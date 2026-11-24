@@ -77,11 +77,11 @@ fn releasing_without_a_reference_is_a_no_op() {
 #[test]
 fn a_worker_that_exits_while_needed_is_started_again() {
 	let (ledger, recorder) = observed();
-	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None);
+	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), None, 0), None);
 	assert!(recorder.seen().is_empty(), "a worker nothing needs stays stopped");
 	ledger.acquire(&ProductId::for_test("a.dot"));
 	ledger.acquire(&ProductId::for_test("a.dot"));
-	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None, "restarted at once");
+	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), None, 0), None, "restarted at once");
 	assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 2, "the references stand");
 	ledger.release(&ProductId::for_test("a.dot"));
 	ledger.release(&ProductId::for_test("a.dot"));
@@ -103,11 +103,11 @@ fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
-	let waits: Vec<_> = (0..12).map(|n| ledger.exited(&product, n * 10)).collect();
+	let waits: Vec<_> = (0..12).map(|n| ledger.exited(&product, None, n * 10)).collect();
 	let restarts_before = recorder.seen().len();
-	ledger.restart(&product);
-	ledger.restart(&product);
-	let after_quiet = ledger.exited(&product, 11 * 10 + CRASH_RUN_WINDOW_MS + 1);
+	ledger.restart(&product, None);
+	ledger.restart(&product, None);
+	let after_quiet = ledger.exited(&product, None, 11 * 10 + CRASH_RUN_WINDOW_MS + 1);
 
 	assert_eq!(
 		(
@@ -146,15 +146,15 @@ fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
-	ledger.exited(&product, 0);
-	assert!(ledger.exited(&product, 1).is_some());
+	ledger.exited(&product, None, 0);
+	assert!(ledger.exited(&product, None, 1).is_some());
 	ledger.release(&product);
-	ledger.restart(&product);
+	ledger.restart(&product, None);
 	ledger.acquire(&product);
-	assert!(ledger.exited(&product, 2).is_some());
+	assert!(ledger.exited(&product, None, 2).is_some());
 	ledger.release(&product);
 	ledger.acquire(&product);
-	ledger.restart(&product);
+	ledger.restart(&product, None);
 
 	assert_eq!(
 		recorder.seen(),
@@ -440,4 +440,27 @@ fn a_panicking_delivery_still_lets_a_later_transition_through() {
 		vec![WorkerTransition::Stop]
 	);
 	assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+}
+
+#[test]
+fn an_older_crash_or_backoff_cannot_restart_a_replacement() {
+	let (ledger, recorder) = observed();
+	let product = ProductId::for_test("retry.dot");
+	let attempt = || ledger.state().references[&product].attempt_id;
+	ledger.acquire(&product);
+	let first = attempt();
+	ledger.exited(&product, Some(first), 0);
+	let waiting = attempt();
+	assert_eq!(ledger.exited(&product, Some(waiting), 1), Some(1_000));
+	ledger.release(&product);
+	ledger.acquire(&product);
+	let current = attempt();
+	assert_eq!(ledger.exited(&product, Some(current), 2), Some(2_000));
+	let before = recorder.seen();
+	ledger.restart(&product, Some(waiting));
+	assert_eq!(ledger.exited(&product, Some(first), 3), None);
+	assert_eq!(recorder.seen(), before);
+	ledger.restart(&product, Some(current));
+	assert_ne!(attempt(), current);
+	assert_eq!(recorder.seen().len(), before.len() + 1);
 }

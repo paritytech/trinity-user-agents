@@ -21,7 +21,7 @@ use truapi::latest::{
 };
 
 use super::{
-	Materials,
+	Caller, Materials,
 	format::{Material, read_material},
 	limits::tree_failures,
 	materials_nodes,
@@ -165,7 +165,8 @@ impl Drop for MaterialsResolution {
 
 impl Materials {
 	/// The resolved materials of `tree` in `context`. Each node that falls back reaches
-	/// `failures` once, with its first reason.
+	/// `failures` once, with its first reason. Starting a replacement before dropping
+	/// this resolution keeps their shared fetches alive.
 	pub fn resolve(
 		&self,
 		tree: &RendererNode,
@@ -177,9 +178,10 @@ impl Materials {
 		let (reports, received) = unbounded();
 		let (abort, registration) = AbortHandle::new_pair();
 		let resolver = Resolver::new(self.clone(), tree, context, settings, failures);
+		let callers = resolver.wanted().into_iter().map(|id| self.subscribe(id)).collect();
 		self.0
 			.spawner
-			.spawn(Abortable::new(resolver.run(sender, received), registration).map(drop));
+			.spawn(Abortable::new(resolver.run(callers, sender, received), registration).map(drop));
 		MaterialsResolution { updates, reports, abort }
 	}
 }
@@ -266,26 +268,23 @@ impl Resolver {
 
 	async fn run(
 		mut self,
+		callers: Vec<Caller>,
 		updates: UnboundedSender<ResolvedMaterials>,
 		reports: UnboundedReceiver<NodeFallback>,
 	) {
 		let mut missing = Vec::new();
-		for id in self.wanted() {
-			match self.materials.kept(id).await {
-				Ok(Some(text)) => self.apply(Event::Text(id, Ok(text))),
-				_ => missing.push(id),
+		for caller in callers {
+			let id = caller.id;
+			match caller.cached.clone().await {
+				Some(text) => self.apply(Event::Text(id, Ok(text))),
+				None => missing.push(caller.map(move |text| Event::Text(id, text))),
 			}
 		}
 		let mut last = self.current();
 		if updates.unbounded_send(last.clone()).is_err() {
 			return;
 		}
-		let texts = select_all(
-			missing
-				.into_iter()
-				.map(|id| self.materials.observe(id).map(move |text| Event::Text(id, text))),
-		);
-		let mut events = select(texts, reports.map(Event::Report));
+		let mut events = select(select_all(missing), reports.map(Event::Report));
 		while let Some(event) = events.next().await {
 			self.apply(event);
 			// Answers already waiting arrive in the same update.

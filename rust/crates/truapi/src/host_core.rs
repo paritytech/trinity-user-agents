@@ -331,6 +331,12 @@ impl<Role> HostRuntime<Role> {
 	pub fn worker_exited(&self, product_id: &ProductId) {
 		self.services.worker_exited(product_id);
 	}
+
+	/// Restart after a native worker failure only while the failing attempt is current.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn worker_attempt_exited(&self, product_id: &ProductId, attempt: u64) {
+		self.services.worker_attempt_exited(product_id, Some(attempt));
+	}
 }
 
 impl<Role: HostRole> HostRuntime<Role> {
@@ -1864,8 +1870,13 @@ pub struct ProductRuntimeControl {
 const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
 
 impl ProductRuntimeControl {
+	/// Whether the peer can still receive frames through this connection.
+	pub fn is_connected(&self) -> bool {
+		!self.disposed.load(Ordering::Acquire)
+	}
+
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
-		if self.disposed.load(Ordering::Acquire) {
+		if !self.is_connected() {
 			return Err(ProductRuntimeError::Closed);
 		}
 		Ok(&self.connection)

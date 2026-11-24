@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, executor::LocalPool, task::SpawnExt};
 use truapi::latest::{
 	BoxProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Parameter,
 	RenderContext, RendererNode,
@@ -10,6 +10,7 @@ use super::*;
 use crate::{
 	host_internal::bulletin::preimage_key,
 	materials::{format::read_material, noise::noise_seed, testing::Device},
+	spawner::Spawner,
 	store::open_temporary_core_db,
 	test_support::{next, wait_until},
 };
@@ -358,22 +359,45 @@ fn an_app_report_makes_its_node_plain_for_good() {
 #[test]
 fn a_new_resolution_asked_before_the_old_is_cancelled_keeps_the_fetch() {
 	let (_dir, db) = open_temporary_core_db();
-	let device = Device::over(db);
+	let (sender, tasks) = std::sync::mpsc::channel();
+	let device = Device::with_spawner(
+		db,
+		Spawner::with_test_scheduler(move |task| {
+			sender.send(task).unwrap();
+		}),
+	);
+	let mut pool = LocalPool::new();
+	let schedule = |pool: &LocalPool| {
+		for task in tasks.try_iter() {
+			pool.spawner().spawn(task).unwrap();
+		}
+	};
 	let face = tree(vec![node(vec![layer(STILL, Vec::new())])]);
-	let mut old = resolve(&device, &face, &card(), ON);
-	assert_eq!(old.next(), [State::Loading]);
+	let old = resolve(&device, &face, &card(), ON);
+	let id = preimage_key(STILL);
 	wait_until(
-		|| device.bulletin.open_lookups(preimage_key(STILL)) == 1,
-		"the material is looked up",
+		|| {
+			schedule(&pool);
+			pool.run_until_stalled();
+			device.bulletin.open_lookups(id) == 1
+		},
+		"the first tree has started its fetch",
 	);
 
 	let mut new = resolve(&device, &face, &card(), ON);
-	assert_eq!(new.next(), [State::Loading]);
 	drop(old);
-	answer(&device, STILL);
+	pool.run_until_stalled();
+	assert_eq!(
+		device.bulletin.open_lookups(id),
+		1,
+		"the replacement still has its fetch before it runs"
+	);
 
-	assert_eq!(new.next(), [State::Ready]);
-	assert_eq!(device.bulletin.lookups(preimage_key(STILL)), 1);
+	schedule(&pool);
+	assert_eq!(states(&pool.run_until(new.resolution.next()).unwrap()), [State::Loading]);
+	device.bulletin.answer(id, STILL.to_vec());
+	assert_eq!(states(&pool.run_until(new.resolution.next()).unwrap()), [State::Ready]);
+	assert_eq!(device.bulletin.lookups(id), 1);
 }
 
 /// A resolution stays open after every node settles, so the app's reports still

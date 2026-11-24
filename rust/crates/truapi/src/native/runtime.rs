@@ -1,9 +1,15 @@
-use std::{
-	collections::HashMap,
-	sync::{
-		Arc, Mutex, OnceLock, Weak,
-		atomic::{AtomicBool, Ordering},
-	},
+mod worker_execution;
+mod workers;
+
+pub use worker_execution::NativeWorkerExecution;
+pub use workers::{
+	NativeWebViewWorkerHost, NativeWorkerAttempt, NativeWorkerExecutionObserver,
+	NativeWorkerExecutionState,
+};
+
+use std::sync::{
+	Arc, Mutex, OnceLock,
+	atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
@@ -109,8 +115,7 @@ pub struct NativeTrUApiHostRuntime {
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
-	/// The one Worker execution per product; opening another replaces it.
-	worker_executions: Mutex<HashMap<ProductId, Weak<NativeProductExecution>>>,
+	workers: workers::Workers,
 	/// The host's top-up engine, once installed, which later statuses are
 	/// pushed through.
 	top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
@@ -132,8 +137,7 @@ impl NativeTrUApiHostRuntime {
 	fn from_resolved(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: NativeResolvedHostRuntimeConfig,
-		log_marker: &str,
-		log_detail: &str,
+		workers: workers::Workers,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
 		// Installed before the rest of startup, so the warnings raised on the way
@@ -158,7 +162,10 @@ impl NativeTrUApiHostRuntime {
 			"truapi {} is logging to this host",
 			env!("CARGO_PKG_VERSION"),
 		);
-		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
+		callbacks.on_core_log(
+			markers::NATIVE_HOST_RUNTIME_BOOT.target.to_string(),
+			"host runtime ready".to_string(),
+		);
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
 		})?;
@@ -197,10 +204,12 @@ impl NativeTrUApiHostRuntime {
 		let spawner = executor.spawner();
 		let runtime =
 			Arc::new(HostRuntime::<SigningHost>::new(platform.clone(), signing, spawner.clone()));
-		assert!(
-			runtime.worker_ledger().install_worker_controller(platform.clone()),
-			"a freshly built runtime installs its worker controller once"
-		);
+		if matches!(workers, workers::Workers::External(_)) {
+			assert!(
+				runtime.worker_ledger().install_worker_controller(platform.clone()),
+				"a freshly built runtime installs its worker controller once"
+			);
+		}
 		assert!(
 			runtime.set_durable_work_observer(platform.clone()),
 			"a freshly built runtime installs its durable work observer once"
@@ -243,7 +252,7 @@ impl NativeTrUApiHostRuntime {
 			ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
 				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			}))),
-			worker_executions: Mutex::new(HashMap::new()),
+			workers,
 			top_up: OnceLock::new(),
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
@@ -260,6 +269,7 @@ impl NativeTrUApiHostRuntime {
 		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		product: ProductContext,
+		worker_attempt: Option<Arc<NativeWorkerAttempt>>,
 	) -> Arc<NativeProductExecution> {
 		let events = Arc::new(NativeEventBus::default());
 		let callback_platform = Arc::new(CallbackPlatform {
@@ -279,9 +289,10 @@ impl NativeTrUApiHostRuntime {
 			game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
 				Arc::new(GameCallbackPlatform { game })
 			});
-		let execution = Arc::new(NativeProductExecution {
+		Arc::new(NativeProductExecution {
+			worker_attempt,
 			runtime: self.runtime.clone(),
-			product: product.clone(),
+			product,
 			platform,
 			chat,
 			pocket: self.pocket.clone(),
@@ -300,21 +311,7 @@ impl NativeTrUApiHostRuntime {
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
 			product_control: Arc::new(Mutex::new(None)),
-		});
-
-		if product.execution_kind == ExecutableKind::Worker {
-			let previous = self
-				.worker_executions
-				.lock()
-				.expect("native worker execution registry mutex poisoned")
-				.insert(product.product_id, Arc::downgrade(&execution))
-				.and_then(|previous| previous.upgrade());
-			if let Some(previous) = previous {
-				previous.shutdown();
-			}
-		}
-
-		execution
+		})
 	}
 }
 
@@ -649,13 +646,24 @@ impl NativeTrUApiHostRuntime {
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: HostRuntimeConfig,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		let runtime_config: NativeResolvedHostRuntimeConfig = runtime_config.try_into()?;
 		Self::from_resolved(
 			callbacks,
-			runtime_config,
-			markers::NATIVE_HOST_RUNTIME_BOOT.target,
-			"host runtime ready",
+			runtime_config.try_into()?,
+			workers::Workers::External(Mutex::default()),
 		)
+	}
+
+	/// Construct a runtime whose worker demand waits for its WebView adapter.
+	///
+	/// Install the session adapter with `enable_product_workers`. Any earlier demand is
+	/// queued, including references acquired by services while the runtime is being built.
+	#[uniffi::constructor]
+	pub fn with_managed_product_workers(
+		callbacks: Arc<dyn HostCallbacks>,
+		runtime_config: HostRuntimeConfig,
+	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
+		let workers = workers::Workers::managed(&callbacks);
+		Self::from_resolved(callbacks, runtime_config.try_into()?, workers)
 	}
 
 	/// Install the host's contacts adapter, which owns the contact list and
@@ -728,12 +736,19 @@ impl NativeTrUApiHostRuntime {
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
-		Ok(self.open_product_execution_with_callbacks(
+		let product: ProductContext = execution_config.into();
+		let worker = product.execution_kind == ExecutableKind::Worker;
+		let execution = self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			game_callbacks,
-			execution_config.into(),
-		))
+			product,
+			None,
+		);
+		if worker {
+			self.workers.register_external(&execution)?;
+		}
+		Ok(execution)
 	}
 
 	/// Claim a product's worker while this consumer needs it.
@@ -748,9 +763,11 @@ impl NativeTrUApiHostRuntime {
 	/// Report that the product's worker stopped running without being asked
 	/// to: it crashed or the system killed it. While references remain, the
 	/// host is asked through [`HostCallbacks::request_worker_transition`] to
-	/// start it again.
+	/// start it again. Managed WebViews report through their startup attempt.
 	pub fn worker_exited(&self, product_id: ProductId) {
-		self.runtime.worker_exited(&product_id);
+		if matches!(self.workers, workers::Workers::External(_)) {
+			self.runtime.worker_exited(&product_id);
+		}
 	}
 
 	/// Forget one product: revoke its grants and Allow once answers, then
@@ -1142,6 +1159,7 @@ impl NativeTrUApiHostRuntime {
 /// One native executable connection opened from a process-owned host runtime.
 #[derive(uniffi::Object)]
 pub struct NativeProductExecution {
+	worker_attempt: Option<Arc<NativeWorkerAttempt>>,
 	runtime: Arc<HostRuntime<SigningHost>>,
 	product: ProductContext,
 	platform: Arc<dyn crate::platform::Platform>,
@@ -1495,6 +1513,34 @@ pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, d
 	);
 }
 
+struct ExecutionConnections {
+	runtime: Arc<HostRuntime<SigningHost>>,
+	product: ProductContext,
+	adapters: crate::host_core::ConnectionAdapters,
+	control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
+	attempt: Option<Arc<NativeWorkerAttempt>>,
+}
+
+impl super::ws_bridge::WsProductRuntimeFactory for ExecutionConnections {
+	fn product_runtime(&self, sink: Arc<dyn crate::FrameSink>) -> crate::ProductRuntime {
+		let connection =
+			self.runtime
+				.product_runtime_with(self.product.clone(), self.adapters.clone(), sink);
+		*self.control.lock().expect("native product control mutex poisoned") =
+			Some(connection.control());
+		if let Some(attempt) = &self.attempt {
+			attempt.connected();
+		}
+		connection
+	}
+
+	fn disconnected(&self) {
+		if let Some(attempt) = &self.attempt {
+			attempt.disconnected();
+		}
+	}
+}
+
 #[uniffi::export]
 impl NativeProductExecution {
 	/// Register this execution with its own token on the host's shared listener.
@@ -1513,16 +1559,12 @@ impl NativeProductExecution {
 				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			})
 		};
-		let runtime = self.runtime.clone();
-		let product = self.product.clone();
-		let adapters = self.adapters();
-		let product_control = self.product_control.clone();
-		let runtime_factory = Arc::new(move |sink| {
-			let product_runtime =
-				runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
-			*product_control.lock().expect("native product control mutex poisoned") =
-				Some(product_runtime.control());
-			product_runtime
+		let runtime_factory = Arc::new(ExecutionConnections {
+			runtime: self.runtime.clone(),
+			product: self.product.clone(),
+			adapters: self.adapters(),
+			control: self.product_control.clone(),
+			attempt: self.worker_attempt.clone(),
 		});
 		let endpoint = self.ws_bridge.register(bind_port, runtime_factory, logger)?;
 		*guard = Some(endpoint.token.clone());
