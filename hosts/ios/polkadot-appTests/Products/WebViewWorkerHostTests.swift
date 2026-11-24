@@ -8,7 +8,7 @@ import TrUAPIHost
 
 private let product = try! ProductId("game.paseo")
 
-struct TrUAPIWorkerManagerTests {
+struct WebViewWorkerHostTests {
     @Test
     func stoppingAnEarlierBootDisposesOnlyItsWebView() async throws {
         let slow = WebViewFixture()
@@ -17,7 +17,7 @@ struct TrUAPIWorkerManagerTests {
         let gate = AsyncStream<Void>.makeStream()
         let first = Attempt(1)
         let second = Attempt(2)
-        let manager = makeManager { _, _, attempt in
+        let host = WebViewWorkerHost { _, attempt in
             if attempt.id() == first.id() {
                 entered.continuation.finish()
                 // Waiting on another task models a fetch that ignores its caller's cancellation.
@@ -28,17 +28,17 @@ struct TrUAPIWorkerManagerTests {
             return replacement.runtime()
         }
 
-        manager.start(productId: product, attempt: first)
+        host.start(productId: product, attempt: first)
         try await withTimeout(.hangGuard) { for await _ in entered.stream {} }
-        manager.stop(productId: product, attemptId: first.id())
-        manager.start(productId: product, attempt: second)
+        host.stop(productId: product, attemptId: first.id())
+        host.start(productId: product, attempt: second)
         try await withTimeout(.hangGuard) { for await _ in replacement.loaded.stream {} }
         gate.continuation.finish()
         try await withTimeout(.hangGuard) { await slow.execution.awaitClose() }
 
         #expect(slow.engine.evaluatedScripts.isEmpty)
         #expect(replacement.execution.closeCallCount == 0)
-        manager.stop(productId: product, attemptId: second.id())
+        host.stop(productId: product, attemptId: second.id())
         try await withTimeout(.hangGuard) { await replacement.execution.awaitClose() }
         #expect(replacement.engine.destroyCallCount == 1)
     }
@@ -47,8 +47,8 @@ struct TrUAPIWorkerManagerTests {
     func aLostWebProcessReportsItsOwnAttempt() async throws {
         let view = WebViewFixture()
         let attempt = Attempt(3)
-        let manager = makeManager { _, _, _ in view.runtime() }
-        manager.start(productId: product, attempt: attempt)
+        let host = WebViewWorkerHost { _, _ in view.runtime() }
+        host.start(productId: product, attempt: attempt)
         try await withTimeout(.hangGuard) { for await _ in view.loaded.stream {} }
 
         view.engine.terminate()
@@ -57,7 +57,7 @@ struct TrUAPIWorkerManagerTests {
             return await failures.next()
         }
         #expect(reason == "WebView process terminated")
-        manager.stop(productId: product, attemptId: attempt.id())
+        host.stop(productId: product, attemptId: attempt.id())
         try await withTimeout(.hangGuard) { await view.execution.awaitClose() }
     }
 
@@ -66,18 +66,14 @@ struct TrUAPIWorkerManagerTests {
         struct MissingWorker: Error {}
 
         let attempt = Attempt(4)
-        let manager = makeManager { _, _, _ in throw MissingWorker() }
-        manager.start(productId: product, attempt: attempt)
+        let host = WebViewWorkerHost { _, _ in throw MissingWorker() }
+        host.start(productId: product, attempt: attempt)
         let reason = try await withTimeout(.hangGuard) {
             var failures = attempt.failures.stream.makeAsyncIterator()
             return await failures.next()
         }
         #expect(reason == String(describing: MissingWorker()))
-        manager.stop(productId: product, attemptId: attempt.id())
-    }
-
-    private func makeManager(build: @escaping TrUAPIWorkerManager.Builder) -> TrUAPIWorkerManager {
-        TrUAPIWorkerManager(build: build, runtime: { throw CancellationError() }, presentationFallback: { nil })
+        host.stop(productId: product, attemptId: attempt.id())
     }
 }
 

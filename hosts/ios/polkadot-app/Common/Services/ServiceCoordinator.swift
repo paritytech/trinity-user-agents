@@ -1,4 +1,5 @@
 import Foundation
+import class TrUAPIHost.TrUAPIHostRuntime
 import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
@@ -248,15 +249,27 @@ extension ServiceCoordinator {
             contentHashCache: ContentHashCache.shared
         )
 
-        let workers = TrUAPIWorkerManager.make(
-            runtimeProvider: truapiRuntimeProvider,
+        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak truapiRuntimeProvider] in
+            guard let truapiRuntimeProvider else { throw CancellationError() }
+            return try truapiRuntimeProvider.sharedRuntime()
+        }
+        let contexts = ProductWorkerContexts { [weak truapiRuntimeProvider] in truapiRuntimeProvider?.presentationView }
+        let workerBuilder = TrUAPIWorkerBuilder(
+            runtime: runtime,
             flowState: spaFlowState,
             productFileProvider: productFileProvider,
             gameReminders: gameReminders,
             themeManager: ThemeManager.shared,
             logger: logger
         )
-        truapiRuntimeProvider.attach(workerManager: workers)
+        let webViewHost = WebViewWorkerHost { productId, attempt in
+            try await workerBuilder.makeRuntime(
+                productId: productId,
+                context: contexts.context(for: productId),
+                attempt: attempt
+            )
+        }
+        truapiRuntimeProvider.attach(webViewHost: webViewHost)
 
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
         RootDependencyLocator.setDependency(
@@ -271,7 +284,7 @@ extension ServiceCoordinator {
         let pocket = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider)
         if let pocket {
             RootDependencyLocator.setDependency(pocket)
-            pocket.start(manager: workers, flowState: spaFlowState)
+            pocket.start(runtime: runtime, flowState: spaFlowState)
         }
 
         guard
@@ -337,14 +350,15 @@ extension ServiceCoordinator {
             accountManager: accountManager,
             spaFlowState: spaFlowState,
             productFileProvider: productFileProvider,
-            workers: workers
+            runtime: runtime,
+            contexts: contexts
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(workers: workers),
+            workerReloader: ProductWorkerReloader(runtime: runtime),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )

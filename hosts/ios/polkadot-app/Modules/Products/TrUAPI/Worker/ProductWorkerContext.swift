@@ -1,5 +1,7 @@
 import Foundation
+import os
 import Products
+import TrUAPIHost
 import UIKitExt
 
 /// What a product's worker is served through, made on first ask and kept for
@@ -15,5 +17,24 @@ final class ProductWorkerContext: @unchecked Sendable {
 
     init(presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil) {
         routers = ProductRoutersFacade.worker(fallback: presentationFallback)
+    }
+}
+
+final class ProductWorkerContexts: Sendable {
+    private let contexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
+    private let presentationFallback: @MainActor @Sendable () -> ControllerBackedProtocol?
+
+    init(presentationFallback: @escaping @MainActor @Sendable () -> ControllerBackedProtocol?) {
+        self.presentationFallback = presentationFallback
+    }
+
+    func context(for productId: ProductId) -> ProductWorkerContext {
+        contexts.withLock { contexts in
+            if let context = contexts[productId] { return context }
+
+            let context = ProductWorkerContext(presentationFallback: presentationFallback)
+            contexts[productId] = context
+            return context
+        }
     }
 }

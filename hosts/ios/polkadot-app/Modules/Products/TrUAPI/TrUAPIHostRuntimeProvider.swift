@@ -54,8 +54,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private var fundingProvidersObservation: Task<Void, Never>?
 
     /// Set once at startup, before any product opens. The runtime is built on
-    /// first use, which is long after, so the manager is in place by then.
-    private var workerManager: (any NativeWebViewWorkerHost)?
+    /// first use, which is long after, so the WebView host is in place by then.
+    private var webViewHost: (any NativeWebViewWorkerHost)?
 
     /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
     /// it is built, or right away if it already is.
@@ -99,11 +99,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.productsRouter.presentationView
     }
 
-    func attach(workerManager: any NativeWebViewWorkerHost) {
+    func attach(webViewHost: any NativeWebViewWorkerHost) {
         lock.lock()
         defer { lock.unlock() }
 
-        self.workerManager = workerManager
+        self.webViewHost = webViewHost
     }
 
     func shutdownProductWorkers() {
@@ -179,7 +179,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerHost: workerManager)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerHost: webViewHost)
         if handedOverKey != nil {
             deviceEncryptionKeys.forgetHandedOverKey()
         }

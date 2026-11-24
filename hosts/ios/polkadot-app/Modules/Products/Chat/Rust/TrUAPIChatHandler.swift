@@ -6,11 +6,7 @@ import UIKitExt
 
 /// The chat half of a product's worker.
 ///
-/// Started while a chat session with the product is open, which is what asks
-/// ``TrUAPIWorkerManager`` for its worker. The core keeps one Worker execution
-/// per product and decides when it runs, so this asks for one rather than
-/// opening an execution of its own. The same worker also draws the product's
-/// Pocket cards.
+/// A Chat session claims its product's worker until the session closes.
 ///
 /// Chat-environment context route through that execution: user messages and
 /// events publish chat actions, widget rendering streams typed renderer nodes,
@@ -32,7 +28,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     }
 
     private let productId: ProductId
-    private let workers: any TrUAPIWorkerManaging
+    private let runtime: ProductWorkerRuntimeProvider
+    private let startupTimeout: Duration
     /// The product's own chat surface and routers, which outlive any one worker.
     private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
@@ -45,22 +42,25 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
-    private var workerClaim: (any TrUAPIWorkerClaiming)?
+    private var workerClaim: NativeWorkerClaim?
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
 
     init(
         productId: ProductId,
-        workers: any TrUAPIWorkerManaging,
+        runtime: @escaping ProductWorkerRuntimeProvider,
+        context: ProductWorkerContext,
+        startupTimeout: Duration = .workerStartupTimeout,
         renderStartupWindow: Duration = .seconds(5),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
-        self.workers = workers
+        self.runtime = runtime
+        self.context = context
+        self.startupTimeout = startupTimeout
         self.renderStartupWindow = renderStartupWindow
         self.logger = logger
-        context = workers.context(of: productId)
     }
 
     deinit {
@@ -208,11 +208,12 @@ private extension TrUAPIChatHandler {
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
 
-        workerClaim = try workers.claim(productId)
-        try await workers.waitUntilReady(productId)
+        let host = try runtime()
+        workerClaim = host.claimWorker(productId: productId)
+        try await host.waitForWorker(productId, timeout: startupTimeout)
 
         try checkNotDisposed()
-        startRoomsForwarding()
+        startRoomsForwarding(host)
 
         logger.debug("Rust chat runtime started for: \(productId)")
     }
@@ -281,7 +282,7 @@ private extension TrUAPIChatHandler {
     }
 
     func requireExecution() throws -> TrUAPIWorkerOperations {
-        guard let execution = workers.currentExecution(of: productId) else {
+        guard let execution = try? runtime().currentWorkerExecution(productId: productId) else {
             throw ChatSeamError.notStarted
         }
         return execution
@@ -291,12 +292,12 @@ private extension TrUAPIChatHandler {
     /// `chat.listSubscribe` sees native changes as they happen. The execution is
     /// read each time rather than captured, so a worker that restarts under this
     /// session keeps being told.
-    func startRoomsForwarding() {
-        roomsForwardingTask = Task { [logger, workers, productId, chat = context.chat] in
+    func startRoomsForwarding(_ host: any ProductWorkerRuntime) {
+        roomsForwardingTask = Task { [logger, productId, chat = context.chat] in
             do {
                 for try await rooms in try await chat.subscribeRooms() {
                     guard !Task.isCancelled else { return }
-                    workers.currentExecution(of: productId)?
+                    host.currentWorkerExecution(productId: productId)?
                         .notifyChatRoomsChanged(rooms: rooms.map { $0.toChatRoom() })
                 }
             } catch {

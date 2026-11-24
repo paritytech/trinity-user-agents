@@ -114,9 +114,9 @@ final class ProductPocketService: @unchecked Sendable {
     }
 
     /// Follow the session's collection and draw its cards through the shared workers.
-    func start(manager: any TrUAPIWorkerManaging, flowState: SPAFlowState) {
+    func start(runtime: @escaping ProductWorkerRuntimeProvider, flowState: SPAFlowState) {
         let handlers = PocketHandlers(
-            workers: manager,
+            runtime: runtime,
             published: PublishedPocketCards.makeDefault(products: flowState.productResolver),
             logger: logger
         )

@@ -3,7 +3,7 @@ import TrUAPIHost
 
 /// Test double for one product execution. Records ws-bridge lifecycle and
 /// chain notify-backs; unused notify surfaces are inert.
-final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sendable {
+final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionProtocol, @unchecked Sendable {
     private(set) var startWsBridgeCallCount = 0
     private(set) var stopWsBridgeCallCount = 0
     private(set) var closeCallCount = 0
@@ -24,9 +24,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
     private(set) var renderRequests: [ProductRendererRenderRequest] = []
-    /// The continuation behind each stream `render` returned, in order, so a
-    /// test can push a face into a stream that is already being drained.
-    private(set) var renderContinuations: [AsyncThrowingStream<RendererNode, Error>.Continuation] = []
+    private(set) var renderObservers: [NativeRendererObserver] = []
     /// Errors thrown by successive `render` calls, consumed in order; once
     /// empty the call succeeds. Lets tests drive the startup retry loop.
     var renderErrors: [Error] = []
@@ -54,7 +52,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         closeSignals = closes.makeAsyncIterator()
         themeSignal = themeContinuation
         themeSignals = themes.makeAsyncIterator()
+        super.init(noHandle: .init())
     }
+
+    required init(unsafeFromHandle _: UInt64) { fatalError("Test execution") }
 
     /// Returns once a `render` call has happened that no earlier call to this method consumed.
     func awaitRenderRequest() async {
@@ -85,29 +86,28 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         closeSignal.yield()
     }
 
-    func publishChatAction(_ item: HostChatActionSubscribeItem) throws {
-        publishedChatActions.append(item)
+    override func publishChatAction(action: HostChatActionSubscribeItem) throws {
+        publishedChatActions.append(action)
     }
 
-    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
+    override func render(
+        request: ProductRendererRenderRequest,
+        observer: NativeRendererObserver
+    ) throws -> NativeSubscription {
         renderRequests.append(request)
         if !renderErrors.isEmpty {
             renderSignal.yield()
             throw renderErrors.removeFirst()
         }
 
-        let nodes = renderNodes
-        let staysOpen = keepsRenderStreamOpen
-        let stream = AsyncThrowingStream<RendererNode, Error> { continuation in
-            nodes.forEach { continuation.yield($0) }
-            if !staysOpen { continuation.finish() }
-            self.renderContinuations.append(continuation)
-        }
+        renderObservers.append(observer)
+        renderNodes.forEach { observer.onUpdate(node: $0) }
+        if !keepsRenderStreamOpen { observer.onComplete() }
         renderSignal.yield()
-        return stream
+        return RenderSubscription(noHandle: .init())
     }
 
-    func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
+    override func publishRendererAction(item: HostRendererActionSubscribeItem) throws {
         publishedRendererActions.append(item)
     }
 
@@ -145,9 +145,13 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         chainClosed.append(connectionId)
     }
 
-    func notifyChatRoomsChanged(rooms _: [ChatRoom]) {}
+    override func notifyChatRoomsChanged(rooms _: [ChatRoom]) {}
 
     func sessionChatIdentityKey() throws -> Data? {
         nil
     }
+}
+
+private final class RenderSubscription: NativeSubscription, @unchecked Sendable {
+    override func cancel() {}
 }

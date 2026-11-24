@@ -43,7 +43,8 @@ struct ChatCardImagesTests {
     ) throws -> WidgetImageResolver {
         let factory = ProductBotFactory(
             productFileProvider: NoChatProductFiles(),
-            workers: StubWorkerManager(),
+            runtime: { throw Unavailable() },
+            contexts: ProductWorkerContexts(presentationFallback: { nil }),
             workerManager: NoWorkers(),
             productImages: ProductImageSources(dotNsResolver: dotNsResolver, ipfsGatewayBaseUrl: gateway)
         )

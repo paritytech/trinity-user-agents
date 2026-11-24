@@ -102,20 +102,16 @@ struct TrUAPIWorkerBuilder {
     }
 }
 
-extension TrUAPIWorkerManager {
-    static func make(
-        runtimeProvider: any TrUAPIHostRuntimeProviding,
+extension TrUAPIWorkerBuilder {
+    init(
+        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime,
         flowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         gameReminders: any ProductGameReminderScheduling,
         themeManager: any ThemeManagerProtocol,
         logger: CoreEventLoggerProtocol
-    ) -> TrUAPIWorkerManager {
-        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak runtimeProvider] in
-            guard let runtimeProvider else { throw CancellationError() }
-            return try runtimeProvider.sharedRuntime()
-        }
-        let builder = TrUAPIWorkerBuilder(
+    ) {
+        self.init(
             environment: {
                 try RustRuntimeEnvironment(
                     runtime: runtime(),
@@ -132,11 +128,6 @@ extension TrUAPIWorkerManager {
             dotNsResolver: flowState.dotNsResolver,
             productFileProvider: productFileProvider,
             logger: logger
-        )
-        return TrUAPIWorkerManager(
-            build: { try await builder.makeRuntime(productId: $0, context: $1, attempt: $2) },
-            runtime: runtime,
-            presentationFallback: { [weak runtimeProvider] in runtimeProvider?.presentationView }
         )
     }
 }

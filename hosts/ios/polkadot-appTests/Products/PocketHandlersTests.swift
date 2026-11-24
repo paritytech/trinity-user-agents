@@ -25,22 +25,23 @@ struct PocketHandlersTests {
     @Test(.timeLimit(.minutes(1)))
     func aRemovedStartingHandlerCannotReleaseChatOrItsReplacement() async throws {
         let workers = workersRunning(gameProductId)
-        let chat = TrUAPIChatHandler(productId: gameProductId, workers: workers)
+        let chat = TrUAPIChatHandler(productId: gameProductId, runtime: { workers }, context: ProductWorkerContext())
         try await chat.start(messagingSupport: .init(bot: nil, context: nil))
         var readiness = workers.readinessChecks.makeAsyncIterator()
         await readiness.next()
 
         let handlers = makeHandlers(workers: workers)
-        workers.suspendsReadiness = true
+        workers.publish([:])
         let starting = Task { await handlers.reconcile([loyalty]) }
         await readiness.next()
         _ = await handlers.reconcile([])
         #expect(workers.references.releaseCounts == [0, 1])
 
-        workers.suspendsReadiness = false
-        _ = await handlers.reconcile([loyalty])
+        let restarting = Task { await handlers.reconcile([loyalty]) }
+        await readiness.next()
         let replacement = handlers.handler(of: gameProductId)
-        workers.resumeReadiness()
+        workers.publish([gameProductId: MockProductExecution()])
+        _ = await restarting.value
         _ = await starting.value
         #expect(replacement != nil)
         #expect(handlers.handler(of: gameProductId) === replacement)
@@ -54,8 +55,8 @@ struct PocketHandlersTests {
 
     @Test(.timeLimit(.minutes(1)))
     func anUnavailableWorkerReturnsItsPocketClaim() async {
-        let workers = StubWorkerManager()
-        workers.finishExecutions()
+        let workers = StubWorkerRuntime()
+        workers.fail(gameProductId, reason: "module failed to start")
         let handlers = makeHandlers(workers: workers)
 
         _ = await handlers.reconcile([loyalty])
@@ -171,17 +172,17 @@ private let streak = PocketCardEntry(
     privileged: false
 )
 
-private func workersRunning(_ productId: ProductId) -> StubWorkerManager {
-    let workers = StubWorkerManager()
+private func workersRunning(_ productId: ProductId) -> StubWorkerRuntime {
+    let workers = StubWorkerRuntime()
     workers.publish([productId: MockProductExecution()])
     return workers
 }
 
 private func makeHandlers(
-    workers: StubWorkerManager,
+    workers: StubWorkerRuntime,
     published: StubPublishedCards = StubPublishedCards()
 ) -> PocketHandlers {
-    PocketHandlers(workers: workers, published: published)
+    PocketHandlers(runtime: { workers }, published: published)
 }
 
 /// Looks every card up successfully unless a failure is queued for it.
