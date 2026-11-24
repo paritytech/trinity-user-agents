@@ -195,8 +195,8 @@ fn test_reads_same_by_field() {
 /// A source and its fork can both be local files with one descriptor `id`. If
 /// every local file were one stack, the CLI would keep their state in one
 /// directory and the fork would read the source's session.
-#[tokio::test]
-async fn two_local_files_are_two_stacks_and_one_file_is_one() {
+#[test]
+fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	let directory = tempfile::tempdir().expect("tempdir");
 	let write = |name: &str| {
 		let path = directory.path().join(name);
@@ -206,13 +206,12 @@ async fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	};
 	let (source, fork) = (write("source.json"), write("fork.json"));
 	let respelled = directory.path().join(".").join("source.json");
-	let id = |path: std::path::PathBuf| async move {
+	let id = |path: std::path::PathBuf| {
 		let path = path.to_str().expect("temporary path is UTF-8").to_owned();
-		load_descriptor(&path, None).await.expect("local descriptor loads").0
+		stack_id(&path, None).expect("a local file has an id")
 	};
 
-	let (source_id, fork_id, respelled_id) =
-		(id(source).await, id(fork).await, id(respelled).await);
+	let (source_id, fork_id, respelled_id) = (id(source), id(fork), id(respelled));
 	assert_eq!((source_id == fork_id, source_id == respelled_id), (false, true));
 }
 

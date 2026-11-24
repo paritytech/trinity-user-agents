@@ -79,3 +79,32 @@ async fn test_wrong_bundled_light_spec_published_fix() {
 	let light = stack.light_client().expect("the stack runs on the light client");
 	assert!(light.provider().has_light_spec(stack.genesis().people));
 }
+
+/// `--stack` with a built-in network's link, its bare URL or its link without
+/// the key is that network, so it keeps its state in the directory
+/// `--network` uses rather than starting empty in one of its own.
+#[test]
+fn a_built_in_stack_given_by_link_or_url_keeps_its_state_directory() {
+	use clap::ValueEnum as _;
+	use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
+
+	for network in Network::value_variants() {
+		let name = network.to_possible_value().expect("every network has a value");
+		let pointer = trinity_stack::known_stack(name.get_name()).expect("a known stack");
+		let url = pointer.url().as_str().to_owned();
+		let keyless_link = Pointer::new(&url, None)
+			.expect("the URL is a pointer")
+			.to_link(DEFAULT_LINK_BASE);
+		let given = [pointer.to_link(DEFAULT_LINK_BASE), url, keyless_link];
+		let bundled = network.bundled_stack(ChainBackend::Rpc);
+
+		let state_directories = given.map(|value| {
+			let (_, id) = stack_key_and_id(&value).expect("the value names a stack");
+			Stack::new(id, bundled.descriptor().clone(), &ChainAccess::Rpc)
+				.expect("the bundled copy runs")
+				.state_directory()
+				.to_owned()
+		});
+		assert_eq!(state_directories, [name.get_name(); 3], "{network:?}");
+	}
+}

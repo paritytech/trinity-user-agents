@@ -39,43 +39,28 @@ pub fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
 	Ok(Some(keyed))
 }
 
-/// Where a stack value's bytes were read from.
-pub enum StackSource {
-	/// A link or a URL, fetched.
-	Fetched,
-	/// A local descriptor file.
-	LocalFile,
-}
-
-/// The pointer a stack value carries, the bytes it serves and where they were read from: a link
-/// or a URL, fetched, or a local file, read under a pointer with no URL of its own and `key`.
-/// Fails when it is unreachable.
-pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>, StackSource)> {
+/// The pointer a stack value carries and the bytes it serves: a link or a URL, fetched, or a local
+/// file, read under a pointer with no URL of its own and `key`. Fails when it is unreachable.
+pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>)> {
 	match pointer_of(stack, key)? {
 		Some(pointer) => {
 			let bytes = fetch(pointer.url().as_str(), FETCH_TIMEOUT)
 				.await
 				.map_err(|cause| anyhow!("{stack} is unreachable: {cause}"))?;
-			Ok((pointer, bytes, StackSource::Fetched))
+			Ok((pointer, bytes))
 		},
 		None => Ok((
 			Pointer::new(LOCAL_FILE_URL, key).map_err(refused)?,
 			fs::read(stack).with_context(|| format!("cannot read {stack}"))?,
-			StackSource::LocalFile,
 		)),
 	}
 }
 
-/// The descriptor a `--stack` value points to, with the stack's id: a link or a URL, fetched and
-/// checked against the key a link carries or `key`, or a local descriptor file, signed or not.
-/// Fails when it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past
-/// `validUntil`.
-///
-/// The id is the pointer's. A local file has no pointer of its own, so its id is `file:` followed
-/// by its canonical path: two files are two stacks, and a file that moves becomes another stack.
-/// A file whose canonical path is not UTF-8 is refused.
-pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
-	let (pointer, bytes, source) = read_stack(stack, key).await?;
+/// The descriptor a `--stack` value points to: a link or a URL, fetched and checked against the
+/// key a link carries or `key`, or a local descriptor file, signed or not. Fails when it is
+/// unreachable, breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
+pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<Descriptor> {
+	let (pointer, bytes) = read_stack(stack, key).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
 	if accepted.expired {
@@ -84,15 +69,22 @@ pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, 
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	let stack_id = match source {
-		StackSource::Fetched => pointer.stack_id(),
-		StackSource::LocalFile => local_file_id(stack)?,
-	};
-	Ok((stack_id, accepted.stack.descriptor))
+	Ok(accepted.stack.descriptor)
+}
+
+/// The id of the stack a `--stack` value names, read with `key`: the id of the pointer a link or
+/// a URL carries. A local file has no pointer of its own, so its id is `file:` followed by its
+/// canonical path: two files are two stacks, and a file that moves becomes another stack. A file
+/// whose canonical path is not UTF-8 is refused.
+pub fn stack_id(stack: &str, key: Option<&str>) -> Result<String> {
+	match pointer_of(stack, key)? {
+		Some(pointer) => Ok(pointer.stack_id()),
+		None => local_file_id(stack),
+	}
 }
 
 fn local_file_id(path: &str) -> Result<String> {
-	let canonical = fs::canonicalize(path).with_context(|| format!("cannot resolve {path}"))?;
+	let canonical = fs::canonicalize(path).with_context(|| format!("cannot read {path}"))?;
 	canonical_file_id(canonical)
 }
 

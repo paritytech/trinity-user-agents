@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
 	chain::ChainAccess,
-	stack_descriptor::{FETCH_TIMEOUT, load_descriptor},
+	stack_descriptor::{FETCH_TIMEOUT, load_descriptor, stack_id},
 };
 
 impl NetworkSource {
@@ -59,13 +59,14 @@ impl NetworkSource {
 	) -> Result<(Stack, Option<BuiltInOrigin>)> {
 		let (stack, built_in) = match &self.network {
 			NetworkChoice::Stack(stack_arg) => {
-				let key = built_in_key(&stack_arg.value);
-				let stack = load_descriptor(&stack_arg.value, key.as_deref())
-					.await
-					.and_then(|(stack_id, descriptor)| {
-						Stack::new(stack_id, descriptor, &self.chain_access)
-					})
-					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
+				let value = &stack_arg.value;
+				let stack = async {
+					let (key, id) = stack_key_and_id(value)?;
+					let descriptor = load_descriptor(value, key.as_deref()).await?;
+					Stack::new(id, descriptor, &self.chain_access)
+				}
+				.await
+				.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)
 			},
 			NetworkChoice::BuiltIn(network) => {
@@ -76,6 +77,15 @@ impl NetworkSource {
 		};
 		Ok((stack, built_in))
 	}
+}
+
+/// The key `--stack` checks `value` against and the id of its stack. A
+/// built-in stack's bare URL, or its link without the key, takes that stack's
+/// key, so it is verified and is the built-in network, state included.
+fn stack_key_and_id(value: &str) -> Result<(Option<String>, String)> {
+	let key = built_in_key(value);
+	let id = stack_id(value, key.as_deref())?;
+	Ok((key, id))
 }
 
 /// The stack `resolve` gives once its chains pass the checks, as
