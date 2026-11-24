@@ -162,7 +162,7 @@ struct ChatQueryTests {
         )
         let execution = try runtime.openProductExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(productId: "test.dot", executionKind: .worker),
+            configuration: ProductExecutionConfig(productId: ProductId("test.dot"), executionKind: .worker),
             chat: StubChatHostBridge()
         )
         let request = ProductChatMessagesQueryRequest(
