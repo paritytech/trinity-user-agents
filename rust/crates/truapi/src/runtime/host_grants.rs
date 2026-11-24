@@ -11,6 +11,7 @@ use super::{
 use crate::{
 	host_logic::session::{SessionInfo, SessionState},
 	platform::{CoreStorage, CoreStorageKey, ProductId, StackRun},
+	session_usernames::SessionUsernames,
 };
 use futures::lock::OwnedMutexGuard;
 use parity_scale_codec::{Decode, Encode};
@@ -845,7 +846,7 @@ impl HostGrantPersistence<'_> {
 		{
 			warn!(%reason, "AutoSigning capability owner reconciliation failed");
 		}
-		if let Some(previous) = previous.filter(|previous| *previous != session) {
+		if let Some(previous) = previous.filter(|previous| !previous.is_same_session(session)) {
 			self.store.caches().forget_allowances(Some(previous));
 			if let Err(reason) =
 				allowances::clear_session_allowance_keys(&*self.store.storage, previous).await

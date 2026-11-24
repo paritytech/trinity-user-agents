@@ -109,6 +109,10 @@ under a key of your own, such as one shared between origins, keep
 `activateExternalSession` that the slot does not cover, the core looks the
 usernames up on every activation.
 
+Activating the session that is already selected keeps it: its permissions and
+the requests waiting on it stay. It keeps the usernames it has, unless
+`SessionUsernamesRun` covers the new blob, and looks them up again.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

@@ -51,21 +51,29 @@ enum BlobUsernames {
 }
 
 impl BlobUsernames {
-	/// The session to install from a blob whose usernames are `self`, and
-	/// whether its usernames are to be looked up once it is installed.
+	/// The session to install from a blob whose usernames are `self`, while
+	/// `selected` is selected, and whether its usernames are to be looked up
+	/// once it is installed.
 	///
 	/// Nothing waits on dotNS: usernames the core vouches for are installed as
 	/// stored, and looked up only when there are none. Unrecorded ones are kept
 	/// until a lookup answers. Stale ones are dropped, so they are looked up
-	/// on the chains the stack runs now.
-	fn session_to_install(self, session: SessionInfo) -> (SessionInfo, bool) {
-		match self {
-			Self::Current => {
+	/// on the chains the stack runs now. When `selected` is the same session,
+	/// it keeps its own usernames instead of either, so installing a blob
+	/// again does not undo a lookup.
+	fn session_to_install(
+		self,
+		session: SessionInfo,
+		selected: Option<SessionInfo>,
+	) -> (SessionInfo, bool) {
+		match (self, selected) {
+			(Self::Current, _) => {
 				let look_up = !session.has_username();
 				(session, look_up)
 			},
-			Self::Unrecorded => (session, true),
-			Self::Stale => {
+			(_, Some(selected)) if selected.is_same_session(&session) => (selected, true),
+			(Self::Unrecorded, _) => (session, true),
+			(Self::Stale, _) => {
 				(SessionInfo { lite_username: None, full_username: None, ..session }, true)
 			},
 		}
@@ -446,7 +454,10 @@ impl SsoRequestService {
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
-		let (session, look_up) = self.blob_usernames(blob).await.session_to_install(session);
+		let (session, look_up) = self
+			.blob_usernames(blob)
+			.await
+			.session_to_install(session, self.session_state.current());
 		self.invalidate_login_attempts();
 		let activation_epoch = self.advance_session_lifecycle();
 		#[cfg(test)]
@@ -510,7 +521,10 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		let (session, look_up) = self.blob_usernames(&blob).await.session_to_install(session);
+		let (session, look_up) = self
+			.blob_usernames(&blob)
+			.await
+			.session_to_install(session, self.session_state.current());
 		let barrier = self.owner.write_barrier().await;
 		self.drain_session_deletions(&barrier).await;
 		if self.session_epoch() != activation_epoch {
@@ -817,7 +831,9 @@ impl SsoRequestService {
 				selection.login_generation = selection.login_generation.wrapping_add(1);
 			}
 			let previous = self.session_state.current();
-			let detached = (previous.as_ref() != Some(&session)).then(|| {
+			let replaced =
+				!previous.as_ref().is_some_and(|previous| previous.is_same_session(&session));
+			let detached = replaced.then(|| {
 				self.owner.session_ended(previous.as_ref(), false);
 				let monitor = channel::detach_session_channel(self);
 				(previous, monitor)
