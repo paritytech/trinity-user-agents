@@ -1,7 +1,7 @@
 //! The built-in networks: each stack's bundled descriptor, its refresh from
 //! the published copy, and the notice when that copy is in use.
 
-use std::{collections::HashMap, fs, path::Path, sync::LazyLock, time::Duration};
+use std::{collections::HashMap, fs, io, path::Path, sync::LazyLock, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::ValueEnum;
@@ -13,7 +13,7 @@ use crate::{
 	platform::atomic_write,
 	stack_descriptor::{
 		FetchError, describe_pin_change, fetch, light_client_chains, pointer_of, reads_same,
-		unix_now,
+		refused, unix_now,
 	},
 };
 
@@ -163,20 +163,20 @@ impl Network {
 
 	/// The published descriptor when it is newer than the bundled copy,
 	/// otherwise the copy this host last ran on or the bundled copy, with
-	/// whether the published one is in use. Logs a notice when the published
+	/// what became of the published one. Logs a notice when the published
 	/// descriptor changes a field the CLI reads.
 	/// Fails when the descriptor in use is expired or is not a stack the CLI
 	/// can run on.
 	///
-	/// A published descriptor that is in use is kept in `copies`. While the
-	/// published one is unreachable, that copy stands in for it, so a host
-	/// that ran on a stack after a wipe does not go back to the bundled
+	/// A published descriptor that is in use is kept in `copy_directory`.
+	/// While the published one is unreachable, that copy stands in for it, so
+	/// a host that ran on a stack after a wipe does not go back to the bundled
 	/// copy's chains, which are gone.
 	pub async fn resolve_built_in(
 		self,
 		fetch_timeout: Duration,
 		chain_access: &ChainAccess,
-		copies: Option<&Path>,
+		copy_directory: Option<&Path>,
 	) -> Result<(Stack, BuiltInOrigin)> {
 		let built_in = self.built_in_stack();
 		let value = self.to_possible_value().expect("network without a --network value");
@@ -191,18 +191,17 @@ impl Network {
 			Err(cause) => tracing::debug!("{name} stack descriptor is unreachable: {cause}"),
 			Ok(_) => {},
 		}
-		let copy_path = copies.map(|directory| directory.join(format!("{name}.json")));
-		let last_run = copy_path.as_deref().and_then(|path| fs::read(path).ok());
+		let copy_path = copy_directory.map(|directory| directory.join(format!("{name}.json")));
+		let last_run = copy_path.as_deref().and_then(read_kept_copy);
 		let now = unix_now() as i64;
 		let published = fetched.as_deref().ok();
 		let copies = Copies { bundled: built_in.bundle, published, last_run: last_run.as_deref() };
 		let refresh = refresh_from_last_run(name, &pointer, copies, now, chain_access)?;
 		if let (Some(published), BuiltInCopy::Published, Some(path)) =
 			(published, refresh.copy, &copy_path) &&
-			last_run.as_deref() != Some(published) &&
-			let Err(error) = atomic_write(path, published)
+			last_run.as_deref() != Some(published)
 		{
-			tracing::warn!("could not keep the {name} stack descriptor: {error}");
+			keep_copy(path, published);
 		}
 		match &refresh.notice {
 			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
@@ -214,19 +213,18 @@ impl Network {
 	}
 }
 
-/// Which copy of a built-in stack's descriptor a network runs on.
+/// What became of a built-in stack's published descriptor, which decides the
+/// copy the network runs on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltInCopy {
-	/// The published descriptor, also when it equals the bundled copy.
+	/// It is in use, also when it equals the bundled copy.
 	Published,
-	/// The copy this host last ran on, or else the bundled copy, because the
-	/// published descriptor could not be fetched; a later fetch may still
-	/// return it.
+	/// It could not be fetched, so the copy this host last ran on is in use,
+	/// or else the bundled copy; a later fetch may still return it.
 	Unreachable,
-	/// The copy this host last ran on, or else the bundled copy, because the
-	/// published descriptor was refused, a rollback, a conflict, changed the
-	/// TLD or the id, or is not a stack the CLI can run on; fetching it again
-	/// returns the same.
+	/// It was refused, a rollback, a conflict, changed the TLD or the id, or
+	/// is not a stack the CLI can run on, so the copy this host last ran on is
+	/// in use, or else the bundled copy; fetching it again returns the same.
 	Rejected,
 }
 
@@ -299,6 +297,49 @@ impl std::fmt::Display for StackNotice {
 	}
 }
 
+/// The published descriptor a host kept at `path` on an earlier run. `None`
+/// when it kept none, and when the file cannot be read, with a warning.
+fn read_kept_copy(path: &Path) -> Option<Vec<u8>> {
+	match fs::read(path) {
+		Ok(copy) => Some(copy),
+		Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+		Err(error) => {
+			let path = path.display();
+			tracing::warn!("could not read the stack descriptor kept at {path}: {error}");
+			None
+		},
+	}
+}
+
+/// Keeps `published` at `path` for a run that cannot fetch it. A failure is a
+/// warning: this run has its descriptor, and the next one keeps it again.
+fn keep_copy(path: &Path, published: &[u8]) {
+	if let Err(error) = atomic_write(path, published) {
+		let path = path.display();
+		tracing::warn!("could not keep the stack descriptor at {path}: {error}");
+	}
+}
+
+/// Whether `last_run` is older than `bundled`, as after an update of the CLI
+/// that ships a later descriptor than the one the host kept.
+fn is_older_than_bundled(
+	pointer: &Pointer,
+	bundled: &[u8],
+	last_run: &[u8],
+	now_unix_seconds: i64,
+) -> bool {
+	accept(pointer, Some(bundled), Fetched::Document(last_run), now_unix_seconds)
+		.is_ok_and(|taken| taken.status == Status::Rollback)
+}
+
+/// How a warning says what [`accept`] made of a copy it did not take.
+fn not_taken(status: &Status) -> String {
+	match status {
+		Status::Refused(error) => format!("is {}", refused(error.clone())),
+		status => format!("is a {}", status.code()),
+	}
+}
+
 /// The copies of a built-in stack's descriptor a refresh chooses between.
 struct Copies<'a> {
 	/// The copy this build ships.
@@ -332,50 +373,39 @@ fn refresh_from_last_run(
 	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
 	let Copies { bundled, published, last_run } = copies;
-	let last_run = last_run.filter(|last_run| {
-		let over_bundled =
-			accept(pointer, Some(bundled), Fetched::Document(last_run), now_unix_seconds);
-		!over_bundled.is_ok_and(|taken| taken.status == Status::Rollback)
-	});
-	let not_taken = published.zip(last_run).and_then(|(published, last_run)| {
-		let taken = accept(pointer, Some(last_run), Fetched::Document(published), now_unix_seconds);
-		match taken.map(|taken| taken.status) {
-			Ok(Status::Updated | Status::Unchanged) => None,
-			Ok(Status::Rollback) => Some("has a lower sequence".to_owned()),
-			Ok(Status::Refused(error)) | Err(error) => {
-				Some(format!("is refused ({}): {error}", error.code()))
-			},
-			Ok(status) => Some(format!("is a {}", status.code())),
-		}
-	});
-	if let Some(reason) = &not_taken {
-		tracing::warn!(
-			"the published {id} stack descriptor {reason}; keeping the one this host last ran on"
-		);
-	}
-	let rolled_back = not_taken.is_some();
+	let last_run = last_run
+		.filter(|last_run| !is_older_than_bundled(pointer, bundled, last_run, now_unix_seconds));
 	let refresh_from = |document: Option<&[u8]>, name: &str| {
 		let fetched = document.map_or(Fetched::Unreachable, Fetched::Document);
 		refresh_stack(id, name, pointer, bundled, fetched, now_unix_seconds, chain_access)
 	};
-	let published_name = format!("published {id} stack descriptor at {}", pointer.url());
-	let from_published = match published.filter(|_| !rolled_back) {
-		Some(published) => Some(refresh_from(Some(published), &published_name)?),
-		None => None,
+	let from_last_run = |copy: BuiltInCopy| {
+		let name = format!("{id} stack descriptor this host last ran on");
+		Ok(StackRefresh { copy, ..refresh_from(last_run, &name)? })
 	};
-	let published_in_use = from_published
-		.as_ref()
-		.is_some_and(|refresh| refresh.copy == BuiltInCopy::Published);
-	let mut refresh = match from_published {
-		Some(refresh) if published_in_use || last_run.is_none() => refresh,
-		_ => refresh_from(last_run, &format!("{id} stack descriptor this host last ran on"))?,
+	let Some(published) = published else {
+		return from_last_run(BuiltInCopy::Unreachable);
 	};
-	refresh.copy = match published {
-		None => BuiltInCopy::Unreachable,
-		Some(_) if published_in_use => BuiltInCopy::Published,
-		Some(_) => BuiltInCopy::Rejected,
-	};
-	Ok(refresh)
+	let over_last_run = last_run.and_then(|last_run| {
+		let taken = accept(pointer, Some(last_run), Fetched::Document(published), now_unix_seconds);
+		match taken.map(|taken| taken.status) {
+			Ok(Status::Updated | Status::Unchanged) => None,
+			Ok(status) => Some(not_taken(&status)),
+			Err(error) => Some(not_taken(&Status::Refused(error))),
+		}
+	});
+	if let Some(reason) = over_last_run {
+		tracing::warn!(
+			"the published {id} stack descriptor {reason}; keeping the one this host last ran on"
+		);
+		return from_last_run(BuiltInCopy::Rejected);
+	}
+	let name = format!("published {id} stack descriptor at {}", pointer.url());
+	let refresh = refresh_from(Some(published), &name)?;
+	if refresh.copy == BuiltInCopy::Published || last_run.is_none() {
+		return Ok(refresh);
+	}
+	from_last_run(BuiltInCopy::Rejected)
 }
 
 /// The stack a built-in network runs on: `fetched` when [`accept`] takes it
@@ -401,15 +431,8 @@ fn refresh_stack(
 	let copy = match &accepted.status {
 		Status::Updated | Status::Unchanged => BuiltInCopy::Published,
 		Status::Unreachable => BuiltInCopy::Unreachable,
-		Status::Refused(error) => {
-			tracing::warn!(
-				"the {fetched_name} is refused ({}): {error}; not using it",
-				error.code()
-			);
-			BuiltInCopy::Rejected
-		},
 		status => {
-			tracing::warn!("the {fetched_name} is a {}; not using it", status.code());
+			tracing::warn!("the {fetched_name} {}; not using it", not_taken(status));
 			BuiltInCopy::Rejected
 		},
 	};

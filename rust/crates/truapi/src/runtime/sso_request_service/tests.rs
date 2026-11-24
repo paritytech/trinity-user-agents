@@ -3,8 +3,8 @@ use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{
-		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, external_sso_session_info,
-		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, usernames_record,
+		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, legacy_asset_hub_frames,
+		paseo_test_stack, sso_session_info, unnamed_sso_session_info,
 	},
 };
 use futures::{FutureExt, executor::block_on};
@@ -227,7 +227,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 							(
 								CoreStorageKey::SessionUsernamesRun.encode(),
 								usernames_record(
-									&paseo_test_stack(),
+									&paseo_test_stack().run(),
 									&encode_persisted_session(&stored),
 								),
 							)
@@ -245,41 +245,42 @@ fn login_store_notifications_follow_the_persisted_value() {
 #[test]
 fn a_failed_username_lookup_changes_nothing() {
 	let storage = Arc::new(CleanupStorage::default());
-	let platform = Arc::new(StubPlatform {
-		core_storage_override: Some(storage.clone()),
-		chain_connect_error: Some("offline"),
-		..Default::default()
-	});
-	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
-	let host = pairing.session().clone();
 	let session = sso_session_info();
+	let host = host_with_session(&storage, offline(), &session);
 	let blob = encode_persisted_session(&session);
-	let stored = || block_on(storage.read_core_storage(CoreStorageKey::AuthSession)).unwrap();
-	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
-	block_on(host.set_connected_session_for_tests(session.clone()));
 
 	block_on(host.look_up_usernames(session.clone(), Some(blob.clone())));
 
-	let record = block_on(storage.read_core_storage(CoreStorageKey::SessionUsernamesRun)).unwrap();
-	assert_eq!((host.session_state.current(), stored(), record), (Some(session), Some(blob), None));
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(Some(session), Some(blob), None)
+	);
 }
 
-/// A pairing host over `storage` whose chains do not connect, so no lookup of
-/// its own answers, with `installed` restored from the `AuthSession` slot.
-fn host_restored_from(
+/// A platform whose chains do not connect, so no username lookup answers.
+fn offline() -> StubPlatform {
+	StubPlatform { chain_connect_error: Some("offline"), ..Default::default() }
+}
+
+/// A pairing host on `chains` that keeps core storage in `storage`, with
+/// `session` installed and stored in the `AuthSession` slot.
+fn host_with_session(
 	storage: &Arc<CleanupStorage>,
-	installed: &SessionInfo,
+	chains: StubPlatform,
+	session: &SessionInfo,
 ) -> Arc<SsoRequestService> {
-	let platform = Arc::new(StubPlatform {
-		core_storage_override: Some(storage.clone()),
-		chain_connect_error: Some("offline"),
-		..Default::default()
-	});
+	let platform =
+		Arc::new(StubPlatform { core_storage_override: Some(storage.clone()), ..chains });
 	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 	let host = pairing.session().clone();
-	let blob = encode_persisted_session(installed);
+	let blob = encode_persisted_session(session);
 	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
-	block_on(host.activate_stored_session()).expect("the stored session activates");
+	block_on(host.set_connected_session_for_tests(session.clone()));
 	host
 }
 
@@ -293,11 +294,14 @@ fn named(session: &SessionInfo) -> SessionInfo {
 /// revokes its grants. The usernames a lookup found are the core's own
 /// rewrite of that slot, so they wait for the activation, and the session
 /// comes out of both installed, named and stored with its record.
+///
+/// The activation is held at its read of the usernames record, the one read
+/// it makes between the two of the slot.
 #[test]
 fn naming_a_session_waits_for_an_activation_in_progress() {
 	let storage = Arc::new(CleanupStorage::default());
-	let installed = external_sso_session_info();
-	let host = host_restored_from(&storage, &installed);
+	let installed = unnamed_sso_session_info();
+	let host = host_with_session(&storage, offline(), &installed);
 	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
 
 	let (between_the_reads, resume) = storage.pause_read(CoreStorageKey::SessionUsernamesRun);
@@ -333,7 +337,7 @@ fn naming_a_session_waits_for_an_activation_in_progress() {
 			Ok(()),
 			Some(named),
 			Some(named_blob.clone()),
-			Some(usernames_record(&paseo_test_stack(), &named_blob)),
+			Some(usernames_record(&paseo_test_stack().run(), &named_blob)),
 		)
 	);
 }
@@ -344,8 +348,8 @@ fn naming_a_session_waits_for_an_activation_in_progress() {
 #[test]
 fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 	let storage = Arc::new(CleanupStorage::default());
-	let installed = external_sso_session_info();
-	let host = host_restored_from(&storage, &installed);
+	let installed = unnamed_sso_session_info();
+	let host = host_with_session(&storage, offline(), &installed);
 	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
 	let replaced = b"another writer's session".to_vec();
 	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, replaced.clone())).unwrap();
@@ -366,32 +370,25 @@ fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 /// A lookup that answers puts what it found in the session and in the stored
 /// blob, and records the run for that blob, so the next start takes the
 /// usernames as they are. One that finds a username names the session. One
-/// that finds none, as on chains where the account never registered, clears a
+/// that finds none, as on an Asset Hub with no dotNS contract, clears a
 /// username stored from other chains.
 #[test]
 fn a_lookup_that_answers_names_the_session_and_the_stored_blob() {
 	let unnamed = SessionInfo {
 		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
-		..external_sso_session_info()
+		..unnamed_sso_session_info()
 	};
 	let stale =
-		SessionInfo { lite_username: Some("stale.07".to_string()), ..external_sso_session_info() };
+		SessionInfo { lite_username: Some("stale.07".to_string()), ..unnamed_sso_session_info() };
 	let no_dotns: fn(&str) -> Vec<String> = |request| {
 		legacy_asset_hub_frames(request, |_| None, |_, _| panic!("no contract is deployed"))
 	};
 	let looked_up = |asset_hub: fn(&str) -> Vec<String>, installed: SessionInfo| {
 		let storage = Arc::new(CleanupStorage::default());
-		let platform = Arc::new(StubPlatform {
-			core_storage_override: Some(storage.clone()),
-			rpc_responder: Some(Arc::new(asset_hub)),
-			..Default::default()
-		});
-		let (_, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
-		let host = pairing.session().clone();
+		let chains =
+			StubPlatform { rpc_responder: Some(Arc::new(asset_hub)), ..Default::default() };
+		let host = host_with_session(&storage, chains, &installed);
 		let blob = encode_persisted_session(&installed);
-		block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
-		block_on(host.set_connected_session_for_tests(installed.clone()));
 
 		block_on(host.look_up_usernames(installed, Some(blob)));
 
@@ -402,7 +399,7 @@ fn a_lookup_that_answers_names_the_session_and_the_stored_blob() {
 			(session.lite_username.clone(), session.full_username.clone()),
 			stored == encode_persisted_session(&session),
 			read(CoreStorageKey::SessionUsernamesRun) ==
-				Some(usernames_record(&paseo_test_stack(), &stored)),
+				Some(usernames_record(&paseo_test_stack().run(), &stored)),
 		)
 	};
 

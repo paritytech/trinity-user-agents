@@ -109,11 +109,6 @@ under a key of your own, such as one shared between origins, keep
 `activateExternalSession` that the slot does not cover, the core looks the
 usernames up on every activation.
 
-The first start after the update, with no wipe, does this once: cached
-manifests are read again, so a grant that rests on one is refused until the
-device is online. A pairing host asks for each product's allowance again. A
-stored ring-VRF registry keeps only the rings on the stack's chains.
-
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

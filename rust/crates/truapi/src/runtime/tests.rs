@@ -111,7 +111,7 @@ use crate::{
 		session::encode_persisted_session,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
-	platform::{PairingHostConfig, Stack, StackIdentity, StackRun},
+	platform::{Stack, StackIdentity, StackRun},
 	test_support::*,
 	unix_time::current_unix_secs,
 };
@@ -485,10 +485,13 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = encode_cached_root_manifest(&paseo_test_stack().run(), Some(&json), fetched_at_secs);
+	let entry =
+		encode_cached_root_manifest(&paseo_test_stack().run(), Some(&json), fetched_at_secs);
 	futures::executor::block_on(
-		platform
-			.write_core_storage(CoreStorageKey::product_manifest(&ProductId::for_test(owner)), entry),
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
 	)
 	.expect("stub core storage accepts the entry");
 }
@@ -509,8 +512,10 @@ fn cache_manifest_entry_in(
 	let fetched_at_secs = current_unix_secs().saturating_sub(age_secs);
 	let entry = encode_cached_root_manifest(run, json.as_deref(), fetched_at_secs);
 	futures::executor::block_on(
-		platform
-			.write_core_storage(CoreStorageKey::product_manifest(&ProductId::for_test(owner)), entry),
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
 	)
 	.expect("stub core storage accepts the entry");
 }
@@ -735,16 +740,14 @@ fn host_in_generation(
 	let chains = paseo_test_stack().chains().clone();
 	let stack = Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, true)
 		.expect("test stack is valid");
-	let (config, _) = runtime_config("unknown.dot");
-	let config = PairingHostConfig::new(
-		config.host.host_info,
-		config.host.platform_info,
-		stack,
-		config.pairing_deeplink_scheme,
-	)
-	.expect("test host runtime config is valid");
 	let product = ProductContext::new(ProductId::for_test("unknown.dot"));
-	ProductRuntimeHost::new_pairing_for_tests(platform, config, product, Spawner::for_test()).0
+	ProductRuntimeHost::new_pairing_for_tests(
+		platform,
+		pairing_config_on(stack),
+		product,
+		Spawner::for_test(),
+	)
+	.0
 }
 
 /// Stores, on `platform`, a manifest cached in the run of `host`'s stack in
@@ -8420,39 +8423,51 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 	assert_eq!(*session_clears.lock().expect("session clear counter mutex poisoned"), 1);
 }
 
-/// An untagged blob restores and the slot is rewritten in the written form, so
-/// a host upgrades its stored session by activating once rather than by pairing
-/// again. `SessionInfo::encode` is the untagged eight-field layout; the canary in
-/// `host_logic::session` is what keeps that true.
+/// An untagged blob restores, and the lookup that follows rewrites the slot in
+/// the written form, so a host upgrades its stored session by activating once
+/// rather than by pairing again. `SessionInfo::encode` is the untagged
+/// eight-field layout; the canary in `host_logic::session` is what keeps that
+/// true.
 #[test]
-fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
-	let stored = sso_session_info();
+fn an_untagged_stored_session_restores_and_is_rewritten_once_its_usernames_are_read() {
+	let stored = SessionInfo {
+		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
+		lite_username: None,
+		full_username: None,
+		..sso_session_info()
+	};
 	let untagged = stored.encode();
-	let platform = Arc::new(
-		StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() }
-			.with_usernames_read_in_this_run(),
+	assert_ne!(
+		untagged,
+		encode_persisted_session(&stored),
+		"the fixture must not already be in the written form, or this proves nothing"
 	);
+	let platform = Arc::new(StubPlatform {
+		session_blob: Some(untagged),
+		rpc_responder: Some(dotns_usernames_responder()),
+		..Default::default()
+	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
 	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("an untagged stored session activates");
 
-	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
-	let written = crate::host_logic::session::encode_persisted_session(&stored);
-	assert_ne!(
-		untagged, written,
-		"the fixture must not already be in the written form, or this proves nothing"
+	let named = SessionInfo {
+		lite_username: Some("alice.01".to_string()),
+		full_username: Some("myproject".to_string()),
+		..stored
+	};
+	let written = encode_persisted_session(&named);
+	let rewritten = || {
+		let writes = platform.session_writes.lock().expect("session write list mutex poisoned");
+		writes.last() == Some(&written)
+	};
+	wait_until(
+		rewritten,
+		"the slot still holds the untagged blob, so it is re-read on every start",
 	);
-	assert_eq!(
-		platform
-			.session_writes
-			.lock()
-			.expect("session write list mutex poisoned")
-			.last(),
-		Some(&written),
-		"the slot still holds the untagged blob, so it would be re-read on every start"
-	);
+	assert_eq!(host.test_session_state().current(), Some(named));
 }
 
 #[test]

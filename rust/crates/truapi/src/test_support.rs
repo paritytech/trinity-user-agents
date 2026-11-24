@@ -30,8 +30,8 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
@@ -51,11 +51,15 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod dotns_usernames;
 mod legacy_asset_hub;
+mod memory_core_storage;
 mod scripted_chain;
 mod tests;
 
-pub use dotns_usernames::{DOTNS_NAMED_ACCOUNT, DOTNS_SQUATTER, dotns_usernames_frames};
+pub use dotns_usernames::{
+	DOTNS_NAMED_ACCOUNT, DOTNS_SQUATTER, dotns_usernames_frames, dotns_usernames_responder,
+};
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
+pub use memory_core_storage::MemoryCoreStorage;
 
 pub use scripted_chain::{
 	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
@@ -283,7 +287,7 @@ impl StubPlatform {
 		let blob = self.session_blob.as_deref().expect("the platform stores a session");
 		self.local_storage.lock().expect("local storage mutex poisoned").insert(
 			core_storage_test_key(CoreStorageKey::SessionUsernamesRun),
-			usernames_record(&paseo_test_stack(), blob),
+			crate::host_logic::session::usernames_record(&paseo_test_stack().run(), blob),
 		);
 		self
 	}
@@ -380,12 +384,6 @@ pub fn test_stack(
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
-}
-
-/// The `SessionUsernamesRun` value the core records once the usernames in the
-/// session `blob` were read in `stack`'s run.
-pub fn usernames_record(stack: &crate::platform::Stack, blob: &[u8]) -> Vec<u8> {
-	stack.run().stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
 /// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
@@ -559,21 +557,23 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
-	(
-		PairingHostConfig::new(
-			HostInfo {
-				name: "Polkadot Web".to_string(),
-				icon: Some("https://example.invalid/dotli.png".to_string()),
-				version: None,
-				platform: truapi::latest::HostPlatform::Web,
-			},
-			PlatformInfo::default(),
-			paseo_test_stack(),
-			"polkadotapp".to_string(),
-		)
-		.expect("test host runtime config is valid"),
-		ProductContext::new(ProductId::for_test(product_id)),
+	(pairing_config_on(paseo_test_stack()), ProductContext::new(ProductId::for_test(product_id)))
+}
+
+/// The pairing host of [`runtime_config`] on `stack`.
+pub fn pairing_config_on(stack: crate::platform::Stack) -> PairingHostConfig {
+	PairingHostConfig::new(
+		HostInfo {
+			name: "Polkadot Web".to_string(),
+			icon: Some("https://example.invalid/dotli.png".to_string()),
+			version: None,
+			platform: truapi::latest::HostPlatform::Web,
+		},
+		PlatformInfo::default(),
+		stack,
+		"polkadotapp".to_string(),
 	)
+	.expect("test host runtime config is valid")
 }
 
 /// Basic connected session fixture without SSO channel material.
@@ -656,7 +656,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 }
 
 /// [`sso_session_info`] without usernames, as for an account that has none.
-pub fn external_sso_session_info() -> crate::host_logic::session::SessionInfo {
+pub fn unnamed_sso_session_info() -> crate::host_logic::session::SessionInfo {
 	crate::host_logic::session::SessionInfo {
 		lite_username: None,
 		full_username: None,

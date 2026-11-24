@@ -821,9 +821,8 @@ pub enum CachePolicy {
 
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
 /// younger than [`MANIFEST_TTL_SECS`] and was read in the run the stack's
-/// chains are in, and where it was read. Whatever `fetch`
-/// answers, including that there is nothing published, is cached for that
-/// lifetime.
+/// chains are in, and where it was read. Whatever `fetch` answers, including
+/// that there is nothing published, is cached for that lifetime.
 ///
 /// A failed lookup is not cached. It says nothing about what is published,
 /// only that the chain could not be read, and holding that for a day would

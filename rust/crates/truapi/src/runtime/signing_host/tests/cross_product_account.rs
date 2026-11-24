@@ -30,8 +30,10 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		current_unix_secs(),
 	);
 	futures::executor::block_on(
-		platform
-			.write_core_storage(CoreStorageKey::product_manifest(&ProductId::for_test(owner)), entry),
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
 	)
 	.expect("stub core storage accepts the entry");
 }

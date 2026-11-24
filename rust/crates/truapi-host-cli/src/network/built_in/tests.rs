@@ -466,3 +466,43 @@ fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
 		]
 	);
 }
+
+/// The copy a host keeps has to be there for its next run, which starts from
+/// it when the published descriptor is unreachable. A host that has kept
+/// nothing reads none, its first copy creates the directory, and a later one
+/// replaces it.
+#[test]
+fn a_kept_copy_is_read_back_by_the_next_run() {
+	let base = tempfile::tempdir().expect("a temporary directory");
+	let path = base.path().join("stacks").join("test.json");
+	let before = read_kept_copy(&path);
+
+	keep_copy(&path, b"published");
+	let kept = read_kept_copy(&path);
+	keep_copy(&path, b"republished");
+
+	assert_eq!(
+		(before, kept, read_kept_copy(&path)),
+		(None, Some(b"published".to_vec()), Some(b"republished".to_vec()))
+	);
+}
+
+/// A CLI update can ship a later descriptor than the one the host kept. That
+/// is no rollback to warn about, so the kept copy is passed over before the
+/// refresh rules see it. A copy that does not verify is left to them, which
+/// say why it is not used.
+#[test]
+fn a_kept_copy_older_than_the_bundled_one_is_passed_over() {
+	let bundled = sign_copy(10, "g1");
+	let older = |last_run: &[u8]| is_older_than_bundled(&test_pointer(), &bundled, last_run, NOW);
+
+	assert_eq!(
+		[
+			older(&sign_copy(9, "g0")),
+			older(&sign_copy(11, "g2")),
+			older(&bundled),
+			older(b"not a descriptor")
+		],
+		[true, false, false, false]
+	);
+}

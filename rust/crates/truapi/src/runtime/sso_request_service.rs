@@ -21,12 +21,10 @@ use crate::{
 	Spawner,
 	chain_runtime::ChainRuntime,
 	host_logic::{
-		session::{SessionInfo, SessionState, encode_persisted_session},
+		session::{SessionInfo, SessionState, encode_persisted_session, usernames_record},
 		session_store::SessionStoreChangeNotifier,
 	},
-	platform::{
-		CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo, StackRun,
-	},
+	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo},
 	session_usernames::SessionUsernames,
 };
 use channel::SsoDisconnectMonitor;
@@ -41,20 +39,12 @@ use truapi::{
 	latest::{GenericError, HostRequestLoginError, HostRequestLoginResponse},
 };
 
-/// `session` without its usernames, so they are looked up on the chains the
-/// stack runs now.
-fn without_usernames(session: SessionInfo) -> SessionInfo {
-	SessionInfo { lite_username: None, full_username: None, ..session }
-}
-
 /// What [`CoreStorageKey::SessionUsernamesRun`] says about the usernames in a
 /// session blob.
-#[derive(Clone, Copy, PartialEq)]
 enum BlobUsernames {
 	/// They were read for this blob in the run the stack's chains are in.
 	Current,
-	/// Nothing is recorded, as for a session stored before the core recorded
-	/// runs.
+	/// Nothing is recorded, as for a session a host keeps itself.
 	Unrecorded,
 	/// The record names another run or another blob, or cannot be read.
 	Stale,
@@ -65,9 +55,9 @@ impl BlobUsernames {
 	/// whether its usernames are to be looked up once it is installed.
 	///
 	/// Nothing waits on dotNS: usernames the core vouches for are installed as
-	/// stored, and looked up only when there are none. Unrecorded ones, which
-	/// an install stored before runs were recorded or a host keeps itself, are
-	/// kept until a lookup answers. Stale ones are dropped.
+	/// stored, and looked up only when there are none. Unrecorded ones are kept
+	/// until a lookup answers. Stale ones are dropped, so they are looked up
+	/// on the chains the stack runs now.
 	fn session_to_install(self, session: SessionInfo) -> (SessionInfo, bool) {
 		match self {
 			Self::Current => {
@@ -75,15 +65,11 @@ impl BlobUsernames {
 				(session, look_up)
 			},
 			Self::Unrecorded => (session, true),
-			Self::Stale => (without_usernames(session), true),
+			Self::Stale => {
+				(SessionInfo { lite_username: None, full_username: None, ..session }, true)
+			},
 		}
 	}
-}
-
-/// The [`CoreStorageKey::SessionUsernamesRun`] value for `blob` in `run`: the
-/// run and a hash of the blob, so the record vouches for that blob only.
-fn usernames_record(run: StackRun, blob: &[u8]) -> Vec<u8> {
-	run.stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
 /// Keeps grants for the paired session and hears when that session changes.
@@ -212,8 +198,8 @@ pub struct SsoRequestService {
 }
 
 impl SsoRequestService {
-	/// Whether the usernames in `blob` were read in the run the stack's chains
-	/// are in.
+	/// What the `SessionUsernamesRun` record says about the usernames in
+	/// `blob`.
 	///
 	/// The core records the run together with a hash of the blob it stored,
 	/// so a blob the host keeps elsewhere, which may be a copy from before a
@@ -223,7 +209,7 @@ impl SsoRequestService {
 	async fn blob_usernames(&self, blob: &[u8]) -> BlobUsernames {
 		match self.platform.read_core_storage(CoreStorageKey::SessionUsernamesRun).await {
 			Ok(None) => BlobUsernames::Unrecorded,
-			Ok(Some(record)) if record == usernames_record(self.host_config.stack.run(), blob) => {
+			Ok(Some(record)) if record == usernames_record(&self.host_config.stack.run(), blob) => {
 				BlobUsernames::Current
 			},
 			Ok(Some(_)) | Err(_) => BlobUsernames::Stale,
@@ -235,7 +221,7 @@ impl SsoRequestService {
 	/// leaves the earlier record, so they are looked up again on the next
 	/// start.
 	async fn record_usernames(&self, blob: &[u8]) {
-		let record = usernames_record(self.host_config.stack.run(), blob);
+		let record = usernames_record(&self.host_config.stack.run(), blob);
 		let written = self
 			.platform
 			.write_core_storage(CoreStorageKey::SessionUsernamesRun, record)
@@ -317,9 +303,13 @@ impl SsoRequestService {
 	/// Rewrites the `AuthSession` slot with `named` while it still holds
 	/// `stored`, and records the run of its usernames.
 	async fn store_named_session(&self, stored: &[u8], named: &SessionInfo) {
-		let latest = self.platform.read_core_storage(CoreStorageKey::AuthSession).await;
-		if !matches!(latest, Ok(Some(latest)) if latest == stored) {
-			return;
+		match self.platform.read_core_storage(CoreStorageKey::AuthSession).await {
+			Ok(Some(latest)) if latest == stored => {},
+			Ok(_) => return,
+			Err(error) => {
+				warn!(reason = %error.reason, "reading the stored session to name it failed");
+				return;
+			},
 		}
 		let blob = encode_persisted_session(named);
 		if blob == stored {
@@ -520,8 +510,7 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		let usernames = self.blob_usernames(&blob).await;
-		let (resolved, look_up) = usernames.session_to_install(session);
+		let (session, look_up) = self.blob_usernames(&blob).await.session_to_install(session);
 		let barrier = self.owner.write_barrier().await;
 		self.drain_session_deletions(&barrier).await;
 		if self.session_epoch() != activation_epoch {
@@ -541,24 +530,17 @@ impl SsoRequestService {
 			}
 			return Err(error);
 		}
-		self.prepare_session_installation(&barrier, &resolved).await;
+		self.prepare_session_installation(&barrier, &session).await;
 		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
-		let resolved_blob = encode_persisted_session(&resolved);
-		if !self.install_session_if_current(resolved.clone(), activation_epoch, false, None) {
+		if !self.install_session_if_current(session.clone(), activation_epoch, false, None) {
 			return Err(StoredSessionActivationError::Changed);
 		}
-		// Only a blob the core vouches for is rewritten now, as when an older
-		// layout is stored again in the current one; any other is rewritten
-		// once its usernames are read.
-		let rewritten = usernames == BlobUsernames::Current &&
-			resolved_blob != blob &&
-			self.session_epoch() == activation_epoch &&
-			self.store_session(resolved_blob.clone()).await.is_ok();
+		// The lookup also rewrites a blob stored in an earlier layout, which
+		// has no record and so is always looked up.
 		if look_up {
-			let in_slot = if rewritten { resolved_blob } else { blob };
-			self.look_up_usernames_in_background(resolved, Some(in_slot));
+			self.look_up_usernames_in_background(session, Some(blob));
 		}
 		self.drain_session_deletions(&barrier).await;
 		Ok(())
@@ -878,10 +860,7 @@ impl SsoRequestService {
 
 	/// Resolve missing identity information for the selected session.
 	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-		let (current, epoch) = {
-			let selection = self.selection.lock().expect("session selection mutex poisoned");
-			(self.session_state.current()?, selection.session_epoch)
-		};
+		let current = self.session_state.current()?;
 		if current.has_username() {
 			return Some(authority_session(&current));
 		}
@@ -893,25 +872,10 @@ impl SsoRequestService {
 			current.clone(),
 		)
 		.await;
-		if resolved == current {
-			return self.current_session();
+		if resolved != current {
+			let stored = encode_persisted_session(&current);
+			self.name_session(&current, resolved, Some(stored)).await;
 		}
-
-		let barrier = self.owner.write_barrier().await;
-		self.drain_session_deletions(&barrier).await;
-		{
-			let selection = self.selection.lock().expect("session selection mutex poisoned");
-			if selection.session_epoch != epoch ||
-				!self.session_state.replace_session_if_current(&current, resolved.clone())
-			{
-				return self.current_session();
-			}
-		}
-		self.auth_state.connected(&Self::session_ui_info(&resolved));
-		if let Err(err) = self.store_session(encode_persisted_session(&resolved)).await {
-			warn!(reason = %err.reason, "refreshed session identity persist failed");
-		}
-		self.drain_session_deletions(&barrier).await;
 		self.current_session()
 	}
 }

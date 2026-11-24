@@ -110,7 +110,7 @@ pub async fn write_allowance_key(
 		slot_account_key,
 	});
 	storage
-		.write_core_storage(storage_key(session)?, run.stamp(&entries.encode()))
+		.write_core_storage(storage_key(session)?, encode_entries(run, entries))
 		.await
 		.map_err(storage_error)
 }
@@ -131,7 +131,7 @@ pub async fn remove_allowance_key(
 		return Ok(());
 	}
 	storage
-		.write_core_storage(storage_key(session)?, run.stamp(&entries.encode()))
+		.write_core_storage(storage_key(session)?, encode_entries(run, entries))
 		.await
 		.map_err(storage_error)
 }
@@ -153,14 +153,9 @@ pub async fn clear_product_allowance_keys(
 	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
 		return Ok(());
 	};
-	let Some(blob) = run.read_stamped(&blob) else {
+	let entries = run.read_stamped(&blob).and_then(|blob| decode_entries(blob).ok());
+	let Some(mut entries) = entries else {
 		return storage.clear_core_storage(key).await.map_err(storage_error);
-	};
-	let mut entries = match decode_entries(blob) {
-		Ok(entries) => entries,
-		Err(_) => {
-			return storage.clear_core_storage(key).await.map_err(storage_error);
-		},
 	};
 	let before = entries.len();
 	entries.retain(|entry| &entry.product_id != product_id);
@@ -171,7 +166,7 @@ pub async fn clear_product_allowance_keys(
 		storage.clear_core_storage(key).await.map_err(storage_error)
 	} else {
 		storage
-			.write_core_storage(key, run.stamp(&entries.encode()))
+			.write_core_storage(key, encode_entries(run, entries))
 			.await
 			.map_err(storage_error)
 	}
@@ -198,6 +193,11 @@ async fn read_entries(
 		Some(blob) => decode_entries(blob),
 		None => Ok(Vec::new()),
 	}
+}
+
+/// `entries` as stored in `run`, which [`read_entries`] reads back in it.
+fn encode_entries(run: &StackRun, entries: Vec<StoredAllowanceEntry>) -> Vec<u8> {
+	run.stamp(&entries.encode())
 }
 
 fn decode_entries(blob: &[u8]) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {

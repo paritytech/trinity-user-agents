@@ -105,7 +105,8 @@ fn stack_in(generation: &str, people: [u8; 32]) -> Stack {
 #[test]
 fn a_registry_loses_only_the_rings_on_chains_a_wipe_replaced() {
 	let paseo = paseo_test_stack();
-	let (people, bulletin, elsewhere) = (paseo.chains().people, paseo.chains().bulletin, [0xee; 32]);
+	let (people, bulletin, elsewhere) =
+		(paseo.chains().people, paseo.chains().bulletin, [0xee; 32]);
 	let registry = registered_on(&[people, bulletin, elsewhere]);
 	let stored = paseo.run().stamp(&registry.encode());
 	let listed_on = |stack: &Stack| listed(stored.clone(), stack, &registry);

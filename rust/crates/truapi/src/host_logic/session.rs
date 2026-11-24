@@ -17,6 +17,8 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use std::sync::{Arc, Mutex};
 
+use crate::platform::StackRun;
+
 use truapi::{
 	v01::HostAccountConnectionStatusSubscribeItem,
 	versioned::account::HostAccountConnectionStatusSubscribeItem as VersionedItem,
@@ -222,6 +224,12 @@ pub fn encode_persisted_session(info: &SessionInfo) -> Vec<u8> {
 	blob.push(PERSISTED_SESSION_V1);
 	info.encode_to(&mut blob);
 	blob
+}
+
+/// The `SessionUsernamesRun` record for the session `blob` in `run`: the run
+/// and a hash of the blob, so the record vouches for that blob only.
+pub fn usernames_record(run: &StackRun, blob: &[u8]) -> Vec<u8> {
+	run.stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
 /// Decode a core-owned persisted session blob.

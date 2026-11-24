@@ -350,10 +350,12 @@ impl RingVrfRegistryStore {
 		let snapshot =
 			match self.platform.read_core_storage(key.clone()).await.map_err(storage_error)? {
 				Some(blob) => match decode_stored(&blob) {
-					Ok((snapshot, Some(stored_in))) => snapshot
-						.without_rings_on(|chain| self.run.lost_since(&stored_in, chain)),
+					Ok((snapshot, Some(stored_in))) => {
+						snapshot.without_rings_on(|chain| self.run.lost_since(&stored_in, chain))
+					},
 					Ok((snapshot, None)) => {
-						let snapshot = snapshot.without_rings_on(|chain| !self.run.has_chain(chain));
+						let snapshot =
+							snapshot.without_rings_on(|chain| !self.run.has_chain(chain));
 						let stamped = self.run.stamp(&snapshot.encode());
 						if let Err(error) = self.platform.write_core_storage(key, stamped).await {
 							warn!(reason = %error.reason, "storing the ring-VRF registry's run failed");
