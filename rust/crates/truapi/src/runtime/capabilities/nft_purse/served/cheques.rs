@@ -256,6 +256,10 @@ fn create_cheque_failure(
 			let reason = latest::GenericError { reason: error.to_string() };
 			latest::HostNftPurseCreateChequeError::Other(reason)
 		},
+		HandoffError::ItemsMovesExhausted(items) => {
+			let items = items.into_iter().map(|key| latest::NftPurseItemKey(key.0)).collect();
+			latest::HostNftPurseCreateChequeError::ItemsMovesExhausted(items)
+		},
 		other => return host_failure(other),
 	};
 	CallError::Domain(refusal)

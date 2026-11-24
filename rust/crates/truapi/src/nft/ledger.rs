@@ -28,7 +28,7 @@ use super::{
 		ReturnRequest, StartedReturn, plan_returns, read_return_items, read_returned_moves,
 		validated_return_items,
 	},
-	scarcity::{DestinationKind, MoveBudgetSource},
+	scarcity::{DestinationKind, MoveBudget, MoveBudgetSource},
 };
 use crate::{
 	durable::{
@@ -396,27 +396,40 @@ impl NftLedger {
 		if request.keys.is_empty() {
 			return Err(HandoffError::NoItems);
 		}
-		let slots = self.validate_can_handoff(&request).await?;
+		let budget = self.budget.current_budget().await.map_err(HandoffError::Budget)?;
+		let slots = self.check_handoff(&request, budget).await?;
 		let secrets = self.secrets.derive_item_secrets(&slots).map_err(HandoffError::Secrets)?;
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
 			.write_unless_refused(move |tx| {
-				let recorded = record_handoff(tx, &request)
+				let recorded = record_handoff(tx, &request, &budget)
 					.and_then(|()| record(tx, &sealed).map_err(HandoffError::Db));
 				Ok(recorded.map(|()| sealed))
 			})
 			.await?
 	}
 
-	/// Checks, in a read, that `request` can be handed off, and returns the
-	/// slot of each of its keys. The write that records it checks again.
+	/// Checks, in a read, that `request` can be handed off, with every NFT
+	/// keeping a fee-less move for the recipient, and returns the slot of each
+	/// of its keys. The write that records it checks again.
 	pub async fn validate_can_handoff<E: Send + 'static>(
 		&self,
 		request: &HandoffRequest,
 	) -> Result<Vec<ItemSlot>, HandoffError<E>> {
+		let budget = self.budget.current_budget().await.map_err(HandoffError::Budget)?;
+		self.check_handoff(request, budget).await
+	}
+
+	/// Checks, in a read, that `request` can be handed off under `budget`, and
+	/// returns the slot of each of its keys.
+	async fn check_handoff<E: Send + 'static>(
+		&self,
+		request: &HandoffRequest,
+		budget: MoveBudget,
+	) -> Result<Vec<ItemSlot>, HandoffError<E>> {
 		let read_request = request.clone();
-		self.db.read(move |conn| Ok(validate_handoff(conn, &read_request))).await?
+		self.db.read(move |conn| Ok(validate_handoff(conn, &read_request, &budget))).await?
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.

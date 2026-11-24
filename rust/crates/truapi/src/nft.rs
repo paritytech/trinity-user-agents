@@ -50,4 +50,7 @@ pub use scarcity::{
 };
 pub use standing::ItemRefusal;
 #[cfg(test)]
-pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger, unmoved_holding};
+pub use testing::{
+	TEST_INSTALLATION, TEST_MAXIMUM_MOVES, holding_after_moves, insert_item_row, test_ledger,
+	unmoved_holding,
+};
