@@ -122,8 +122,14 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     // The core checked that the product hosts each room and screened every value. A room that is gone by now
     // answers `ChatRoomError.unknownRoom`, which the product receives as the reason of a rejection.
 
+    /// The core also reads the configuration before a posted message, for a room that it has not checked, so a
+    /// room that does not exist has the default configuration.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig {
-        try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+        do {
+            return try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+        } catch ChatRoomError.unknownRoom {
+            return .hostDefault
+        }
     }
 
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
@@ -155,10 +161,8 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
     /// room that the product keeps, an open room screen takes the update. When no screen shows the room, the update
     /// changes the cached page, so the next open shows the change before the newest page arrives.
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
-        guard let roomId = roomId.nilIfEmpty else {
-            throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
-        }
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatFeedOutcome {
+        let roomId = try requireRoomId(roomId)
 
         let chatId = Chat.Id.chatExtension(productId.rawValue, roomId: roomId)
 
@@ -167,15 +171,16 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
                 await pageCache.apply(update, productId: productId.rawValue, roomId: roomId)
                 logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room, the cached page takes it")
             }
-            return
+            return .applied
         }
 
         do {
             try await chatMessaging.applyFeedUpdate(roomId: roomId, update: Chat.ProductFeedUpdate(update))
+            return .applied
         } catch let error as Chat.ProductFeedError {
-            throw error.rejection
+            return error.outcome
         } catch let ChatRoomError.unknownRoom(roomId) {
-            throw NativeChatFeedRejection.Rejected(reason: "no chat room \(roomId)")
+            throw HostRejection.Rejected(reason: "no chat room \(roomId)")
         }
     }
 }

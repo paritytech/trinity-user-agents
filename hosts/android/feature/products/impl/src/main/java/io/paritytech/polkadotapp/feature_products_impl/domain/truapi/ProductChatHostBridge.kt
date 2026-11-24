@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductC
 import kotlinx.coroutines.flow.firstOrNull
 import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
@@ -25,7 +26,6 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
-import uniffi.truapi.NativeChatFeedRejection
 import uniffi.truapi.ProductId
 
 /**
@@ -100,17 +100,19 @@ class ProductChatHostBridge(
      * The core sets [persist] for a room that the host stores. For a room that the product keeps, only the
      * screens that show the room take the update.
      */
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
-        if (roomId.isEmpty()) throw NativeChatFeedRejection.Rejected("a chat room needs an id")
-        val room = ProductChatIdParameter(roomId)
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome {
+        val room = requireRoom(roomId)
         val model = update.toModel(productId)
 
         if (!persist) {
             if (!chatMessaging.deliverLiveFeedUpdate(room, model)) Timber.d("truapi.chat.updateFeed for %s: no open room", roomId)
-            return
+            return ChatFeedOutcome.APPLIED
         }
 
-        chatMessaging.applyFeedUpdate(room, model).getOrElse { throw it.toFeedRejection() }
+        return chatMessaging.applyFeedUpdate(room, model)
+            .map { ChatFeedOutcome.APPLIED }
+            .recoverCatching { failure -> failure.toFeedOutcome() ?: throw failure }
+            .orReject()
     }
 
     private fun requireRoom(roomId: String): ProductChatIdParameter {
@@ -118,12 +120,11 @@ class ProductChatHostBridge(
         return ProductChatIdParameter(roomId)
     }
 
-    private fun Throwable.toFeedRejection(): NativeChatFeedRejection = when (this) {
-        is ProductFeedRejection.UnknownMessage -> NativeChatFeedRejection.UnknownMessage()
-        is ProductFeedRejection.DuplicateMessage -> NativeChatFeedRejection.DuplicateMessage()
-        is ProductFeedRejection.NotOwner -> NativeChatFeedRejection.NotOwner()
-        is ProductFeedRejection.UnknownRoom -> NativeChatFeedRejection.Rejected("no such chat room")
-        else -> NativeChatFeedRejection.Rejected(message ?: toString())
+    private fun Throwable.toFeedOutcome(): ChatFeedOutcome? = when (this) {
+        is ProductFeedRejection.UnknownMessage -> ChatFeedOutcome.UNKNOWN_MESSAGE
+        is ProductFeedRejection.DuplicateMessage -> ChatFeedOutcome.DUPLICATE_MESSAGE
+        is ProductFeedRejection.NotOwner -> ChatFeedOutcome.NOT_OWNER
+        else -> null
     }
 
     private fun <T> Result<T>.orReject(): T = getOrElse { failure ->

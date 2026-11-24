@@ -386,17 +386,15 @@ impl CliChatHost {
 		Ok(message)
 	}
 
-	/// Mark `message_id` as the newest message the user saw in `room_id`. The
-	/// answer is `true` when the product asked for seen reports.
-	pub fn mark_seen(&self, room_id: &str, message_id: &str) -> Result<bool, String> {
+	/// Mark `message_id` as the newest message the user saw in `room_id`.
+	pub fn mark_seen(&self, room_id: &str, message_id: &str) -> Result<(), String> {
 		let mut state = self.lock();
 		let room = state.rooms.get_mut(room_id).ok_or_else(|| unknown_room(room_id))?;
 		room.position(message_id).ok_or_else(|| unknown_message(message_id))?;
 		room.last_seen = Some(message_id.to_string());
-		let report = room.config.report_seen;
 		let event = with_kind("room", room_json(room_id, room));
 		Self::broadcast(&mut state, event);
-		Ok(report)
+		Ok(())
 	}
 
 	/// Apply what the product answered to a user action in a room it keeps,
@@ -843,7 +841,6 @@ fn config_json(config: &ChatRoomConfig) -> Value {
 	json!({
 		"productSource": config.product_source,
 		"reactionDetails": config.reaction_details,
-		"reportSeen": config.report_seen,
 	})
 }
 

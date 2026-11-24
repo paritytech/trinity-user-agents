@@ -61,13 +61,12 @@ fun ChatRoomConfigModel.toLocal() = ChatRoomConfigLocal(
     messageActions = false,
     allowedReactions = null,
     placeholder = null,
-    reportSeen = reportSeen,
+    reportSeen = false,
 )
 
 fun ChatRoomConfigLocal.toDomain() = ChatRoomConfigModel(
     productSource = productSource,
     reactionDetails = reactionDetails,
-    reportSeen = reportSeen,
 )
 
 fun ChatRoomPreviewModel.toLocal(decoder: CustomContentDecoder) = ChatRoomPreviewLocal(

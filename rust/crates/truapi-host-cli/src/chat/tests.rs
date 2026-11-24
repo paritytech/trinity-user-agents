@@ -33,7 +33,7 @@ fn room(room_id_source: &str) -> HostChatCreateRoomRequest {
 }
 
 fn source_config() -> ChatRoomConfig {
-	ChatRoomConfig { product_source: true, report_seen: true, ..ChatRoomConfig::default() }
+	ChatRoomConfig { product_source: true, ..ChatRoomConfig::default() }
 }
 
 // The core derives the room id. These tests drive the host alone, so the
@@ -706,7 +706,7 @@ fn the_newest_seen_message_clears_the_unread_count() {
 	}
 	assert_eq!(room_view(&host, "support")["list"]["badge"]["count"], 2);
 
-	assert_eq!(host.mark_seen("support", "p-1"), Ok(false));
+	host.mark_seen("support", "p-1").expect("known");
 	assert_eq!(room_view(&host, "support")["list"]["badge"]["count"], 1);
 	host.mark_seen("support", "p-2").expect("known");
 	assert_eq!(room_view(&host, "support")["list"]["badge"], Value::Null);

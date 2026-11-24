@@ -93,11 +93,9 @@ extension Chat {
         let productSource: Bool
         /// The host offers "who reacted" and asks the product for it.
         let reactionDetails: Bool
-        /// The product wants a `Seen` event for the messages that the user saw.
-        let reportSeen: Bool
 
         /// The configuration of a room that declares nothing.
-        static let hostDefault = RoomConfig(productSource: false, reactionDetails: false, reportSeen: false)
+        static let hostDefault = RoomConfig(productSource: false, reactionDetails: false)
     }
 }
 

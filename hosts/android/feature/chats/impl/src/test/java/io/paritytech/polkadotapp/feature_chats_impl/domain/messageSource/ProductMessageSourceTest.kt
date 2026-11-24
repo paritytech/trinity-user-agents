@@ -400,7 +400,7 @@ class ProductMessageSourceTest {
     fun `seen goes to the product for a newer message only`() = runBlocking<Unit> {
         val history = ProductRoomHistory(count = 10)
         val querying = ScriptedProductChatQuerying(answerPage = history.answer)
-        val source = openedSource(querying, reportsSeen = true)
+        val source = openedSource(querying)
 
         source.perform(ChatSourceAction.MarkSeen(setOf("m4", "m9")))
         waitFor { querying.actionRequests.firstOrNull() }
@@ -411,29 +411,16 @@ class ProductMessageSourceTest {
         assertEquals(listOf(ChatUserActionModel.Seen("m9")), querying.actionRequests)
     }
 
-    @Test
-    fun `seen stays in the host when the product does not ask for it`() = runBlocking<Unit> {
-        val history = ProductRoomHistory(count = 10)
-        val querying = ScriptedProductChatQuerying(answerPage = history.answer)
-        val source = openedSource(querying, reportsSeen = false)
-
-        source.perform(ChatSourceAction.MarkSeen(setOf("m9")))
-        delay(50)
-
-        assertTrue(querying.actionRequests.isEmpty())
-    }
-
     // endregion
 
     private fun source(
         querying: ScriptedProductChatQuerying,
         cache: ProductMessageCaching = ProductMessageCache(),
-        reportsSeen: Boolean = false,
     ) = ProductMessageSource(
         chatId = productRoom,
         querying = querying,
         cache = cache,
-        settings = ProductMessageSource.Settings.Default.copy(retryDelay = 1.milliseconds, reportsSeen = reportsSeen),
+        settings = ProductMessageSource.Settings.Default.copy(retryDelay = 1.milliseconds),
         now = { 1_000_000L },
         dispatcher = Dispatchers.Default,
     )
@@ -441,8 +428,7 @@ class ProductMessageSourceTest {
     private suspend fun openedSource(
         querying: ScriptedProductChatQuerying,
         cache: ProductMessageCaching = ProductMessageCache(),
-        reportsSeen: Boolean = false,
-    ): ProductMessageSource = source(querying, cache, reportsSeen).apply {
+    ): ProductMessageSource = source(querying, cache).apply {
         start()
         awaitFirstPage()
     }

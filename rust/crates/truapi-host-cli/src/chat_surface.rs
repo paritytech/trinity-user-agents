@@ -524,11 +524,11 @@ impl ChatSurface {
 				self.later_action("delete", *req_id, room_id, action)
 			},
 			PageOp::Seen { req_id, message_id, .. } => {
-				if source && config.report_seen {
+				if source {
 					let action = ChatUserAction::Seen { message_id: message_id.clone() };
 					return self.later_action("seen", *req_id, room_id, action);
 				}
-				if !source && let Err(reason) = self.chat.mark_seen(&room_id, message_id) {
+				if let Err(reason) = self.chat.mark_seen(&room_id, message_id) {
 					return Applied::Now(error_reply(reason));
 				}
 				Applied::Now(answer_ok("seen", *req_id, json!({ "type": "Kept" })))
@@ -996,11 +996,7 @@ mod tests {
 			.expect("a new room is created");
 		};
 		create("daily", "Daily", ChatRoomConfig::default());
-		create(
-			"kept",
-			"Kept",
-			ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true },
-		);
+		create("kept", "Kept", ChatRoomConfig { product_source: true, reaction_details: true });
 		ChatSurface::with_timeouts(Arc::clone(&chat), worker_bundle, "chat.dot".to_string(), SHORT)
 	}
 

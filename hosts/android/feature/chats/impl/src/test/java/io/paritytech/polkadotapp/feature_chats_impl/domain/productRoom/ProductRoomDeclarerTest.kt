@@ -83,12 +83,12 @@ class ProductRoomDeclarerTest {
     fun `a change that keeps the store mode keeps the messages`() = runBlocking<Unit> {
         withRoomExisting(true)
         withDeclaredConfig(ChatRoomConfigModel.HOST_DEFAULT)
-        val seen = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)
+        val reactionDetails = ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true)
 
-        declarer.setConfig(extensionId, room, seen)
+        declarer.setConfig(extensionId, room, reactionDetails)
 
         coVerify(exactly = 0) { chatMessageRepository.deleteAllChatMessages(any()) }
-        coVerify { declarationsWriter.setConfig(room, seen) }
+        coVerify { declarationsWriter.setConfig(room, reactionDetails) }
     }
 
     @Test

@@ -24,7 +24,6 @@ const ROOM_ID_SOURCE = "support";
 const HOST_STORED_ROOM: ChatRoomConfig = {
   productSource: false,
   reactionDetails: false,
-  reportSeen: false,
 };
 
 /** Published limits, mirrored from `truapi::platform` so a case can cross one. */
