@@ -1,8 +1,11 @@
 //! Session and session-store tests driven through the pairing host.
 
 use crate::{
-	host_logic::statement_store::SUBMIT_STATEMENT_METHOD,
-	platform::{AuthState, CoreStorage, CoreStorageKey, Stack},
+	host_logic::{
+		session::{SessionInfo, encode_persisted_session},
+		statement_store::SUBMIT_STATEMENT_METHOD,
+	},
+	platform::{AuthState, CoreStorage, CoreStorageKey, PairingHostConfig, Stack},
 	runtime::{
 		ProductRuntimeHost,
 		sso_request_service::SsoRequestService,
@@ -250,7 +253,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	let persisted = sso_session_info();
 	let platform = Arc::new(
 		StubPlatform {
-			session_blob: Some(crate::host_logic::session::encode_persisted_session(&persisted)),
+			session_blob: Some(encode_persisted_session(&persisted)),
 			..Default::default()
 		}
 		.with_usernames_read_in_this_run(),
@@ -265,7 +268,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 
 	let mut stale_external = persisted.clone();
 	stale_external.public_key = [0x44; 32];
-	let stale_blob = crate::host_logic::session::encode_persisted_session(&stale_external);
+	let stale_blob = encode_persisted_session(&stale_external);
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
@@ -299,7 +302,7 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
+	let stale_blob = encode_persisted_session(&sso_session_info());
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
@@ -335,7 +338,7 @@ fn a_product_reset_during_activation_keeps_the_new_session() {
 		Spawner::for_test(),
 	);
 	let session = sso_session_info();
-	let blob = crate::host_logic::session::encode_persisted_session(&session);
+	let blob = encode_persisted_session(&session);
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
@@ -363,7 +366,7 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 	let stored = sso_session_info();
 	let platform = Arc::new(
 		StubPlatform {
-			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			session_blob: Some(encode_persisted_session(&stored)),
 			..Default::default()
 		}
 		.with_usernames_read_in_this_run(),
@@ -416,7 +419,7 @@ fn session_store_sync_announces_a_restored_boot_once() {
 	let stored = sso_session_info();
 	let platform = Arc::new(
 		StubPlatform {
-			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			session_blob: Some(encode_persisted_session(&stored)),
 			..Default::default()
 		}
 		.with_usernames_read_in_this_run(),
@@ -443,7 +446,7 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	let stored = sso_session_info();
 	let platform = Arc::new(
 		StubPlatform {
-			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			session_blob: Some(encode_persisted_session(&stored)),
 			..Default::default()
 		}
 		.with_usernames_read_in_this_run(),
@@ -478,9 +481,7 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
 	let (host, pairing_host) = ProductRuntimeHost::new_compat_with_pairing(
 		Arc::new(
 			StubPlatform {
-				session_blob: Some(crate::host_logic::session::encode_persisted_session(
-					&replacement,
-				)),
+				session_blob: Some(encode_persisted_session(&replacement)),
 				..Default::default()
 			}
 			.with_usernames_read_in_this_run(),
@@ -578,7 +579,7 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	let stored = sso_session_info();
 	let platform = Arc::new(
 		StubPlatform {
-			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			session_blob: Some(encode_persisted_session(&stored)),
 			..Default::default()
 		}
 		.with_usernames_read_in_this_run(),
@@ -691,7 +692,7 @@ fn pairing_host_on_unserved_asset_hub(storage: Arc<MemoryCoreStorage>) -> Arc<Pa
 		Arc::new(StubPlatform { core_storage_override: Some(storage), ..StubPlatform::default() });
 	let stack = test_stack("paseo", [0; 32], [0xbb; 32], UNSERVED_GENESIS);
 	let (config, _) = runtime_config("dim2.dot");
-	let config = crate::platform::PairingHostConfig::new(
+	let config = PairingHostConfig::new(
 		config.host.host_info,
 		config.host.platform_info,
 		stack.clone(),
@@ -705,7 +706,7 @@ fn pairing_host_on_unserved_asset_hub(storage: Arc<MemoryCoreStorage>) -> Arc<Pa
 
 /// The blob of a session named `alice`.
 fn alices_session_blob() -> Vec<u8> {
-	crate::host_logic::session::encode_persisted_session(&crate::host_logic::session::SessionInfo {
+	encode_persisted_session(&SessionInfo {
 		lite_username: Some("alice".to_string()),
 		..sso_session_info()
 	})
@@ -791,8 +792,7 @@ fn a_session_comes_back_at_once_with_only_the_usernames_it_may_keep() {
 fn a_session_the_host_keeps_never_brings_back_a_username_from_before_a_wipe() {
 	let (current, _) = current_and_earlier_stack();
 	let kept_copy = alices_session_blob();
-	let rewritten =
-		crate::host_logic::session::encode_persisted_session(&external_sso_session_info());
+	let rewritten = encode_persisted_session(&external_sso_session_info());
 	let storage = Arc::new(MemoryCoreStorage::default());
 	store_session(&storage, &rewritten, Some(usernames_record(&current, &rewritten)));
 
@@ -822,7 +822,7 @@ fn a_session_the_host_keeps_never_brings_back_a_username_from_before_a_wipe() {
 /// spawned task ever runs, so a lookup is never answered.
 #[test]
 fn activating_a_session_does_not_wait_for_its_usernames() {
-	let blob = crate::host_logic::session::encode_persisted_session(&external_sso_session_info());
+	let blob = encode_persisted_session(&external_sso_session_info());
 	let storage = Arc::new(MemoryCoreStorage::default());
 	store_session(&storage, &blob, Some(usernames_record(&paseo_test_stack(), &blob)));
 	let platform =

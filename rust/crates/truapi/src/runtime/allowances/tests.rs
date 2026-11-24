@@ -1,7 +1,10 @@
 use super::*;
 use std::{collections::HashMap, sync::Mutex};
 
-use crate::test_support::{paseo_test_stack, sso_session_info, test_stack};
+use crate::{
+	platform::Stack,
+	test_support::{paseo_test_stack, sso_session_info, test_stack},
+};
 
 #[derive(Default)]
 struct MemStorage {
@@ -178,7 +181,7 @@ fn allowance_keys_stored_in_another_run_of_the_chains_are_not_read() {
 	let storage = MemStorage::default();
 	let session = sso_session_info();
 	let product = ProductId::for_test("dotli.dot");
-	let read = |stack: crate::platform::Stack| {
+	let read = |stack: Stack| {
 		futures::executor::block_on(read_allowance_key(
 			&storage,
 			&stack.run(),

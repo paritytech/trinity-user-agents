@@ -10,7 +10,7 @@ use super::*;
 use crate::{
 	platform::{CoreStorage, CoreStorageKey},
 	runtime::product_manifest::CachedManifest,
-	test_support::account_id,
+	test_support::{UNSERVED_GENESIS, account_id, test_run},
 	unix_time::current_unix_secs,
 };
 use futures::FutureExt as _;
@@ -26,7 +26,7 @@ use truapi::versioned::{
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
 fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 	let entry = CachedManifest {
-		run: crate::test_support::test_run(crate::test_support::UNSERVED_GENESIS),
+		run: test_run(UNSERVED_GENESIS),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};

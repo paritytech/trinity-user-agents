@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::CoreStorage,
-	test_support::{StubPlatform, paseo_test_stack},
+	test_support::{StubPlatform, paseo_test_stack, test_stack},
 };
 
 fn handle(owner: &str, index: u32) -> ProductAccountId {
@@ -60,11 +60,7 @@ fn registered_on(chains: [[u8; 32]; 3]) -> (RegistrySnapshot, [ProductAccountId;
 
 /// Which of `handles` a registry on `stack` still lists after it read `stored`,
 /// and whether it still takes the owner's listing for complete.
-fn listed(
-	stored: Vec<u8>,
-	stack: &crate::platform::Stack,
-	handles: &[ProductAccountId; 3],
-) -> ([bool; 3], bool) {
+fn listed(stored: Vec<u8>, stack: &Stack, handles: &[ProductAccountId; 3]) -> ([bool; 3], bool) {
 	let platform = Arc::new(StubPlatform::default());
 	let (root, owner) = ([1; 32], ProductId::for_test("owner.dot"));
 	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
@@ -90,7 +86,7 @@ fn a_registry_loses_only_the_rings_on_chains_the_stack_no_longer_runs() {
 	let (people, bulletin, elsewhere) = ([0; 32], [0xbb; 32], [0xee; 32]);
 	let (registry, handles) = registered_on([people, bulletin, elsewhere]);
 	let stored = paseo_test_stack().run().stamp(&registry.encode());
-	let wiped = crate::test_support::test_stack("paseo", [0x77; 32], bulletin, [0xcc; 32]);
+	let wiped = test_stack("paseo", [0x77; 32], bulletin, [0xcc; 32]);
 
 	assert_eq!(
 		[listed(stored.clone(), &paseo_test_stack(), &handles), listed(stored, &wiped, &handles)],

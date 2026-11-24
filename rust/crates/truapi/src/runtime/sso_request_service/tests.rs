@@ -226,7 +226,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 						.chain((!changed).then(|| {
 							(
 								CoreStorageKey::SessionUsernamesRun.encode(),
-								crate::test_support::usernames_record(
+								usernames_record(
 									&paseo_test_stack(),
 									&encode_persisted_session(&stored),
 								),

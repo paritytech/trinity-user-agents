@@ -43,7 +43,7 @@ use crate::{
 			signing_runtime_on_asset_hub,
 		},
 	},
-	test_support::StubPlatform,
+	test_support::{StubPlatform, paseo_test_stack},
 };
 use truapi::{
 	CallContext, CallError,
@@ -243,7 +243,7 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted_products: &str) {
              "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted_products}}}"#
 	);
 	let entry = crate::runtime::product_manifest::CachedManifest {
-		run: crate::test_support::paseo_test_stack().run(),
+		run: paseo_test_stack().run(),
 		fetched_at_secs: crate::unix_time::current_unix_secs(),
 		json: Some(json),
 	};
@@ -543,7 +543,7 @@ fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<S
 					crate::runtime::product_manifest::encode_cached_root_manifest(
 						json.as_deref(),
 						fetched_at_secs,
-						&crate::test_support::paseo_test_stack().run(),
+						&paseo_test_stack().run(),
 					),
 				),
 			)
@@ -773,7 +773,7 @@ fn third_product_context(
 				crate::runtime::product_manifest::encode_cached_root_manifest(
 					None,
 					crate::unix_time::current_unix_secs(),
-					&crate::test_support::paseo_test_stack().run(),
+					&paseo_test_stack().run(),
 				),
 			),
 		)

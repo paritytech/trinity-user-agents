@@ -13,8 +13,8 @@ use crate::{
 	},
 	platform::{CoreStorageKey, ProductContext},
 	test_support::{
-		StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
-		sso_session_info, sso_success_response_script, statement, stub_platform,
+		StubPlatform, account_id, new_statements_frame, paseo_test_stack, runtime_config,
+		signed_statement, sso_session_info, sso_success_response_script, statement, stub_platform,
 		submitted_remote_message, subscribe_ack_frame,
 	},
 };
@@ -45,7 +45,7 @@ fn assert_sr25519_signature(signer: [u8; 32], signature: [u8; 64], payload: &[u8
 /// resolves without a chain.
 fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	let entry = crate::runtime::product_manifest::CachedManifest {
-		run: crate::test_support::paseo_test_stack().run(),
+		run: paseo_test_stack().run(),
 		fetched_at_secs: crate::unix_time::current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
 	};
@@ -76,7 +76,7 @@ fn signing_host_runtime_on(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::paseo_test_stack(),
+		paseo_test_stack(),
 		Spawner::for_test(),
 	);
 	let signing_host = SigningHost::new(services.clone());
