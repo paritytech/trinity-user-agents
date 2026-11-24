@@ -43,6 +43,78 @@ struct HostLogSinkDestinationTests {
         ])
     }
 
+    @Test func aLoopingTagSendsABoundedNumberOfLinesAndThenCountsWhatItDropped() {
+        let sink = RecordingHostLogSink()
+        let clock = ManualClock()
+        let destination = HostLogSinkDestination(sink: sink, now: { clock.now })
+        let limit = HostLogSinkDestination.linesPerWindow
+
+        for index in 0 ..< limit + 500 {
+            send(
+                .warning,
+                "[truapi.product] chainHead follow p:\(index) restarted 1 ms after the stop",
+                to: destination
+            )
+        }
+        send(.info, "[truapi.chain] chain connection 2 open", to: destination)
+
+        #expect(sink.lines.filter { $0.tag == "truapi.product" }.count == limit)
+        #expect(sink.lines.last == RecordingHostLogSink.Line(
+            level: .info,
+            tag: "truapi.chain",
+            message: "chain connection 2 open"
+        ))
+
+        clock.now += HostLogSinkDestination.window
+        send(.warning, "[truapi.product] chainHead follow p:9999 restarted 1 ms after the stop", to: destination)
+
+        #expect(Array(sink.lines.suffix(2)) == [
+            RecordingHostLogSink.Line(
+                level: .warning,
+                tag: "truapi.product",
+                message: "500 truapi.product lines dropped over the limit of \(limit) a minute",
+                attributes: [HostLogSinkDestination.droppedAttribute: .count(500)]
+            ),
+            RecordingHostLogSink.Line(
+                level: .warning,
+                tag: "truapi.product",
+                message: "chainHead follow p:9999 restarted 1 ms after the stop"
+            )
+        ])
+    }
+
+    @Test func aWindowThatDroppedNothingSendsNoCount() {
+        let sink = RecordingHostLogSink()
+        let clock = ManualClock()
+        let destination = HostLogSinkDestination(sink: sink, now: { clock.now })
+
+        send(.warning, "[truapi.product] first", to: destination)
+        clock.now += HostLogSinkDestination.window
+        send(.warning, "[truapi.product] second", to: destination)
+
+        #expect(sink.lines.map(\.message) == ["first", "second"])
+    }
+
+    @Test func coreEventsSkipTheLimit() {
+        let sink = RecordingHostLogSink()
+        let destination = HostLogSinkDestination(sink: sink, now: { 0 })
+        let count = HostLogSinkDestination.linesPerWindow + 5
+
+        for index in 0 ..< count {
+            _ = destination.send(
+                .warning,
+                msg: "[truapi.core] marker \(index)",
+                thread: "",
+                file: "",
+                function: "",
+                line: 0,
+                context: CoreEventContext(marker: "truapi.chain.marker", attributes: [:])
+            )
+        }
+
+        #expect(sink.lines.count == count)
+    }
+
     @Test func aTaggedLineSplitsAtTheFirstClosingBracket() {
         #expect(TaggedLogLine("[truapi.core] marker: [nested] detail") == TaggedLogLine(
             tag: "truapi.core",
@@ -56,6 +128,10 @@ private extension HostLogSinkDestinationTests {
     func send(_ level: SwiftyBeaver.Level, _ message: String, to destination: HostLogSinkDestination) {
         _ = destination.send(level, msg: message, thread: "", file: "", function: "", line: 0)
     }
+}
+
+private final class ManualClock: @unchecked Sendable {
+    var now: TimeInterval = 0
 }
 
 final class RecordingHostLogSink: HostLogSink, @unchecked Sendable {

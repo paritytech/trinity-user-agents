@@ -5,11 +5,29 @@ import SwiftyBeaver
 /// Forwards `[truapi.*]` lines at info and above to a `HostLogSink`, as the Android host does with its
 /// `truapi.*` Timber tags. A core event arrives with a `CoreEventContext` and reaches the sink as its marker,
 /// with its attributes as fields. Every other line stays on the device.
+///
+/// Each tag sends at most `linesPerWindow` host lines per `window`. The first line after a window that
+/// dropped lines is preceded by one line that counts them, so a product or connection stuck in a loop costs
+/// a bounded number of lines. Core events skip the limit, since the core already bounds what it sends.
 final class HostLogSinkDestination: BaseDestination {
-    private let sink: HostLogSink
+    static let linesPerWindow = 60
+    static let window: TimeInterval = 60
+    static let droppedAttribute = "dropped"
 
-    init(sink: HostLogSink) {
+    private struct Window {
+        var start: TimeInterval
+        var sent = 0
+        var dropped = 0
+    }
+
+    private let sink: HostLogSink
+    private let now: () -> TimeInterval
+    private let lock = NSLock()
+    private var windows: [String: Window] = [:]
+
+    init(sink: HostLogSink, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.sink = sink
+        self.now = now
         super.init()
         minLevel = .info
     }
@@ -27,10 +45,40 @@ final class HostLogSinkDestination: BaseDestination {
 
         if let event = context as? CoreEventContext {
             sink.log(level: level.hostLogLevel, tag: line.tag, message: event.marker, attributes: event.attributes)
-        } else {
-            sink.log(level: level.hostLogLevel, tag: line.tag, message: line.message)
+            return nil
         }
+        guard let dropped = admit(tag: line.tag) else { return nil }
+        if dropped > 0 {
+            sink.log(
+                level: .warning,
+                tag: line.tag,
+                message: "\(dropped) \(line.tag) lines dropped over the limit of \(Self.linesPerWindow) a minute",
+                attributes: [Self.droppedAttribute: .count(dropped)]
+            )
+        }
+        sink.log(level: level.hostLogLevel, tag: line.tag, message: line.message)
         return nil
+    }
+
+    /// Counts a line against its tag's window. Returns nil when the line is over the limit, else how many
+    /// lines the window that just closed dropped.
+    private func admit(tag: String) -> Int? {
+        lock.withLock {
+            let time = now()
+            var window = windows[tag] ?? Window(start: time)
+            var closedWithDrops = 0
+            if time - window.start >= Self.window {
+                closedWithDrops = window.dropped
+                window = Window(start: time)
+            }
+            defer { windows[tag] = window }
+            guard window.sent < Self.linesPerWindow else {
+                window.dropped += 1
+                return nil
+            }
+            window.sent += 1
+            return closedWithDrops
+        }
     }
 }
 

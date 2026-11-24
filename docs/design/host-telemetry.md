@@ -90,7 +90,9 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 ## What this does not touch
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`).
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:32,44`).
+
+On iOS `HostLogSinkDestination` also limits each tag's host lines to 60 a minute, and the first line after a minute that dropped lines is preceded by one that counts them. A product's console warnings and errors reach Sentry as `truapi.product`, so a product stuck in a loop costs at most that many lines per device. Core events skip the limit, since the core already bounds what it sends.
 
 Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log. On Android the three are `HostProcessTelemetry`, `DeviceReadingsInitializer` and `SentryHostLogSink`, and both `HostLogSinkTree` and `CoreEventLogger` reach that last one through `HostLogSink`.
 
