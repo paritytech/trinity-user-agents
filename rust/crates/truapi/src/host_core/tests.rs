@@ -389,6 +389,28 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
 }
 
+/// Kept subtrees are stored by product id, so one can name a product the
+/// stack does not serve. The host's lookup refuses that product rather than
+/// answering from the kept key.
+#[test]
+fn a_kept_subtree_of_an_unserved_product_is_not_returned() {
+	let platform = Arc::new(StubPlatform::default());
+	let (host_config, _) = runtime_config("myapp.dot");
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
+	let session = crate::test_support::sso_session_info();
+	install_session_after_boot(&runtime, &platform, session.clone());
+	let unserved = ProductId::for_test("foo.testnet");
+	runtime
+		.role
+		.accounts()
+		.cache_product_subtree_for_test(&session, &unserved, [9; 32]);
+
+	let error = futures::executor::block_on(runtime.product_subtree_public_key(&unserved, Some(1)))
+		.expect_err("an unserved product has no subtree");
+	assert_eq!(error.reason, "product foo.testnet is not under a TLD the paseo stack serves");
+}
+
 #[test]
 fn a_timeout_bounds_the_wait_for_the_account_holder() {
 	let platform = Arc::new(StubPlatform::default());

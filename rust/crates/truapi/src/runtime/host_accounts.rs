@@ -293,6 +293,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 	/// When the holder has to ask for it, the user first approves the review
 	/// in `confirm` on its connection; a kept subtree, or one the holder
 	/// derives itself, needs no review.
+	///
+	/// A product the stack does not serve is refused before the kept grants
+	/// are read, which can hold a subtree under any product id.
 	async fn resolve_product_subtree(
 		&self,
 		session: &AuthoritySession,
@@ -301,6 +304,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		product_id: &ProductId,
 		confirm: Option<(&ProductConnection, UserConfirmationReview)>,
 	) -> Result<[u8; 32], AuthorityError> {
+		self.services.stack().require_served(product_id)?;
 		let (current, revision) = self.grant_session(session)?;
 		if let Some(key) = self.grants.known_product_subtree(&current, product_id).await {
 			self.holder.require_current_session(session)?;
