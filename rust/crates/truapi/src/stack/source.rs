@@ -96,8 +96,9 @@ pub struct StackStatus {
 	pub expired: bool,
 	/// The core stored a newer copy that changes a chain, the network or the
 	/// generation. It runs that copy from its next start, so build the
-	/// runtime again to follow it. A copy that changes a pinned field, such as
-	/// the TLD, is refused and never sets it.
+	/// runtime again to follow it. A copy that changes a field the bundled
+	/// descriptor pins, such as the TLD, never sets it: the core refuses that
+	/// copy.
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
