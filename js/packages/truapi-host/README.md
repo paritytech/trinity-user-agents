@@ -109,6 +109,10 @@ under a key of your own, such as one shared between origins, keep
 `activateExternalSession` that the slot does not cover, the core looks the
 usernames up on every activation.
 
+Activating the session that is already selected keeps it: its permissions and
+the requests waiting on it stay. It keeps the usernames it has, unless
+`SessionUsernamesRun` covers the new blob, and looks them up again.
+
 The first start after the update, with no wipe, does this once: cached
 manifests are read again, so a grant that rests on one is refused until the
 device is online. A pairing host asks for each product's allowance again. A

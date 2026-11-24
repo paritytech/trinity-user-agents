@@ -363,6 +363,67 @@ fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 	);
 }
 
+/// A lookup renames the selected session in place, and it stays the same
+/// session. Installing it again must not end it, which would delete its
+/// allowance keys and wake the SSO requests waiting on its channel. A blob
+/// whose usernames the core does not vouch for, such as the host's own copy
+/// with no record or a record of another blob, leaves the usernames the lookup
+/// found. One it vouches for, as after another writer's lookup, brings its
+/// own.
+#[test]
+fn installing_the_selected_session_again_keeps_it() {
+	let installed = external_sso_session_info();
+	let named = named(&installed);
+	let renamed_elsewhere =
+		SessionInfo { lite_username: Some("alice.02".to_string()), ..installed.clone() };
+	let sso = installed.sso.clone().expect("the fixture has an SSO channel");
+	let allowance_keys =
+		CoreStorageKey::AllowanceKeys { session_id: allowances::session_storage_id(&sso) };
+	let reinstalled = |reinstall: &dyn Fn(&SsoRequestService, &CleanupStorage)| {
+		let storage = Arc::new(CleanupStorage::default());
+		let host = host_restored_from(&storage, &installed);
+		block_on(host.name_session(&installed, named.clone(), None));
+		block_on(storage.write_core_storage(allowance_keys.clone(), vec![0xAA])).unwrap();
+		let (_waiting, disconnected) = host.session_disconnects.subscribe(&sso);
+
+		reinstall(&host, &storage);
+
+		let kept = block_on(storage.read_core_storage(allowance_keys.clone())).unwrap();
+		(host.session_state.current(), kept, disconnected.now_or_never())
+	};
+	let blob = encode_persisted_session(&installed);
+	let vouched = encode_persisted_session(&renamed_elsewhere);
+
+	assert_eq!(
+		[
+			reinstalled(&|host, _| block_on(host.activate_external_session(&blob)).unwrap()),
+			reinstalled(&|host, storage| {
+				let another_blobs = usernames_record(&paseo_test_stack(), &vouched);
+				block_on(
+					storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, another_blobs),
+				)
+				.unwrap();
+				block_on(host.activate_external_session(&blob)).unwrap();
+			}),
+			reinstalled(&|host, _| block_on(host.activate_stored_session()).unwrap()),
+			reinstalled(&|host, storage| {
+				let record = usernames_record(&paseo_test_stack(), &vouched);
+				block_on(storage.write_core_storage(CoreStorageKey::AuthSession, vouched.clone()))
+					.unwrap();
+				block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record))
+					.unwrap();
+				block_on(host.activate_stored_session()).unwrap();
+			}),
+		],
+		[
+			(Some(named.clone()), Some(vec![0xAA]), None),
+			(Some(named.clone()), Some(vec![0xAA]), None),
+			(Some(named), Some(vec![0xAA]), None),
+			(Some(renamed_elsewhere), Some(vec![0xAA]), None),
+		]
+	);
+}
+
 /// A lookup that answers puts what it found in the session and in the stored
 /// blob, and records the run for that blob, so the next start takes the
 /// usernames as they are. One that finds a username names the session. One

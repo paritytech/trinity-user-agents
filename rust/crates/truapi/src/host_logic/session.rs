@@ -54,6 +54,12 @@ impl crate::session_usernames::SessionUsernames for SessionInfo {
 	fn has_username(&self) -> bool {
 		non_empty_username(&self.full_username) || non_empty_username(&self.lite_username)
 	}
+
+	fn is_same_session(&self, other: &Self) -> bool {
+		let without_usernames =
+			|session: &Self| Self { lite_username: None, full_username: None, ..session.clone() };
+		without_usernames(self) == without_usernames(other)
+	}
 }
 
 fn non_empty_username(value: &Option<String>) -> bool {
