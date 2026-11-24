@@ -180,7 +180,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// the per-execution bridge passed to
     /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``.
     /// Can arrive on any thread, including synchronously on the calling
-    /// thread during `acquireWorker`/`releaseWorker`, often the main thread
+    /// thread when a worker claim is acquired or released, often the main thread
     /// and re-entrantly: hand the transition off rather than blocking on
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
@@ -192,13 +192,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Can arrive on any thread. Defaults to a no-op.
     func workerCrashing(productId: ProductId, crashes: UInt32)
 
-    /// Begin a pending operation, whose id keeps the product's worker alive
-    /// until it ends. `label` is a log/UI hint, empty when the product gave none.
-    func beginOperation(productId: ProductId, label: String) async throws -> UInt32
-
-    /// End a pending operation. Idempotent: an unknown or already-ended id
-    /// succeeds, so a retry after an ambiguous failure is safe.
-    func endOperation(productId: ProductId, id: UInt32) async throws
 
     /// A device finished pairing with this signing host.
     ///
@@ -327,7 +320,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// the text input.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
-    /// Return the current product-scoped native Chat rooms.
+    /// Return the current product-scoped native Chat rooms. The core checks the
+    /// room of each change to a room against this list, so a host that cannot
+    /// read its rooms throws: an empty list makes the core answer `UnknownRoom`
+    /// for a room that exists.
     func listRooms() async throws -> [ChatRoom]
 
     /// Return the configuration of the last `createRoom` of a room. The core
@@ -340,24 +336,30 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// `createRoom`.
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
 
-    /// Replace how a room shows in the chat list.
-    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws
+    /// Replace how a room shows in the chat list, and answer
+    /// ``ChatRoomChangeOutcome/applied``. The default answers
+    /// ``ChatRoomChangeOutcome/unsupported``.
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws -> ChatRoomChangeOutcome
 
-    /// Delete a room with its messages, cache and declarations, and close its
-    /// screen. A room that does not exist is not an error.
-    func deleteRoom(roomId: String) async throws
+    /// Delete a room with its messages, cache and declarations, close its
+    /// screen, and answer ``ChatRoomChangeOutcome/applied``. A room that does
+    /// not exist is not an error. The default answers
+    /// ``ChatRoomChangeOutcome/unsupported``.
+    func deleteRoom(roomId: String) async throws -> ChatRoomChangeOutcome
 
-    /// Apply one change to the messages of a room. With `persist` the host
-    /// stores the change. Without it the host applies the change only to an
-    /// open room screen and to the chat list preview. An error that it throws
-    /// reaches the product as `HostFailure`.
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws
+    /// Apply one change to the messages of a room, and answer
+    /// ``ChatRoomChangeOutcome/applied``. With `persist` the host stores the
+    /// change. Without it the host applies the change only to an open room
+    /// screen and to the chat list preview. An error that it throws reaches the
+    /// product as `HostFailure`. The default answers
+    /// ``ChatRoomChangeOutcome/unsupported``.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatRoomChangeOutcome
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
-/// The product receives a rejection for each request, with two exceptions. The
-/// host ignores metadata and keeps the name and icon of `createRoom`. The host
-/// creates a room with the configuration that keeps the behaviour that it
+/// The product receives `Unsupported` for each request, with two exceptions.
+/// The host ignores metadata and keeps the name and icon of `createRoom`. The
+/// host creates a room with the configuration that keeps the behaviour that it
 /// serves, and refuses any other before it creates anything.
 public extension ChatHostBridge {
     func createRoom(
@@ -376,16 +378,20 @@ public extension ChatHostBridge {
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
 
-    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {
-        throw unservedChatRequest("setRoomPreview")
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
+        .unsupported
     }
 
-    func deleteRoom(roomId _: String) async throws {
-        throw unservedChatRequest("deleteRoom")
+    func deleteRoom(roomId _: String) async throws -> ChatRoomChangeOutcome {
+        .unsupported
     }
 
-    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {
-        throw unservedChatRequest("updateFeed")
+    func updateFeed(
+        roomId _: String,
+        update _: ChatFeedUpdate,
+        persist _: Bool
+    ) async throws -> ChatRoomChangeOutcome {
+        .unsupported
     }
 }
 
@@ -395,10 +401,6 @@ public extension ChatRoomConfig {
     static var hostDefault: ChatRoomConfig {
         ChatRoomConfig(productSource: false, reactionDetails: false)
     }
-}
-
-private func unservedChatRequest(_ request: String) -> HostRejection {
-    HostRejection.Rejected(reason: "this host does not serve chat \(request)")
 }
 
 /// Native game-reminder surface. Implement and pass to
@@ -660,36 +662,8 @@ public extension HostBridge {
     func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
         .unsupported
     }
-    /// Defaults opt out of worker keep-alive; override to run background work
-    /// past the product's surface. The id is still distinct per call, because
-    /// an `OperationId` names one operation: a host overriding only
-    /// `endOperation`, and the core's own demand accounting, both end the
-    /// wrong ones when every operation shares an id.
-    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
-        defaultOperationIds.take()
-    }
 
-    func endOperation(productId: ProductId, id: UInt32) async throws {}
 }
-
-/// Ids handed out by the default `beginOperation`, distinct for the life of
-/// the process.
-private final class DefaultOperationIds: @unchecked Sendable {
-    private let lock = NSLock()
-    private var nextId: UInt32 = 1
-
-    func take() -> UInt32 {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = nextId
-        // Never zero, and never traps: an id is only ever compared, so wrapping
-        // back to one costs nothing.
-        nextId = nextId == UInt32.max ? 1 : nextId + 1
-        return id
-    }
-}
-
-private let defaultOperationIds = DefaultOperationIds()
 
 /// Adapter that bridges the public `ChatHostBridge` to the generated UniFFI
 /// `NativeChatCallbacks` protocol.
@@ -747,17 +721,17 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         }
     }
 
-    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
         try await withHostRejection {
             try await bridge.setRoomPreview(roomId: roomId, preview: preview)
         }
     }
 
-    func deleteRoom(roomId: String) async throws {
+    func deleteRoom(roomId: String) async throws -> ChatRoomChangeOutcome {
         try await withHostRejection { try await bridge.deleteRoom(roomId: roomId) }
     }
 
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatRoomChangeOutcome {
         try await withHostRejection {
             try await bridge.updateFeed(roomId: roomId, update: update, persist: persist)
         }
@@ -1201,18 +1175,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
-        try await withHostRejection {
-            try await bridge.beginOperation(productId: productId, label: label)
-        }
-    }
-
-    func endOperation(productId: ProductId, id: UInt32) async throws {
-        try await withHostRejection {
-            try await bridge.endOperation(productId: productId, id: id)
-        }
-    }
-
     private func withNavigationRejection<T>(_ operation: () throws -> T) throws -> T {
         do {
             return try operation()
@@ -1570,19 +1532,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.disconnect()
     }
 
-    /// Take one reference on the product's worker for a modality holder that
-    /// is on screen or in flight. The first one reports `.start` to
-    /// ``HostBridge/requestWorkerTransition(productId:transition:)``, which is
-    /// where the host starts the worker. Pair every call with one
-    /// ``releaseWorker(productId:)``.
-    public func acquireWorker(productId: ProductId) {
-        inner.acquireWorker(productId: productId)
-    }
-
-    /// Release one reference. The last one reports `.stop`, after which the
-    /// host may stop the worker. Releasing with none held is a no-op.
-    public func releaseWorker(productId: ProductId) {
-        inner.releaseWorker(productId: productId)
+    /// Take one reference on the worker until this consumer releases its claim.
+    public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
+        inner.claimWorker(productId: productId)
     }
 
     /// Report that the product's worker stopped without the host asking, as

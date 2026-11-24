@@ -22,6 +22,8 @@ pub use truapi_provider::{
 
 use truapi::Bytes32;
 
+use crate::BulletinCid;
+
 /// In-memory mock platform for tests and host simulators (enable the `mock` feature).
 #[cfg(feature = "mock")]
 pub mod mock;
@@ -34,8 +36,8 @@ pub use crate::{
 	},
 	stack::{
 		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
-		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
-		StackStatus,
+		StackFetchResponse, StackHost, StackIdentity, StackRecords, StackRefresh,
+		StackRefreshOutcome, StackStatus,
 	},
 };
 
@@ -62,8 +64,7 @@ use truapi::{
 		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
 		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
 		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
@@ -545,6 +546,32 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
 	}
 }
 
+/// Validate a product-supplied image that RFC 0002 makes a resource: absent,
+/// an inline PNG, JPEG, GIF, WebP, or AVIF image, or the CID of a Bulletin
+/// preimage, which the core writes in its one text form.
+///
+/// A URL that names where to fetch the image is refused, so the host never
+/// fetches from where a product points.
+fn validate_chat_resource(field: &'static str, resource: &str) -> Result<String, ChatFieldError> {
+	let trimmed = resource.trim();
+	if trimmed.is_empty() {
+		return Ok(String::new());
+	}
+	if trimmed.len() > CHAT_ICON_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_ICON_MAX_BYTES });
+	}
+	if trimmed.chars().any(is_display_unsafe) {
+		return Err(ChatFieldError::UnsafeCharacter { field });
+	}
+	if let Ok(cid) = trimmed.parse::<BulletinCid>() {
+		return Ok(cid.to_string());
+	}
+	match icon_scheme(trimmed).as_deref() {
+		Some("data") if is_allowed_icon_data_url(trimmed) => Ok(trimmed.to_string()),
+		_ => Err(ChatFieldError::NotAResource { field }),
+	}
+}
+
 /// Validate the resource of a media item. The node of a HOP file reaches the
 /// host as text, so the core screens it as a name.
 fn validate_chat_media_resource(
@@ -578,8 +605,9 @@ fn check_chat_count<T>(
 }
 
 /// Validate the name, description, icon and empty-room text of a room. The icon
-/// has the rules of the icon of `create_room`. A description or an empty-room
-/// text can have more than one line, so it has the rules of a message body.
+/// is a resource: inline image data or the CID of a preimage, never a URL. A
+/// description or an empty-room text can have more than one line, so it has the
+/// rules of a message body.
 pub fn validate_chat_room_metadata(
 	metadata: ChatRoomMetadata,
 ) -> Result<ChatRoomMetadata, ChatFieldError> {
@@ -589,7 +617,7 @@ pub fn validate_chat_room_metadata(
 			.description
 			.map(|description| validate_chat_body("description", &description))
 			.transpose()?,
-		icon: metadata.icon.map(|icon| validate_chat_icon("icon", &icon)).transpose()?,
+		icon: metadata.icon.map(|icon| validate_chat_resource("icon", &icon)).transpose()?,
 		placeholder: metadata
 			.placeholder
 			.map(|placeholder| validate_chat_body("placeholder", &placeholder))
@@ -629,12 +657,12 @@ pub fn validate_chat_room_preview(
 	})
 }
 
-/// An image badge has the rules of the icon of `create_room`, and it needs an
-/// image.
+/// An image badge is a resource, as the icon of the room metadata is, and it
+/// needs an image.
 fn validate_chat_room_badge(badge: ChatRoomBadge) -> Result<ChatRoomBadge, ChatFieldError> {
 	match badge {
 		ChatRoomBadge::Image { icon } => {
-			let icon = validate_chat_icon("badge", &icon)?;
+			let icon = validate_chat_resource("badge", &icon)?;
 			if icon.is_empty() {
 				return Err(ChatFieldError::Empty { field: "badge" });
 			}
@@ -646,11 +674,9 @@ fn validate_chat_room_badge(badge: ChatRoomBadge) -> Result<ChatRoomBadge, ChatF
 
 /// Validate what a message says.
 ///
-/// A size rejection names `text`, the field a product shrinks by sending
-/// less.
-pub fn validate_chat_message_body(
-	body: ChatMessageBody,
-) -> Result<ChatMessageBody, ChatFieldError> {
+/// A size rejection names `text` or `payload`, the field a product shrinks by
+/// sending less.
+fn validate_chat_message_body(body: ChatMessageBody) -> Result<ChatMessageBody, ChatFieldError> {
 	Ok(match body {
 		ChatMessageBody::Text { text } => {
 			ChatMessageBody::Text { text: validate_chat_body("text", &text)? }
@@ -710,7 +736,7 @@ fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFi
 
 /// Validate one message, as a product writes it into a feed or answers it in
 /// a page.
-pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
+fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
 	let mut seen = BTreeSet::new();
 	let reactions = message
 		.reactions
@@ -958,6 +984,12 @@ pub enum ChatFieldError {
 	/// The icon carried a scheme a host must not render.
 	#[display("{field} carries a scheme that cannot be rendered")]
 	RejectedScheme {
+		/// Offending field name.
+		field: &'static str,
+	},
+	/// The image was neither inline image data nor the CID of a preimage.
+	#[display("{field} must be an inline image or the CID of a preimage, not a URL")]
+	NotAResource {
 		/// Offending field name.
 		field: &'static str,
 	},
@@ -2297,7 +2329,10 @@ pub trait PreimageHost: Send + Sync {
 /// byte-for-byte, keeping line breaks and tabs, so a product reads back the
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
 /// fetch or open is restricted to `https` or an inline raster image and
-/// delivered as the parser resolved it.
+/// delivered as the parser resolved it. The one exception is the node of a HOP
+/// media item: a `wss` URL that the core screens only as a name. The icon of
+/// the room metadata and an image badge take no URL at all: inline image data
+/// or the CID of a Bulletin preimage, as RFC 0002 names resources.
 ///
 /// The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
 /// `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -2364,12 +2399,14 @@ pub trait ChatPlatform: Send + Sync {
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 
-	/// The current product-scoped room list, read one time. The core uses it to
-	/// check that a product hosts a room, before each change to a room. A host
-	/// that cannot read its rooms returns an error, not an empty list. If a
-	/// Rust host does not implement this method, the core uses the first item
-	/// of the room list subscription. A host whose subscription registers a
-	/// listener implements it: otherwise each check leaves a listener behind.
+	/// The current product-scoped room list, read one time.
+	///
+	/// The core uses it to check that a product hosts a room, before each
+	/// change to a room. A host that cannot read its rooms returns an error,
+	/// not an empty list. If a Rust host does not implement this method, the
+	/// core uses the first item of the room list subscription. A host whose
+	/// subscription registers a listener implements it: otherwise each check
+	/// leaves a listener behind.
 	async fn list_chat_rooms(
 		&self,
 		product: &ProductContext,
@@ -2379,8 +2416,10 @@ pub trait ChatPlatform: Send + Sync {
 		})
 	}
 
-	/// The configuration of the last `create_chat_room` of a room. The core
-	/// reads it to decide whether the host stores the messages of the room.
+	/// The configuration of the last `create_chat_room` of a room.
+	///
+	/// The core reads it to decide whether the host stores the messages of the
+	/// room.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
@@ -2389,8 +2428,9 @@ pub trait ChatPlatform: Send + Sync {
 		Ok(ChatRoomConfig::default())
 	}
 
-	/// Replace the name, description, icon and empty-room text of a room. An
-	/// icon of `None` keeps the icon, and an empty icon removes it. If a Rust
+	/// Replace the name, description, icon and empty-room text of a room.
+	///
+	/// An icon of `None` keeps the icon, and an empty icon removes it. If a Rust
 	/// host does not implement this method, it ignores the metadata. The room
 	/// keeps the name and icon of `create_chat_room`.
 	async fn set_chat_room_metadata(
@@ -2402,42 +2442,62 @@ pub trait ChatPlatform: Send + Sync {
 	}
 
 	/// Replace how a room shows in the chat list.
+	///
+	/// If a Rust host does not implement this method, it answers
+	/// `Unsupported`, and so does the product's request.
 	async fn set_chat_room_preview(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatSetRoomPreviewRequest,
-	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("setChatRoomPreview"))
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
+		Ok(ChatRoomChangeOutcome::Unsupported)
 	}
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen. The core calls it only for a room the product hosts.
+	/// screen.
+	///
+	/// The core calls it for every room except one that the product takes
+	/// part in as a bot, so a room that does not exist is not an error. If a
+	/// Rust host does not implement this method, it answers `Unsupported`.
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatDeleteRoomRequest,
-	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("deleteChatRoom"))
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
+		Ok(ChatRoomChangeOutcome::Unsupported)
 	}
 
-	/// Apply one change to the messages of a room. With `persist` the host
-	/// stores the change, because it keeps the messages of the room. Without
-	/// it the host applies the change only to an open room screen and the chat
-	/// list preview. A failure of the host reaches the product as
-	/// `HostFailure`.
+	/// Apply one change to the messages of a room.
+	///
+	/// With `persist` the host stores the change, because it keeps the
+	/// messages of the room. Without it the host applies the change only to an
+	/// open room screen and the chat list preview. A failure of the host
+	/// reaches the product as `HostFailure`. If a Rust host does not implement
+	/// this method, it answers `Unsupported`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
-	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("updateChatFeed"))
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
+		Ok(ChatRoomChangeOutcome::Unsupported)
 	}
 }
 
-/// The failure of a chat platform method a host does not serve yet.
-fn chat_method_not_served(method: &str) -> GenericError {
-	GenericError { reason: format!("this host does not serve {method}") }
+/// What the host did with a change to a room: a preview, a delete or a feed
+/// update.
+///
+/// It is the answer of the host, not an error, so a host returns it as it
+/// returns any other value. A host that does not serve the request answers
+/// `Unsupported`, and the product receives the `Unsupported` call error. An
+/// error that the host returns reaches the product as `HostFailure`.
+#[derive(Debug, PartialEq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ChatRoomChangeOutcome {
+	/// The host applied the change.
+	Applied,
+	/// The host does not serve this request.
+	Unsupported,
 }
 
 /// Host-implemented balance view: what a payment request can spend right now,
@@ -2635,7 +2695,9 @@ pub enum FundingPresentOutcome {
 #[async_trait::async_trait]
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
+	/// host itself when `product` is `None`. A cancel while the overlay is up
+	/// drops this call, and the host takes the overlay down when it is
+	/// dropped.
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,
@@ -2836,34 +2898,6 @@ pub trait ExpandedCardHost: Send + Sync {
 	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
-/// Host store for a product's pending operations, which the host uses to keep
-/// the product's worker runtime alive. Reached only through the `Worker`
-/// protocol trait, so non-worker products never call these.
-#[async_trait::async_trait]
-pub trait ProductOperations: Send + Sync {
-	/// Record a pending operation. `label` is a host log and UI hint, empty
-	/// when the product gave none.
-	///
-	/// The returned id must be unique among this product's open operations.
-	/// The core keys the worker reference an operation holds by that id, so an
-	/// id already open for the product records nothing the second time, and
-	/// ending it once drops the demand both were holding. Ids may repeat
-	/// across products, and may be reused once an operation has ended.
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-	/// Remove a pending operation. Idempotent: an unknown or already-ended id
-	/// returns `Ok`, so a retry after an ambiguous failure is safe.
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), HostWorkerOperationError>;
-}
-
 /// Contact handles the core needs turned back into accounts, and the key they
 /// were minted under.
 ///
@@ -3057,7 +3091,6 @@ pub trait Platform:
 	+ ThemeHost
 	+ LocaleHost
 	+ PreimageHost
-	+ ProductOperations
 {
 }
 
@@ -3075,7 +3108,6 @@ impl<T> Platform for T where
 		+ ThemeHost
 		+ LocaleHost
 		+ PreimageHost
-		+ ProductOperations
 {
 }
 

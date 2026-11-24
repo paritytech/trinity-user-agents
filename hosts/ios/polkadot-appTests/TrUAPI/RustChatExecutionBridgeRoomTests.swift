@@ -76,8 +76,7 @@ struct RustChatExecutionBridgeRoomTests {
     func eachPreviewVariantReachesTheStore(_ previewCase: PreviewCase) async throws {
         let bridge = await makeBridge()
 
-        try await bridge.setRoomPreview(roomId: "r", preview: previewCase.wire)
-
+        #expect(try await bridge.setRoomPreview(roomId: "r", preview: previewCase.wire) == .applied)
         #expect(api.roomPreviews.map(\.preview) == [previewCase.stored])
     }
 
@@ -93,7 +92,7 @@ struct RustChatExecutionBridgeRoomTests {
             )
         }
         await #expect(throws: ChatRoomError.self) {
-            try await bridge.setRoomPreview(roomId: "gone", preview: PreviewCase.all[0].wire)
+            _ = try await bridge.setRoomPreview(roomId: "gone", preview: PreviewCase.all[0].wire)
         }
     }
 
@@ -104,7 +103,7 @@ struct RustChatExecutionBridgeRoomTests {
             _ = try await bridge.createRoom(roomId: "", name: "x", icon: "", config: .hostDefault)
         }
         await #expect(throws: HostRejection.self) {
-            try await bridge.setRoomPreview(roomId: "", preview: PreviewCase.all[0].wire)
+            _ = try await bridge.setRoomPreview(roomId: "", preview: PreviewCase.all[0].wire)
         }
         #expect(api.roomConfigs.isEmpty)
     }

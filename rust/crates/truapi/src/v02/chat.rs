@@ -164,8 +164,10 @@ pub struct ChatRoomMetadata {
 	pub name: String,
 	/// One or more lines the host shows in the room header.
 	pub description: Option<String>,
-	/// An icon that replaces the icon of `create_room`, with the same rules.
-	/// An empty string removes the icon. `None` keeps the current icon.
+	/// An icon that replaces the icon of `create_room`: an inline PNG, JPEG,
+	/// GIF, WebP or AVIF image as a `data:` URL, or the CID of a Bulletin
+	/// preimage. A URL that names where to fetch the image is refused. An
+	/// empty string removes the icon. `None` keeps the current icon.
 	pub icon: Option<String>,
 	/// The text that the room shows while it has no messages. `None` shows
 	/// nothing.
@@ -181,7 +183,8 @@ pub enum ChatRoomBadge {
 		/// The number the host shows.
 		count: u32,
 	},
-	/// An image, with the rules of the icon of `create_room`.
+	/// An image, with the rules of the icon of `ChatRoomMetadata`: inline image
+	/// data or the CID of a Bulletin preimage, never a URL to fetch.
 	Image {
 		/// The image the host shows.
 		icon: String,
@@ -595,10 +598,12 @@ pub enum HostChatUpdateFeedError {
 	UnknownMessage,
 	/// `New` names a message the room holds already.
 	DuplicateMessage,
-	/// The text is over its limit.
+	/// The text or the custom payload is over its limit.
 	MessageTooLarge,
-	/// In a room the host stores: `New` from `"user"`, or `Edited` or `Deleted`
-	/// of a message the product did not write.
+	/// In a room the host stores: a new or replaced message that names `"user"`
+	/// as its author, as the author of the message it quotes, or as one who
+	/// reacted to it; a reaction placed or removed as `"user"`; or `Edited` or
+	/// `Deleted` of a message the product did not write.
 	NotOwner,
 }
 

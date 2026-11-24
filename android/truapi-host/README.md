@@ -89,7 +89,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG` and refuses any other configuration before it creates anything, `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomMetadata` keeps the name and icon of `createRoom`, and every other request answers a rejection. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG` and refuses any other configuration before it creates anything, `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomMetadata` keeps the name and icon of `createRoom`, and every other request answers `ChatRoomChangeOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `ChatRoomChangeOutcome.APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
@@ -100,7 +100,7 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
 | `setRoomFooter` | Shows the text input, or nothing |
 
-The core checks that the product created the room before it calls any of these, except `createRoom` and `roomConfig`.
+The core checks that the product created the room before it calls any of these, except `createRoom` and `deleteRoom`. It calls `deleteRoom` for every room except one that the product takes part in as a bot, so a room that does not exist is not an error.
 
 ```kotlin
 import io.parity.truapi.*
@@ -108,6 +108,7 @@ import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomChangeOutcome
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
@@ -121,19 +122,19 @@ import uniffi.truapi.ProductId
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override fun createRoom(roomId: String, name: String, icon: String) =
+    override suspend fun createRoom(roomId: String, name: String, icon: String) =
         createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
 
     // The room and its configuration land in one write.
-    override fun createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) =
+    override suspend fun createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) =
         if (store.putRoom(roomId, name, icon, config)) ChatRoomRegistrationStatus.NEW
         else ChatRoomRegistrationStatus.EXISTS
 
-    override fun registerBot(botId: String, name: String, icon: String) =
+    override suspend fun registerBot(botId: String, name: String, icon: String) =
         if (store.putBot(botId, name, icon)) ChatBotRegistrationStatus.NEW
         else ChatBotRegistrationStatus.EXISTS
 
-    override fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (content is ChatMessageContent.File) {
             // Declining a variant is how a host opts out of rendering one.
             throw HostRejection.Rejected("this host cannot render file cards")
@@ -141,15 +142,16 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
         return store.append(roomId, content, alt)
     }
 
-    override fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
 
-    override fun listRooms(): List<ChatRoom> = store.rooms()
+    override suspend fun listRooms(): List<ChatRoom> = store.rooms()
 
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         store.config(roomId) ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
 
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatRoomChangeOutcome {
         store.apply(roomId, update, persist)
+        return ChatRoomChangeOutcome.APPLIED
     }
 }
 
@@ -202,7 +204,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns ret
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `requestWorkerTransition`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. A feature takes a worker reference with `runtime.claimWorker(productId)` when it needs the product and calls `claim.release()` when that work ends. The runtime bridge receives the resulting `requestWorkerTransition` calls. Opening, replacing or closing a render stream leaves the feature's claim intact. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 

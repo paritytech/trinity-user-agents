@@ -7,14 +7,20 @@ use std::sync::Arc;
 use futures::{channel::mpsc, executor::block_on};
 use tempfile::TempDir;
 
-use super::{FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan};
+use super::{
+	FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan,
+	test_submission,
+};
 use crate::{
 	chain::{EncodedExtrinsic, HeadEvent, MortalExtrinsic},
 	chain_runtime::RuntimeFailure,
 	durable::{
 		dao,
-		engine::{DurableDeps, DurableRequest, DurableTxEngine},
-		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, SubmissionPlan},
+		engine::{DeferredSubmission, DurableDeps, DurableRequest, DurableTxEngine},
+		model::{
+			DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, OnDependencyFailure,
+			PolicyParams, SubmissionPlan, TransactionDependency,
+		},
 		oracle::{DurableRegistry, Unobservable},
 	},
 	store::Db,
@@ -25,6 +31,11 @@ use crate::{
 /// The domain a test defers into unless it needs a second one.
 pub fn test_domain() -> DomainId {
 	DomainId::new("test")
+}
+
+/// A dependency on `id` whose failure fails its dependent too.
+pub fn cascading_dependency(id: DurableTxId) -> TransactionDependency {
+	TransactionDependency { id, on_failure: OnDependencyFailure::Cascade }
 }
 
 /// A second domain the harness serves.
@@ -96,14 +107,31 @@ impl DeferredTxHarness {
 	/// Defers `count` transactions of the test domain, in no group, in one
 	/// write.
 	pub fn defer_repeated(&self, count: usize) -> Vec<DurableTxId> {
-		let plans = vec![test_plan(vec![]); count];
-		let request = DurableRequest::deferred(test_domain(), None, plans).unwrap();
+		let submissions = (0..count).map(|_| test_submission(vec![])).collect();
+		let request = DurableRequest::deferred(test_domain(), None, submissions).unwrap();
 		self.defer(request)
 	}
 
 	/// Registers `request` and returns its ids.
 	pub fn defer(&self, request: DurableRequest) -> Vec<DurableTxId> {
 		block_on(self.engine.execute(request)).unwrap()
+	}
+
+	/// Defers one test-domain transaction, in no group, that waits for
+	/// `dependencies`.
+	pub fn defer_with_dependencies(&self, dependencies: Vec<TransactionDependency>) -> DurableTxId {
+		let submission =
+			DeferredSubmission { params: PolicyParams(vec![1]), depends_on: dependencies };
+		let request = DurableRequest::deferred(test_domain(), None, vec![submission]).unwrap();
+		self.defer(request)[0]
+	}
+
+	/// Writes `status` onto `id`, a row with an attempt, as a watch or a
+	/// pass would.
+	pub fn record_status(&self, id: DurableTxId, status: DurableTxStatus) {
+		let observed = self.entry(id);
+		let write = self.db.write(move |tx| dao::compare_and_set(tx, &observed, status, None));
+		assert!(block_on(write).unwrap(), "the status of {id:?} was written");
 	}
 
 	/// A test-domain row waiting to be built, written as a previous
