@@ -42,17 +42,17 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     /// provider answered, and the session's state says when it did.
     func start(_ entryId: String, provider: ProductId?) async throws
 
-    /// The user left the screen that started the session on its best quote:
-    /// the core no longer starts it.
+    /// The user went back from the quotes on the screen that started the
+    /// session on its best quote: the core no longer starts it, and the
+    /// session stays open.
     func stopStarting(_ entryId: String)
 
-    /// The user left the session's screens. One that never started is
-    /// dropped; one in flight runs on.
+    /// The user closed the session's screens, which is not a cancel. One
+    /// that never started is dropped; one in flight runs on.
     func leave(_ entryId: String)
 
-    /// Cancels a session. One that never started is dropped at once, as when
-    /// the user leaves its screens; one in flight goes to the core, which ends
-    /// it or asks the provider.
+    /// The user's cancel, in any state: the core decides what it does. One
+    /// whose screens are up is dropped, and they are taken down.
     func cancel(_ entryId: String) async throws -> CancelOutcome
 
     /// Answers the provider's cancel offer: `terms` are the ones the user
