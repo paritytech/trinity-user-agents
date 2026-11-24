@@ -647,7 +647,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   who continues before every row answered: once every row of that request
   answered, the core selects `best` as `select_funding_provider` would, at
   once when they already have. A new ask, `select_funding_options`,
-  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  `cancel_funding_auto_start` (the user going back from the quotes),
+  `cancel_funding` or a list with
   no usable quote disarms it. `funding_available` says whether the host
   offers any provider, announced with `Providers` when
   `set_funding_provider_config` changes the list.
@@ -744,18 +745,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session, named or not, or saw the user's payment; from then on only the
   provider ends the session, and it cannot fail it once funds started.
   Before that, an unassigned session expires 24 hours after it opened and an
-  assigned one 7 days after its provider last reported. `cancel_funding`
-  answers what a cancel did: it ends an unassigned session; before money
+  assigned one 7 days after its provider last reported. `cancel_funding` is
+  the host's one cancel, whatever the session went through, and answers
+  what it did: while the overlay is up it drops `present_funding`, which
+  the host answers by taking the overlay down, and drops the session, or,
+  when the user already chose a provider, keeps it as started and asks the
+  provider to stop; it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
   it asks the provider, who answers `Refused` or `Offer`, one offer per
   cancel, and the host answers the offer with
   `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
   showed (`None` declines), which the provider hears through `settleCancel`;
-  terms other than the offer's answer `NoOffer`, and an inbound session whose
-  credit started answers `TooLate`. A provider asked before money moved
-  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  terms other than the offer's answer `NoOffer`, an inbound session whose
+  credit started answers `TooLate`, and an ended or unknown one `Refused`.
+  A provider asked before money moved answers `Stopped`, and the core ends
+  the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
-  money moved.
+  money moved; a cancel after that asks again.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
