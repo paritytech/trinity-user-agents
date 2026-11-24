@@ -129,7 +129,6 @@ suite("worker serving a signing host", () => {
         config: {
           productSource: false,
           reactionDetails: false,
-          reportSeen: false,
         },
       });
       const { status, roomId } = created._unsafeUnwrap();

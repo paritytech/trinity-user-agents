@@ -137,7 +137,7 @@ fn custom() -> v02::ChatMessage {
 }
 
 fn config() -> v02::ChatRoomConfig {
-	v02::ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true }
+	v02::ChatRoomConfig { product_source: true, reaction_details: true }
 }
 
 /// Every leg of the methods, at the versions a v2 client encodes.

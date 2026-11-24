@@ -14,7 +14,6 @@ use std::collections::BTreeSet;
 use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
-use unicode_segmentation::UnicodeSegmentation;
 
 pub use truapi_provider::{
 	ProviderError,
@@ -42,23 +41,23 @@ pub use crate::{
 
 use truapi::{
 	latest::{
-		AllocatableResource, ChatAction, ChatActions, ChatCustomBody,
-		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
+		AllocatableResource, ChatAction, ChatActions, ChatCustomBody, ChatCustomMessage,
+		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
+		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
 		ChatPreviewReaction, ChatReaction, ChatReactionSummary, ChatReply, ChatReplyPreview,
 		ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig,
 		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, CodeFormat,
-		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest,
-		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
-		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
-		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
-		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest, HostDevicePermissionRequest,
+		HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostFundingStatusSubscribeItem,
+		HostLocalStorageChangeItem, HostLocaleSubscribeItem, HostNavigateToError,
+		HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem, HostPaymentError,
+		HostPaymentRequest, HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+		HostPaymentTopUpError, HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
 		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
 		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
 		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
@@ -458,29 +457,6 @@ fn validate_chat_emoji(field: &'static str, value: &str) -> Result<String, ChatF
 	Ok(normalized)
 }
 
-/// Largest accepted length for one reaction of a Chat Extension v2 message, in
-/// bytes, as the chat modality RFC limits an `Emoji`.
-pub const CHAT_EMOJI_MAX_BYTES: usize = 64;
-
-/// Bound and screen the emoji of a reaction in a feed update, a reaction
-/// summary or a room preview: one extended grapheme cluster, of at most
-/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A reader that follows the
-/// RFC drops a longer reaction, so the core refuses it first.
-fn validate_chat_reaction_emoji(
-	field: &'static str,
-	value: &str,
-) -> Result<String, ChatFieldError> {
-	let emoji = validate_chat_emoji(field, value)?;
-	if emoji.len() > CHAT_EMOJI_MAX_BYTES {
-		return Err(ChatFieldError::TooLong { field, limit: CHAT_EMOJI_MAX_BYTES });
-	}
-	match emoji.graphemes(true).count() {
-		0 => Err(ChatFieldError::Empty { field }),
-		1 => Ok(emoji),
-		_ => Err(ChatFieldError::NotOneGrapheme { field }),
-	}
-}
-
 /// Resolve a product-supplied `https` URL to what a host will actually be
 /// handed, or reject it.
 ///
@@ -569,44 +545,14 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
 	}
 }
 
-/// Largest accepted length for a room description, in bytes.
-pub const CHAT_DESCRIPTION_MAX_BYTES: usize = 1024;
-
-/// Largest accepted number of reaction summaries on one message.
-pub const CHAT_REACTIONS_MAX: usize = 64;
-
-/// Largest accepted number of `update_feed` calls for one room in one second.
-pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
-
-/// Largest accepted number of `set_room_preview` calls for one room in one
-/// second.
-pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
-
-/// The largest file a [`ChatResource::Hop`] names: the largest the native chat sends.
-pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
-
-/// The longest node URL of a [`ChatResource::Hop`].
-pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
-
-/// Validate the resource of a media item: a HOP file.
+/// Validate the resource of a media item. The node of a HOP file reaches the
+/// host as text, so the core screens it as a name.
 fn validate_chat_media_resource(
 	field: &'static str,
 	resource: ChatResource,
 ) -> Result<ChatResource, ChatFieldError> {
-	let ChatResource::Hop { node, size, .. } = &resource;
-	if !node.starts_with("wss://") {
-		return Err(ChatFieldError::RejectedScheme { field });
-	}
-	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
-		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
-	}
-	if *size == 0 {
-		return Err(ChatFieldError::Empty { field });
-	}
-	if *size > CHAT_HOP_FILE_MAX_BYTES {
-		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_FILE_MAX_BYTES as usize });
-	}
-	Ok(resource)
+	let ChatResource::Hop { identifier, ticket, node, size } = resource;
+	Ok(ChatResource::Hop { identifier, ticket, node: validate_chat_name(field, &node)?, size })
 }
 
 /// Hosts compare a media type with allowlists. Thus the core screens it as a
@@ -617,15 +563,6 @@ fn validate_chat_mime_type(field: &'static str, mime_type: &str) -> Result<Strin
 		return Err(ChatFieldError::Empty { field });
 	}
 	Ok(mime_type)
-}
-
-/// Bound and screen a description. A description can have more than one line,
-/// so the core keeps its line breaks and does not normalize it.
-fn validate_chat_description(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
-	if value.len() > CHAT_DESCRIPTION_MAX_BYTES {
-		return Err(ChatFieldError::TooLong { field, limit: CHAT_DESCRIPTION_MAX_BYTES });
-	}
-	validate_chat_body(field, value)
 }
 
 /// Reject a list longer than `limit`.
@@ -641,7 +578,8 @@ fn check_chat_count<T>(
 }
 
 /// Validate the name, description, icon and empty-room text of a room. The icon
-/// has the rules of the icon of `create_room`.
+/// has the rules of the icon of `create_room`. A description or an empty-room
+/// text can have more than one line, so it has the rules of a message body.
 pub fn validate_chat_room_metadata(
 	metadata: ChatRoomMetadata,
 ) -> Result<ChatRoomMetadata, ChatFieldError> {
@@ -649,12 +587,12 @@ pub fn validate_chat_room_metadata(
 		name: validate_chat_name("name", &metadata.name)?,
 		description: metadata
 			.description
-			.map(|description| validate_chat_description("description", &description))
+			.map(|description| validate_chat_body("description", &description))
 			.transpose()?,
 		icon: metadata.icon.map(|icon| validate_chat_icon("icon", &icon)).transpose()?,
 		placeholder: metadata
 			.placeholder
-			.map(|placeholder| validate_chat_description("placeholder", &placeholder))
+			.map(|placeholder| validate_chat_body("placeholder", &placeholder))
 			.transpose()?,
 	})
 }
@@ -669,7 +607,7 @@ pub fn validate_chat_room_preview(
 			.last_reaction
 			.map(|reaction| {
 				Ok::<_, ChatFieldError>(ChatPreviewReaction {
-					emoji: validate_chat_reaction_emoji("emoji", &reaction.emoji)?,
+					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
 					by_user: reaction.by_user,
 					message: reaction.message.map(validate_chat_preview_message).transpose()?,
 					removed: reaction.removed,
@@ -773,13 +711,12 @@ fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFi
 /// Validate one message, as a product writes it into a feed or answers it in
 /// a page.
 pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
-	check_chat_count("reactions", &message.reactions, CHAT_REACTIONS_MAX)?;
 	let mut seen = BTreeSet::new();
 	let reactions = message
 		.reactions
 		.into_iter()
 		.map(|reaction| {
-			let emoji = validate_chat_reaction_emoji("emoji", &reaction.emoji)?;
+			let emoji = validate_chat_emoji("emoji", &reaction.emoji)?;
 			if !seen.insert(emoji.clone()) {
 				return Err(ChatFieldError::Duplicate { field: "emoji" });
 			}
@@ -859,14 +796,14 @@ pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdat
 			ChatFeedUpdate::ReactionPlaced {
 				message_id: message_id(&id)?,
 				participant_id: participant_id(&by)?,
-				emoji: validate_chat_reaction_emoji("emoji", &emoji)?,
+				emoji: validate_chat_emoji("emoji", &emoji)?,
 			}
 		},
 		ChatFeedUpdate::ReactionRemoved { message_id: id, participant_id: by, emoji } => {
 			ChatFeedUpdate::ReactionRemoved {
 				message_id: message_id(&id)?,
 				participant_id: participant_id(&by)?,
-				emoji: validate_chat_reaction_emoji("emoji", &emoji)?,
+				emoji: validate_chat_emoji("emoji", &emoji)?,
 			}
 		},
 		ChatFeedUpdate::StatusChanged { message_id: id, status } => {
@@ -1021,13 +958,6 @@ pub enum ChatFieldError {
 	/// The icon carried a scheme a host must not render.
 	#[display("{field} carries a scheme that cannot be rendered")]
 	RejectedScheme {
-		/// Offending field name.
-		field: &'static str,
-	},
-	/// The reaction carried more than one character as a reader sees it (one
-	/// extended grapheme cluster).
-	#[display("{field} must be one emoji, one grapheme cluster")]
-	NotOneGrapheme {
 		/// Offending field name.
 		field: &'static str,
 	},
@@ -2449,12 +2379,8 @@ pub trait ChatPlatform: Send + Sync {
 		})
 	}
 
-	/// The configuration of the last `create_chat_room` of a room, or the
-	/// default configuration for a room the host does not know. The core reads
-	/// it to decide whether a room keeps its messages in the host. Before
-	/// `post_chat_message` the core reads it for the room that the product
-	/// names, without a check that the product hosts the room, so an unknown
-	/// room answers the default configuration and not an error.
+	/// The configuration of the last `create_chat_room` of a room. The core
+	/// reads it to decide whether the host stores the messages of the room.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
@@ -2497,35 +2423,16 @@ pub trait ChatPlatform: Send + Sync {
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change, because it keeps the messages of the room. Without
 	/// it the host applies the change only to an open room screen and the chat
-	/// list preview. The host answers the outcome `Applied`, or the outcome
-	/// that names why it did not apply the change. It answers an error only
-	/// for a failure of its own, which the product receives as `HostFailure`.
+	/// list preview. A failure of the host reaches the product as
+	/// `HostFailure`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
-	) -> Result<ChatFeedOutcome, GenericError> {
+	) -> Result<(), GenericError> {
 		Err(chat_method_not_served("updateChatFeed"))
 	}
-}
-
-/// What a host did with one change to the messages of a room.
-///
-/// It is the answer of the host, not an error, so a web host returns it as it
-/// returns any other value: the web bridge turns each error that a web
-/// callback throws into `HostFailure`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-pub enum ChatFeedOutcome {
-	/// The host applied the change.
-	Applied,
-	/// The change names a message that the room does not hold.
-	UnknownMessage,
-	/// `New` names a message that the room holds already.
-	DuplicateMessage,
-	/// The change edits, replaces or deletes a message that the product did
-	/// not write.
-	NotOwner,
 }
 
 /// The failure of a chat platform method a host does not serve yet.

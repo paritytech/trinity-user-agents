@@ -144,9 +144,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     /// The core reads the configuration of the room and sets `persist` for a room that the host stores. The host
     /// keeps nothing of an update for a room that the product keeps.
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
-        guard let roomId = roomId.nilIfEmpty else {
-            throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
-        }
+        let roomId = try requireRoomId(roomId)
 
         guard persist else {
             logger.debug("[truapi:chat-bridge] updateFeed \(roomId): the product keeps the room")
@@ -155,10 +153,8 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
         do {
             try await chatMessaging.applyFeedUpdate(roomId: roomId, update: Chat.ProductFeedUpdate(update))
-        } catch let error as Chat.ProductFeedError {
-            throw error.rejection
         } catch let ChatRoomError.unknownRoom(roomId) {
-            throw NativeChatFeedRejection.Rejected(reason: "no chat room \(roomId)")
+            throw HostRejection.Rejected(reason: "no chat room \(roomId)")
         }
     }
 }

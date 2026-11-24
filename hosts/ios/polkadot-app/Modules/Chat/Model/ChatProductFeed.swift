@@ -43,7 +43,7 @@ extension Chat {
         case deleted(messageId: String)
     }
 
-    /// Why the host refuses a feed update (`NativeChatFeedRejection`).
+    /// Why the host refuses a feed update.
     enum ProductFeedError: Error, Equatable {
         case unknownMessage
         case duplicateMessage

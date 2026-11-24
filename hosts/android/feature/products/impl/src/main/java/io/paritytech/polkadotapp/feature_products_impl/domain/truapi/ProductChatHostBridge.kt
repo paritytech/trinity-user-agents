@@ -24,9 +24,8 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
-import uniffi.truapi.NativeChatFeedRejection
-import uniffi.truapi.NativeChatRoomRejection
 import uniffi.truapi.ProductId
 
 /**
@@ -50,7 +49,7 @@ class ProductChatHostBridge(
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        if (config.productSource) throw NativeChatRoomRejection.UnsupportedConfig()
+        if (config.productSource) throw HostChatCreateRoomException.UnsupportedConfig()
         val roomIcon = ProductChatIcon.fromString(icon).orReject()
         val room = ProductChatIdParameter(roomId)
         val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status
@@ -105,8 +104,7 @@ class ProductChatHostBridge(
      * screens that show the room take the update.
      */
     override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
-        if (roomId.isEmpty()) throw NativeChatFeedRejection.Rejected("a chat room needs an id")
-        val room = ProductChatIdParameter(roomId)
+        val room = requireRoom(roomId)
         val model = update.toModel(productId)
 
         if (!persist) {
@@ -114,20 +112,12 @@ class ProductChatHostBridge(
             return
         }
 
-        chatMessaging.applyFeedUpdate(room, model).getOrElse { throw it.toFeedRejection() }
+        chatMessaging.applyFeedUpdate(room, model).orReject()
     }
 
     private fun requireRoom(roomId: String): ProductChatIdParameter {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
         return ProductChatIdParameter(roomId)
-    }
-
-    private fun Throwable.toFeedRejection(): NativeChatFeedRejection = when (this) {
-        is ProductFeedRejection.UnknownMessage -> NativeChatFeedRejection.UnknownMessage()
-        is ProductFeedRejection.DuplicateMessage -> NativeChatFeedRejection.DuplicateMessage()
-        is ProductFeedRejection.NotOwner -> NativeChatFeedRejection.NotOwner()
-        is ProductFeedRejection.UnknownRoom -> NativeChatFeedRejection.Rejected("no such chat room")
-        else -> NativeChatFeedRejection.Rejected(message ?: toString())
     }
 
     private fun <T> Result<T>.orReject(): T = getOrElse { failure ->

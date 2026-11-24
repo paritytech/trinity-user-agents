@@ -121,12 +121,11 @@ export function makeHostCallbacks(
             readChatRoomConfig: async () => ({
               productSource: false,
               reactionDetails: false,
-              reportSeen: false,
             }),
             setChatRoomMetadata: async () => {},
             setChatRoomPreview: async () => {},
             deleteChatRoom: async () => {},
-            updateChatFeed: async () => "Applied" as const,
+            updateChatFeed: async () => {},
             ...overrides.chat,
           },
         }

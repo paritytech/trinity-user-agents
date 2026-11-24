@@ -52,14 +52,3 @@ extension Chat.ProductMessageStatus {
         }
     }
 }
-
-extension Chat.ProductFeedError {
-    /// The rejection that the core gives to the product for this refusal.
-    var rejection: NativeChatFeedRejection {
-        switch self {
-        case .unknownMessage: .UnknownMessage
-        case .duplicateMessage: .DuplicateMessage
-        case .notOwner: .NotOwner
-        }
-    }
-}
