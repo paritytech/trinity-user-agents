@@ -48,8 +48,7 @@ use crate::SigningHost;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
-	host_logic::{root_entropy::RootEntropy, worker::WorkerTransition},
-	runtime::HostRole,
+	host_logic::root_entropy::RootEntropy, runtime::HostRole,
 };
 
 mod generated_bridge;
@@ -907,17 +906,23 @@ struct WasmWorkerController {
 	crashing: Option<SendWrapper<Function>>,
 }
 
-impl crate::host_logic::worker::WorkerController for WasmWorkerController {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		let name = match transition {
-			WorkerTransition::Start => "Start",
-			WorkerTransition::Stop => "Stop",
-		};
+impl WasmWorkerController {
+	fn request(&self, product_id: &ProductId, transition: &str) {
 		let _ = self.request.call2(
 			&JsValue::NULL,
 			&JsValue::from_str(product_id.as_str()),
-			&JsValue::from_str(name),
+			&JsValue::from_str(transition),
 		);
+	}
+}
+
+impl crate::host_logic::worker::WorkerController for WasmWorkerController {
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.request(product_id, "Start");
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.request(product_id, "Stop");
 	}
 
 	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
@@ -949,18 +954,10 @@ fn install_worker_controller(
 	Ok(())
 }
 
-/// A host consumer's reference on a worker, released explicitly or when the handle is freed.
+/// A host consumer's reference on a worker, released when the handle is freed.
 #[wasm_bindgen]
 pub struct WasmWorkerClaim {
-	reference: Option<crate::WorkerHold>,
-}
-
-#[wasm_bindgen]
-impl WasmWorkerClaim {
-	/// Release this handle's reference once.
-	pub fn release(&mut self) {
-		self.reference.take();
-	}
+	_reference: crate::WorkerHold,
 }
 
 fn claim_worker<Role>(runtime: &HostRuntime<Role>, raw_id: &str) -> Option<WasmWorkerClaim> {
@@ -970,7 +967,7 @@ fn claim_worker<Role>(runtime: &HostRuntime<Role>, raw_id: &str) -> Option<WasmW
 			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
 		)
 		.ok()?;
-	Some(WasmWorkerClaim { reference: Some(runtime.hold_worker(&product)) })
+	Some(WasmWorkerClaim { _reference: runtime.hold_worker(&product) })
 }
 
 fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
@@ -1204,7 +1201,7 @@ impl WasmPairingHostRuntime {
 		self.runtime.reset_session_state().await;
 	}
 
-	/// Claim one reference until the returned handle is released or freed.
+	/// Claim one reference until the returned handle is freed.
 	///
 	/// An invalid product id is logged and returns no handle.
 	#[wasm_bindgen(js_name = claimWorker)]
@@ -1468,7 +1465,7 @@ impl WasmSigningHostRuntime {
 		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
-	/// Claim one reference until the returned handle is released or freed.
+	/// Claim one reference until the returned handle is freed.
 	///
 	/// An invalid product id is logged and returns no handle.
 	#[wasm_bindgen(js_name = claimWorker)]
