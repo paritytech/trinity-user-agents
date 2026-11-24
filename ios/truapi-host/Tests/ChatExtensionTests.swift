@@ -27,7 +27,9 @@ struct ChatHostBridgeDefaultsTests {
 
     /// A declaration that the host cannot serve must fail, not disappear. A
     /// configuration it cannot keep fails before the room exists, so no room
-    /// is left with the behaviour that the product did not ask for.
+    /// is left with the behaviour that the product did not ask for. A change
+    /// it does not serve answers `unsupported`, so the product can tell it
+    /// from a failure worth a retry.
     @Test
     func defaultsRefuseWhatTheHostDoesNotServe() async throws {
         let bridge = FirstVersionChatHostBridge()
@@ -38,16 +40,23 @@ struct ChatHostBridgeDefaultsTests {
             _ = try await bridge.createRoom(roomId: "room", name: "Room", icon: "", config: config)
         }
         #expect(bridge.createdRooms.isEmpty)
-        await #expect(throws: HostRejection.self) {
-            try await bridge.deleteRoom(roomId: "room")
-        }
-        await #expect(throws: HostRejection.self) {
-            try await bridge.updateFeed(
-                roomId: "room",
-                update: .statusChanged(messageId: "message", status: .read),
-                persist: true
-            )
-        }
+        let preview = ChatRoomPreview(
+            timestamp: nil,
+            badge: nil,
+            lastMessage: nil,
+            lastReaction: nil,
+            unseenReactions: 0,
+            pinned: false,
+            activity: nil
+        )
+        #expect(try await bridge.setRoomPreview(roomId: "room", preview: preview) == .unsupported)
+        #expect(try await bridge.deleteRoom(roomId: "room") == .unsupported)
+        let fed = try await bridge.updateFeed(
+            roomId: "room",
+            update: .statusChanged(messageId: "message", status: .read),
+            persist: true
+        )
+        #expect(fed == .unsupported)
     }
 
     /// The core reaches a bridge as `any ChatHostBridge`. A host that keeps

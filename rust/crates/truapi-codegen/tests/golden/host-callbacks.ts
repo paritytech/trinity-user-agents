@@ -152,6 +152,17 @@ export interface ChainExtensionVersion {
 }
 
 /**
+ * What the host did with a change to a room: a preview, a delete or a feed
+ * update.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value. A host that does not serve the request answers
+ * `Unsupported`, and the product receives the `Unsupported` call error. An
+ * error that the host returns reaches the product as `HostFailure`.
+ */
+export type ChatRoomChangeOutcome = "Applied" | "Unsupported";
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1082,6 +1093,19 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 );
 
 /**
+ * What the host did with a change to a room: a preview, a delete or a feed
+ * update.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value. A host that does not serve the request answers
+ * `Unsupported`, and the product receives the `Unsupported` call error. An
+ * error that the host returns reaches the product as `HostFailure`.
+ */
+export const ChatRoomChangeOutcome: S.Codec<ChatRoomChangeOutcome> = S.lazy(
+  (): S.Codec<ChatRoomChangeOutcome> => S.Status("Applied", "Unsupported"),
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1745,7 +1769,9 @@ export interface ChainProvider {
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
  * delivered as the parser resolved it. The one exception is the node of a HOP
- * media item: a `wss` URL that the core screens only as a name.
+ * media item: a `wss` URL that the core screens only as a name. The icon of
+ * the room metadata and an image badge take no URL at all: inline image data
+ * or the CID of a Bulletin preimage, as RFC 0002 names resources.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1854,23 +1880,27 @@ export interface ChatPlatform {
 
   /**
    * Replace how a room shows in the chat list.
+   *
+   * If a Rust host does not implement this method, it answers
+   * `Unsupported`, and so does the product's request.
    */
   setChatRoomPreview?(
     product: ProductContext,
     request: HostChatSetRoomPreviewRequest,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 
   /**
    * Delete a room with its messages, cache and declarations, and close its
    * screen.
    *
    * The core calls it for every room except one that the product takes
-   * part in as a bot, so a room that does not exist is not an error.
+   * part in as a bot, so a room that does not exist is not an error. If a
+   * Rust host does not implement this method, it answers `Unsupported`.
    */
   deleteChatRoom?(
     product: ProductContext,
     request: HostChatDeleteRoomRequest,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 
   /**
    * Apply one change to the messages of a room.
@@ -1878,13 +1908,14 @@ export interface ChatPlatform {
    * With `persist` the host stores the change, because it keeps the
    * messages of the room. Without it the host applies the change only to an
    * open room screen and the chat list preview. A failure of the host
-   * reaches the product as `HostFailure`.
+   * reaches the product as `HostFailure`. If a Rust host does not implement
+   * this method, it answers `Unsupported`.
    */
   updateChatFeed?(
     product: ProductContext,
     request: HostChatUpdateFeedRequest,
     persist: boolean,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 }
 
 /**

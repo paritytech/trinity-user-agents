@@ -405,9 +405,15 @@ final class StubChatHostBridge: ChatHostBridge {
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
 
-    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {}
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
+        .applied
+    }
 
-    func deleteRoom(roomId _: String) async throws {}
+    func deleteRoom(roomId _: String) async throws -> ChatRoomChangeOutcome { .applied }
 
-    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {}
+    func updateFeed(
+        roomId _: String,
+        update _: ChatFeedUpdate,
+        persist _: Bool
+    ) async throws -> ChatRoomChangeOutcome { .applied }
 }

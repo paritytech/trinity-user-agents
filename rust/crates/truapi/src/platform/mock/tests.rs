@@ -756,15 +756,18 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 		block_on(p.set_chat_room_preview(
 			&product,
 			latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: empty_preview() },
-		)),
+		))
+		.map(drop),
 		block_on(
 			p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }),
-		),
+		)
+		.map(drop),
 		block_on(p.update_chat_feed(
 			&product,
 			latest::HostChatUpdateFeedRequest { room_id: room(), update: read_status("m1") },
 			true,
-		)),
+		))
+		.map(drop),
 	];
 	assert_eq!(refusals, vec![Err(latest::GenericError { reason: "chat down".into() }); 6]);
 
@@ -1052,7 +1055,7 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 			latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
 			true,
 		)),
-		Ok(())
+		Ok(ChatRoomChangeOutcome::Applied)
 	);
 
 	assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));

@@ -783,7 +783,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomPreviewRequest,
-	) -> Result<(), truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
 		self.chat
 			.set_room_preview(request.room_id, request.preview)
 			.await
@@ -794,15 +794,18 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatDeleteRoomRequest,
-	) -> Result<(), truapi::latest::GenericError> {
-		self.chat
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+		let outcome = self
+			.chat
 			.delete_room(request.room_id)
 			.await
 			.map_err(truapi::latest::GenericError::from)?;
-		if let Ok(rooms) = self.chat.list_rooms().await {
+		if outcome == crate::platform::ChatRoomChangeOutcome::Applied &&
+			let Ok(rooms) = self.chat.list_rooms().await
+		{
 			self.events.notify_chat_rooms_changed(rooms);
 		}
-		Ok(())
+		Ok(outcome)
 	}
 
 	async fn update_chat_feed(
@@ -810,7 +813,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		_product: &ProductContext,
 		request: truapi::latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
 		self.chat
 			.update_feed(request.room_id, request.update, persist)
 			.await

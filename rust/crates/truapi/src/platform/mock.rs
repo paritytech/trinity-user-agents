@@ -46,10 +46,11 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	AuthPresenter, AuthState, ChainProvider, ChatPlatform, ChatRoomChangeOutcome, CoreStorage,
+	CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductStorage,
+	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -1488,15 +1489,16 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomPreviewRequest,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatDeleteRoomRequest,
-	) -> Result<(), latest::GenericError> {
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
@@ -1517,7 +1519,7 @@ impl ChatPlatform for MockPlatform {
 		if removed {
 			self.publish_chat_rooms();
 		}
-		Ok(())
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn update_chat_feed(
@@ -1525,8 +1527,9 @@ impl ChatPlatform for MockPlatform {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 }
 

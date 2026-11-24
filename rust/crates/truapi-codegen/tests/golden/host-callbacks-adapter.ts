@@ -35,6 +35,7 @@ import {
 import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
+  ChatRoomChangeOutcome,
   CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
@@ -82,13 +83,19 @@ export interface RawCallbacks {
   listChatRooms?(product: Uint8Array): Promise<Uint8Array>;
   readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
   setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
-  setChatRoomPreview?(product: Uint8Array, request: Uint8Array): Promise<void>;
-  deleteChatRoom?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomPreview?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
+  deleteChatRoom?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
   updateChatFeed?(
     product: Uint8Array,
     request: Uint8Array,
     persist: boolean,
-  ): Promise<void>;
+  ): Promise<Uint8Array>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   contactUsernames?(product: Uint8Array): Promise<Uint8Array>;
@@ -210,20 +217,26 @@ export function createWasmRawCallbacks(
               HostChatSetRoomMetadataRequest.dec(request),
             ),
           setChatRoomPreview: async (product, request) =>
-            await chat.setChatRoomPreview(
-              ProductContext.dec(product),
-              HostChatSetRoomPreviewRequest.dec(request),
+            ChatRoomChangeOutcome.enc(
+              await chat.setChatRoomPreview(
+                ProductContext.dec(product),
+                HostChatSetRoomPreviewRequest.dec(request),
+              ),
             ),
           deleteChatRoom: async (product, request) =>
-            await chat.deleteChatRoom(
-              ProductContext.dec(product),
-              HostChatDeleteRoomRequest.dec(request),
+            ChatRoomChangeOutcome.enc(
+              await chat.deleteChatRoom(
+                ProductContext.dec(product),
+                HostChatDeleteRoomRequest.dec(request),
+              ),
             ),
           updateChatFeed: async (product, request, persist) =>
-            await chat.updateChatFeed(
-              ProductContext.dec(product),
-              HostChatUpdateFeedRequest.dec(request),
-              persist,
+            ChatRoomChangeOutcome.enc(
+              await chat.updateChatFeed(
+                ProductContext.dec(product),
+                HostChatUpdateFeedRequest.dec(request),
+                persist,
+              ),
             ),
         }
       : {}),

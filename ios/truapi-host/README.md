@@ -132,7 +132,9 @@ The other requests have defaults for a host that does not serve them yet:
 `ChatRoomConfig.hostDefault` and refuses any other configuration before it
 creates anything, `roomConfig` answers `ChatRoomConfig.hostDefault`,
 `setRoomMetadata` keeps the name and icon of `createRoom`, and every other
-request answers a rejection. A room the product declares nothing for is a room
+request answers `ChatRoomChangeOutcome.unsupported`, which the product receives
+as `Unsupported`. A host that serves one of them answers `.applied`. A room the
+product declares nothing for is a room
 the host stores, with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
@@ -196,8 +198,9 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
         store.config(roomId) ?? .hostDefault
     }
 
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws {
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatRoomChangeOutcome {
         store.apply(update, to: roomId, persist: persist)
+        return .applied
     }
 }
 

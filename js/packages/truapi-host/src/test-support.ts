@@ -111,9 +111,9 @@ export function makeHostCallbacks(
               reactionDetails: false,
             }),
             setChatRoomMetadata: async () => {},
-            setChatRoomPreview: async () => {},
-            deleteChatRoom: async () => {},
-            updateChatFeed: async () => {},
+            setChatRoomPreview: async () => "Applied",
+            deleteChatRoom: async () => "Applied",
+            updateChatFeed: async () => "Applied",
             ...overrides.chat,
           },
         }

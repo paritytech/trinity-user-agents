@@ -360,27 +360,32 @@ pub trait NativeChatCallbacks: Send + Sync {
 		metadata: latest::ChatRoomMetadata,
 	) -> Result<(), HostRejection>;
 
-	/// Replace how a room shows in the chat list.
+	/// Replace how a room shows in the chat list. A host that does not serve it
+	/// answers `Unsupported`.
 	async fn set_room_preview(
 		&self,
 		room_id: String,
 		preview: latest::ChatRoomPreview,
-	) -> Result<(), HostRejection>;
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen. A room that does not exist is not an error.
-	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
+	/// screen. A room that does not exist is not an error. A host that does not
+	/// serve it answers `Unsupported`.
+	async fn delete_room(
+		&self,
+		room_id: String,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change; without it the host applies it only to an open room
-	/// screen and the chat list preview. A rejection reaches the product as
-	/// `HostFailure`.
+	/// screen and the chat list preview. A host that does not serve it answers
+	/// `Unsupported`. A rejection reaches the product as `HostFailure`.
 	async fn update_feed(
 		&self,
 		room_id: String,
 		update: latest::ChatFeedUpdate,
 		persist: bool,
-	) -> Result<(), HostRejection>;
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 }
 
 /// Native game-reminder adapter. Hosts that can hold reminders pass an

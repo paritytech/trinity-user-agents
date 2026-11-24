@@ -45,6 +45,7 @@ import uniffi.truapi.NativeMaterialsResolution
 import uniffi.truapi.ResolvedMaterials
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomChangeOutcome
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
@@ -565,7 +566,7 @@ interface ChatHostBridge {
     suspend fun listRooms(): List<ChatRoom>
 
     // The members below have defaults for a host that does not serve the Chat
-    // Extension v2 requests yet. The product receives a rejection for each
+    // Extension v2 requests yet. The product receives `Unsupported` for each
     // request, with two exceptions. The host ignores metadata and keeps the
     // name and icon of `createRoom`. The host creates a room with the
     // configuration that keeps the behaviour that it serves, and refuses any
@@ -587,27 +588,35 @@ interface ChatHostBridge {
     @Throws(HostRejection::class)
     suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
 
-    /** Replace how a room shows in the chat list. */
-    @Throws(HostRejection::class)
-    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): Unit =
-        throw unservedChatRequest("setRoomPreview")
-
     /**
-     * Delete a room with its messages, cache and declarations, and close its
-     * screen. A room that does not exist is not an error.
+     * Replace how a room shows in the chat list, and answer
+     * [ChatRoomChangeOutcome.APPLIED]. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
-    suspend fun deleteRoom(roomId: String): Unit = throw unservedChatRequest("deleteRoom")
+    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
 
     /**
-     * Apply one change to the messages of a room. With [persist] the host
-     * stores the change. Without it the host applies the change only to an
-     * open room screen and to the chat list preview. An exception that it
-     * throws reaches the product as `HostFailure`.
+     * Delete a room with its messages, cache and declarations, close its
+     * screen, and answer [ChatRoomChangeOutcome.APPLIED]. A room that does not
+     * exist is not an error. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
-    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): Unit =
-        throw unservedChatRequest("updateFeed")
+    suspend fun deleteRoom(roomId: String): ChatRoomChangeOutcome = ChatRoomChangeOutcome.UNSUPPORTED
+
+    /**
+     * Apply one change to the messages of a room, and answer
+     * [ChatRoomChangeOutcome.APPLIED]. With [persist] the host stores the
+     * change. Without it the host applies the change only to an open room
+     * screen and to the chat list preview. An exception that it throws
+     * reaches the product as `HostFailure`. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     */
+    @Throws(HostRejection::class)
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
 }
 
 /**
@@ -617,9 +626,6 @@ interface ChatHostBridge {
  */
 val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig
     get() = ChatRoomConfig(productSource = false, reactionDetails = false)
-
-private fun unservedChatRequest(request: String): HostRejection =
-    HostRejection.Rejected("this host does not serve chat $request")
 
 /**
  * Native game-reminder surface. Implement and pass to

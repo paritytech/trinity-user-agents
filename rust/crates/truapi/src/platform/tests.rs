@@ -1102,17 +1102,23 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 		}),
 		Err(ChatFieldError::TooLong { field: "name", limit: CHAT_FIELD_MAX_BYTES })
 	);
-	// A new icon has the rules of the icon of `create_room`.
+	// RFC 0002 makes the icon a resource: inline image data or the CID of a
+	// preimage. A URL would make the host fetch from where the product points.
 	let icon = |icon: &str| ChatRoomMetadata { icon: Some(icon.to_string()), ..metadata(0) };
-	assert_eq!(
-		validate_chat_room_metadata(icon(" https://icons.example/room.png ")),
-		Ok(icon("https://icons.example/room.png"))
-	);
+	let inline = "data:image/png;base64,AQID";
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+	assert_eq!(validate_chat_room_metadata(icon(inline)), Ok(icon(inline)));
+	assert_eq!(validate_chat_room_metadata(icon(&format!(" {cid} "))), Ok(icon(&cid)));
 	assert_eq!(validate_chat_room_metadata(icon("")), Ok(icon("")));
-	assert_eq!(
-		validate_chat_room_metadata(icon("javascript:alert(1)")),
-		Err(ChatFieldError::RejectedScheme { field: "icon" })
-	);
+	for url in
+		["https://icons.example/room.png", "http://icons.example/room.png", "javascript:alert(1)"]
+	{
+		assert_eq!(
+			validate_chat_room_metadata(icon(url)),
+			Err(ChatFieldError::NotAResource { field: "icon" }),
+			"{url} names a place to fetch, not the image"
+		);
+	}
 
 	// The core bounds the empty-room text as it bounds a description.
 	let placeholder = |text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
@@ -1122,7 +1128,7 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 		Err(ChatFieldError::TooLong { field: "placeholder", limit: CHAT_BODY_MAX_BYTES })
 	);
 
-	// An image badge has the rules of an icon and needs an image. An
+	// An image badge is a resource as the icon is, and needs an image. An
 	// activity line is display text that says something.
 	let bare = ChatRoomPreview {
 		timestamp: None,
@@ -1137,17 +1143,15 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 		badge: Some(ChatRoomBadge::Image { icon: icon.to_string() }),
 		..bare.clone()
 	};
-	assert_eq!(
-		validate_chat_room_preview(badge(" https://icons.example/live.png ")),
-		Ok(badge("https://icons.example/live.png"))
-	);
+	assert_eq!(validate_chat_room_preview(badge(&format!(" {cid} "))), Ok(badge(&cid)));
+	assert_eq!(validate_chat_room_preview(badge(inline)), Ok(badge(inline)));
 	assert_eq!(
 		validate_chat_room_preview(badge("")),
 		Err(ChatFieldError::Empty { field: "badge" })
 	);
 	assert_eq!(
-		validate_chat_room_preview(badge("javascript:alert(1)")),
-		Err(ChatFieldError::RejectedScheme { field: "badge" })
+		validate_chat_room_preview(badge("https://icons.example/live.png")),
+		Err(ChatFieldError::NotAResource { field: "badge" })
 	);
 	let activity = |text: &str| ChatRoomPreview {
 		activity: Some(ChatRoomActivity { text: text.to_string(), ongoing: true }),
@@ -1272,17 +1276,15 @@ impl ChatPlatform for ChatHostWithoutDeclarations {
 
 // The Rust defaults have the same contract as the Swift and Kotlin bridges.
 // A host without the declaration callbacks reads every room as the default
-// configuration, accepts the metadata, which changes nothing, and refuses all
-// other declarations. The configuration itself arrives in `create_chat_room`,
-// which has no default.
+// configuration, accepts the metadata, which changes nothing, and answers
+// `Unsupported` for every other change, so a product can tell it from a
+// failure. The configuration itself arrives in `create_chat_room`, which has
+// no default.
 #[test]
 fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 	let host = ChatHostWithoutDeclarations;
 	let product = ProductContext::new(ProductId::for_test("chat.dot"));
-	// The Swift and Kotlin bridges refuse with the same reason.
-	let refused = |request: &str| {
-		Err(GenericError { reason: format!("this host does not serve chat {request}") })
-	};
+	let unsupported = Ok(ChatRoomChangeOutcome::Unsupported);
 
 	assert_eq!(
 		futures::executor::block_on(host.read_chat_room_config(&product, "support".to_string())),
@@ -1319,14 +1321,14 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 				},
 			},
 		)),
-		refused("setRoomPreview")
+		unsupported
 	);
 	assert_eq!(
 		futures::executor::block_on(host.delete_chat_room(
 			&product,
 			HostChatDeleteRoomRequest { room_id: "support".to_string() },
 		)),
-		refused("deleteRoom")
+		unsupported
 	);
 	assert_eq!(
 		futures::executor::block_on(host.update_chat_feed(
@@ -1337,6 +1339,6 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 			},
 			true,
 		)),
-		refused("updateFeed")
+		unsupported
 	);
 }

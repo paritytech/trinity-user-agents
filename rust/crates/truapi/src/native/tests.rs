@@ -578,18 +578,21 @@ impl NativeChatCallbacks for EventCallbacks {
 		&self,
 		room_id: String,
 		_preview: truapi::latest::ChatRoomPreview,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("preview", &room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
-	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection> {
+	async fn delete_room(
+		&self,
+		room_id: String,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("delete", &room_id);
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
 			.retain(|(created, _, _)| *created != room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn update_feed(
@@ -597,7 +600,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		update: truapi::latest::ChatFeedUpdate,
 		persist: bool,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		if let Some(reason) =
 			self.chat_feed_rejection.lock().expect("feed rejection mutex poisoned").clone()
 		{
@@ -607,7 +610,7 @@ impl NativeChatCallbacks for EventCallbacks {
 			.lock()
 			.expect("feed mutex poisoned")
 			.push((room_id, update, persist));
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 }
 
@@ -2026,7 +2029,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 	assert_eq!(ready_rooms(rooms.as_mut(), "the room list").rooms.len(), 1);
 
 	use crate::platform::ChatPlatform as _;
-	futures::executor::block_on(async {
+	let deleted = futures::executor::block_on(async {
 		platform
 			.set_chat_room_metadata(
 				&product,
@@ -2053,6 +2056,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 			.await
 	})
 	.expect("every declaration reaches the host");
+	assert_eq!(deleted, crate::platform::ChatRoomChangeOutcome::Applied);
 
 	assert_eq!(
 		*callbacks.chat_declared.lock().expect("declared mutex poisoned"),
@@ -2081,8 +2085,8 @@ fn native_chat_adapter_applies_a_feed_update_or_reports_the_host_failure() {
 			persist,
 		))
 	};
-	assert_eq!(apply(false), Ok(()));
-	assert_eq!(apply(true), Ok(()));
+	assert_eq!(apply(false), Ok(crate::platform::ChatRoomChangeOutcome::Applied));
+	assert_eq!(apply(true), Ok(crate::platform::ChatRoomChangeOutcome::Applied));
 	// The host stores the update only when the core says so, so the flag
 	// reaches it as the core set it.
 	assert_eq!(

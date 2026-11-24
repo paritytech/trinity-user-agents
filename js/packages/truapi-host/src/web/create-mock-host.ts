@@ -1465,17 +1465,20 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         declareChatRoom(request.roomId, (room) => {
           room.preview = request.preview;
         });
+        return "Applied";
       },
       async deleteChatRoom(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
         chatDeclarations.delete(request.roomId);
         dropChatMessages(request.roomId);
         if (chatRooms.delete(request.roomId)) publishChatRooms();
+        return "Applied";
       },
       async updateChatFeed(_product, request, persist) {
         declareChatRoom(request.roomId, (room) => {
           room.feed.push([request.update, persist]);
         });
+        return "Applied";
       },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription

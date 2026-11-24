@@ -27,6 +27,9 @@ struct RecordingHost {
 	delete_failure: Mutex<Option<String>>,
 	/// The failure reason of `read_chat_room_config`, if any.
 	config_failure: Mutex<Option<String>>,
+	/// The host serves no preview, delete or feed update, as a host that keeps
+	/// the defaults of `ChatPlatform`.
+	unserved: Mutex<bool>,
 	/// The host keeps only the default configuration, as a host that does
 	/// not serve the configurations yet.
 	default_config_only: Mutex<bool>,
@@ -49,6 +52,19 @@ impl RecordingHost {
 
 	fn calls(&self) -> Vec<String> {
 		self.calls.lock().unwrap().clone()
+	}
+
+	/// Record a room change, or answer that the host does not serve it.
+	fn change(
+		&self,
+		call: &str,
+		room_id: &str,
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		if *self.unserved.lock().unwrap() {
+			return Ok(ChatRoomChangeOutcome::Unsupported);
+		}
+		self.record(call, room_id)?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	fn room_list(&self) -> latest::HostChatListSubscribeItem {
@@ -156,20 +172,23 @@ impl ChatPlatform for RecordingHost {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomPreviewRequest,
-	) -> Result<(), latest::GenericError> {
-		self.record("preview", &request.room_id)
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.change("preview", &request.room_id)
 	}
 
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatDeleteRoomRequest,
-	) -> Result<(), latest::GenericError> {
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
 		if let Some(reason) = self.delete_failure.lock().unwrap().clone() {
 			return Err(latest::GenericError { reason });
 		}
-		self.rooms.lock().unwrap().remove(&request.room_id);
-		self.record("delete", &request.room_id)
+		let outcome = self.change("delete", &request.room_id)?;
+		if outcome == ChatRoomChangeOutcome::Applied {
+			self.rooms.lock().unwrap().remove(&request.room_id);
+		}
+		Ok(outcome)
 	}
 
 	async fn update_chat_feed(
@@ -177,9 +196,12 @@ impl ChatPlatform for RecordingHost {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), latest::GenericError> {
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		if *self.unserved.lock().unwrap() {
+			return Ok(ChatRoomChangeOutcome::Unsupported);
+		}
 		self.feed.lock().unwrap().push((request, persist));
-		Ok(())
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 }
 
@@ -457,6 +479,171 @@ fn a_feed_update_is_stored_only_in_a_room_the_host_keeps() {
 	assert_eq!(persisted, [("stored".to_string(), true), ("sourced".to_string(), false)]);
 }
 
+/// A message of the product that quotes a message of `quoted_participant_id`.
+fn quoting(quoted_participant_id: &str) -> latest::ChatMessage {
+	let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+		unreachable!("text_message builds a new message")
+	};
+	message.reply = Some(latest::ChatReply {
+		message_id: "m0".to_string(),
+		preview: Some(latest::ChatReplyPreview {
+			origin: latest::ChatMessageOrigin { participant_id: quoted_participant_id.to_string() },
+			body: latest::ChatMessageBody::Text { text: "I agree to pay".to_string() },
+		}),
+	});
+	message
+}
+
+/// A message of the product whose reaction summary counts the user.
+fn reacted_by_the_user() -> latest::ChatMessage {
+	let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+		unreachable!("text_message builds a new message")
+	};
+	message.reactions = vec![latest::ChatReactionSummary {
+		emoji: "👍".to_string(),
+		count: 1,
+		reacted_by_user: true,
+		unseen: false,
+	}];
+	message
+}
+
+/// A new and a replaced message of `participant_id`, and a reaction of
+/// `participant_id` placed and removed.
+fn updates_by(participant_id: &str) -> [latest::ChatFeedUpdate; 4] {
+	let latest::ChatFeedUpdate::New(message) = text_message(participant_id) else {
+		unreachable!("text_message builds a new message")
+	};
+	[
+		latest::ChatFeedUpdate::New(message.clone()),
+		latest::ChatFeedUpdate::Replaced(message),
+		latest::ChatFeedUpdate::ReactionPlaced {
+			message_id: "m1".to_string(),
+			participant_id: participant_id.to_string(),
+			emoji: "👍".to_string(),
+		},
+		latest::ChatFeedUpdate::ReactionRemoved {
+			message_id: "m1".to_string(),
+			participant_id: participant_id.to_string(),
+			emoji: "👍".to_string(),
+		},
+	]
+}
+
+/// Previews that show a message or a reaction of the user.
+fn previews_of_the_user() -> [latest::ChatRoomPreview; 3] {
+	let user_message = latest::ChatPreviewMessage {
+		message_id: "m1".to_string(),
+		origin: latest::ChatMessageOrigin { participant_id: "user".to_string() },
+		timestamp: 1,
+		body: latest::ChatMessageBody::Text { text: "hi".to_string() },
+		status: latest::ChatMessageStatus::Sent,
+		reply_to: None,
+		edited_at: None,
+		request: false,
+	};
+	let reaction_of_the_user = latest::ChatPreviewReaction {
+		emoji: "👍".to_string(),
+		by_user: true,
+		message: None,
+		removed: false,
+	};
+	let reaction_to_the_user = latest::ChatPreviewReaction {
+		by_user: false,
+		message: Some(user_message.clone()),
+		..reaction_of_the_user.clone()
+	};
+	[
+		latest::ChatRoomPreview { last_message: Some(user_message), ..empty_preview() },
+		latest::ChatRoomPreview { last_reaction: Some(reaction_of_the_user), ..empty_preview() },
+		latest::ChatRoomPreview { last_reaction: Some(reaction_to_the_user), ..empty_preview() },
+	]
+}
+
+// In a room that the host stores, the user writes and reacts only through
+// the host. Thus no update from a product can name the user as its author.
+// Without this check, a host that trusts the core stores words that the
+// user did not write.
+#[test]
+fn a_product_cannot_write_as_the_user_in_a_room_the_host_keeps() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+	let runtime = chat_runtime(chat.clone());
+	let quotes = [
+		latest::ChatFeedUpdate::New(quoting("user")),
+		latest::ChatFeedUpdate::Replaced(quoting("user")),
+	];
+	let summaries = [
+		latest::ChatFeedUpdate::New(reacted_by_the_user()),
+		latest::ChatFeedUpdate::Replaced(reacted_by_the_user()),
+	];
+
+	for update in updates_by("user").into_iter().chain(quotes).chain(summaries) {
+		assert_eq!(
+			update_feed(&runtime, "stored", update),
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
+				latest::HostChatUpdateFeedError::NotOwner
+			)))
+		);
+	}
+	assert!(
+		chat.feed.lock().unwrap().is_empty(),
+		"a host that trusts the core would store words the user did not write"
+	);
+
+	// The product still quotes the contact and counts the reactions of others.
+	let mut by_others = reacted_by_the_user();
+	by_others.reactions[0].reacted_by_user = false;
+	update_feed(&runtime, "stored", latest::ChatFeedUpdate::New(quoting("contact")))
+		.expect("a quote of the contact");
+	update_feed(&runtime, "stored", latest::ChatFeedUpdate::New(by_others))
+		.expect("a summary of the reactions of others");
+}
+
+// In a room that the product keeps, the product reports all changes, also
+// the messages and reactions of the user. The host only shows them.
+#[test]
+fn a_room_the_product_keeps_shows_the_users_messages_and_reactions() {
+	let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
+	let runtime = chat_runtime(chat.clone());
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+
+	for update in updates_by("user") {
+		update_feed(&runtime, "sourced", update).expect("a shown update");
+	}
+	update_feed(&runtime, "sourced", latest::ChatFeedUpdate::New(reacted_by_the_user()))
+		.expect("a summary that counts the user");
+	assert_eq!(chat.feed.lock().unwrap().len(), 5);
+}
+
+// The chat list shows the newest message and reaction of a room. In a room
+// that the host stores, the host takes those of the user from its own store,
+// so a product cannot show the user there.
+#[test]
+fn a_preview_cannot_show_the_user_in_a_room_the_host_keeps() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
+	let runtime = chat_runtime(chat.clone());
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+
+	for preview in previews_of_the_user() {
+		assert_eq!(
+			set_preview(&runtime, "stored", preview.clone()),
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V2(
+				latest::HostChatSetRoomPreviewError::NotOwner
+			)))
+		);
+		set_preview(&runtime, "sourced", preview).expect("a preview of a product room");
+	}
+	assert_eq!(chat.calls(), ["preview sourced"; 3]);
+}
+
 // A deletion names its message as the core screens it, and the host of a
 // room it keeps stores it.
 #[test]
@@ -515,6 +702,26 @@ fn deleting_a_room_that_is_gone_succeeds() {
 	assert_eq!(delete_room(&runtime, "support"), Ok(HostChatDeleteRoomResponse::V2));
 	assert_eq!(delete_room(&runtime, " support "), Ok(HostChatDeleteRoomResponse::V2));
 	assert_eq!(chat.calls(), ["delete support", "delete support"]);
+}
+
+// A host that does not serve a room change answers `Unsupported`, so a
+// product can tell it from a failure worth a retry.
+#[test]
+fn a_room_change_the_host_does_not_serve_is_unsupported() {
+	let chat = RecordingHost::with_rooms(&[hosted("support")]);
+	*chat.unserved.lock().unwrap() = true;
+	let runtime = chat_runtime(chat.clone());
+
+	assert_eq!(set_preview(&runtime, "support", empty_preview()), Err(CallError::Unsupported));
+	assert_eq!(
+		update_feed(&runtime, "support", text_message("product")),
+		Err(CallError::Unsupported)
+	);
+	assert_eq!(delete_room(&runtime, "support"), Err(CallError::Unsupported));
+	assert!(
+		chat.calls().is_empty(),
+		"a host that does not serve a change must not apply part of it"
+	);
 }
 
 // A product that reaches a room as a bot does not own it, so it cannot delete
