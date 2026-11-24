@@ -39,6 +39,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsParticleLook
 import io.paritytech.polkadotapp.feature_products_api.model.JsPose
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
+import io.paritytech.polkadotapp.feature_products_api.model.JsTiltParallax
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrack
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrackPlay
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
@@ -314,8 +315,9 @@ private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed())
             }
             is Modifier.Animate -> add(JsModifier.Animate(modifier.v1.toJs()))
             is Modifier.Emit -> add(JsModifier.Emit(modifier.v1.toJs(), (modifier.v1.source as? EmitSource.Pan)?.v1?.let(keyed.panTrail)))
-            // The Android parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
-            is Modifier.Parallax -> Unit
+            is Modifier.Parallax -> with(modifier.v1) {
+                add(JsModifier.Parallax(depthPermille.toInt(), tilt?.let { JsTiltParallax(it.travel.toLong(), it.maxTiltCentideg.toInt(), it.settleMs.toInt()) }, pan))
+            }
         }
     }
 

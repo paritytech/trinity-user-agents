@@ -65,7 +65,7 @@ internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (lastMaskO
     compareBy {
         when (it) {
             is JsModifier.Margin -> 0
-            is JsModifier.Translate -> 1
+            is JsModifier.Translate, is JsModifier.Parallax -> 1
             is JsModifier.Opacity -> 3
             is JsModifier.FadeWithPan -> 4
             is JsModifier.BlendingMode -> 2
@@ -116,10 +116,11 @@ fun JsModifier.toComposeModifier(): Modifier = when (this) {
     is JsModifier.Mask -> maskModifier()
     is JsModifier.Enter, is JsModifier.Animate -> nodeMotionModifier(listOf(this).nodeMotionSpec())
     is JsModifier.Emit -> particleModifier(this)
+    is JsModifier.Parallax -> parallaxModifier()
 }
 
 private fun JsModifier.precedesNodeMotion(): Boolean = when (this) {
-    is JsModifier.Margin, is JsModifier.Translate, is JsModifier.BlendingMode,
+    is JsModifier.Margin, is JsModifier.Translate, is JsModifier.Parallax, is JsModifier.BlendingMode,
     is JsModifier.Opacity, is JsModifier.FadeWithPan -> true
     else -> false
 }
