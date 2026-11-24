@@ -158,7 +158,7 @@ struct FundingServiceTests {
         let cancelled = try await service.cancel(intent)
         runtime.releaseSelection()
 
-        #expect(cancelled == .ended)
+        #expect(cancelled == .cancelled)
         #expect(await outcome.value == .dismissed)
         await #expect(throws: FundingStartError.left) { try await start.value }
     }
