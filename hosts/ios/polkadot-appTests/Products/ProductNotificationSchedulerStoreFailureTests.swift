@@ -46,7 +46,7 @@ struct ProductNotificationSchedulerStoreFailureTests {
     }
 
     private func book() async throws -> UInt32 {
-        try await scheduler.schedule(productId: productId, request: request)
+        try await scheduler.schedule(productId: productId, title: nil, request: request)
     }
 
     @Test func aRefusedStoreReadRecordsNotScheduledWithoutAnIdAndStillThrows() async throws {

@@ -3,10 +3,15 @@ use futures::{FutureExt, executor::block_on};
 use super::*;
 use crate::{
 	durable::{
-		model::{DurableTxState, DurableTxStatus, PolicyParams},
+		model::{
+			DurableTxFailureKind, DurableTxState, DurableTxStatus, OnDependencyFailure,
+			TransactionDependency,
+		},
+		oracle::{DurableRegistry, Unobservable},
 		testing::{
-			DeferredTxHarness, FakeChain, ScriptedPolicy, extrinsic, pending_presigned,
-			test_engine, test_plan, without_plan,
+			DeferredTxHarness, FakeChain, ScriptedPolicy, ServesTestDomains, engine_with,
+			extrinsic, insert, pending_presigned, test_engine, test_plan, test_submission,
+			without_plan,
 		},
 	},
 	test_support::wait_until,
@@ -195,9 +200,9 @@ fn an_unregistered_domain_cannot_register() {
 	));
 }
 
-/// Defers `plans` in the `op` group of the test domain.
-fn deferred_in_op<E>(plans: Vec<SubmissionPlan>) -> DurableRequest<E> {
-	DurableRequest::deferred(domain(), Some(GroupId::new("op")), plans).unwrap()
+/// Defers `submissions` in the `op` group of the test domain.
+fn deferred_in_op<E>(submissions: Vec<DeferredSubmission>) -> DurableRequest<E> {
+	DurableRequest::deferred(domain(), Some(GroupId::new("op")), submissions).unwrap()
 }
 
 fn op_group(engine: &DurableTxEngine) -> Vec<DurableTxState> {
@@ -219,7 +224,8 @@ fn a_deferred_transaction_waits_for_its_policy_and_broadcasts_nothing() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
 	let engine = harness.engine();
 
-	let ids = harness.defer(deferred_in_op(vec![test_plan(vec![1]), test_plan(vec![1])]));
+	let ids =
+		harness.defer(deferred_in_op(vec![test_submission(vec![1]), test_submission(vec![1])]));
 
 	let waiting = |id: &DurableTxId| DurableTxState {
 		id: *id,
@@ -256,7 +262,7 @@ fn a_presigned_transaction_keeps_the_plan_that_rebuilds_it() {
 fn a_deferral_rolls_back_when_locking_what_it_spends_fails() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
 	let engine = harness.engine();
-	let request = deferred_in_op(vec![test_plan(vec![1])]);
+	let request = deferred_in_op(vec![test_submission(vec![1])]);
 
 	let result =
 		block_on(engine.execute_with(request, |_, _| Err::<(), _>(DomainRefusal::ItemSpent)));
@@ -266,7 +272,7 @@ fn a_deferral_rolls_back_when_locking_what_it_spends_fails() {
 }
 
 fn planned_in_op<E: Send + 'static>(
-	plan: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send + 'static,
+	plan: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<DeferredSubmission>, E> + Send + 'static,
 ) -> DurableRequest<E> {
 	let group = Some(GroupId::new("op"));
 	DurableRequest::deferred_in(domain(), group, plan)
@@ -278,8 +284,9 @@ fn planned_in_op<E: Send + 'static>(
 fn a_deferral_planned_in_the_write_records_one_waiting_row_per_params() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
 	let engine = harness.engine();
-	let request =
-		planned_in_op(|_| Ok::<_, DbError>(vec![PolicyParams(vec![7]), PolicyParams(vec![8])]));
+	let request = planned_in_op(|_| {
+		Ok::<_, DbError>(vec![test_submission(vec![7]), test_submission(vec![8])])
+	});
 
 	let (ids, ()) = block_on(engine.execute_with(request, |_, _| Ok::<_, DbError>(()))).unwrap();
 
@@ -310,4 +317,81 @@ fn a_plan_that_refuses_records_nothing() {
 
 	assert!(matches!(result, Err(RegistrationError::Hook(DomainRefusal::ItemSpent))));
 	assert_eq!(op_group(engine), vec![]);
+}
+
+/// One transaction of the `op` group that waits for `dependency`.
+fn dependent_request<E>(dependency: TransactionDependency) -> DurableRequest<E> {
+	let submission =
+		DeferredSubmission { params: PolicyParams(vec![1]), depends_on: vec![dependency] };
+	deferred_in_op(vec![submission])
+}
+
+/// A dependent of a transaction that does not exist would wait forever, so
+/// nothing is recorded.
+#[test]
+fn a_dependency_on_an_unknown_transaction_refuses_the_registration() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
+	let unknown = DurableTxId(42);
+
+	let result =
+		block_on(harness.engine().execute(dependent_request(TransactionDependency::new(unknown))));
+
+	assert!(matches!(result, Err(RegistrationError::UnknownDependency(id)) if id == unknown));
+	assert_eq!(op_group(harness.engine()), vec![]);
+}
+
+/// Nothing orders transactions of two chains, so a success on the other
+/// chain says nothing about whether the dependent is valid.
+#[test]
+fn a_dependency_on_another_chain_refuses_the_registration() {
+	let chain = FakeChain::new(130, 140);
+	let elsewhere = DomainId::new("elsewhere");
+	let registry = DurableRegistry::new().serving(domain(), Arc::new(Unobservable)).serving_on(
+		elsewhere.clone(),
+		H256::repeat_byte(1),
+		Arc::new(Unobservable),
+	);
+	let (_dir, engine, _timer) = engine_with(&chain, registry);
+	let foreign = insert(&engine.db, &elsewhere, extrinsic(1, 100, 64));
+
+	let result = block_on(engine.execute(dependent_request(TransactionDependency::new(foreign))));
+
+	assert!(
+		matches!(result, Err(RegistrationError::DependencyOnOtherChain { dependency, .. }) if dependency == foreign)
+	);
+	assert_eq!(op_group(&engine), vec![]);
+}
+
+/// A transaction of a domain no one serves is never decided, so its
+/// dependent would wait forever.
+#[test]
+fn a_dependency_in_an_unserved_domain_refuses_the_registration() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
+	let unserved = harness.leave_waiting(DomainId::new("removed"), test_plan(vec![]));
+
+	let result = block_on(
+		harness
+			.engine()
+			.execute(dependent_request(TransactionDependency::new(unserved))),
+	);
+
+	assert!(
+		matches!(result, Err(RegistrationError::DependencyInUnservedDomain { dependency, .. }) if dependency == unserved)
+	);
+	assert_eq!(op_group(harness.engine()), vec![]);
+}
+
+/// A dependency that already failed is handled like one that fails later:
+/// a pass cascades it or its policy decides. Refusing it would be a third
+/// path the domain has to handle.
+#[test]
+fn a_dependency_that_already_failed_is_accepted() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::giving_up());
+	let failed = harness.defer_one();
+	harness.wait_for(failed, DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
+	let dependency = TransactionDependency { id: failed, on_failure: OnDependencyFailure::Cascade };
+
+	let ids = block_on(harness.engine().execute(dependent_request(dependency))).unwrap();
+
+	assert_eq!(harness.status(ids[0]), DurableTxStatus::PendingSubmission);
 }
