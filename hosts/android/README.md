@@ -202,3 +202,17 @@ Report vulnerabilities responsibly following [Parity's security policy](https://
 ## License
 
 Licensed under the **GNU General Public License v3.0** — see [LICENSE](./LICENSE).
+
+## Keyed gesture rendering
+
+Chat and room-footer gestures with a key send at most one move per display frame,
+retaining only the newest pending position until the worker answers. Start and end
+actions retain their existing behavior; end and cancellation discard unsent moves.
+Unkeyed gestures retain their configured move interval, and host-driven gestures
+keep their native movement.
+
+A `SetOffset { key, x, y }` renderer item updates only that gesture's child offset,
+in logical pixels along the layout direction. It does not emit, map or diff a new
+widget tree. A full tree resets all offsets; removed keys ignore later updates.
+The render subscription owns the bindings, so identical keys in different rooms
+remain independent. Pocket faces ignore offset-only items.

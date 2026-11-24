@@ -5,9 +5,15 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
@@ -22,6 +28,11 @@ import uniffi.truapi.Dimensions
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
 import uniffi.truapi.Modifier
+import uniffi.truapi.PanAxis
+import uniffi.truapi.PanDrag
+import uniffi.truapi.PanGesture
+import uniffi.truapi.PanRelease
+import uniffi.truapi.PanTravel
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.Size
@@ -32,7 +43,8 @@ import uniffi.truapi.VerticalAlignment
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
-fun RendererNode.toJsWidget(): JsWidget = JsWidgetMapping().map(this)
+fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { null }): JsWidget =
+    JsWidgetMapping(gesturePosition).map(this)
 
 fun RendererNode.hasMaterials(): Boolean = materialsCount() > 0
 
@@ -52,7 +64,7 @@ private fun RendererNode.materialsCount(): Int = when (this) {
     is RendererNode.Image -> 0
 }
 
-private class JsWidgetMapping {
+private class JsWidgetMapping(private val gesturePosition: (String) -> JsGesturePosition?) {
     private var nextMaterialsNode = 0
 
     fun map(node: RendererNode): JsWidget = when (node) {
@@ -112,8 +124,16 @@ private class JsWidgetMapping {
                 modifiers = node.modifiers.toJsModifiers(),
             )
         } ?: JsWidget.Box(modifiers = node.modifiers.toJsModifiers())
-        // The Android gesture layer draws the gesture; until then its children draw in a plain box.
-        is RendererNode.Gesture -> JsWidget.Box(children = mapChildren(node.children))
+        is RendererNode.Gesture -> JsWidget.Gesture(
+            position = node.props.key?.let(gesturePosition),
+            tapAction = node.props.tapAction,
+            pan = node.props.pan?.toJs(),
+            accessibilityLabel = node.props.accessibilityLabel,
+            enabled = node.props.enabled ?: true,
+            hapticOnComplete = node.props.hapticOnComplete ?: false,
+            modifiers = node.modifiers.toJsModifiers(),
+            children = mapChildren(node.children),
+        )
         is RendererNode.Materials -> {
             val index = nextMaterialsNode++
             JsWidget.Materials(node = index, children = mapChildren(node.children))
@@ -121,13 +141,42 @@ private class JsWidgetMapping {
     }
 
     private fun mapChildren(children: List<RendererNode>): List<JsWidget> =
-        children.filterNot { it is RendererNode.Nil || it is RendererNode.String }.map(::map)
+        children.filterNot { it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset }.map(::map)
 
     // The core numbers `Materials` nodes under a `Text` or `Button` although their children are not drawn.
     private fun skipMaterialsIn(children: List<RendererNode>) {
         nextMaterialsNode += children.sumOf { it.materialsCount() }
     }
 }
+
+private fun PanGesture.toJs(): JsPanGesture = JsPanGesture(
+    axis = axis.toJs(),
+    drag = drag?.toJs(),
+    startAction = startAction,
+    moveAction = moveAction,
+    moveIntervalMs = moveIntervalMs?.toInt() ?: 0,
+    endAction = endAction,
+)
+
+private fun PanAxis.toJs(): JsPanAxis = when (this) {
+    PanAxis.HORIZONTAL -> JsPanAxis.HORIZONTAL
+    PanAxis.VERTICAL -> JsPanAxis.VERTICAL
+    PanAxis.FREE -> JsPanAxis.FREE
+}
+
+// A completed drag stays at the end unless the product says otherwise.
+private fun PanDrag.toJs(): JsPanDrag = JsPanDrag(
+    travel = when (val travel = travel) {
+        is PanTravel.ParentWidth -> JsPanTravel.ParentWidth
+        is PanTravel.Points -> JsPanTravel.Points(travel.v1.toDp())
+    },
+    release = when (val release = release) {
+        is PanRelease.SnapBack -> JsPanRelease.SnapBack
+        is PanRelease.Stay -> JsPanRelease.Stay
+        is PanRelease.Complete -> JsPanRelease.Complete(release.thresholdPercent.toInt())
+    },
+    holdAtEnd = holdAtEnd ?: true,
+)
 
 private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
     var width: Int? = null

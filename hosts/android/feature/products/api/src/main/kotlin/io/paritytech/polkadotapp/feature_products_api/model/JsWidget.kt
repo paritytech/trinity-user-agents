@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 sealed interface JsWidget {
@@ -63,6 +64,27 @@ sealed interface JsWidget {
         val enabled: Boolean = true,
         val loading: Boolean = false,
         val modifiers: List<JsModifier> = emptyList(),
+    ) : JsWidget
+
+    /**
+     * Draws its children and reports taps and pans on them; no styling of its own.
+     * @param tapAction Action ID invoked on a tap that did not become a pan
+     * @param pan The pan the node accepts, if any
+     * @param accessibilityLabel What a screen reader's action on the node is called
+     * @param enabled Whether the node accepts gestures
+     * @param hapticOnComplete Whether a completed drag gives success feedback
+     */
+    @Serializable
+    @SerialName("gesture")
+    data class Gesture(
+        @Transient val position: JsGesturePosition? = null,
+        val tapAction: String? = null,
+        val pan: JsPanGesture? = null,
+        val accessibilityLabel: String? = null,
+        val enabled: Boolean = true,
+        val hapticOnComplete: Boolean = false,
+        val modifiers: List<JsModifier> = emptyList(),
+        val children: List<JsWidget> = emptyList(),
     ) : JsWidget
 
     /**

@@ -187,6 +187,8 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
             JsUiEvent.Type.ButtonClick -> null
             is JsUiEvent.Type.InputFieldValueChange -> type.newValue.scaleEncodeBinary()
                 .toHexString(withPrefix = true)
+            // Script products draw no gesture node.
+            is JsUiEvent.Type.Gesture -> null
         }
     }
 

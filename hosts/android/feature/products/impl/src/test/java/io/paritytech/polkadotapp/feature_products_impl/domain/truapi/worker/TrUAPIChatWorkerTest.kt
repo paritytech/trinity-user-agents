@@ -50,6 +50,7 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.GestureProps
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductId
@@ -79,6 +80,40 @@ class TrUAPIChatWorkerTest {
         whenever(workers.executionState(productId)).thenReturn(flowOf(WorkerExecutionState.Running(execution)))
         whenever(workers.currentExecution(productId)).thenReturn(execution)
         return workers
+    }
+
+    @Test
+    fun `offset replies update only the bound gesture and a later full tree resets it`() = runTest {
+        val execution = mockk<TrUAPIProductExecution>()
+        val stream = MutableSharedFlow<RendererNode>()
+        every { execution.render(any()) } returns stream
+        val worker = worker(workers = runningWorkers(execution))
+        val trees = mutableListOf<JsWidget>()
+        val collection = launch {
+            worker.renderRoomFooter(roomId, messageType, messageData).collect { trees += it.getOrThrow() }
+        }
+        runCurrent()
+        val tree = RendererNode.Gesture(
+            modifiers = emptyList(),
+            props = GestureProps(null, null, null, null, null, "piece"),
+            children = emptyList(),
+        )
+        stream.emit(tree)
+        runCurrent()
+        val position = requireNotNull((trees.single() as JsWidget.Gesture).position)
+
+        stream.emit(RendererNode.SetOffset("piece", 42, -2))
+        runCurrent()
+        assertEquals(1, trees.size)
+        assertEquals(42, position.value.value.x)
+        assertEquals(-2, position.value.value.y)
+
+        stream.emit(tree)
+        runCurrent()
+        assertEquals(2, trees.size)
+        assertSame(position, (trees.last() as JsWidget.Gesture).position)
+        assertEquals(0, position.value.value.x)
+        collection.cancel()
     }
 
     @Test
