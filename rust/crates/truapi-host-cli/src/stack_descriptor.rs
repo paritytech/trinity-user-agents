@@ -92,7 +92,11 @@ fn local_file_id(path: &str) -> Result<String> {
 /// a lossy conversion would give two such paths one id.
 fn canonical_file_id(canonical: PathBuf) -> Result<String> {
 	let canonical = canonical.into_os_string().into_string().map_err(|canonical| {
-		anyhow!("{} is not a UTF-8 path, so it cannot name a stack", canonical.display())
+		anyhow!(
+			"{} is not a UTF-8 path, so it cannot name a stack; copy the file to a path that is \
+			 UTF-8",
+			canonical.display()
+		)
 	})?;
 	Ok(format!("file:{canonical}"))
 }
