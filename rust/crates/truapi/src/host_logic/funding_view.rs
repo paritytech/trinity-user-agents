@@ -115,7 +115,7 @@ pub fn crypto_tokens(candidates: &[FundingCandidate], network: Option<&str>) -> 
 /// The canonical English name of a crypto network id, which hosts may
 /// localise. Known ids have their proper name; any other is title-cased word
 /// by word.
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+#[cfg_attr(not(target_arch = "wasm32"), uniffi::export)]
 pub fn funding_network_name(id: String) -> String {
 	match id.as_str() {
 		"polkadot" => "Polkadot".to_string(),
@@ -255,7 +255,7 @@ pub fn amount_issue(
 
 /// Whether the user can cancel a session now, and what a cancel does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingCancelAvailability {
 	/// No cancel is possible: the session ended, or an offer or an accepted
 	/// cancel is already in.
@@ -300,7 +300,7 @@ pub fn cancel_availability(status: &FundingStatus, money_moved: bool) -> Funding
 
 /// How an ended session went.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingEndedOutcome {
 	/// Not ended yet.
 	#[default]
@@ -322,7 +322,7 @@ pub enum FundingEndedOutcome {
 
 /// Where a released withdrawal's payout stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingPayoutState {
 	/// The provider has not said yet.
 	Pending,
@@ -334,7 +334,7 @@ pub enum FundingPayoutState {
 
 /// The facts about how a session ended.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingEnding {
 	/// When it ended, else when it opened, in Unix milliseconds: what history
 	/// is ordered by.

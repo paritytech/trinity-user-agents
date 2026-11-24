@@ -10,10 +10,10 @@ import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 object LightClientChains {
     fun of(environment: TestnetEnvironment): Set<String> = when (environment) {
         TestnetEnvironment.TESTNET -> setOf(
-            "860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
-            "bac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896",
-            "55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9",
-            "a081192b90c1f6a3f8e9ce7b2a8246f41af805c66456c84e05fd97c2b3502425",
+            "48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6",
+            "f7d88e2e343e911c9a5c1a7e6ed53d06ef4cd73276fc3afff87062a1f6f90514",
+            "732abb4e3052154ebd9201a375b0aacf2d1fe7015700235c0a8b30d44b401c19",
+            "1c0a1c27946ca0e7def02955315633db590bc38b0c537936e423efeb6c554876",
         )
 
         TestnetEnvironment.NIGHTLY -> setOf(

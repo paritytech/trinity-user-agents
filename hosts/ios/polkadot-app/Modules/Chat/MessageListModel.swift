@@ -5,6 +5,8 @@ struct MessageListModel {
     let messagesById: [Chat.MessageId: Int]
     let orderedSections: [MessageListSection]
     let messagesBySection: [MessageListSection: [Chat.LocalMessage]]
+    /// Messages dated before the day of the section they sit in; their time is hidden to avoid an out-of-order time.
+    let outOfDayMessageIds: Set<Chat.MessageId>
     let reactionsByMessageId: [Chat.MessageId: [Chat.MessageReactionAggregate]]
     let latestEditByMessageId: [Chat.MessageId: Chat.EditedMessage]
     let initiallyUnreadMessage: Chat.MessageId?

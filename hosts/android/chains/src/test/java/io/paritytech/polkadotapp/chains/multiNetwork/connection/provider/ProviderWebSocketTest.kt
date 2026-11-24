@@ -199,7 +199,7 @@ class ProviderWebSocketTest {
         const val HEAD = "0x01"
         const val GOING_AWAY = 1001
         const val SLOW_HANDSHAKE_MILLIS = 500L
-        const val PREVIEWNET_RELAY = "860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92"
+        const val PREVIEWNET_RELAY = "48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6"
         val TIMEOUT = 10.seconds
     }
 }

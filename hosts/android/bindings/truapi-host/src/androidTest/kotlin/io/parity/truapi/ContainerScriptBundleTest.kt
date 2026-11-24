@@ -44,8 +44,8 @@ class ContainerScriptBundleTest {
                     } else ""
                     val html = """
                         <!doctype html><html><body>$frames<script>
-                        const host = window.__HOST_API_CLIENT__;
-                        window.__HOST_API_CLIENT__ = {};
+                        const host = window.__HOST_API_TRANSPORT__;
+                        window.__HOST_API_TRANSPORT__ = {};
                         const originalFetch = window.fetch;
                         const originalWebSocket = window.WebSocket;
                         const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
@@ -54,7 +54,7 @@ class ContainerScriptBundleTest {
                         navigator.mediaDevices.getUserMedia = () => {};
                         frameReport.receive(
                           location.href,
-                          host !== undefined && window.__HOST_API_CLIENT__ === host && Object.isFrozen(host),
+                          host !== undefined && window.__HOST_API_TRANSPORT__ === host && Object.isFrozen(host),
                           typeof Object.getOwnPropertyDescriptor(window, '__HOST_API_PORT__')?.get === 'function',
                           window.__truapi_localhost === undefined,
                           window.__HOST_WEBVIEW_MARK__ === true,

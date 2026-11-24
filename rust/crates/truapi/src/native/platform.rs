@@ -10,8 +10,8 @@ use crate::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -37,7 +37,7 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	engine_follow::{BalanceFollower, StatusFollower},
 	errors::HostRejection,
@@ -72,6 +72,15 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
+
+	async fn contact_usernames(
+		&self,
+		product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, v01::GenericError> {
+		self.contacts
+			.contact_usernames(product.product_id.clone())
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
 }
 
 /// [`crate::platform::ScannerPlatform`] served by host-provided
@@ -92,6 +101,27 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`StackHost`] served by host-provided
+/// [`NativeStackCallbacks`].
+pub struct StackCallbackHost {
+	/// Host HTTP client and stack status observer.
+	pub stack: Arc<dyn NativeStackCallbacks>,
+}
+
+#[async_trait::async_trait]
+impl StackHost for StackCallbackHost {
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, v01::GenericError> {
+		Ok(self.stack.fetch_stack_descriptor(request).await?)
+	}
+
+	fn stack_changed(&self, status: StackStatus) {
+		self.stack.stack_changed(status);
 	}
 }
 
@@ -170,15 +200,15 @@ impl Navigation for CallbackPlatform {
 impl Notifications for CallbackPlatform {
 	async fn push_notification(
 		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		notification: latest::HostPushNotificationRequest,
+	) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
 		self.callbacks.on_core_log(
 			markers::NATIVE_PUSH_NOTIFICATION.target.to_string(),
 			notification.text.clone(),
 		);
 
 		let id = self.callbacks.push_notification(notification).await?;
-		Ok(v01::HostPushNotificationResponse { id })
+		Ok(latest::HostPushNotificationResponse { id })
 	}
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
@@ -219,6 +249,21 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 
 		self.callbacks
 			.set_expanded_card_face_shown(shown)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, v01::GenericError> {
+		self.callbacks.on_core_log(
+			markers::NATIVE_SET_EXPANDED_CARD_BACK_SHOWN.target.to_string(),
+			format!("{shown}"),
+		);
+
+		self.callbacks
+			.set_expanded_card_back_shown(shown)
 			.await
 			.map_err(v01::GenericError::from)
 	}
@@ -310,6 +355,16 @@ impl ProductStorage for CallbackPlatform {
 	async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
 		self.callbacks.local_storage_clear(key.clone()).await?;
 		self.storage_events.notify_storage_changed(&key, None);
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.callbacks.clear_product_storage(product_id).await?;
+		self.storage_events.notify_storage_cleared_under(&owned);
 		Ok(())
 	}
 
@@ -406,6 +461,9 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 		if let Err(err) = self.callbacks.chain_send(self.id, request) {
 			self.callbacks
 				.on_core_log(markers::NATIVE_CHAIN_SEND_FAILED.target.to_string(), err.to_string());
+			// The request is lost, so end the response stream and let the
+			// client fail what it is still waiting on.
+			self.close();
 		}
 	}
 
@@ -641,21 +699,25 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatCreateRoomRequest,
-	) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
-		let status: v01::ChatRoomRegistrationStatus = self
+		room_id: String,
+		request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
+	{
+		let status: truapi::latest::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(request.room_id, request.name, request.icon)
+			.create_room(room_id, request.name, request.icon)
 			.await
-			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
+			.map_err(|error| truapi::latest::HostChatCreateRoomError::Unknown {
+				reason: error.to_string(),
+			})?;
 
-		if status == v01::ChatRoomRegistrationStatus::New &&
+		if status == truapi::latest::ChatRoomRegistrationStatus::New &&
 			let Ok(rooms) = self.chat.list_rooms().await
 		{
 			self.events.notify_chat_rooms_changed(rooms);
 		}
 
-		Ok(v01::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(

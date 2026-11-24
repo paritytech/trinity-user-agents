@@ -81,6 +81,11 @@ extension IncomingChatAcceptanceCoordinationContext {
             return nil
         }
 
+        guard request.status == .outgoing(.pending) else {
+            logger.debug("Skipping acceptance of a cancelled request")
+            return nil
+        }
+
         do {
             try await requestStoreService.acceptOutgoingRequest(
                 requestId,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::{host_logic::x25519_seal::X25519PrivateKey, platform::AuthState};
 
 /// A product reset concerns that product's grants, not the wallet: account
 /// work already under way survives it, while a lock or a wallet change ends it.
@@ -17,8 +18,9 @@ fn pending_account_access_tracks_wallet_activation() {
 			..StubPlatform::default()
 		});
 		let (services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-		let session = authority.current_session().unwrap();
+		futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+			.unwrap();
+		let session = authority.accounts().current_session().unwrap();
 		let runtime = product_runtime(services, authority.clone());
 		let cx = CallContext::default();
 		let account = runtime.get_account(
@@ -35,8 +37,10 @@ fn pending_account_access_tracks_wallet_activation() {
 		match change {
 			"lock" => futures::executor::block_on(authority.disconnect()),
 			"reactivate" => {
-				futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-					.unwrap();
+				futures::executor::block_on(
+					authority.activate_local_session(RootEntropy::new(ENTROPY)),
+				)
+				.unwrap();
 			},
 			"reset" => authority.clear_product_state(&ProductId::for_test("myapp.dot")),
 			_ => unreachable!(),
@@ -50,7 +54,7 @@ fn pending_account_access_tracks_wallet_activation() {
 		assert_eq!(
 			(
 				futures::executor::block_on(account).map(|_| ()),
-				authority.current_session().map(|current| current.validation_id) ==
+				authority.accounts().current_session().map(|current| current.validation_id) ==
 					Some(session.validation_id),
 				platform.account_access_reviews.lock().unwrap().len(),
 			),
@@ -60,46 +64,49 @@ fn pending_account_access_tracks_wallet_activation() {
 	}
 }
 
+/// A signing host answers pairing proposals with its install-wide key, so the
+/// paired devices address it by that key: the host must project and serve the
+/// same one, with no paired wallet device of its own to name.
 #[test]
-fn product_reset_during_allocation_review_cannot_restore_native_grants() {
-	use futures::FutureExt;
+fn a_local_session_projects_the_install_wide_device_key() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_, authority) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		resource_allocation_confirmed: true,
-		resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
-		..StubPlatform::default()
-	});
-	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-	let runtime = product_runtime(services, authority.clone());
-	let cx = CallContext::default();
-	let allocation = ResourceAllocation::request(
-		&runtime,
-		&cx,
-		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-			resources: vec![v01::AllocatableResource::AutoSigning],
-		}),
-	);
-	futures::pin_mut!(allocation);
-	assert!(allocation.as_mut().now_or_never().is_none());
-	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
-	release.send(()).unwrap();
-	let result = futures::executor::block_on(allocation);
-	let status = keeps_auto_signing(&authority, "myapp.dot");
+	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
+	let auth_states = platform.auth_states.lock().unwrap();
+	let Some(AuthState::Connected(ui_info)) = auth_states.last() else {
+		panic!("activation should end connected: {auth_states:?}");
+	};
 	assert_eq!(
-		(result.map(|_| ()), status, platform.resource_allocation_reviews.lock().unwrap().len()),
 		(
-			Err(CallError::Domain(
-				truapi::versioned::resource_allocation::HostRequestResourceAllocationError::V1(
-					v01::ResourceAllocationError::Unknown {
-						reason: AuthorityError::Disconnected.to_string()
-					}
-				)
-			)),
-			false,
-			1
+			ui_info.device_enc_public_key,
+			ui_info.peer_device_enc_public_key,
+			futures::executor::block_on(authority.accounts().device_encryption_secret()),
 		),
+		(
+			Some(X25519PrivateKey::from(install_secret).public_key().0),
+			None,
+			Ok(Some(install_secret)),
+		)
+	);
+}
+
+/// An active session's `AuthState::Connected` already names the device key,
+/// and contacts encrypt to it, so the key cannot change under that session.
+#[test]
+fn an_active_session_keeps_its_device_key() {
+	let (_, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
+
+	let adoption = futures::executor::block_on(authority.adopt_device_encryption_secret([9; 32]));
+
+	assert_eq!(
+		(adoption.is_err(), futures::executor::block_on(authority.device_encryption_secret())),
+		(true, Ok(install_secret))
 	);
 }
 
@@ -114,7 +121,8 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let runtime = product_runtime(services, authority.clone());
 	let prompts_after_request = || {
 		futures::executor::block_on(runtime.get_account(
@@ -131,9 +139,11 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 	};
 	let mut prompts = vec![prompts_after_request(), prompts_after_request()];
 	futures::executor::block_on(authority.disconnect());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	prompts.push(prompts_after_request());
-	futures::executor::block_on(authority.activate_local_session(vec![0xCD; 16])).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new([0xCD; 16])))
+		.unwrap();
 	prompts.push(prompts_after_request());
 	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 	prompts.push(prompts_after_request());
@@ -146,19 +156,37 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 #[test]
 fn the_static_receive_secret_is_the_users_chat_key() {
 	use crate::{
-		host_logic::{
-			sso::pairing::derive_identity_chat_private_key, x25519_seal::X25519PrivateKey,
-		},
+		host_logic::{root_entropy::RootEntropy, x25519_seal::X25519PrivateKey},
 		nft_purse::StaticReceiveSecret,
 	};
 
 	let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
 	let signed_out = authority.static_receive_secret().map(|secret| secret.public_key());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 
 	let signed_in = authority.static_receive_secret().unwrap().public_key();
 
-	let chat_key = X25519PrivateKey::from(derive_identity_chat_private_key(&ENTROPY));
+	let chat_key =
+		X25519PrivateKey::from(RootEntropy::new(ENTROPY).derive_identity_chat_private_key());
 	assert_eq!(signed_in, chat_key.public_key());
 	assert!(matches!(signed_out, Err(AuthorityError::Disconnected)));
+}
+
+/// A host signs its own writes as the active identity through the runtime,
+/// so it keeps no entropy once the session is active.
+#[test]
+fn identity_signer_signs_as_the_active_identity_and_needs_a_session() {
+	use subxt::tx::Signer;
+
+	let (_, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+	let without_session = authority.identity_signer().ok().map(|signer| signer.account_id().0);
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let identity = RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+
+	assert_eq!(
+		(without_session, authority.identity_signer().unwrap().account_id().0),
+		(None, identity.public.to_bytes())
+	);
 }

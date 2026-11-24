@@ -84,14 +84,15 @@ pub trait Account: Send + Sync {
 	/// Retrieve the contextual alias for a context and ring.
 	///
 	/// ```ts
+	/// import { ringCollectionId } from "@parity/truapi";
+	///
 	/// const productContext = await truapi.system.getProductContext();
 	/// assert(productContext.isOk(), "getProductContext failed:", productContext);
 	///
 	/// const people = await truapi.chain.getChainInfo({ chain: "People" });
 	/// assert(people.isOk(), "getChainInfo failed:", people);
 	///
-	/// const PEOPLE_COLLECTION_ID =
-	///   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465" as const;
+	/// const PEOPLE_COLLECTION_ID = ringCollectionId("pop:polkadot.network/people-lite");
 	/// const keyHandle = {
 	///   dotNsIdentifier: productContext.value.productId,
 	///   derivationIndex: { tag: "Index" as const, value: 0 },
@@ -128,7 +129,7 @@ pub trait Account: Send + Sync {
 	/// Generate a ring VRF proof with an explicitly registered member key.
 	///
 	/// ```ts
-	/// import { asProductId } from "@parity/truapi";
+	/// import { asProductId, ringCollectionId } from "@parity/truapi";
 	///
 	/// const productContext = await truapi.system.getProductContext();
 	/// assert(productContext.isOk(), "getProductContext failed:", productContext);
@@ -136,8 +137,7 @@ pub trait Account: Send + Sync {
 	/// const people = await truapi.chain.getChainInfo({ chain: "People" });
 	/// assert(people.isOk(), "getChainInfo failed:", people);
 	///
-	/// const PEOPLE_COLLECTION_ID =
-	///   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
+	/// const PEOPLE_COLLECTION_ID = ringCollectionId("pop:polkadot.network/people-lite");
 	///
 	/// const result = await truapi.account.createAccountProof({
 	///   keyHandle: {
@@ -217,11 +217,12 @@ pub trait Account: Send + Sync {
 	/// Register a ring-VRF key owned by the calling product.
 	///
 	/// ```ts
+	/// import { ringCollectionId } from "@parity/truapi";
+	///
 	/// const people = await truapi.chain.getChainInfo({ chain: "People" });
 	/// assert(people.isOk(), "getChainInfo failed:", people);
 	///
-	/// const PEOPLE_COLLECTION_ID =
-	///   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
+	/// const PEOPLE_COLLECTION_ID = ringCollectionId("pop:polkadot.network/people-lite");
 	///
 	/// const result = await truapi.account.registerRingVrfKey({
 	///   index: { tag: "Index", value: 0 },

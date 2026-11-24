@@ -17,7 +17,9 @@ use truapi::{
 		HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
 		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
-		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseListChequesError, HostNftPurseListChequesRequest,
+		HostNftPurseListChequesResponse, HostNftPurseListPursesError,
+		HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
 		HostNftPurseListenOneTimePaymentRequest, HostNftPurseListenPaymentInboxError,
 		HostNftPurseListenPaymentInboxItem, HostNftPurseListenPaymentInboxRequest,
@@ -37,7 +39,7 @@ use truapi::{
 use crate::{
 	nft::{AllocateItemsError, CreatePurseError, PurseId, UnknownPurse},
 	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize},
-	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
+	runtime::{AccountHolder, ProductConnection, ProductRuntimeHost, versioning::version},
 };
 
 impl ProductConnection {
@@ -48,7 +50,7 @@ impl ProductConnection {
 }
 
 #[async_trait::async_trait]
-impl NftPurse for ProductRuntimeHost {
+impl<H: AccountHolder> NftPurse for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_purse"))]
 	async fn create_purse(
 		&self,
@@ -111,6 +113,23 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseRevokeChequeRequest,
 	) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
 		version(request).exec(|request| self.revoke_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.list_cheques"))]
+	async fn list_cheques(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseListChequesRequest,
+	) -> Result<HostNftPurseListChequesResponse, CallError<HostNftPurseListChequesError>> {
+		version(request)
+			.exec(|_| async move {
+				self.require_session()?;
+				let purses = self.connection.nft_purses()?;
+				let creator = self.connection.product_id();
+				let cheques = purses.list_cheques(creator).await.map_err(host_failure)?;
+				Ok(latest::HostNftPurseListChequesResponse { cheques })
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.refund"))]
@@ -198,7 +217,7 @@ impl NftPurse for ProductRuntimeHost {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	async fn create_nft_purse(
 		&self,
 		request: latest::HostNftPurseCreatePurseRequest,

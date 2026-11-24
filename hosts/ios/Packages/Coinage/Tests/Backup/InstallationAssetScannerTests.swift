@@ -47,7 +47,7 @@ struct InstallationAssetScannerTests {
         let unfinalizedKey = try keyFactory.derivePublicKey(index: CoinageKeyIndex(installation: .other, item: 0))
         coinQuery.setPresent(unfinalizedKey, atBlockHash: chain.bestHead.hash)
 
-        let coins = try await scanner.scanCoins(installation: .other, startIndex: 0, count: 2)
+        let coins = try await scanner.scanCoins(installation: .other, startIndex: 0, count: 2).coins
 
         let coin = try #require(coins.first)
         #expect(coins.count == 1)
@@ -56,6 +56,20 @@ struct InstallationAssetScannerTests {
         #expect(coin.age == 7)
         #expect(coin.isOnchain)
         #expect(coin.publicKey == key)
+    }
+
+    @Test("a foreign coin is not recovered, but its index counts as used")
+    func foreignCoinIsSkippedButUsed() async throws {
+        let foreignKey = try keyFactory.derivePublicKey(index: CoinageKeyIndex(installation: .other, item: 0))
+        let ownIndex = CoinageKeyIndex(installation: .other, item: 1)
+        let ownKey = try keyFactory.derivePublicKey(index: ownIndex)
+        coinQuery.setForeign(foreignKey, atBlockHash: chain.finalizedHead.hash, instanceId: 9)
+        coinQuery.setPresent(ownKey, atBlockHash: chain.finalizedHead.hash)
+
+        let batch = try await scanner.scanCoins(installation: .other, startIndex: 0, count: 2)
+
+        #expect(batch.coins.map(\.derivationIndex) == [ownIndex])
+        #expect(batch.usedCount == 2)
     }
 
     @Test("vouchers are read at the finalized head, not the best one")

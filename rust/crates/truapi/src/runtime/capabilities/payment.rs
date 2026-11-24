@@ -50,7 +50,7 @@ use crate::{
 		ProductContext,
 	},
 	runtime::{
-		ProductRuntimeHost,
+		AccountHolder, ProductRuntimeHost,
 		funding::{Claim, FundsAsked, engine_holds},
 		payment_id::host_payment_id,
 		versioning::version,
@@ -58,7 +58,7 @@ use crate::{
 };
 
 #[async_trait::async_trait]
-impl CoinPayment for ProductRuntimeHost {
+impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
 	async fn create_purse(
 		&self,
@@ -180,7 +180,7 @@ enum EngineAnswer {
 	Unsure,
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Take `host_id` for a call that starts funds outside any funding
 	/// session. Refused with `already_exists` while a call under it is in
 	/// flight or a session holds funds under it.
@@ -278,7 +278,7 @@ impl ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Payment for ProductRuntimeHost {
+impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "payment.balance_subscribe"))]
 	async fn balance_subscribe(
 		&self,
@@ -387,7 +387,7 @@ impl Payment for ProductRuntimeHost {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// `Denied` unless a pairing session is connected.
 	pub(crate) fn require_session<E>(&self) -> Result<(), CallError<E>> {
 		match self.accounts.current_session() {

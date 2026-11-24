@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.truapi_provider.StorageClient
 import java.io.File
+import java.net.URLEncoder
 import javax.inject.Inject
 
 /** Keeps the light client's finalized state in no-backup storage, one file per chain. */
@@ -14,15 +15,15 @@ class LightClientStorage @Inject constructor(
 ) : StorageClient {
     private val directory = File(context.noBackupFilesDir, "light-client")
 
-    override suspend fun load(genesisHash: ByteArray): String? = withContext(Dispatchers.IO) {
-        file(genesisHash).takeIf(File::exists)?.readText()
+    override suspend fun load(genesisHash: ByteArray, stack: String?): String? = withContext(Dispatchers.IO) {
+        file(genesisHash, stack).takeIf(File::exists)?.readText()
     }
 
     // Written aside and renamed, so a process killed mid-write leaves the previous state intact.
-    override suspend fun save(genesisHash: ByteArray, blob: String) = withContext(Dispatchers.IO) {
-        directory.mkdirs()
-        val target = file(genesisHash)
-        val written = File(directory, "${target.name}.tmp").apply { writeText(blob) }
+    override suspend fun save(genesisHash: ByteArray, blob: String, stack: String?) = withContext(Dispatchers.IO) {
+        val target = file(genesisHash, stack)
+        target.parentFile?.mkdirs()
+        val written = File(target.parentFile, "${target.name}.tmp").apply { writeText(blob) }
         check(written.renameTo(target)) { "could not store the light client state for ${target.name}" }
     }
 
@@ -31,5 +32,10 @@ class LightClientStorage @Inject constructor(
         withContext(Dispatchers.IO) { directory.deleteRecursively() }
     }
 
-    private fun file(genesisHash: ByteArray) = File(directory, genesisHash.toHexString())
+    // A provider built without a stack keeps the top-level layout; a stack's chains get a directory of
+    // their own, since the same genesis on another stack is another blob.
+    private fun file(genesisHash: ByteArray, stack: String?): File {
+        val parent = stack?.let { File(directory, URLEncoder.encode(it, Charsets.UTF_8.name())) } ?: directory
+        return File(parent, genesisHash.toHexString())
+    }
 }

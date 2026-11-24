@@ -275,7 +275,7 @@ private extension TransferAmountPresenter {
                 if validation.requiresPrivacyConfirmation {
                     presentPrivacyConfirmation(validation: validation)
                 } else {
-                    doSubmit(validation: validation)
+                    authorizeAndSubmit(validation: validation)
                 }
             } catch {
                 view?.didStopSubmission()
@@ -291,12 +291,22 @@ private extension TransferAmountPresenter {
             from: view,
             amount: amountText,
             onSendAnyway: { [weak self] in
-                self?.doSubmit(validation: validation)
+                self?.authorizeAndSubmit(validation: validation)
             },
             onCancel: { [weak self] in
                 self?.view?.didStopSubmission()
             }
         )
+    }
+
+    func authorizeAndSubmit(validation: TransferPreviewValidation) {
+        wireframe.authorize(animated: true, retriable: false) { [weak self] isAuthorized in
+            guard isAuthorized else {
+                self?.view?.didStopSubmission()
+                return
+            }
+            self?.doSubmit(validation: validation)
+        }
     }
 
     func doSubmit(validation: TransferPreviewValidation) {

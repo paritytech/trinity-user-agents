@@ -133,7 +133,7 @@ pub enum ResponderExit {
 	SubscriptionEnded,
 }
 
-/// Why [`crate::SigningHostRuntime::resume_pairing`] stopped serving.
+/// Why [`crate::HostRuntime::resume_pairing`] stopped serving.
 ///
 /// Either way the peer is still paired.
 #[derive(Debug, derive_more::Display, derive_more::Error)]
@@ -343,14 +343,14 @@ impl SsoResponderService {
 		services: Arc<RuntimeServices>,
 		wallet: Arc<WalletAccountHolder>,
 		consent: Arc<ProductConsent>,
-	) -> Arc<Self> {
-		Arc::new(Self {
+	) -> Self {
+		Self {
 			services,
 			wallet,
 			consent,
 			replay_locks: SsoReplayLocks::default(),
 			unpublished_answers: UnpublishedAnswers::default(),
-		})
+		}
 	}
 
 	fn account_holder_service(&self, session: AuthoritySession) -> SsoAccountHolderService {
@@ -394,8 +394,7 @@ impl SsoResponderService {
 	) -> Result<EstablishedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let wallet_session = self.wallet_session()?;
-		let device_enc_secret =
-			X25519PrivateKey::from(self.services.device_encryption_secret().await?);
+		let device_enc_secret = X25519PrivateKey::from(self.wallet.encryption_secret().await?);
 		let device_enc_pub_key = device_enc_secret.public_key().0;
 		let (session, statement) = self
 			.wallet

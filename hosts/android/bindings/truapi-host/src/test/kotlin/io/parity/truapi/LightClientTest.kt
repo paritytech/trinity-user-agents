@@ -13,12 +13,12 @@ class LightClientTest {
     private val closed = LinkedBlockingQueue<UInt>()
 
     private val storage = object : StorageClient {
-        override suspend fun load(genesisHash: ByteArray): String? {
+        override suspend fun load(genesisHash: ByteArray, stack: String?): String? {
             loads.add(genesisHash.toHexString())
             return null
         }
 
-        override suspend fun save(genesisHash: ByteArray, blob: String) = Unit
+        override suspend fun save(genesisHash: ByteArray, blob: String, stack: String?) = Unit
     }
 
     private fun provider(urls: List<String>) = CoreChainConnections(
@@ -61,7 +61,7 @@ class LightClientTest {
     }
 
     private companion object {
-        const val PREVIEWNET_RELAY = "860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92"
+        const val PREVIEWNET_RELAY = "48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6"
         const val GENESIS_REQUEST = """{"jsonrpc":"2.0","id":1,"method":"chainSpec_v1_genesisHash","params":[]}"""
     }
 }

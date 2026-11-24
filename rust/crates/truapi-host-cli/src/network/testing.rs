@@ -27,14 +27,6 @@ pub fn edit_stack(edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
 	Document::parse(&plain).expect("invalid test descriptor").descriptor().clone()
 }
 
-/// The bundled paseo-next-v2 descriptor with `role`'s chain edited.
-pub fn edit_chain(role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
-	edit_stack(|descriptor| {
-		let chains = descriptor["chains"].as_array_mut().expect("chains is not an array");
-		edit(chains.iter_mut().find(|chain| chain["role"] == role).expect("role missing"));
-	})
-}
-
 impl Stack {
 	/// The descriptor this stack reads.
 	pub fn descriptor(&self) -> &Descriptor {
@@ -67,7 +59,8 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(descriptor, self.chain_backend).expect("edited stack refused")
+		Self::new(self.stack_id.clone(), descriptor, self.chain_backend)
+			.expect("edited stack refused")
 	}
 
 	/// This stack with the chain of `role` edited as JSON.

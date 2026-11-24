@@ -31,6 +31,27 @@ PR pipeline (`.github/workflows/pr.yml`):
 3. **Hardcoded strings** (ubuntu-latest) — `Runscripts/check_hardcoded_strings.py` through reviewdog; fails on hardcoded UI strings in lines the PR adds
 4. Skip with `skip-ci` label or `release/` branch prefix
 
+## What to Test
+
+Tests cover **risky behavior**, not every type. Use the `tester` skill
+(`.claude/plugins/polkadotapp-workflows/skills/tester/`) to plan, audit or deflake.
+
+- **Triage first.** Score impact x likelihood; only Tier 1/2 units get tests
+  (`tester/references/risk-triage.md`). Field-copy mappers, pass-through wiring and `init`
+  assembly get none.
+- **Humble objects are not tested.** ViewControllers, ViewLayouts, SwiftUI views, cells,
+  Wireframes and ViewFactories only move data. A rule inside one is extracted into a pure
+  type (view model factory, policy, reducer) and that type is tested
+  (`tester/references/humble-objects.md`). No assertions on label text, fonts, colors or
+  view hierarchy.
+- **Coverage target is 70 to 80% of the files holding Tier 1/2 logic**, not a global
+  percentage. Coverage finds gaps; it is never a reason to add a test.
+- **One behavior, one test.** Case tables use `@Test(arguments:)`.
+- **Time is injected.** Waits take `any Clock<Duration>`, wall-clock reads take
+  `DateProviding`; tests use `ManualClock` and fixed providers.
+  No `Task.sleep`, fixed polling or short timeouts in tests; timeouts are hang guards
+  (`withTimeout(.seconds(60))`, `.timeLimit(.minutes(1))`) only (`tester/references/time-and-async.md`).
+
 ## Test Patterns
 
 ### Prefer real implementations

@@ -77,7 +77,18 @@ function normalizePermissionPolicy(
 }
 
 /** The core's product-storage key prefix, up to and including its version. */
-const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
+const CORE_PRODUCT_STORAGE_PREFIX = "truapi:product-storage:v1:";
+
+/**
+ * The prefix of every key the core hands the host for `productId`'s values,
+ * as `ProductStorageKey::owner_prefix` builds it. The id's length is in UTF-8
+ * bytes, so one product's prefix never matches a product whose id merely
+ * starts with it.
+ */
+function coreProductStorageOwnerPrefix(productId: ProductId): string {
+  const length = new TextEncoder().encode(productId).length;
+  return `${CORE_PRODUCT_STORAGE_PREFIX}${length}:${productId}:`;
+}
 
 /**
  * The product's own key inside a core-namespaced one, or `undefined`.
@@ -93,9 +104,8 @@ const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
  * where the id ends, not the next separator.
  */
 export function coreProductStorageKey(stored: string): string | undefined {
-  const prefix = CORE_PRODUCT_STORAGE_PREFIX.exec(stored);
-  if (!prefix) return undefined;
-  const rest = stored.slice(prefix[0].length);
+  if (!stored.startsWith(CORE_PRODUCT_STORAGE_PREFIX)) return undefined;
+  const rest = stored.slice(CORE_PRODUCT_STORAGE_PREFIX.length);
   const separator = rest.indexOf(":");
   if (separator < 0) return undefined;
   const length = Number(rest.slice(0, separator));
@@ -184,6 +194,8 @@ export type PermissionKind = "device" | "remote";
 export interface NotificationLogEntry {
   /** Host-assigned id, the same one `cancelNotification` takes. */
   id: number;
+  /** Title the core let through, or undefined when the host shows the product id. */
+  title: string | undefined;
   /** Notification text. */
   text: string;
   /** Optional URL to open on tap. */
@@ -402,12 +414,12 @@ export interface MockHostConfig {
   devicePermissions?: PermissionPolicy;
   /** Answer for `remotePermission`. Default `"allow-all"`. */
   remotePermissions?: PermissionPolicy;
-  /** Whether `featureSupported` reports support. Default `true`. */
+  /** Whether `featureSupported` reports chain support. The core answers materials questions itself. Default `true`. */
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `servedChains`, as a real host
-   * does, so a chain outside that set is unsupported. Default `false`. It
-   * becomes the default in a later breaking release. The Rust
+   * does, so a chain outside that set is unsupported. Default `true`. `false`
+   * reports every chain as supported. The Rust
    * `MockConfig::only_served_chains` is the same option.
    */
   onlyServedChains?: boolean;
@@ -888,7 +900,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
-    onlyServedChains = false,
+    onlyServedChains = true,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -1116,6 +1128,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         storage.delete(productKey(key));
         publishStorage(key, undefined);
       },
+      async clearProduct(productId) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        const owned = coreProductStorageOwnerPrefix(productId);
+        for (const stored of [...storage.keys()]) {
+          if (stored.startsWith(productKey(owned))) storage.delete(stored);
+        }
+        for (const key of [...storageSubscribers.keys()]) {
+          if (key.startsWith(owned)) publishStorage(key, undefined);
+        }
+      },
       subscribeStorage(key) {
         const current = storage.get(productKey(key));
         return liveSubscription<HostLocalStorageChangeItem>(
@@ -1181,6 +1203,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const id = nextNotificationId++;
         pushedNotifications.push({
           id,
+          title: notification.title,
           text: notification.text,
           deeplink: notification.deeplink,
           scheduledAt: notification.scheduledAt,
@@ -1241,12 +1264,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
         const served =
-          !onlyServedChains ||
-          servedChains.some(
-            (genesisHash) =>
-              normalizeHash(genesisHash) ===
-              normalizeHash(request.value.genesisHash),
-          );
+          request.tag === "Chain" &&
+          (!onlyServedChains ||
+            servedChains.some(
+              (genesisHash) =>
+                normalizeHash(genesisHash) ===
+                normalizeHash(request.value.genesisHash),
+            ));
         return { supported: featureSupported && served };
       },
     },
@@ -1358,17 +1382,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     chat: {
-      async createChatRoom(_product, request) {
+      async createChatRoom(_product, roomId) {
         if (faults.chatError) throw new Error(faults.chatError);
-        if (chatRooms.has(request.roomId)) return { status: "Exists" };
-        chatRooms.set(request.roomId, {
-          roomId: request.roomId,
+        if (chatRooms.has(roomId)) return "Exists";
+        chatRooms.set(roomId, {
+          roomId,
           // A product that creates a room hosts it; a product reaching a room
           // as a bot registers the bot instead.
           participatingAs: "RoomHost",
         });
         publishChatRooms();
-        return { status: "New" };
+        return "New";
       },
       async registerChatBot(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
@@ -1733,6 +1757,17 @@ export interface TestStackChain {
  * production bundle takes a {@link ProductRuntimeConfig.stack} only.
  */
 export interface TestStack {
+  /**
+   * Tells this stack apart from others. Any non-empty string; a host with a
+   * bundled descriptor takes the key in the stack's link.
+   */
+  id: string;
+  /**
+   * The run of the stack's chains, which changes when they restart, as after
+   * a wipe. Any non-empty string; a host with a bundled descriptor takes the
+   * descriptor's `generation`.
+   */
+  generation: string;
   /** The network `getChainInfo` reports. */
   network: string;
   /** The dotNS TLD a signing host derives its reserved identities under. */
@@ -1742,10 +1777,10 @@ export interface TestStack {
   /** The Bulletin chain, which takes the core's own preimage submissions. */
   bulletin: TestStackChain;
   /**
-   * Asset Hub, where product manifests resolve from dotNS. Leave it out for a
-   * host with no Asset Hub; an all-zero hash is refused.
+   * Asset Hub, where product manifests resolve from dotNS. An all-zero hash
+   * is refused.
    */
-  assetHub?: TestStackChain;
+  assetHub: TestStackChain;
   /** The relay chain. */
   relay?: TestStackChain;
   /**
@@ -1762,15 +1797,41 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
 
 /**
  * The stack a mock host runs by default: network `mock` under the `paseo`
- * TLD, over the {@link MOCK_GENESIS} chains.
+ * TLD, over the {@link MOCK_GENESIS} chains, with `mock` as its `id` and its
+ * `generation`.
  */
 export function mockTestStack(): TestStack {
   return {
+    id: "mock",
+    generation: "mock",
     network: "mock",
     tld: "paseo",
     people: { genesisHash: MOCK_GENESIS.people },
     bulletin: { genesisHash: MOCK_GENESIS.bulletin },
     assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+  };
+}
+
+/**
+ * `stack` with a `generation` named after its genesis hashes in lowercase,
+ * for a stack whose chains were replaced: other chains are another run. A
+ * stack still on the {@link mockTestStack} chains keeps its `mock`
+ * generation.
+ */
+export function withChainsGeneration(stack: TestStack): TestStack {
+  const genesis = (chain?: TestStackChain): string =>
+    chain === undefined
+      ? "none"
+      : typeof chain.genesisHash === "string"
+        ? chain.genesisHash.toLowerCase()
+        : `0x${hex(chain.genesisHash)}`;
+  const chainsOf = ({ relay, assetHub, people, bulletin }: TestStack) =>
+    [relay, assetHub, people, bulletin].map(genesis).join(":");
+  const mock = mockTestStack();
+  const chains = chainsOf(stack);
+  return {
+    ...stack,
+    generation: chains === chainsOf(mock) ? mock.generation : chains,
   };
 }
 

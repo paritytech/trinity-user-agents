@@ -143,6 +143,13 @@ sealed class ChatMessageStatementContent {
         val requestId: String,
         val device: DeviceInfoScale,
     ) : ChatMessageStatementContent()
+
+    @Serializable
+    @EnumIndex(22)
+    class Seen(
+        val messageId: String,
+        val timestamp: ULong
+    ) : ChatMessageStatementContent()
 }
 
 @Serializable
