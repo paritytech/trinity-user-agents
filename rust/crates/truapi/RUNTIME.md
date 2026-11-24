@@ -350,7 +350,7 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`, and the host
+bindings expose it as `claim_worker`, one reference per claim, and the host
 reports a worker that stopped without being asked, because it crashed, failed
 to boot or the system killed it, with `worker_exited`: while references remain
 the ledger requests `Start` again, and the core hands the restarted worker its
@@ -359,13 +359,11 @@ the first restart is immediate, then each waits 1 s, doubling up to 5 min, and
 a restart still waiting is dropped once nothing holds the worker or it was
 started meanwhile. On the run's third crash the host hears
 `worker_crashing(product_id, crashes)` and tells the user that product is not
-working. Every `Start` or
-`Stop` the counts produce is requested through the host's
-`request_worker_transition` callback, in the order the ledger produced it and one
-at a time, whether the host asked for the transition or the core took the
-reference itself for an open render. The host runs the executable and the core
-keeps the count; on the web `@parity/truapi-host` pushes the wanted level to
-the page.
+working. The ledger delivers `start_worker(product_id, attempt_id)` and
+`stop_worker(product_id)` in order. A managed native runtime uses the attempt
+ID to publish readiness and dispose the correct execution. Hosts that manage
+their own workers receive the transition through `request_worker_transition`.
+On the web, `@parity/truapi-host` pushes the wanted level to the page.
 
 ### Inter-host SSO
 

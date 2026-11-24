@@ -139,8 +139,14 @@ pub struct CallbackPlatform {
 }
 
 impl crate::host_logic::worker::WorkerController for CallbackPlatform {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.callbacks.request_worker_transition(product_id.clone(), transition);
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.callbacks
+			.request_worker_transition(product_id.clone(), WorkerTransition::Start);
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.callbacks
+			.request_worker_transition(product_id.clone(), WorkerTransition::Stop);
 	}
 
 	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {

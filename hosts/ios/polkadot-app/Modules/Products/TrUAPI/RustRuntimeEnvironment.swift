@@ -118,7 +118,7 @@ private extension RustRuntimeEnvironment {
         let acknowledge: (@Sendable () -> Bool)?
         if case let .worker(_, attempt) = purpose {
             execution = try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
-            acknowledge = { execution.reportReady(for: attempt) }
+            acknowledge = execution.reportWorkerModuleStarted
         } else {
             execution = try runtime.openProductExecution(
                 bridge: bridges.host,

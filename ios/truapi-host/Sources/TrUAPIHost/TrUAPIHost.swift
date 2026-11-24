@@ -1102,8 +1102,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         callbackRetainer = adapter
         let inner: NativeTrUApiHostRuntime
         if let workerHost {
-            inner = try .withManagedProductWorkers(callbacks: adapter, runtimeConfig: runtimeConfig)
-            _ = inner.enableProductWorkers(host: workerHost)
+            inner = try .withManagedProductWorkers(callbacks: adapter, runtimeConfig: runtimeConfig, workerHost: workerHost)
         } else {
             inner = try .withRuntimeConfig(callbacks: adapter, runtimeConfig: runtimeConfig)
         }
@@ -1751,8 +1750,8 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     }
 
     /// Acknowledge that the WebView loaded this attempt's worker entry.
-    public func reportReady(for attempt: NativeWorkerAttempt) -> Bool {
-        attempt.ready(execution: inner)
+    public func reportWorkerModuleStarted() -> Bool {
+        inner.reportWorkerModuleStarted()
     }
 
     deinit {

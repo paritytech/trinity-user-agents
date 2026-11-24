@@ -10,17 +10,25 @@ struct Recorder {
 }
 
 impl Recorder {
+	fn record(&self, product_id: &ProductId, transition: WorkerTransition) {
+		self.seen
+			.lock()
+			.expect("recorder mutex poisoned")
+			.push((product_id.to_string(), transition));
+	}
+
 	fn seen(&self) -> Vec<(String, WorkerTransition)> {
 		self.seen.lock().expect("recorder mutex poisoned").clone()
 	}
 }
 
 impl WorkerController for Recorder {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.seen
-			.lock()
-			.expect("recorder mutex poisoned")
-			.push((product_id.to_string(), transition));
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.record(product_id, WorkerTransition::Start);
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.record(product_id, WorkerTransition::Stop);
 	}
 
 	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
@@ -195,22 +203,21 @@ struct Reentrant {
 	seen: Mutex<Vec<WorkerTransition>>,
 	/// Cleared after the one re-entrant pair, so the pair it produces does
 	/// not produce another.
-	reenter_on: Mutex<Option<WorkerTransition>>,
+	reenter_on_stop: Mutex<bool>,
 }
 
 impl WorkerController for Reentrant {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.seen.lock().expect("recorder mutex poisoned").push(transition);
-		{
-			let mut reenter_on = self.reenter_on.lock().expect("gate mutex poisoned");
-			if *reenter_on != Some(transition) {
-				return;
-			}
-			*reenter_on = None;
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Start);
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Stop);
+		if core::mem::take(&mut *self.reenter_on_stop.lock().expect("gate mutex poisoned")) {
+			let ledger = self.ledger.upgrade().expect("ledger outlives its controller");
+			ledger.acquire(product_id);
+			ledger.release(product_id);
 		}
-		let ledger = self.ledger.upgrade().expect("ledger outlives its controller");
-		ledger.acquire(product_id);
-		ledger.release(product_id);
 	}
 }
 
@@ -220,7 +227,7 @@ fn a_reentrant_call_from_the_controller_does_not_deadlock() {
 	let controller = Arc::new(Reentrant {
 		ledger: Arc::downgrade(&ledger),
 		seen: Mutex::new(Vec::new()),
-		reenter_on: Mutex::new(Some(WorkerTransition::Stop)),
+		reenter_on_stop: Mutex::new(true),
 	});
 	assert!(ledger.install_worker_controller(controller.clone()));
 
@@ -250,14 +257,18 @@ struct Gated {
 }
 
 impl WorkerController for Gated {
-	fn request_worker_transition(&self, _product_id: &ProductId, transition: WorkerTransition) {
-		self.seen.lock().expect("recorder mutex poisoned").push(transition);
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Start);
 		let gate = self.gate.lock().expect("gate mutex poisoned").take();
 		let Some(gate) = gate else {
 			return;
 		};
 		self.entered.send(()).expect("test thread gone");
 		gate.recv().expect("test thread gone");
+	}
+
+	fn stop_worker(&self, _product_id: &ProductId) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Stop);
 	}
 }
 
@@ -316,7 +327,11 @@ impl Counter {
 }
 
 impl WorkerController for Counter {
-	fn request_worker_transition(&self, _product_id: &ProductId, _transition: WorkerTransition) {
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		*self.delivered.lock().expect("counter mutex poisoned") += 1;
+	}
+
+	fn stop_worker(&self, _product_id: &ProductId) {
 		*self.delivered.lock().expect("counter mutex poisoned") += 1;
 	}
 }
@@ -400,31 +415,25 @@ fn nothing_stays_queued_once_the_ledger_falls_quiet() {
 	}
 }
 
-/// Observer that panics on its first call and records every call after.
-struct PanicsOnFirstCall {
+/// Observer that panics on startup and records the subsequent stop.
+struct PanicsOnStart {
 	seen: Mutex<Vec<WorkerTransition>>,
-	called_before: Mutex<bool>,
 }
 
-impl WorkerController for PanicsOnFirstCall {
-	fn request_worker_transition(&self, _product_id: &ProductId, transition: WorkerTransition) {
-		let mut called_before = self.called_before.lock().expect("gate mutex poisoned");
-		if !*called_before {
-			*called_before = true;
-			drop(called_before);
-			panic!("controller panics on its first call");
-		}
-		self.seen.lock().expect("recorder mutex poisoned").push(transition);
+impl WorkerController for PanicsOnStart {
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		panic!("controller panics on its first call");
+	}
+
+	fn stop_worker(&self, _product_id: &ProductId) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Stop);
 	}
 }
 
 #[test]
 fn a_panicking_delivery_still_lets_a_later_transition_through() {
 	let ledger = Arc::new(WorkerLedger::default());
-	let controller = Arc::new(PanicsOnFirstCall {
-		seen: Mutex::new(Vec::new()),
-		called_before: Mutex::new(false),
-	});
+	let controller = Arc::new(PanicsOnStart { seen: Mutex::new(Vec::new()) });
 	assert!(ledger.install_worker_controller(controller.clone()));
 
 	let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

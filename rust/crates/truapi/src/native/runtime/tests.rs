@@ -275,7 +275,7 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 	};
 
 	let updates = Box::new(Updates(std::sync::Mutex::new(Vec::new())));
-	let worker = super::worker_execution::shared(&execution);
+	let worker: Arc<dyn NativeWorkerExecution> = execution.clone();
 	let _resolution = worker.resolve_materials(tree, context.clone(), true, updates);
 	let delivered = crate::test_support::next(&mut failures)
 		.expect("a failure report")

@@ -6563,21 +6563,25 @@ struct DemandRecorder {
 }
 
 impl DemandRecorder {
+	fn record(&self, product_id: &ProductId, transition: crate::WorkerTransition) {
+		self.transitions
+			.lock()
+			.expect("demand recorder mutex poisoned")
+			.push((product_id.to_string(), transition));
+	}
+
 	fn seen(&self) -> Vec<(String, crate::host_logic::worker::WorkerTransition)> {
 		self.transitions.lock().expect("demand recorder mutex poisoned").clone()
 	}
 }
 
 impl crate::host_logic::worker::WorkerController for DemandRecorder {
-	fn request_worker_transition(
-		&self,
-		product_id: &ProductId,
-		transition: crate::host_logic::worker::WorkerTransition,
-	) {
-		self.transitions
-			.lock()
-			.expect("demand recorder mutex poisoned")
-			.push((product_id.to_string(), transition));
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.record(product_id, crate::WorkerTransition::Start);
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.record(product_id, crate::WorkerTransition::Stop);
 	}
 }
 
@@ -12638,14 +12642,10 @@ struct EndingWorkerController {
 }
 
 impl crate::host_logic::worker::WorkerController for EndingWorkerController {
-	fn request_worker_transition(
-		&self,
-		product_id: &ProductId,
-		transition: crate::host_logic::worker::WorkerTransition,
-	) {
-		if product_id.as_str() != "ramp.dot" ||
-			transition != crate::host_logic::worker::WorkerTransition::Start
-		{
+	fn stop_worker(&self, _product_id: &ProductId) {}
+
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		if product_id.as_str() != "ramp.dot" {
 			return;
 		}
 		let (Some(services), Some(intent)) =

@@ -188,34 +188,6 @@ pub struct RuntimeServices {
 }
 
 impl RuntimeServices {
-	/// The host reports that `product_id`'s worker stopped without being
-	/// asked to. While something holds it, it is started again once the
-	/// ledger's backoff for its run of crashes has passed.
-	pub fn worker_exited(self: &Arc<Self>, product_id: &crate::platform::ProductId) {
-		self.worker_attempt_exited(product_id, None);
-	}
-
-	/// Apply crash backoff only if the reported attempt still serves this product.
-	pub fn worker_attempt_exited(
-		self: &Arc<Self>,
-		product_id: &crate::platform::ProductId,
-		attempt: Option<u64>,
-	) {
-		let Some(wait_ms) =
-			self.worker_ledger.exited(product_id, attempt, crate::current_unix_millis())
-		else {
-			return;
-		};
-		let services = Arc::downgrade(self);
-		let product_id = product_id.clone();
-		self.spawner.spawn(async move {
-			futures_timer::Delay::new(core::time::Duration::from_millis(wait_ms)).await;
-			if let Some(services) = services.upgrade() {
-				services.worker_ledger.restart(&product_id, attempt);
-			}
-		});
-	}
-
 	/// Build role-neutral runtime services from the platform, the host
 	/// identity reported to products, and the stack whose People chain backs
 	/// the statement store, whose Bulletin chain takes in-core preimage

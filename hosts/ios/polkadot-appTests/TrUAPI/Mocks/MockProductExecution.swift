@@ -24,7 +24,7 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
     private(set) var renderRequests: [ProductRendererRenderRequest] = []
-    private(set) var renderObservers: [NativeRendererObserver] = []
+    private(set) var renders: [(observer: NativeRendererObserver, cancellation: AsyncStream<Void>)] = []
     /// Errors thrown by successive `render` calls, consumed in order; once
     /// empty the call succeeds. Lets tests drive the startup retry loop.
     var renderErrors: [Error] = []
@@ -100,11 +100,12 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
             throw renderErrors.removeFirst()
         }
 
-        renderObservers.append(observer)
+        let subscription = RenderSubscription(noHandle: .init())
+        renders.append((observer, subscription.cancellation.stream))
         renderNodes.forEach { observer.onUpdate(node: $0) }
         if !keepsRenderStreamOpen { observer.onComplete() }
         renderSignal.yield()
-        return RenderSubscription(noHandle: .init())
+        return subscription
     }
 
     override func publishRendererAction(item: HostRendererActionSubscribeItem) throws {
@@ -153,5 +154,7 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
 }
 
 private final class RenderSubscription: NativeSubscription, @unchecked Sendable {
-    override func cancel() {}
+    let cancellation = AsyncStream<Void>.makeStream()
+
+    override func cancel() { cancellation.continuation.yield() }
 }
