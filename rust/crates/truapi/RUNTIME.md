@@ -225,6 +225,31 @@ A newer descriptor that changes a genesis hash, the network, the TLD or the
 again. Any other change applies at once. `StackStatus` documents the rest,
 including the `generation` a host keys cached chain data by.
 
+#### After a wipe
+
+A wipe keeps a stack's id and replaces its chains. The core tells one run of
+the chains from the next by `StackRun`: the descriptor's `generation` and the
+Asset Hub, People and Bulletin genesis hashes. A runtime is built on one run,
+so the core notices a wipe at its next start.
+
+What the core stored about the chains carries the run it was written in:
+
+- Cached manifests and allowance keys from another run, or stored without a
+  run, are ignored until they are written again.
+- The ring-VRF registry is the wallet's own record, so it is kept. It loses
+  only the rings on chains of its run that the stack no longer has.
+- The `SessionUsernamesRun` slot records the run in which the usernames of the
+  `AuthSession` blob were read, with a hash of that blob.
+
+The session and the stored permissions are kept.
+
+A session is installed without waiting on dotNS, whether it is restored from
+the slot or passed to `activate_external_session`. The core looks its
+usernames up afterwards, unless the record vouches for the blob and the blob
+has a username. Until the lookup answers, usernames with no record are kept,
+and usernames whose record names another run or blob are dropped. A lookup
+that fails changes nothing. One that finds no username clears the stored ones.
+
 ### Core database
 
 Native signing hosts (iOS, Android, the CLI) give the core a directory for its
@@ -482,23 +507,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
 
 - `ProductStorage`: product-scoped key-value storage.
 - `CoreStorage`: typed core-owned storage slots such as auth session, pairing
-  identity, and permission authorization state. A wipe keeps a stack's id and
-  replaces its chains. The core tells one run of the chains from the next by
-  `StackRun`: the descriptor's `generation` and the Asset Hub, People and
-  Bulletin genesis hashes. Cached manifests and allowance keys are stored
-  with the run they were read in; one from another run, or stored without a
-  run, is ignored until it is written again. The ring-VRF registry is the
-  wallet's own record, so it is kept. It is stored with its run as well, and
-  loses only the rings on chains of that run which the stack no longer has.
-  The `SessionUsernamesRun` slot records the run in which the
-  usernames of the `AuthSession` blob were read, with a hash of that blob.
-  A session is installed without waiting on dotNS, whether it is restored
-  from the slot or passed to `activate_external_session`. When the record
-  does not vouch for its blob, or vouches for a blob with no username, its
-  usernames are looked up afterwards: they are kept meanwhile when nothing is
-  recorded, and dropped when the record names another run or blob. A lookup
-  that fails changes nothing, and one that finds no username clears the stored
-  ones. The session and the stored permissions are kept.
+  identity, and permission authorization state.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

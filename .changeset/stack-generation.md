@@ -2,19 +2,17 @@
 "@parity/truapi-host": major
 ---
 
-The core notices that a stack's chains restarted, as after a wipe, by the descriptor's `generation` and the Asset Hub,
-People and Bulletin genesis hashes together, so a restart that changes a genesis hash is seen even when the operator
-left `generation` as it was. What it read from the old chains is ignored: a cached product, Worker or App manifest is
-read again from the new Asset Hub, stored allowance keys are replaced when the wallet grants them again, the ring-VRF
-registry loses the rings on chains the stack no longer runs, and a session's usernames are looked up again. The session
-itself and stored permissions are kept. Manifests, allowance keys and the ring-VRF registry are stored with the run they
-were written in. The new `SessionUsernamesRun` slot holds the run in which the usernames of the `AuthSession` blob were
-read, with a hash of that blob; a host that keeps `AuthSession` under a key of its own keeps `SessionUsernamesRun` next
-to it.
+After a wipe a stack keeps its id but its chains are new, and the core kept using what it had read from the old ones. It
+now stops: cached product, Worker and App manifests are read again, allowance keys are asked for again, the ring-VRF
+registry loses the rings on chains that are gone, and the session's usernames are looked up again. The session and
+stored permissions stay.
 
-A session restored from storage or passed to `activateExternalSession` is installed without waiting for its usernames,
-which are looked up afterwards; a lookup that fails changes nothing, and one that finds no username clears the stored
-ones. A blob passed to `activateExternalSession` that the core does not vouch for has its usernames looked up again on
-every activation. On an update with no wipe, cached manifests are read again, a pairing host asks for each product's
-allowance again, because the stored keys carry no run, a stored ring-VRF registry keeps only the rings on the stack's
-chains, and a stored session's usernames are looked up in the background.
+The core tells a restart by the descriptor's `generation` and the Asset Hub, People and Bulletin genesis hashes, so a
+wipe that changes a hash is caught even when `generation` was left as it was.
+
+A restored session comes up without waiting for its usernames. The core looks them up afterwards and records in the new
+`SessionUsernamesRun` slot which run it read them in. A host that keeps `AuthSession` under a key of its own has to keep
+`SessionUsernamesRun` next to it.
+
+On the first start after the update, with no wipe, cached manifests are read again and a pairing host asks for each
+product's allowance again.

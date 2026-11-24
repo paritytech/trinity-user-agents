@@ -85,31 +85,33 @@ A runtime built from it does not refresh: it calls neither stack callback, and
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
-After a wipe a stack has the same id and new chains. The core sees that at its
-next start by the `generation` and the Asset Hub, People and Bulletin genesis
-hashes, and stops using what it read from the old chains: a cached manifest is
-ignored until it is read again, allowance keys until the wallet grants them
-again, the ring-VRF registry loses the rings on chains the stack no longer
-runs, and the session's usernames are looked up again. The session and stored
-permissions are kept. A session restored from storage or passed to
-`activateExternalSession` is installed at once and its usernames are looked up
-afterwards. A lookup that fails, as on a device that is offline, changes
-nothing; one that finds no username clears the stored ones.
+After a wipe a stack has the same id and new chains. At its next start the core
+notices by the `generation` and the Asset Hub, People and Bulletin genesis
+hashes, and stops using what it read from the old chains:
 
-The core vouches for the usernames in an `AuthSession` blob through the
-`SessionUsernamesRun` slot, which holds the run they were read in and a hash of
-that blob. A host that keeps the `AuthSession` value under a key of its own,
-such as one shared between origins, keeps `SessionUsernamesRun` next to it. A
-blob passed to `activateExternalSession` that the slot does not vouch for has
-its usernames looked up again on every activation; when nothing is recorded,
-its usernames are shown until that lookup answers.
+- Cached manifests are read again.
+- Allowance keys are asked for again.
+- The ring-VRF registry loses the rings on chains that are gone.
+- The session's usernames are looked up again.
 
-An install updated to this version with no wipe loses this: cached manifests
-are read again, so a grant that rests on one is refused until the device is
-online; a pairing host asks for each product's allowance again, because the
-stored keys carry no run; a stored ring-VRF registry keeps only the rings on
-the stack's chains; and the stored session's usernames are looked up in the
-background.
+The session and stored permissions stay.
+
+A session restored from storage or passed to `activateExternalSession` comes up
+at once, and the core looks its usernames up afterwards. If the lookup fails,
+as on an offline device, nothing changes. If it finds no username, the stored
+ones are cleared.
+
+The core records in the `SessionUsernamesRun` slot which run it read the
+usernames in, with a hash of the `AuthSession` blob. If you keep `AuthSession`
+under a key of your own, such as one shared between origins, keep
+`SessionUsernamesRun` next to it. For a blob passed to
+`activateExternalSession` that the slot does not cover, the core looks the
+usernames up on every activation.
+
+The first start after the update, with no wipe, does this once: cached
+manifests are read again, so a grant that rests on one is refused until the
+device is online. A pairing host asks for each product's allowance again. A
+stored ring-VRF registry keeps only the rings on the stack's chains.
 
 ## Bundler requirements
 
