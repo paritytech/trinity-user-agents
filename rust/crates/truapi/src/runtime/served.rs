@@ -1,9 +1,11 @@
 //! Proof that the stack serves every product a value names.
 //!
 //! [`serve`] checks a value against the stack and wraps it in [`Served`]. A
-//! handler serves a request that names another product before it acts, and
-//! `HostAccounts` and the signing requests the core builds take their products
-//! as `Served`, so no key is resolved for a product the stack does not serve.
+//! product's handler serves a request that names another product, and a paired
+//! host's handler serves the caller and the request it relays, before either
+//! acts. `HostAccounts` and the signing requests the core builds take their
+//! products as `Served`, so no key is resolved for a product the stack does not
+//! serve.
 
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,

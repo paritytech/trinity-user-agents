@@ -474,12 +474,16 @@ Parsing checks syntax only, so any DNS label is a TLD: a wire frame or a stored
 record is decoded without a stack. The stack decides which ids it serves:
 localhost ids, and names under `dot` or under its own TLD (`Stack::serves`).
 
-The core checks this wherever a product id enters the runtime: the product a
-host asks it to run (`ProductContext::served_by`), a call that names another
-product (answered `MalformedFrame`), the caller a paired host names, every key
-derivation in the signing wallet, the manifest readers and worker references. `runtime::served` describes
-how a checked value reaches the account calls. Native hosts run the same checks
-through a `Stack` they open from the bundled copy.
+The core checks this wherever it acts for a product: the product a host asks it
+to run (`ProductContext::served_by`), a call that names another product
+(answered `MalformedFrame`), every product a paired host's request names, the
+subtree a host looks up, every key derivation in the signing wallet, the
+manifest readers and worker references. `runtime::served` describes how a
+checked value reaches the account calls. Native hosts run the same checks
+through a `Stack` they open from the bundled copy. Host administration of
+stored state (`permission_authorization_status` and its setter,
+`clear_product_state`) takes any id, so a host can still read, change and clear
+what an unserved product left.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
 counts only under a TLD the stack serves. These products bypass recorded permissions and

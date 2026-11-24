@@ -9,6 +9,10 @@ TLD can run products. A host on `paseo` no longer runs `.testnet` products, and 
 `MalformedFrame`. A trusted label is trusted only under a TLD the stack serves, in permission prompts and in the stored
 statuses a host reads.
 
+A signing host refuses a paired host's request when its caller, or a product it names, is under a TLD the signing host's
+stack does not serve. A pairing host on another stack, such as dotli on previewnet paired with a CLI wallet on paseo,
+gets that error on its first relayed request for one of its own `.testnet` products.
+
 `parseProductId` checks syntax only and accepts any TLD. `hasTrustedRemotePermissions(productId)` is a method of the
 pairing and signing host runtimes, answered for the runtime's stack. Native hosts open the bundled stack with
 `Stack.openBundled(stack)` and call `parseNavigate`, `productShareHosts`, `parseProductShareHost` and

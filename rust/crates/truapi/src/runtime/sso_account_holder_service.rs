@@ -65,8 +65,9 @@ impl SsoAccountHolderService {
 	///
 	/// A request whose review names a product the stack does not serve is
 	/// refused before the user is asked, because the wallet would refuse it
-	/// anyway. A relayed caller is served before its invocation is built, and
-	/// the wallet checks every product it derives a key for.
+	/// anyway. Each handler serves the relayed caller and the products its
+	/// payload names before the wallet sees them, except `sign_vrf`, whose
+	/// payload this check serves through its review.
 	async fn confirmed<'a, T, F>(
 		&self,
 		invocation: AccountInvocation<'a>,
@@ -295,9 +296,8 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountGetAliasRequest>,
 	) -> GetAccountAliasResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		self.wallet
-			.account_alias(cx.account_invocation(Some(&caller)), request.payload)
-			.await
+		let payload = self.wallet.serve(request.payload)?.into_inner();
+		self.wallet.account_alias(cx.account_invocation(Some(&caller)), payload).await
 	}
 
 	/// Allocate SSO-backed resources for a product.
@@ -430,9 +430,8 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountCreateProofRequest>,
 	) -> CreateAccountProofResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		self.wallet
-			.create_proof(cx.account_invocation(Some(&caller)), request.payload)
-			.await
+		let payload = self.wallet.serve(request.payload)?.into_inner();
+		self.wallet.create_proof(cx.account_invocation(Some(&caller)), payload).await
 	}
 
 	/// Sign an RFC-0023 VRF transcript.
@@ -464,8 +463,9 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
+		let product_id = self.wallet.serve(request.product_id).map_err(|err| err.to_string())?;
 		self.wallet
-			.product_subtree_public_key(cx.account_invocation(None), &request.product_id)
+			.product_subtree_public_key(cx.account_invocation(None), &product_id)
 			.await
 			.map_err(|err| err.to_string())?
 			.resolve()
@@ -492,8 +492,9 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
 	) -> ListRingVrfKeysResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
+		let payload = self.wallet.serve(request.payload)?.into_inner();
 		self.wallet
-			.list_ring_vrf_keys(cx.account_invocation(Some(&caller)), request.payload)
+			.list_ring_vrf_keys(cx.account_invocation(Some(&caller)), payload)
 			.await
 	}
 
@@ -504,9 +505,8 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountRingVrfSignRequest>,
 	) -> RingVrfSignResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		self.wallet
-			.ring_vrf_sign(cx.account_invocation(Some(&caller)), request.payload)
-			.await
+		let payload = self.wallet.serve(request.payload)?.into_inner();
+		self.wallet.ring_vrf_sign(cx.account_invocation(Some(&caller)), payload).await
 	}
 }
 

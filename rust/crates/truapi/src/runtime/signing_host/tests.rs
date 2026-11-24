@@ -917,11 +917,18 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 		for door in DOORS {
 			let (proof, alias) =
 				third_product_context(door, owner, grants, context_of(context), |_| {});
-			assert_eq!(
-				proof.err(),
-				Some(RingVrfError::NotAllowlisted),
-				"proof through {door:?}: {why}"
-			);
+			// This `dot` stack refuses a paired host's `.paseo` context as
+			// unserved before the context check. The product door's request is
+			// served as a paseo stack would serve it, so it still reaches that
+			// check.
+			let refused = match (door, context) {
+				(Door::Paired, "dim2.paseo") => RingVrfError::Unknown {
+					reason: "product dim2.paseo is not under a TLD the dot stack serves"
+						.to_string(),
+				},
+				_ => RingVrfError::NotAllowlisted,
+			};
+			assert_eq!(proof.err(), Some(refused), "proof through {door:?}: {why}");
 			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
 		}
 	}

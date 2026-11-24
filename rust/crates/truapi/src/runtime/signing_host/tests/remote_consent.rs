@@ -176,3 +176,59 @@ fn a_relayed_caller_the_stack_does_not_serve_is_refused() {
 		(unserved.clone(), unserved, 0)
 	);
 }
+
+/// A relayed request is held to the rule a product's own request is: every
+/// product it names must be one the stack serves. An unserved owner or
+/// context is refused before the user is asked, so no Allow Always, which is
+/// filed by bare label, can be won for it.
+#[test]
+fn a_relayed_request_naming_an_unserved_product_is_refused() {
+	let platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: std::sync::Mutex::new(
+			[PermissionDecision::AllowAlways; 3].into(),
+		),
+		..StubPlatform::default()
+	});
+	cache_grant(&platform, "peopl.dot", "{}");
+	let (_, authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let session = authority.accounts().current_session().unwrap();
+	register_full_person_key(&authority, &session, &full_person_ring_location());
+
+	let alias = |key_handle, context: &str| {
+		let request = HostAccountGetAliasRequest {
+			key_handle,
+			context: v01::ProductProofContext {
+				product_id: ProductId::for_test(context),
+				suffix: v01::DerivationIndex::Index(0),
+			},
+			ring_location: full_person_ring_location(),
+		};
+		paired_request(&authority, "bar.dot", request).map(|_| ())
+	};
+	let unserved_owner = v01::ProductAccountId {
+		dot_ns_identifier: ProductId::for_test("foo.testnet"),
+		derivation_index: v01::DerivationIndex::Index(0),
+	};
+	let list = HostAccountListRingVrfKeysRequest {
+		owner: ProductId::for_test("foo.testnet"),
+		disclosure: RingVrfKeyDisclosure::PublicKey,
+	};
+	let outcomes = [
+		alias(unserved_owner, "bar.dot"),
+		alias(full_person_key_handle(), "foo.testnet"),
+		paired_request(&authority, "bar.dot", list).map(|_| ()),
+	];
+
+	let unserved = || {
+		Err(RingVrfError::Unknown {
+			reason: "product foo.testnet is not under a TLD the dot stack serves".to_string(),
+		})
+	};
+	assert_eq!(
+		(outcomes, platform.account_access_reviews.lock().unwrap().len()),
+		([unserved(), unserved(), unserved()], 0)
+	);
+}
