@@ -667,7 +667,7 @@ fn the_host_hears_of_changes_in_order_and_may_call_back() {
 	assert!(host.registry.set(Arc::downgrade(&registry)).is_ok());
 	assert!(registry.install_platform(host.clone()));
 
-	assert_eq!(block_on(registry.cancel(NOW, "fs_a")).expect("cancelled"), CancelOutcome::Ended);
+	assert_eq!(block_on(registry.cancel(NOW, "fs_a")).expect("cancelled"), CancelOutcome::Cancelled);
 
 	assert_eq!(
 		*host.heard.lock().expect("heard mutex poisoned"),
@@ -1015,8 +1015,11 @@ fn sessions_of_a_newer_format_make_the_registry_read_only() {
 	);
 }
 
+// Only its overlay closes a presented session, and the services register
+// the overlay before the session, so a cancel that finds no overlay leaves
+// a presented session alone.
 #[test]
-fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
+fn a_presented_session_without_its_overlay_is_not_cancelled() {
 	let db = open_memory_core_db();
 	let registry = registry_on(&db);
 	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");

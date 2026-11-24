@@ -110,11 +110,10 @@ jobs:
             them. If none are shown below, push an empty commit before merging rather than
             assuming the suite passed.
 
-            If `test_light_client_catalog_match` fails, a bundled spec derives to a different
-            genesis hash than its stack descriptor declares: either a spec refresh failed (an
-            `ERROR` line in the refresh run's log) or the published descriptor does not carry
-            the new genesis yet. Once both serve the new chain, run Refresh Chain Specs manually
-            from the Actions tab.
+            If `test_bundled_light_specs_match_the_bundled_copies` fails, a descriptor in `stacks/`
+            names a light spec that `stacks/light-specs/` does not hold or that fails the check.
+            `scripts/update-stacks.sh` writes both together, so rerun it rather than editing either
+            file.
 
             If `paseo_chains_keep_their_genesis` fails, a refreshed public Paseo spec derives to
             a chain other than Paseo: an endpoint in `scripts/update-chain-specs.sh` serves

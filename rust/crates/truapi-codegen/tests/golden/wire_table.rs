@@ -584,18 +584,6 @@ pub const POCKET_REMOVE_CARD: MethodIds = MethodIds {
     method_id: 1,
 };
 
-/// Wire discriminants for `worker_begin_operation`.
-pub const WORKER_BEGIN_OPERATION: MethodIds = MethodIds {
-    trait_id: 19,
-    method_id: 0,
-};
-
-/// Wire discriminants for `worker_end_operation`.
-pub const WORKER_END_OPERATION: MethodIds = MethodIds {
-    trait_id: 19,
-    method_id: 1,
-};
-
 /// Wire discriminants for `contacts_pick`.
 pub const CONTACTS_PICK: MethodIds = MethodIds {
     trait_id: 20,
@@ -1151,14 +1139,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "pocket_remove_card",
         kind: WireKind::Request(POCKET_REMOVE_CARD),
-    },
-    WireEntry {
-        method: "worker_begin_operation",
-        kind: WireKind::Request(WORKER_BEGIN_OPERATION),
-    },
-    WireEntry {
-        method: "worker_end_operation",
-        kind: WireKind::Request(WORKER_END_OPERATION),
     },
     WireEntry {
         method: "contacts_pick",
