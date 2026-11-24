@@ -48,9 +48,9 @@ use truapi::latest;
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, CoreStorage,
 	CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-	PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
+	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
