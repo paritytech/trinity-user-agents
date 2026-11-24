@@ -419,3 +419,32 @@ fn a_built_in_stack_named_by_its_url_keeps_its_key() {
 	assert_eq!(built_in_key("https://stack.test.invalid/other.json"), None);
 	assert_eq!(built_in_key("./stack.json"), None);
 }
+
+/// `--stack` with a built-in network's link, its bare URL or its link without
+/// the key is that network, so it keeps its state in the directory
+/// `--network` uses rather than starting empty in one of its own. The id is
+/// derived as `--stack` derives it, since the bundled copy's would match by
+/// construction.
+#[test]
+fn a_built_in_stack_given_by_link_or_url_keeps_its_state_directory() {
+	for network in Network::value_variants() {
+		let built_in = network.built_in_stack();
+		let pointer = built_in.pointer();
+		let url = pointer.url().as_str().to_owned();
+		let keyless_link = Pointer::new(&url, None)
+			.expect("the URL is a pointer")
+			.to_link(trinity_stack::DEFAULT_LINK_BASE);
+		let given = [pointer.to_link(trinity_stack::DEFAULT_LINK_BASE), url, keyless_link];
+
+		let state_directories = given.map(|value| {
+			let key = built_in_key(&value);
+			let pointer =
+				pointer_of(&value, key.as_deref()).expect("readable").expect("not a file");
+			Stack::new(pointer.stack_id(), built_in.open_bundled(), &ChainAccess::Rpc)
+				.expect("the bundled copy runs")
+				.state_directory()
+				.to_owned()
+		});
+		assert_eq!(state_directories, [built_in.name; 3], "{network:?}");
+	}
+}
