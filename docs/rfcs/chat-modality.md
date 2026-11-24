@@ -189,7 +189,8 @@ This is the core of v2. The Product can either rely on the Host's built-in messa
 #### 4.1 Types
 
 ```rust
-MessageId = UUID
+// Unique in the room.
+MessageId = String
 ChatParticipantId = String
 Timestamp = u64
 
