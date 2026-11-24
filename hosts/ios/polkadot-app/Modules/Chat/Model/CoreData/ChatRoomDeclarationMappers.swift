@@ -167,12 +167,10 @@ extension Chat.RoomConfig: ScaleCodable {
     init(scaleDecoder: any ScaleDecoding) throws {
         productSource = try Bool(scaleDecoder: scaleDecoder)
         reactionDetails = try Bool(scaleDecoder: scaleDecoder)
-        reportSeen = try Bool(scaleDecoder: scaleDecoder)
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try productSource.encode(scaleEncoder: scaleEncoder)
         try reactionDetails.encode(scaleEncoder: scaleEncoder)
-        try reportSeen.encode(scaleEncoder: scaleEncoder)
     }
 }

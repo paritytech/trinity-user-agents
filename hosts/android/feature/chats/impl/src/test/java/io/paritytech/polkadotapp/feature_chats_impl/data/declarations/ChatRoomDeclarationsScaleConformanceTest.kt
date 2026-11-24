@@ -35,7 +35,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
     @Test
     fun `decode a declared config from encoded bytes`() {
         assertEquals(
-            ChatRoomConfigModel(productSource = true, reactionDetails = false, reportSeen = true),
+            ChatRoomConfigModel(productSource = true, reactionDetails = false),
             decode<ChatRoomConfigLocal>(CONFIG).toDomain(),
         )
         assertEquals(ChatRoomConfigModel.HOST_DEFAULT, decode<ChatRoomConfigLocal>(CONFIG_DEFAULT).toDomain())
@@ -90,7 +90,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
             request = true,
         )
         val declarations = ChatRoomDeclarations(
-            config = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true),
+            config = ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true),
             configGeneration = 4,
             metadata = ChatRoomMetadataModel("About", placeholder = "Nothing here yet"),
             preview = ChatRoomPreviewModel(
