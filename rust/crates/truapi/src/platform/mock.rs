@@ -43,11 +43,12 @@ use futures::{
 	stream::{self, BoxStream},
 };
 
-use truapi::{CallError, latest};
+use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
+	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, CoreStorage,
+	CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+	PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
 	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
@@ -180,7 +181,8 @@ pub struct ChatMessageRecord {
 /// What the product declared for one chat room through the mock.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChatRoomDeclarations {
-	/// The last configuration, or `None` before the product declared one.
+	/// The configuration of the last `create_chat_room`, or `None` for a room
+	/// the product did not create through the mock.
 	pub config: Option<latest::ChatRoomConfig>,
 	/// The last metadata from `set_chat_room_metadata`.
 	pub metadata: Option<latest::ChatRoomMetadata>,
@@ -1349,11 +1351,15 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-		_request: latest::HostChatCreateRoomRequest,
+		request: latest::HostChatCreateRoomRequest,
 	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
+		// The mock keeps every configuration, in the same call that creates
+		// the room, for a new room and for a room that exists.
+		self.declare_chat_room(room_id.clone(), |room| room.config = Some(request.config))
+			.map_err(|error| latest::HostChatCreateRoomError::Unknown { reason: error.reason })?;
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
 			if rooms.contains_key(&room_id) {
@@ -1487,15 +1493,6 @@ impl ChatPlatform for MockPlatform {
 			.unwrap_or_default())
 	}
 
-	async fn set_chat_room_config(
-		&self,
-		_product: &ProductContext,
-		room_id: String,
-		config: latest::ChatRoomConfig,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(room_id, |room| room.config = Some(config))
-	}
-
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
@@ -1545,9 +1542,9 @@ impl ChatPlatform for MockPlatform {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
-		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))
-			.map_err(|error| CallError::HostFailure { reason: error.reason })
+	) -> Result<ChatFeedOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))?;
+		Ok(ChatFeedOutcome::Applied)
 	}
 }
 
