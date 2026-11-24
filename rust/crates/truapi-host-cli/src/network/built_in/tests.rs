@@ -440,16 +440,10 @@ fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
 		descriptor["tld"] = "testnet".into();
 	});
 	let run = |published: Option<&[u8]>, last_run: Option<&[u8]>| {
-		let refresh = refresh_from_last_run(
-			"test",
-			&test_pointer(),
-			&bundled,
-			published,
-			last_run,
-			NOW,
-			&ChainAccess::Rpc,
-		)
-		.expect("a descriptor is usable");
+		let copies = Copies { bundled: &bundled, published, last_run };
+		let refresh =
+			refresh_from_last_run("test", &test_pointer(), copies, NOW, &ChainAccess::Rpc)
+				.expect("a descriptor is usable");
 		(refresh.stack.descriptor().sequence, refresh.copy)
 	};
 

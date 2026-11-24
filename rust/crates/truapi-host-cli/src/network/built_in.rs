@@ -195,15 +195,8 @@ impl Network {
 		let last_run = copy_path.as_deref().and_then(|path| fs::read(path).ok());
 		let now = unix_now() as i64;
 		let published = fetched.as_deref().ok();
-		let refresh = refresh_from_last_run(
-			name,
-			&pointer,
-			built_in.bundle,
-			published,
-			last_run.as_deref(),
-			now,
-			chain_access,
-		)?;
+		let copies = Copies { bundled: built_in.bundle, published, last_run: last_run.as_deref() };
+		let refresh = refresh_from_last_run(name, &pointer, copies, now, chain_access)?;
 		if let (Some(published), BuiltInCopy::Published, Some(path)) =
 			(published, refresh.copy, &copy_path) &&
 			last_run.as_deref() != Some(published) &&
@@ -306,6 +299,16 @@ impl std::fmt::Display for StackNotice {
 	}
 }
 
+/// The copies of a built-in stack's descriptor a refresh chooses between.
+struct Copies<'a> {
+	/// The copy this build ships.
+	bundled: &'a [u8],
+	/// The published copy, when it could be fetched.
+	published: Option<&'a [u8]>,
+	/// The published copy the host kept from an earlier run, when it kept one.
+	last_run: Option<&'a [u8]>,
+}
+
 /// [`refresh_stack`] with `last_run`, the published descriptor the host kept
 /// from an earlier run, standing in for `published` while that is
 /// unreachable.
@@ -324,12 +327,11 @@ impl std::fmt::Display for StackNotice {
 fn refresh_from_last_run(
 	id: &str,
 	pointer: &Pointer,
-	bundled: &[u8],
-	published: Option<&[u8]>,
-	last_run: Option<&[u8]>,
+	copies: Copies<'_>,
 	now_unix_seconds: i64,
 	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
+	let Copies { bundled, published, last_run } = copies;
 	let last_run = last_run.filter(|last_run| {
 		let over_bundled =
 			accept(pointer, Some(bundled), Fetched::Document(last_run), now_unix_seconds);
