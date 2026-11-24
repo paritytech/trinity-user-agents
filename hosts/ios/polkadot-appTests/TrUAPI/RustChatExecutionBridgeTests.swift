@@ -167,4 +167,16 @@ struct RustChatExecutionBridgeTests {
 
         #expect(try await bridge.listRooms().isEmpty)
     }
+
+    /// The core checks each room change against this list, so an empty answer
+    /// would refuse a room that exists as unknown.
+    @Test func listRoomsFailsWhenTheRoomListEndsWithoutAList() async throws {
+        let api = RecordingChatMessaging()
+        api.endsRoomListWithoutRooms = true
+        let bridge = await makeBridge(api: api)
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.listRooms()
+        }
+    }
 }

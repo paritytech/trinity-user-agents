@@ -18,7 +18,6 @@ use truapi::{
 	api::{
 		Account, Chain, Chat, Entropy, ExpandedCard, Game, LocalStorage, Notifications,
 		Permissions, Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
-		Worker,
 	},
 	v02,
 	versioned::{
@@ -94,10 +93,6 @@ use truapi::{
 			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
-		worker::{
-			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
-			HostWorkerEndOperationRequest,
-		},
 	},
 };
 
@@ -3618,7 +3613,7 @@ fn a_cancel_that_moved_nothing_is_acknowledged_and_left_out_of_history() {
 	let intent = opened_session(&services, &tasks);
 	assert_eq!(
 		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
-		CancelOutcome::Ended
+		CancelOutcome::Cancelled
 	);
 
 	let owed = futures::executor::block_on(services.acknowledge_funding_session(&intent))
@@ -3995,6 +3990,8 @@ struct GatedFundingPlatform {
 		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
 	/// Whether the host was told of a session, which it is once started.
 	told: AtomicBool,
+	/// Whether the overlay showed.
+	shown: AtomicBool,
 	/// The options read back on each notice, as a host reads them.
 	options: Mutex<Vec<(String, crate::host_logic::funding_providers::FundingOptions)>>,
 	services: std::sync::Weak<RuntimeServices>,
@@ -4009,6 +4006,7 @@ impl GatedFundingPlatform {
 		Arc::new(Self {
 			answer: Mutex::new(answer),
 			told: AtomicBool::new(false),
+			shown: AtomicBool::new(false),
 			options: Mutex::new(Vec::new()),
 			services: Arc::downgrade(services),
 		})
@@ -4023,6 +4021,7 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 		_session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
 		let answer = self.answer.lock().expect("answer mutex poisoned").take();
+		self.shown.store(true, Ordering::Release);
 		Ok(answer.expect("overlay shown once").await.expect("answered"))
 	}
 	async fn present_provider_frame(
@@ -4220,6 +4219,161 @@ fn a_selection_without_an_asset_goes_by_the_resolved_one() {
 			countries.into_iter().map(|country| country.country).collect::<Vec<_>>()
 		)),
 		Some((Some("EUR".to_string()), vec!["DE".to_string()]))
+	);
+}
+
+/// Opens a host session on `services` whose overlay stays up until `answer`
+/// says how it ended, and waits until it shows. Returns its intent and the
+/// thread waiting on how the overlay ended.
+fn showing_overlay(
+	services: &Arc<RuntimeServices>,
+	answer: futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>,
+) -> (
+	String,
+	std::thread::JoinHandle<Result<crate::host_logic::funding::FundingSession, super::funding::OpenFundingError>>,
+) {
+	let platform = GatedFundingPlatform::new(services, Some(answer));
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = new_intent();
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		let intent = intent.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				intent,
+				v01::FundingDirection::In,
+				None,
+			))
+		}
+	});
+	wait_until(|| platform.shown.load(Ordering::Acquire), "overlay shown");
+	(intent, opening)
+}
+
+// A session whose overlay is up never started, so a cancel closes the
+// overlay as though the user dismissed it: the host's call is dropped, the
+// session is gone, and there is nothing left to cancel.
+#[test]
+fn cancelling_while_the_overlay_is_up_closes_it_and_drops_the_session() {
+	let services = funding_services();
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let (intent, opening) = showing_overlay(&services, answered);
+
+	let cancelled = futures::executor::block_on(services.cancel_funding(&intent));
+	let opened = opening.join().expect("opening thread");
+	let again = futures::executor::block_on(services.cancel_funding(&intent));
+
+	assert_eq!(
+		(
+			cancelled,
+			answer.is_canceled(),
+			matches!(opened, Err(super::funding::OpenFundingError::Dismissed)),
+			services.funding().get(&intent).is_none(),
+			again,
+		),
+		(Ok(CancelOutcome::Cancelled), true, true, true, Ok(CancelOutcome::Refused))
+	);
+}
+
+// A provider chosen in the overlay may already work on the session, so a
+// cancel while the overlay is up starts it and asks the provider to stop,
+// once, as it would a started session.
+#[test]
+fn cancelling_while_the_overlay_is_up_after_choosing_a_provider_asks_it_to_stop() {
+	let services = funding_services();
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let (intent, opening) = showing_overlay(&services, answered);
+	let quote_id = offer_test_quote(&services, &intent, "ramp.dot");
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&quote_id,
+		))
+		.expect("selected")
+	);
+
+	let cancelled = futures::executor::block_on(services.cancel_funding(&intent));
+	let opened = opening.join().expect("opening thread").ok().map(|session| session.intent);
+	let kept = services.funding().get(&intent);
+	let again = futures::executor::block_on(services.cancel_funding(&intent));
+
+	assert_eq!(
+		(
+			cancelled,
+			answer.is_canceled(),
+			opened,
+			kept.map(|session| (session.is_terminal(), session.cancel)),
+			again,
+			services.funding().get(&intent).map(|session| session.is_terminal()),
+		),
+		(
+			Ok(CancelOutcome::Requested),
+			true,
+			Some(intent.clone()),
+			Some((false, Some(FundingCancel::Requested))),
+			Ok(CancelOutcome::Cancelled),
+			Some(true),
+		)
+	);
+}
+
+// A host may cancel as soon as it can name the session, before the task
+// that shows the overlay ran: the overlay is closed before the host is
+// asked to show it, and the session is gone.
+#[test]
+fn cancelling_before_the_overlay_shows_never_shows_it() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let (_answer, answered) = futures::channel::oneshot::channel();
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = new_intent();
+	let finished = futures::executor::block_on(services.show_funding(
+		None,
+		intent.clone(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("shown");
+
+	let (cancelled, opened) = futures::executor::block_on(async {
+		// The cancel waits on the overlay, whose task has not run yet.
+		let mut cancelling = core::pin::pin!(services.cancel_funding(&intent));
+		assert!(futures::poll!(&mut cancelling).is_pending());
+		tasks.run().await;
+		(cancelling.await, finished.await.expect("overlay finished"))
+	});
+
+	assert_eq!(
+		(
+			cancelled,
+			platform.shown.load(Ordering::Acquire),
+			matches!(opened, Err(super::funding::OpenFundingError::Dismissed)),
+			services.funding().get(&intent).is_none(),
+		),
+		(Ok(CancelOutcome::Cancelled), false, true, true)
+	);
+}
+
+// A session the user started is cancelled by what it went through: with no
+// provider it ends, and once ended, or for a session the core does not
+// hold, there is nothing to cancel.
+#[test]
+fn cancelling_a_started_session_ends_it_then_refuses() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform));
+	let intent = opened_session(&services, &tasks);
+	let cancel = |intent: &str| futures::executor::block_on(services.cancel_funding(intent));
+
+	assert_eq!(
+		(cancel(&intent), cancel(&intent), cancel("fs_unknown")),
+		(Ok(CancelOutcome::Cancelled), Ok(CancelOutcome::Refused), Ok(CancelOutcome::Refused))
 	);
 }
 
@@ -6567,127 +6721,6 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	);
 }
 
-#[test]
-fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let begin = |label: Option<&str>| {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: label.map(str::to_string),
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation")
-	};
-
-	assert_eq!(begin(Some("funding")), 1);
-	assert_eq!(begin(None), 2);
-	assert_eq!(
-		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
-		vec![
-			(ProductId::for_test("myapp.dot"), "funding".to_string()),
-			(ProductId::for_test("myapp.dot"), String::new()),
-		],
-		"begin reaches the platform under the calling product; a missing label is empty"
-	);
-
-	end(1);
-	end(99);
-	assert_eq!(
-		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
-		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
-		"end reaches the platform under the calling product, unknown ids included"
-	);
-}
-
-#[test]
-fn an_open_operation_holds_worker_demand_until_it_ends() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: Some("funding".to_string()),
-			}),
-		))
-		.expect("begin operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"an open operation is demand on the worker, so the host is told to run it"
-	);
-
-	futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	))
-	.expect("end operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"ending the last operation drops the demand it held"
-	);
-}
-
-#[test]
-fn ending_an_operation_twice_releases_only_the_demand_it_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-	let begin = || {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: None,
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation");
-	};
-
-	let first = begin();
-	begin();
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
-
-	end(first);
-	end(first);
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
-	);
-}
-
 /// Records every worker-demand transition the ledger reports.
 #[derive(Default)]
 struct DemandRecorder {
@@ -6711,162 +6744,6 @@ impl crate::host_logic::worker::WorkerController for DemandRecorder {
 			.expect("demand recorder mutex poisoned")
 			.push((product_id.to_string(), transition));
 	}
-}
-
-#[test]
-fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
-	use crate::host_logic::worker::WorkerTransition;
-
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let recorder = Arc::new(DemandRecorder::default());
-	assert!(
-		host.connection
-			.services()
-			.worker_ledger
-			.install_worker_controller(recorder.clone())
-	);
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-
-	host.connection.release_open_operations();
-
-	// A native reconnect drops the replaced connection's last reference only
-	// after the new one exists, so a stop deferred to that point would reach
-	// the host as a stop for the worker it had just restarted.
-	assert_eq!(
-		recorder.seen(),
-		vec![
-			("myapp.dot".to_string(), WorkerTransition::Start),
-			("myapp.dot".to_string(), WorkerTransition::Stop),
-		],
-		"teardown reports the stop, rather than leaving it to the last Arc"
-	);
-
-	drop(host);
-
-	assert_eq!(recorder.seen().len(), 2, "the eventual drop has nothing left to report");
-}
-
-#[test]
-fn a_cancelled_begin_ends_the_operation_the_host_started() {
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		begin_operation_gate: Mutex::new(Some(gate)),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-
-	// Poll once so the call reaches the host, then drop it the way an aborted
-	// dispatch does while the host is still deciding.
-	let mut begun = Box::pin(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	));
-	assert!(
-		futures::executor::block_on(futures::future::poll_fn(|cx| {
-			std::task::Poll::Ready(futures::FutureExt::poll_unpin(&mut begun, cx).is_pending())
-		})),
-		"the host has not answered yet"
-	);
-	drop(begun);
-
-	// Without the fix the host's call went with the cancelled dispatch, so the
-	// gate may already be gone.
-	let _ = release.send(());
-
-	// Nobody is left to receive the id, so the operation the host started is
-	// ended rather than stranded in its store.
-	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-	loop {
-		let ended = platform
-			.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.clone();
-		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-			break;
-		}
-		assert!(
-			std::time::Instant::now() < deadline,
-			"a cancelled begin leaves the host holding nothing; saw {ended:?}"
-		);
-		std::thread::yield_now();
-	}
-	assert_eq!(
-		host.connection
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		0
-	);
-}
-
-#[test]
-fn a_failed_end_still_drops_the_demand_the_operation_held() {
-	let platform = Arc::new(StubPlatform {
-		end_operation_error: Some("store unavailable"),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: None,
-			}),
-		))
-		.expect("begin operation");
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	let ended = futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	));
-	assert!(ended.is_err(), "the host's failure still reaches the product");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"the product declared the operation over, so the core stops counting it \
-         whatever the host made of the call"
-	);
-}
-
-#[test]
-fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let services = host.connection.services().clone();
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	drop(host);
-
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"a product that goes away without ending its operations leaves no demand behind"
-	);
 }
 
 #[test]
@@ -11322,7 +11199,7 @@ fn a_second_cancel_ends_the_session_and_releases_the_worker() {
 			true,
 			CancelOutcome::Requested,
 			true,
-			CancelOutcome::Ended,
+			CancelOutcome::Cancelled,
 			true,
 			Some(v01::HostFundingStatusSubscribeItem::Failed {
 				reason: v01::FundingFailure::Cancelled

@@ -27,7 +27,7 @@ class CoreLogLineTest {
 
     /**
      * A local marker's detail describes what the person is doing, so it is logged below the level
-     * `SentryLogTree` forwards.
+     * `HostLogSinkTree` forwards.
      */
     @Test
     fun `a local marker stays on the device`() {

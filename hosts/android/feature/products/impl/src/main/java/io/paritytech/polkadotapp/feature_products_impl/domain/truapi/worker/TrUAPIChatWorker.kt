@@ -44,6 +44,7 @@ import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
@@ -62,16 +63,16 @@ class TrUAPIChatWorker(
 ) : ProductWorker {
     // Each open room screen holds the worker as well, so a room keeps its product while the user reads it.
     private val holds = WorkerHolds(
-        acquire = { runtime.acquireWorker(productId) },
-        release = ::releaseWorker,
+        claim = { runtime.claimWorker(productId) },
+        release = ::releaseClaim,
     )
 
     init {
         val workerJob = scope.coroutineContext.job
         // A product keeps its worker for the life of its chat: a bot posts with no room open.
-        runtime.acquireWorker(productId)
-        workerJob.invokeOnCompletion { releaseWorker() }
-        // When the scope ends, the holds release each room hold and refuse each new hold.
+        val claim = runtime.claimWorker(productId)
+        workerJob.invokeOnCompletion { releaseClaim(claim) }
+        // When the scope ends, the holds release each room claim and refuse each new hold.
         workerJob.invokeOnCompletion { holds.close() }
         scope.launch {
             workers.executionState(productId)
@@ -84,9 +85,9 @@ class TrUAPIChatWorker(
         }
     }
 
-    private fun releaseWorker() {
-        runCatching { runtime.releaseWorker(productId) }
-            .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
+    private fun releaseClaim(claim: NativeWorkerClaim) {
+        runCatching { claim.release() }
+            .onFailure { Timber.w(it, "TrUAPI worker claim release failed for %s", productId.value) }
     }
 
     override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {

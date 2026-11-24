@@ -6,7 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
-import io.paritytech.polkadotapp.app.logging.SentryCoreEventSink
+import io.paritytech.polkadotapp.app.logging.SentryHostLogSink
 import io.paritytech.polkadotapp.app.monitoring.DeviceReadingsInitializer
 import io.paritytech.polkadotapp.app.monitoring.RealSentryMetricsCapture
 import io.paritytech.polkadotapp.app.monitoring.SentryMetricsCapture
@@ -24,9 +24,9 @@ import io.paritytech.polkadotapp.app.telemetry.RealHostTelemetryEnabledProvider
 import io.paritytech.polkadotapp.app.telemetry.RealSentryEventCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryEventCapture
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
-import io.paritytech.polkadotapp.common.data.telemetry.CoreEventSink
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostLogSink
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.presentation.ActivityIntentProvider
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
@@ -69,7 +69,7 @@ internal interface AppModule {
     fun bindHostEventCapture(impl: RealHostEventCapture): HostEventCapture
 
     @Binds
-    fun bindCoreEventSink(impl: SentryCoreEventSink): CoreEventSink
+    fun bindHostLogSink(impl: SentryHostLogSink): HostLogSink
 
     @Binds
     fun bindSentryEventCapture(impl: RealSentryEventCapture): SentryEventCapture

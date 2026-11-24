@@ -10,8 +10,8 @@ import UIKitExt
 /// ``TrUAPIWorkerManager`` for its worker. The core keeps one Worker execution
 /// per product and decides when it runs, so this asks for one rather than
 /// opening an execution of its own. The same worker also draws the product's
-/// Pocket cards. Each open room screen and each query asks for the worker too, and
-/// gives the request back when it ends.
+/// Pocket cards. Each open room screen and each query claims the worker too, and
+/// releases the claim when it ends.
 ///
 /// Chat-environment context route through that execution: user messages and
 /// events publish chat actions, widget rendering streams typed renderer nodes,
@@ -46,10 +46,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
 
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
-    private var request = WorkerRequest.none
-    /// The worker requests of the open room screens, by room. Each open that does not throw adds one, and each
-    /// close gives one back.
-    private(set) var openRooms: [String: Int] = [:]
+    private var workerClaim: (any TrUAPIWorkerClaiming)?
+    /// The worker claims of the open room screens, by room. Each open that does not throw adds one, and each
+    /// close releases one.
+    private var openRooms: [String: [any TrUAPIWorkerClaiming]] = [:]
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private(set) var disposed = false
@@ -97,27 +97,28 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     func open(roomId: String) async throws {
         try checkNotDisposed()
 
+        let claim = try workers.claim(productId)
         do {
-            _ = try await workers.ensureWorker(for: productId)
+            try await workers.waitUntilReady(productId)
         } catch {
-            workers.releaseWorker(for: productId)
+            claim.release()
             throw error
         }
 
         guard !disposed else {
-            workers.releaseWorker(for: productId)
+            claim.release()
             throw CancellationError()
         }
 
-        openRooms[roomId, default: 0] += 1
+        openRooms[roomId, default: []].append(claim)
     }
 
-    /// Gives back the worker request of the open.
+    /// Releases the worker claim of the open.
     func close(roomId: String) async {
-        guard let count = openRooms[roomId], count > 0 else { return }
+        guard var claims = openRooms[roomId], let claim = claims.popLast() else { return }
 
-        openRooms[roomId] = count > 1 ? count - 1 : nil
-        workers.releaseWorker(for: productId)
+        openRooms[roomId] = claims.isEmpty ? nil : claims
+        claim.release()
     }
 
     // MARK: - ProductChatQuerying
@@ -241,11 +242,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
 
         // A release, not a close. The product's cards may still be asking for
         // the same worker, and the core stops it once the last request goes.
-        releaseWorker()
-        for (_, count) in openRooms {
-            for _ in 0 ..< count {
-                workers.releaseWorker(for: productId)
-            }
+        workerClaim?.release()
+        workerClaim = nil
+        for claim in openRooms.values.joined() {
+            claim.release()
         }
         openRooms = [:]
 
@@ -261,38 +261,13 @@ private extension TrUAPIChatHandler {
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
 
-        request = .asking
-
-        // Returns once the worker is up, because everything the bot does next,
-        // its welcome message first of all, is published through the execution.
-        do {
-            _ = try await workers.ensureWorker(for: productId)
-        } catch {
-            settleRequest()
-            throw error
-        }
-        settleRequest()
+        workerClaim = try workers.claim(productId)
+        try await workers.waitUntilReady(productId)
 
         try checkNotDisposed()
         startRoomsForwarding()
 
         logger.debug("Rust chat runtime started for: \(productId)")
-    }
-
-    /// The ask has returned, so the request is ours either way: it is
-    /// registered before the wait that can fail. A dispose that landed while we
-    /// were asking left the giving back to here.
-    func settleRequest() {
-        request = .held
-
-        if disposed { releaseWorker() }
-    }
-
-    func releaseWorker() {
-        guard request == .held else { return }
-
-        request = .none
-        workers.releaseWorker(for: productId)
     }
 
     func checkNotDisposed() throws {
