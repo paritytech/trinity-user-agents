@@ -34,7 +34,7 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
         messageId: String,
         messageType: String?,
         actionId: String,
-        payload: String?
+        payload: Data?
     ) async
     @MainActor func attach(presentationView: ControllerBackedProtocol)
 }

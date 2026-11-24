@@ -55,7 +55,7 @@ struct PocketCollectionCardView: View {
 
     /// A press carries no payload; a text edit carries the new value as UTF-8,
     /// which is the shape every host sends.
-    private func send(_ action: String, _ value: String?) {
-        pocket?.send(action: action, payload: Data((value ?? "").utf8), for: card.key)
+    private func send(_ action: String, _ value: Data?) {
+        pocket?.send(action: action, payload: value ?? Data(), for: card.key)
     }
 }

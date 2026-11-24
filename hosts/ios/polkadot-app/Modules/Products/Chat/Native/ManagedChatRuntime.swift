@@ -84,15 +84,18 @@ final class ManagedChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         messageId: String,
         messageType _: String?,
         actionId: String,
-        payload: String?
+        payload: Data?
     ) async {
         guard let worker = await ensureWorker() else { return }
 
+        // The legacy worker accepts text actions only.
+        let text = payload.flatMap { String(data: $0, encoding: .utf8) }
+        guard payload == nil || text != nil else { return }
         await worker.dispatchEvent(
             roomId: roomId,
             messageId: messageId,
             actionId: actionId,
-            payload: payload
+            payload: text
         )
     }
 
