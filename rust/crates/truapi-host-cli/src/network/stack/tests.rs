@@ -6,7 +6,6 @@ use super::{
 	*,
 };
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
-use clap::ValueEnum;
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
@@ -107,7 +106,7 @@ fn test_stack_namespace() {
 /// descriptor that renames itself keeps its stack's state.
 #[test]
 fn test_stack_state_directory() {
-	let on = |stack_id: &str, id: &str| {
+	let read_from = |stack_id: &str, id: &str| {
 		let descriptor = edit_stack(|descriptor| descriptor["id"] = id.into());
 		Stack::new(stack_id.to_string(), descriptor, &ChainAccess::Rpc).expect("stack is valid")
 	};
@@ -117,9 +116,9 @@ fn test_stack_state_directory() {
 	assert_eq!(
 		[
 			Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).state_directory(),
-			on(fork, "paseo-next-v2-fork").state_directory(),
-			on(namesake, "paseo-next-v2").state_directory(),
-			on(namesake, "renamed").state_directory(),
+			read_from(fork, "paseo-next-v2-fork").state_directory(),
+			read_from(namesake, "paseo-next-v2").state_directory(),
+			read_from(namesake, "renamed").state_directory(),
 		],
 		[
 			"paseo-next-v2",
@@ -134,6 +133,8 @@ fn test_stack_state_directory() {
 /// is where its users and the e2e scripts look for it.
 #[test]
 fn test_built_in_state_directory_is_the_network_name() {
+	use clap::ValueEnum as _;
+
 	for network in Network::value_variants() {
 		let name = network.to_possible_value().expect("every network has a value");
 		assert_eq!(network.bundled_stack(ChainBackend::Rpc).state_directory(), name.get_name());

@@ -2411,8 +2411,7 @@ export interface ProductOperations {
  * names the product that owns the value. Host implementations may treat
  * `key` as opaque in one shared store. A host that separates physical storage
  * by product must decode the owner with `ProductStorageKey` on read, since
- * that owner is another product on a granted foreign read. A host that can run
- * more than one stack keeps this store per stack, as `CoreStorage` describes.
+ * that owner is another product on a granted foreign read.
  * Storage errors are pinned to `v01` rather than taken from `truapi::latest`.
  * The read error gained a cross-product refusal in v0.2 that the core decides
  * before it ever calls a host, so a host has no way to produce it and should

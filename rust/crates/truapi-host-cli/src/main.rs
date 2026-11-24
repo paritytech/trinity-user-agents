@@ -1477,6 +1477,7 @@ async fn run_signing_host(
 	let initial_deeplink = args.deeplink.clone();
 	if let Some(command) = exec_command {
 		let cleanup_catalog = session.catalog.clone();
+		let network_name = session.network.namespace().to_owned();
 		let clear_target =
 			with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 				if let Some(deeplink) = initial_deeplink {
@@ -1495,7 +1496,7 @@ async fn run_signing_host(
 			})
 			.await?;
 		if let Some(target) = clear_target {
-			clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
+			clear_sessions_after_shutdown(&cleanup_catalog, &network_name, &target)?;
 		}
 		return Ok(());
 	}
@@ -1510,6 +1511,7 @@ async fn run_signing_host(
 	};
 	restore_paired_responders(&mut session).await;
 	let cleanup_catalog = session.catalog.clone();
+	let network_name = session.network.namespace().to_owned();
 	let clear_target =
 		with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 			signing_interactive_loop(
@@ -1524,7 +1526,7 @@ async fn run_signing_host(
 		})
 		.await?;
 	if let Some(target) = clear_target {
-		clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
+		clear_sessions_after_shutdown(&cleanup_catalog, &network_name, &target)?;
 	}
 	Ok(())
 }
@@ -2932,7 +2934,7 @@ fn session_clear_confirmation(
 	let action = match target {
 		SessionClearTarget::Named(name) => format!("Clear session {name}"),
 		SessionClearTarget::All => {
-			format!("Clear all sessions for {}", session.catalog.network_id())
+			format!("Clear all sessions for {}", session.network.namespace())
 		},
 	};
 	let scope = match target {
@@ -2943,10 +2945,8 @@ fn session_clear_confirmation(
 			"This permanently deletes every local session's signer keys, scripts, storage, and permissions"
 		},
 	};
-	let mut detail = format!(
-		"{scope} for {}. On-chain usernames are not removed.",
-		session.catalog.network_id()
-	);
+	let mut detail =
+		format!("{scope} for {}. On-chain usernames are not removed.", session.network.namespace());
 	if active {
 		detail.push_str(" The active session is included, so the signing host will stop.");
 	}
@@ -2954,30 +2954,29 @@ fn session_clear_confirmation(
 }
 
 fn session_clear_success(
-	network_id: &str,
+	network: &str,
 	target: &SessionClearTarget,
 	stopped: bool,
 ) -> (String, String) {
 	let title = match target {
 		SessionClearTarget::Named(name) => format!("Session {name} cleared"),
-		SessionClearTarget::All => format!("All sessions cleared for {network_id}"),
+		SessionClearTarget::All => format!("All sessions cleared for {network}"),
 	};
 	let detail = if stopped {
 		"Signing host stopped. Restart it to create or select another session.".to_string()
 	} else {
-		format!(
-			"Local signer keys, scripts, storage, and permissions were deleted for {network_id}."
-		)
+		format!("Local signer keys, scripts, storage, and permissions were deleted for {network}.")
 	};
 	(title, detail)
 }
 
 fn clear_sessions_after_shutdown(
 	catalog: &SessionCatalog,
+	network: &str,
 	target: &SessionClearTarget,
 ) -> Result<()> {
 	catalog.clear(target)?;
-	let (title, detail) = session_clear_success(catalog.network_id(), target, true);
+	let (title, detail) = session_clear_success(network, target, true);
 	terminal_ui::output_success(title, Some(detail));
 	Ok(())
 }
@@ -3662,7 +3661,7 @@ async fn signing_interactive_loop(
 				match session.catalog.clear(&target) {
 					Ok(_) => {
 						let (title, detail) =
-							session_clear_success(session.catalog.network_id(), &target, false);
+							session_clear_success(session.network.namespace(), &target, false);
 						ui.success(title, Some(detail));
 						let current = session
 							.profile

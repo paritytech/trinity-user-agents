@@ -31,8 +31,7 @@ pub struct HostRuntimeConfig {
 	/// under come from it.
 	pub stack: BundledStack,
 	/// Existing, writable directory for core-owned databases, kept out of
-	/// device backups. The runtime opens its database there at startup. A host
-	/// that can run more than one stack passes a directory per stack.
+	/// device backups. The runtime opens its database there at startup.
 	pub database_directory: String,
 	/// Cards the host pins in the Pocket: listed first, removable by nobody.
 	/// A card pinned on an earlier start and missing here stays only if the

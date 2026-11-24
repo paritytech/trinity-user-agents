@@ -19,13 +19,13 @@ fn command() -> Command {
 
 /// The state directory of the stack [`command`] runs on, from the base path.
 fn state_directory() -> PathBuf {
-	Path::new("v2").join(state::offline_state_name())
+	Path::new("v2").join(state::offline_state_directory())
 }
 
 /// The account store `template`, with `@stack` as each record's network, for the stack
 /// [`command`] runs on.
 fn accounts_json(template: &str) -> String {
-	template.replace("@stack", &state::offline_state_name())
+	template.replace("@stack", state::offline_state_directory())
 }
 
 fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
@@ -331,7 +331,7 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	assert!(!bob.exists());
 	assert!(unrelated.exists());
 	let stdout = String::from_utf8_lossy(&output.stdout);
-	assert!(stdout.contains(&format!("All sessions cleared for {}", state::offline_state_name())));
+	assert!(stdout.contains("All sessions cleared for paseo-next-v2"));
 	assert!(!output.stdout.contains(&0x1b));
 }
 

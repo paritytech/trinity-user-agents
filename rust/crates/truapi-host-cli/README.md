@@ -135,14 +135,11 @@ through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
-Everything the CLI stores for a stack is kept under one name: the stack's
-directory under `v2`, and its network in an account store. A built-in network's
-is its name, such as `v2/paseo-next-v2`. A stack given with `--stack` that is
-not a built-in network's gets `stack-<tag>`, named from the stack's id, so a
-fork starts with none of its source's sessions, accounts, pairings or stored
-data. A stack named once by a link with its key and once by its bare URL has
-two ids, and so two directories. `truapi-host network-check` prints the name as
-`state_directory`.
+Each stack has its own directory under `v2`. A built-in network's is its name,
+such as `v2/paseo-next-v2`. Any other stack gets `stack-<tag>`, named from the
+stack's id, so a fork starts with none of its source's sessions, accounts,
+pairings or stored data. `truapi-host network-check` prints the name as
+`state_directory`, and SPEC.md §13.1 has the rest.
 
 The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices

@@ -424,11 +424,6 @@ impl SessionCatalog {
 		Ok(names)
 	}
 
-	/// Return the network whose signing-host sessions this catalog owns.
-	pub fn network_id(&self) -> &str {
-		&self.network_id
-	}
-
 	/// Check that a clear target currently resolves to managed session data.
 	pub fn validate_clear_target(&self, target: &SessionClearTarget) -> Result<()> {
 		let SessionClearTarget::Named(name) = target else {
