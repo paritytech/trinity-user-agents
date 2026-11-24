@@ -18,6 +18,8 @@ struct CleanupStorage {
 	values: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
 	pause: Mutex<Option<(CoreStorageKey, oneshot::Receiver<()>)>>,
 	failure: Mutex<Option<CoreStorageKey>>,
+	read_failure: Mutex<Option<CoreStorageKey>>,
+	write_failure: Mutex<Option<CoreStorageKey>>,
 	write_pause: Mutex<Option<oneshot::Receiver<()>>>,
 	read_pause: Mutex<Option<ReadPause>>,
 }
@@ -51,6 +53,9 @@ impl CoreStorage for CleanupStorage {
 			let _ = pause.started.send(());
 			let _ = pause.resume.await;
 		}
+		if self.read_failure.lock().unwrap().as_ref() == Some(&key) {
+			return Err(GenericError { reason: "storage read failed".to_string() });
+		}
 		Ok(self.values.lock().unwrap().get(&key.encode()).cloned())
 	}
 
@@ -59,6 +64,9 @@ impl CoreStorage for CleanupStorage {
 		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
+		if self.write_failure.lock().unwrap().as_ref() == Some(&key) {
+			return Err(GenericError { reason: "storage write failed".to_string() });
+		}
 		self.values.lock().unwrap().insert(key.encode(), value);
 		let pause = self.write_pause.lock().unwrap().take();
 		if let Some(pause) = pause {
@@ -316,20 +324,21 @@ fn naming_a_session_waits_for_an_activation_in_progress() {
 		let host = host.clone();
 		move || block_on(host.activate_stored_session())
 	});
-	block_on(between_the_reads).expect("the activation reads the usernames record");
-	let (finished, naming) = std::sync::mpsc::channel();
-	std::thread::spawn({
+	let reading = std::thread::spawn(move || block_on(between_the_reads));
+	finished(reading, "the activation reads the usernames record").expect("it is paused");
+	let (named_it, naming) = mpsc::channel();
+	let rename = std::thread::spawn({
 		let (host, installed, named) = (host.clone(), installed.clone(), named.clone());
 		move || {
 			block_on(host.name_session(&installed, named, Some(blob)));
-			let _ = finished.send(());
+			let _ = named_it.send(());
 		}
 	});
 	// A rewrite that did not wait lands here, between the activation's reads.
-	let _ = naming.recv_timeout(std::time::Duration::from_millis(200));
+	let _ = naming.recv_timeout(Duration::from_millis(200));
 	resume.send(()).expect("the activation is still reading");
-	let activated = activation.join().expect("the activation does not panic");
-	let _ = naming.recv_timeout(std::time::Duration::from_secs(5));
+	let activated = finished(activation, "the activation ends");
+	finished(rename, "the rename ends");
 
 	let named_blob = encode_persisted_session(&named);
 	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
@@ -842,4 +851,69 @@ fn a_lookup_that_ended_is_let_go() {
 	}
 
 	assert_eq!(host.username_lookups.lock().unwrap().len(), 1);
+}
+
+/// Storing the usernames a lookup found takes two writes, the blob and then
+/// its record, and either can fail. The session stays selected under the
+/// usernames found. A failed write of the blob leaves the slot and the record
+/// as they were. A failed write of the record leaves it naming the blob
+/// before, so the next start takes the usernames in the new blob for stale and
+/// looks them up again rather than vouching for them.
+#[test]
+fn a_failed_write_of_the_named_session_keeps_it_selected() {
+	let installed = unnamed_sso_session_info();
+	let named = named(&installed);
+	let (blob, named_blob) =
+		(encode_persisted_session(&installed), encode_persisted_session(&named));
+	let record = usernames_record(&paseo_test_stack().run(), &blob);
+	let stored_after = |failing: CoreStorageKey| {
+		let storage = Arc::new(CleanupStorage::default());
+		let host = host_with_session(&storage, offline(), &installed);
+		block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record.clone()))
+			.unwrap();
+		*storage.write_failure.lock().unwrap() = Some(failing);
+
+		block_on(host.name_session(&installed, named.clone(), Some(blob.clone())));
+
+		let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+		(
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		)
+	};
+
+	assert_eq!(
+		[
+			stored_after(CoreStorageKey::AuthSession),
+			stored_after(CoreStorageKey::SessionUsernamesRun),
+		],
+		[
+			(Some(named.clone()), Some(blob.clone()), Some(record.clone())),
+			(Some(named), Some(named_blob), Some(record)),
+		]
+	);
+}
+
+/// A usernames record that cannot be read does not vouch for the usernames
+/// stored with the session, which may name accounts on chains that are gone.
+/// The session comes up without them, as for a record of another run, and
+/// keeps none while the lookup fails.
+#[test]
+fn a_usernames_record_that_cannot_be_read_drops_the_usernames() {
+	let storage = Arc::new(CleanupStorage::default());
+	let host = pairing_host(&storage, offline());
+	let stored = named(&unnamed_sso_session_info());
+	let blob = encode_persisted_session(&stored);
+	let record = usernames_record(&paseo_test_stack().run(), &blob);
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
+	block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record)).unwrap();
+	*storage.read_failure.lock().unwrap() = Some(CoreStorageKey::SessionUsernamesRun);
+
+	block_on(host.activate_stored_session()).expect("the stored session activates");
+
+	assert_eq!(
+		host.session_state.current(),
+		Some(SessionInfo { lite_username: None, full_username: None, ..stored })
+	);
 }
