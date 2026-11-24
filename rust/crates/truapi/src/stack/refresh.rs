@@ -18,8 +18,8 @@ use trinity_stack::{FetchRequest, Served};
 use truapi::latest::GenericError;
 
 use super::{
-	ReplaceCheck, Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords,
-	StackStatus, signed_pointer,
+	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
+	signed_pointer,
 	source::{Listing, StackSource},
 };
 use crate::{
@@ -272,21 +272,8 @@ impl Shared {
 			};
 			if let Some(request) = request {
 				let mut fetch = core::pin::pin!(self.fetch(host.as_ref(), request));
-				let write = loop {
-					match select(fetch.as_mut(), chain_answers.next()).await {
-						Either::Left((write, _)) => break write,
-						Either::Right(_) => self.report_change(&tell, &mut reported),
-					}
-				};
-				if let Some((record, check)) = write {
-					// A host told of the copy the fetch brought before its record
-					// is stored could act on a copy that a failed store or a kill
-					// loses.
-					let mut store = core::pin::pin!(self.store(record, check));
-					while let Either::Right(_) = select(store.as_mut(), chain_answers.next()).await
-					{
-						self.report_mismatches(&tell, &mut reported);
-					}
+				while let Either::Right(_) = select(fetch.as_mut(), chain_answers.next()).await {
+					self.report_change(&tell, &mut reported);
 				}
 				self.report_change(&tell, &mut reported);
 			}
@@ -328,23 +315,8 @@ impl Shared {
 		}
 	}
 
-	/// Tells the host when [`StackStatus::mismatches`] differs from
-	/// `reported`'s, with the rest of `reported` as it was told.
-	fn report_mismatches(&self, tell: &dyn Fn(&StackStatus), reported: &mut StackStatus) {
-		let mismatches = self.source().status().mismatches;
-		if mismatches != reported.mismatches {
-			reported.mismatches = mismatches;
-			tell(reported);
-		}
-	}
-
-	/// Makes one fetch through the host. Returns the record it changed, with
-	/// the check for storing it, for [`Self::store`].
-	async fn fetch(
-		&self,
-		host: &dyn StackHost,
-		request: FetchRequest,
-	) -> Option<(Vec<u8>, ReplaceCheck)> {
+	/// Makes one fetch through the host and stores the record it changed.
+	async fn fetch(&self, host: &dyn StackHost, request: FetchRequest) {
 		let FetchRequest { url, if_none_match } = request;
 		let request = StackFetchRequest { url, if_none_match, max_bytes: MAX_DESCRIPTOR_BYTES };
 		let answer = select(host.fetch_stack_descriptor(request), self.timer.sleep(FETCH_TIMEOUT));
@@ -365,16 +337,15 @@ impl Shared {
 		if let Err(reason) = &served {
 			tracing::debug!("stack descriptor fetch failed: {reason}");
 		}
-		let mut source = self.source();
-		let record = source.fetched(served, self.now())?;
-		let check = source.replace_check(&record);
-		Some((record, check))
-	}
-
-	/// Stores `record`, which [`Self::fetch`] returned, and records whether
-	/// that worked.
-	async fn store(&self, record: Vec<u8>, check: ReplaceCheck) {
-		let stack_id = self.source().stack_id();
+		let (stack_id, write) = {
+			let mut source = self.source();
+			let write = source.fetched(served, self.now()).map(|record| {
+				let check = source.replace_check(&record);
+				(record, check)
+			});
+			(source.stack_id(), write)
+		};
+		let Some((record, check)) = write else { return };
 		let write = self.records.write_stack_record(&stack_id, record, check);
 		let stored = match select(write, self.timer.sleep(STORE_TIMEOUT)).await {
 			Either::Left((stored, _)) => stored.map_err(|error| error.reason),

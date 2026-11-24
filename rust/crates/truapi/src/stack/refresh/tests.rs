@@ -793,12 +793,12 @@ fn a_chain_found_wrong_during_a_fetch_is_reported_while_it_is_out() {
 	);
 }
 
-/// A record can take half a minute to store, and a full disk or a kill can
-/// lose it. A host told of the copy a fetch brought before then could act on
-/// one the next start never reads, so a chain's answer meanwhile is reported
-/// on top of what the host was told before the fetch.
+/// A record can take half a minute to store, and the store can fail. Until it
+/// settles, the host is shown the status from before the fetch, through its
+/// callback and `status` alike, so it is never told `Current` for a copy
+/// whose store may still fail. A chain's answer meanwhile still shows.
 #[test]
-fn a_chain_found_wrong_while_a_record_is_stored_is_reported_without_the_fetched_copy() {
+fn a_fetched_copy_is_not_shown_as_current_while_its_record_is_stored() {
 	let records = Arc::<MemoryRecords>::default();
 	records.stuck.store(true, Ordering::SeqCst);
 	let newer = published_test_descriptor_at(2);
@@ -808,15 +808,19 @@ fn a_chain_found_wrong_while_a_record_is_stored_is_reported_without_the_fetched_
 	started.wait_for_sleeps(2);
 
 	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
-	let while_storing = started.next_status();
+	let told_while_storing = started.next_status();
+	let read_while_storing = started.refresh.status();
 	started.advance(STORE_TIMEOUT);
 	let once_the_store_failed = started.next_status();
 
 	let not_stored = StackRefreshOutcome::NotStored { reason: "not stored within 30s".to_string() };
+	let before_the_fetch =
+		StackStatus { mismatches: people_gave(TEST_STACK_WIPED_PEOPLE), ..at_start };
 	assert_eq!(
-		[while_storing, once_the_store_failed],
+		[told_while_storing, read_while_storing, once_the_store_failed],
 		[
-			StackStatus { mismatches: people_gave(TEST_STACK_WIPED_PEOPLE), ..at_start },
+			before_the_fetch.clone(),
+			before_the_fetch,
 			StackStatus {
 				mismatches: people_gave(TEST_STACK_WIPED_PEOPLE),
 				..stack_status(&newer, Some(not_stored))
