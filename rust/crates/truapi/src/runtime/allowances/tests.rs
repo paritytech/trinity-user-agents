@@ -1,36 +1,5 @@
 use super::*;
-use std::{collections::HashMap, sync::Mutex};
-
-use crate::test_support::{sso_session_info, test_run};
-
-#[derive(Default)]
-struct MemStorage {
-	inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-}
-
-#[async_trait::async_trait]
-impl CoreStorage for MemStorage {
-	async fn read_core_storage(
-		&self,
-		key: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
-	}
-
-	async fn write_core_storage(
-		&self,
-		key: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), GenericError> {
-		self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
-		Ok(())
-	}
-
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-		self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
-		Ok(())
-	}
-}
+use crate::test_support::{MemoryCoreStorage, sso_session_info, test_run};
 
 /// The run the chains are in.
 fn this_run() -> StackRun {
@@ -43,7 +12,7 @@ fn earlier_run() -> StackRun {
 }
 
 /// What is stored for `session`, whichever run stored it.
-fn stored(storage: &MemStorage, session: &SessionInfo) -> Option<Vec<u8>> {
+fn stored(storage: &MemoryCoreStorage, session: &SessionInfo) -> Option<Vec<u8>> {
 	futures::executor::block_on(storage.read_core_storage(storage_key(session).unwrap())).unwrap()
 }
 
@@ -59,7 +28,7 @@ fn entries_stored_with_string_ids_read_and_write_unchanged() {
 
 #[test]
 fn stores_allowance_keys_by_product_and_resource() {
-	let storage = MemStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 	let run = this_run();
 
@@ -126,7 +95,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 
 #[test]
 fn clears_session_allowance_keys() {
-	let storage = MemStorage::default();
+	let storage = MemoryCoreStorage::default();
 	let session = sso_session_info();
 	let run = this_run();
 
@@ -158,7 +127,7 @@ fn clears_session_allowance_keys() {
 }
 
 /// Writes a Bulletin key of `byte`s for `product` in `run`.
-fn write_bulletin_key(storage: &MemStorage, run: &StackRun, product: &str, byte: u8) {
+fn write_bulletin_key(storage: &MemoryCoreStorage, run: &StackRun, product: &str, byte: u8) {
 	futures::executor::block_on(write_allowance_key(
 		storage,
 		run,
@@ -171,7 +140,11 @@ fn write_bulletin_key(storage: &MemStorage, run: &StackRun, product: &str, byte:
 }
 
 /// The Bulletin key `run` reads for `product`.
-fn read_bulletin_key(storage: &MemStorage, run: &StackRun, product: &str) -> Option<Vec<u8>> {
+fn read_bulletin_key(
+	storage: &MemoryCoreStorage,
+	run: &StackRun,
+	product: &str,
+) -> Option<Vec<u8>> {
 	futures::executor::block_on(read_allowance_key(
 		storage,
 		run,
@@ -193,8 +166,8 @@ fn bulletin_entry(product: &str, byte: u8) -> StoredAllowanceEntry {
 
 /// Storage holding the keys of `dotli.dot` and `other.dot` as stored in `run`,
 /// or as a bare list when there is none.
-fn storage_with_two_keys(run: Option<&StackRun>) -> MemStorage {
-	let storage = MemStorage::default();
+fn storage_with_two_keys(run: Option<&StackRun>) -> MemoryCoreStorage {
+	let storage = MemoryCoreStorage::default();
 	let entries = vec![bulletin_entry("dotli.dot", 1), bulletin_entry("other.dot", 2)].encode();
 	let stored = run.map_or(entries.clone(), |run| run.stamp(&entries));
 	futures::executor::block_on(

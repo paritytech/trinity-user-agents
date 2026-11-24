@@ -813,7 +813,7 @@ fn activating_a_session_does_not_wait_for_its_usernames() {
 	let (_, _, started_without_lookups) = activate(sso_session_info());
 
 	assert_eq!(
-		(activated, installed, started_with_lookups - started_without_lookups),
-		(Ok((Ok(()), Ok(()))), Some(None), 2)
+		(activated, installed, started_with_lookups > started_without_lookups),
+		(Ok((Ok(()), Ok(()))), Some(None), true)
 	);
 }

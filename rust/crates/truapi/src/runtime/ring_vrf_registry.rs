@@ -408,17 +408,10 @@ impl RingVrfRegistryStore {
 
 /// A stored registry and the run it was stored in, or no run for one stored
 /// without it.
-///
-/// A blob that reads as stamped and holds no valid registry is tried as one
-/// stored without a run, whose first bytes can look like a stamp. When that
-/// fails too, the error is the stamped reading's.
 fn decode_stored(blob: &[u8]) -> Result<(RegistrySnapshot, Option<StackRun>), RingVrfError> {
-	let Some((run, value)) = StackRun::split_stamped(blob) else {
-		return Ok((decode_snapshot(blob)?, None));
-	};
-	match decode_snapshot(value) {
-		Ok(snapshot) => Ok((snapshot, Some(run))),
-		Err(error) => decode_snapshot(blob).map(|snapshot| (snapshot, None)).map_err(|_| error),
+	match StackRun::split_stamped(blob) {
+		Some((run, value)) => Ok((decode_snapshot(value)?, Some(run))),
+		None => Ok((decode_snapshot(blob)?, None)),
 	}
 }
 

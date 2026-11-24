@@ -442,7 +442,7 @@ fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
 	let run = |published: Option<&[u8]>, last_run: Option<&[u8]>| {
 		let copies = Copies { bundled: &bundled, published, last_run };
 		let refresh =
-			refresh_from_last_run("test", &test_pointer(), copies, NOW, &ChainAccess::Rpc)
+			refresh_from_last_run("test", &test_pointer(), &copies, NOW, &ChainAccess::Rpc)
 				.expect("a descriptor is usable");
 		(refresh.stack.descriptor().sequence, refresh.copy)
 	};
@@ -504,5 +504,29 @@ fn a_kept_copy_older_than_the_bundled_one_is_passed_over() {
 			older(b"not a descriptor")
 		],
 		[true, false, false, false]
+	);
+}
+
+/// A host keeps the published copy it runs on, and only that one. A copy it
+/// did not take must not become the copy the next offline run starts from,
+/// and the copy kept already is not written again.
+#[test]
+fn only_a_published_copy_in_use_is_kept() {
+	let kept = |last_run: Option<&'static [u8]>, in_use: BuiltInCopy| {
+		let copies = Copies { bundled: b"bundled", published: Some(b"published"), last_run };
+		copy_to_keep(&copies, in_use)
+	};
+	let unreachable = Copies { bundled: b"bundled", published: None, last_run: Some(b"earlier") };
+	let published: Option<&[u8]> = Some(b"published");
+
+	assert_eq!(
+		[
+			kept(None, BuiltInCopy::Published),
+			kept(Some(b"earlier"), BuiltInCopy::Published),
+			kept(Some(b"published"), BuiltInCopy::Published),
+			kept(Some(b"earlier"), BuiltInCopy::Rejected),
+			copy_to_keep(&unreachable, BuiltInCopy::Unreachable),
+		],
+		[published, published, None, None, None]
 	);
 }

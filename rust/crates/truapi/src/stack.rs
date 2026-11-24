@@ -138,9 +138,16 @@ impl StackRun {
 		[self.asset_hub, self.people, self.bulletin].contains(&genesis_hash)
 	}
 
-	/// Whether `chain`, a chain of the run `earlier`, is gone in this run:
-	/// another generation restarted every chain, and otherwise the chain is
-	/// gone when this run no longer has it.
+	/// Whether what `earlier` stored about `chain` is stale in this run.
+	///
+	/// It is when `chain` is a chain of `earlier` and either the generation
+	/// changed, which restarts every chain, or this run no longer has the
+	/// chain. A chain `earlier` did not have is never lost, since the run
+	/// says nothing about it.
+	///
+	/// This is for a value that names its chain. [`Self::read_stamped`] gives
+	/// up a value when anything in the run changed. Here a chain restarted
+	/// under the same generation leaves what was stored about the others.
 	pub fn lost_since(&self, earlier: &Self, chain: [u8; 32]) -> bool {
 		earlier.has_chain(chain) &&
 			(earlier.generation != self.generation || !self.has_chain(chain))

@@ -196,11 +196,8 @@ impl Network {
 		let now = unix_now() as i64;
 		let published = fetched.as_deref().ok();
 		let copies = Copies { bundled: built_in.bundle, published, last_run: last_run.as_deref() };
-		let refresh = refresh_from_last_run(name, &pointer, copies, now, chain_access)?;
-		if let (Some(published), BuiltInCopy::Published, Some(path)) =
-			(published, refresh.copy, &copy_path) &&
-			last_run.as_deref() != Some(published)
-		{
+		let refresh = refresh_from_last_run(name, &pointer, &copies, now, chain_access)?;
+		if let (Some(path), Some(published)) = (&copy_path, copy_to_keep(&copies, refresh.copy)) {
 			keep_copy(path, published);
 		}
 		match &refresh.notice {
@@ -332,12 +329,22 @@ fn is_older_than_bundled(
 		.is_ok_and(|taken| taken.status == Status::Rollback)
 }
 
-/// How a warning says what [`accept`] made of a copy it did not take.
-fn not_taken(status: &Status) -> String {
+/// How a warning says why a copy [`accept`] gave `status` is not in use, or
+/// `None` when it is, or when there was no copy to take.
+fn not_taken(status: &Status) -> Option<String> {
 	match status {
-		Status::Refused(error) => format!("is {}", refused(error.clone())),
-		status => format!("is a {}", status.code()),
+		Status::Updated | Status::Unchanged | Status::Unreachable => None,
+		Status::Conflict | Status::Rollback => Some(format!("is a {}", status.code())),
+		Status::Refused(error) => Some(format!("is {}", refused(error.clone()))),
 	}
+}
+
+/// The published copy to keep for a run that cannot fetch it: the one
+/// `in_use`, unless it is the copy kept already.
+fn copy_to_keep<'a>(copies: &Copies<'a>, in_use: BuiltInCopy) -> Option<&'a [u8]> {
+	copies
+		.published
+		.filter(|published| in_use == BuiltInCopy::Published && copies.last_run != Some(published))
 }
 
 /// The copies of a built-in stack's descriptor a refresh chooses between.
@@ -368,11 +375,11 @@ struct Copies<'a> {
 fn refresh_from_last_run(
 	id: &str,
 	pointer: &Pointer,
-	copies: Copies<'_>,
+	copies: &Copies<'_>,
 	now_unix_seconds: i64,
 	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
-	let Copies { bundled, published, last_run } = copies;
+	let &Copies { bundled, published, last_run } = copies;
 	let last_run = last_run
 		.filter(|last_run| !is_older_than_bundled(pointer, bundled, last_run, now_unix_seconds));
 	let refresh_from = |document: Option<&[u8]>, name: &str| {
@@ -387,11 +394,9 @@ fn refresh_from_last_run(
 		return from_last_run(BuiltInCopy::Unreachable);
 	};
 	let over_last_run = last_run.and_then(|last_run| {
-		let taken = accept(pointer, Some(last_run), Fetched::Document(published), now_unix_seconds);
-		match taken.map(|taken| taken.status) {
-			Ok(Status::Updated | Status::Unchanged) => None,
-			Ok(status) => Some(not_taken(&status)),
-			Err(error) => Some(not_taken(&Status::Refused(error))),
+		match accept(pointer, Some(last_run), Fetched::Document(published), now_unix_seconds) {
+			Ok(taken) => not_taken(&taken.status),
+			Err(error) => Some(format!("is {}", refused(error))),
 		}
 	});
 	if let Some(reason) = over_last_run {
@@ -428,13 +433,13 @@ fn refresh_stack(
 		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
 	let accepted = accept(pointer, Some(bundled), fetched, now_unix_seconds)
 		.map_err(|error| anyhow!("the {id} stack has no usable descriptor: {error}"))?;
-	let copy = match &accepted.status {
-		Status::Updated | Status::Unchanged => BuiltInCopy::Published,
-		Status::Unreachable => BuiltInCopy::Unreachable,
-		status => {
-			tracing::warn!("the {fetched_name} {}; not using it", not_taken(status));
+	let copy = match not_taken(&accepted.status) {
+		Some(reason) => {
+			tracing::warn!("the {fetched_name} {reason}; not using it");
 			BuiltInCopy::Rejected
 		},
+		None if accepted.status == Status::Unreachable => BuiltInCopy::Unreachable,
+		None => BuiltInCopy::Published,
 	};
 	let (bundled_descriptor, published) =
 		(&bundled_copy.stack.descriptor, &accepted.stack.descriptor);

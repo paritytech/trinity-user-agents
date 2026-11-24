@@ -44,7 +44,7 @@ use truapi::{
 enum BlobUsernames {
 	/// They were read for this blob in the run the stack's chains are in.
 	Current,
-	/// Nothing is recorded, as for a session a host keeps itself.
+	/// Nothing is recorded.
 	Unrecorded,
 	/// The record names another run or another blob, or cannot be read.
 	Stale,
@@ -860,7 +860,10 @@ impl SsoRequestService {
 
 	/// Resolve missing identity information for the selected session.
 	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-		let current = self.session_state.current()?;
+		let (current, epoch) = {
+			let selection = self.selection.lock().expect("session selection mutex poisoned");
+			(self.session_state.current()?, selection.session_epoch)
+		};
 		if current.has_username() {
 			return Some(authority_session(&current));
 		}
@@ -872,10 +875,25 @@ impl SsoRequestService {
 			current.clone(),
 		)
 		.await;
-		if resolved != current {
-			let stored = encode_persisted_session(&current);
-			self.name_session(&current, resolved, Some(stored)).await;
+		if resolved == current {
+			return self.current_session();
 		}
+
+		let barrier = self.owner.write_barrier().await;
+		self.drain_session_deletions(&barrier).await;
+		{
+			let selection = self.selection.lock().expect("session selection mutex poisoned");
+			if selection.session_epoch != epoch ||
+				!self.session_state.replace_session_if_current(&current, resolved.clone())
+			{
+				return self.current_session();
+			}
+		}
+		self.auth_state.connected(&Self::session_ui_info(&resolved));
+		if let Err(err) = self.store_session(encode_persisted_session(&resolved)).await {
+			warn!(reason = %err.reason, "refreshed session identity persist failed");
+		}
+		self.drain_session_deletions(&barrier).await;
 		self.current_session()
 	}
 }

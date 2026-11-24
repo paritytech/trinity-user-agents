@@ -367,6 +367,48 @@ fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 	);
 }
 
+/// After a wipe the stored blob still carries the usernames read from the old
+/// chains, and the session comes up without them. When a product then asks who
+/// the user is and the lookup answers, what it found is stored over that blob
+/// with its run, so the next start has the username whether or not it is
+/// online.
+#[test]
+fn usernames_found_for_a_product_replace_the_blob_from_before_a_wipe() {
+	let storage = Arc::new(CleanupStorage::default());
+	let installed = SessionInfo {
+		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
+		..unnamed_sso_session_info()
+	};
+	let chains = StubPlatform {
+		rpc_responder: Some(Arc::new(dotns_usernames_frames)),
+		..Default::default()
+	};
+	let host = host_with_session(&storage, chains, &installed);
+	let before_the_wipe = encode_persisted_session(&SessionInfo {
+		lite_username: Some("stale.07".to_string()),
+		..installed
+	});
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, before_the_wipe)).unwrap();
+
+	block_on(host.refresh_current_session_identity());
+
+	let session = host.session_state.current().expect("the session stays installed");
+	let named_blob = encode_persisted_session(&session);
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			session.lite_username,
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(
+			Some("alice.01".to_string()),
+			Some(named_blob.clone()),
+			Some(usernames_record(&paseo_test_stack().run(), &named_blob)),
+		)
+	);
+}
+
 /// A lookup that answers puts what it found in the session and in the stored
 /// blob, and records the run for that blob, so the next start takes the
 /// usernames as they are. One that finds a username names the session. One
