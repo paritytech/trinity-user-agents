@@ -36,24 +36,22 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(try await bridge.listRooms() == [ChatRoom(roomId: "lobby", participatingAs: .roomHost)])
     }
 
-    /// A second-version `create_room` keeps its configuration and preview, and a repeat that finds the room
-    /// keeps them.
+    /// A second-version `create_room` keeps its configuration and preview. A repeat that finds the room, as a
+    /// product sends at each start, keeps the preview and the configuration that it carries again.
     @Test func aSecondVersionRoomKeepsItsDeclarations() async throws {
         let bridge = await fixture.bridge()
 
         let first = try await create(bridge, metadata: metadata, config: config, preview: preview)
-        let declared = try await fixture.storedChat("lobby")?.roomDeclarations
         let repeated = try await create(
             bridge,
             metadata: ChatRoomMetadata(name: "Lobby", description: "Another", icon: nil, placeholder: nil),
-            config: .hostDefault,
+            config: config,
             preview: nil
         )
 
         #expect(first == .new)
         #expect(repeated == .exists)
         let chat = try #require(try await fixture.storedChat("lobby"))
-        #expect(chat.roomDeclarations == declared)
         #expect(chat.roomDeclarations?.config == Chat.RoomConfig(config))
         #expect(chat.roomDeclarations?.preview == Chat.RoomPreview(preview))
         #expect(chat.roomPolicy?.reportsSeen == true)
@@ -142,8 +140,8 @@ struct ChatExtensionV2RoomScenarioTests {
     @Test func deleteRemovesTheRoomAndEverythingInIt() async throws {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: config, preview: preview)
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", text: "hi")), persist: true)
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", text: "hi")), persist: true)
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .reactionPlaced(messageId: "m1", participantId: "alice", emoji: "👍"),
             persist: true
@@ -156,7 +154,7 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(try await fixture.messages("lobby").isEmpty)
         #expect(try await reactionCount() == 0)
         #expect(try await bridge.listRooms().isEmpty)
-        await #expect(throws: ChatRoomError.self) { try await bridge.roomConfig(roomId: "lobby") }
+        #expect(try await bridge.roomConfig(roomId: "lobby") == .hostDefault)
     }
 
     /// The chat list draws a product room from what the store holds, and the bot of the product asks for
@@ -205,7 +203,7 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(opened.roomPolicy?.reportsSeen == true)
 
         var changed = config
-        changed.reportSeen = false
+        changed.productSource = false
         _ = try await bridge.createRoom(roomId: "lobby", name: metadata.name, icon: "", config: changed)
 
         var reloaded = opened
@@ -226,7 +224,7 @@ private extension ChatExtensionV2RoomScenarioTests {
     }
 
     var config: ChatRoomConfig {
-        ChatRoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
+        ChatRoomConfig(productSource: true, reactionDetails: false)
     }
 
     var preview: ChatRoomPreview {

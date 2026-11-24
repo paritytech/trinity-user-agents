@@ -23,6 +23,7 @@ import org.junit.Test
 import uniffi.truapi.ChatCallRecord
 import uniffi.truapi.ChatContactEvent
 import uniffi.truapi.ChatCustomBody
+import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMediaItem
 import uniffi.truapi.ChatMediaMeta
@@ -34,7 +35,7 @@ import uniffi.truapi.ChatReactionSummary
 import uniffi.truapi.ChatReply
 import uniffi.truapi.ChatReplyPreview
 import uniffi.truapi.ChatResource
-import uniffi.truapi.NativeChatFeedRejection
+import uniffi.truapi.HostRejection
 import uniffi.truapi.ChatMessage as CoreChatMessage
 import uniffi.truapi.ProductId
 
@@ -129,23 +130,24 @@ class ProductChatHostBridgeFeedTest {
     fun `a deletion reaches the store with the product id of the message`() = runTest {
         coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.success(Unit)
 
-        bridge.updateFeed(ROOM, ChatFeedUpdate.Deleted("m1"), persist = true)
+        assertEquals(ChatFeedOutcome.APPLIED, bridge.updateFeed(ROOM, ChatFeedUpdate.Deleted("m1"), persist = true))
 
         coVerify { messaging.applyFeedUpdate(room, ProductFeedUpdateModel.Deleted("m1")) }
     }
 
     @Test
-    fun `each refusal of the store reaches the product as its own rejection`() = runTest {
-        suspend fun rejectionFor(failure: Throwable): Throwable? {
+    fun `each refusal of the store reaches the product as its own outcome`() = runTest {
+        suspend fun answerTo(failure: Throwable): Result<ChatFeedOutcome> {
             coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.failure(failure)
-            return runCatching { bridge.updateFeed(ROOM, ChatFeedUpdate.Replaced(coreMessage(ChatMessageBody.Text("hi"))), persist = true) }.exceptionOrNull()
+            return runCatching { bridge.updateFeed(ROOM, ChatFeedUpdate.Replaced(coreMessage(ChatMessageBody.Text("hi"))), persist = true) }
         }
 
-        assertTrue(rejectionFor(ProductFeedRejection.UnknownMessage()) is NativeChatFeedRejection.UnknownMessage)
-        assertTrue(rejectionFor(ProductFeedRejection.DuplicateMessage()) is NativeChatFeedRejection.DuplicateMessage)
-        assertTrue(rejectionFor(ProductFeedRejection.NotOwner()) is NativeChatFeedRejection.NotOwner)
-        assertTrue(rejectionFor(ProductFeedRejection.UnknownRoom()) is NativeChatFeedRejection.Rejected)
-        assertTrue(rejectionFor(IllegalStateException("disk full")) is NativeChatFeedRejection.Rejected)
+        assertEquals(ChatFeedOutcome.UNKNOWN_MESSAGE, answerTo(ProductFeedRejection.UnknownMessage()).getOrNull())
+        assertEquals(ChatFeedOutcome.DUPLICATE_MESSAGE, answerTo(ProductFeedRejection.DuplicateMessage()).getOrNull())
+        assertEquals(ChatFeedOutcome.NOT_OWNER, answerTo(ProductFeedRejection.NotOwner()).getOrNull())
+        // A room that is gone or a broken store is a failure of the host, not an outcome.
+        assertTrue(answerTo(ProductFeedRejection.UnknownRoom()).exceptionOrNull() is HostRejection.Rejected)
+        assertTrue(answerTo(IllegalStateException("disk full")).exceptionOrNull() is HostRejection.Rejected)
     }
 
     @Test
@@ -162,7 +164,7 @@ class ProductChatHostBridgeFeedTest {
     fun `an update without a room is refused before the store`() = runTest {
         val thrown = runCatching { bridge.updateFeed("", ChatFeedUpdate.StatusChanged("m1", ChatMessageStatus.READ), persist = true) }.exceptionOrNull()
 
-        assertTrue(thrown is NativeChatFeedRejection.Rejected)
+        assertTrue(thrown is HostRejection.Rejected)
     }
 
     @Test

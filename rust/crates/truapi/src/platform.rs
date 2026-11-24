@@ -42,18 +42,18 @@ pub use crate::{
 
 use truapi::{
 	latest::{
-		AllocatableResource, ChatAction, ChatActions, ChatCustomBody,
-		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor,
-		ChatPreviewMessage, ChatPreviewReaction, ChatReaction, ChatReactionDetail,
-		ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource, ChatRichText,
-		ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview,
-		ChatRoomRegistrationStatus, ChatUserAction, CodeFormat, FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
+		AllocatableResource, ChatAction, ChatActions, ChatCustomBody, ChatCustomMessage,
+		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
+		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatReply,
+		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge,
+		ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus,
+		ChatUserAction, CodeFormat, FundingDirection, FundingQuote, FundingQuoteRefusal,
+		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
 		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
@@ -460,13 +460,13 @@ fn validate_chat_emoji(field: &'static str, value: &str) -> Result<String, ChatF
 }
 
 /// Largest accepted length for one reaction of a Chat Extension v2 message, in
-/// bytes, as the chat modality RFC limits an `Emoji`.
+/// bytes.
 pub const CHAT_EMOJI_MAX_BYTES: usize = 64;
 
 /// Bound and screen the emoji of a reaction in a feed update, a reaction
 /// summary or a room preview: one extended grapheme cluster, of at most
-/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A reader that follows the
-/// RFC drops a longer reaction, so the core refuses it first.
+/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A host draws a reaction as one
+/// emoji, so the core refuses anything else before a host sees it.
 fn validate_chat_reaction_emoji(
 	field: &'static str,
 	value: &str,
@@ -581,13 +581,6 @@ pub const CHAT_MESSAGES_PAGE_MAX: u32 = 100;
 
 /// Largest accepted length for a page cursor, in bytes.
 pub const CHAT_CURSOR_MAX_BYTES: usize = 1024;
-
-/// Largest accepted number of `update_feed` calls for one room in one second.
-pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
-
-/// Largest accepted number of `set_room_preview` calls for one room in one
-/// second.
-pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
 
 /// The largest file a [`ChatResource::Hop`] names: the largest the native chat sends.
 pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
@@ -2559,11 +2552,12 @@ pub trait ChatPlatform: Send + Sync {
 
 	/// The configuration of the last `create_chat_room` of a room, or the
 	/// default configuration for a room the host does not know. The core reads
-	/// it to decide whether a room keeps its messages in the host and which
-	/// queries the product answers. Before `post_chat_message` the core reads it
-	/// for the room that the product names, without a check that the product
-	/// hosts the room, so an unknown room answers the default configuration and
-	/// not an error.
+	/// it before each feed update, preview and query of the room to decide
+	/// whether the host stores the messages of the room and which queries the
+	/// product answers. Before `post_chat_message` the core reads it for the
+	/// room that the product names, before any check that the product created
+	/// the room, so an unknown room answers the default configuration and not
+	/// an error.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
@@ -2621,10 +2615,11 @@ pub trait ChatPlatform: Send + Sync {
 
 /// What a host did with one change to the messages of a room.
 ///
-/// It is the answer of the host, not an error, so a web host returns it as it
-/// returns any other value: the web bridge turns each error that a web
+/// It is the answer of the host, not an error, so a host returns it as it
+/// returns any other value: the web and native bridges turn each error that a
 /// callback throws into `HostFailure`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatFeedOutcome {
 	/// The host applied the change.
 	Applied,

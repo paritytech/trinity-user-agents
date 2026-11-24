@@ -163,7 +163,7 @@ extension ProductMessageSource {
 // MARK: - Seen
 
 extension ProductMessageSource {
-    /// Notes the newest of the messages as seen, and tells the product when it asks for `Seen`.
+    /// Notes the newest of the messages as seen, and tells the product with a `Seen` action.
     func markSeen(_ messageIds: Set<Chat.MessageId>) {
         let ids = orderedIds
         guard
@@ -177,10 +177,6 @@ extension ProductMessageSource {
             seenMessageId = newest.messageId
             seenTimestamp = newest.timestamp
             emit()
-        }
-
-        guard settings.reportsSeen else {
-            return
         }
 
         // The native chat marks the reactions of every message up to the newest seen one as seen. The product

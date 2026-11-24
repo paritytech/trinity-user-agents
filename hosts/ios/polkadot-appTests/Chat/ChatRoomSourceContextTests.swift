@@ -172,7 +172,7 @@ private extension ChatRoomSourceContextTests {
     }
 
     func policy(store: ChatRoomPolicy.MessageStore) -> ChatRoomPolicy {
-        ChatRoomPolicy(messageStore: store, reportsSeen: true, footer: ChatRoomPolicy.defaults.footer)
+        ChatRoomPolicy(messageStore: store, footer: ChatRoomPolicy.defaults.footer)
     }
 
     func message(_ id: String) -> ChatMessage {

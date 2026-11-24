@@ -69,12 +69,13 @@ struct ChatRoomPolicyDeclarationsTests {
         #expect(policy.messageStore == .product)
     }
 
-    @Test func theConfigurationSetsSeen() {
-        let config = Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
-        let policy = ChatRoomPolicy(footer: nil, declarations: declarations(config: config))
+    /// The product of a product-source room learns which messages the user saw, and a host room reports nothing.
+    @Test func onlyAProductSourceRoomReportsSeen() {
+        let product = ChatRoomPolicy(footer: nil, declarations: declarations(config: config(productSource: true)))
+        let host = ChatRoomPolicy(footer: nil, declarations: declarations(config: config(productSource: false)))
 
-        #expect(policy.messageStore == .host)
-        #expect(policy.reportsSeen)
+        #expect(product.reportsSeen)
+        #expect(!host.reportsSeen)
     }
 
     /// The footer is the one of `set_room_footer`, also for a room with declarations.
@@ -110,7 +111,7 @@ struct ChatRoomPolicyDeclarationsTests {
 
 private extension ChatRoomPolicyDeclarationsTests {
     func config(productSource: Bool) -> Chat.RoomConfig {
-        Chat.RoomConfig(productSource: productSource, reactionDetails: false, reportSeen: false)
+        Chat.RoomConfig(productSource: productSource, reactionDetails: false)
     }
 
     func declarations(

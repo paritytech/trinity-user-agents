@@ -142,16 +142,13 @@ private extension ChatRoomSourceContext {
             return coreDataSource
         }
 
-        var settings = services.settings
-        settings.reportsSeen = policy.reportsSeen
-
         let source = ProductMessageSource(
             chatId: chatId,
             productId: productId,
             roomId: roomId,
             querying: services.querying ?? MissingProductChatQuerying(),
             cache: services.cache,
-            settings: settings,
+            settings: services.settings,
             logger: logger
         )
         registration = services.feedListeners.register(source, for: chatId)

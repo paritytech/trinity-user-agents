@@ -63,11 +63,9 @@ class ProductMessageSource(
         val retryDelay: Duration,
         /** The most pages that one jump asks in each direction. */
         val jumpPageLimit: Int,
-        /** The product wants a `Seen` action when the user sees a newer message. */
-        val reportsSeen: Boolean,
     ) {
         companion object {
-            val Default = Settings(pageSize = 50, windowLimit = 500, retryDelay = 1.seconds, jumpPageLimit = 1_000, reportsSeen = false)
+            val Default = Settings(pageSize = 50, windowLimit = 500, retryDelay = 1.seconds, jumpPageLimit = 1_000)
         }
     }
 
@@ -449,7 +447,7 @@ class ProductMessageSource(
 
     // region Seen
 
-    /** Notes the newest of the messages as seen, and tells the product when it asks for `Seen`. */
+    /** Notes the newest of the messages as seen, and tells the product with a `Seen` action. */
     private fun markSeen(messageIds: Set<ChatMessageId>) {
         val ids = window.orderedIds
         val newestIndex = ids.indexOfLast { it in messageIds }
@@ -460,8 +458,6 @@ class ProductMessageSource(
             window.seenTimestamp = newest.timestamp
             emit()
         }
-
-        if (!settings.reportsSeen) return
 
         val reported = window.reportedSeenMessageId
         if (isNewer(newest, reported, reported?.let { window.messages[it] }?.timestamp, ids)) {

@@ -211,14 +211,14 @@ class ProductChatHostBridgeTest {
     @Test
     fun `a declared config is answered as declared`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
-        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true, reportSeen = true)
+        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true, reactionDetails = true)
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
             Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
 
         val config = ProductChatHostBridge(productId, messaging).roomConfig(ROOM)
 
         assertTrue(config.productSource)
-        assertTrue(config.reportSeen)
+        assertTrue(config.reactionDetails)
     }
 
     @Test
@@ -233,7 +233,7 @@ class ProductChatHostBridgeTest {
         val bridge = ProductChatHostBridge(productId, messaging)
 
         // The configuration arrives with the room, in one call.
-        bridge.createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reportSeen = true))
+        bridge.createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reactionDetails = true))
         bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null, placeholder = null))
         bridge.setRoomPreview(
             ROOM,
@@ -249,7 +249,7 @@ class ProductChatHostBridgeTest {
         )
         bridge.deleteRoom(ROOM)
 
-        coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)) }
+        coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true)) }
         coVerify { messaging.setRoomMetadata(room, "Lobby", null, ChatRoomMetadataModel("Play here", placeholder = null)) }
         coVerify {
             messaging.setRoomPreview(
