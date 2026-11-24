@@ -371,7 +371,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn list_rooms(&self) -> Result<Vec<latest::ChatRoom>, HostRejection>;
 
 	/// Return the configuration of the last `create_room` of a room. The core
-	/// reads it before each feed update of the room.
+	/// reads it before each feed update and preview of the room.
 	async fn room_config(
 		&self,
 		room_id: String,

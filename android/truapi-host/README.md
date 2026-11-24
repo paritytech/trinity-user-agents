@@ -94,7 +94,7 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 | Request | What the host does |
 | --- | --- |
 | `createRoom(roomId, name, icon, config)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomException.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update |
+| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update and preview |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.APPLIED`, or the outcome that names why it did not apply the change |

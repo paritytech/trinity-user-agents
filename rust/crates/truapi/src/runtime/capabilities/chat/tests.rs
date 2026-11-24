@@ -242,6 +242,55 @@ fn set_preview(
 	))
 }
 
+/// A message of the product that quotes a message of `quoted_participant_id`.
+fn quoting(quoted_participant_id: &str) -> latest::ChatMessage {
+	let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+		unreachable!("text_message builds a new message")
+	};
+	message.reply = Some(latest::ChatReply {
+		message_id: "m0".to_string(),
+		preview: Some(latest::ChatReplyPreview {
+			origin: latest::ChatMessageOrigin { participant_id: quoted_participant_id.to_string() },
+			body: latest::ChatMessageBody::Text { text: "I agree to pay".to_string() },
+		}),
+	});
+	message
+}
+
+/// Previews that show a message or a reaction of the user.
+fn previews_of_the_user() -> [latest::ChatRoomPreview; 3] {
+	let user_message = latest::ChatPreviewMessage {
+		message_id: "m1".to_string(),
+		origin: latest::ChatMessageOrigin { participant_id: "user".to_string() },
+		timestamp: 1,
+		body: latest::ChatMessageBody::Text { text: "hi".to_string() },
+		status: latest::ChatMessageStatus::Sent,
+		reply_to: None,
+		edited_at: None,
+		request: false,
+	};
+	let preview = |last_message, last_reaction| latest::ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message,
+		last_reaction,
+		unseen_reactions: 0,
+		pinned: false,
+		activity: None,
+	};
+	let reaction = |by_user, message| latest::ChatPreviewReaction {
+		emoji: "👍".to_string(),
+		by_user,
+		message,
+		removed: false,
+	};
+	[
+		preview(Some(user_message.clone()), None),
+		preview(None, Some(reaction(true, None))),
+		preview(None, Some(reaction(false, Some(user_message)))),
+	]
+}
+
 /// Stores `config` as the configuration the product declared for `room_id`.
 fn configure(chat: &RecordingHost, room_id: &str, config: latest::ChatRoomConfig) {
 	chat.configs.lock().unwrap().insert(room_id.to_string(), config);
@@ -313,8 +362,85 @@ fn a_feed_update_is_stored_only_in_a_room_the_host_keeps() {
 	assert_eq!(persisted, [("stored".to_string(), true), ("sourced".to_string(), false)]);
 }
 
-// A deletion names its message as the core screens it, and the host of a
-// room it keeps stores it.
+/// Every update that names an author: a new message, a replaced message,
+/// and a reaction placed and removed.
+fn updates_by(participant_id: &str) -> [latest::ChatFeedUpdate; 4] {
+	let latest::ChatFeedUpdate::New(message) = text_message(participant_id) else {
+		unreachable!("text_message builds a new message")
+	};
+	let reaction = |placed: bool| {
+		let message_id = "m1".to_string();
+		let participant_id = participant_id.to_string();
+		let emoji = "👍".to_string();
+		if placed {
+			latest::ChatFeedUpdate::ReactionPlaced { message_id, participant_id, emoji }
+		} else {
+			latest::ChatFeedUpdate::ReactionRemoved { message_id, participant_id, emoji }
+		}
+	};
+	[
+		latest::ChatFeedUpdate::New(message.clone()),
+		latest::ChatFeedUpdate::Replaced(message),
+		reaction(true),
+		reaction(false),
+	]
+}
+
+// In a room that the host stores, the user writes and reacts only through
+// the host. Thus no update from a product can name the user as its author.
+// Without this check, a host that trusts the core stores words that the
+// user did not write.
+#[test]
+fn a_product_cannot_write_as_the_user_in_a_room_the_host_keeps() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+	let runtime = chat_runtime(chat.clone());
+
+	let quotes = [
+		latest::ChatFeedUpdate::New(quoting("user")),
+		latest::ChatFeedUpdate::Replaced(quoting("user")),
+	];
+	for update in updates_by("user").into_iter().chain(quotes) {
+		assert_eq!(
+			update_feed(&runtime, "stored", update),
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
+				latest::HostChatUpdateFeedError::NotOwner
+			)))
+		);
+	}
+	assert!(chat.feed.lock().unwrap().is_empty());
+
+	// The product still quotes its own messages and those of the contact.
+	update_feed(&runtime, "stored", latest::ChatFeedUpdate::New(quoting("contact")))
+		.expect("a quote of the contact");
+}
+
+// The chat list shows the newest message and reaction of a room. In a room
+// that the host stores, the host takes those of the user from its own store,
+// so a product cannot show the user there.
+#[test]
+fn a_preview_cannot_show_the_user_in_a_room_the_host_keeps() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
+	let runtime = chat_runtime(chat.clone());
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+
+	for preview in previews_of_the_user() {
+		assert_eq!(
+			set_preview(&runtime, "stored", preview.clone()),
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V2(
+				latest::HostChatSetRoomPreviewError::NotOwner
+			)))
+		);
+		set_preview(&runtime, "sourced", preview).expect("a preview of a product room");
+	}
+	assert_eq!(chat.calls(), ["preview sourced"; 3]);
+}
+
+// A deletion names no author, so the core sends it to the host. The host
+// refuses the deletion of a message that the product did not write.
 #[test]
 fn a_product_deletes_a_message_in_a_room_the_host_keeps() {
 	let chat = RecordingHost::with_rooms(&[hosted("stored")]);
@@ -330,6 +456,24 @@ fn a_product_deletes_a_message_in_a_room_the_host_keeps() {
 			.collect::<Vec<_>>(),
 		[(deleted("m1"), true)]
 	);
+}
+
+// In a room that the product keeps, the product reports all changes, also
+// the messages and reactions of the user. The host only shows them.
+#[test]
+fn a_room_the_product_keeps_shows_the_users_messages_and_reactions() {
+	let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
+	let runtime = chat_runtime(chat.clone());
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+
+	for update in updates_by("user") {
+		update_feed(&runtime, "sourced", update).expect("a shown update");
+	}
+	assert_eq!(chat.feed.lock().unwrap().len(), 4);
 }
 
 #[test]
@@ -483,6 +627,63 @@ fn a_host_that_cannot_keep_a_configuration_creates_no_room() {
 
 	create(latest::ChatRoomConfig::default()).expect("the default configuration");
 	assert_eq!(chat.rooms.lock().unwrap().len(), 1);
+}
+
+/// A new message of the product whose reaction summary says that the user
+/// reacted with 👍.
+fn reacted_by_the_user() -> latest::ChatMessage {
+	let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+		unreachable!("text_message builds a new message")
+	};
+	message.reactions = vec![latest::ChatReactionSummary {
+		emoji: "👍".to_string(),
+		count: 1,
+		reacted_by_user: true,
+		unseen: false,
+	}];
+	message
+}
+
+// The reaction summaries of a message are a second way to say that the user
+// reacted. In a room that the host stores, the user reacts only through the
+// host, so a summary that counts the user is refused as a reaction from the
+// user is.
+#[test]
+fn a_product_cannot_show_that_the_user_reacted_in_a_room_the_host_keeps() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
+	let runtime = chat_runtime(chat.clone());
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+	let updates = || {
+		[
+			latest::ChatFeedUpdate::New(reacted_by_the_user()),
+			latest::ChatFeedUpdate::Replaced(reacted_by_the_user()),
+		]
+	};
+
+	for update in updates() {
+		assert_eq!(
+			update_feed(&runtime, "stored", update),
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
+				latest::HostChatUpdateFeedError::NotOwner
+			)))
+		);
+	}
+	assert!(chat.feed.lock().unwrap().is_empty());
+
+	// The product still counts the reactions of the other participants.
+	let mut by_others = reacted_by_the_user();
+	by_others.reactions[0].reacted_by_user = false;
+	update_feed(&runtime, "stored", latest::ChatFeedUpdate::New(by_others))
+		.expect("a summary of the reactions of others");
+	// In a room that the product keeps, the product reports the reactions
+	// of the user too.
+	for update in updates() {
+		update_feed(&runtime, "sourced", update).expect("a shown update");
+	}
 }
 
 // The host answers why it did not apply an update, and the product gets

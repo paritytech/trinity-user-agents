@@ -597,8 +597,10 @@ pub enum HostChatUpdateFeedError {
 	DuplicateMessage,
 	/// The text is over its limit.
 	MessageTooLarge,
-	/// In a room the host stores: `New` from `"user"`, or `Edited` or `Deleted`
-	/// of a message the product did not write.
+	/// In a room the host stores: `New`, `Replaced` or a reaction from
+	/// `"user"`, a `New` or `Replaced` message that quotes `"user"` or whose
+	/// reaction summaries say that the user reacted, or `Edited`, `Replaced`
+	/// or `Deleted` of a message the product did not write.
 	NotOwner,
 }
 

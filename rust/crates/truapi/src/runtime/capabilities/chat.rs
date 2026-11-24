@@ -41,6 +41,9 @@ use crate::{
 	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
 
+/// The participant id of the host's user, which a product cannot write as.
+const USER_PARTICIPANT_ID: &str = "user";
+
 /// The fields that a product makes valid when it sends less content.
 /// `MessageTooLarge` names no field, so it can describe only these. `payload`
 /// is the payload of a first-version `Custom` message.
@@ -251,6 +254,15 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				request.preview =
 					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
 				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
+				let config = platform
+					.read_chat_room_config(&self.connection.product, request.room_id.clone())
+					.await
+					.map_err(room_host_error)?;
+				// In a room that the host stores, the host shows the messages and
+				// reactions of the user from its own store.
+				if !config.product_source && preview_shows_the_user(&request.preview) {
+					return Err(CallError::Domain(latest::HostChatSetRoomPreviewError::NotOwner));
+				}
 				platform
 					.set_chat_room_preview(&self.connection.product, request)
 					.await
@@ -307,8 +319,15 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
 					.map_err(room_host_error)?;
+				let persist = !config.product_source;
+				// In a room that the host stores, the user writes and reacts
+				// only through the host. A product cannot write or react as the
+				// user.
+				if persist && names_the_user(&request.update) {
+					return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
+				}
 				let outcome = platform
-					.update_chat_feed(&self.connection.product, request, !config.product_source)
+					.update_chat_feed(&self.connection.product, request, persist)
 					.await
 					.map_err(room_host_error)?;
 				feed_outcome(outcome)
@@ -389,6 +408,48 @@ fn footer_refusal(refusal: RoomRefusal) -> CallError<latest::HostChatSetRoomFoot
 			latest::HostChatSetRoomFooterError::Unknown { reason }
 		},
 	})
+}
+
+/// Whether `update` names the host's user as the author of a message, of the
+/// message that a reply quotes, of a reaction, or of a reaction that a
+/// message's summaries count.
+fn names_the_user(update: &latest::ChatFeedUpdate) -> bool {
+	match update {
+		latest::ChatFeedUpdate::New(message) | latest::ChatFeedUpdate::Replaced(message) => {
+			shows_the_user(message)
+		},
+		latest::ChatFeedUpdate::ReactionPlaced { participant_id, .. } |
+		latest::ChatFeedUpdate::ReactionRemoved { participant_id, .. } => {
+			participant_id == USER_PARTICIPANT_ID
+		},
+		latest::ChatFeedUpdate::Edited { .. } |
+		latest::ChatFeedUpdate::StatusChanged { .. } |
+		latest::ChatFeedUpdate::Deleted { .. } => false,
+	}
+}
+
+/// Whether the host's user wrote `message` or the message that it quotes, or
+/// reacted to it as its reaction summaries say.
+fn shows_the_user(message: &latest::ChatMessage) -> bool {
+	let quotes_the_user = message
+		.reply
+		.as_ref()
+		.and_then(|reply| reply.preview.as_ref())
+		.is_some_and(|preview| preview.origin.participant_id == USER_PARTICIPANT_ID);
+	let user_reacted = message.reactions.iter().any(|reaction| reaction.reacted_by_user);
+	message.origin.participant_id == USER_PARTICIPANT_ID || quotes_the_user || user_reacted
+}
+
+/// Whether `preview` shows a message or a reaction of the host's user.
+fn preview_shows_the_user(preview: &latest::ChatRoomPreview) -> bool {
+	let by_user =
+		|message: &latest::ChatPreviewMessage| message.origin.participant_id == USER_PARTICIPANT_ID;
+	let last_message = preview.last_message.as_ref().is_some_and(by_user);
+	let last_reaction = preview
+		.last_reaction
+		.as_ref()
+		.is_some_and(|reaction| reaction.by_user || reaction.message.as_ref().is_some_and(by_user));
+	last_message || last_reaction
 }
 
 /// Report a rejected field of a room-changing call.

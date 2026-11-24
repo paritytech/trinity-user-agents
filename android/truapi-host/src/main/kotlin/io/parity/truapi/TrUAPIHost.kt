@@ -588,7 +588,7 @@ interface ChatHostBridge {
 
     /**
      * Return the configuration of the last `createRoom` of a room. The core
-     * reads it before each feed update of the room.
+     * reads it before each feed update and preview of the room.
      */
     @Throws(HostRejection::class)
     suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG

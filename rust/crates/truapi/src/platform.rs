@@ -2380,7 +2380,8 @@ pub trait ChatPlatform: Send + Sync {
 	}
 
 	/// The configuration of the last `create_chat_room` of a room. The core
-	/// reads it to decide whether the host stores the messages of the room.
+	/// reads it before each feed update and preview of the room to decide
+	/// whether the host stores the messages of the room.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
