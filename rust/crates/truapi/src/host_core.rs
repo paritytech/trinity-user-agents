@@ -328,8 +328,9 @@ impl<Role> HostRuntime<Role> {
 	/// Report that the product's worker stopped without being asked to:
 	/// it is started again while something holds it, with a growing wait
 	/// when it keeps crashing.
+	#[cfg(target_arch = "wasm32")]
 	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
+		self.services.worker_attempt_exited(product_id, None);
 	}
 
 	/// Restart after a native worker failure only while the failing attempt is current.
