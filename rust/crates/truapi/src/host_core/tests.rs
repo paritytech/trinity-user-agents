@@ -406,7 +406,7 @@ fn a_kept_subtree_of_an_unserved_product_is_not_returned() {
 		.accounts()
 		.cache_product_subtree_for_test(&session, &unserved, [9; 32]);
 
-	let error = futures::executor::block_on(runtime.product_subtree_public_key(&unserved, Some(1)))
+	let error = futures::executor::block_on(runtime.product_subtree_public_key(&unserved, None))
 		.expect_err("an unserved product has no subtree");
 	assert_eq!(error.reason, "product foo.testnet is not under a TLD the paseo stack serves");
 }
