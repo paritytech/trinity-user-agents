@@ -936,8 +936,19 @@ fn dropping_the_refresh_stops_the_reports() {
 	assert_eq!(statuses.recv_timeout(ANSWER_WAIT), Err(RecvTimeoutError::Disconnected));
 }
 
+/// Runs `work` to the end, failing the test instead of hanging when it has not
+/// finished within [`ANSWER_WAIT`].
+fn within_answer_wait<T>(work: impl Future<Output = T>) -> T {
+	let work = core::pin::pin!(work);
+	match futures::executor::block_on(select(work, futures_timer::Delay::new(ANSWER_WAIT))) {
+		Either::Left((done, _)) => done,
+		Either::Right(_) => panic!("not finished within {}s", ANSWER_WAIT.as_secs()),
+	}
+}
+
 /// A runtime on the stack `refresh` hands out, over a People node that names
-/// `genesis` as its chain and gives `suffix` as its `NetworkSuffix`.
+/// `genesis` as its chain and gives `suffix` as its `NetworkSuffix`. Any other
+/// request gets a JSON-RPC error.
 fn runtime_on(
 	refresh: &StackRefresh,
 	genesis: [u8; 32],
@@ -948,15 +959,25 @@ fn runtime_on(
 			let request: serde_json::Value =
 				serde_json::from_str(request).expect("the core sends JSON-RPC");
 			let answer = match request["method"].as_str() {
-				Some("chainSpec_v1_genesisHash") => hex::encode(genesis),
-				Some("state_getStorage") => hex::encode(suffix.as_bytes().to_vec().encode()),
-				method => panic!("the node was asked {method:?}"),
+				Some("chainSpec_v1_genesisHash") => Ok(hex::encode(genesis)),
+				Some("state_getStorage") => Ok(hex::encode(suffix.as_bytes().to_vec().encode())),
+				method => Err(format!("the node serves no {method:?}")),
 			};
-			let answer = format!("0x{answer}");
-			vec![
-				serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": answer})
-					.to_string(),
-			]
+			// An error, not a panic: a panic would end the node's answers, and
+			// the call waiting on one would never finish.
+			let frame = match answer {
+				Ok(answer) => serde_json::json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"result": format!("0x{answer}"),
+				}),
+				Err(message) => serde_json::json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"error": {"code": -32601, "message": message},
+				}),
+			};
+			vec![frame.to_string()]
 		})),
 		..Default::default()
 	});
@@ -982,7 +1003,7 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, _node) = runtime_on(&refresh, TEST_STACK_WIPED_PEOPLE, "paseo");
 
-	let people = futures::executor::block_on(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
+	let people = within_answer_wait(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
 
 	assert!(people.is_err(), "the restarted chain is not handed out");
 	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));
@@ -996,7 +1017,7 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "testnet");
 
-	let read = futures::executor::block_on(async {
+	let read = within_answer_wait(async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
 		services.people_network_suffix(people.rpc()).await.ok()
 	});
@@ -1026,7 +1047,7 @@ fn a_people_suffix_that_cannot_be_read_is_not_reported() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "");
 
-	let failed = futures::executor::block_on(async {
+	let failed = within_answer_wait(async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
 		Some(services.people_network_suffix(people.rpc()).await.is_err())
 	});
