@@ -242,6 +242,36 @@ fn a_second_store_lock_is_refused_rather_than_waited_on() -> Result<()> {
 	Ok(())
 }
 
+/// The refusal tells the user what to do instead, so every flag it names is
+/// one the commands that provision an account take.
+#[test]
+fn a_refused_store_lock_names_flags_the_signing_commands_take() -> Result<()> {
+	use clap::CommandFactory as _;
+
+	let dir = tempdir()?;
+	let _held = AccountStoreLock::acquire(dir.path())?;
+	let Err(refusal) = AccountStoreLock::acquire(dir.path()) else {
+		panic!("a second exclusive lock must be refused");
+	};
+	let refusal = refusal.to_string();
+	let named: Vec<&str> = refusal
+		.split(|character: char| character.is_whitespace() || character == ',')
+		.filter_map(|word| word.strip_prefix("--"))
+		.collect();
+	let cli = crate::Cli::command();
+	let unknown: Vec<(&str, &str)> = ["signing-host", "dev"]
+		.into_iter()
+		.flat_map(|name| named.iter().map(move |flag| (name, *flag)))
+		.filter(|(name, flag)| {
+			let command = cli.find_subcommand(name).expect("the command exists");
+			!command.get_arguments().any(|arg| arg.get_long() == Some(*flag))
+		})
+		.collect();
+
+	assert_eq!((named.is_empty(), unknown), (false, Vec::new()), "{refusal}");
+	Ok(())
+}
+
 #[test]
 fn cached_signer_resolves_without_network_access() -> Result<()> {
 	let dir = tempdir()?;
