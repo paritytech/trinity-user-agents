@@ -83,7 +83,7 @@ struct ChatExtensionV2RoomScenarioTests {
         _ = try await fixture.surface.sendMessage(.text("hello"), roomId: "lobby")
         #expect(try await fixture.storedChat("lobby")?.unreadDisplayMessageCount == 1)
 
-        try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
+        _ = try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
             timestamp: nil,
             badge: .image(icon: "https://example.com/badge.png"),
             lastMessage: nil,
@@ -103,7 +103,7 @@ struct ChatExtensionV2RoomScenarioTests {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
 
-        try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
+        _ = try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
             timestamp: 42,
             badge: .unreadCount(count: 3),
             // The product gives a message of the contact that the user has not seen as `Delivered`.
@@ -120,7 +120,7 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(chat.message?.timestamp == 42)
         #expect(chat.message?.status == .incoming(.new))
 
-        try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
+        _ = try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
             timestamp: nil,
             badge: .unreadCount(count: 0),
             lastMessage: nil,
@@ -147,8 +147,8 @@ struct ChatExtensionV2RoomScenarioTests {
             persist: true
         )
 
-        try await bridge.deleteRoom(roomId: "lobby")
-        try await bridge.deleteRoom(roomId: "lobby")
+        #expect(try await bridge.deleteRoom(roomId: "lobby") == .applied)
+        #expect(try await bridge.deleteRoom(roomId: "lobby") == .applied)
 
         #expect(try await fixture.storedChat("lobby") == nil)
         #expect(try await fixture.messages("lobby").isEmpty)
@@ -292,7 +292,7 @@ private extension ChatExtensionV2RoomScenarioTests {
         if status == .new {
             try await bridge.setRoomMetadata(roomId: "lobby", metadata: metadata)
             if let preview {
-                try await bridge.setRoomPreview(roomId: "lobby", preview: preview)
+                _ = try await bridge.setRoomPreview(roomId: "lobby", preview: preview)
             }
         }
 
