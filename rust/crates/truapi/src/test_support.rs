@@ -31,8 +31,8 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
@@ -63,6 +63,10 @@ pub use scripted_chain::{
 
 /// Response frames produced for an incoming JSON-RPC request.
 pub type RpcResponder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
+/// Response frames produced for an incoming JSON-RPC request on a connection
+/// opened for the chain with this genesis hash.
+pub type ChainRpcResponder = Arc<dyn Fn([u8; 32], &str) -> Vec<String> + Send + Sync>;
 
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
@@ -192,6 +196,10 @@ pub struct StubPlatform {
 	pub rpc_responses: Vec<String>,
 	/// Frames keyed by request contents, including subscription events.
 	pub rpc_responder: Option<RpcResponder>,
+	/// Like `rpc_responder`, and also told which chain the connection was
+	/// opened for, so one platform can serve several chains differently.
+	/// `rpc_responder` wins when both are set.
+	pub chain_rpc_responder: Option<ChainRpcResponder>,
 	/// Responses keyed by JSON-RPC method, answered as each request arrives with
 	/// that request's own id echoed back. A `state_call` is keyed by the runtime
 	/// API it names instead, so metadata and view-function reads stay separable.
@@ -2072,11 +2080,14 @@ impl ChainProvider for StubPlatform {
 			let _guard = DropFlagGuard(self.pending_connect_dropped.clone());
 			futures::future::pending::<()>().await;
 		}
+		let chain_rpc_responder = self.chain_rpc_responder.clone().map(|responder| {
+			Arc::new(move |request: &str| responder(genesis_hash, request)) as RpcResponder
+		});
 		Ok(Box::new(RecordingConnection {
 			sent: Arc::default(),
 			all_sent: self.sent_rpc.clone(),
 			responses: self.rpc_responses.clone(),
-			rpc_responder: self.rpc_responder.clone(),
+			rpc_responder: self.rpc_responder.clone().or(chain_rpc_responder),
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
 			sso_response_script: self.sso_response_script.clone(),

@@ -16,7 +16,7 @@ use crate::{
 	host_logic::root_entropy::RootEntropy,
 	platform::{HostInfo, ProductContext, ProductId},
 	runtime::{
-		HostRole, LocalActivation, SigningHost,
+		HostRole, LocalActivation, SigningHost, StatementRenewalTarget,
 		services::RuntimeServices,
 		statement_allowance::{StatementAllowanceError, slot::SlotError},
 	},
@@ -959,11 +959,12 @@ const PEOPLE_METADATA: &[u8] =
 /// The Asset Hub of [`published_test_descriptor`].
 const TEST_STACK_ASSET_HUB: [u8; 32] = [0xcc; 32];
 
-/// A runtime on the stack `refresh` hands out, over a People node that names
-/// `genesis` as its chain, gives `suffix` as its `NetworkSuffix`, and serves the
-/// runtime version and metadata an allowance reads first. Any other storage is
-/// empty, and any other request gets a JSON-RPC error. Asset Hub is out of
-/// reach, so activating a wallet looks up no username.
+/// A runtime on the stack `refresh` hands out, over nodes that each name the
+/// chain they were dialled for, apart from People's, which names `genesis`.
+/// People gives `suffix` as its `NetworkSuffix`, and each node serves the
+/// runtime version and People metadata an allowance reads first. Any other
+/// storage is empty, and any other request gets a JSON-RPC error. Asset Hub is
+/// out of reach, so activating a wallet looks up no username.
 fn runtime_on(
 	refresh: &StackRefresh,
 	genesis: [u8; 32],
@@ -972,21 +973,21 @@ fn runtime_on(
 	let suffix_key = [twox_128(b"NetworkSuffix"), twox_128(b"NetworkSuffix")].concat();
 	let suffix_key = format!("0x{}", hex::encode(suffix_key));
 	let node = Arc::new(StubPlatform {
-		rpc_responder: Some(Arc::new(move |request| {
+		chain_rpc_responder: Some(Arc::new(move |chain, request| {
 			let request: serde_json::Value =
 				serde_json::from_str(request).expect("the core sends JSON-RPC");
+			let people = chain == TEST_STACK_PEOPLE;
+			let named = if people { genesis } else { chain };
 			let as_hex = |bytes: &[u8]| serde_json::json!(format!("0x{}", hex::encode(bytes)));
 			let answer = match (request["method"].as_str(), request["params"][0].as_str()) {
-				(Some("chainSpec_v1_genesisHash" | "chain_getBlockHash"), _) => {
-					Ok(as_hex(&genesis))
-				},
+				(Some("chainSpec_v1_genesisHash" | "chain_getBlockHash"), _) => Ok(as_hex(&named)),
 				(Some("state_getRuntimeVersion"), _) => {
 					Ok(serde_json::json!({"specVersion": 1, "transactionVersion": 1}))
 				},
 				(Some("state_call"), Some("Metadata_metadata_at_version")) => {
 					Ok(as_hex(&Some(PEOPLE_METADATA.to_vec()).encode()))
 				},
-				(Some("state_getStorage"), Some(key)) if key == suffix_key => {
+				(Some("state_getStorage"), Some(key)) if people && key == suffix_key => {
 					Ok(as_hex(&suffix.as_bytes().to_vec().encode()))
 				},
 				(Some("state_getStorage"), _) => Ok(serde_json::Value::Null),
@@ -1105,36 +1106,71 @@ fn a_people_suffix_that_cannot_be_read_leaves_the_listing_as_it_was() {
 	assert_eq!(refresh.status().mismatches, testnet_suffix_listed());
 }
 
-/// The allowance work is where a signing host reads People's suffix, so it is
-/// the allowance that has to report it. One that read the suffix past the
-/// checks would build proofs with a suffix the host never hears of.
-#[test]
-fn a_statement_store_allowance_reports_a_people_suffix_that_is_not_the_tld() {
+/// A signing host with an active wallet, on a runtime over [`runtime_on`]'s
+/// nodes where People gives `testnet` as its suffix, and the refresh whose
+/// stack it runs. Past the suffix the nodes give only empty storage and
+/// errors, so any allowance work the host starts fails after reading it.
+fn signing_host_over_a_testnet_suffix() -> (StackRefresh, Arc<SigningHost>) {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "testnet");
 	let signing_host = SigningHost::new(services);
-	let product = ProductContext::new(ProductId::for_test("myapp.paseo"));
+	within_answer_wait(signing_host.activate_local_session(RootEntropy::new([0xab; 16])))
+		.expect("activation succeeds");
+	(refresh, signing_host)
+}
 
-	// Past the suffix the node gives only empty storage and errors, so the
-	// allowance itself fails.
-	let allocated = within_answer_wait(async {
-		signing_host.activate_local_session(RootEntropy::new([0xab; 16])).await.ok()?;
-		let accounts = signing_host.accounts();
-		let session = accounts.current_session()?;
-		let cx = CallContext::default();
-		Some(accounts.statement_store_allowance_key(&cx, &session, &product).await.is_ok())
-	});
+fn test_product() -> ProductContext {
+	ProductContext::new(ProductId::for_test("myapp.paseo"))
+}
 
-	assert_eq!(
-		(allocated, refresh.status().mismatches),
-		(
-			Some(false),
-			vec![StackMismatch::NetworkSuffix {
-				named: "paseo".to_string(),
-				answered: "testnet".to_string(),
-			}],
-		)
-	);
+/// The allowance work is where a signing host reads People's suffix, so each
+/// allowance has to report it. One that read the suffix past the checks would
+/// build proofs with a suffix the host never hears of.
+#[test]
+fn a_statement_store_allowance_reports_a_people_suffix_that_is_not_the_tld() {
+	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
+	let accounts = signing_host.accounts();
+	let session = accounts.current_session().expect("a session is active");
+
+	let allocated = within_answer_wait(accounts.statement_store_allowance_key(
+		&CallContext::default(),
+		&session,
+		&test_product(),
+	));
+
+	assert_eq!((allocated.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
+}
+
+/// A Bulletin allowance proves with People's suffix too, read after Bulletin's
+/// own authorization.
+#[test]
+fn a_bulletin_allowance_reports_a_people_suffix_that_is_not_the_tld() {
+	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
+	let accounts = signing_host.accounts();
+	let session = accounts.current_session().expect("a session is active");
+
+	let allocated = within_answer_wait(accounts.bulletin_allowance_key(
+		&CallContext::default(),
+		&session,
+		&test_product(),
+	));
+
+	assert_eq!((allocated.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
+}
+
+/// A renewal pass proves with People's suffix for each statement account it
+/// keeps allowed, with no product asking.
+#[test]
+fn a_statement_store_renewal_reports_a_people_suffix_that_is_not_the_tld() {
+	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
+	within_answer_wait(
+		signing_host.track_statement_renewal_targets(vec![StatementRenewalTarget::WalletSso]),
+	)
+	.expect("the wallet's own statement account is tracked");
+
+	let renewed = within_answer_wait(signing_host.renew_statement_allowances());
+
+	assert_eq!((renewed.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
 }
 
 /// The host is told of a wrong suffix the way it is told of a wrong chain:
