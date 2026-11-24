@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
@@ -6,7 +6,10 @@ use truapi::platform::{
 	ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError, StackIdentity,
 };
 
-use crate::{chain::ChainBackend, stack_descriptor::Roles};
+use crate::{
+	chain::{ChainAccess, ChainBackend, StackLightClient},
+	stack_descriptor::Roles,
+};
 
 mod built_in;
 mod checks;
@@ -16,7 +19,10 @@ mod stack;
 #[cfg(test)]
 mod testing;
 
-pub use built_in::ensure_built_in_runnable;
+#[cfg(test)]
+pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, light_spec_genesis, serve_light_specs};
+
+pub use built_in::{bundled_light_spec, ensure_built_in_runnable};
 
 /// Networks the headless hosts know by name, each a test network this build
 /// ships a signed stack copy of. The CLI account store saves BIP-39 mnemonics
@@ -71,7 +77,7 @@ fn namespace_of(id: &str) -> &str {
 /// or `--stack`. Built only by [`NetworkSource::new`], which refuses the
 /// flag combinations no command can run.
 pub struct NetworkSource {
-	chain_backend: ChainBackend,
+	chain_access: ChainAccess,
 	network: NetworkChoice,
 	/// Where the published descriptor a built-in network last ran on is kept.
 	stack_copies: Option<std::path::PathBuf>,
@@ -101,7 +107,8 @@ pub struct StackArg {
 pub struct Stack {
 	stack_id: String,
 	descriptor: Descriptor,
-	chain_backend: ChainBackend,
+	/// Set exactly when the stack runs on the light client.
+	light_client: Option<Arc<StackLightClient>>,
 	chains: Roles<ChainEndpoint>,
 	identity_backend: String,
 	pop_controller: [u8; 20],
@@ -158,7 +165,21 @@ impl Stack {
 
 	/// How this run reaches the chains, from `--chain-backend`.
 	pub fn chain_backend(&self) -> ChainBackend {
-		self.chain_backend
+		match self.light_client {
+			Some(_) => ChainBackend::LightClient,
+			None => ChainBackend::Rpc,
+		}
+	}
+
+	/// The stack's light client, when it runs on one.
+	pub fn light_client(&self) -> Option<&StackLightClient> {
+		self.light_client.as_deref()
+	}
+
+	/// The stack's light client for a chain provider to hold. Every provider
+	/// built from this stack shares the one client, so a chain syncs once.
+	pub fn share_light_client(&self) -> Option<Arc<StackLightClient>> {
+		self.light_client.clone()
 	}
 
 	/// The identity of the pointer the descriptor was read from, and the

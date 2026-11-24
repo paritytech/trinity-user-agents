@@ -1,17 +1,20 @@
 //! The built-in networks: each stack's bundled descriptor, its refresh from
 //! the published copy, and the notice when that copy is in use.
 
-use std::{fs, path::Path, sync::LazyLock, time::Duration};
+use std::{collections::HashMap, fs, path::Path, sync::LazyLock, time::Duration};
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::ValueEnum;
 use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 
 use super::{Network, Stack};
 use crate::{
-	chain::ChainBackend,
+	chain::ChainAccess,
 	platform::atomic_write,
-	stack_descriptor::{FetchError, describe_pin_change, fetch, pointer_of, reads_same, unix_now},
+	stack_descriptor::{
+		FetchError, describe_pin_change, fetch, light_client_chains, pointer_of, reads_same,
+		unix_now,
+	},
 };
 
 /// How long a command waits for a built-in stack's published descriptor
@@ -86,17 +89,44 @@ pub fn built_in_key(stack: &str) -> Option<String> {
 }
 
 /// Fails when `descriptor`, fetched from `pointer`, is a built-in network's
-/// stack the CLI cannot run on, so a bundled copy cannot start every command
-/// with an error.
+/// stack the CLI cannot run on over either chain backend, so a bundled copy
+/// cannot start every command with an error.
 pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> Result<()> {
 	let stack_id = pointer.stack_id();
 	let is_built_in = Network::value_variants()
 		.iter()
 		.any(|network| network.built_in_stack().pointer().stack_id() == stack_id);
-	if is_built_in && let Err(error) = Stack::new(stack_id, descriptor.clone(), ChainBackend::Rpc) {
-		bail!("{} is a built-in network's stack the CLI cannot run: {error}", pointer.url());
+	if !is_built_in {
+		return Ok(());
+	}
+	let url = pointer.url();
+	if let Err(error) = Stack::new(stack_id, descriptor.clone(), &ChainAccess::Rpc) {
+		bail!("{url} is a built-in network's stack the CLI cannot run: {error}");
+	}
+	if let Some(chain) = light_client_chains(descriptor).find(|chain| chain.light_spec.is_none()) {
+		let role = &chain.role;
+		bail!(
+			"{url} is a built-in network's stack the CLI cannot run on the light client: its \
+			 descriptor names no lightSpec for {role}"
+		);
 	}
 	Ok(())
+}
+
+/// The light spec with `sha256`, as a descriptor writes it, when a built-in
+/// network's bundled copy names it, so the light client starts without the
+/// spec's server.
+pub fn bundled_light_spec(sha256: &str) -> Option<&'static str> {
+	static SPECS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+		Network::value_variants()
+			.iter()
+			.flat_map(|network| {
+				serde_json::from_slice::<HashMap<String, String>>(network.bundled_light_specs())
+					.expect("invalid bundled light specs")
+			})
+			.collect()
+	});
+	SPECS.get(sha256).map(String::as_str)
 }
 
 impl Network {
@@ -108,12 +138,26 @@ impl Network {
 		}
 	}
 
+	/// The light specs the bundled copy names, by `sha256`, as `stack bundle
+	/// --light-specs` writes them. `scripts/update-stacks.sh` refreshes them
+	/// with the copy.
+	fn bundled_light_specs(self) -> &'static [u8] {
+		match self {
+			Self::PaseoNextV2 => {
+				include_bytes!("../../../../../stacks/light-specs/paseo-next-v2.json")
+			},
+			Self::Previewnet => include_bytes!("../../../../../stacks/light-specs/previewnet.json"),
+			Self::PcfDevnet => include_bytes!("../../../../../stacks/light-specs/pcf-devnet.json"),
+		}
+	}
+
 	/// The bundled copy of this network's stack, connected to over
 	/// `chain_backend`, without fetching anything.
 	#[cfg(test)]
-	pub fn bundled_stack(self, chain_backend: ChainBackend) -> Stack {
+	pub fn bundled_stack(self, chain_backend: crate::chain::ChainBackend) -> Stack {
+		let chain_access = super::testing::test_access(chain_backend);
 		let built_in = self.built_in_stack();
-		Stack::new(built_in.pointer().stack_id(), built_in.open_bundled(), chain_backend)
+		Stack::new(built_in.pointer().stack_id(), built_in.open_bundled(), &chain_access)
 			.expect("invalid bundled stack")
 	}
 
@@ -131,7 +175,7 @@ impl Network {
 	pub async fn resolve_built_in(
 		self,
 		fetch_timeout: Duration,
-		chain_backend: ChainBackend,
+		chain_access: &ChainAccess,
 		copies: Option<&Path>,
 	) -> Result<(Stack, BuiltInOrigin)> {
 		let built_in = self.built_in_stack();
@@ -158,7 +202,7 @@ impl Network {
 			published,
 			last_run.as_deref(),
 			now,
-			chain_backend,
+			chain_access,
 		)?;
 		if let (Some(published), BuiltInCopy::Published, Some(path)) =
 			(published, refresh.copy, &copy_path) &&
@@ -284,7 +328,7 @@ fn refresh_from_last_run(
 	published: Option<&[u8]>,
 	last_run: Option<&[u8]>,
 	now_unix_seconds: i64,
-	chain_backend: ChainBackend,
+	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
 	let last_run = last_run.filter(|last_run| {
 		let over_bundled =
@@ -310,7 +354,7 @@ fn refresh_from_last_run(
 	let rolled_back = not_taken.is_some();
 	let refresh_from = |document: Option<&[u8]>, name: &str| {
 		let fetched = document.map_or(Fetched::Unreachable, Fetched::Document);
-		refresh_stack(id, name, pointer, bundled, fetched, now_unix_seconds, chain_backend)
+		refresh_stack(id, name, pointer, bundled, fetched, now_unix_seconds, chain_access)
 	};
 	let published_name = format!("published {id} stack descriptor at {}", pointer.url());
 	let from_published = match published.filter(|_| !rolled_back) {
@@ -337,7 +381,8 @@ fn refresh_from_last_run(
 /// CLI can run on; otherwise `bundled`, with a warning that calls `fetched`
 /// the `fetched_name`. Carries a notice when the stack in use differs from
 /// the bundled one in a field the CLI reads. Fails when the descriptor in use
-/// is past `expiresAt`.
+/// is past `expiresAt`, and on the light client when `fetched` runs over RPC
+/// but names no light spec the light client needs.
 fn refresh_stack(
 	id: &str,
 	fetched_name: &str,
@@ -345,7 +390,7 @@ fn refresh_stack(
 	bundled: &[u8],
 	fetched: Fetched,
 	now_unix_seconds: i64,
-	chain_backend: ChainBackend,
+	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
 	let bundled_copy = accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
 		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
@@ -379,8 +424,22 @@ fn refresh_stack(
 			Some(reason) => Err(reason),
 			None => {
 				ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
-				Stack::new(pointer.stack_id(), accepted.stack.descriptor, chain_backend)
-					.map_err(|error| format!("cannot run: {error:#}"))
+				match Stack::new(
+					pointer.stack_id(),
+					accepted.stack.descriptor.clone(),
+					&ChainAccess::Rpc,
+				) {
+					Err(error) => Err(format!("cannot run: {error:#}")),
+					Ok(stack) => Ok(match chain_access {
+						ChainAccess::Rpc => stack,
+						// The bundled copy's chains may be gone, so the light
+						// client does not fall back to it.
+						light_client => {
+							Stack::new(pointer.stack_id(), accepted.stack.descriptor, light_client)
+								.with_context(|| format!("the {fetched_name}"))?
+						},
+					}),
+				}
 			},
 		};
 	let (stack, stale, copy, notice) = match published_stack {
@@ -389,7 +448,7 @@ fn refresh_stack(
 			tracing::warn!("the {fetched_name} {reason}; not using it");
 			ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
 			let bundled =
-				Stack::new(pointer.stack_id(), bundled_copy.stack.descriptor, chain_backend)?;
+				Stack::new(pointer.stack_id(), bundled_copy.stack.descriptor, chain_access)?;
 			(bundled, bundled_copy.stale, BuiltInCopy::Rejected, None)
 		},
 	};
