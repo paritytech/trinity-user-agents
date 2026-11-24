@@ -51,4 +51,11 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
 
         return roomId == other.roomId && messageType == other.messageType && payload == other.payload
     }
+
+    /// A product that replaces the card docked in a room's footer fades the new card in over the old one.
+    func crossfades(from previous: any ChatInputViewConfigurationProtocol) -> Bool {
+        guard let previous = previous as? ProductRoomFooterCardConfiguration else { return false }
+
+        return roomId == previous.roomId && !equalsTo(configuration: previous)
+    }
 }

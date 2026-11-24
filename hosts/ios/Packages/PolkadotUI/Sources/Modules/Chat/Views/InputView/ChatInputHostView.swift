@@ -2,7 +2,12 @@ import UIKit
 internal import SnapKit
 
 public final class ChatInputHostView: UIView {
+    /// How long a slot that crossfades takes to replace the one before it.
+    static let crossfadeDuration: TimeInterval = 0.25
+
     private var currentContentView: UIView?
+    /// The slot a crossfade is fading out, removed when the fade ends.
+    private var fadingContentView: UIView?
     private var currentConfiguration: (any ChatInputViewConfigurationProtocol)?
     private let safeAreaFillView = UIView()
     private weak var inputHandler: ChatInputHandling?
@@ -34,6 +39,7 @@ public final class ChatInputHostView: UIView {
     }
 
     func clear() {
+        dropFadingContentView()
         currentContentView?.removeFromSuperview()
         currentContentView = nil
         currentConfiguration = nil
@@ -51,8 +57,14 @@ public final class ChatInputHostView: UIView {
         }
 
         let newContentView = configuration.makeContentView(for: inputHandler)
+        let crossfades = currentConfiguration.map { configuration.crossfades(from: $0) } ?? false
+            && !UIAccessibility.isReduceMotionEnabled
 
-        currentContentView?.removeFromSuperview()
+        dropFadingContentView()
+        let previousContentView = currentContentView
+        if !crossfades {
+            previousContentView?.removeFromSuperview()
+        }
 
         currentContentView = newContentView
         addSubview(newContentView)
@@ -66,6 +78,39 @@ public final class ChatInputHostView: UIView {
         }
 
         safeAreaFillView.backgroundColor = configuration.safeAreaFillColor
+
+        if crossfades, let previousContentView {
+            crossfade(from: previousContentView, to: newContentView)
+        }
+    }
+
+    /// Fades `previous` out over `next`, which fades in; `previous` takes no touches meanwhile.
+    private func crossfade(from previous: UIView, to next: UIView) {
+        fadingContentView = previous
+        previous.isUserInteractionEnabled = false
+        bringSubviewToFront(previous)
+        next.alpha = 0
+        UIView.animate(
+            withDuration: Self.crossfadeDuration,
+            delay: 0,
+            options: [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState],
+            animations: {
+                next.alpha = 1
+                previous.alpha = 0
+            },
+            completion: { [weak self, weak previous] _ in
+                guard let self, let previous, fadingContentView === previous else { return }
+                dropFadingContentView()
+            }
+        )
+    }
+
+    private func dropFadingContentView() {
+        fadingContentView?.layer.removeAllAnimations()
+        fadingContentView?.removeFromSuperview()
+        fadingContentView = nil
+        currentContentView?.layer.removeAllAnimations()
+        currentContentView?.alpha = 1
     }
 
     public var contentHeight: CGFloat {
