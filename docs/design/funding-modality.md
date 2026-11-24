@@ -219,7 +219,7 @@ top-up started stays open 7 days for a late payment, which is still added.
 ```mermaid
 flowchart TD
   c[user cancels] --> up{overlay up?}
-  up -- "yes, never started" --> dropped[Ended · session dropped]
+  up -- "yes, never started" --> dropped[Cancelled · session dropped]
   up -- "yes, provider chosen" --> mm
   up -- no --> assigned{provider assigned?}
   assigned -- no --> none[Cancelled]
