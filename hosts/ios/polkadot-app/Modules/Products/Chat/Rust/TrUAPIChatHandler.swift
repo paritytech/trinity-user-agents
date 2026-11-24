@@ -45,7 +45,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
-    private var request = WorkerRequest.none
+    private var workerClaim: (any TrUAPIWorkerClaiming)?
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
@@ -193,7 +193,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
         // A release, not a close. The product's cards may still be asking for
         // the same worker, and the core stops it once the last request goes.
-        releaseWorker()
+        workerClaim?.release()
+        workerClaim = nil
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }
@@ -207,38 +208,13 @@ private extension TrUAPIChatHandler {
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
 
-        request = .asking
-
-        // Returns once the worker is up, because everything the bot does next,
-        // its welcome message first of all, is published through the execution.
-        do {
-            _ = try await workers.ensureWorker(for: productId)
-        } catch {
-            settleRequest()
-            throw error
-        }
-        settleRequest()
+        workerClaim = try workers.claim(productId)
+        try await workers.waitUntilReady(productId)
 
         try checkNotDisposed()
         startRoomsForwarding()
 
         logger.debug("Rust chat runtime started for: \(productId)")
-    }
-
-    /// The ask has returned, so the request is ours either way: it is
-    /// registered before the wait that can fail. A dispose that landed while we
-    /// were asking left the giving back to here.
-    func settleRequest() {
-        request = .held
-
-        if disposed { releaseWorker() }
-    }
-
-    func releaseWorker() {
-        guard request == .held else { return }
-
-        request = .none
-        workers.releaseWorker(for: productId)
     }
 
     func checkNotDisposed() throws {

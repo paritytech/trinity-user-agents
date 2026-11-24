@@ -682,11 +682,11 @@ fn an_execution_opens_only_for_a_product_the_stack_serves() {
 	assert!(matches!(open("myapp.elsewhere"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }
 
-/// A worker reference for a product the stack does not serve is dropped. The
-/// worker can never open, so keeping the reference would make the host retry
-/// it forever.
+/// A worker claim for a product the stack does not serve holds nothing. The
+/// worker can never open, so a reference would make the host retry it
+/// forever.
 #[test]
-fn a_worker_reference_for_an_unserved_product_starts_nothing() {
+fn a_worker_claim_for_an_unserved_product_starts_nothing() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
@@ -694,8 +694,8 @@ fn a_worker_reference_for_an_unserved_product_starts_nothing() {
 	)
 	.expect("host runtime config should be valid");
 
-	host.acquire_worker(ProductId::for_test("shared.elsewhere"));
-	host.acquire_worker(ProductId::for_test("shared.dot"));
+	let _unserved = host.claim_worker(ProductId::for_test("shared.elsewhere"));
+	let _served = host.claim_worker(ProductId::for_test("shared.dot"));
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),

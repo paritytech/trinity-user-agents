@@ -60,6 +60,7 @@ pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 mod test_resource_controls;
 mod versioning;
 mod vrf;
+mod worker_hold;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -98,6 +99,7 @@ pub use sso_responder_service::{
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
+pub use worker_hold::WorkerHold;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
@@ -418,7 +420,7 @@ impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
 	}
 }
 
-/// Per-connection adapters, permissions, channels and open operation demand.
+/// Per-connection adapters, permissions and channels.
 pub struct ProductConnection {
 	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
@@ -441,7 +443,6 @@ pub struct ProductConnection {
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// Control of the card face under this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
-	open_operations: Mutex<HashSet<u32>>,
 	/// Cards whose back this connection has drawn. A press on a back reaches
 	/// the product only for these: a product whose SDK predates
 	/// `PocketCardBack` cannot decode one and would lose its whole action
@@ -459,7 +460,6 @@ impl Drop for ProductConnection {
 	fn drop(&mut self) {
 		// This runtime owns its chain connections outright, so they go with it.
 		self.chain.release_scope();
-		self.release_open_operations();
 	}
 }
 
@@ -679,77 +679,6 @@ impl ProductConnection {
 		renderer_access_for(self.product.execution_kind)
 	}
 
-	/// Hold worker demand until the matching [`Self::release_worker_reference`].
-	pub fn acquire_worker_reference(&self) {
-		self.services.worker_ledger.acquire(&self.product.product_id);
-	}
-
-	/// Release one core-held reference on this connection's product worker.
-	pub fn release_worker_reference(&self) {
-		self.services.worker_ledger.release(&self.product.product_id);
-	}
-
-	/// Hold this connection's product worker until the hold is dropped.
-	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
-		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
-	}
-
-	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
-	async fn begin_operation_with_host(
-		&self,
-		label: String,
-	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-		let (tx, rx) = futures::channel::oneshot::channel();
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		self.services.spawner.spawn(async move {
-			let begun = platform.begin_operation(&product, label).await;
-			if let Err(Ok(response)) = tx.send(begun) {
-				let _ = platform.end_operation(&product, response.id).await;
-			}
-		});
-		rx.await.unwrap_or_else(|_| {
-			Err(latest::HostWorkerOperationError::Unknown {
-				reason: "the host did not answer".to_string(),
-			})
-		})
-	}
-
-	/// Hold worker demand until this operation ends or the connection closes.
-	fn hold_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
-			self.acquire_worker_reference();
-		}
-	}
-
-	/// Release all operation demand immediately and schedule host cleanup.
-	/// Repeated calls leave already released operations alone.
-	pub fn release_open_operations(&self) {
-		let open = core::mem::take(
-			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
-		);
-		if open.is_empty() {
-			return;
-		}
-		for _ in &open {
-			self.release_worker_reference();
-		}
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		self.services.spawner.spawn(async move {
-			for id in open {
-				let _ = platform.end_operation(&product, id).await;
-			}
-		});
-	}
-
-	/// Release one open operation's demand; unknown ids leave demand unchanged.
-	fn release_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
-			self.release_worker_reference();
-		}
-	}
-
 	/// End the renderer action and failure streams this connection's product
 	/// is reading.
 	pub fn detach_renderer(&self) {
@@ -844,7 +773,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			pocket_platform: adapters.pocket_platform,
 			game_platform: adapters.game_platform,
 			expanded_card: adapters.expanded_card,
-			open_operations: Mutex::new(HashSet::new()),
 			drawn_backs: Mutex::new(HashSet::new()),
 		});
 		let accounts = ProductAccounts::new(accounts, connection.clone());
