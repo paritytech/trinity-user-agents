@@ -158,9 +158,9 @@ Debug, DevCI, Nightly and Safetynet keep the stacks they run now.
 Release has no default on purpose. Right now Release runs `polkadot` with reserved values allowed, and we don't want a
 build to end up with that just because nobody set a config. So a release build with an empty setting fails.
 
-This means Parity's own Release builds need a config before the change can land, and we have not decided which one (open
-question 1). Release is used by the release TestFlight builds, by the Profile and Archive actions of the Xcode schemes,
-and by Android's release unit tests in CI.
+This means Parity's own Release builds need a config before the change can land. Which one they get is for the iOS and
+Android owners to decide when they move their builds to configs. Release is used by the release TestFlight builds, by
+the Profile and Archive actions of the Xcode schemes, and by Android's release unit tests in CI.
 
 PCF would not have to change any host code. It keeps its own `production.build.json` outside this repository, with
 `polkadot.json` next to it, and passes the config's path through the same setting. It refreshes that copy in its own
@@ -247,7 +247,8 @@ although the refresh never changes a config. `scripts/update-stacks.sh` needs no
   need the `truapi-host` binary and network access, and no pull request would stand between a publisher and a release.
 - **Several stacks in one config.** #1899 and RFC 2 speak of a build's stacks in the plural, but RFC 2 also says that
   each build still runs one stack, and every build in its table has one. Among the hosts covered here, the only ones
-  that offer more are one development deployment of dotli and its Docker image (open question 3).
+  that offer more are one development deployment of dotli and its Docker image. Whether those take one config per
+  network or keep choosing their networks the way they do now is up to dotli.
 - **Taking the link from `known-stacks.json`, so that the config only has the stack's name.** The link carries the
   publisher's key. If the config only had a name, a config that says `allowed: true` would not show who gets that
   permission, and a publisher outside this repository would have to add its stack to Parity's list before it could
@@ -257,21 +258,3 @@ although the refresh never changes a config. `scripts/update-stacks.sh` needs no
 - **Extending `.trinity/stacks.json`.** `@parity/trinity-stack` defines that file's format and writes it for any
   project, host or not. Its values are plain link strings, so adding a policy would change a published format for
   readers that have no use for it.
-
-## Open questions
-
-For the iOS and Android owners:
-
-1. Which config should Parity's Release builds get, and which Xcode configuration and Gradle build type is the
-   mainnet-fork build? Release runs `polkadot` now, and nothing runs polkadot-test.
-2. Does PCF build the apps from this tree, or from polkadot-ios-community and polkadot-android-community? Those two have
-   no `stacks/` directory.
-
-For the dotli owners:
-
-3. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
-   container starts. Should such a build take several configs, or should its choice of networks stay outside this
-   format?
-4. dotli keeps its descriptor copies in `packages/config/.trinity/`, a directory the `trinity-stack` tool writes. Can
-   its build configs live there next to the copies? And should `trinity-stack` take the link from a config, so that it
-   is not written in `.trinity/stacks.json` as well?
