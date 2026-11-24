@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -239,7 +240,15 @@ internal fun ExitFadeChildren(parent: JsWidget, content: @Composable (JsWidget) 
                 }
                 // The exit layer must blend with the backdrop outside its alpha layer.
                 val blending = slot.widget.modifiers().filterIsInstance<JsModifier.BlendingMode>().toComposeModifier()
-                Box(blending.graphicsLayer { this.alpha = alpha.value }) { content(slot.widget) }
+                // A child fading out is no longer in the current tree: it sends no particles, and its actions set none off.
+                val outer = LocalJsEventHandler.current
+                val actions = LocalParticleActions.current
+                val muted: JsUiEventHandler = remember(outer, actions) {
+                    { actionId, eventType -> actions?.muted { outer(actionId, eventType) } ?: outer(actionId, eventType) }
+                }
+                CompositionLocalProvider(LocalParticlesLeaving provides true, LocalJsEventHandler provides muted) {
+                    Box(blending.graphicsLayer { this.alpha = alpha.value }) { content(slot.widget) }
+                }
             }
         }
     }

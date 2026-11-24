@@ -32,9 +32,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 @Composable
 fun List<JsModifier>.toComposeModifier(): Modifier {
     val shadowShape = if (any { it is JsModifier.Shadow || it is JsModifier.Fill }) shadowShape() else RectangleShape
-    val motion = nodeMotionModifier(nodeMotionSpec())
+    val motion = nodeMotionModifier(nodeMotionSpec()).then(particleModifier(lastOrNull { it is JsModifier.Emit } as JsModifier.Emit?))
     var placedMotion = false
-    val styled = orderedForCompose().filterNot { it is JsModifier.Enter || it is JsModifier.Animate }.fold(Modifier as Modifier) { acc, modifier ->
+    val styled = orderedForCompose().filterNot { it is JsModifier.Enter || it is JsModifier.Animate || it is JsModifier.Emit }.fold(Modifier as Modifier) { acc, modifier ->
         val before = if (!placedMotion && !modifier.precedesNodeMotion()) {
             placedMotion = true
             acc.then(motion)
@@ -69,7 +69,7 @@ internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (lastMaskO
             is JsModifier.Opacity -> 3
             is JsModifier.FadeWithPan -> 4
             is JsModifier.BlendingMode -> 2
-            is JsModifier.Spin, is JsModifier.Enter, is JsModifier.Animate -> 5
+            is JsModifier.Spin, is JsModifier.Enter, is JsModifier.Animate, is JsModifier.Emit -> 5
             is JsModifier.Mask -> 6
             is JsModifier.Shadow -> 7
             is JsModifier.Fill -> 8
@@ -115,6 +115,7 @@ fun JsModifier.toComposeModifier(): Modifier = when (this) {
     is JsModifier.Font, is JsModifier.ExitFade -> Modifier
     is JsModifier.Mask -> maskModifier()
     is JsModifier.Enter, is JsModifier.Animate -> nodeMotionModifier(listOf(this).nodeMotionSpec())
+    is JsModifier.Emit -> particleModifier(this)
 }
 
 private fun JsModifier.precedesNodeMotion(): Boolean = when (this) {
