@@ -9,6 +9,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
@@ -36,6 +38,8 @@ import uniffi.truapi.Dimensions
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
 import uniffi.truapi.Mask
+import uniffi.truapi.MaskBrush
+import uniffi.truapi.MaskBrushTip
 import uniffi.truapi.MaskMode
 import uniffi.truapi.MaskPoint
 import uniffi.truapi.MaskShape
@@ -329,8 +333,7 @@ private fun Mask.toJs(keyed: RendererKeyed): JsModifier.Mask = JsModifier.Mask(
     key = key,
     mode = if (mode == MaskMode.SHOW) JsMaskMode.SHOW else JsMaskMode.HIDE,
     shapes = shapes.map { it.toJs() },
-    // The Android stamped-brush layer stamps a followed brush; until then the strokes draw round.
-    follow = follow?.let { JsMaskFollow(it.pan, it.width.toLong()) },
+    follow = follow?.let { JsMaskFollow(it.pan, it.width.toLong(), it.brush?.toJs()) },
     fadeMs = fadeMs?.toLong() ?: 0L,
     // The Android mask-progress layer checks mid-stroke, rescues a stalled share and plays `haptics`; until then
     // `whileDown`, `rescue` and `haptics` are ignored.
@@ -344,9 +347,15 @@ fun MaskShape.toJs(): JsMaskShape = when (this) {
     is MaskShape.All -> JsMaskShape.All
     is MaskShape.Circle -> JsMaskShape.Circle(center.toJs(), radius.toLong())
     is MaskShape.Stroke -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
-    // The Android stamped-brush layer stamps the tip; until then the line draws round at its width.
-    is MaskShape.Stamped -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
+    is MaskShape.Stamped -> JsMaskShape.Stamped(width.toLong(), brush.toJs(), points.map { it.toJs() })
 }
+
+private fun MaskBrush.toJs() = JsMaskBrush(
+    tip = if (tip == MaskBrushTip.CAPSULE) JsMaskBrushTip.CAPSULE else JsMaskBrushTip.ELLIPSE,
+    aspectPermille = aspectPermille.toInt(),
+    angleCentideg = angleCentideg.toInt(),
+    spacingPermille = spacingPermille.toInt(),
+)
 
 private fun MaskPoint.toJs() = JsMaskPoint(x, y)
 

@@ -14,13 +14,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -35,6 +38,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.toSize
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
@@ -64,7 +69,7 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
         val followed = mask.follow?.let { follow ->
             val trail = mask.trail ?: return@let emptyList()
             val place = trail.origin - bounds.topLeft
-            MaskRules.followed(trail.strokes, follow.width, place, density, if (rtl) bounds.width else null)
+            MaskRules.followed(trail.strokes, follow.width, place, density, if (rtl) bounds.width else null, follow.brush)
         }.orEmpty()
         return JsMaskShapes.Picture(mask.mode, mask.shapes + channel?.added.orEmpty() + followed)
     }
@@ -188,6 +193,7 @@ internal object MaskRules {
         for (shape in shapes) {
             when (shape) {
                 JsMaskShape.All -> path.addRect(size.toRect())
+                is JsMaskShape.Stamped -> path.addPath(stamps(shape, density, mirroredWidth))
                 is JsMaskShape.Circle -> if (shape.radius > 0) {
                     path.addOval(circle(px(shape.center, density, mirroredWidth), shape.radius * density / HUNDREDTHS))
                 }
@@ -195,6 +201,30 @@ internal object MaskRules {
                     path.addOval(circle(px(shape.points[0], density, mirroredWidth), shape.width * density / HUNDREDTHS / 2))
                 }
             }
+        }
+        return path
+    }
+
+    private fun stamps(shape: JsMaskShape.Stamped, density: Float, mirroredWidth: Float?): Path {
+        val path = Path()
+        val halfLength = shape.width * density / HUNDREDTHS / 2
+        val halfThickness = halfLength * shape.brush.aspectPermille.coerceIn(1, 1000) / 1000f
+        val rect = Rect(-halfLength, -halfThickness, halfLength, halfThickness)
+        val angle = shape.brush.angleCentideg / 100f * if (mirroredWidth == null) 1 else -1
+        for (centre in MaskStamps.centres(shape.width, shape.brush, shape.points)) {
+            val tip = Path().apply {
+                when (shape.brush.tip) {
+                    JsMaskBrushTip.ELLIPSE -> addOval(rect)
+                    JsMaskBrushTip.CAPSULE -> addRoundRect(RoundRect(rect, CornerRadius(halfThickness)))
+                }
+            }
+            val x = (centre.x * density / HUNDREDTHS).toFloat()
+            val y = (centre.y * density / HUNDREDTHS).toFloat()
+            tip.transform(Matrix().apply {
+                translate(mirroredWidth?.let { it - x } ?: x, y)
+                rotateZ(angle)
+            })
+            path.addPath(tip)
         }
         return path
     }
@@ -225,17 +255,16 @@ internal object MaskRules {
         place: Offset,
         density: Float,
         mirroredWidth: Float?,
+        brush: JsMaskBrush? = null,
     ): List<JsMaskShape> = strokes.filter { it.isNotEmpty() }.map { stroke ->
-        JsMaskShape.Stroke(
-            width,
-            stroke.map { point ->
-                val x = point.x + place.x
-                JsMaskPoint(
-                    x = ((mirroredWidth?.let { it - x } ?: x) / density * HUNDREDTHS).roundToInt(),
-                    y = ((point.y + place.y) / density * HUNDREDTHS).roundToInt(),
-                )
-            },
-        )
+        val points = stroke.map { point ->
+            val x = point.x + place.x
+            JsMaskPoint(
+                x = ((mirroredWidth?.let { it - x } ?: x) / density * HUNDREDTHS).roundToInt(),
+                y = ((point.y + place.y) / density * HUNDREDTHS).roundToInt(),
+            )
+        }
+        if (brush == null) JsMaskShape.Stroke(width, points) else JsMaskShape.Stamped(width, brush, points)
     }
 
     private fun circle(center: Offset, radius: Float) =

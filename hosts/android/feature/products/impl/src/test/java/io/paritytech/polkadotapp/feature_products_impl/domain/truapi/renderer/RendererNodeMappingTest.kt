@@ -4,6 +4,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
@@ -38,6 +40,8 @@ import uniffi.truapi.Fill
 import uniffi.truapi.GestureProps
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.Mask
+import uniffi.truapi.MaskBrush
+import uniffi.truapi.MaskBrushTip
 import uniffi.truapi.MaskFollow
 import uniffi.truapi.MaskMode
 import uniffi.truapi.MaskPoint
@@ -334,7 +338,7 @@ class RendererNodeMappingTest {
                 MaskShape.Circle(MaskPoint(1050, -200), 2600u),
                 MaskShape.Stroke(5200u, listOf(MaskPoint(0, 0), MaskPoint(100, 250))),
             ),
-            follow = MaskFollow("pan", 5200u),
+            follow = MaskFollow("pan", 5200u, MaskBrush(MaskBrushTip.ELLIPSE, 400u, 3000, 100u)),
             fadeMs = 350u.toUShort(),
             clearedShare = ClearedShare(atPermille = 550u.toUShort(), action = "cleared"),
         )
@@ -360,7 +364,7 @@ class RendererNodeMappingTest {
             ),
             mapped.shapes,
         )
-        assertEquals(JsMaskFollow("pan", 5200), mapped.follow)
+        assertEquals(JsMaskFollow("pan", 5200, JsMaskBrush(JsMaskBrushTip.ELLIPSE, 400, 3000, 100)), mapped.follow)
         assertEquals(350L, mapped.fadeMs)
         assertEquals(JsClearedShare(550, "cleared"), mapped.clearedShare)
         assertSame(shapes, mapped.channel)
