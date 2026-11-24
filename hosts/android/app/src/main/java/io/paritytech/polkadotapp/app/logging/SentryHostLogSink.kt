@@ -1,27 +1,28 @@
 package io.paritytech.polkadotapp.app.logging
 
 import android.util.Log
+import io.paritytech.polkadotapp.common.data.telemetry.HostLogSink
 import io.sentry.SentryAttribute
 import io.sentry.SentryAttributes
 import io.sentry.SentryLogLevel
 import io.sentry.logger.ILoggerApi
 import io.sentry.logger.SentryLogParameters
-import timber.log.Timber
 import javax.inject.Inject
 
-class SentryLogTree @Inject constructor(
+class SentryHostLogSink @Inject constructor(
     private val logger: ILoggerApi,
-) : Timber.Tree() {
-    override fun isLoggable(tag: String?, priority: Int): Boolean =
-        priority >= Log.INFO && tag?.startsWith(TAG_PREFIX) == true
-
-    override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
-        val attributes = SentryAttributes.of(SentryAttribute.stringAttribute(TAG_ATTRIBUTE, tag))
-        logger.log(priority.toSentryLogLevel(), SentryLogParameters.create(attributes), message)
+) : HostLogSink {
+    override fun log(priority: Int, tag: String, message: String, attributes: Map<String, Any>) {
+        val fields = attributes.map { (key, value) -> SentryAttribute.named(key, value) } +
+            SentryAttribute.stringAttribute(TAG_ATTRIBUTE, tag)
+        logger.log(
+            priority.toSentryLogLevel(),
+            SentryLogParameters.create(SentryAttributes.of(*fields.toTypedArray())),
+            message,
+        )
     }
 
     private companion object {
-        const val TAG_PREFIX = "truapi."
         const val TAG_ATTRIBUTE = "tag"
     }
 }

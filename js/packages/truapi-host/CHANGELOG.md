@@ -1,5 +1,104 @@
 # @parity/truapi-host
 
+## 0.33.0
+
+### Major Changes
+
+- 568580c: Add the Chat Extension v2 methods and types to `chat`. A product changes a room with `setRoomMetadata` (name,
+  description, icon and the text of an empty room), `setRoomPreview` (sort time, badge, which can be an image, pinning,
+  the preview line or an activity line such as "Ben is typing"), `deleteRoom` and `updateFeed`, which also deletes a
+  message. The preview line comes from a `ChatPreviewMessage`, a message without reactions that names the message it
+  replies to by id. The host asks a product questions that the product answers through `onMessagesQuery`, `onUserAction`
+  and `onReactionsQuery`. Each handler returns one result, `ok` with the answer or `err` with the failure. A user action
+  can delete a message. A message body can be `Custom`: the product draws it through `Renderer::render`, like a custom
+  message it posts with `postMessage`.
+
+  These methods are new in v0.2, so a v0.1 client cannot call them. Their errors name each failure and have no
+  catch-all: a host failure arrives as `HostFailure`, and a request or an answer that does not pass the core's checks as
+  `MalformedFrame`. A user action in a room that does not keep its messages in the product fails with `NotAvailable`.
+
+  The host makes room ids. `createRoom` version 2 takes `roomIdSource`, the product's own name for the room, and
+  `config`, the parts of the room the product serves (its messages, who reacted and the reports of what the user saw).
+  It answers `roomId`, the blake2b-256 hash of the product and that source. Every later call names the room with that
+  `roomId`, so a product that names a room with its own string must keep the id that `createRoom` returns. A host's
+  `createChatRoom` callback receives the derived `roomId` and answers only the registration status. Each `createRoom`
+  replaces the configuration of the room, also for a room that exists, so a product declares its rooms again each time
+  it starts. A room that `createRoom` version 1 creates keeps the `roomId` that the product gives, because a version 1
+  answer carries no id and the product names the room with that id in its later calls. A host's `createChatRoom`
+  callback then receives that id. `postMessage` and `setRoomFooter` keep their shapes and versions, so a product built
+  against the earlier client calls them the same way through the client a host injects.
+
+- 9522d1b: The mock host reports a chain as supported only when it serves it: `onlyServedChains` (Rust
+  `MockConfig::only_served_chains`) defaults to `true`, so `featureSupported` answers from `servedChains`. The test
+  fixture fills `servedChains` from `networks` and `chain`, and otherwise from the chains in `runtimeConfig.testStack`.
+  An explicit `mock.servedChains` replaces that list. A suite that proxies a chain through `mock.chainProxies` without
+  declaring it lists its genesis in `mock.servedChains`, and `onlyServedChains: false` reports every chain as supported.
+- 2d5fa6f: A contact handle from `contacts.pick` is scoped to the calling product: the same contact has a different
+  handle in every product, and the same one on every host of the user. A handle from another product, or one picked
+  before this release, does not resolve. `HostContactLookup.handle_key` is per session and product, so a host that keeps
+  handle hashes keeps them per key.
+- d6f465b: A `TestStack` needs an `id` and a `generation`: the stack's identity and the run of its chains, which a host
+  with a bundled descriptor takes from the stack's pointer and descriptor. `mockTestStack()` uses `mock` for both. A
+  stack the fixture builds from `networks`, or `liveChain` returns, names its `generation` after its genesis hashes in
+  lowercase, and keeps `mock` while those are the mock chains.
+
+### Minor Changes
+
+- 8f2509f: Native hosts recover NFT purses after a reinstall. While a session is active, the core reads the
+  installations the seed registered in the stack's `AccountDataStore` contract and walks their purses on Asset Hub
+  together: the main purse, then purse ids from 0 until 10 in a row are empty under every earlier installation, each
+  purse until more than 1000 keys in a row hold nothing. Keys that hold an NFT return under their purse, and a purse
+  with no record is recreated, owned by Root and named `Recovered purse <id>`. Creating a purse waits while any
+  registered installation is unfinished. Hosts change nothing.
+- 83afd9e: `notifications.sendPushNotification` takes an optional `title`, shown in place of the product id. Only a
+  trusted product may set one. The core trims whitespace and zero width characters from the title, drops one that is
+  then empty and the title any other product sends, and the call still succeeds. The client sends a request without a
+  title as v0.1, so hosts that predate v0.2 keep serving it; a titled request needs a host that serves v0.2. A domain
+  error comes back tagged `V2` whichever version was sent.
+
+  Hosts receive the title as `HostPushNotificationRequest.title`, which is absent unless the core let it through. The
+  app hosts show the product id when it is absent. The mock host records it as `NotificationLogEntry.title`, and the CLI
+  prints it above the notification text.
+
+- 8f2509f: The `trinity-stack` crate's `Descriptor::contract_address` returns the address of a contract the descriptor
+  names in `contracts`. The core's `Stack` exposes the `AccountDataStore` contract, where each seed registers its
+  installations, as `account_data_store`, or `None` when the stack names none.
+  `truapi-host stack bundle --skip-same-projection` counts `contracts` as read, so a published copy that changes only
+  them is still written.
+
+### Patch Changes
+
+- 15eb4eb: The native durability engine composes transactions: a deferred transaction can wait for other transactions on
+  the same chain, and is built once each has taken effect at a best block. Each dependency either cascades its failure
+  to the dependent or leaves the dependent to its policy, which sees how every dependency ended. A dependent whose
+  attempt fails while a dependency has not taken effect, as after a reorg, waits for it again. The JavaScript API and
+  wire protocol are unchanged.
+- be155df: Rust embedders hold the user's root entropy as `truapi::host_logic::root_entropy::RootEntropy`, built once
+  from the bytes a host hands over. Every derivation is a method on it, and local session activation takes it in place
+  of raw bytes. The wasm and UniFFI entry points still take bytes. Derived keys and addresses are unchanged.
+- 405f7be: Simplify the native durability engine: each domain is registered with its chain, oracle and one policy, a
+  recovery pass asks each oracle once without the domain's history, the builder alone starts and stops one worker per
+  domain, each transaction cools down on its own before a rebuild, groups only label transactions for listing, and a
+  transaction has at most one follower. Transactions of an unregistered domain stay as they are instead of being
+  abandoned. Deferred (formerly scheduled) transactions keep their status names. The JavaScript API and wire protocol
+  are unchanged.
+- Updated dependencies [cc9c407]
+- Updated dependencies [c9bd7c0]
+- Updated dependencies [090d276]
+- Updated dependencies [568580c]
+- Updated dependencies [b59c82d]
+- Updated dependencies [4ad5f6a]
+- Updated dependencies [3b2e486]
+- Updated dependencies [3080698]
+- Updated dependencies [db2a45b]
+- Updated dependencies [9522d1b]
+- Updated dependencies [2d5fa6f]
+- Updated dependencies [83afd9e]
+- Updated dependencies [9f83c66]
+- Updated dependencies [fef6583]
+- Updated dependencies [8f2509f]
+  - @parity/truapi@0.33.0
+
 ## 0.32.0
 
 ### Major Changes
