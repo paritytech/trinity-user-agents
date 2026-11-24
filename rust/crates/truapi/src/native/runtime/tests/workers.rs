@@ -205,12 +205,12 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 	old_claim.release();
 	let _new_claim = runtime.claim_worker(product.clone());
 	let current = views.latest();
+	assert!(old.open_execution(Arc::new(EventCallbacks::new()), None, None).is_err());
 	let current_owner = open(&current);
-	let callbacks = Arc::new(EventCallbacks::new());
-	assert!(old.open_execution(callbacks, None, None).is_err());
 	let _socket = connect(&current_owner).await;
-	assert!(current.module_started());
 	assert!(!old.module_started());
+	assert!(runtime.current_worker_execution(product.clone()).is_none());
+	assert!(current.module_started());
 	old.failed("late renderer loss".into());
 	runtime
 		.current_worker_execution(product)
