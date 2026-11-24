@@ -5,6 +5,75 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.32.0] - 2026-11-20
+
+### Added
+
+- ship the links of the known Trinity stacks (#2203)
+- core events reach Sentry with their attributes (#2183)
+- hosts get core events with their fields named (#2177)
+- add an auto-hide switch for the docklet in settings (#2162)
+- decide a product's source once; serve archives by the core's rules (#1869)
+- run a stack's chains from light specs given at runtime (#2010)
+- list the NFT cheques a product created (#2123)
+- resolve the materials of the faces a Worker product renders (#2096)
+- resolve the materials of a card face (#2094)
+- show the Docklet on the chat screen and lift the input above it (#2125)
+- build material shaders for OpenGL ES and Metal (#2023)
+- expanded card layout implementation (#2087)
+- expanded pocket card rfc (#2086)
+- refresh the stack descriptor on native hosts (#2015)
+- decide which stack descriptor the core runs and refresh it (#2014)
+- check materials against the format and the tree limits (#2003)
+- keep materials on the device (#1927)
+- product manifest reads can refresh past the 24 h cache; funding providers do on every launch (#2118)
+- stream cached public profiles (#2032)
+- let the chats + button follow the docklet (#2059)
+
+### Changed
+
+- encode product frames with the product's own SDK (#2193)
+- name every envelope's latest payload in truapi::latest (#2210)
+- serve contact usernames to the game product (#2067)
+- clear a product's storage when its state is cleared (#2192)
+- use HostRuntime with concrete pairing and signing roles (#2185)
+- give hosts the device encryption key their contacts encrypt to (#2189)
+- serve the Pocket card back and check inline images in the core (#1882)
+- refresh the stack descriptor in the wasm core (#2004)
+- stream avatars and remove one-shot profiles (#2033)
+- resolve materials for the apps (#2047)
+- resolve every connect through one path (#2009)
+- make content insets follow the Docklet (#2122)
+- HostAccounts replaces ProductAuthority (#2039)
+- require an Asset Hub chain in the stack (#2091)
+- replace the Effect node with Materials (#1861)
+- gate the runtime feature in one place (#2078)
+- stream public profile avatars (#1843)
+- derive variant-name strings instead of matching by hand (#2079)
+- provider screens open only when the host opens them; providers only from dotNS, named without a TLD (#2057)
+
+### Fixed
+
+- clear the chat notification when the chat screen resumes (#2190)
+- extend the chat input background under the Docklet (#2208)
+- share one product subtree request between concurrent callers (#1538)
+- every action subscription of a connection hears each action (#2108)
+- send statements as 0x-prefixed hex (#2180)
+- anchor transaction mortality at the finalized block hash (#2173)
+- a bad provider manifest no longer hides the others; type more archive files (#2170)
+- limit requests in flight per json-rpc connection (#2129)
+- read dotNS over legacy RPC without a chain follow (#2095)
+- funding warnings no longer export the session intent (#2127)
+- keep chat messages clear of the docked room footer card (#2080)
+- draw the scroll edge glass under the status strip (#2043)
+- tune the tab bar glass transparency (#2063)
+- Collectibles card disappears (#2090)
+- Collectibles book animation clipped on smaller screens (#2089)
+- build the iOS driver against the typed ProductId (#1957)
+- gate cross-product sign_vrf on the context grant, without a prompt for first-party products (#2092)
+- announce a funding session started on its best quote under the overlay (#2084)
+- keep worker-runtime out of the shared test registry (#2074)
+
 ## [0.31.0] - 2026-11-12
 
 ### RFCs
@@ -29,6 +98,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.31.0, @parity/truapi-host 0.31.0, @parity/truapi-provider 0.5.0 (#2061)
 - take chain config from the Trinity stack (#1964)
 - let a product dock its own card in a chat room footer (#1781)
 - RemoteAccountHolder for the paired host (#1999)

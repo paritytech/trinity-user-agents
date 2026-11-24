@@ -105,7 +105,7 @@ pub struct RuntimeServices {
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
-	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+	pub contact_handle_cache: crate::runtime::contacts::ContactHandleCache,
 	/// dotNS reads running now, shared by the callers that overlap them.
 	pub dotns_reads: DotnsReads,
 	/// Public profile resolution and native cache retention shared by host callers.
@@ -184,10 +184,6 @@ pub struct RuntimeServices {
 	statement_cache: Mutex<StatementCache>,
 	/// Task spawner for background runtime work.
 	pub spawner: Spawner,
-	/// Serializes the read-or-create of the persisted device encryption key.
-	/// Concurrent first-time readers would otherwise each generate a secret and
-	/// persist it, leaving peers addressing an overwritten key.
-	device_encryption_key: futures::lock::Mutex<()>,
 	next_core_instance: AtomicU64,
 }
 
@@ -220,16 +216,17 @@ impl RuntimeServices {
 		stack: Stack,
 		spawner: Spawner,
 	) -> Arc<Self> {
-		Self::with_chat_platform(platform, host_info, stack, spawner, None)
+		Self::with_platforms(platform, host_info, stack, spawner, None, None)
 	}
 
-	/// Same as [`Self::new`], with the host's chat adapter installed.
-	pub fn with_chat_platform(
+	/// Same as [`Self::new`], with the host's optional chat and contacts adapters.
+	pub fn with_platforms(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
 		stack: Stack,
 		spawner: Spawner,
 		chat_platform: Option<Arc<dyn ChatPlatform>>,
+		contacts_platform: Option<Arc<dyn ContactsPlatform>>,
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
@@ -260,8 +257,8 @@ impl RuntimeServices {
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
-			contacts_platform: OnceLock::new(),
-			contact_handles: Default::default(),
+			contacts_platform: contacts_platform.map(OnceLock::from).unwrap_or_default(),
+			contact_handle_cache: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
 			public_profiles,
 			game_platform: OnceLock::new(),
@@ -299,7 +296,6 @@ impl RuntimeServices {
 			local_preimages: Mutex::new(std::collections::HashMap::new()),
 			statement_cache: Mutex::new(StatementCache::default()),
 			spawner,
-			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
 		})
 	}
@@ -618,19 +614,6 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
 		self.durable_work_observer.get().cloned()
-	}
-
-	/// This device's persisted X25519 encryption secret, created on first use.
-	///
-	/// The only supported way to reach the key: it bundles the serialization
-	/// guard with the read, so no caller can race another into generating a
-	/// second secret and overwriting the one peers were told to address.
-	pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
-		let _guard = self.device_encryption_key.lock().await;
-		crate::host_logic::device_key::read_or_create_device_encryption_secret(
-			self.platform.as_ref(),
-		)
-		.await
 	}
 
 	/// Allocate the next per-product-runtime id, used to scope chain follow

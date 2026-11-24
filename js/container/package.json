@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "esbuild src/index.ts --bundle --outfile=../../ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js --format=iife --target=es2020 --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:test-sdk": "esbuild src/test-sdk.ts --bundle --outfile=dist/truapi-test-sdk.js --format=iife --target=es2020",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

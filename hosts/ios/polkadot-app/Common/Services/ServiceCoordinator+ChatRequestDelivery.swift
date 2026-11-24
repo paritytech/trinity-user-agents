@@ -14,7 +14,8 @@ extension ServiceCoordinator {
         durable: DurableTxServices,
         keyResolver: BandersnatchKeyResolving,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
-        walletRepo: WalletManagerRepositoryProtocol = .shared
+        walletRepo: WalletManagerRepositoryProtocol = .shared,
+        entropyManager: RootEntropyManaging = RootEntropyManager.shared
     ) throws -> NotificationStatementAccountAllocating {
         let dependencies = makeNotificationSlotDependencies(keyResolver: keyResolver, tldProvider: tldProvider)
 
@@ -22,7 +23,8 @@ extension ServiceCoordinator {
             wallet: walletRepo.main(),
             keyResolver: keyResolver,
             chainRegistry: ChainRegistryFacade.sharedRegistry,
-            networkSuffixProvider: tldProvider
+            networkSuffixProvider: tldProvider,
+            signerResolver: DerivationPathSignerResolver(entropyManager: entropyManager)
         )
 
         registerNotificationSlotDomain(in: durable, dependencies: dependencies, originFactory: originFactory)
@@ -69,7 +71,13 @@ private extension ServiceCoordinator {
                     chainId: chainId,
                     chainRegistry: chainRegistry,
                     storageRequestFactory: storageRequestFactory
-                )
+                ),
+                statementStorageParameters: StatementStorageParametersProvider(
+                    chainId: chainId,
+                    chainRegistry: chainRegistry,
+                    storageRequestFactory: storageRequestFactory
+                ),
+                logger: Logger.shared
             ),
             issueDiagnostics: NotificationSlotIssueDiagnostics.make(reporter: IssueReportingFacade.shared),
             logger: Logger.shared

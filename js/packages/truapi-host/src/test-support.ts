@@ -38,6 +38,7 @@ export function makeHostCallbacks(
       read: async () => undefined,
       write: async () => {},
       clear: async () => {},
+      clearProduct: async () => {},
       async *subscribeStorage() {},
     },
     productOperations: {
@@ -109,7 +110,7 @@ export function makeHostCallbacks(
     ...(overrides.chat
       ? {
           chat: {
-            createChatRoom: async () => ({ status: "New" as const }),
+            createChatRoom: async () => "New" as const,
             registerChatBot: async () => ({ status: "New" as const }),
             postChatMessage: async () => ({ messageId: "message" }),
             setChatRoomFooter: async () => {},

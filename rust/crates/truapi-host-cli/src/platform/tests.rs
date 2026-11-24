@@ -578,6 +578,7 @@ fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
 	let first =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: None,
 			scheduled_at: None,
@@ -585,6 +586,7 @@ fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
 		.expect("immediate notification");
 	let second =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
+			title: None,
 			text: "Again".to_string(),
 			deeplink: Some("polkadot://example".to_string()),
 			scheduled_at: None,
@@ -652,6 +654,52 @@ fn product_storage_uses_safe_per_product_files() {
 	});
 	assert_eq!(first_value, Some(b"dark".to_vec()));
 	assert_eq!(localhost_value, Some(b"light".to_vec()));
+}
+
+// Clearing removes the product's file rather than leaving an empty one, and
+// writes none for a product that never stored anything.
+#[test]
+fn a_cleared_product_stays_cleared_after_a_restart() {
+	let temporary = tempdir().expect("create product storage root");
+	let cleared = ProductStorageKey::new(ProductId::for_test("cleared.dot"), "theme");
+	let kept = ProductStorageKey::new(ProductId::for_test("kept.dot"), "theme");
+	let open = || {
+		CliPlatform::new(
+			&test_network(),
+			Some(test_storage_paths(temporary.path(), "test")),
+			ApprovalPolicy::AutoAccept,
+			None,
+		)
+	};
+	let platform = open();
+	futures::executor::block_on(async {
+		platform.write(cleared.encode(), b"dark".to_vec()).await.expect("write cleared");
+		platform.write(kept.encode(), b"light".to_vec()).await.expect("write kept");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clear product");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clearing again is Ok");
+		platform
+			.clear_product(ProductId::for_test("never.dot"))
+			.await
+			.expect("clearing a product that never stored is Ok");
+	});
+
+	let directory = temporary.path().join("storage").join("test");
+	assert_eq!(fs::read_dir(&directory).expect("list product storage").count(), 1);
+	drop(platform);
+	let restored = open();
+	let values = futures::executor::block_on(async {
+		(
+			restored.read(cleared.encode()).await.expect("read cleared"),
+			restored.read(kept.encode()).await.expect("read kept"),
+		)
+	});
+	assert_eq!(values, (None, Some(b"light".to_vec())));
 }
 
 #[test]

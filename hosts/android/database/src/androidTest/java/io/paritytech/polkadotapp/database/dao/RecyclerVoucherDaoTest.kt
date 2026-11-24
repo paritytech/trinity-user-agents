@@ -141,6 +141,38 @@ class RecyclerVoucherDaoTest {
         assertEquals(RING_INDEX, voucher.locationRecyclerIndex)
     }
 
+    @Test
+    fun aNewUnloadedCountReplacesTheStoredOne() = runBlocking {
+        givenVoucher()
+        update(recyclerUnloaded = 4)
+
+        update(recyclerUnloaded = 6)
+
+        assertEquals(6, storedVoucher().recyclerUnloaded)
+    }
+
+    @Test
+    fun anUnreadUnloadedCountClearsTheStoredOne() = runBlocking {
+        givenVoucher()
+        update(recyclerUnloaded = 4)
+
+        update(recyclerUnloaded = null)
+
+        assertNull(storedVoucher().recyclerUnloaded)
+    }
+
+    @Test
+    fun anUnreadUnloadedCountAfterAMoveToAnotherRingStoresNull() = runBlocking {
+        givenVoucher()
+        update(recyclerUnloaded = 4)
+
+        update(recyclerIndex = RING_INDEX + 1, recyclerUnloaded = null)
+
+        val voucher = storedVoucher()
+        assertEquals(RING_INDEX + 1, voucher.locationRecyclerIndex)
+        assertNull(voucher.recyclerUnloaded)
+    }
+
     private fun dao() = database.recyclerVoucherDao()
 
     private suspend fun givenVoucher(ring: Int? = null, members: Int? = null, enteredAt: Long? = null) {
@@ -156,7 +188,8 @@ class RecyclerVoucherDaoTest {
         recyclerMembers = members,
         enteredAt = enteredAt,
         recyclerFungibility = 0,
-        maxRecyclerFungibility = null
+        maxRecyclerFungibility = null,
+        recyclerUnloaded = null
     )
 
     private suspend fun update(
@@ -164,14 +197,16 @@ class RecyclerVoucherDaoTest {
         recyclerMembers: Int = 400,
         enteredAt: Long? = null,
         recyclerFungibility: Int? = null,
-        maxRecyclerFungibility: Int? = null
+        maxRecyclerFungibility: Int? = null,
+        recyclerUnloaded: Int? = null
     ) = dao().updateLocation(
         ringVrfPublicKey = publicKey,
         recyclerIndex = recyclerIndex,
         recyclerMembers = recyclerMembers,
         enteredAt = enteredAt,
         recyclerFungibility = recyclerFungibility,
-        maxRecyclerFungibility = maxRecyclerFungibility
+        maxRecyclerFungibility = maxRecyclerFungibility,
+        recyclerUnloaded = recyclerUnloaded
     )
 
     private suspend fun storedVoucher(): RecyclerVoucherLocal =

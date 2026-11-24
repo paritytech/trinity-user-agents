@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.TestScope
 import org.junit.Test
 import uniffi.truapi.DevServerProduct
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 
 class ProductTabSessionFactoryTest {
     private val devServer = DevServerProduct(
@@ -25,28 +26,35 @@ class ProductTabSessionFactoryTest {
     private val native = mockk<NativeProductTabSessionFactory> {
         every { create(any(), any(), any()) } returns provider
     }
-    private val runtimeSettings = mockk<ProductRuntimeSettings> { every { isTrUAPIRuntimeEnabled() } returns false }
-    private val devServers = mockk<DevServers> { every { productAt(any()) } returns null }
-    private val scope = TestScope()
+    private val runtimeSettings = object : ProductRuntimeSettings {
+        override fun isTrUAPIRuntimeEnabled() = false
 
+        override fun setTrUAPIRuntimeEnabled(enabled: Boolean) = Unit
+    }
+    private val scope = TestScope()
     private val factory = ProductTabSessionFactory(
         native,
         TrUAPIProductTabSessionFactory(webViewProviders, sessionStarter, mockk(relaxed = true)),
         runtimeSettings,
-        devServers,
+        productSources(),
     )
 
     @Test
     fun `a dev server runs on TrUAPI under the core's id, with the server's origin as first party`() {
         // The core runs a dev server product whichever runtime the toggle selects, and a phone reaches the
         // server by an address that is not that id, so neither can be derived from the other.
-        every { devServers.productAt(devServer.url) } returns devServer
-
         factory.create(devServer.url, scope) {}
 
         val productId = ProductId.parse("humanity.dot").getOrThrow()
         verify {
-            webViewProviders.create(devServer.url, any(), true, scope, productId, devServer.origin, any())
+            webViewProviders.create(
+                devServer.url,
+                any(),
+                true,
+                scope,
+                source = ProductSource.DevServer(devServer),
+                servedExecutable = any(),
+            )
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)
         }
         verify(exactly = 0) { native.create(any(), any(), any()) }

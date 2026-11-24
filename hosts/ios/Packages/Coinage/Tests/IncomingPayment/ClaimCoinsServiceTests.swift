@@ -99,26 +99,60 @@ struct ClaimCoinsServiceTests {
         #expect(!run.isFinished)
         run.cancel()
     }
+
+    @Test
+    func foreignBundleEndsNotClaimedInsideWindow() async throws {
+        let rig = try Rig(windowFromNow: 60)
+        let run = rig.start()
+
+        await rig.query.waitForSubscriptions(1)
+        rig.query.send(CoinInfosSnapshot(foreign: [rig.coinPublicKey: Self.foreignInstance]))
+        let detections = await run.detections()
+
+        #expect(rig.submitter.submittedPublicKeys.isEmpty)
+        #expect(detections.last == .notClaimed)
+    }
+
+    @Test
+    func coinReadForeignIsNeverClaimedWhenItLaterReadsPresent() async throws {
+        let rig = try Rig(windowFromNow: 60, coinCount: 2)
+        let foreignKey = rig.coinPublicKeys[0]
+        let ownKey = rig.coinPublicKeys[1]
+        let run = rig.start()
+
+        await rig.query.waitForSubscriptions(1)
+        rig.query.send(CoinInfosSnapshot(foreign: [foreignKey: Self.foreignInstance]))
+        rig.query.send(CoinInfosSnapshot(claimable: [foreignKey: Self.coinInfo, ownKey: Self.coinInfo]))
+        await rig.submitter.waitForSubmissions(1)
+
+        #expect(rig.submitter.submittedPublicKeys == [[ownKey]])
+        run.cancel()
+    }
 }
 
 private extension ClaimCoinsServiceTests {
     static let coinInfo = ClaimableCoinInfo(exponent: 0, age: 0)
+    static let foreignInstance: CoinageInstanceId = 99
 
     /// One claim of a single coin against a scripted chain, on a manual clock and a movable date.
     struct Rig {
         let clock: ManualClock
         let query: ScriptedCoinInfoQuery
         let submitter: RecordingClaimSubmitter
-        let coinSecret: Data
-        let coinPublicKey: Data
+        let coinSecrets: [Data]
+        let coinPublicKeys: [Data]
         let retryUntil: Date
+
+        var coinPublicKey: Data { coinPublicKeys[0] }
 
         private let dateProvider: MovableDateProvider
         private let service: ClaimCoinsService
 
-        init(windowFromNow: TimeInterval) throws {
+        init(windowFromNow: TimeInterval, coinCount: Int = 1) throws {
             let keyFactory = SNKeyFactory()
-            let keypair = try keyFactory.createKeypair(fromSeed: Data(repeating: 0xAB, count: 32))
+            let keypairs = try (0 ..< coinCount).map { index in
+                try keyFactory.createKeypair(fromSeed: Data(repeating: 0xAB &+ UInt8(index), count: 32))
+            }
             let start = Date()
             let dateProvider = MovableDateProvider(now: start)
             let clock = ManualClock()
@@ -143,14 +177,14 @@ private extension ClaimCoinsServiceTests {
             self.query = query
             self.submitter = submitter
             self.dateProvider = dateProvider
-            coinSecret = keypair.privateKey().rawData()
-            coinPublicKey = keypair.publicKey().rawData()
+            coinSecrets = keypairs.map { $0.privateKey().rawData() }
+            coinPublicKeys = keypairs.map { $0.publicKey().rawData() }
             retryUntil = start.addingTimeInterval(windowFromNow)
         }
 
         func start() -> ClaimRun {
             ClaimRun(stream: service.claim(
-                coinKeys: [coinSecret],
+                coinKeys: coinSecrets,
                 groupId: "claim-coins-test",
                 retryUntil: retryUntil,
                 context: ClaimCoinsServiceTests.denomination
