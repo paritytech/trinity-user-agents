@@ -40,3 +40,4 @@ export * as scale from "./scale.js";
 export type { CallErrorValue, Codec, HexString } from "./scale.js";
 export { ringCollectionId } from "./ring-collection-id.js";
 export * from "./generated/index.js";
+export { encodeGestureEvent, decodeGestureEvent, setOffset } from "./gesture-event.js";

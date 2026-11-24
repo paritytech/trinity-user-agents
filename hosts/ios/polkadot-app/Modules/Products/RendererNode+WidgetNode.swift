@@ -13,8 +13,16 @@ extension RendererNode {
              .spacer,
              .text,
              .button,
-             .textField:
+             .textField,
+             .setOffset:
             return leafWidgetNode(resolver: resolver)
+
+        case let .gesture(_, _, children):
+            // The iPhone gesture layer draws the gesture; until then its children draw in a plain box.
+            return CustomMessageWidgetNode(
+                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
+                modifiers: .empty
+            )
 
         case let .materials(_, children):
             return CustomMessageWidgetNode(
@@ -61,7 +69,8 @@ private extension RendererNode {
     func leafWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
         switch self {
         case .nil,
-             .string:
+             .string,
+             .setOffset:
             return nil
 
         case let .image(modifiers, props):
@@ -114,7 +123,8 @@ private extension RendererNode {
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
-        case .box,
+        case .gesture,
+             .box,
              .column,
              .row,
              .materials:
