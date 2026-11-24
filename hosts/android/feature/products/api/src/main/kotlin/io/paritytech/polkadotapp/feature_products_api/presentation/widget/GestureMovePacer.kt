@@ -15,15 +15,11 @@ internal fun CoroutineScope.launchGestureMoves(
     intervalMs: Int,
     onMove: (Offset) -> Unit,
 ): Job = launch {
-    var answer = position.value.value.answer
     var lastMoveAt: Long? = null
     while (isActive && position.value.value.attached) {
         withFrameNanos { frame ->
             val received = position.value.value
-            if (received.answer != answer) {
-                answer = received.answer
-                moves.acknowledge()
-            }
+            moves.noteAnswer(received.answer)
             val nowMs = frame.nanoseconds.inWholeMilliseconds
             if (received.attached && GestureRules.movesNow(nowMs, lastMoveAt, intervalMs)) {
                 moves.takeFrame(frame)?.let { move ->

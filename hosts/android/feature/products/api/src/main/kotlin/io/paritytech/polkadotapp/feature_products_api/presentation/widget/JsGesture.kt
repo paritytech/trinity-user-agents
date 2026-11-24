@@ -29,6 +29,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -38,6 +39,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePhase
+import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
@@ -68,6 +70,7 @@ internal fun JsGesture(
 ) {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val view = LocalView.current
     val density = LocalDensity.current.density
     val rtl by rememberUpdatedState(LocalLayoutDirection.current == LayoutDirection.Rtl)
     val current by rememberUpdatedState(widget)
@@ -81,6 +84,10 @@ internal fun JsGesture(
     var nodeWidth by remember { mutableIntStateOf(0) }
     var childrenWidth by remember { mutableIntStateOf(0) }
     var heldAtEnd by remember { mutableStateOf(false) }
+
+    // The worker's answer waited for in the frame that sent its move, laid out in that frame (GesturePacingSettings).
+    var answeredInFrame by remember { mutableStateOf<Pair<JsGesturePosition, JsGesturePosition.Value>?>(null) }
+    val minimumGapNanos = remember(view) { GesturePacingSettings.minimumGapNanos(view.display?.refreshRate) }
 
     fun travelNow(): Float = GestureRules.travelPx(current.pan?.drag?.travel, nodeWidth, childrenWidth, density)
 
@@ -98,6 +105,21 @@ internal fun JsGesture(
                 fractionPermille = GestureRules.permille(along, travel),
             ),
         )
+    }
+
+    /** A keyed move: sent, then its answer waited for briefly so the frame being made lays it out. */
+    fun sendKeyed(position: JsGesturePosition, actionId: String?, point: Offset, travel: Float) {
+        actionId ?: return
+        val before = position.value.value.answer
+        send(actionId, JsGesturePhase.MOVED, point.x, point.y, travel)
+        val wait = GesturePacingSettings.currentAnswerWaitNanos
+        if (wait <= 0L) return
+        val answered = position.awaitAnswer(before, wait)
+        val inTime = answered.answer != before
+        if (inTime) {
+            moves.noteAnswer(answered.answer)
+            answeredInFrame = position to answered
+        }
     }
 
     fun moveTo(x: Float, y: Float, animated: Boolean) {
@@ -192,8 +214,16 @@ internal fun JsGesture(
                         }
                         if (drag != null) moveTo(x, y, animated = false)
                         if (pan.moveAction != null) {
-                            if (node.position != null) {
+                            val keyed = node.position
+                            if (keyed != null) {
                                 moves.offer(Offset(x, y))
+                                if (GesturePacingSettings.currentSendOnTouch && current.enabled && current.position === keyed) {
+                                    moves.noteAnswer(keyed.value.value.answer)
+                                    val gap = maxOf(minimumGapNanos, pan.moveIntervalMs * NANOS_PER_MS)
+                                    moves.takeTouch(System.nanoTime(), gap)?.let { point ->
+                                        sendKeyed(keyed, pan.moveAction, point, travel)
+                                    }
+                                }
                             } else if (GestureRules.movesNow(at, lastMoveAt, pan.moveIntervalMs)) {
                                 lastMoveAt = at
                                 send(pan.moveAction, JsGesturePhase.MOVED, x, y, travel)
@@ -248,9 +278,10 @@ internal fun JsGesture(
                                     node.position?.let { position ->
                                         if (pan.moveAction != null) {
                                             moves.clear()
+                                            moves.noteAnswer(position.value.value.answer)
                                             moveJob = scope.launchGestureMoves(moves, position, pan.moveIntervalMs) { point ->
                                                 if (current.enabled && current.position === position) {
-                                                    send(pan.moveAction, JsGesturePhase.MOVED, point.x, point.y, travel)
+                                                    sendKeyed(position, pan.moveAction, point, travel)
                                                 } else {
                                                     moves.clear()
                                                 }
@@ -310,7 +341,10 @@ internal fun JsGesture(
                 .offset {
                     // Clamped here too: a tree that narrows the node mid-hold must not push the children out of it.
                     val travel = travelNow()
-                    val position = workerPosition?.value
+                    val position = GestureRules.newest(
+                        workerPosition?.value,
+                        answeredInFrame?.takeIf { it.first === current.position }?.second,
+                    )
                     IntOffset(
                         (placeX.value.coerceIn(0f, travel) + (position?.x ?: 0) / 100f * density).roundToInt(),
                         (placeY.value.coerceIn(0f, travel) + (position?.y ?: 0) / 100f * density).roundToInt(),
@@ -321,5 +355,7 @@ internal fun JsGesture(
         }
     }
 }
+
+private const val NANOS_PER_MS = 1_000_000L
 
 private val SpringBack = spring<Float>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
