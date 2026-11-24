@@ -264,6 +264,7 @@ class MaterialsSurface(
         TextureRole.Base -> baseTexture
         TextureRole.Input -> if (index == 0) baseTexture else target(index - 1).texture
         TextureRole.Noise -> noiseTexture()
+        TextureRole.Trail -> NO_TEXTURE
         is TextureRole.Argument -> when (layer.args.getOrNull(role.v1.toInt())?.imageRef()) {
             is ImageRef.Source -> imageTexture(index to role.v1.toInt())
             ImageRef.Noise, null -> noiseTexture()
@@ -387,5 +388,6 @@ class MaterialsSurface(
         const val NOISE_SIDE = 1024
         const val BYTES_PER_PIXEL = 4
         const val MAX_ARGUMENT_FLOATS = 4
+        const val NO_TEXTURE = 0
     }
 }
