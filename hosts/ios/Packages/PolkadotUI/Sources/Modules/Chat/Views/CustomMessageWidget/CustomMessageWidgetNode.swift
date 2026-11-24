@@ -276,6 +276,10 @@ public extension CustomMessageWidgetNode {
         public let exitFade: TimeInterval?
         /// Hides part of the node, or shows only part of it.
         public let mask: Mask?
+        /// Plays the node in when it appears.
+        public let enter: Enter?
+        /// Moves parts of how the node is drawn on the host's clock, at most one per property.
+        public let tracks: [Track]
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -330,7 +334,9 @@ public extension CustomMessageWidgetNode {
             shimmer: Shimmer? = nil,
             spinPeriod: TimeInterval? = nil,
             exitFade: TimeInterval? = nil,
-            mask: Mask? = nil
+            mask: Mask? = nil,
+            enter: Enter? = nil,
+            tracks: [Track] = []
         ) {
             self.padding = padding
             self.margin = margin
@@ -352,6 +358,8 @@ public extension CustomMessageWidgetNode {
             self.spinPeriod = spinPeriod
             self.exitFade = exitFade
             self.mask = mask
+            self.enter = enter
+            self.tracks = tracks
         }
     }
 }
