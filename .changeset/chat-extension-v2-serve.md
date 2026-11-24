@@ -7,7 +7,7 @@ The core serves the Chat Extension v2 requests of `chat`: `setRoomMetadata`, `se
 `updateFeed`, and the configuration that each `createRoom` declares. It screens every field and checks that the
 product hosts the room. A field of these requests that fails the screen fails the call with `MalformedFrame`, and a
 failure of the host with `HostFailure`. A reaction in a feed update, in the reaction summaries of a message or in a
-room preview is one emoji: one extended grapheme cluster of at most 64 bytes, as the chat modality RFC limits it.
+room preview is one emoji: one extended grapheme cluster of at most 64 bytes.
 
 A room with the default configuration is a room the host stores. In such a room a product cannot write, replace or
 react as the user, quote the user, or say in the reaction summaries of a message that the user reacted. A

@@ -1098,9 +1098,9 @@ fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
 	);
 }
 
-// The chat modality RFC limits a reaction to one extended grapheme cluster of
-// at most 64 bytes, and a reader drops a longer one. The core refuses it
-// first, in each place a v2 reaction reaches a host.
+// A host draws a reaction as one emoji: one extended grapheme cluster of at
+// most 64 bytes. The core refuses anything else in each place a v2 reaction
+// reaches a host.
 #[test]
 fn a_reaction_is_one_emoji_of_at_most_64_bytes() {
 	let placed = |emoji: &str| {

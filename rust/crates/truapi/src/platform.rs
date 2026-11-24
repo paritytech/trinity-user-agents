@@ -459,13 +459,13 @@ fn validate_chat_emoji(field: &'static str, value: &str) -> Result<String, ChatF
 }
 
 /// Largest accepted length for one reaction of a Chat Extension v2 message, in
-/// bytes, as the chat modality RFC limits an `Emoji`.
+/// bytes.
 pub const CHAT_EMOJI_MAX_BYTES: usize = 64;
 
 /// Bound and screen the emoji of a reaction in a feed update, a reaction
 /// summary or a room preview: one extended grapheme cluster, of at most
-/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A reader that follows the
-/// RFC drops a longer reaction, so the core refuses it first.
+/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A host draws a reaction as one
+/// emoji, so the core refuses anything else before a host sees it.
 fn validate_chat_reaction_emoji(
 	field: &'static str,
 	value: &str,
