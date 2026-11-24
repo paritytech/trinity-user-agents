@@ -49,7 +49,8 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -230,9 +231,9 @@ pub struct MockConfig {
 	/// Whether `feature_supported` reports support.
 	pub feature_supported: bool,
 	/// When set, `feature_supported` answers from `served_chains`, as a real
-	/// host does, so a chain outside that set is unsupported. It becomes the
-	/// default in a later breaking release. The JS mock's `onlyServedChains` is
-	/// the same option.
+	/// host does, so a chain outside that set is unsupported. Set by default;
+	/// unset reports every chain as supported. The JS mock's `onlyServedChains`
+	/// is the same option.
 	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
@@ -260,7 +261,7 @@ impl Default for MockConfig {
 			device_permissions: PermissionPolicy::AllowAll,
 			remote_permissions: PermissionPolicy::AllowAll,
 			feature_supported: true,
-			only_served_chains: false,
+			only_served_chains: true,
 			theme: latest::ThemeVariant::Dark,
 			language_tag: "en".to_string(),
 			confirm_user_actions: true,
@@ -1022,10 +1023,18 @@ pub fn mock_stack(
 	bulletin: truapi::Bytes32,
 	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
+	let identity =
+		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	let reserved_values = crate::platform::ReservedValuesPolicy::default();
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, &reserved_values)
-		.expect("a mock stack names no reserved value")
+	crate::platform::Stack::new(
+		identity,
+		"mock".to_string(),
+		"paseo".to_string(),
+		chains,
+		&reserved_values,
+	)
+	.expect("a mock stack names no reserved value")
 }
 
 /// Placeholder genesis hashes for the chains a mock host serves.
@@ -1308,20 +1317,21 @@ impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: latest::HostChatCreateRoomRequest,
-	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+		room_id: String,
+		_request: latest::HostChatCreateRoomRequest,
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&request.room_id) {
+			if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
-					request.room_id.clone(),
+					room_id.clone(),
 					latest::ChatRoom {
-						room_id: request.room_id.clone(),
+						room_id,
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
@@ -1333,7 +1343,7 @@ impl ChatPlatform for MockPlatform {
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
 		}
-		Ok(latest::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(

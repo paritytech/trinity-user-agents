@@ -117,16 +117,16 @@ pub enum ProviderError {
 		"this provider was built without a stack, so it has no descriptor to check a light spec against"
 	)]
 	NoStack,
-	/// Warm start was asked of a provider built with both a stack and a store.
-	#[display(
-		"a stack's provider keeps no stored state: the store keys it by genesis hash, which a fork shares with its source"
-	)]
-	StackStorage,
-	/// A bundled genesis hash does not decode to 32 bytes.
-	#[display("bundled genesis hash {hex} is malformed")]
-	MalformedGenesis {
-		/// The catalog entry as written.
-		hex: String,
+	/// A bundled chain spec does not yield a genesis hash.
+	#[cfg(feature = "networks")]
+	#[display("bundled {network} {service} chain spec yields no genesis hash: {source}")]
+	MalformedBundledSpec {
+		/// The catalog network listing the spec.
+		network: &'static str,
+		/// The chain's service within the network (`relay`, `asset-hub`, ...).
+		service: &'static str,
+		/// Why the spec does not parse or lacks a genesis state root.
+		source: trinity_stack::Error,
 	},
 }
 
@@ -221,33 +221,4 @@ pub fn frame_for_id(frame: &str, id: &str) -> Option<FrameForId> {
 mod tests;
 
 #[cfg(all(test, feature = "ws"))]
-mod ws_tests {
-	use super::redacted;
-
-	#[test]
-	fn userinfo_is_stripped_from_a_node_url() {
-		let url = url::Url::parse("wss://alice:hunter2@node.example/path").expect("parse");
-
-		let printed = redacted(&url);
-
-		assert!(!printed.contains("alice"), "leaked the username: {printed}");
-		assert!(!printed.contains("hunter2"), "leaked the password: {printed}");
-		assert!(printed.contains("node.example"), "lost the host: {printed}");
-	}
-
-	#[test]
-	fn a_username_without_a_password_is_stripped_too() {
-		let url = url::Url::parse("wss://token@node.example/").expect("parse");
-
-		assert!(!redacted(&url).contains("token"));
-	}
-
-	/// A URL with no userinfo is the common case and must survive verbatim, so
-	/// the diagnostic keeps its path and port.
-	#[test]
-	fn a_url_without_credentials_is_unchanged() {
-		let url = url::Url::parse("wss://node.example:9944/ws").expect("parse");
-
-		assert_eq!(redacted(&url), url.to_string());
-	}
-}
+mod ws_tests;

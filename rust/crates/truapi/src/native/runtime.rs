@@ -35,6 +35,7 @@ use crate::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
+	host_logic::root_entropy::RootEntropy,
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
@@ -213,7 +214,7 @@ impl NativeTrUApiHostRuntime {
 		}
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
-				secret,
+				RootEntropy::new(secret),
 				runtime_config.local_session_lite_username,
 			))
 			.map_err(|err| NativeRuntimeConfigError::LocalSessionActivation {
@@ -475,9 +476,16 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did. `TooLate` asks the host to tell the user the balance was
-	/// already credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did. While its overlay is up
+	/// the core drops `present_funding`, which the host answers by taking the
+	/// overlay down, and the session is gone (`Cancelled`). Once started, it ends
+	/// when no provider serves it; otherwise the provider is asked
+	/// (`Requested`), and before money moved a second cancel ends it. After
+	/// money moved the provider may answer with an offer, read from the
+	/// session's `cancel` and answered with `confirm_funding_cancel`.
+	/// `TooLate` asks the host to tell the user the balance was already
+	/// credited; an ended session answers `Refused`.
 	pub async fn cancel_funding(
 		&self,
 		intent: String,
@@ -589,7 +597,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Disarm `start_funding_when_quoted` for session `intent`, as the user
-	/// leaves its quotes.
+	/// goes back from its quotes and the session stays open.
+	/// `cancel_funding` disarms it too.
 	pub fn cancel_funding_auto_start(&self, intent: String) {
 		self.runtime.cancel_funding_auto_start(&intent);
 	}
@@ -977,7 +986,8 @@ impl NativeTrUApiHostRuntime {
 		lite_username: Option<String>,
 	) -> Result<(), HostRejection> {
 		futures::executor::block_on(
-			self.runtime.activate_local_session_with_identity(secret, lite_username),
+			self.runtime
+				.activate_local_session_with_identity(RootEntropy::new(secret), lite_username),
 		)
 		.map_err(Into::into)
 	}

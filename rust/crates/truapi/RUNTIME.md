@@ -175,9 +175,8 @@ after activation. A name the host passes is shown until a record answers.
 
 ### Stack
 
-Both host configs carry a `Stack`, the core's only chain configuration: the
-Relay, Asset Hub, People and Bulletin genesis hashes, the network
-`get_chain_info` reports, and the dotNS TLD.
+Both host configs carry a `Stack`, the core's only chain configuration. Its
+doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell puts three things in its runtime config: the stack's
 pointer, the signed descriptor its build bundles, and the build's
@@ -219,14 +218,11 @@ the request.
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
-without a People chain, and one that names another TLD than the bundled copy:
-accounts derive under the TLD, so only a new build changes it. A stored
-descriptor the core refuses is ignored: the core starts from the bundled copy,
-and the next descriptor it takes replaces the stored one, whatever its
-`sequence`. After a refused or failed fetch `last_refresh` says so even when
-the core could not write its record. That record holds the descriptor the core
-already holds, which may be one whose earlier store failed, and never the one
-just refused.
+without a People chain, and one on another TLD than the bundled copy, since
+accounts derive under the TLD. A stored descriptor it would refuse is ignored
+until the next one the core takes replaces it, whatever its `sequence`. After
+a refused or failed fetch, `last_refresh` reports that fetch even if writing
+the record fails.
 
 On a stack whose build allows it reserved values the core pins more of the
 bundled copy: the set of chain roles and each role's genesis hash, `assets`,
@@ -321,19 +317,21 @@ mortal extrinsics (`DurableRequest::presigned`, then `execute` or
 transaction); the engine broadcasts them once committed and follows each with
 a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
-the shared chain capabilities and the domain's `CompletionOracle`. Every
+the shared chain capabilities and the domain's `CompletionOracle`, which a
+pass asks once per domain about its undecided rows. Every
 verdict is a compare-and-set against the status and attempt it was derived
 from, and rows are never deleted.
 
-A domain can also schedule transactions it cannot sign yet
-(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
-`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
-policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
-submission executor builds them: one task per domain, policy and group asks the
+Each domain is registered in the `DurableRegistry` with the genesis hash of
+its chain, its `CompletionOracle` and its one `SubmissionPolicy`. A domain can
+also defer transactions it cannot sign yet (`DurableRequest::deferred`),
+each with a `SubmissionPlan`: the `PolicyParams` its domain's policy builds it
+from. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain and group asks the
 policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
 and fails each `GiveUp`, backing off after rounds that decide nothing. A
 presigned submission may carry a plan as well. When a verdict proves a
-transaction with a policy failed, the verdict writer asks the policy's
+transaction with a plan failed, the verdict writer asks the domain policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
 records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
@@ -593,9 +591,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider a Rust host offers with `origin: Bundled`
-  ships inside it: its shipped manifest is what the core goes by, and dotNS
-  is never read for it.
+  Funding drops out.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -672,7 +668,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   who continues before every row answered: once every row of that request
   answered, the core selects `best` as `select_funding_provider` would, at
   once when they already have. A new ask, `select_funding_options`,
-  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  `cancel_funding_auto_start` (the user going back from the quotes),
+  `cancel_funding` or a list with
   no usable quote disarms it. `funding_available` says whether the host
   offers any provider, announced with `Providers` when
   `set_funding_provider_config` changes the list.
@@ -744,8 +741,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  when the provider publishes an `app` subname on dotNS, read within ten
+  seconds; otherwise `NoApp`). The
   core never shows it on its own: it holds the call, tells the host through
   `provider_frame_requested`, and presents it once the host calls
   `open_provider_frame`, at once while the user looks at the session or when
@@ -769,18 +766,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session, named or not, or saw the user's payment; from then on only the
   provider ends the session, and it cannot fail it once funds started.
   Before that, an unassigned session expires 24 hours after it opened and an
-  assigned one 7 days after its provider last reported. `cancel_funding`
-  answers what a cancel did: it ends an unassigned session; before money
+  assigned one 7 days after its provider last reported. `cancel_funding` is
+  the host's one cancel, whatever the session went through, and answers
+  what it did: while the overlay is up it drops `present_funding`, which
+  the host answers by taking the overlay down, and drops the session, or,
+  when the user already chose a provider, keeps it as started and asks the
+  provider to stop; it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
   it asks the provider, who answers `Refused` or `Offer`, one offer per
   cancel, and the host answers the offer with
   `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
   showed (`None` declines), which the provider hears through `settleCancel`;
-  terms other than the offer's answer `NoOffer`, and an inbound session whose
-  credit started answers `TooLate`. A provider asked before money moved
-  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  terms other than the offer's answer `NoOffer`, an inbound session whose
+  credit started answers `TooLate`, and an ended or unknown one `Refused`.
+  A provider asked before money moved answers `Stopped`, and the core ends
+  the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
-  money moved.
+  money moved; a cancel after that asks again.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

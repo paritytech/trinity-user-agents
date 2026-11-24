@@ -5,9 +5,8 @@ use crate::{
 	stack::signed_pointer,
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
-		redeployed_reserved_test_descriptor, refused_for_its_tld, refused_for_pinned,
-		reserved_test_descriptor, sign_test_descriptor, stack_status, stored_test_record,
-		test_chain, without_bulletin,
+		redeployed_reserved_test_descriptor, refused_for_pinned, reserved_test_descriptor,
+		sign_test_descriptor, stack_status, stored_test_record, test_chain, without_bulletin,
 	},
 };
 
@@ -114,11 +113,40 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 	);
 	// An app killed before it restarts gets no second notice. The status at
 	// its next start still names the new generation, so the host can tell
-	// its cached chain data is for the old chains.
+	// its cached chain data is for the old chains. The stored copy is the
+	// same stack under its own generation.
 	let restarted = load(&bundled, Some(&record));
 	assert_eq!(
-		(restarted.stack().chains().people, restarted.status()),
-		(TEST_STACK_WIPED_PEOPLE, stack_status(&wiped, None))
+		(
+			restarted.stack().chains().people,
+			restarted.stack().id(),
+			restarted.stack().generation(),
+			restarted.status()
+		),
+		(TEST_STACK_WIPED_PEOPLE, source.stack().id(), "second", stack_status(&wiped, None))
+	);
+}
+
+/// A new generation on the same genesis hashes still means the chains
+/// restarted, so the core asks for a restart rather than switching to it.
+#[test]
+fn a_new_generation_on_the_same_chains_runs_from_the_next_start() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+
+	serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_PEOPLE), START)
+		.expect("the newer copy is stored");
+	source.record_stored();
+
+	assert_eq!(
+		(source.stack().generation(), source.status()),
+		(
+			"first",
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			}
+		)
 	);
 }
 
@@ -218,8 +246,19 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 #[test]
 fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let record =
-		stored_test_record(&published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS), START);
+	let (link, _) = sign_test_descriptor(&bundled);
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
+	let mut reader = StackReader::new(Refresh::Never);
+	let record = reader
+		.fetched(
+			&pointer,
+			Served::Document { bytes: &signed(&on_extra_genesis), etag: None },
+			START,
+		)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored");
 
 	let mut source = load_reserving(&bundled, Some(&record), reserving_extras());
 
@@ -229,22 +268,23 @@ fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	);
 }
 
-/// The reader judges every fetch against the copy it holds. A copy the core
-/// cannot run must not become that copy, or the operator's corrected
-/// descriptor at the same `sequence` would be turned away as a conflict.
+/// A copy the core refuses must not become the copy the reader judges fetches
+/// against, or the corrected descriptor at the same `sequence` would be
+/// refused as a conflict.
 #[test]
-fn a_copy_the_core_cannot_run_does_not_stand_in_the_way_of_the_corrected_one() {
-	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let mut source = load(&bundled, None);
+fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
 	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let refused = [without_bulletin(corrected.clone()), on_testnet(corrected.clone())];
 
-	let refused = serve(&mut source, &without_bulletin(corrected.clone()), START);
-	let record = serve(&mut source, &corrected, START + 3600);
+	let fetched = refused.map(|copy| {
+		let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+		let refusal = serve(&mut source, &copy, START);
+		let record = serve(&mut source, &corrected, START + 3600);
+		(refusal, record.is_some(), source.status())
+	});
 
-	assert_eq!(
-		(refused, record.is_some(), source.status()),
-		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
-	);
+	let taken = (None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)));
+	assert_eq!(fetched, [taken.clone(), taken]);
 }
 
 /// While a host rebuilds its runtime, the old and the new one can both
@@ -295,9 +335,8 @@ fn an_older_copy_is_refused() {
 	);
 }
 
-/// The fetch a core that runs its bundled copy makes: at once, since a
-/// bundled copy was never fetched, and with no `ETag`, since it came with
-/// none.
+/// The first fetch of a core running its bundled copy: due at once, with no
+/// `ETag`.
 fn bundled_copys_fetch() -> Option<FetchRequest> {
 	Some(FetchRequest {
 		url: "https://stack.test.invalid/stack.json".to_string(),
@@ -305,27 +344,26 @@ fn bundled_copys_fetch() -> Option<FetchRequest> {
 	})
 }
 
-/// A record written by another core version may hold a copy this one cannot
-/// run. The bundled copy still starts the host, and it is fetched at once
-/// although the record was fetched a moment ago.
+/// A record written by another core version or another build may hold a copy
+/// this core refuses. The bundled copy starts the host and is fetched at once,
+/// though the record is fresh.
 #[test]
-fn a_stored_copy_the_core_cannot_run_is_ignored() {
+fn a_stored_copy_the_core_refuses_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let cannot_run = without_bulletin(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
-	let record = stored_test_record(&cannot_run, START);
+	let newer = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let refused = [without_bulletin(newer.clone()), on_testnet(newer)];
 
-	let mut source = load(&bundled, Some(&record));
+	let started = refused.map(|copy| {
+		let mut source = load(&bundled, Some(&stored_test_record(&copy, START)));
+		(source.status(), source.due_fetch(START))
+	});
 
-	assert_eq!(
-		(source.status(), source.due_fetch(START)),
-		(stack_status(&bundled, None), bundled_copys_fetch())
-	);
+	let from_bundled = (stack_status(&bundled, None), bundled_copys_fetch());
+	assert_eq!(started, [from_bundled.clone(), from_bundled]);
 }
 
-/// The server answers `304 Not Modified` to an `ETag` it knows, and the core
-/// takes that as the copy it holds being current. A core that sent the `ETag`
-/// of a record it ignored would be told its bundled copy is the published
-/// one. The record's `ETag` goes with the record.
+/// A `304 Not Modified` tells the core its copy is current. Sending an ignored
+/// record's `ETag` would get that answer for the bundled copy.
 #[test]
 fn an_ignored_records_etag_is_not_sent() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
@@ -339,65 +377,6 @@ fn an_ignored_records_etag_is_not_sent() {
 			load(&bundled, Some(&record)).due_fetch(START)
 		}),
 		[bundled_copys_fetch(), bundled_copys_fetch()]
-	);
-}
-
-/// Accounts derive under the TLD, so a descriptor signed with a stolen key
-/// must not move a stack to another one. The copy is refused on every fetch
-/// and never stored, and the core keeps the copy it holds.
-#[test]
-fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
-	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
-	let held = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	let moved = on_testnet(published_test_descriptor(3, "first", TEST_STACK_PEOPLE));
-	let held_record = serve(&mut source, &held, START);
-
-	let refusals = [START + 3600, START + 7200].map(|now| {
-		(serve(&mut source, &moved, now), source.status(), source.stack().tld() == "paseo")
-	});
-
-	let refused = (None, stack_status(&held, refused_for_its_tld()), true);
-	assert_eq!((held_record.is_some(), refusals), (true, [refused.clone(), refused]));
-}
-
-/// The reader judges every fetch against the copy it holds. A copy refused
-/// for its TLD must not become that copy, or the operator's corrected
-/// descriptor at the same `sequence` would be turned away as a conflict.
-#[test]
-fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
-	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
-	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-
-	let refused = serve(&mut source, &on_testnet(corrected.clone()), START);
-	let record = serve(&mut source, &corrected, START + 3600);
-
-	assert_eq!(
-		(refused, record.is_some(), source.status()),
-		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
-	);
-}
-
-/// A record may hold a copy on another TLD than the build bundles, such as
-/// one written by another build of the app. The bundled copy starts the host
-/// and is fetched at once although the record was fetched a moment ago, and
-/// the published copy the record came from is refused when it is fetched.
-#[test]
-fn a_stored_copy_on_another_tld_is_ignored() {
-	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let moved = on_testnet(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
-	let record = stored_test_record(&moved, START);
-
-	let mut source = load(&bundled, Some(&record));
-	let at_start = (source.stack().tld().to_string(), source.status(), source.due_fetch(START));
-	let fetched = serve(&mut source, &moved, START);
-
-	assert_eq!(
-		(at_start, fetched, source.status()),
-		(
-			("paseo".to_string(), stack_status(&bundled, None), bundled_copys_fetch()),
-			None,
-			stack_status(&bundled, refused_for_its_tld())
-		)
 	);
 }
 
@@ -467,7 +446,7 @@ fn a_reserved_stack_follows_a_new_generation_with_no_pinned_field_changed() {
 #[test]
 fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
 	let bundled = reserved_test_descriptor(1);
-	let record = stored_test_record(&redeployed_reserved_test_descriptor(2), START);
+	let record = stored_test_record(&redeployed_reserved_test_descriptor(2), 0);
 
 	let mut source = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
 	let at_start = (source.status(), source.due_fetch(START));

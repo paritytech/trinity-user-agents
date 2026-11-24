@@ -36,7 +36,7 @@ use truapi::{latest, v01, versioned::FromLatest};
 use crate::{
 	Spawner,
 	frame::ProtocolMessage,
-	host_logic::worker::WorkerLedger,
+	host_logic::{root_entropy::RootEntropy, worker::WorkerLedger},
 	runtime::{
 		AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		DevicePairingObserver, FundingProviderLink, HostAccounts, HostRole, HostSession,
@@ -306,7 +306,7 @@ impl<Role> HostRuntime<Role> {
 	/// the next transaction naming a contact reads the list again.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
-		self.services.contact_handles.clear();
+		self.services.contact_handle_cache.clear();
 	}
 
 	/// Reference counts per product worker, shared by every connection of
@@ -904,9 +904,11 @@ impl HostRuntime<SigningHost> {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did: it ended, its provider was asked, a cancel is already with
-	/// the provider, or it is too late because the balance was credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did: it ended, including one
+	/// whose overlay was up and closes, its provider was asked, a cancel is
+	/// already with the provider, it is too late because the balance was
+	/// credited, or there is nothing to cancel.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
 	pub async fn cancel_funding(
 		&self,
@@ -1064,16 +1066,18 @@ impl HostRuntime<SigningHost> {
 		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and `durable`, with the static receive
-	/// secret NFT purses open cheques with, and starts tracking its holdings,
-	/// when an installation provider and encrypted storage are set.
+	/// Installs the NFT ledger over `db` and `durable`, whose new purses wait
+	/// for backup recovery, and the static receive secret NFT purses open
+	/// cheques with, then starts tracking its holdings. Does nothing without
+	/// an installation provider or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
-		let Some(ledger) = self.nft_ledger(db, durable) else {
+		let recovery = Arc::new(self.nft_recovery(db.clone()));
+		let Some(ledger) = self.nft_ledger(db, durable, recovery) else {
 			return;
 		};
 		let static_secret = Arc::new(Arc::downgrade(&self.role));
@@ -1082,14 +1086,53 @@ impl HostRuntime<SigningHost> {
 		start_holding_tracker(&self.services, ledger);
 	}
 
+	/// NFT backup recovery over `db`, started when the stack names the
+	/// installation registry and an installation provider is set. Otherwise
+	/// there is nothing to recover and recovery is off.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_recovery(&self, db: crate::store::Db) -> crate::nft::NftRecovery {
+		let registry = self.services.stack().account_data_store();
+		let installation = self.services.installation_provider();
+		let (Some(contract), Some(installation)) = (registry, installation) else {
+			tracing::info!("the stack names no AccountDataStore, NFT backup recovery is off");
+			return crate::nft::NftRecovery::off();
+		};
+		crate::nft::NftRecovery::start(crate::nft::NftRecoveryDeps {
+			db,
+			chain: Arc::new(self.nft_recovery_chain(contract)),
+			keys: Arc::new(Arc::downgrade(&self.role)),
+			installation,
+			session_state: self.role.session_state(),
+			spawner: self.services.spawner.clone(),
+			scan_config: crate::nft::recovery_scan_config(),
+		})
+	}
+
+	/// Recovery's reads on Asset Hub, with the installation registry at
+	/// `contract` decrypted by the signing host.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_recovery_chain(&self, contract: [u8; 20]) -> crate::nft::AssetHubRecoveryChain {
+		let genesis = self.services.asset_hub_chain_genesis_hash().into();
+		let asset_hub =
+			crate::chain_runtime::ChainAccess::new(self.services.chain.clone(), genesis);
+		let data_store_keys = Arc::downgrade(&self.role);
+		let registry = crate::installation_registry::RegisteredInstallations::new(
+			asset_hub.clone(),
+			contract,
+			data_store_keys,
+		);
+		crate::nft::AssetHubRecoveryChain::new(&asset_hub, registry)
+	}
+
 	/// The NFT ledger over `db` and `durable`, deriving item keys from the
-	/// signing host, or `None`, logged, without an installation provider or
-	/// encrypted storage.
+	/// signing host and creating purses once `recovery` has finished, or
+	/// `None`, logged, without an installation provider or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn nft_ledger(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
+		recovery: Arc<crate::nft::NftRecovery>,
 	) -> Option<crate::nft::NftLedger> {
 		let Some(installation) = self.services.installation_provider() else {
 			tracing::warn!("no installation provider set, NFT purses are off");
@@ -1103,7 +1146,15 @@ impl HostRuntime<SigningHost> {
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		let deps = crate::nft::NftLedgerDeps {
+			db,
+			installation,
+			keys,
+			durable,
+			secrets,
+			imported,
+			recovery,
+		};
 		Some(crate::nft::NftLedger::new(deps))
 	}
 
@@ -1117,7 +1168,7 @@ impl HostRuntime<SigningHost> {
 		self.services.install_durable_work_observer(observer)
 	}
 
-	/// Runs durable recovery until no transaction is live, building scheduled
+	/// Runs durable recovery until no transaction is live, building deferred
 	/// transactions meanwhile.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
@@ -1229,26 +1280,28 @@ impl HostRuntime<SigningHost> {
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
-	/// Activate a wallet-local session from host-held secret material (raw
-	/// BIP-39 entropy).
+	/// Activate a wallet-local session from the root entropy the host holds.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
-	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), v01::GenericError> {
+	pub async fn activate_local_session(
+		&self,
+		entropy: RootEntropy,
+	) -> Result<(), v01::GenericError> {
 		self.role
-			.activate_local_session(secret)
+			.activate_local_session(entropy)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Activate a wallet-local session from host-held secret material and
+	/// Activate a wallet-local session from the root entropy the host holds and
 	/// attach known identity metadata.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session_with_identity"))]
 	pub async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), v01::GenericError> {
 		self.role
-			.activate_local_session_with_identity(secret, lite_username)
+			.activate_local_session_with_identity(entropy, lite_username)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
@@ -1377,7 +1430,6 @@ fn start_durable_engine(
 		return None;
 	}
 	forward_durable_work(services, &engine);
-	engine.ensure_submissions_started();
 	Some(engine)
 }
 
@@ -1409,7 +1461,7 @@ fn durable_engine(
 	})
 }
 
-/// The domains and policies the durable engine serves: NFT transfers, on the
+/// The domains the durable engine serves: NFT transfers, on the
 /// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
 /// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1485,6 +1537,19 @@ impl HostRuntime<SigningHost> {
 		&self,
 	) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
 		self.role.statement_renewal_targets().await.map_err(Into::into)
+	}
+
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails without an active session.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.identity_signer"))]
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, v01::GenericError> {
+		self.role
+			.identity_signer()
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
 	/// Root public key the active identity records its fixed ledger entries
@@ -2001,7 +2066,7 @@ impl ProductRuntime {
 	/// what it cached before. For an embedder that holds only this runtime;
 	/// one holding the host runtime calls it there.
 	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
+		self.admin.product_runtime.connection().services().contact_handle_cache.clear();
 	}
 
 	/// Build a product-facing host core around a platform implementation and

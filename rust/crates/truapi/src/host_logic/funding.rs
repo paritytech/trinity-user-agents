@@ -340,8 +340,9 @@ pub struct FundingProgress {
 /// ended ones under "Completed", where `{moment}` reads "Today at 12:45",
 /// "Yesterday at 12:45", "Jun 12 at 16:40" or, in another year,
 /// "Jun 12, 2025".
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingStatus {
 	/// Inbound bank: waiting for the user's transfer.
 	///
@@ -506,8 +507,9 @@ pub struct FundingProgressStep {
 }
 
 /// A milestone a session reaches, labelled on its timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingStep {
 	/// The session was opened.
 	///
@@ -702,25 +704,29 @@ pub enum FundingCancel {
 }
 
 /// What a user's cancel did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum CancelOutcome {
-	/// The session ended as cancelled: no provider serves it, or no money
-	/// moved and its provider was asked once already.
-	Ended,
+	/// The session ended as cancelled: it never started and its overlay
+	/// closed, no provider serves it, or no money moved and its provider was
+	/// asked once already.
+	Cancelled,
 	/// The provider serving it was asked to cancel.
 	Requested,
 	/// A cancel is already with the provider, or accepted and being settled.
 	Pending,
 	/// Too late: the provider already started crediting the user's balance.
 	TooLate,
-	/// Not cancellable here: the session ended, or its overlay is still up.
+	/// Nothing to cancel: the session ended, or the core holds no such
+	/// session.
 	Refused,
 }
 
 /// What the user's answer to a cancel offer did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum CancelConfirmation {
 	/// The offer was accepted and passed to the provider to settle.
 	Accepted,
@@ -912,7 +918,7 @@ impl FundingSession {
 	}
 
 	/// The session's steps, each with when it was reached, if it was.
-	fn steps_reached(&self) -> Vec<FundingProgressStep> {
+	pub fn steps_reached(&self) -> Vec<FundingProgressStep> {
 		let steps = FundingStep::of(self.direction);
 		let first = |matches: fn(&FundingUpdate) -> bool| {
 			self.updates
@@ -1756,12 +1762,12 @@ impl FundingSession {
 		}
 		if self.provider_id.is_none() {
 			self.fail(FundingFailure::Cancelled, now_ms);
-			return CancelOutcome::Ended;
+			return CancelOutcome::Cancelled;
 		}
 		if !self.money_moved() {
 			if self.cancel.is_some() {
 				self.fail(FundingFailure::Cancelled, now_ms);
-				return CancelOutcome::Ended;
+				return CancelOutcome::Cancelled;
 			}
 			self.cancel = Some(FundingCancel::Requested);
 			return CancelOutcome::Requested;
@@ -1869,7 +1875,8 @@ impl FundingSession {
 				true
 			},
 			answer => {
-				error!(?answer, "a provider's cancel answer does not fit");
+				let kind: &'static str = (&answer).into();
+				error!(kind, "a provider's cancel answer does not fit");
 				self.cancel = Some(FundingCancel::Refused { reason: String::new() });
 				true
 			},
@@ -2079,7 +2086,10 @@ impl FundingDeposit {
 }
 
 /// Why a session operation failed.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(
+	Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error, strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingSessionError {
 	/// The core database failed, or none is configured.
 	#[display("funding session storage failed: {reason}")]

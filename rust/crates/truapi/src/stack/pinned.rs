@@ -1,8 +1,7 @@
-//! What no newer copy of a stack's descriptor may change.
+//! The fields no other copy of a stack's descriptor may change.
 //!
-//! [`Pinned`] holds the copy a host build bundles.
-//! [`Pinned::refuse_change`] holds every copy the core stored or fetched to
-//! it.
+//! [`Pinned`] holds the copy the build bundles, and
+//! [`Pinned::refuse_change`] checks stored and fetched copies against it.
 
 use trinity_stack::Descriptor;
 
@@ -11,10 +10,9 @@ use super::{ReservedValuesPolicy, StackError};
 /// A stack's bundled descriptor, as the copy whose pinned fields every other
 /// copy must leave as they are.
 ///
-/// The bundled copy ships inside the build, so the key that signs the
-/// stack's descriptors cannot change it. A copy signed with a stolen key is
-/// therefore refused when it names another value for a pinned field. The TLD
-/// is pinned on every stack: the signing role derives its accounts under it.
+/// The bundled copy ships in the build, so a copy signed with a stolen key
+/// cannot move the stack off these values. The TLD is pinned on every stack
+/// because accounts derive under it.
 ///
 /// A stack its build allows reserved values pins more of what its descriptor
 /// names: the chain roles and each one's genesis hash, `assets`, `contracts`,

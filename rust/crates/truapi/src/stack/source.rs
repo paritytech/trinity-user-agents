@@ -96,8 +96,8 @@ pub struct StackStatus {
 	pub expired: bool,
 	/// The core stored a newer copy that changes a chain, the network or the
 	/// generation. It runs that copy from its next start, so build the
-	/// runtime again to follow it. A copy that names another TLD than the
-	/// bundled descriptor never sets it: the core refuses that copy.
+	/// runtime again to follow it. A copy that changes a pinned field, such as
+	/// the TLD, is refused and never sets it.
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
@@ -129,9 +129,8 @@ impl StackSource {
 	/// bundled, stored or fetched, is held to it.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
-	/// a stack the core can run. A stored record that fails either, or that
-	/// changes a field `bundled` pins, is ignored, and the next record the
-	/// core stores replaces it.
+	/// a stack the core can run. A stored record the core would refuse is
+	/// ignored until the next stored record replaces it.
 	pub fn load(
 		pointer: Pointer,
 		bundled: &[u8],
@@ -225,11 +224,9 @@ impl StackSource {
 	/// [`Self::record_stored`], or [`Self::record_not_stored`] when the store
 	/// failed. The record goes back to [`Self::load`] as `stored`.
 	///
-	/// A copy the core cannot run, or one that changes a field the bundled
-	/// copy pins, is refused like one that breaks a descriptor rule: it is not
-	/// stored, so the core never starts from it. The record a refused or
-	/// failed fetch returns holds the copy the core already had, without the
-	/// `ETag` it was served with.
+	/// A copy the core cannot run, or that changes a pinned field, is refused
+	/// and not stored. After a refused or failed fetch the record holds the
+	/// copy the core already had, without its `ETag`.
 	#[must_use = "the record is the copy the next start reads"]
 	pub fn fetched(
 		&mut self,
@@ -302,11 +299,10 @@ impl StackSource {
 	}
 
 	/// Says the record the last [`Self::fetched`] returned could not be
-	/// stored, and why. The host sees it in [`StackStatus::last_refresh`]
-	/// when that fetch found the published copy to be the one the core holds.
-	/// After a refused or failed fetch the record holds the copy the core
-	/// already held, which may be one whose earlier store failed, and the
-	/// host is still told what that fetch came to.
+	/// stored, and why.
+	///
+	/// It shows in [`StackStatus::last_refresh`] only after a fetch that came
+	/// to `Current`. A refused or failed fetch stays reported as such.
 	pub fn record_not_stored(&mut self, reason: String) {
 		if self.last_refresh == Some(StackRefreshOutcome::Current) {
 			self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });
@@ -319,8 +315,7 @@ impl StackSource {
 	}
 
 	/// Why the core refuses a served document that verifies under the
-	/// pointer: it cannot run it, or it changes a field the bundled copy pins.
-	/// `None` for one the core takes, and for one the reader refuses.
+	/// pointer. `None` when the core takes it or the reader refuses it.
 	fn refusal(&self, served: Served) -> Option<String> {
 		let Served::Document { bytes, .. } = served else { return None };
 		let verified = open(bytes, self.rules.pointer()).ok()?;

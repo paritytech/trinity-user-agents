@@ -16,8 +16,8 @@ pub trait StackRecords: Send + Sync {
 	/// Read once, while the runtime is built.
 	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError>;
 
-	/// Stores `record` for `stack_id`, unless `check` says the record already
-	/// there stays. Two runtimes can refresh at once while a host rebuilds its
+	/// Stores `record` for `stack_id`, unless `check` keeps the record already
+	/// there. Two runtimes can refresh at once while a host rebuilds its
 	/// runtime, and the slower one must not put an older copy back. A store
 	/// checks and writes in one transaction where it can.
 	async fn write_stack_record(
@@ -28,21 +28,19 @@ pub trait StackRecords: Send + Sync {
 	) -> Result<(), GenericError>;
 }
 
-/// Whether a record may replace the one already stored for its stack: not
-/// when the stored one holds a copy that passes the core's rules, at a higher
+/// Whether a record may replace the one stored for its stack: not when the
+/// stored one holds a copy that passes the core's rules at a higher
 /// `sequence`.
 ///
-/// A stored record without such a copy is replaced: one that no longer reads,
-/// or one whose copy the core cannot run or that changes a field the bundled
-/// copy pins. The core never starts from it, so left in place it would keep
-/// every copy with a lower `sequence` out of the store.
+/// Any other stored record is replaced. The core never starts from one it
+/// ignores, so keeping it would block every lower `sequence`.
 pub struct ReplaceCheck {
 	rules: CopyRules,
 	sequence: Option<u32>,
 }
 
 impl ReplaceCheck {
-	/// The check for storing `record`, a record of the stack `rules` are for.
+	/// The check for storing `record` under `rules`.
 	pub fn new(rules: CopyRules, record: &[u8]) -> Self {
 		let sequence = passing_sequence(&rules, record);
 		Self { rules, sequence }
@@ -55,10 +53,10 @@ impl ReplaceCheck {
 	}
 }
 
-/// The `sequence` of the copy in `record`, or `None` when the record holds no
-/// copy that passes the core's rules.
+/// The `sequence` of the copy in `record`, or `None` when it holds none that
+/// passes `rules`.
 fn passing_sequence(rules: &CopyRules, record: &[u8]) -> Option<u32> {
-	Some(rules.stored_copy(record).ok()??.descriptor.sequence)
+	rules.stored_copy(record).ok().flatten().map(|copy| copy.descriptor.sequence)
 }
 
 /// The stack's record kept in a host's [`CoreStorage`], under

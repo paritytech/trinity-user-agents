@@ -1,6 +1,10 @@
 use clap::ValueEnum;
 
-use super::{super::testing::edit_descriptor, *};
+use super::{
+	super::testing::{edit_descriptor, test_access},
+	*,
+};
+use crate::chain::ChainBackend;
 
 /// A bundled copy that no longer opens with its pointer would leave the
 /// built-in network, or the check that tells a Polkadot fork from Polkadot,
@@ -42,6 +46,106 @@ fn test_built_in_runnable_check() {
 		.expect("a stack other than a built-in network checked");
 	ensure_built_in_runnable(&paseo, &Network::PaseoNextV2.built_in_stack().open_bundled())
 		.expect("bundled paseo-next-v2 copy not runnable");
+}
+
+/// A built-in's copy runs on either chain backend, so one without a light
+/// spec is not written: every light-client command would fail on it. Any
+/// other stack may run over RPC only, so this check accepts it without one.
+#[test]
+fn test_built_in_runnable_check_on_the_light_client() {
+	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
+	let url = paseo.url();
+	for role in ["Relay", "People", "AssetHub", "Bulletin"] {
+		let without_spec = super::super::testing::edit_chain(role, |chain| {
+			chain.as_object_mut().unwrap().remove("lightSpec");
+		});
+		let error = ensure_built_in_runnable(&paseo, &without_spec).unwrap_err();
+		assert_eq!(
+			error.to_string(),
+			format!(
+				"{url} is a built-in network's stack the CLI cannot run on the light client: its \
+				 descriptor names no lightSpec for {role}"
+			)
+		);
+		ensure_built_in_runnable(&POLKADOT_REFERENCE_STACK.pointer(), &without_spec)
+			.expect("a stack other than a built-in network checked for its light specs");
+	}
+}
+
+/// `stack bundle` refuses a built-in's copy by this check and a light-client
+/// command refuses it by `Stack::new`, each with its own list of the chains
+/// that need a light spec. They give the same answer for a copy that lacks one
+/// chain's light spec, for every chain of every built-in, so this check
+/// refuses such a copy exactly when a light-client command would.
+#[test]
+fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
+	let light_client = test_access(ChainBackend::LightClient);
+	let mut refused_by_check = Vec::new();
+	let mut refused_by_light_client = Vec::new();
+	for network in Network::value_variants() {
+		let built_in = network.built_in_stack();
+		let bundled = built_in.open_bundled();
+		for (index, chain) in bundled.chains.iter().enumerate() {
+			let mut document = serde_json::to_value(&bundled).expect("descriptor not JSON");
+			let edited = document["chains"][index].as_object_mut().expect("a chain is an object");
+			edited.remove("lightSpec");
+			let without_spec = Descriptor::from_json(document).expect("invalid edited descriptor");
+
+			let refused = ensure_built_in_runnable(&built_in.pointer(), &without_spec).is_err();
+			refused_by_check.push((*network, chain.role.clone(), refused));
+			let refused =
+				Stack::new(built_in.pointer().stack_id(), without_spec, &light_client).is_err();
+			refused_by_light_client.push((*network, chain.role.clone(), refused));
+		}
+	}
+
+	assert_eq!(refused_by_check, refused_by_light_client);
+}
+
+/// A chain the light client does not run needs no light spec, so this check
+/// and a light-client command both accept a built-in's copy that names none
+/// for it. The chain is added here because the bundled copies may stop
+/// listing one.
+#[test]
+fn test_built_in_runnable_check_accepts_a_chain_the_light_client_does_not_run() {
+	let with_unrouted_chain = super::super::testing::edit_stack(|descriptor| {
+		let chains = descriptor["chains"].as_array_mut().unwrap();
+		chains.push(serde_json::json!({
+			"role": "Unrouted",
+			"genesisHash": format!("0x{}", "11".repeat(32)),
+			"paraId": u32::MAX,
+			"rpc": ["wss://unrouted.example"],
+		}));
+	});
+	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
+
+	let by_check =
+		ensure_built_in_runnable(&paseo, &with_unrouted_chain).map_err(|error| error.to_string());
+	let by_light_client =
+		Stack::new(paseo.stack_id(), with_unrouted_chain, &test_access(ChainBackend::LightClient))
+			.map(drop)
+			.map_err(|error| error.to_string());
+
+	assert_eq!((by_check, by_light_client), (Ok(()), Ok(())));
+}
+
+/// A light client on a fresh state directory starts from the specs this build
+/// ships, so every spec a built-in's bundled copy names for a chain it runs
+/// must be shipped and pass the check. `scripts/update-stacks.sh` refreshes
+/// both together.
+#[test]
+fn test_bundled_light_specs_match_the_bundled_copies() {
+	for network in Network::value_variants() {
+		let descriptor = network.built_in_stack().open_bundled();
+		for chain in crate::stack_descriptor::light_client_chains(&descriptor) {
+			let named = chain.light_spec.as_ref().expect("a built-in names every light spec");
+			let spec = bundled_light_spec(&named.sha256)
+				.unwrap_or_else(|| panic!("{network:?} ships no light spec for {}", chain.role));
+			chain
+				.check_light_spec(spec.as_bytes())
+				.unwrap_or_else(|error| panic!("{network:?} {}: {error}", chain.role));
+		}
+	}
 }
 
 /// The hint tells the user which copy is in use and why, so a restart on
@@ -91,7 +195,15 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
+	refresh_on(&ChainAccess::Rpc, bundled, fetched)
+}
+
+fn refresh_on(
+	chain_access: &ChainAccess,
+	bundled: &[u8],
+	fetched: Fetched,
+) -> Result<StackRefresh> {
+	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, chain_access)
 }
 
 const NOW: i64 = 1_800_000_000;
@@ -197,6 +309,35 @@ fn test_refresh_unrunnable_copy_bundle() {
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 }
 
+/// The light client runs a newer published copy from the light specs it
+/// names. One that names none for a chain it runs is an error rather than a
+/// fall back to the bundled copy, whose chains may have restarted since; over
+/// RPC the same copy runs.
+#[test]
+fn test_refresh_on_the_light_client() {
+	let light_client = test_access(ChainBackend::LightClient);
+	let bundled = sign_copy(10, "g1");
+	let restarted = sign_copy(11, "g2");
+	let published = refresh_on(&light_client, &bundled, Fetched::Document(&restarted)).unwrap();
+	assert_eq!(published.stack.descriptor().sequence, 11);
+	assert!(published.stack.light_client().is_some());
+
+	let without_people_spec = sign_edited(|descriptor| {
+		descriptor["sequence"] = 11.into();
+		descriptor["generation"] = "g2".into();
+		let chains = descriptor["chains"].as_array_mut().unwrap();
+		let people = chains.iter_mut().find(|chain| chain["role"] == "People").unwrap();
+		people.as_object_mut().unwrap().remove("lightSpec");
+	});
+	let error = refresh_on(&light_client, &bundled, Fetched::Document(&without_people_spec))
+		.err()
+		.expect("a published copy without People's light spec ran on the light client");
+	assert!(format!("{error:#}").contains("no lightSpec for People"), "{error:#}");
+
+	let over_rpc = refresh(&bundled, Fetched::Document(&without_people_spec)).unwrap();
+	assert_eq!(over_rpc.stack.descriptor().sequence, 11);
+}
+
 /// A signed copy with a lower sequence is a replay of an older descriptor.
 #[test]
 fn test_refresh_rollback_bundle() {
@@ -240,11 +381,16 @@ fn test_refresh_expired_error() {
 fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 	for network in Network::value_variants() {
 		let built_in = network.built_in_stack();
+		let link = built_in.pointer().to_link(trinity_stack::DEFAULT_LINK_BASE);
 		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
-		let bundled =
-			truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, &allowed)
-				.expect("the bundled copy starts an app");
+		let bundled = truapi::platform::Stack::bundled(&link, built_in.bundle, &allowed)
+			.expect("the bundled copy starts an app");
+		let identity = truapi::platform::StackIdentity {
+			id: bundled.id().to_string(),
+			generation: bundled.generation().to_string(),
+		};
 		let expected = truapi::platform::Stack::new(
+			identity,
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
@@ -253,4 +399,24 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 
 		assert_eq!(network.bundled_stack(ChainBackend::Rpc).core_stack(), expected, "{network:?}");
 	}
+}
+
+/// A built-in stack is signed, so its bare URL has to resolve to the same
+/// stack as its network name. Read as an unsigned stack it would get another
+/// id, and the core would find none of the state stored under the name.
+#[test]
+fn a_built_in_stack_named_by_its_url_keeps_its_key() {
+	for network in Network::value_variants() {
+		let pointer = network.built_in_stack().pointer();
+		let key = pointer.key().map(|key| format!("0x{}", hex::encode(key)));
+		let link = pointer.to_link(trinity_stack::DEFAULT_LINK_BASE);
+
+		assert_eq!(
+			(built_in_key(pointer.url().as_str()), built_in_key(&link)),
+			(key, None),
+			"{network:?}"
+		);
+	}
+	assert_eq!(built_in_key("https://stack.test.invalid/other.json"), None);
+	assert_eq!(built_in_key("./stack.json"), None);
 }

@@ -83,10 +83,9 @@ fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
 	assert_eq!([after_an_older_one, stored()], [Some(record_at(3)), Some(record_at(4))]);
 }
 
-/// The core ignores a record whose copy fails its rules, on every start. If
-/// such a record kept a copy the core took out of the store, that copy would
-/// never be the one the next start reads. A record whose copy passes the
-/// rules still keeps an older copy out.
+/// The core never starts from a record whose copy fails its rules, so that
+/// record must not keep a copy the core took out of the store. A record that
+/// passes still keeps an older copy out.
 #[test]
 fn only_a_record_whose_copy_passes_the_cores_rules_keeps_an_older_copy_out() {
 	let check = ReplaceCheck::new(bundled_rules(), &record_at(3));
@@ -101,25 +100,9 @@ fn only_a_record_whose_copy_passes_the_cores_rules_keeps_an_older_copy_out() {
 	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true, true, true, true]);
 }
 
-/// On a stack allowed reserved values the core also ignores a record that
-/// changes a field the bundled copy pins, so that record keeps no copy out
-/// either. The check follows the build's policy on what is pinned.
-#[test]
-fn a_record_that_changes_a_reserved_pin_keeps_no_copy_out() {
-	let rules = rules_of(&reserved_test_descriptor(1), ReservedValuesPolicy::ALLOWED);
-	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3), 0));
-	let existing = [
-		stored_test_record(&reserved_test_descriptor(5), 0),
-		stored_test_record(&redeployed_reserved_test_descriptor(5), 0),
-	];
-
-	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true]);
-}
-
-/// iOS and Android keep the record in the core database, which checks and
-/// writes in one transaction. It applies the same check as the browser's
-/// store: a record on another TLD is replaced whatever its `sequence`, and a
-/// record the core can run keeps an older one out.
+/// The core database on iOS and Android applies the same check, in one
+/// transaction: a record on another TLD is replaced whatever its `sequence`,
+/// and one the core can run keeps an older one out.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run() {
@@ -142,4 +125,19 @@ fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run
 	write(record_at(4));
 
 	assert_eq!([over_an_ignored_one, stored()], [Some(record_at(3)), Some(record_at(5))]);
+}
+
+/// On a stack allowed reserved values the core also ignores a record that
+/// changes a field the bundled copy pins, so that record keeps no copy out
+/// either. The check follows the build's policy on what is pinned.
+#[test]
+fn a_record_that_changes_a_reserved_pin_keeps_no_copy_out() {
+	let rules = rules_of(&reserved_test_descriptor(1), ReservedValuesPolicy::ALLOWED);
+	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3), 0));
+	let existing = [
+		stored_test_record(&reserved_test_descriptor(5), 0),
+		stored_test_record(&redeployed_reserved_test_descriptor(5), 0),
+	];
+
+	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true]);
 }

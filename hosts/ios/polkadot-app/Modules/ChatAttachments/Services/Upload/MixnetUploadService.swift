@@ -32,7 +32,7 @@ final class MixnetUploadService: @unchecked Sendable {
 
     let context: MixnetUploadContext
     let senderProvider: AttachmentsSenderProviding
-    let allowanceManager: AllowanceManaging
+    let allowanceManager: any AllowanceManaging<AccountId>
     let retryPolicy: UploadRetryPolicy
 
     private var uploadTask: Task<Void, Never>?
@@ -42,7 +42,7 @@ final class MixnetUploadService: @unchecked Sendable {
         storageFacade: StorageFacadeProtocol,
         uploadContextFactory: UploadFileContextFactory,
         senderProvider: AttachmentsSenderProviding,
-        allowanceManager: AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         retryPolicy: UploadRetryPolicy = .default,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared

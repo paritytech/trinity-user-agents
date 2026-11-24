@@ -30,8 +30,8 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
@@ -41,7 +41,7 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey};
 use truapi::{
-	v01,
+	latest, v01,
 	versioned::{
 		account::{HostAccountCreateProofRequest, HostAccountGetAliasRequest},
 		resource_allocation::HostRequestResourceAllocationRequest,
@@ -51,6 +51,7 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod legacy_asset_hub;
 mod scripted_chain;
+mod tests;
 
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
@@ -184,7 +185,7 @@ pub struct StubPlatform {
 	/// to the topic, with no statement this host can open ever arriving.
 	pub pairing_silent_after_subscribe: bool,
 	pub notification_id: u32,
-	pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
+	pub pushed_notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
 	pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
 	pub sent_rpc: Arc<Mutex<Vec<String>>>,
 	pub rpc_responses: Vec<String>,
@@ -347,6 +348,9 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// Identity of every [`test_stack`].
+pub const TEST_STACK_ID: &str = "test-stack";
+
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -355,9 +359,13 @@ pub fn test_stack(
 	bulletin: [u8; 32],
 	asset_hub: [u8; 32],
 ) -> crate::platform::Stack {
+	let identity = crate::platform::StackIdentity {
+		id: TEST_STACK_ID.to_string(),
+		generation: "test-generation".to_string(),
+	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
-	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, &allowed)
+	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, &allowed)
 		.expect("test stack is valid")
 }
 
@@ -444,6 +452,75 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
+/// The test stack's descriptor at `sequence`, on the bundled chains and
+/// generation.
+pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
+}
+
+/// `descriptor` moved to the `testnet` TLD.
+pub fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["tld"] = "testnet".into();
+	descriptor
+}
+
+/// `descriptor` without its Bulletin chain. It still passes the descriptor
+/// rules, but the core cannot run it.
+pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.retain(|chain| chain["role"] != "Bulletin");
+	descriptor
+}
+
+/// The `ETag` every [`stored_test_record`] carries.
+const STORED_TEST_ETAG: &str = "\"stored\"";
+
+/// The record a store holds once a reader stored `descriptor`, fetched at
+/// the Unix time `fetched_at` and served with an `ETag`.
+pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
+	let (link, bytes) = sign_test_descriptor(descriptor);
+	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");
+	let served = trinity_stack::Served::Document { bytes: &bytes, etag: Some(STORED_TEST_ETAG) };
+	trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
+		.fetched(&pointer, served, fetched_at)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored")
+}
+
+/// The status of a core running `descriptor`, neither stale nor expired, with
+/// no restart pending.
+pub fn stack_status(
+	descriptor: &serde_json::Value,
+	last_refresh: Option<crate::platform::StackRefreshOutcome>,
+) -> crate::platform::StackStatus {
+	let plain: trinity_stack::Descriptor =
+		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
+	crate::platform::StackStatus {
+		descriptor: serde_json::to_string(&plain).expect("a descriptor always serialises"),
+		generation: plain.generation,
+		stale: false,
+		expired: false,
+		restart_required: false,
+		last_refresh,
+	}
+}
+
+/// The outcome of fetching a copy on another TLD.
+pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
+	refused_for_pinned("tld")
+}
+
+/// The outcome of fetching a copy that changes `field`, which the bundled
+/// copy pins.
+pub fn refused_for_pinned(field: &str) -> Option<crate::platform::StackRefreshOutcome> {
+	Some(crate::platform::StackRefreshOutcome::Refused {
+		reason: format!("stack descriptor changes {field}, which the bundled copy pins"),
+	})
+}
+
 /// The `chains` entry of `descriptor` with this role.
 pub fn test_chain<'a>(
 	descriptor: &'a mut serde_json::Value,
@@ -500,74 +577,6 @@ pub fn redeployed_reserved_test_descriptor(sequence: u32) -> serde_json::Value {
 	let mut descriptor = reserved_test_descriptor(sequence);
 	descriptor["dotns"]["popController"] = format!("0x{}", hex::encode([0xee; 20])).into();
 	descriptor
-}
-
-/// The test stack's descriptor as published at `sequence`, on the chains and
-/// in the generation every test bundles it with.
-pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
-	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
-}
-
-/// `descriptor` moved to the `testnet` TLD.
-pub fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
-	descriptor["tld"] = "testnet".into();
-	descriptor
-}
-
-/// `descriptor` without its Bulletin chain. It still passes the descriptor
-/// rules, but the core cannot run it.
-pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value {
-	descriptor["chains"]
-		.as_array_mut()
-		.expect("chains is an array")
-		.retain(|chain| chain["role"] != "Bulletin");
-	descriptor
-}
-
-/// The `ETag` every [`stored_test_record`] carries.
-const STORED_TEST_ETAG: &str = "\"stored\"";
-
-/// The record a store holds once a reader stored `descriptor`, fetched at
-/// the Unix time `fetched_at` and served with an `ETag`.
-pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
-	let (link, bytes) = sign_test_descriptor(descriptor);
-	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");
-	let served = trinity_stack::Served::Document { bytes: &bytes, etag: Some(STORED_TEST_ETAG) };
-	trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
-		.fetched(&pointer, served, fetched_at)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored")
-}
-
-/// What the host is told while the core runs `descriptor` on time, with no
-/// restart pending, after a last fetch that came to `last_refresh`.
-pub fn stack_status(
-	descriptor: &serde_json::Value,
-	last_refresh: Option<crate::platform::StackRefreshOutcome>,
-) -> crate::platform::StackStatus {
-	let plain: trinity_stack::Descriptor =
-		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
-	crate::platform::StackStatus {
-		descriptor: serde_json::to_string(&plain).expect("a descriptor always serialises"),
-		generation: plain.generation,
-		stale: false,
-		expired: false,
-		restart_required: false,
-		last_refresh,
-	}
-}
-
-/// What a fetch of a copy on another TLD than the bundled one comes to.
-pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
-	refused_for_pinned("tld")
-}
-
-/// What a fetch of a copy that changes the pinned `field` comes to.
-pub fn refused_for_pinned(field: &str) -> Option<crate::platform::StackRefreshOutcome> {
-	Some(crate::platform::StackRefreshOutcome::Refused {
-		reason: format!("stack descriptor changes {field}, which the bundled copy pins"),
-	})
 }
 
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
@@ -636,9 +645,12 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 /// side of one SSO session.
 pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	use crate::{
-		host_logic::sso::pairing::{
-			ResponderIdentity, create_pairing_bootstrap, derive_x25519_keypair_from_entropy,
-			establish_responder_session_info, establish_sso_session_info,
+		host_logic::{
+			root_entropy::RootEntropy,
+			sso::pairing::{
+				ResponderIdentity, create_pairing_bootstrap, establish_responder_session_info,
+				establish_sso_session_info,
+			},
 		},
 		platform::{HostInfo, PairingHostConfig, PlatformInfo},
 	};
@@ -660,7 +672,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 		.unwrap()
 		.expand_to_keypair(ExpansionMode::Ed25519);
 	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso");
+		RootEntropy::new([0xAB; 16]).derive_x25519_keypair(b"sso");
 	let responder = ResponderIdentity {
 		statement_secret: statement_keypair.secret.to_bytes(),
 		statement_public_key: statement_keypair.public.to_bytes(),
@@ -1484,13 +1496,13 @@ impl PlatformNavigation for StubPlatform {
 impl PlatformNotifications for StubPlatform {
 	async fn push_notification(
 		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		notification: latest::HostPushNotificationRequest,
+	) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
 		self.pushed_notifications
 			.lock()
 			.expect("notification list mutex poisoned")
 			.push(notification);
-		Ok(v01::HostPushNotificationResponse { id: self.notification_id })
+		Ok(latest::HostPushNotificationResponse { id: self.notification_id })
 	}
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
@@ -2038,76 +2050,6 @@ fn method_keyed_responses(
 			}
 		}
 	}))
-}
-
-#[test]
-#[should_panic(
-	expected = "`state_getStorage` was called 2 times, and the script has 1 response(s) for it"
-)]
-fn method_keyed_responses_do_not_replay_an_exhausted_answer() {
-	use futures::StreamExt;
-
-	let request =
-		|id| format!(r#"{{"jsonrpc":"2.0","id":"{id}","method":"state_getStorage","params":[]}}"#);
-	let sent = Arc::new(Mutex::new(vec![request(1), request(2)]));
-	let mut responses =
-		method_keyed_responses(sent, vec![("state_getStorage", "null".to_string())]);
-
-	futures::executor::block_on(async {
-		responses.next().await.expect("first scripted response");
-		responses.next().await.expect("second scripted response");
-	});
-}
-
-fn assert_rpc_responses_are_connection_local(platform: StubPlatform) {
-	use futures::FutureExt;
-
-	futures::executor::block_on(async {
-		let first = platform.connect([0xaa; 32]).await.unwrap();
-		let second = platform.connect([0xaa; 32]).await.unwrap();
-		let mut first_responses = first.responses();
-		let mut second_responses = second.responses();
-		let mut expected_requests = Vec::new();
-
-		for index in 1..=2 {
-			let request = format!(
-				r#"{{"jsonrpc":"2.0","id":"truapi:{index}","method":"state_getStorage","params":[]}}"#
-			);
-			let response =
-				format!(r#"{{"jsonrpc":"2.0","id":"truapi:{index}","result":"0x0{index}"}}"#);
-			first.send(request.clone());
-			assert_eq!(first_responses.next().await, Some(response.clone()));
-			assert_eq!(second_responses.next().now_or_never(), None);
-
-			second.send(request.clone());
-			assert_eq!(second_responses.next().await, Some(response));
-			expected_requests.extend([request.clone(), request]);
-		}
-
-		assert_eq!(*platform.sent_rpc.lock().unwrap(), expected_requests);
-	});
-}
-
-#[test]
-fn scripted_rpc_responses_wait_for_their_own_connection_request() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_responses: vec![
-			r#"{"jsonrpc":"2.0","id":"truapi:1","result":"0x01"}"#.to_string(),
-			r#"{"jsonrpc":"2.0","id":"truapi:2","result":"0x02"}"#.to_string(),
-		],
-		..Default::default()
-	});
-}
-
-#[test]
-fn method_keyed_rpc_responses_count_requests_per_connection() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_method_responses: vec![
-			("state_getStorage", r#""0x01""#.to_string()),
-			("state_getStorage", r#""0x02""#.to_string()),
-		],
-		..Default::default()
-	});
 }
 
 async fn wait_for_matching_request_id(sent: Arc<Mutex<Vec<String>>>, response: &str) {

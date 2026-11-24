@@ -150,6 +150,8 @@ dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 # uniffi-bindgen scans the cdylib's metadata symbols, which `release` strips, so
 # codegen builds use the unstripped `codegen` profile (see [profile.codegen]).
 UNIFFI_CDYLIB_DIR := target/codegen
+# The codegen profile is incremental; keep only the newest cache of each crate.
+PRUNE_CODEGEN_INCREMENTAL := ./scripts/prune-incremental.sh $(UNIFFI_CDYLIB_DIR) 0
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi.dylib
@@ -164,6 +166,7 @@ PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-out
 
 uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
 	$(CARGO) build -p truapi --profile codegen
+	$(PRUNE_CODEGEN_INCREMENTAL)
 	rm -rf $(UNIFFI_SWIFT_TMP)
 	mkdir -p $(UNIFFI_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -230,6 +233,7 @@ UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
 uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi cdylib.
 	$(CARGO) build -p truapi --profile codegen
+	$(PRUNE_CODEGEN_INCREMENTAL)
 	rm -rf $(UNIFFI_KOTLIN_OUT)
 	mkdir -p $(UNIFFI_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -266,6 +270,7 @@ PROVIDER_JNILIBS := android/truapi-provider/src/main/jniLibs
 
 provider-swift: ## Generate the TrUAPIProvider Swift bindings into target/uniffi-provider-swift-out (no Xcode, no iOS targets).
 	$(CARGO) build -p truapi-provider --profile codegen --no-default-features --features uniffi
+	$(PRUNE_CODEGEN_INCREMENTAL)
 	rm -rf $(PROVIDER_SWIFT_TMP)
 	mkdir -p $(PROVIDER_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -278,6 +283,7 @@ provider-ios: ## Build the TrUAPIProvider Swift bindings + xcframework (adds --s
 
 provider-kotlin: ## Regenerate Kotlin UniFFI bindings from the truapi-provider cdylib.
 	$(CARGO) build -p truapi-provider --profile codegen --no-default-features --features uniffi
+	$(PRUNE_CODEGEN_INCREMENTAL)
 	rm -rf $(PROVIDER_KOTLIN_OUT)
 	mkdir -p $(PROVIDER_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \

@@ -279,14 +279,14 @@ fn the_provider_config_lists_each_published_name_once() {
 		(
 			entries
 				.iter()
-				.map(|entry| (entry.product_id.as_str().to_string(), entry.origin))
+				.map(|entry| entry.product_id.as_str().to_string())
 				.collect::<Vec<_>>(),
 			invalid,
 		),
 		(
 			vec![
-				("ramp.paseo".to_string(), FundingProviderOrigin::Published),
-				("bank.paseo".to_string(), FundingProviderOrigin::Published),
+				"ramp.paseo".to_string(),
+				"bank.paseo".to_string(),
 			],
 			vec!["ramp.dot".to_string(), "not a product!".to_string()],
 		)

@@ -66,12 +66,12 @@ refresh it.
   page becomes visible again.
 - `stackChanged(status)`: the `StackStatus` at start and on each change, also
   for a host without `fetchStackDescriptor`. The same value comes from
-  `stackStatus()`. `restartRequired` means a newer copy
-  changes a chain, the network or the generation, and applies once
-  the runtime is built again. A copy that names another TLD than the bundled
-  descriptor is refused, and so is one that changes a field a stack allowed
-  reserved values pins. `lastRefresh` says so. `generation` changes when
-  the stack restarts its chains: key cached chain data by it.
+  `stackStatus()`. `restartRequired` means a newer copy changes a chain, the
+  network or the generation, and applies once the runtime is built again. A
+  copy on another TLD than the bundled descriptor is refused, and so is one
+  that changes a field a stack allowed reserved values pins. `lastRefresh`
+  says so. `generation` changes when the stack restarts its chains: key cached
+  chain data by it.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key, and starts from it when it is newer than the bundled one.
@@ -81,10 +81,11 @@ bundled copy.
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.
 
-The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it,
-and refuses a field it does not have. A runtime built from it does not refresh:
-it calls neither stack callback, and `stackStatus()` returns `undefined`.
+The test host has no descriptor, so it passes `testStack` instead: an `id` and
+a `generation`, the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it, and refuses a field it does not have. A runtime
+built from it does not refresh: it calls neither stack callback, and
+`stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 

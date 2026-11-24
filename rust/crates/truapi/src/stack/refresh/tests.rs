@@ -163,7 +163,7 @@ impl Started {
 
 /// The test stack's descriptor as bundled.
 fn bundled() -> serde_json::Value {
-	published_test_descriptor(1, "first", TEST_STACK_PEOPLE)
+	published_test_descriptor_at(1)
 }
 
 /// The test stack's `stack_id`, which its record is stored under.
@@ -344,9 +344,8 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 	);
 }
 
-/// A descriptor signed with a stolen key must not move a stack to another
-/// TLD. The host is told the copy was refused, nothing is written for it, and
-/// the next start runs the same stack.
+/// A stolen key must not move a stack to another TLD. The host sees the copy
+/// refused, nothing is stored, and the next start runs the same stack.
 #[test]
 fn a_fetched_copy_on_another_tld_is_refused_and_not_stored() {
 	let records = Arc::<MemoryRecords>::default();
@@ -375,11 +374,9 @@ fn a_fetched_copy_on_another_tld_is_refused_and_not_stored() {
 	);
 }
 
-/// A copy that came with an `ETag` has its record written again without it
-/// when the next fetch is refused or fails. That record holds the copy the
-/// core already holds, never the one just refused, so whether the write works
-/// or not the host is told what the fetch came to, and the next start runs
-/// the copy the core held.
+/// A refused or failed fetch rewrites the record without its `ETag`, still
+/// holding the copy the core runs. Whether that write works or not, the host
+/// sees the fetch's outcome and the next start runs the same copy.
 #[test]
 fn a_refused_or_failed_fetch_is_reported_as_such_whatever_the_store_does() {
 	let held = published_test_descriptor_at(2);
@@ -404,10 +401,9 @@ fn a_refused_or_failed_fetch_is_reported_as_such_whatever_the_store_does() {
 	assert_eq!(told_and_stored, [refused.clone(), refused, unreachable]);
 }
 
-/// A newer copy whose store failed is not lost when the next fetch fails. The
-/// record that fetch writes, to drop the copy's `ETag`, holds that copy, so
-/// the host is told to restart while the last fetch is reported as failed,
-/// and the next start runs the newer copy.
+/// A newer copy whose store failed is stored by the record the next failed
+/// fetch writes. The host is told to restart, the fetch is reported as
+/// failed, and the next start runs the newer copy.
 #[test]
 fn a_copy_whose_store_failed_is_stored_when_the_next_fetch_fails() {
 	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
@@ -438,11 +434,9 @@ fn a_copy_whose_store_failed_is_stored_when_the_next_fetch_fails() {
 	);
 }
 
-/// A record may hold a copy on another TLD than the build bundles, such as
-/// one written by another build of the app. The host starts on the bundled
-/// copy and the record stays as it is while the published copy is refused.
-/// The next copy the core takes replaces it, and the next start runs that
-/// copy.
+/// A record from another build of the app may hold a copy on another TLD.
+/// The host starts on the bundled copy and refuses the published one. The
+/// record stays until the core takes a copy, which the next start runs.
 #[test]
 fn a_stored_copy_on_another_tld_is_ignored_until_a_copy_the_core_takes_replaces_it() {
 	let moved = on_testnet(published_test_descriptor_at(2));
@@ -471,11 +465,9 @@ fn a_stored_copy_on_another_tld_is_ignored_until_a_copy_the_core_takes_replaces_
 	);
 }
 
-/// A record the core does not start from can hold a higher `sequence` than
-/// the published copy: one on another TLD, or one the core cannot run. It
-/// must not keep the published copy out of the store. The host would be told
-/// to restart, start from the bundled copy again and be told to restart
-/// again, for as long as the record stayed.
+/// A record the core ignores, on another TLD or one it cannot run, may hold a
+/// higher `sequence` than the published copy. It must not keep that copy out
+/// of the store, or every start would ask for another restart.
 #[test]
 fn an_ignored_record_with_a_higher_sequence_does_not_keep_a_newer_copy_out() {
 	let wiped = published_test_descriptor(3, "second", TEST_STACK_WIPED_PEOPLE);
@@ -515,8 +507,7 @@ fn a_record_that_changes_a_reserved_pin_does_not_keep_a_newer_copy_out() {
 	let bundled = reserved_test_descriptor(1);
 	let mut regenerated = reserved_test_descriptor(3);
 	regenerated["generation"] = "second".into();
-	let records =
-		holding(stored_test_record(&redeployed_reserved_test_descriptor(5), START.cast_signed()));
+	let records = holding(stored_test_record(&redeployed_reserved_test_descriptor(5), 0));
 	let start = || {
 		let published = vec![published(&regenerated)];
 		start_stack(&bundled, ReservedValuesPolicy::ALLOWED, records.clone(), published)
