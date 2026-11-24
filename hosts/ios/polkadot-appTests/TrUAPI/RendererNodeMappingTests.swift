@@ -489,6 +489,60 @@ struct RendererNodeMappingTests {
         ))))
     }
 
+    @Test func anEmitterMapsInPointsRadiansAndSecondsAndTheLastIsKept() throws {
+        let sparks = Emitter(
+            looks: [
+                .circle(diameter: 300, color: 0xFF00_00FF),
+                .rectangle(width: 400, height: 200, color: 0x00FF_00FF),
+                .image(source: .archive("particle.png"), width: 1_200, height: 800),
+                .image(source: .inline(Data([1])), width: 100, height: 100),
+            ],
+            source: .point(MaskPoint(x: 500, y: -200)),
+            ratePerS: 12,
+            ratePer100pt: 3,
+            lifeMs: 1_500,
+            speed: ValueRange(min: 12_000, max: 4_000),
+            angleCentideg: 9_000,
+            spreadCentideg: 3_000,
+            gravity: 98_000,
+            spin: ValueRange(min: -18_000, max: 18_000),
+            fadeFromPermille: 600,
+            endScalePermille: 200,
+            maxAlive: 80,
+            bursts: [
+                Burst(count: 20, on: .action("done")),
+                Burst(count: 5, on: .change(3)),
+                Burst(count: 1, on: .appear)
+            ]
+        )
+        var first = sparks
+        first.source = .area
+        let node = RendererNode.box(
+            modifiers: [.emit(first), .emit(sparks)],
+            props: BoxProps(contentAlignment: nil),
+            children: []
+        )
+        let emitter = try #require(node.toWidgetNode(resolver: resolver)?.modifiers.emitter)
+        #expect(emitter.source == .point(CGPoint(x: 5, y: -2)), "a node keeps its last emitter")
+        #expect(emitter.looks.map(\.size) == [
+            CGSize(width: 3, height: 3), CGSize(width: 4, height: 2), CGSize(width: 12, height: 8),
+            CGSize(width: 1, height: 1),
+        ])
+        guard case let .image(fetched, _) = emitter.looks[2], case let .image(refused, _) = emitter.looks[3] else {
+            Issue.record("the images did not map")
+            return
+        }
+        #expect(fetched == .archive(path: "particle.png") && refused == nil, "an inline picture is refused")
+        #expect(emitter.ratePerSecond == 12 && emitter.ratePer100Points == 3 && emitter.life == 1.5)
+        #expect(emitter.speed == 40 ... 120, "the ends are put in order")
+        #expect(abs(emitter.angle - .pi / 2) < 1e-9 && abs(emitter.spread - .pi / 6) < 1e-9)
+        #expect(emitter.gravity == 980 && emitter.spin == -180 ... 180)
+        #expect(emitter.fadeFrom == 0.6 && emitter.endScale == 0.2 && emitter.maxAlive == 80)
+        #expect(emitter.bursts == [
+            .init(count: 20, on: .action("done")), .init(count: 5, on: .change(3)), .init(count: 1, on: .appear),
+        ])
+    }
+
     @Test func aPressFeelScalesTheAxesApart() throws {
         let feel = { (down: UInt16?) in
             PanFeel(

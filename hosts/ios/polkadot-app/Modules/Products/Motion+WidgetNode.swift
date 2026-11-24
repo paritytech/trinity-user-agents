@@ -69,6 +69,14 @@ extension Track {
     }
 }
 
+extension [CustomMessageWidgetNode.Track] {
+    /// A node keeps its last track per property.
+    mutating func keepLast(_ track: CustomMessageWidgetNode.Track) {
+        removeAll { $0.property == track.property }
+        append(track)
+    }
+}
+
 extension AnimatedProperty {
     var widgetProperty: CustomMessageWidgetNode.AnimatedProperty {
         switch self {

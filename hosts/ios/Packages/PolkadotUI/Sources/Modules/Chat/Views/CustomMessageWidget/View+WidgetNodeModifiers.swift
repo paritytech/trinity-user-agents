@@ -26,6 +26,8 @@ extension View {
             .modifier(NodeSpinModifier(period: modifiers.spinPeriod))
             .modifier(NodeCompositingModifier(modifiers: modifiers))
             .modifier(PanFadeModifier(fade: modifiers.panFade))
+            // 5a. Particles over the node and its children, unmasked and unclipped
+            .modifier(NodeEmitterModifier(emitter: modifiers.emitter))
             // 5b. Drawn moved, its layout unchanged
             .offset(modifiers.translate)
             // 5c. Played in and moved on the host's clock, its layout unchanged

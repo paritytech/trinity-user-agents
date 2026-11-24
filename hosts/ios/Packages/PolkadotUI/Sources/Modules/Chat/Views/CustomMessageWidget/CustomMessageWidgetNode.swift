@@ -280,6 +280,8 @@ public extension CustomMessageWidgetNode {
         public let enter: Enter?
         /// Moves parts of how the node is drawn on the host's clock, at most one per property.
         public let tracks: [Track]
+        /// Sends particles over the node.
+        public let emitter: Emitter?
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -336,7 +338,8 @@ public extension CustomMessageWidgetNode {
             exitFade: TimeInterval? = nil,
             mask: Mask? = nil,
             enter: Enter? = nil,
-            tracks: [Track] = []
+            tracks: [Track] = [],
+            emitter: Emitter? = nil
         ) {
             self.padding = padding
             self.margin = margin
@@ -360,6 +363,7 @@ public extension CustomMessageWidgetNode {
             self.mask = mask
             self.enter = enter
             self.tracks = tracks
+            self.emitter = emitter
         }
     }
 }
