@@ -37,7 +37,8 @@ use web_time::Instant;
 
 use crate::{
 	platform::{
-		ChatFieldError, ChatPlatform, normalize_chat_identifier, validate_chat_feed_update,
+		ChatFeedOutcome, ChatFieldError, ChatPlatform, normalize_chat_identifier,
+		validate_chat_feed_update,
 		validate_chat_custom_message, validate_chat_icon, validate_chat_message_content,
 		validate_chat_name,
 		validate_chat_room_metadata, validate_chat_room_preview,
@@ -86,19 +87,12 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				} else {
 					self.connection.product.product_id.chat_room_id(&request.room_id_source)
 				};
-				let config = request.config.clone();
+				// One host call: the host keeps the configuration with the
+				// room, or refuses it before it creates anything.
 				let status = platform
 					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
 					.map_err(CallError::Domain)?;
-				platform
-					.set_chat_room_config(&self.connection.product, room_id.clone(), config)
-					.await
-					.map_err(|error| {
-						CallError::Domain(latest::HostChatCreateRoomError::Unknown {
-							reason: error.reason,
-						})
-					})?;
 				Ok(latest::HostChatCreateRoomResponse { status, room_id })
 			})
 			.await
@@ -181,16 +175,11 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
-					.map_err(|error| {
-						CallError::Domain(latest::HostChatPostMessageError::Unknown {
-							reason: error.reason,
-						})
-					})?;
+					.map_err(room_host_error)?;
+				// A room that keeps its messages in the product takes them
+				// through `update_feed`, so it takes no posted message.
 				if config.product_source {
-					return Err(CallError::Domain(latest::HostChatPostMessageError::Unknown {
-						reason: "the room keeps its messages in the product; use updateFeed"
-							.to_string(),
-					}));
+					return Err(CallError::Denied);
 				}
 				platform
 					.post_chat_message(&self.connection.product, request)
@@ -282,13 +271,15 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.preview =
 					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let limiter = &self.connection.services.chat_rate_limits.preview;
-				if !self.take_room_budget(limiter, &request.room_id) {
-					return Err(CallError::Domain(
-						latest::HostChatSetRoomPreviewError::RateLimited,
-					));
+				let rate_limited =
+					|| CallError::Domain(latest::HostChatSetRoomPreviewError::RateLimited);
+				// A room with no budget left is refused before the host sees the
+				// call, so a paced product costs the host nothing.
+				if !self.room_has_budget(limiter, &normalized_room_id(&request.room_id)?) {
+					return Err(rate_limited());
 				}
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
@@ -297,6 +288,11 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				// reactions of the user from its own store.
 				if !config.product_source && preview_shows_the_user(&request.preview) {
 					return Err(CallError::Domain(latest::HostChatSetRoomPreviewError::NotOwner));
+				}
+				// The budget pays for what the host does, so only a call that
+				// reaches the host spends it.
+				if !self.take_room_budget(limiter, &request.room_id) {
+					return Err(rate_limited());
 				}
 				platform
 					.set_chat_room_preview(&self.connection.product, request)
@@ -357,11 +353,15 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.update =
 					validate_chat_feed_update(request.update).map_err(feed_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let limiter = &self.connection.services.chat_rate_limits.feed;
-				if !self.take_room_budget(limiter, &request.room_id) {
-					return Err(CallError::Domain(latest::HostChatUpdateFeedError::RateLimited));
+				let rate_limited =
+					|| CallError::Domain(latest::HostChatUpdateFeedError::RateLimited);
+				// A room with no budget left is refused before the host sees the
+				// call, so a paced product costs the host nothing.
+				if !self.room_has_budget(limiter, &normalized_room_id(&request.room_id)?) {
+					return Err(rate_limited());
 				}
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
@@ -373,10 +373,32 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				if persist && names_the_user(&request.update) {
 					return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
 				}
-				platform.update_chat_feed(&self.connection.product, request, persist).await
+				// The budget pays for what the host does, so only a call that
+				// reaches the host spends it.
+				if !self.take_room_budget(limiter, &request.room_id) {
+					return Err(rate_limited());
+				}
+				let outcome = platform
+					.update_chat_feed(&self.connection.product, request, persist)
+					.await
+					.map_err(room_host_error)?;
+				feed_outcome(outcome)
 			})
 			.await
 	}
+}
+
+/// The answer to the product for what the host did with a feed update.
+fn feed_outcome(
+	outcome: ChatFeedOutcome,
+) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
+	let refusal = match outcome {
+		ChatFeedOutcome::Applied => return Ok(()),
+		ChatFeedOutcome::UnknownMessage => latest::HostChatUpdateFeedError::UnknownMessage,
+		ChatFeedOutcome::DuplicateMessage => latest::HostChatUpdateFeedError::DuplicateMessage,
+		ChatFeedOutcome::NotOwner => latest::HostChatUpdateFeedError::NotOwner,
+	};
+	Err(CallError::Domain(refusal))
 }
 
 /// Why the core refuses a room-changing call before the host sees it.
@@ -441,7 +463,8 @@ fn footer_refusal(refusal: RoomRefusal) -> CallError<latest::HostChatSetRoomFoot
 }
 
 /// Whether `update` names the host's user as the author of a message, of the
-/// message that a reply quotes, or of a reaction.
+/// message that a reply quotes, of a reaction, or of a reaction that a
+/// message's summaries count.
 fn names_the_user(update: &latest::ChatFeedUpdate) -> bool {
 	match update {
 		latest::ChatFeedUpdate::New(message) | latest::ChatFeedUpdate::Replaced(message) => {
@@ -457,14 +480,16 @@ fn names_the_user(update: &latest::ChatFeedUpdate) -> bool {
 	}
 }
 
-/// Whether the host's user wrote `message`, or the message that it quotes.
+/// Whether the host's user wrote `message` or the message that it quotes, or
+/// reacted to it as its reaction summaries say.
 fn shows_the_user(message: &latest::ChatMessage) -> bool {
 	let quotes_the_user = message
 		.reply
 		.as_ref()
 		.and_then(|reply| reply.preview.as_ref())
 		.is_some_and(|preview| preview.origin.participant_id == USER_PARTICIPANT_ID);
-	message.origin.participant_id == USER_PARTICIPANT_ID || quotes_the_user
+	let user_reacted = message.reactions.iter().any(|reaction| reaction.reacted_by_user);
+	message.origin.participant_id == USER_PARTICIPANT_ID || quotes_the_user || user_reacted
 }
 
 /// Whether `preview` shows a message or a reaction of the host's user.
@@ -535,6 +560,14 @@ impl ProductConnection {
 	}
 }
 
+/// The normalized id of the room that a room-changing call names. The
+/// normalization of `create_room`, so each spelling of a room id finds the
+/// stored room.
+fn normalized_room_id(room_id: &str) -> Result<String, RoomRefusal> {
+	normalize_chat_identifier("roomId", room_id)
+		.map_err(|error| RoomRefusal::Malformed(error.to_string()))
+}
+
 impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// The normalized id of a room this product hosts.
 	///
@@ -545,8 +578,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		platform: &Arc<dyn ChatPlatform>,
 		room_id: &str,
 	) -> Result<String, RoomRefusal> {
-		let room_id = normalize_chat_identifier("roomId", room_id)
-			.map_err(|error| RoomRefusal::Malformed(error.to_string()))?;
+		let room_id = normalized_room_id(room_id)?;
 		let rooms = platform
 			.list_chat_rooms(&self.connection.product)
 			.await
@@ -559,6 +591,12 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			},
 			Some(_) => Ok(room_id),
 		}
+	}
+
+	/// Whether `room_id` has a call of its budget in `limiter` left, without
+	/// spending it.
+	fn room_has_budget(&self, limiter: &ChatRateLimiter, room_id: &str) -> bool {
+		limiter.has_budget(self.connection.product.product_id.as_str(), room_id, Instant::now())
 	}
 
 	/// Spend one call of the budget of `room_id` in `limiter`. Returns `false`
@@ -597,10 +635,17 @@ mod tests {
 		icons: Mutex<Vec<String>>,
 		feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
 		calls: Mutex<Vec<String>>,
+		/// How many times the core read the room list.
+		room_lists: Mutex<usize>,
 		/// The failure reason of `list_chat_rooms`, if any.
 		room_list_failure: Mutex<Option<String>>,
 		/// The failure reason of `delete_chat_room`, if any.
 		delete_failure: Mutex<Option<String>>,
+		/// The host keeps only the default configuration, as a host that does
+		/// not serve the configurations yet.
+		default_config_only: Mutex<bool>,
+		/// What the host answers to a feed update; `Applied` when unset.
+		feed_outcome: Mutex<Option<ChatFeedOutcome>>,
 	}
 
 	impl RecordingHost {
@@ -645,11 +690,18 @@ mod tests {
 			room_id: String,
 			request: latest::HostChatCreateRoomRequest,
 		) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
+			if *self.default_config_only.lock().unwrap() &&
+				request.config != latest::ChatRoomConfig::default()
+			{
+				return Err(latest::HostChatCreateRoomError::UnsupportedConfig);
+			}
 			self.icons.lock().unwrap().push(request.icon);
 			self.rooms
 				.lock()
 				.unwrap()
-				.insert(room_id, latest::ChatRoomParticipation::RoomHost);
+				.insert(room_id.clone(), latest::ChatRoomParticipation::RoomHost);
+			self.configs.lock().unwrap().insert(room_id.clone(), request.config);
+			let _ = self.record("create", &room_id);
 			Ok(latest::ChatRoomRegistrationStatus::New)
 		}
 
@@ -691,6 +743,7 @@ mod tests {
 			&self,
 			_product: &ProductContext,
 		) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
+			*self.room_lists.lock().unwrap() += 1;
 			match self.room_list_failure.lock().unwrap().clone() {
 				Some(reason) => Err(latest::GenericError { reason }),
 				None => Ok(self.room_list()),
@@ -703,16 +756,6 @@ mod tests {
 			room_id: String,
 		) -> Result<latest::ChatRoomConfig, latest::GenericError> {
 			Ok(self.configs.lock().unwrap().get(&room_id).cloned().unwrap_or_default())
-		}
-
-		async fn set_chat_room_config(
-			&self,
-			_product: &ProductContext,
-			room_id: String,
-			config: latest::ChatRoomConfig,
-		) -> Result<(), latest::GenericError> {
-			self.configs.lock().unwrap().insert(room_id.clone(), config);
-			self.record("config", &room_id)
 		}
 
 		async fn set_chat_room_preview(
@@ -740,9 +783,9 @@ mod tests {
 			_product: &ProductContext,
 			request: latest::HostChatUpdateFeedRequest,
 			persist: bool,
-		) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
+		) -> Result<ChatFeedOutcome, latest::GenericError> {
 			self.feed.lock().unwrap().push((request, persist));
-			Ok(())
+			Ok(self.feed_outcome.lock().unwrap().unwrap_or(ChatFeedOutcome::Applied))
 		}
 	}
 
@@ -1149,12 +1192,9 @@ mod tests {
 			}),
 		));
 
-		assert!(matches!(
-			posted,
-			Err(CallError::Domain(HostChatPostMessageError::V1(
-				latest::HostChatPostMessageError::Unknown { .. }
-			)))
-		));
+		// The room takes its messages through `update_feed`, so a posted
+		// message is a call the product may not make here.
+		assert_eq!(posted, Err(CallError::Denied));
 		assert!(chat.calls().is_empty());
 	}
 
@@ -1266,8 +1306,162 @@ mod tests {
 				.collect::<Vec<_>>(),
 			[true, false]
 		);
-		let config = format!("config {room_id}");
-		assert_eq!(chat.calls(), [config.clone(), config]);
+		// Each `create_room` is one host call, which carries the configuration.
+		let create = format!("create {room_id}");
+		assert_eq!(chat.calls(), [create.clone(), create]);
+	}
+
+	// A host that cannot keep a configuration refuses it in the same call that
+	// would create the room. Thus no room is left behind with the behaviour
+	// that the product did not ask for.
+	#[test]
+	fn a_host_that_cannot_keep_a_configuration_creates_no_room() {
+		let chat = RecordingHost::with_rooms(&[]);
+		*chat.default_config_only.lock().unwrap() = true;
+		let runtime = chat_runtime(chat.clone());
+		let create = |config: latest::ChatRoomConfig| {
+			block_on(Chat::create_room(
+				&runtime,
+				&CallContext::default(),
+				HostChatCreateRoomRequest::V2(latest::HostChatCreateRoomRequest {
+					room_id_source: "support".to_string(),
+					name: "Support".to_string(),
+					icon: String::new(),
+					config,
+				}),
+			))
+		};
+
+		assert_eq!(
+			create(latest::ChatRoomConfig { report_seen: true, ..Default::default() }),
+			Err(CallError::Domain(HostChatCreateRoomError::V2(
+				latest::HostChatCreateRoomError::UnsupportedConfig
+			)))
+		);
+		assert!(chat.rooms.lock().unwrap().is_empty());
+		assert!(chat.calls().is_empty());
+
+		create(latest::ChatRoomConfig::default()).expect("the default configuration");
+		assert_eq!(chat.rooms.lock().unwrap().len(), 1);
+	}
+
+	/// A new message of the product whose reaction summary says that the user
+	/// reacted with 👍.
+	fn reacted_by_the_user() -> latest::ChatMessage {
+		let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+			unreachable!("text_message builds a new message")
+		};
+		message.reactions = vec![latest::ChatReactionSummary {
+			emoji: "👍".to_string(),
+			count: 1,
+			reacted_by_user: true,
+			unseen: false,
+		}];
+		message
+	}
+
+	// The reaction summaries of a message are a second way to say that the user
+	// reacted. In a room that the host stores, the user reacts only through the
+	// host, so a summary that counts the user is refused as a reaction from the
+	// user is.
+	#[test]
+	fn a_product_cannot_show_that_the_user_reacted_in_a_room_the_host_keeps() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
+		let runtime = chat_runtime(chat.clone());
+		configure(
+			&chat,
+			"sourced",
+			latest::ChatRoomConfig { product_source: true, ..Default::default() },
+		);
+		let updates = || {
+			[
+				latest::ChatFeedUpdate::New(reacted_by_the_user()),
+				latest::ChatFeedUpdate::Replaced(reacted_by_the_user()),
+			]
+		};
+
+		for update in updates() {
+			assert_eq!(
+				update_feed(&runtime, "stored", update),
+				Err(CallError::Domain(HostChatUpdateFeedError::V2(
+					latest::HostChatUpdateFeedError::NotOwner
+				)))
+			);
+		}
+		assert!(chat.feed.lock().unwrap().is_empty());
+
+		// The product still counts the reactions of the other participants.
+		let mut by_others = reacted_by_the_user();
+		by_others.reactions[0].reacted_by_user = false;
+		update_feed(&runtime, "stored", latest::ChatFeedUpdate::New(by_others))
+			.expect("a summary of the reactions of others");
+		// In a room that the product keeps, the product reports the reactions
+		// of the user too.
+		for update in updates() {
+			update_feed(&runtime, "sourced", update).expect("a shown update");
+		}
+	}
+
+	// A call that the core refuses never reaches the host, so it spends none
+	// of the budget of its room.
+	#[test]
+	fn a_refused_update_keeps_the_budget_of_its_room() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+		let runtime = chat_runtime(chat.clone());
+
+		for _ in 0..CHAT_FEED_UPDATES_PER_SECOND {
+			assert_eq!(
+				update_feed(&runtime, "stored", text_message("user")),
+				Err(CallError::Domain(HostChatUpdateFeedError::V2(
+					latest::HostChatUpdateFeedError::NotOwner
+				)))
+			);
+		}
+		for _ in 0..CHAT_FEED_UPDATES_PER_SECOND {
+			update_feed(&runtime, "stored", text_message("product")).expect("within budget");
+		}
+		assert_eq!(chat.feed.lock().unwrap().len(), CHAT_FEED_UPDATES_PER_SECOND as usize);
+	}
+
+	// A room with no budget left is refused before the core reads the room list
+	// of the host.
+	#[test]
+	fn a_paced_update_costs_the_host_nothing() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+		let runtime = chat_runtime(chat.clone());
+
+		for _ in 0..CHAT_FEED_UPDATES_PER_SECOND {
+			update_feed(&runtime, "stored", text_message("product")).expect("within budget");
+		}
+		let lists = *chat.room_lists.lock().unwrap();
+		assert_eq!(
+			update_feed(&runtime, "stored", text_message("product")),
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
+				latest::HostChatUpdateFeedError::RateLimited
+			)))
+		);
+		assert_eq!(*chat.room_lists.lock().unwrap(), lists);
+	}
+
+	// The host answers why it did not apply an update, and the product gets
+	// that reason as its own error.
+	#[test]
+	fn the_host_names_why_it_did_not_apply_an_update() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+		let runtime = chat_runtime(chat.clone());
+		let deleted = || latest::ChatFeedUpdate::Deleted { message_id: "m1".to_string() };
+
+		for (outcome, error) in [
+			(ChatFeedOutcome::UnknownMessage, latest::HostChatUpdateFeedError::UnknownMessage),
+			(ChatFeedOutcome::DuplicateMessage, latest::HostChatUpdateFeedError::DuplicateMessage),
+			(ChatFeedOutcome::NotOwner, latest::HostChatUpdateFeedError::NotOwner),
+		] {
+			*chat.feed_outcome.lock().unwrap() = Some(outcome);
+			assert_eq!(
+				update_feed(&runtime, "stored", deleted()),
+				Err(CallError::Domain(HostChatUpdateFeedError::V2(error)))
+			);
+		}
 	}
 
 	// The icon of a room keeps its rules: a scheme the host must not fetch is
