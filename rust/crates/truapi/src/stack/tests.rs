@@ -242,36 +242,49 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	);
 }
 
-/// A stack with `relay` and these generation and genesis hashes.
-fn stack_in_run(generation: &str, relay: Option<[u8; 32]>, asset_hub: [u8; 32]) -> Stack {
+/// A stack in `generation` over `chains`.
+fn stack_in_run(generation: &str, chains: StackChains) -> Stack {
 	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
-	let chains = StackChains { relay, asset_hub, people: [0xa1; 32], bulletin: [0xb2; 32] };
 	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, false)
 		.expect("stack is valid")
 }
 
 /// A value stamped in one run is read back in that run only. A new
-/// `generation` or a new Asset Hub is another run. The relay chain, which the
-/// core never reads, is not part of the run, so a host that starts or stops
-/// serving it keeps what the core stored. A stamp of another version is
-/// another run, so a later layout cannot be misread as this one.
+/// `generation`, or a new Asset Hub, People or Bulletin chain, is another run.
+/// The relay chain, which the core never reads, is not part of the run, so a
+/// host that starts or stops serving it keeps what the core stored. A stamp of
+/// another version is another run, so a later layout cannot be misread as this
+/// one.
 #[test]
 fn a_stamped_value_is_read_back_in_its_own_run_only() {
-	let run = stack_in_run("g1", None, [0xc3; 32]).run();
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let run = stack_in_run("g1", chains.clone()).run();
 	let stamped = run.stamp(b"value");
-	let read_in = |stack: Stack| stack.run().read_stamped(&stamped).map(<[u8]>::to_vec);
+	let read_in = |generation: &str, chains: StackChains| {
+		stack_in_run(generation, chains)
+			.run()
+			.read_stamped(&stamped)
+			.map(<[u8]>::to_vec)
+	};
 	let mut other_version = stamped.clone();
 	other_version[0] = 2;
 
 	assert_eq!(
 		[
-			read_in(stack_in_run("g1", None, [0xc3; 32])),
-			read_in(stack_in_run("g1", Some([0x01; 32]), [0xc3; 32])),
-			read_in(stack_in_run("g2", None, [0xc3; 32])),
-			read_in(stack_in_run("g1", None, [0xc4; 32])),
+			read_in("g1", chains.clone()),
+			read_in("g1", StackChains { relay: Some([0x01; 32]), ..chains.clone() }),
+			read_in("g2", chains.clone()),
+			read_in("g1", StackChains { asset_hub: [0xc4; 32], ..chains.clone() }),
+			read_in("g1", StackChains { people: [0xa2; 32], ..chains.clone() }),
+			read_in("g1", StackChains { bulletin: [0xb3; 32], ..chains }),
 			run.read_stamped(&other_version).map(<[u8]>::to_vec),
 		],
-		[Some(b"value".to_vec()), Some(b"value".to_vec()), None, None, None]
+		[Some(b"value".to_vec()), Some(b"value".to_vec()), None, None, None, None, None]
 	);
 }
 
@@ -281,7 +294,7 @@ fn a_stamped_value_is_read_back_in_its_own_run_only() {
 /// the next start and is another run, so that start ignores what the old run
 /// stored.
 #[test]
-fn a_refresh_changes_the_run_exactly_when_it_restarts_the_chains() {
+fn a_refresh_keeps_the_run_unless_it_restarts_the_chains() {
 	let base = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 	let edited = |edit: fn(&mut serde_json::Value)| {
 		let mut descriptor = base.clone();

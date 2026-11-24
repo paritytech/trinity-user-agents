@@ -56,15 +56,8 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   notifyContactsChanged(): void;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
-  /**
-   * Take one reference on the product's worker. The first one reports
-   * `"Start"` through the runtime's `requestWorkerTransition` callback.
-   */
-  acquireWorker(productId: ProductId): void;
-  /**
-   * Release one reference. The last one reports `"Stop"` the same way.
-   */
-  releaseWorker(productId: ProductId): void;
+  /** Free the returned handle to release this consumer's reference. */
+  claimWorker(productId: ProductId): { free(): void } | undefined;
   /**
    * Forget one product: its grants, Allow once answers and keys, and the
    * values it wrote to product storage.

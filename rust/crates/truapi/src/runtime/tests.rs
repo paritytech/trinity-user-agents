@@ -17,7 +17,7 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
 	},
 	v02,
 	versioned::{
@@ -87,15 +87,11 @@ use truapi::{
 			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
-		worker::{
-			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
-			HostWorkerEndOperationRequest,
-		},
 	},
 };
 
 use super::{
-	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	product_manifest::{MANIFEST_TTL_SECS, encode_cached_root_manifest},
 	sso_request_service::SsoRequestService,
 	*,
 };
@@ -111,7 +107,7 @@ use crate::{
 		session::encode_persisted_session,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
-	platform::{PairingHostConfig, Stack, StackIdentity, StackRun},
+	platform::{Stack, StackIdentity, StackRun},
 	test_support::*,
 	unix_time::current_unix_secs,
 };
@@ -485,34 +481,38 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = CachedManifest { run: paseo_test_stack().run(), fetched_at_secs, json: Some(json) };
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	let entry =
+		encode_cached_root_manifest(&paseo_test_stack().run(), Some(&json), fetched_at_secs);
+	futures::executor::block_on(
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
-	let run = paseo_test_stack().run();
-	cache_manifest_entry_in(platform, run, owner, json, age_secs);
+	cache_manifest_entry_in(platform, &paseo_test_stack().run(), owner, json, age_secs);
 }
 
 /// [`cache_manifest_entry`] for a host whose stack is in `run`.
 fn cache_manifest_entry_in(
 	platform: &StubPlatform,
-	run: StackRun,
+	run: &StackRun,
 	owner: &str,
 	json: Option<String>,
 	age_secs: u64,
 ) {
-	let entry =
-		CachedManifest { run, fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	let fetched_at_secs = current_unix_secs().saturating_sub(age_secs);
+	let entry = encode_cached_root_manifest(run, json.as_deref(), fetched_at_secs);
+	futures::executor::block_on(
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
@@ -736,43 +736,32 @@ fn host_in_generation(
 	let chains = paseo_test_stack().chains().clone();
 	let stack = Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, true)
 		.expect("test stack is valid");
-	let (config, _) = runtime_config("unknown.dot");
-	let config = PairingHostConfig::new(
-		config.host.host_info,
-		config.host.platform_info,
-		stack,
-		config.pairing_deeplink_scheme,
-	)
-	.expect("test host runtime config is valid");
 	let product = ProductContext::new(ProductId::for_test("unknown.dot"));
-	ProductRuntimeHost::new_pairing_for_tests(platform, config, product, Spawner::for_test()).0
+	ProductRuntimeHost::new_pairing_for_tests(
+		platform,
+		pairing_config_on(stack),
+		product,
+		Spawner::for_test(),
+	)
+	.0
 }
 
-/// Stores a manifest cached in the run of `host`'s stack, in which `wallet.dot`
-/// grants storage access, and an allowed identity disclosure.
-fn store_grant_and_permission(host: &ProductRuntimeHost<RemoteAccountHolder>) {
-	let storage = host.connection.services.platform.as_ref();
-	let entry = CachedManifest {
-		run: host.connection.services.stack().run(),
-		fetched_at_secs: current_unix_secs(),
-		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
-	};
-	futures::executor::block_on(async {
-		storage
-			.write_core_storage(
-				CoreStorageKey::product_manifest(&ProductId::for_test("wallet.dot")),
-				entry.encode(),
-			)
-			.await
-			.expect("stub core storage accepts the entry");
-		set_authorization_status(
-			storage,
-			identity_disclosure_key(),
-			PermissionAuthorizationStatus::Authorized,
-		)
-		.await
-		.expect("stub core storage accepts the decision");
-	});
+/// Stores, on `platform`, a manifest cached in the run of `host`'s stack in
+/// which `wallet.dot` grants storage access, and an allowed identity
+/// disclosure.
+fn store_grant_and_permission(
+	platform: &StubPlatform,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) {
+	let run = host.connection.services.stack().run();
+	let grant = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	cache_manifest_entry_in(platform, &run, "wallet.dot", Some(grant), 0);
+	futures::executor::block_on(set_authorization_status(
+		platform,
+		identity_disclosure_key(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("stub core storage accepts the decision");
 }
 
 fn identity_disclosure_key() -> CoreStorageKey {
@@ -796,7 +785,7 @@ fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
 	let platform = stub_platform();
 	seed_owner_value(&platform, "wallet.dot");
 	let before_wipe = host_in_generation(platform.clone(), "first");
-	store_grant_and_permission(&before_wipe);
+	store_grant_and_permission(&platform, &before_wipe);
 	assert!(granted_value(&before_wipe, "wallet.dot").is_some());
 
 	let after_wipe = host_in_generation(platform, "second");
@@ -816,7 +805,7 @@ fn a_grant_cached_from_another_asset_hub_is_not_honoured() {
 	let platform = stub_platform();
 	let manifest = test_manifest_json(r#"{"unknown":["storage"]}"#);
 	let other_asset_hub = test_run([0x99; 32]);
-	cache_manifest_entry_in(&platform, other_asset_hub, "wallet.dot", Some(manifest), 0);
+	cache_manifest_entry_in(&platform, &other_asset_hub, "wallet.dot", Some(manifest), 0);
 	seed_owner_value(&platform, "wallet.dot");
 	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
 
@@ -6831,127 +6820,6 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	);
 }
 
-#[test]
-fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let begin = |label: Option<&str>| {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: label.map(str::to_string),
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation")
-	};
-
-	assert_eq!(begin(Some("funding")), 1);
-	assert_eq!(begin(None), 2);
-	assert_eq!(
-		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
-		vec![
-			(ProductId::for_test("myapp.dot"), "funding".to_string()),
-			(ProductId::for_test("myapp.dot"), String::new()),
-		],
-		"begin reaches the platform under the calling product; a missing label is empty"
-	);
-
-	end(1);
-	end(99);
-	assert_eq!(
-		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
-		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
-		"end reaches the platform under the calling product, unknown ids included"
-	);
-}
-
-#[test]
-fn an_open_operation_holds_worker_demand_until_it_ends() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: Some("funding".to_string()),
-			}),
-		))
-		.expect("begin operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"an open operation is demand on the worker, so the host is told to run it"
-	);
-
-	futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	))
-	.expect("end operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"ending the last operation drops the demand it held"
-	);
-}
-
-#[test]
-fn ending_an_operation_twice_releases_only_the_demand_it_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-	let begin = || {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: None,
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation");
-	};
-
-	let first = begin();
-	begin();
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
-
-	end(first);
-	end(first);
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
-	);
-}
-
 /// Records every worker-demand transition the ledger reports.
 #[derive(Default)]
 struct DemandRecorder {
@@ -6975,162 +6843,6 @@ impl crate::host_logic::worker::WorkerController for DemandRecorder {
 			.expect("demand recorder mutex poisoned")
 			.push((product_id.to_string(), transition));
 	}
-}
-
-#[test]
-fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
-	use crate::host_logic::worker::WorkerTransition;
-
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let recorder = Arc::new(DemandRecorder::default());
-	assert!(
-		host.connection
-			.services()
-			.worker_ledger
-			.install_worker_controller(recorder.clone())
-	);
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-
-	host.connection.release_open_operations();
-
-	// A native reconnect drops the replaced connection's last reference only
-	// after the new one exists, so a stop deferred to that point would reach
-	// the host as a stop for the worker it had just restarted.
-	assert_eq!(
-		recorder.seen(),
-		vec![
-			("myapp.dot".to_string(), WorkerTransition::Start),
-			("myapp.dot".to_string(), WorkerTransition::Stop),
-		],
-		"teardown reports the stop, rather than leaving it to the last Arc"
-	);
-
-	drop(host);
-
-	assert_eq!(recorder.seen().len(), 2, "the eventual drop has nothing left to report");
-}
-
-#[test]
-fn a_cancelled_begin_ends_the_operation_the_host_started() {
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		begin_operation_gate: Mutex::new(Some(gate)),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-
-	// Poll once so the call reaches the host, then drop it the way an aborted
-	// dispatch does while the host is still deciding.
-	let mut begun = Box::pin(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	));
-	assert!(
-		futures::executor::block_on(futures::future::poll_fn(|cx| {
-			std::task::Poll::Ready(futures::FutureExt::poll_unpin(&mut begun, cx).is_pending())
-		})),
-		"the host has not answered yet"
-	);
-	drop(begun);
-
-	// Without the fix the host's call went with the cancelled dispatch, so the
-	// gate may already be gone.
-	let _ = release.send(());
-
-	// Nobody is left to receive the id, so the operation the host started is
-	// ended rather than stranded in its store.
-	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-	loop {
-		let ended = platform
-			.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.clone();
-		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-			break;
-		}
-		assert!(
-			std::time::Instant::now() < deadline,
-			"a cancelled begin leaves the host holding nothing; saw {ended:?}"
-		);
-		std::thread::yield_now();
-	}
-	assert_eq!(
-		host.connection
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		0
-	);
-}
-
-#[test]
-fn a_failed_end_still_drops_the_demand_the_operation_held() {
-	let platform = Arc::new(StubPlatform {
-		end_operation_error: Some("store unavailable"),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: None,
-			}),
-		))
-		.expect("begin operation");
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	let ended = futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	));
-	assert!(ended.is_err(), "the host's failure still reaches the product");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"the product declared the operation over, so the core stops counting it \
-         whatever the host made of the call"
-	);
-}
-
-#[test]
-fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let services = host.connection.services().clone();
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	drop(host);
-
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"a product that goes away without ending its operations leaves no demand behind"
-	);
 }
 
 #[test]
@@ -8430,39 +8142,51 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 	assert_eq!(*session_clears.lock().expect("session clear counter mutex poisoned"), 1);
 }
 
-/// An untagged blob restores and the slot is rewritten in the written form, so
-/// a host upgrades its stored session by activating once rather than by pairing
-/// again. `SessionInfo::encode` is the untagged eight-field layout; the canary in
-/// `host_logic::session` is what keeps that true.
+/// An untagged blob restores, and the lookup that follows rewrites the slot in
+/// the written form, so a host upgrades its stored session by activating once
+/// rather than by pairing again. `SessionInfo::encode` is the untagged
+/// eight-field layout; the canary in `host_logic::session` is what keeps that
+/// true.
 #[test]
-fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
-	let stored = sso_session_info();
+fn an_untagged_stored_session_restores_and_is_rewritten_once_its_usernames_are_read() {
+	let stored = SessionInfo {
+		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
+		lite_username: None,
+		full_username: None,
+		..sso_session_info()
+	};
 	let untagged = stored.encode();
-	let platform = Arc::new(
-		StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() }
-			.with_usernames_read_in_this_run(),
+	assert_ne!(
+		untagged,
+		encode_persisted_session(&stored),
+		"the fixture must not already be in the written form, or this proves nothing"
 	);
+	let platform = Arc::new(StubPlatform {
+		session_blob: Some(untagged),
+		rpc_responder: Some(dotns_usernames_responder()),
+		..Default::default()
+	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
 	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("an untagged stored session activates");
 
-	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
-	let written = crate::host_logic::session::encode_persisted_session(&stored);
-	assert_ne!(
-		untagged, written,
-		"the fixture must not already be in the written form, or this proves nothing"
+	let named = SessionInfo {
+		lite_username: Some("alice.01".to_string()),
+		full_username: Some("myproject".to_string()),
+		..stored
+	};
+	let written = encode_persisted_session(&named);
+	let rewritten = || {
+		let writes = platform.session_writes.lock().expect("session write list mutex poisoned");
+		writes.last() == Some(&written)
+	};
+	wait_until(
+		rewritten,
+		"the slot still holds the untagged blob, so it is re-read on every start",
 	);
-	assert_eq!(
-		platform
-			.session_writes
-			.lock()
-			.expect("session write list mutex poisoned")
-			.last(),
-		Some(&written),
-		"the slot still holds the untagged blob, so it would be re-read on every start"
-	);
+	assert_eq!(host.test_session_state().current(), Some(named));
 }
 
 #[test]

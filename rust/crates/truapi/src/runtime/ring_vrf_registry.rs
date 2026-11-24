@@ -5,9 +5,8 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, ProductId, Stack, StackChains, StackRun};
+use crate::platform::{CoreStorageKey, Platform, ProductId, Stack, StackRun};
 use parity_scale_codec::{Decode, Encode};
-use tracing::warn;
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
 use crate::host_internal::sso_messages::RingVrfError;
@@ -28,23 +27,25 @@ struct RegistrySnapshot {
 }
 
 impl RegistrySnapshot {
-	/// The snapshot without the rings on chains that are `gone`.
+	/// The snapshot stored in the run `stored_in`, without the rings on the
+	/// chains that are lost in `run`, as [`StackRun::lost_since`] tells.
 	///
 	/// An entry left with no ring is dropped, and an owner that lost a ring is
 	/// no longer listed completely, so its listing is read again.
-	fn without_rings_on(mut self, gone: impl Fn([u8; 32]) -> bool) -> Self {
-		let kept = |ring: &RingLocation| !gone(ring.chain_id);
-		let mut incomplete = Vec::new();
+	fn without_rings_lost(mut self, stored_in: &StackRun, run: &StackRun) -> Self {
+		let gone = |ring: &RingLocation| run.lost_since(stored_in, ring.chain_id);
+		let incomplete: Vec<_> = self
+			.entries
+			.iter()
+			.filter(|entry| entry.rings.iter().any(&gone))
+			.map(|entry| entry.handle.dot_ns_identifier.clone())
+			.collect();
 		for entry in &mut self.entries {
-			let before = entry.rings.len();
-			entry.rings.retain(kept);
-			if entry.rings.len() != before {
-				incomplete.push(entry.handle.dot_ns_identifier.clone());
-			}
+			entry.rings.retain(|ring| !gone(ring));
 		}
 		self.entries.retain(|entry| !entry.rings.is_empty());
 		self.complete_owners.retain(|owner| !incomplete.contains(owner));
-		self.selected_providers.retain(|provider| kept(&provider.ring));
+		self.selected_providers.retain(|provider| !gone(&provider.ring));
 		self
 	}
 }
@@ -53,7 +54,6 @@ impl RegistrySnapshot {
 pub struct RingVrfRegistryStore {
 	platform: Arc<dyn Platform>,
 	run: StackRun,
-	chains: StackChains,
 	cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
 	storage_guard: futures::lock::Mutex<()>,
 }
@@ -178,15 +178,14 @@ impl RingVrfRegistryStore {
 	/// A registry kept in `platform`'s storage for the host that runs `stack`.
 	///
 	/// A wipe replaces a stack's chains and the rings on them, so a registry
-	/// is stored with the run it was written in. One read later loses the
-	/// rings on the chains of that run which the stack no longer has, and
-	/// keeps every other ring. One stored before runs were recorded keeps only
-	/// the rings on the stack's chains, and is stored again with the run.
+	/// is stored with the run it was written in. One read in another run
+	/// loses the rings on the chains that run lost, as
+	/// [`StackRun::lost_since`] tells, and keeps every other ring. One stored
+	/// without a run is not read.
 	pub fn new(platform: Arc<dyn Platform>, stack: &Stack) -> Arc<Self> {
 		Arc::new(Self {
 			platform,
 			run: stack.run(),
-			chains: stack.chains().clone(),
 			cache: Mutex::new(HashMap::new()),
 			storage_guard: futures::lock::Mutex::new(()),
 		})
@@ -347,28 +346,17 @@ impl RingVrfRegistryStore {
 			return Ok(snapshot);
 		}
 		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-		let snapshot =
-			match self.platform.read_core_storage(key.clone()).await.map_err(storage_error)? {
-				Some(blob) => match decode_stored(&blob) {
-					Ok((snapshot, Some(stored_in))) => snapshot.without_rings_on(|chain| {
-						stored_in.has_chain(chain) && !self.chains.contains(chain)
-					}),
-					Ok((snapshot, None)) => {
-						let snapshot =
-							snapshot.without_rings_on(|chain| !self.chains.contains(chain));
-						let stamped = self.run.stamp(&snapshot.encode());
-						if let Err(error) = self.platform.write_core_storage(key, stamped).await {
-							warn!(reason = %error.reason, "storing the ring-VRF registry's run failed");
-						}
-						snapshot
-					},
-					Err(error) => {
-						let _ = self.platform.clear_core_storage(key).await;
-						return Err(error);
-					},
+		let stored = self.platform.read_core_storage(key.clone()).await.map_err(storage_error)?;
+		let snapshot = match stored.as_deref().and_then(StackRun::split_stamped) {
+			Some((stored_in, value)) => match decode_snapshot(value) {
+				Ok(snapshot) => snapshot.without_rings_lost(&stored_in, &self.run),
+				Err(error) => {
+					let _ = self.platform.clear_core_storage(key).await;
+					return Err(error);
 				},
-				None => RegistrySnapshot::default(),
-			};
+			},
+			None => RegistrySnapshot::default(),
+		};
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")
@@ -404,17 +392,6 @@ impl RingVrfRegistryStore {
 			.insert(root_public_key, snapshot);
 		Ok(())
 	}
-}
-
-/// A stored registry and the run it was stored in, or no run for one stored
-/// before runs were recorded.
-fn decode_stored(blob: &[u8]) -> Result<(RegistrySnapshot, Option<StackRun>), RingVrfError> {
-	if let Some((run, value)) = StackRun::split_stamped(blob) &&
-		let Ok(snapshot) = decode_snapshot(value)
-	{
-		return Ok((snapshot, Some(run)));
-	}
-	Ok((decode_snapshot(blob)?, None))
 }
 
 fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {

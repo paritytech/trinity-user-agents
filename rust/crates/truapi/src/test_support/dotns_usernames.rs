@@ -5,7 +5,10 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
-use super::legacy_asset_hub::{legacy_asset_hub_frames, view_output};
+use super::{
+	RpcResponder,
+	legacy_asset_hub::{legacy_asset_hub_frames, view_output},
+};
 use crate::host_logic::dotns_gateway::{
 	DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
 	account_to_h160, dispatcher_address_key,
@@ -108,4 +111,19 @@ pub fn dotns_usernames_frames(request: &str) -> Vec<String> {
 		|key| (key == dispatcher_address_key()).then(|| DISPATCHER.to_vec()),
 		username_view,
 	)
+}
+
+/// A responder for a platform's chain connections that answers the reads of a
+/// username lookup as [`dotns_usernames_frames`] does, and leaves every other
+/// request unanswered, such as the ones a session's own channels send.
+pub fn dotns_usernames_responder() -> RpcResponder {
+	std::sync::Arc::new(|request| {
+		let parsed: serde_json::Value = serde_json::from_str(request).expect("a JSON-RPC request");
+		let lookup_read = match parsed["method"].as_str() {
+			Some("chain_getBlockHash" | "state_getStorage") => true,
+			Some("state_call") => parsed["params"][0] == "ReviveApi_call",
+			_ => false,
+		};
+		if lookup_read { dotns_usernames_frames(request) } else { Vec::new() }
+	})
 }

@@ -442,7 +442,7 @@ fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
 	let run = |published: Option<&[u8]>, last_run: Option<&[u8]>| {
 		let copies = Copies { bundled: &bundled, published, last_run };
 		let refresh =
-			refresh_from_last_run("test", &test_pointer(), copies, NOW, &ChainAccess::Rpc)
+			refresh_from_last_run("test", &test_pointer(), &copies, NOW, &ChainAccess::Rpc)
 				.expect("a descriptor is usable");
 		(refresh.stack.descriptor().sequence, refresh.copy)
 	};
@@ -464,5 +464,69 @@ fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
 			(11, BuiltInCopy::Rejected),
 			(11, BuiltInCopy::Rejected),
 		]
+	);
+}
+
+/// The copy a host keeps has to be there for its next run, which starts from
+/// it when the published descriptor is unreachable. A host that has kept
+/// nothing reads none, its first copy creates the directory, and a later one
+/// replaces it.
+#[test]
+fn a_kept_copy_is_read_back_by_the_next_run() {
+	let base = tempfile::tempdir().expect("a temporary directory");
+	let path = base.path().join("stacks").join("test.json");
+	let before = read_kept_copy(&path);
+
+	keep_copy(&path, b"published");
+	let kept = read_kept_copy(&path);
+	keep_copy(&path, b"republished");
+
+	assert_eq!(
+		(before, kept, read_kept_copy(&path)),
+		(None, Some(b"published".to_vec()), Some(b"republished".to_vec()))
+	);
+}
+
+/// A CLI update can ship a later descriptor than the one the host kept. That
+/// is no rollback to warn about, so the kept copy is passed over before the
+/// refresh rules see it. A copy that does not verify is left to them, which
+/// say why it is not used.
+#[test]
+fn a_kept_copy_older_than_the_bundled_one_is_passed_over() {
+	let bundled = sign_copy(10, "g1");
+	let older = |last_run: &[u8]| is_older_than_bundled(&test_pointer(), &bundled, last_run, NOW);
+
+	assert_eq!(
+		[
+			older(&sign_copy(9, "g0")),
+			older(&sign_copy(11, "g2")),
+			older(&bundled),
+			older(b"not a descriptor")
+		],
+		[true, false, false, false]
+	);
+}
+
+/// A host keeps the published copy it runs on, and only that one. A copy it
+/// did not take must not become the copy the next offline run starts from,
+/// and the copy kept already is not written again.
+#[test]
+fn only_a_published_copy_in_use_is_kept() {
+	let kept = |last_run: Option<&'static [u8]>, in_use: BuiltInCopy| {
+		let copies = Copies { bundled: b"bundled", published: Some(b"published"), last_run };
+		copy_to_keep(&copies, in_use)
+	};
+	let unreachable = Copies { bundled: b"bundled", published: None, last_run: Some(b"earlier") };
+	let published: Option<&[u8]> = Some(b"published");
+
+	assert_eq!(
+		[
+			kept(None, BuiltInCopy::Published),
+			kept(Some(b"earlier"), BuiltInCopy::Published),
+			kept(Some(b"published"), BuiltInCopy::Published),
+			kept(Some(b"earlier"), BuiltInCopy::Rejected),
+			copy_to_keep(&unreachable, BuiltInCopy::Unreachable),
+		],
+		[published, published, None, None, None]
 	);
 }

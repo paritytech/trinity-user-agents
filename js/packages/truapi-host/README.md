@@ -114,11 +114,6 @@ the requests waiting on it stay. It keeps the usernames it has and looks them
 up again, unless `SessionUsernamesRun` covers the new blob, whose usernames it
 then takes.
 
-The first start after the update, with no wipe, does this once: cached
-manifests are read again, so a grant that rests on one is refused until the
-device is online. A pairing host asks for each product's allowance again. A
-stored ring-VRF registry keeps only the rings on the stack's chains.
-
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler
@@ -272,9 +267,8 @@ render cannot take the surrounding surface with it. Exactly one terminal fires
 per render: `onComplete` means the last tree delivered stands, `onError` means
 it is partial and must not be shown as final. A product that declines the
 render, a tree that fails to decode, a closed connection, and a throwing
-renderer all arrive as `onError`. An open render holds one worker reference for
-the provider's product, released when the stream ends or the disposer runs, so
-the product's worker stays up for as long as something is being drawn.
+renderer all arrive as `onError`. A surface that needs the worker takes a claim and releases it when the surface leaves.
+It can end or replace a render without changing worker demand.
 
 `publishChatAction` is the path for posted messages, commands and host-drawn
 `Actions` buttons. Each action entry point sits behind its own service's access
@@ -481,8 +475,9 @@ const runtime = await createWebWorkerPairingHostRuntime(
 );
 
 // Resolves once product frames may use the restored session; rejects when
-// there was nothing to restore, or the slot changed while it was read, in which
-// case the change notification restores it.
+// there was nothing to restore, or the slot changed while it was read. After
+// such a change the session stays selected if the slot still holds it, and
+// another origin's sign-in comes up with its change notification.
 await runtime.activateStoredSession().catch(() => {});
 
 const provider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
@@ -521,8 +516,7 @@ leaves. The host runs and stops the worker executable itself; the runtime only t
 
 | Runtime method                    | Use it to                                                        |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `acquireWorker(productId)`        | Take one reference while a holder is on screen or in flight.     |
-| `releaseWorker(productId)`        | Release one reference; with none held it is a no-op.             |
+| `claimWorker(productId)`          | Hold one reference until the returned handle's `release()` runs.  |
 | `subscribeWorkerDemand(listener)` | Learn which workers to run: current set first, then each change. |
 
 ```ts
@@ -531,8 +525,9 @@ const stop = runtime.subscribeWorkerDemand(({ productId, wanted }) => {
   else stopProductWorker(productId);
 });
 
-runtime.acquireWorker("chat-bot.dot"); // a room it serves came on screen
-runtime.releaseWorker("chat-bot.dot"); // the room left the screen
+const productId = await runtime.parseProductId("chat-bot.dot");
+const room = runtime.claimWorker(productId); // the room came on screen
+room.release(); // the room left the screen
 ```
 
 Two holders of one product hold one worker: the listener hears `wanted: true` once, on the first, and `wanted: false`

@@ -29,10 +29,10 @@ use crate::platform::{
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
-	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductContext, ProductId, ProductStorage as PlatformProductStorage, ProductStorageKey,
+	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
+	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -51,11 +51,15 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod dotns_usernames;
 mod legacy_asset_hub;
+mod memory_core_storage;
 mod scripted_chain;
 mod tests;
 
-pub use dotns_usernames::{DOTNS_NAMED_ACCOUNT, DOTNS_SQUATTER, dotns_usernames_frames};
+pub use dotns_usernames::{
+	DOTNS_NAMED_ACCOUNT, DOTNS_SQUATTER, dotns_usernames_frames, dotns_usernames_responder,
+};
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
+pub use memory_core_storage::MemoryCoreStorage;
 
 pub use scripted_chain::{
 	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
@@ -246,18 +250,6 @@ pub struct StubPlatform {
 	/// Open `subscribe_storage` streams by namespaced key; `write` and
 	/// `clear` push each change to the matching ones.
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
-	/// Every `begin_operation` as `(product_id, label)`, in order. The
-	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
-	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
-	/// Held open by a test so `begin_operation` is still in flight while the
-	/// dispatch awaiting it goes away.
-	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-	/// When set, `end_operation` records the call and then fails with this
-	/// reason, standing in for a host that drops the operation and still
-	/// reports an error.
-	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
@@ -283,7 +275,7 @@ impl StubPlatform {
 		let blob = self.session_blob.as_deref().expect("the platform stores a session");
 		self.local_storage.lock().expect("local storage mutex poisoned").insert(
 			core_storage_test_key(CoreStorageKey::SessionUsernamesRun),
-			usernames_record(&paseo_test_stack(), blob),
+			crate::host_logic::session::usernames_record(&paseo_test_stack().run(), blob),
 		);
 		self
 	}
@@ -380,12 +372,6 @@ pub fn test_stack(
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
-}
-
-/// The `SessionUsernamesRun` value the core records once the usernames in the
-/// session `blob` were read in `stack`'s run.
-pub fn usernames_record(stack: &crate::platform::Stack, blob: &[u8]) -> Vec<u8> {
-	stack.run().stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
 /// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
@@ -559,21 +545,23 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
-	(
-		PairingHostConfig::new(
-			HostInfo {
-				name: "Polkadot Web".to_string(),
-				icon: Some("https://example.invalid/dotli.png".to_string()),
-				version: None,
-				platform: truapi::latest::HostPlatform::Web,
-			},
-			PlatformInfo::default(),
-			paseo_test_stack(),
-			"polkadotapp".to_string(),
-		)
-		.expect("test host runtime config is valid"),
-		ProductContext::new(ProductId::for_test(product_id)),
+	(pairing_config_on(paseo_test_stack()), ProductContext::new(ProductId::for_test(product_id)))
+}
+
+/// The pairing host of [`runtime_config`] on `stack`.
+pub fn pairing_config_on(stack: crate::platform::Stack) -> PairingHostConfig {
+	PairingHostConfig::new(
+		HostInfo {
+			name: "Polkadot Web".to_string(),
+			icon: Some("https://example.invalid/dotli.png".to_string()),
+			version: None,
+			platform: truapi::latest::HostPlatform::Web,
+		},
+		PlatformInfo::default(),
+		stack,
+		"polkadotapp".to_string(),
 	)
+	.expect("test host runtime config is valid")
 }
 
 /// Basic connected session fixture without SSO channel material.
@@ -656,7 +644,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 }
 
 /// [`sso_session_info`] without usernames, as for an account that has none.
-pub fn external_sso_session_info() -> crate::host_logic::session::SessionInfo {
+pub fn unnamed_sso_session_info() -> crate::host_logic::session::SessionInfo {
 	crate::host_logic::session::SessionInfo {
 		lite_username: None,
 		full_username: None,
@@ -1297,59 +1285,6 @@ impl PlatformProductStorage for StubPlatform {
 		Box::pin(
 			stream::once(async move { Ok(v01::HostLocalStorageChangeItem { value }) }).chain(rx),
 		)
-	}
-}
-
-#[async_trait::async_trait]
-impl PlatformProductOperations for StubPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		let gate = self
-			.begin_operation_gate
-			.lock()
-			.expect("begin operation gate mutex poisoned")
-			.take();
-		if let Some(gate) = gate {
-			let _ = gate.await;
-		}
-		// The stub has no worker lifecycle to keep alive; it only records the
-		// call and hands back its position as the id.
-		let id = {
-			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
-			begun.push((product.product_id.clone(), label));
-			u32::try_from(begun.len()).expect("test product count fits in u32")
-		};
-		// The operation exists host-side from here on, so a test holding the
-		// gate keeps only the answer in flight.
-		let gate = self
-			.begin_operation_gate
-			.lock()
-			.expect("begin operation gate mutex poisoned")
-			.take();
-		if let Some(gate) = gate {
-			let _ = gate.await;
-		}
-		Ok(v01::HostWorkerBeginOperationResponse { id })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), v01::HostWorkerOperationError> {
-		self.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.push((product.product_id.clone(), id));
-		match self.end_operation_error {
-			Some(reason) => {
-				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })
-			},
-			None => Ok(()),
-		}
 	}
 }
 

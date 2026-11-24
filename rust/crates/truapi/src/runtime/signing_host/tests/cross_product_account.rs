@@ -9,12 +9,11 @@ use super::*;
 
 use crate::{
 	platform::{CoreStorage, CoreStorageKey},
-	runtime::product_manifest::CachedManifest,
+	runtime::product_manifest::encode_cached_root_manifest,
 	test_support::{UNSERVED_GENESIS, account_id, test_run},
 	unix_time::current_unix_secs,
 };
 use futures::FutureExt as _;
-use parity_scale_codec::Encode;
 use truapi::versioned::{
 	account::{HostAccountSignVrfError, HostAccountSignVrfRequest},
 	signing::{
@@ -25,15 +24,17 @@ use truapi::versioned::{
 
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
 fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
-	let entry = CachedManifest {
-		run: test_run(UNSERVED_GENESIS),
-		fetched_at_secs: current_unix_secs(),
-		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
-	};
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	let entry = encode_cached_root_manifest(
+		&test_run(UNSERVED_GENESIS),
+		Some(&format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
+		current_unix_secs(),
+	);
+	futures::executor::block_on(
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
+	)
 	.expect("stub core storage accepts the entry");
 }
 

@@ -44,15 +44,15 @@ fn assert_sr25519_signature(signer: [u8; 32], signature: [u8; 64], payload: &[u8
 /// Seed `owner`'s manifest cache so its `context` grant to `grantee`
 /// resolves without a chain.
 fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
-	let entry = crate::runtime::product_manifest::CachedManifest {
-		run: paseo_test_stack().run(),
-		fetched_at_secs: crate::unix_time::current_unix_secs(),
-		json: Some(format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
-	};
+	let entry = crate::runtime::product_manifest::encode_cached_root_manifest(
+		&paseo_test_stack().run(),
+		Some(&format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
+		crate::unix_time::current_unix_secs(),
+	);
 	futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 		platform,
 		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
+		entry,
 	))
 	.expect("stub core storage accepts the entry");
 }

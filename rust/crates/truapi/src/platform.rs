@@ -56,8 +56,7 @@ use truapi::{
 		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
 		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
@@ -1247,11 +1246,12 @@ pub enum CoreStorageKey {
 		/// The stack's `stack_id`, the key in its link.
 		stack_id: String,
 	},
-	/// The [`StackRun`] the usernames in the `AuthSession` blob were read in,
-	/// with a hash of that blob, so it vouches for that blob only. A host that
-	/// keeps the `AuthSession` value under a key of its own keeps this one
-	/// next to it. When it vouches for another run or another blob, the core
-	/// installs the session and looks its usernames up again.
+	/// The [`StackRun`] the usernames in the `AuthSession` blob were read in.
+	///
+	/// It carries a hash of that blob, so it vouches for that blob only. A
+	/// host that keeps the `AuthSession` value under a key of its own keeps
+	/// this one next to it. When it vouches for another run or another blob,
+	/// the core installs the session and looks its usernames up again.
 	#[codec(index = 18)]
 	SessionUsernamesRun,
 }
@@ -2479,34 +2479,6 @@ pub trait ExpandedCardHost: Send + Sync {
 	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
-/// Host store for a product's pending operations, which the host uses to keep
-/// the product's worker runtime alive. Reached only through the `Worker`
-/// protocol trait, so non-worker products never call these.
-#[async_trait::async_trait]
-pub trait ProductOperations: Send + Sync {
-	/// Record a pending operation. `label` is a host log and UI hint, empty
-	/// when the product gave none.
-	///
-	/// The returned id must be unique among this product's open operations.
-	/// The core keys the worker reference an operation holds by that id, so an
-	/// id already open for the product records nothing the second time, and
-	/// ending it once drops the demand both were holding. Ids may repeat
-	/// across products, and may be reused once an operation has ended.
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-	/// Remove a pending operation. Idempotent: an unknown or already-ended id
-	/// returns `Ok`, so a retry after an ambiguous failure is safe.
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), HostWorkerOperationError>;
-}
-
 /// Contact handles the core needs turned back into accounts, and the key they
 /// were minted under.
 ///
@@ -2700,7 +2672,6 @@ pub trait Platform:
 	+ ThemeHost
 	+ LocaleHost
 	+ PreimageHost
-	+ ProductOperations
 {
 }
 
@@ -2718,7 +2689,6 @@ impl<T> Platform for T where
 		+ ThemeHost
 		+ LocaleHost
 		+ PreimageHost
-		+ ProductOperations
 {
 }
 

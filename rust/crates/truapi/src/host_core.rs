@@ -31,7 +31,10 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::{latest, v01, versioned::FromLatest};
+use truapi::{
+	latest, v01,
+	versioned::{FromLatest, IntoLatest},
+};
 
 use crate::{
 	Spawner,
@@ -313,6 +316,13 @@ impl<Role> HostRuntime<Role> {
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
 		&self.services.worker_ledger
+	}
+
+	/// Hold the product's worker until this reference is dropped.
+	///
+	/// The first reference requests startup and the last release requests a stop.
+	pub fn hold_worker(&self, product_id: &ProductId) -> crate::WorkerHold {
+		crate::WorkerHold::acquire(&self.services, product_id)
 	}
 
 	/// Report that the product's worker stopped without being asked to:
@@ -1911,13 +1921,9 @@ impl ProductRuntimeControl {
 		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
 	}
 
-	/// Ask this connection's product to draw one body, streaming replacement
-	/// trees until the returned subscription is dropped.
+	/// Ask the connected product to draw a body.
 	///
-	/// An open render stream is one reference on the product's worker, held by
-	/// the core for exactly as long as the returned subscription lives. A
-	/// transition it causes reaches the host through the controller installed with
-	/// [`WorkerLedger::install_worker_controller`].
+	/// Each item replaces the current tree. Dropping the subscription stops the render.
 	pub fn render(
 		&self,
 		request: truapi::latest::ProductRendererRenderRequest,
@@ -1926,8 +1932,7 @@ impl ProductRuntimeControl {
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
-		let reference = self.connection.hold_worker();
-		let back = match &request.context {
+		let mut back = match &request.context {
 			truapi::latest::RenderContext::PocketCardBack { card_id } => {
 				Some((self.connection.clone(), card_id.clone()))
 			},
@@ -1943,31 +1948,15 @@ impl ProductRuntimeControl {
 			transport,
 			request,
 		);
-		// The reference lives in the stream's state, so a subscription dropped
-		// unpolled still releases it. An interrupt ends the stream by contract
-		// and is not polled past, so it releases there rather than waiting for
-		// the caller to drop the handle.
-		let stream = futures::stream::unfold(
-			(stream, Some(reference), back),
-			|(mut stream, reference, mut back)| async move {
-				match stream.next().await? {
-					Ok(
-						truapi::versioned::renderer::ProductRendererRenderItem::V1(mut node) |
-						truapi::versioned::renderer::ProductRendererRenderItem::V2(mut node),
-					) => {
-						node.clear_refused_inline_images();
-						if let Some((connection, card_id)) = back.take() {
-							connection.mark_back_drawn(card_id);
-						}
-						Some((Ok(node), (stream, reference, back)))
-					},
-					Err(interrupt) => Some((
-						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None, None),
-					)),
-				}
-			},
-		);
+		let stream = stream.map(move |item| {
+			let first_back = back.take();
+			let mut node = item.map_err(crate::interrupt::interrupt_into_latest)?.into_latest();
+			node.clear_refused_inline_images();
+			if let Some((connection, card_id)) = first_back {
+				connection.mark_back_drawn(card_id);
+			}
+			Ok(node)
+		});
 		Ok(truapi::Subscription::new(stream))
 	}
 }
@@ -2348,7 +2337,6 @@ impl ProductRuntime {
 		let connection = self.admin.product_runtime.connection();
 		connection.detach_chat();
 		connection.detach_renderer();
-		connection.release_open_operations();
 		if let Some((product_id, link)) = &self.funding_link {
 			connection.services().funding().unlink(product_id, link);
 		}

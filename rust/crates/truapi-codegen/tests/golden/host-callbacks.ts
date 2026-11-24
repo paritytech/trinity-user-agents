@@ -61,7 +61,6 @@ import type {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
-  HostWorkerBeginOperationResponse,
   Result,
 } from "@parity/truapi";
 
@@ -264,11 +263,12 @@ export type CoreStorageKey =
    */
   | { tag: "StackRecord"; value: { stackId: string } }
   /**
-   * The `StackRun` the usernames in the `AuthSession` blob were read in,
-   * with a hash of that blob, so it vouches for that blob only. A host that
-   * keeps the `AuthSession` value under a key of its own keeps this one
-   * next to it. When it vouches for another run or another blob, the core
-   * installs the session and looks its usernames up again.
+   * The `StackRun` the usernames in the `AuthSession` blob were read in.
+   *
+   * It carries a hash of that blob, so it vouches for that blob only. A
+   * host that keeps the `AuthSession` value under a key of its own keeps
+   * this one next to it. When it vouches for another run or another blob,
+   * the core installs the session and looks its usernames up again.
    */
   | { tag: "SessionUsernamesRun"; value?: undefined };
 
@@ -2380,34 +2380,6 @@ export interface PreimageHost {
 }
 
 /**
- * Host store for a product's pending operations, which the host uses to keep
- * the product's worker runtime alive. Reached only through the `Worker`
- * protocol trait, so non-worker products never call these.
- */
-export interface ProductOperations {
-  /**
-   * Record a pending operation. `label` is a host log and UI hint, empty
-   * when the product gave none.
-   *
-   * The returned id must be unique among this product's open operations.
-   * The core keys the worker reference an operation holds by that id, so an
-   * id already open for the product records nothing the second time, and
-   * ending it once drops the demand both were holding. Ids may repeat
-   * across products, and may be reused once an operation has ended.
-   */
-  beginOperation(
-    product: ProductContext,
-    label: string,
-  ): Promise<HostWorkerBeginOperationResponse>;
-
-  /**
-   * Remove a pending operation. Idempotent: an unknown or already-ended id
-   * returns `Ok`, so a retry after an ambiguous failure is safe.
-   */
-  endOperation(product: ProductContext, id: number): Promise<void>;
-}
-
-/**
  * Product-scoped key-value storage.
  *
  * The core namespaces product keys before calling this trait, and the key
@@ -2575,7 +2547,6 @@ export interface HostCallbacks {
   theme: ThemeHost;
   locale: LocaleHost;
   preimage: PreimageHost;
-  productOperations: ProductOperations;
   chat?: ChatPlatform;
   contacts?: ContactsPlatform;
   game?: GamePlatform;
@@ -2598,7 +2569,6 @@ export interface RequiredHostCallbacks {
   theme: Required<ThemeHost>;
   locale: Required<LocaleHost>;
   preimage: Required<PreimageHost>;
-  productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
   contacts?: Required<ContactsPlatform>;
   game?: Required<GamePlatform>;

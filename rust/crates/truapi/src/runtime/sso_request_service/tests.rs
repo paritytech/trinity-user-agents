@@ -3,8 +3,8 @@ use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{
-		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, external_sso_session_info,
-		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, usernames_record,
+		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, dotns_usernames_responder,
+		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, unnamed_sso_session_info,
 	},
 };
 use futures::{FutureExt, executor::block_on};
@@ -227,7 +227,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 							(
 								CoreStorageKey::SessionUsernamesRun.encode(),
 								usernames_record(
-									&paseo_test_stack(),
+									&paseo_test_stack().run(),
 									&encode_persisted_session(&stored),
 								),
 							)
@@ -245,46 +245,48 @@ fn login_store_notifications_follow_the_persisted_value() {
 #[test]
 fn a_failed_username_lookup_changes_nothing() {
 	let storage = Arc::new(CleanupStorage::default());
-	let platform = Arc::new(StubPlatform {
-		core_storage_override: Some(storage.clone()),
-		chain_connect_error: Some("offline"),
-		..Default::default()
-	});
-	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
-	let host = pairing.session().clone();
 	let session = sso_session_info();
+	let host = host_with_session(&storage, offline(), &session);
 	let blob = encode_persisted_session(&session);
-	let stored = || block_on(storage.read_core_storage(CoreStorageKey::AuthSession)).unwrap();
-	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
-	block_on(host.set_connected_session_for_tests(session.clone()));
 
 	block_on(host.look_up_usernames(session.clone(), Some(blob.clone())));
 
-	let record = block_on(storage.read_core_storage(CoreStorageKey::SessionUsernamesRun)).unwrap();
-	assert_eq!((host.session_state.current(), stored(), record), (Some(session), Some(blob), None));
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(Some(session), Some(blob), None)
+	);
 }
 
-/// A pairing host over `storage` whose chains do not connect, so no lookup of
-/// its own answers, with no session selected.
-fn offline_host(storage: &Arc<CleanupStorage>) -> Arc<SsoRequestService> {
-	let platform = Arc::new(StubPlatform {
-		core_storage_override: Some(storage.clone()),
-		chain_connect_error: Some("offline"),
-		..Default::default()
-	});
+/// A platform whose chains do not connect, so no username lookup answers.
+fn offline() -> StubPlatform {
+	StubPlatform { chain_connect_error: Some("offline"), ..Default::default() }
+}
+
+/// A pairing host on `chains` that keeps core storage in `storage`, with no
+/// session selected.
+fn pairing_host(storage: &Arc<CleanupStorage>, chains: StubPlatform) -> Arc<SsoRequestService> {
+	let platform =
+		Arc::new(StubPlatform { core_storage_override: Some(storage.clone()), ..chains });
 	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 	pairing.session().clone()
 }
 
-/// An [`offline_host`] with `installed` restored from the `AuthSession` slot.
-fn host_restored_from(
+/// A [`pairing_host`] with `session` installed and stored in the `AuthSession`
+/// slot.
+fn host_with_session(
 	storage: &Arc<CleanupStorage>,
-	installed: &SessionInfo,
+	chains: StubPlatform,
+	session: &SessionInfo,
 ) -> Arc<SsoRequestService> {
-	let host = offline_host(storage);
-	let blob = encode_persisted_session(installed);
+	let host = pairing_host(storage, chains);
+	let blob = encode_persisted_session(session);
 	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
-	block_on(host.activate_stored_session()).expect("the stored session activates");
+	block_on(host.set_connected_session_for_tests(session.clone()));
 	host
 }
 
@@ -298,11 +300,14 @@ fn named(session: &SessionInfo) -> SessionInfo {
 /// slot, which nothing notifies the core of, so they wait for the activation,
 /// and the session comes out of both installed, named and stored with its
 /// record.
+///
+/// The activation is held at its read of the usernames record, the one read
+/// it makes between the two of the slot.
 #[test]
 fn naming_a_session_waits_for_an_activation_in_progress() {
 	let storage = Arc::new(CleanupStorage::default());
-	let installed = external_sso_session_info();
-	let host = host_restored_from(&storage, &installed);
+	let installed = unnamed_sso_session_info();
+	let host = host_with_session(&storage, offline(), &installed);
 	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
 
 	let (between_the_reads, resume) = storage.pause_read(CoreStorageKey::SessionUsernamesRun);
@@ -338,7 +343,7 @@ fn naming_a_session_waits_for_an_activation_in_progress() {
 			Ok(()),
 			Some(named),
 			Some(named_blob.clone()),
-			Some(usernames_record(&paseo_test_stack(), &named_blob)),
+			Some(usernames_record(&paseo_test_stack().run(), &named_blob)),
 		)
 	);
 }
@@ -349,8 +354,8 @@ fn naming_a_session_waits_for_an_activation_in_progress() {
 #[test]
 fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 	let storage = Arc::new(CleanupStorage::default());
-	let installed = external_sso_session_info();
-	let host = host_restored_from(&storage, &installed);
+	let installed = unnamed_sso_session_info();
+	let host = host_with_session(&storage, offline(), &installed);
 	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
 	let replaced = b"another writer's session".to_vec();
 	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, replaced.clone())).unwrap();
@@ -368,6 +373,48 @@ fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 	);
 }
 
+/// After a wipe the stored blob still carries the usernames read from the old
+/// chains, and the session comes up without them. When a product then asks who
+/// the user is and the lookup answers, what it found is stored over that blob
+/// with its run, so the next start has the username whether or not it is
+/// online.
+#[test]
+fn usernames_found_for_a_product_replace_the_blob_from_before_a_wipe() {
+	let storage = Arc::new(CleanupStorage::default());
+	let installed = SessionInfo {
+		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
+		..unnamed_sso_session_info()
+	};
+	let chains = StubPlatform {
+		rpc_responder: Some(Arc::new(dotns_usernames_frames)),
+		..Default::default()
+	};
+	let host = host_with_session(&storage, chains, &installed);
+	let before_the_wipe = encode_persisted_session(&SessionInfo {
+		lite_username: Some("stale.07".to_string()),
+		..installed
+	});
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, before_the_wipe)).unwrap();
+
+	block_on(host.refresh_current_session_identity());
+
+	let session = host.session_state.current().expect("the session stays installed");
+	let named_blob = encode_persisted_session(&session);
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			session.lite_username,
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(
+			Some("alice.01".to_string()),
+			Some(named_blob.clone()),
+			Some(usernames_record(&paseo_test_stack().run(), &named_blob)),
+		)
+	);
+}
+
 /// A lookup renames the selected session in place, and it stays the same
 /// session. Installing it again must not end it, which would delete its
 /// allowance keys and wake the SSO requests waiting on its channel. A blob
@@ -377,7 +424,7 @@ fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 /// own.
 #[test]
 fn installing_the_selected_session_again_keeps_it() {
-	let installed = external_sso_session_info();
+	let installed = unnamed_sso_session_info();
 	let named = named(&installed);
 	let renamed_elsewhere =
 		SessionInfo { lite_username: Some("alice.02".to_string()), ..installed.clone() };
@@ -386,7 +433,7 @@ fn installing_the_selected_session_again_keeps_it() {
 		CoreStorageKey::AllowanceKeys { session_id: allowances::session_storage_id(&sso) };
 	let reinstalled = |reinstall: &dyn Fn(&SsoRequestService, &CleanupStorage)| {
 		let storage = Arc::new(CleanupStorage::default());
-		let host = host_restored_from(&storage, &installed);
+		let host = host_with_session(&storage, offline(), &installed);
 		block_on(host.name_session(&installed, named.clone(), None));
 		block_on(storage.write_core_storage(allowance_keys.clone(), vec![0xAA])).unwrap();
 		let (_waiting, disconnected) = host.session_disconnects.subscribe(&sso);
@@ -403,7 +450,7 @@ fn installing_the_selected_session_again_keeps_it() {
 		[
 			reinstalled(&|host, _| block_on(host.activate_external_session(&blob)).unwrap()),
 			reinstalled(&|host, storage| {
-				let another_blobs = usernames_record(&paseo_test_stack(), &vouched);
+				let another_blobs = usernames_record(&paseo_test_stack().run(), &vouched);
 				block_on(
 					storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, another_blobs),
 				)
@@ -412,7 +459,7 @@ fn installing_the_selected_session_again_keeps_it() {
 			}),
 			reinstalled(&|host, _| block_on(host.activate_stored_session()).unwrap()),
 			reinstalled(&|host, storage| {
-				let record = usernames_record(&paseo_test_stack(), &vouched);
+				let record = usernames_record(&paseo_test_stack().run(), &vouched);
 				block_on(storage.write_core_storage(CoreStorageKey::AuthSession, vouched.clone()))
 					.unwrap();
 				block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record))
@@ -432,32 +479,25 @@ fn installing_the_selected_session_again_keeps_it() {
 /// A lookup that answers puts what it found in the session and in the stored
 /// blob, and records the run for that blob, so the next start takes the
 /// usernames as they are. One that finds a username names the session. One
-/// that finds none, as on chains where the account never registered, clears a
+/// that finds none, as on an Asset Hub with no dotNS contract, clears a
 /// username stored from other chains.
 #[test]
 fn a_lookup_that_answers_names_the_session_and_the_stored_blob() {
 	let unnamed = SessionInfo {
 		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
-		..external_sso_session_info()
+		..unnamed_sso_session_info()
 	};
 	let stale =
-		SessionInfo { lite_username: Some("stale.07".to_string()), ..external_sso_session_info() };
+		SessionInfo { lite_username: Some("stale.07".to_string()), ..unnamed_sso_session_info() };
 	let no_dotns: fn(&str) -> Vec<String> = |request| {
 		legacy_asset_hub_frames(request, |_| None, |_, _| panic!("no contract is deployed"))
 	};
 	let looked_up = |asset_hub: fn(&str) -> Vec<String>, installed: SessionInfo| {
 		let storage = Arc::new(CleanupStorage::default());
-		let platform = Arc::new(StubPlatform {
-			core_storage_override: Some(storage.clone()),
-			rpc_responder: Some(Arc::new(asset_hub)),
-			..Default::default()
-		});
-		let (_, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
-		let host = pairing.session().clone();
+		let chains =
+			StubPlatform { rpc_responder: Some(Arc::new(asset_hub)), ..Default::default() };
+		let host = host_with_session(&storage, chains, &installed);
 		let blob = encode_persisted_session(&installed);
-		block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
-		block_on(host.set_connected_session_for_tests(installed.clone()));
 
 		block_on(host.look_up_usernames(installed, Some(blob)));
 
@@ -468,7 +508,7 @@ fn a_lookup_that_answers_names_the_session_and_the_stored_blob() {
 			(session.lite_username.clone(), session.full_username.clone()),
 			stored == encode_persisted_session(&session),
 			read(CoreStorageKey::SessionUsernamesRun) ==
-				Some(usernames_record(&paseo_test_stack(), &stored)),
+				Some(usernames_record(&paseo_test_stack().run(), &stored)),
 		)
 	};
 
@@ -498,7 +538,7 @@ fn finished<T>(thread: std::thread::JoinHandle<T>, what: &str) -> T {
 /// auto-signing keys stay for the session the change notification installs.
 #[test]
 fn a_slot_written_during_an_activation_ends_the_selected_session_only_for_another_one() {
-	let installed = external_sso_session_info();
+	let installed = unnamed_sso_session_info();
 	let other_account = SessionInfo { public_key: [0x56; 32], ..installed.clone() };
 	let sso = installed.sso.clone().expect("the fixture has an SSO channel");
 	let allowance_keys =
@@ -507,8 +547,8 @@ fn a_slot_written_during_an_activation_ends_the_selected_session_only_for_anothe
 	let raced = |selected: Option<&SessionInfo>, first: &SessionInfo, then: Option<Vec<u8>>| {
 		let storage = Arc::new(CleanupStorage::default());
 		let host = match selected {
-			Some(selected) => host_restored_from(&storage, selected),
-			None => offline_host(&storage),
+			Some(selected) => host_with_session(&storage, offline(), selected),
+			None => pairing_host(&storage, offline()),
 		};
 		let write = |key, value| block_on(storage.write_core_storage(key, value)).unwrap();
 		write(allowance_keys.clone(), vec![0xAA]);
@@ -560,17 +600,16 @@ fn a_slot_written_during_an_activation_ends_the_selected_session_only_for_anothe
 	);
 }
 
-/// An external activation of the session, or a username request over a slot
-/// that does not hold the session's own encoding, names the session without
-/// storing it, and the lookup started when the session was installed, which
-/// knows the blob in the slot, can finish after it. In either order the slot
-/// is rewritten with the usernames and recorded.
+/// The lookup after an external activation of the session names it without
+/// storing it, and the lookup started when the session was installed from the
+/// slot, which knows the blob there, can finish after it. In either order the
+/// slot is rewritten with the usernames and recorded.
 #[test]
 fn a_lookup_that_finds_its_session_already_named_still_stores_it() {
 	let stored_after = |knows_the_slot_in_turn: [bool; 2]| {
 		let storage = Arc::new(CleanupStorage::default());
-		let installed = external_sso_session_info();
-		let host = host_restored_from(&storage, &installed);
+		let installed = unnamed_sso_session_info();
+		let host = host_with_session(&storage, offline(), &installed);
 		let (blob, named) = (encode_persisted_session(&installed), named(&installed));
 		for knows_the_slot in knows_the_slot_in_turn {
 			let stored = knows_the_slot.then(|| blob.clone());
@@ -582,7 +621,7 @@ fn a_lookup_that_finds_its_session_already_named_still_stores_it() {
 			host.session_state.current() == Some(named),
 			read(CoreStorageKey::AuthSession) == Some(named_blob.clone()),
 			read(CoreStorageKey::SessionUsernamesRun) ==
-				Some(usernames_record(&paseo_test_stack(), &named_blob)),
+				Some(usernames_record(&paseo_test_stack().run(), &named_blob)),
 		)
 	};
 
@@ -590,23 +629,23 @@ fn a_lookup_that_finds_its_session_already_named_still_stores_it() {
 }
 
 /// A product asking for the username of a session that has none makes the
-/// core look it up. The usernames go into the session, but an external
-/// session is the host's to store, so the `AuthSession` slot stays empty.
+/// core look it up. The usernames go into the session, but a session the host
+/// installed with `activateExternalSession` is the host's to keep, so the
+/// `AuthSession` slot stays empty.
 #[test]
 fn a_username_refresh_does_not_store_an_external_session() {
 	let storage = Arc::new(CleanupStorage::default());
-	let platform = Arc::new(StubPlatform {
-		core_storage_override: Some(storage.clone()),
+	let dotns = StubPlatform {
 		rpc_responder: Some(Arc::new(dotns_usernames_frames)),
 		..Default::default()
-	});
-	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
-	let host = pairing.session().clone();
+	};
+	let host = pairing_host(&storage, dotns);
 	let unnamed = SessionInfo {
 		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
-		..external_sso_session_info()
+		..unnamed_sso_session_info()
 	};
-	block_on(host.set_connected_session_for_tests(unnamed));
+	let epoch = host.advance_session_lifecycle();
+	assert!(host.install_session_if_current(unnamed, epoch, true, None), "the session installs");
 
 	block_on(host.refresh_current_session_identity());
 
@@ -615,5 +654,122 @@ fn a_username_refresh_does_not_store_an_external_session() {
 	assert_eq!(
 		((session.lite_username, session.full_username), stored),
 		((Some("alice.01".to_string()), Some("myproject".to_string())), None)
+	);
+}
+
+/// A selected session with no username, whose lookup answers.
+fn session_to_look_up() -> SessionInfo {
+	SessionInfo { identity_account_id: Some(DOTNS_NAMED_ACCOUNT), ..unnamed_sso_session_info() }
+}
+
+/// What an activation and a product's username request leave behind when
+/// [`session_to_look_up`] is selected and the slot holds `slot`, recorded as
+/// read in this run when `recorded`. The request starts while the activation
+/// is between its two reads of the slot.
+fn refresh_while_an_activation_reads(
+	slot: &SessionInfo,
+	recorded: bool,
+) -> (Result<(), String>, Option<SessionInfo>, Option<Vec<u8>>) {
+	let storage = Arc::new(CleanupStorage::default());
+	let dotns =
+		StubPlatform { rpc_responder: Some(dotns_usernames_responder()), ..Default::default() };
+	let host = host_with_session(&storage, dotns, &session_to_look_up());
+	let blob = encode_persisted_session(slot);
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
+	if recorded {
+		let record = usernames_record(&paseo_test_stack().run(), &blob);
+		block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record)).unwrap();
+	}
+
+	let (between_the_reads, resume) = storage.pause_read(CoreStorageKey::SessionUsernamesRun);
+	let activation = std::thread::spawn({
+		let host = host.clone();
+		move || block_on(host.activate_stored_session())
+	});
+	let reading = std::thread::spawn(move || block_on(between_the_reads));
+	finished(reading, "the activation reads the usernames record").expect("it is paused");
+	let (refreshed, refreshing) = std::sync::mpsc::channel();
+	let refresh = std::thread::spawn({
+		let host = host.clone();
+		move || {
+			block_on(host.refresh_current_session_identity());
+			let _ = refreshed.send(());
+		}
+	});
+	// A refresh that did not wait would land here, between the activation's reads.
+	let _ = refreshing.recv_timeout(std::time::Duration::from_millis(200));
+	resume.send(()).expect("the activation is still reading");
+	let activated = finished(activation, "the activation ends");
+	finished(refresh, "the refresh ends");
+
+	let stored = block_on(storage.read_core_storage(CoreStorageKey::AuthSession)).unwrap();
+	(activated, host.session_state.current(), stored)
+}
+
+/// A product's username request renames the selected session and stores it,
+/// which is a change to the slot. Made between an activation's two reads, it
+/// would make that activation reject, and nothing tells the core of its own
+/// writes, so the request waits for the activation and stores after it.
+#[test]
+fn a_username_refresh_waits_for_an_activation_in_progress() {
+	let selected = session_to_look_up();
+	let named = SessionInfo {
+		lite_username: Some("alice.01".to_string()),
+		full_username: Some("myproject".to_string()),
+		..selected.clone()
+	};
+
+	let (activated, current, stored) = refresh_while_an_activation_reads(&selected, false);
+
+	assert_eq!(
+		(activated, current, stored),
+		(Ok(()), Some(named.clone()), Some(encode_persisted_session(&named)))
+	);
+}
+
+/// Another origin can sign in to another account and store it while a product
+/// here asks for the username of the selected session. The request neither
+/// lands between the reads of the activation installing that sign-in nor
+/// stores over another account's blob, so the old session does not come back
+/// in the slot. The new account is installed and keeps its blob.
+#[test]
+fn a_username_refresh_does_not_overwrite_a_sign_in_an_activation_is_reading() {
+	let signed_in = SessionInfo {
+		public_key: [0x56; 32],
+		identity_account_id: None,
+		lite_username: Some("bob.01".to_string()),
+		..unnamed_sso_session_info()
+	};
+
+	let (activated, current, stored) = refresh_while_an_activation_reads(&signed_in, true);
+
+	assert_eq!(
+		(activated, current, stored),
+		(Ok(()), Some(signed_in.clone()), Some(encode_persisted_session(&signed_in)))
+	);
+}
+
+/// A lookup can answer after its session was replaced, by a sign-in to
+/// another account here, while the slot still holds the old blob. What it
+/// found belongs to a session no longer selected, so it is not stored.
+#[test]
+fn a_lookup_for_a_session_no_longer_selected_stores_nothing() {
+	let storage = Arc::new(CleanupStorage::default());
+	let installed = unnamed_sso_session_info();
+	let host = host_with_session(&storage, offline(), &installed);
+	let blob = encode_persisted_session(&installed);
+	let other_account = SessionInfo { public_key: [0x56; 32], ..installed.clone() };
+	block_on(host.set_connected_session_for_tests(other_account.clone()));
+
+	block_on(host.name_session(&installed, named(&installed), Some(blob.clone())));
+
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(Some(other_account), Some(blob), None)
 	);
 }

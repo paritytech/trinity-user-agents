@@ -240,8 +240,11 @@ What the core stored about the chains carries the run it was written in:
 
 - Cached manifests and allowance keys from another run, or stored without a
   run, are ignored until they are written again.
-- The ring-VRF registry is the wallet's own record, so it is kept. It loses
-  only the rings on chains of its run that the stack no longer has.
+- The ring-VRF registry is the wallet's own record, so it is kept. Each ring
+  names its chain, and the registry loses the rings on the chains of its run
+  that restarted: all of them when the `generation` changed, otherwise those
+  whose genesis hash the stack no longer has. One stored without a run is not
+  read.
 - The `SessionUsernamesRun` slot records the run in which the usernames of the
   `AuthSession` blob were read, with a hash of that blob.
 
@@ -378,7 +381,7 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`, and the host
+bindings expose it as `claim_worker`, one reference per claim, and the host
 reports a worker that stopped without being asked, because it crashed, failed
 to boot or the system killed it, with `worker_exited`: while references remain
 the ledger requests `Start` again, and the core hands the restarted worker its

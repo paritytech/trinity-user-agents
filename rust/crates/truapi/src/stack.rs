@@ -13,7 +13,7 @@ mod records;
 mod refresh;
 mod source;
 
-use parity_scale_codec::{Decode, Encode, Error as CodecError, Input, Output};
+use parity_scale_codec::{Decode, Encode};
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
@@ -94,15 +94,12 @@ pub struct StackIdentity {
 /// One run of a stack's chains, from one wipe to the next: the descriptor's
 /// `generation` and the genesis hashes of the chains the core reads.
 ///
-/// A wipe changes both. The hashes are compared as well, so a wipe that
-/// changes one is noticed even when the operator left `generation` as it was. What the core stored
-/// about the chains in another run is stale. The relay chain is left out:
-/// the core never reads it, so adding or removing it is not a wipe.
-///
-/// It encodes as a version byte, then its fields, independent of
-/// [`StackChains`]. An encoding with another version decodes as an error,
-/// which every reader takes for another run.
-#[derive(Clone, PartialEq)]
+/// A wipe changes `generation`, and the genesis hashes too unless the chains
+/// restart from the same spec. Both are compared, so a wipe is noticed when
+/// the operator changed either. What the core stored about the chains in
+/// another run is stale. The relay chain is left out: the core never reads
+/// it, so adding or removing it is not a wipe.
+#[derive(PartialEq, Encode, Decode)]
 pub struct StackRun {
 	generation: String,
 	asset_hub: [u8; 32],
@@ -110,31 +107,15 @@ pub struct StackRun {
 	bulletin: [u8; 32],
 }
 
-/// The version byte that leads an encoded [`StackRun`].
-const STACK_RUN_V1: u8 = 1;
-
-impl Encode for StackRun {
-	fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
-		STACK_RUN_V1.encode_to(dest);
-		(&self.generation, &self.asset_hub, &self.people, &self.bulletin).encode_to(dest);
-	}
-}
-
-impl Decode for StackRun {
-	fn decode<I: Input>(input: &mut I) -> Result<Self, CodecError> {
-		if u8::decode(input)? != STACK_RUN_V1 {
-			return Err("unknown stack run version".into());
-		}
-		let (generation, asset_hub, people, bulletin) = Decode::decode(input)?;
-		Ok(Self { generation, asset_hub, people, bulletin })
-	}
-}
+/// The byte that leads a value [`StackRun::stamp`] wrote, ahead of the run.
+const STAMP_V1: u8 = 1;
 
 impl StackRun {
 	/// `value` led by this run, for a value read from the chains that is
 	/// stored. [`Self::read_stamped`] gives it back only in the same run.
 	pub fn stamp(&self, value: &[u8]) -> Vec<u8> {
-		let mut stamped = self.encode();
+		let mut stamped = vec![STAMP_V1];
+		self.encode_to(&mut stamped);
 		stamped.extend_from_slice(value);
 		stamped
 	}
@@ -146,15 +127,30 @@ impl StackRun {
 	}
 
 	/// The run that stamped `stamped` and the value it leads, or `None` when
-	/// no run did.
+	/// `stamped` carries no stamp of this version.
 	pub fn split_stamped(stamped: &[u8]) -> Option<(Self, &[u8])> {
-		let mut value = stamped;
+		let mut value = stamped.strip_prefix(&[STAMP_V1])?;
 		Some((Self::decode(&mut value).ok()?, value))
 	}
 
 	/// Whether one of the chains of this run has `genesis_hash`.
-	pub fn has_chain(&self, genesis_hash: [u8; 32]) -> bool {
+	fn has_chain(&self, genesis_hash: [u8; 32]) -> bool {
 		[self.asset_hub, self.people, self.bulletin].contains(&genesis_hash)
+	}
+
+	/// Whether what `earlier` stored about `chain` is stale in this run.
+	///
+	/// It is when `chain` is a chain of `earlier` and either the generation
+	/// changed, which restarts every chain, or this run no longer has the
+	/// chain. A chain `earlier` did not have is never lost, since the run
+	/// says nothing about it.
+	///
+	/// This is for a value that names its chain. [`Self::read_stamped`] gives
+	/// up a value when anything in the run changed. Here a chain restarted
+	/// under the same generation leaves what was stored about the others.
+	pub fn lost_since(&self, earlier: &Self, chain: [u8; 32]) -> bool {
+		earlier.has_chain(chain) &&
+			(earlier.generation != self.generation || !self.has_chain(chain))
 	}
 }
 
@@ -173,14 +169,6 @@ pub struct StackChains {
 	pub people: [u8; 32],
 	/// The Bulletin chain.
 	pub bulletin: [u8; 32],
-}
-
-impl StackChains {
-	/// Whether one of these chains has `genesis_hash`.
-	pub fn contains(&self, genesis_hash: [u8; 32]) -> bool {
-		let Self { relay, asset_hub, people, bulletin } = self;
-		*relay == Some(genesis_hash) || [asset_hub, people, bulletin].contains(&&genesis_hash)
-	}
 }
 
 /// Why a stack was refused.

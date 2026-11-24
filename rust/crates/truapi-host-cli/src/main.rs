@@ -613,11 +613,11 @@ async fn main() -> Result<()> {
 			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
 		},
 	};
-	// Only a host keeps the descriptor it ran on: `stack` and the one-off
-	// commands have no state of their own to protect from an older copy.
-	let hosts =
+	// Only a host keeps state between runs, so only a host keeps the
+	// descriptor it ran on.
+	let is_host =
 		matches!(cli.command, Command::PairingHost(_) | Command::Dev(_) | Command::SigningHost(_));
-	let stack_copies = hosts.then(|| command_base_path(&cli.command).join("stacks"));
+	let stack_copies = is_host.then(|| command_base_path(&cli.command).join("stacks"));
 	let source = NetworkSource::new(chain_access, cli.network, stack, stack_copies)?;
 
 	// A background check runs alongside the command rather than delaying it, and

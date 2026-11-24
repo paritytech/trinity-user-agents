@@ -14,5 +14,6 @@ A restored session comes up without waiting for its usernames. The core looks th
 `SessionUsernamesRun` slot which run it read them in. A host that keeps `AuthSession` under a key of its own has to keep
 `SessionUsernamesRun` next to it.
 
-On the first start after the update, with no wipe, cached manifests are read again and a pairing host asks for each
-product's allowance again.
+On the first start after the update, with no wipe, cached manifests are read again, a pairing host asks for each
+product's allowance again, and the stored ring-VRF registry is not read, so a provider chosen for a ring has to be
+chosen again.
