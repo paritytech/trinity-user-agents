@@ -497,6 +497,31 @@ fn an_oversized_feed_update_is_too_large() {
 }
 
 #[test]
+fn a_room_the_product_keeps_takes_no_posted_message() {
+	let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
+	let runtime = chat_runtime(chat.clone());
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+
+	let posted = block_on(Chat::post_message(
+		&runtime,
+		&CallContext::default(),
+		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+			room_id: "sourced".to_string(),
+			payload: latest::ChatMessageContent::Text { text: "hi".to_string() },
+		}),
+	));
+
+	// The room takes its messages through `update_feed`, so a posted
+	// message is a call the product may not make here.
+	assert_eq!(posted, Err(CallError::Denied));
+	assert!(chat.calls().is_empty());
+}
+
+#[test]
 fn deleting_a_room_that_is_gone_succeeds() {
 	let chat = RecordingHost::with_rooms(&[hosted("support")]);
 	let runtime = chat_runtime(chat.clone());

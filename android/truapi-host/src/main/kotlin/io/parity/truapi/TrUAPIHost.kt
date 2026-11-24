@@ -604,8 +604,11 @@ interface ChatHostBridge {
     // other before it creates anything.
 
     /**
-     * Return the configuration of the last `createRoom` of a room. The core
-     * reads it before each feed update, preview and query of the room.
+     * Return the configuration of the last `createRoom` of a room, or
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] for a room the host does not know. The
+     * core reads it before each feed update, preview, query and posted message
+     * of the room. For a posted message it reads it for the room the product
+     * names, before any check that the product created the room.
      */
     @Throws(HostRejection::class)
     suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG

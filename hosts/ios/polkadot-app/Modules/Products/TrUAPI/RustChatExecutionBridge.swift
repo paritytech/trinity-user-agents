@@ -122,8 +122,14 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     // The core checked that the product hosts each room and screened every value. A room that is gone by now
     // answers `ChatRoomError.unknownRoom`, which the product receives as the reason of a rejection.
 
+    /// The core also reads the configuration before a posted message, for a room that it has not checked, so a
+    /// room that does not exist has the default configuration.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig {
-        try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+        do {
+            return try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+        } catch ChatRoomError.unknownRoom {
+            return .hostDefault
+        }
     }
 
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {

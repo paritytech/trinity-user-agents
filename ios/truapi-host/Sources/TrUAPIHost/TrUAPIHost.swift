@@ -330,8 +330,11 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
 
-    /// Return the configuration of the last `createRoom` of a room. The core
-    /// reads it before each feed update, preview and query of the room.
+    /// Return the configuration of the last `createRoom` of a room, or
+    /// ``ChatRoomConfig/hostDefault`` for a room the host does not know. The
+    /// core reads it before each feed update, preview, query and posted
+    /// message of the room. For a posted message it reads it for the room the
+    /// product names, before any check that the product created the room.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
     /// Replace the name, description, icon and empty-room text of a room. An

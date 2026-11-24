@@ -2550,10 +2550,14 @@ pub trait ChatPlatform: Send + Sync {
 		})
 	}
 
-	/// The configuration of the last `create_chat_room` of a room. The core
-	/// reads it before each feed update, preview and query of the room to
-	/// decide whether the host stores the messages of the room and which
-	/// queries the product answers.
+	/// The configuration of the last `create_chat_room` of a room, or the
+	/// default configuration for a room the host does not know. The core reads
+	/// it before each feed update, preview and query of the room to decide
+	/// whether the host stores the messages of the room and which queries the
+	/// product answers. Before `post_chat_message` the core reads it for the
+	/// room that the product names, before any check that the product created
+	/// the room, so an unknown room answers the default configuration and not
+	/// an error.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,

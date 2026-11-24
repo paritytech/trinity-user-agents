@@ -154,7 +154,7 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(try await fixture.messages("lobby").isEmpty)
         #expect(try await reactionCount() == 0)
         #expect(try await bridge.listRooms().isEmpty)
-        await #expect(throws: ChatRoomError.self) { try await bridge.roomConfig(roomId: "lobby") }
+        #expect(try await bridge.roomConfig(roomId: "lobby") == .hostDefault)
     }
 
     /// The chat list draws a product room from what the store holds, and the bot of the product asks for

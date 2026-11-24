@@ -92,11 +92,18 @@ struct RustChatExecutionBridgeRoomTests {
         #expect(api.deletedRoomIds == ["r"])
     }
 
+    /// The core reads the configuration before a posted message, also for a room that does not exist.
+    @Test func aRoomThatDoesNotExistHasTheDefaultConfiguration() async throws {
+        let bridge = await makeBridge()
+        api.unknownRooms = ["gone"]
+
+        #expect(try await bridge.roomConfig(roomId: "gone") == .hostDefault)
+    }
+
     @Test func everyOtherRequestRefusesARoomThatDoesNotExist() async {
         let bridge = await makeBridge()
         api.unknownRooms = ["gone"]
 
-        await #expect(throws: ChatRoomError.self) { try await bridge.roomConfig(roomId: "gone") }
         await #expect(throws: ChatRoomError.self) {
             try await bridge.setRoomMetadata(
                 roomId: "gone",

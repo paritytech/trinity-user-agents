@@ -75,6 +75,10 @@ pub enum HostChatCreateRoomError {
 ///
 /// v0.2 adds `alt`, the text a host shows wherever it lists a custom message
 /// without drawing it, such as a chat list preview.
+///
+/// A room that keeps its messages in the product takes no posted message: the
+/// core refuses the request with `Denied`, and the product sends its messages
+/// with `update_feed`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatPostMessageRequest {
 	/// Room to post to.

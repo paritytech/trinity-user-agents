@@ -370,8 +370,11 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// Return the current product-scoped native Chat room list.
 	async fn list_rooms(&self) -> Result<Vec<latest::ChatRoom>, HostRejection>;
 
-	/// Return the configuration of the last `create_room` of a room. The core
-	/// reads it before each feed update, preview and query of the room.
+	/// Return the configuration of the last `create_room` of a room, or the
+	/// default configuration for a room the host does not know. The core reads
+	/// it before each feed update, preview, query and posted message of the
+	/// room. For a posted message it reads it for the room the product names,
+	/// before any check that the product created the room.
 	async fn room_config(
 		&self,
 		room_id: String,

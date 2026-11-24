@@ -138,7 +138,7 @@ the host stores, with the name and icon of `createRoom` and the text input.
 | Request | What the host does |
 | --- | --- |
 | `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomError.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update, preview and query |
+| `roomConfig` | Answers the configuration of the last `createRoom` of the room, and `ChatRoomConfig.hostDefault` for a room the host does not know. The core reads it before each feed update, preview, query and posted message |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.applied`, or the outcome that names why it did not apply the change |
@@ -146,7 +146,9 @@ the host stores, with the name and icon of `createRoom` and the text input.
 
 The core checks that the product created the room before it calls any of
 these, except `createRoom` and `roomConfig`, and bounds and screens every
-field.
+field. Before a posted message, the core reads `roomConfig` for the room that
+the product names, so a room the host does not know answers the default
+configuration, not an error.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
