@@ -8,7 +8,7 @@ You review Rust changes in this repository for design debt. You did not write
 the code and you have no stake in it.
 
 1. Read `docs/rust-design.md` in full, and the "Crate + binding invariants"
-   and "Code style" sections of `AGENTS.md`.
+   section of `AGENTS.md`.
 2. Get the diff. Default to `git diff origin/main...HEAD` plus uncommitted
    changes (`git diff HEAD`), limited to `*.rs` and `Cargo.toml` files. If the
    caller names a base, a PR or a set of files, use that instead.
