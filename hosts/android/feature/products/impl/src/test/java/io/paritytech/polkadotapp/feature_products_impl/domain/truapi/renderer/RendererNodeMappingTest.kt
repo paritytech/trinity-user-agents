@@ -4,6 +4,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverReveal
+import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
@@ -30,6 +32,7 @@ import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
 import uniffi.truapi.CoverBrush
 import uniffi.truapi.CoverGridProps
+import uniffi.truapi.CoverReveal
 import uniffi.truapi.Dimensions
 import uniffi.truapi.DropShadow
 import uniffi.truapi.Fill
@@ -398,6 +401,28 @@ class RendererNodeMappingTest {
 
         assertEquals(JsCoverBrush(pan = "pan", width = 52, trail = trail), widget.brush)
         assertSame(trail, widget.brush?.trail)
+    }
+
+    @Test
+    fun `a cover's reveal names its pan's touch, its share and its action`() {
+        val touch = JsGesturePosition()
+        val node = RendererNode.CoverGrid(
+            modifiers = emptyList(),
+            props = CoverGridProps(
+                key = "foil",
+                columns = 35u,
+                rows = 37u,
+                cleared = ByteArray(0),
+                brush = null,
+                reveal = CoverReveal(pan = "scratch", atPermille = 550u, action = "scratch.reveal"),
+            ),
+            children = emptyList(),
+        )
+
+        val widget = node.toJsWidget(gesturePosition = { key -> touch.takeIf { key == "scratch" } }) as JsWidget.CoverGrid
+
+        assertEquals(JsCoverReveal(pan = "scratch", atPermille = 550, action = "scratch.reveal", touch = touch), widget.reveal)
+        assertSame(touch, widget.reveal?.touch)
     }
 
     @Test

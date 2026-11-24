@@ -418,6 +418,7 @@ internal fun JsGesture(
                         // The pan takes the finger: Started at the touch-down point, then this change's place.
                         fun claim(change: PointerInputChange) {
                             claimed = true
+                            node.position?.touched(down = true)
                             node.position?.let { position ->
                                 if (pan.moveAction != null) {
                                     moves.clear()
@@ -472,6 +473,7 @@ internal fun JsGesture(
                         } finally {
                             moveJob?.cancel()
                             moves.clear()
+                            if (claimed) node.position?.touched(down = false)
                             if (claimed) {
                                 send(pan.endAction, if (lifted) JsGesturePhase.ENDED else JsGesturePhase.CANCELLED, last.x, last.y, width)
                             } else if (lifted && total.getDistance() <= slop) {
@@ -563,6 +565,7 @@ internal fun JsGesture(
                             when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
                                 SlideDragDecision.CLAIM -> {
                                     claimed = true
+                                    node.position?.touched(down = true)
                                     cutSettleShort()
                                     node.position?.let { position ->
                                         if (pan.moveAction != null) {
@@ -596,6 +599,7 @@ internal fun JsGesture(
                     } finally {
                         moveJob?.cancel()
                         moves.clear()
+                        if (claimed) node.position?.touched(down = false)
                         // A press the drag did not complete lets go; a completion's pop takes it over.
                         if (!claimed || drag == null) unpress()
                         when {

@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverReveal
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
@@ -136,6 +137,9 @@ fun RendererNode.toJsWidget(
     is RendererNode.CoverGrid -> JsWidget.CoverGrid(
         cells = coverCells(props.key),
         brush = props.brush?.let { JsCoverBrush(pan = it.pan, width = it.width.toDp(), trail = panTrail(it.pan)) },
+        reveal = props.reveal?.let {
+            JsCoverReveal(pan = it.pan, atPermille = it.atPermille.toInt(), action = it.action, touch = gesturePosition(it.pan))
+        },
         key = props.key,
         columns = props.columns.toInt(),
         rows = props.rows.toInt(),

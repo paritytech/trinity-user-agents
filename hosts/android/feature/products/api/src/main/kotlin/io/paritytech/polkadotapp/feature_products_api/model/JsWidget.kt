@@ -124,6 +124,7 @@ sealed interface JsWidget {
      * @param key Names the cover for cleared-cells updates
      * @param cleared The cells this tree clears, `row * columns + column`
      * @param brush Draws the cells cleared since this tree as strokes along a pan's finger; absent draws round holes
+     * @param reveal Sends one action when enough of the cover is cleared and the finger is up; absent sends none
      */
     @Serializable
     @SerialName("coverGrid")
@@ -134,6 +135,7 @@ sealed interface JsWidget {
         val rows: Int,
         val cleared: List<Int> = emptyList(),
         val brush: JsCoverBrush? = null,
+        val reveal: JsCoverReveal? = null,
         val modifiers: List<JsModifier> = emptyList(),
         val children: List<JsWidget> = emptyList(),
     ) : JsWidget

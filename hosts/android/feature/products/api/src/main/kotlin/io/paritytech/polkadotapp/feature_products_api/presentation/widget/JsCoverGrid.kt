@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -29,9 +30,14 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import io.paritytech.polkadotapp.feature_products_api.model.CoverRevealWatch
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverReveal
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
+import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import java.util.BitSet
 import kotlin.math.sqrt
 import androidx.compose.ui.graphics.RenderEffect as ComposeRenderEffect
@@ -45,6 +51,7 @@ import androidx.compose.ui.graphics.RenderEffect as ComposeRenderEffect
  * ([CoverGridRules.softening]), so cells read as one scratch, not as steps; before that it is drawn as is.
  * With a brush, the cells cleared since the tree are drawn as the brush's strokes along the finger instead, cut only
  * near those cells ([CoverGridRules.brushGate]), while the host holds a stroke of the brush's pan.
+ * With a reveal, it sends the reveal's action once enough is cleared after a lift ([CoverRevealWatch]).
  */
 @Composable
 internal fun JsCoverGrid(
@@ -55,6 +62,7 @@ internal fun JsCoverGrid(
     val columns = widget.columns.coerceIn(1, JsCoverCells.MAX_SIDE)
     val rows = widget.rows.coerceIn(1, JsCoverCells.MAX_SIDE)
     val treeCells = remember(widget.cleared) { BitSet().apply { widget.cleared.filter { it >= 0 }.forEach(::set) } }
+    widget.reveal?.let { reveal -> CoverReveal(reveal, treeCells, widget.cells, columns * rows) }
     val since = widget.cells
     val brush = widget.brush
     val mirrored = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -110,6 +118,26 @@ internal fun JsCoverGrid(
     }
 }
 
+/**
+ * Sends [reveal]'s action when the cover's cleared cells, the tree's [treeCells] and those cleared since ([since]),
+ * reach its share after a lift. It collects in a coroutine, so a cleared cell or a touch recomposes nothing.
+ */
+@Composable
+private fun CoverReveal(reveal: JsCoverReveal, treeCells: BitSet, since: JsCoverCells?, cells: Int) {
+    val dispatch = LocalJsEventHandler.current
+    val touch = reveal.touch ?: return
+    LaunchedEffect(reveal, treeCells, since, cells) {
+        val watch = CoverRevealWatch(lifts = touch.touch.value.lifts)
+        val worker = since?.value ?: MutableStateFlow(JsCoverCells.Value(BitSet(), 0))
+        combine(touch.touch, worker) { finger, cleared -> finger to cleared.cells }.collect { (finger, cleared) ->
+            val all = (treeCells.clone() as BitSet).apply { or(cleared) }
+            if (watch.update(finger, CoverGridRules.countBelow(all, cells), cells, reveal)) {
+                dispatch(reveal.action, JsUiEvent.Type.ButtonClick)
+            }
+        }
+    }
+}
+
 /** Softens the holes by [softening] pixels, then sharpens their edge again ([CoverGridRules.sharpenEdge]). */
 @RequiresApi(Build.VERSION_CODES.S)
 private fun smoothEdge(softening: Float): ComposeRenderEffect {
@@ -126,6 +154,9 @@ private fun LayoutCoordinates.originOf(cover: LayoutCoordinates): Offset =
 
 /** A cover grid's geometry, kept apart from drawing so it can be checked on its own. */
 internal object CoverGridRules {
+    /** How many of [cleared] lie inside a grid of [cells] cells: a cell past the grid is not counted. */
+    fun countBelow(cleared: BitSet, cells: Int): Int = cleared.get(0, cells.coerceAtLeast(0)).cardinality()
+
     /**
      * One circle per cleared cell: centred on the cell, its radius half the cell's diagonal, so it reaches the cell's
      * corners and neighbouring holes merge into one soft-edged scratch with no cover left between them. Column 0 sits
