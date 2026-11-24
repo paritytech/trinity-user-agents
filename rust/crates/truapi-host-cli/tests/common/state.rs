@@ -14,7 +14,12 @@ pub fn offline_state_directory() -> &'static str {
 			.env("TRUAPI_HOST_NO_UPDATE", "1")
 			.output()
 			.expect("run network-check");
-		assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+		assert!(
+			output.status.success(),
+			"network-check {}: {}",
+			output.status,
+			String::from_utf8_lossy(&output.stderr)
+		);
 		let routing: serde_json::Value =
 			serde_json::from_slice(&output.stdout).expect("network-check prints JSON");
 		routing["state_directory"].as_str().expect("a state directory").to_owned()
