@@ -216,6 +216,10 @@ private extension [Modifier] {
                 style.take(modifier)
             case let .mask(value):
                 mask = value.widgetMask
+            case .enter,
+                 .animate:
+                // The iPhone enter-and-keyframes layer plays these; until then the node draws as the tree does.
+                break
             }
         }
 

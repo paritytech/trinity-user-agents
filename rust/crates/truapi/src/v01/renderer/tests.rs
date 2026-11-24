@@ -924,3 +924,156 @@ fn mask_progress_and_an_axis_press_round_trip_through_uniffi() {
 	let ffi = <PanFeel as uniffi::Lower<crate::UniFfiTag>>::lower(feel.clone());
 	assert_eq!(<PanFeel as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), feel);
 }
+
+const LINEAR: Curve = Curve { x1: 0, y1: 0, x2: 1000, y2: 1000 };
+const EASE: Curve = Curve { x1: 250, y1: 100, x2: 250, y2: 1000 };
+
+/// Rises from the start, holds, and falls a little before the end.
+fn rise_and_settle(repeat: u16, alternate: Option<bool>) -> Keyframes {
+	Keyframes {
+		frames: vec![
+			Keyframe { at_ms: 0, value: 0, curve: LINEAR },
+			Keyframe { at_ms: 100, value: 1000, curve: LINEAR },
+			Keyframe { at_ms: 300, value: 600, curve: LINEAR },
+		],
+		repeat,
+		alternate: OptionBool(alternate),
+	}
+}
+
+/// A node that springs in from below, faded and small, and pulses for ever.
+fn entering_and_pulsing() -> Vec<Modifier> {
+	vec![
+		Modifier::Enter(Enter {
+			from: Pose {
+				opacity_permille: 0,
+				scale_permille: 900,
+				x: 0,
+				y: 1200,
+				rotation_centideg: -500,
+			},
+			motion: Motion::Spring(Spring { omega_centi: 1800, damping_centi: 80 }),
+			delay_ms: 50,
+		}),
+		Modifier::Animate(Track {
+			property: AnimatedProperty::Scale,
+			play: TrackPlay::Keyframes(rise_and_settle(0, Some(true))),
+		}),
+		Modifier::Animate(Track {
+			property: AnimatedProperty::OffsetX,
+			play: TrackPlay::Follow {
+				target: -400,
+				motion: Motion::Timed { ms: 250, curve: EASE },
+			},
+		}),
+	]
+}
+
+/// `Enter` and `Animate` follow `Mask`: the pose's fields in order, then the
+/// motion and the delay.
+#[test]
+fn enter_and_animate_are_the_modifiers_after_mask() {
+	let [enter, scale, follow] = entering_and_pulsing().try_into().unwrap();
+	assert_eq!(
+		enter.encode(),
+		vec![
+			21, 0, 0, 0x84, 0x03, 0, 0, 0, 0, 0xB0, 0x04, 0, 0, 0x0C, 0xFE, 0xFF, 0xFF, //
+			1, 0x08, 0x07, 80, 0, //
+			50, 0,
+		]
+	);
+	assert_eq!(scale.encode()[..3], [22, 1, 0]);
+	// Follow is the second play: the target, then a timed motion and its curve.
+	assert_eq!(
+		follow.encode(),
+		vec![
+			22, 2, 1, 0x70, 0xFE, 0xFF, 0xFF, 0, 0xFA, 0, 0, 0, 0xFA, 0, 100, 0, 0xFA, 0, 0xE8,
+			0x03
+		]
+	);
+}
+
+#[test]
+fn entering_and_animated_nodes_round_trip_through_scale_json_and_uniffi() {
+	let node = RendererNode::Box {
+		modifiers: entering_and_pulsing(),
+		props: BoxProps { content_alignment: None },
+		children: vec![renderer_node()],
+	};
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	let json = r#"[
+		{"tag":"Enter","value":{"from":{"opacityPermille":0,"scalePermille":900,"x":0,"y":1200,"rotationCentideg":-500},
+			"motion":{"tag":"Spring","value":{"omegaCenti":1800,"dampingCenti":80}},"delayMs":50}},
+		{"tag":"Animate","value":{"property":"Scale","play":{"tag":"Keyframes","value":{"frames":[
+			{"atMs":0,"value":0,"curve":{"x1":0,"y1":0,"x2":1000,"y2":1000}},
+			{"atMs":100,"value":1000,"curve":{"x1":0,"y1":0,"x2":1000,"y2":1000}},
+			{"atMs":300,"value":600,"curve":{"x1":0,"y1":0,"x2":1000,"y2":1000}}],"repeat":0,"alternate":true}}}},
+		{"tag":"Animate","value":{"property":"OffsetX","play":{"tag":"Follow","value":{"target":-400,
+			"motion":{"tag":"Timed","value":{"ms":250,"curve":{"x1":250,"y1":100,"x2":250,"y2":1000}}}}}}}
+	]"#;
+	assert_eq!(serde_json::from_str::<Vec<Modifier>>(json).unwrap(), entering_and_pulsing());
+	#[cfg(not(target_arch = "wasm32"))]
+	{
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		assert_eq!(<RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), node);
+	}
+}
+
+#[test]
+fn a_curve_eases_as_css_cubic_bezier_does() {
+	let close = |a: f64, b: f64| (a - b).abs() < 1e-3;
+	assert!(close(LINEAR.ease(0.25), 0.25));
+	assert!(close(EASE.ease(0.0), 0.0));
+	assert!(close(EASE.ease(1.0), 1.0));
+	// CSS `ease` at half time is about 80% of the way.
+	assert!(close(EASE.ease(0.5), 0.8024), "{}", EASE.ease(0.5));
+	// Time outside 0 to 1 is clamped; progress may overshoot.
+	assert!(close(EASE.ease(2.0), 1.0));
+	let overshoot = Curve { x1: 340, y1: 1560, x2: 640, y2: 1000 };
+	assert!(overshoot.ease(0.6) > 1.0);
+}
+
+/// Hosts draw whole units; the easing's own rounding stays below them.
+fn rounded(value: Option<f64>) -> Option<i64> {
+	value.map(|value| value.round() as i64)
+}
+
+#[test]
+fn keyframes_play_runs_and_hold_where_the_last_run_ended() {
+	let once = rise_and_settle(2, None);
+	assert_eq!(rounded(once.value_at(50)), Some(500));
+	assert_eq!(rounded(once.value_at(100)), Some(1000));
+	assert_eq!(rounded(once.value_at(200)), Some(800));
+	// The second run starts over from the first keyframe.
+	assert_eq!(rounded(once.value_at(350)), Some(500));
+	assert_eq!(rounded(once.value_at(600)), Some(600));
+	assert_eq!(rounded(once.value_at(60_000)), Some(600));
+	// Alternating, the second run plays backwards and ends at the start.
+	let back = rise_and_settle(2, Some(true));
+	assert_eq!(rounded(back.value_at(300)), Some(600));
+	assert_eq!(rounded(back.value_at(350)), Some(700));
+	assert_eq!(rounded(back.value_at(600)), Some(0));
+	// For ever: the run repeats.
+	assert_eq!(rounded(rise_and_settle(0, None).value_at(3050)), Some(500));
+}
+
+#[test]
+fn keyframes_out_of_order_or_at_one_time_jump() {
+	let frames = |times: [(u32, i32); 3]| Keyframes {
+		frames: times.map(|(at_ms, value)| Keyframe { at_ms, value, curve: LINEAR }).to_vec(),
+		repeat: 1,
+		alternate: OptionBool(None),
+	};
+	// The last keyframe, earlier than the one before it, is taken at that
+	// one's time and holds there.
+	let late = frames([(0, 0), (200, 1000), (100, 500)]);
+	assert_eq!(rounded(late.value_at(100)), Some(500));
+	assert_eq!(rounded(late.value_at(200)), Some(500));
+	assert_eq!(rounded(late.value_at(900)), Some(500));
+	let still = frames([(0, 7), (0, 8), (0, 9)]);
+	assert_eq!(rounded(still.value_at(0)), Some(9));
+	assert_eq!(
+		Keyframes { frames: Vec::new(), repeat: 0, alternate: OptionBool(None) }.value_at(5),
+		None
+	);
+}

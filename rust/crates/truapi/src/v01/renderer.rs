@@ -379,6 +379,250 @@ pub struct Shimmer {
 	pub rest_ms: u32,
 }
 
+/// An easing curve, as CSS `cubic-bezier(x1, y1, x2, y2)` draws it, with its
+/// control points in thousandths: `{ x1: 250, y1: 100, x2: 250, y2: 1000 }`
+/// is CSS's `ease`, and `{ 0, 0, 1000, 1000 }` is linear.
+///
+/// The host clamps `x1` and `x2` to 0 through 1000; `y1` and `y2` may leave
+/// that range to overshoot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Curve {
+	/// The first control point's time.
+	pub x1: i16,
+	/// The first control point's progress.
+	pub y1: i16,
+	/// The second control point's time.
+	pub x2: i16,
+	/// The second control point's progress.
+	pub y2: i16,
+}
+
+impl Curve {
+	/// The progress at `time`, both shares of the whole (`time` clamped to 0
+	/// through 1): the rule both hosts follow.
+	pub fn ease(&self, time: f64) -> f64 {
+		let time = time.clamp(0.0, 1.0);
+		let thousandths = |value: i16| f64::from(value) / 1000.0;
+		let (x1, x2) = (thousandths(self.x1).clamp(0.0, 1.0), thousandths(self.x2).clamp(0.0, 1.0));
+		let (y1, y2) = (thousandths(self.y1), thousandths(self.y2));
+		let bezier = |first: f64, second: f64, at: f64| {
+			let rest = 1.0 - at;
+			3.0 * rest * rest * at * first + 3.0 * rest * at * at * second + at * at * at
+		};
+		let (mut low, mut high) = (0.0, 1.0);
+		for _ in 0..50 {
+			let middle = (low + high) / 2.0;
+			if bezier(x1, x2, middle) < time {
+				low = middle;
+			} else {
+				high = middle;
+			}
+		}
+		bezier(y1, y2, (low + high) / 2.0)
+	}
+}
+
+/// A damped spring that starts at rest, in the units [`PanFeel`]'s return
+/// spring uses.
+///
+/// It ends once it is within a thousandth of the change from its target and
+/// moves less than that in 1/60 s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Spring {
+	/// Angular frequency, in hundredths of a radian a second.
+	pub omega_centi: u16,
+	/// Damping ratio, in hundredths: 100 is critically damped, less bounces.
+	pub damping_centi: u16,
+}
+
+/// How the host moves a value to another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum Motion {
+	/// Over a set time, along a curve.
+	Timed {
+		/// How long it takes, in milliseconds.
+		ms: u32,
+		/// The curve it follows.
+		curve: Curve,
+	},
+	/// On a spring, for as long as it takes to settle.
+	Spring(Spring),
+}
+
+/// Where a node enters from, relative to how the tree draws it: its opacity
+/// and scale multiplied, its place and turn added, about its centre and after
+/// layout, as [`Translate`] moves it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Pose {
+	/// Opacity, in thousandths of the node's own; clamped to 0 through 1000.
+	pub opacity_permille: u16,
+	/// Scale, in thousandths.
+	pub scale_permille: u16,
+	/// Moved towards the end, in hundredths of a logical pixel.
+	pub x: i32,
+	/// Moved downwards, in hundredths of a logical pixel.
+	pub y: i32,
+	/// Turned clockwise, in hundredths of a degree.
+	pub rotation_centideg: i32,
+}
+
+/// Has the host play a node in from a [`Pose`] when it appears: when a tree
+/// holds it at a place among its siblings that the tree before did not, and
+/// for every node of the first tree.
+///
+/// The node holds `from` for `delay_ms`, then moves to how the tree draws it
+/// with `motion`. A tree arriving while it plays keeps it playing. It plays
+/// once per appearance, and not at all where the person asked for less
+/// motion; a host that cannot play it draws the node as the tree does.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Enter {
+	/// Where it starts.
+	pub from: Pose,
+	/// How it moves.
+	pub motion: Motion,
+	/// How long it waits first, in milliseconds.
+	pub delay_ms: u16,
+}
+
+/// A part of how a node is drawn that a [`Track`] moves, relative to how the
+/// tree draws it and after layout, about the node's centre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum AnimatedProperty {
+	/// Opacity, in thousandths of the node's own; clamped to 0 through 1000.
+	Opacity,
+	/// Scale, in thousandths.
+	Scale,
+	/// Moved towards the end, in hundredths of a logical pixel.
+	OffsetX,
+	/// Moved downwards, in hundredths of a logical pixel.
+	OffsetY,
+	/// Turned clockwise, in hundredths of a degree.
+	Rotation,
+}
+
+/// One value of a [`Keyframes`] timeline.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Keyframe {
+	/// When it is reached, in milliseconds from the start of a run.
+	pub at_ms: u32,
+	/// The value, in the property's units.
+	pub value: i32,
+	/// The curve from the keyframe before to this one; the first keyframe's
+	/// is not used.
+	pub curve: Curve,
+}
+
+/// A timeline of values the host plays on its own clock from when the node
+/// appears, as a CSS `@keyframes` animation does.
+///
+/// A run lasts until the last keyframe; before the first, the value is the
+/// first's. Keyframes are in order of `at_ms`: one earlier than the keyframe
+/// before it is taken at that one's time, and at a time several share, the
+/// last of them holds, so two keyframes at one time make a jump. `repeat` is how many runs play,
+/// zero for ever; with `alternate`, every second run plays backwards. After
+/// the last run the value holds where that run ended. A tree that keeps the
+/// same timeline keeps its clock; a tree that changes it starts it over. The
+/// host draws at most 32 keyframes, holds the end where the person asked for
+/// less motion (the first keyframe for a timeline that plays for ever), and a
+/// host that cannot play it draws that value.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Keyframes {
+	/// The values, in order.
+	pub frames: Vec<Keyframe>,
+	/// How many runs play; zero plays for ever.
+	pub repeat: u16,
+	/// Play every second run backwards; absent means false.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub alternate: OptionBool,
+}
+
+impl Keyframes {
+	/// The value `elapsed_ms` after the timeline started, or `None` with no
+	/// keyframes: the rule both hosts follow.
+	pub fn value_at(&self, elapsed_ms: u64) -> Option<f64> {
+		let mut frames = Vec::with_capacity(self.frames.len());
+		let mut latest = 0;
+		for frame in &self.frames {
+			latest = latest.max(frame.at_ms);
+			frames.push((latest, f64::from(frame.value), frame.curve));
+		}
+		let (&(first_ms, first_value, _), &(run_ms, last_value, _)) =
+			(frames.first()?, frames.last()?);
+		if run_ms == 0 {
+			return Some(last_value);
+		}
+		let runs = elapsed_ms / u64::from(run_ms);
+		let (run, within) = if self.repeat != 0 && runs >= u64::from(self.repeat) {
+			(u64::from(self.repeat) - 1, run_ms)
+		} else {
+			(runs, u32::try_from(elapsed_ms % u64::from(run_ms)).unwrap_or(run_ms))
+		};
+		let backwards = self.alternate.0 == Some(true) && run % 2 == 1;
+		let at = if backwards { run_ms - within } else { within };
+		if let Some(&(_, value, _)) = frames.iter().rev().find(|(frame_ms, ..)| *frame_ms == at) {
+			return Some(value);
+		}
+		if at < first_ms {
+			return Some(first_value);
+		}
+		let next = frames.iter().position(|(frame_ms, ..)| *frame_ms > at)?;
+		let ((from_ms, from_value, _), (to_ms, to_value, curve)) = (frames[next - 1], frames[next]);
+		let time = f64::from(at - from_ms) / f64::from(to_ms - from_ms);
+		Some(from_value + (to_value - from_value) * curve.ease(time))
+	}
+}
+
+/// How a [`Track`] sets its property.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum TrackPlay {
+	/// A timeline the host plays on its own.
+	Keyframes(Keyframes),
+	/// The value `target`, which the node first appears at; when a later tree
+	/// changes it, the host moves there from the value it draws with `motion`,
+	/// a spring keeping its speed. Where the person asked for less motion, or
+	/// on a host that cannot move it, the value changes at once.
+	Follow {
+		/// The value, in the property's units.
+		target: i32,
+		/// How a change moves.
+		motion: Motion,
+	},
+}
+
+/// Moves one part of how a node is drawn on the host's clock, with no update
+/// from the worker per frame: opacity and scale multiply the node's own,
+/// offsets and turn add to them, about its centre and after layout. A node
+/// keeps its last track for each property, and its tracks compose with its
+/// `Enter`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Track {
+	/// The part moved.
+	pub property: AnimatedProperty,
+	/// How it moves.
+	pub play: TrackPlay,
+}
+
 /// Layout and styling applied to one node.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(tag = "tag", content = "value")]
@@ -434,6 +678,10 @@ pub enum Modifier {
 	/// Hides part of the node, or shows only part of it. A node keeps its last
 	/// `Mask`.
 	Mask(Mask),
+	/// Plays the node in when it appears.
+	Enter(Enter),
+	/// Moves a part of how the node is drawn on the host's clock.
+	Animate(Track),
 }
 
 /// Properties of a `Box`.

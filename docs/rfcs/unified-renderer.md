@@ -659,3 +659,55 @@ stroke. A worker drawing the finger's line itself keeps the last point it
 handled and adds the segment from there to the newest point, so the moves the
 host drops between frames leave no gaps.
 
+
+### Enter animations and tracks
+
+A worker never animates frame by frame, so motion a design needs is named in
+the tree and played on the host's clock. Two modifiers, after `Mask`, do it
+for any node. Both move the node after layout, about its centre, as
+`Translate` does: opacity and scale multiply the node's own, offsets and turn
+add to them, and its neighbours keep their places.
+
+`Enter { from, motion, delayMs }` (index 21) plays a node in when it appears:
+when a tree holds it at a place among its siblings that the tree before did
+not, and for every node of the first tree. It holds the `from` pose for
+`delayMs`, then moves to how the tree draws it. It plays once per appearance,
+and a tree arriving while it plays keeps it playing.
+
+`Animate(Track { property, play })` (index 22) moves one part of the node:
+`Opacity`, `Scale`, `OffsetX`, `OffsetY` or `Rotation`. A node keeps its last
+track per property, and its tracks compose with its `Enter`. A track plays in
+one of two ways:
+
+- `Keyframes { frames, repeat, alternate }`, a timeline started when the node
+  appears, as a CSS `@keyframes` animation. Each `Keyframe { atMs, value, curve }`
+  is reached at `atMs` from the start of a run, along `curve` from the one before.
+  `repeat` runs play, zero for ever, and with `alternate` every second run plays
+  backwards; after the last run the value holds where it ended. A tree that
+  keeps the same timeline keeps its clock; a tree that changes it starts over.
+- `Follow { target, motion }`, a value the node first appears at. When a later
+  tree changes `target`, the host moves there from the value it draws with
+  `motion`, a spring keeping its speed, so a worker sets where a thing should
+  be and the host carries it there.
+
+| Value | Units | Range | Default |
+| --- | --- | --- | --- |
+| `Pose.opacityPermille`, `Opacity` | thousandths of the node's own opacity | clamped to 0 to 1000 | |
+| `Pose.scalePermille`, `Scale` | thousandths | | |
+| `Pose.x`, `Pose.y`, `OffsetX`, `OffsetY` | hundredths of a logical pixel, towards the end and downwards | | |
+| `Pose.rotationCentideg`, `Rotation` | hundredths of a degree, clockwise | | |
+| `Motion::Timed { ms, curve }` | milliseconds along a curve | | |
+| `Motion::Spring { omegaCenti, dampingCenti }` | hundredths of a radian a second, damping ratio in hundredths | | starts at rest |
+| `Curve { x1, y1, x2, y2 }` | CSS `cubic-bezier` control points in thousandths | `x1`, `x2` clamped to 0 to 1000; `y` may overshoot | |
+| `Keyframes.frames` | in order of `atMs`; an earlier one is taken at the time before it, and at a shared time the last holds | at most 32 drawn | |
+| `Keyframes.repeat` | runs | | 0: for ever |
+| `Keyframes.alternate` | | | false |
+
+A spring ends once it is within a thousandth of the change from its target and
+moves less than that in 1/60 s. `Curve::ease` and `Keyframes::value_at` in the
+core crate are the rules both hosts follow.
+
+Where the person asked for less motion, the host plays none of it: an `Enter`
+node draws as the tree does, a timeline holds its end (its first keyframe if it
+plays for ever), and a `Follow` changes at once. A host that cannot play them
+draws the same.
