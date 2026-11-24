@@ -103,7 +103,7 @@ pub async fn claim_paid_sources(
 	for (source, mode) in modes {
 		let payment = match mode {
 			TransferMode::FeeLess => MovePayment::FeeLess,
-			TransferMode::Paid => MovePayment::PaidByClaim { claim: claim_into(claims, source).await? },
+			TransferMode::Paid => MovePayment::PaidByClaim { claim: new_or_active_claim(claims, source).await? },
 		};
 		by_source.insert(source, payment);
 	}
@@ -111,7 +111,7 @@ pub async fn claim_paid_sources(
 }
 
 /// The claim into `source`: a new one, or the one already active.
-async fn claim_into(claims: &PgasClaims, source: ItemKey) -> Result<DurableTxId, PaidMoveError> {
+async fn new_or_active_claim(claims: &PgasClaims, source: ItemKey) -> Result<DurableTxId, PaidMoveError> {
 	match claims.claim(AccountId32(source.0)).await {
 		Ok(claim) | Err(RegistrationError::Hook(PgasClaimError::AlreadyClaiming(claim))) => Ok(claim),
 		Err(error) => Err(PaidMoveError::Claim(error)),

@@ -149,12 +149,12 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		Arc::new(chain.clone()),
 		genesis,
 	));
-	live_purses_over(chain, genesis, budget, DurableRegistry::new())
+	live_purses_with_budget(chain, genesis, budget, DurableRegistry::new())
 }
 
 /// [`live_purses`] whose moves pay by `budget`, with the domains of `registry`
 /// served next to NFT transfers.
-fn live_purses_over(
+fn live_purses_with_budget(
 	chain: &ChainRuntime,
 	genesis: H256,
 	budget: Arc<dyn MoveBudgetSource>,
@@ -345,7 +345,7 @@ async fn a_rebalance_without_fee_less_moves_claims_pgas_and_moves_paid() {
 	let person = Arc::new(LivePerson::connect(&chain, genesis, entropy).await);
 	let claims = with_pgas_claims(DurableRegistry::new(), genesis, person);
 	let no_fee_less_moves = Arc::new(FixedMoveBudget(MoveBudget::new(0)));
-	let live = live_purses_over(&chain, genesis, no_fee_less_moves, claims);
+	let live = live_purses_with_budget(&chain, genesis, no_fee_less_moves, claims);
 	let purses = live_product_purses(&live);
 	let collection = owner.create_collection().await;
 
