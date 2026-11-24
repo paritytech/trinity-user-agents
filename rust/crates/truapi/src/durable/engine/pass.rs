@@ -39,10 +39,12 @@ struct LiveDomain<'a> {
 }
 
 impl DurableTxEngine {
-	/// Decides what it can of every live transaction. At most one pass runs
-	/// at a time; a call made while one runs returns at once. The ladder runs
-	/// outside any write, and each verdict is a compare-and-set against the
-	/// status it was derived from.
+	/// Decides what it can of every live transaction, then fails every
+	/// unfinished transaction whose dependency marked
+	/// [`Cascade`](crate::durable::OnDependencyFailure::Cascade) failed. At
+	/// most one pass runs at a time; a call made while one runs returns at
+	/// once. The ladder runs outside any write, and each verdict is a
+	/// compare-and-set against the status it was derived from.
 	pub async fn run_pass(&self) {
 		let Some(_running) = self.pass_lock.try_lock() else {
 			return;
@@ -56,6 +58,22 @@ impl DurableTxEngine {
 			.into_iter()
 			.map(|(genesis, domains)| self.decide_chain(genesis, domains));
 		futures::future::join_all(chains).await;
+		self.abandon_cascaded_dependents().await;
+	}
+
+	/// Fails every unfinished row whose `Cascade` dependency failed, and the
+	/// rows that cascade from those. Passes run on every head, so it reads
+	/// first and writes only when there is something to fail.
+	async fn abandon_cascaded_dependents(&self) {
+		match self.db.read(dao::cascading_failures).await {
+			Ok(found) if found.is_empty() => return,
+			Ok(_) => {},
+			Err(error) => return warn!(%error, "durable cascade could not read the ledger"),
+		}
+		match self.db.write(dao::abandon_cascading).await {
+			Ok(applied) => applied.iter().for_each(log_cascaded_failure),
+			Err(error) => warn!(%error, "durable cascade could not be written"),
+		}
 	}
 
 	/// Groups `domains` by the chain they live on, so each chain's heads
@@ -203,5 +221,12 @@ impl DurableTxEngine {
 	}
 }
 
+fn log_cascaded_failure(failure: &dao::CascadingFailure) {
+	warn!(
+		id = failure.dependent.0,
+		dependency = failure.dependency.0,
+		"durable transaction abandoned: a dependency it cascades from failed"
+	);
+}
 #[cfg(test)]
 mod tests;
