@@ -68,18 +68,18 @@ refresh it.
   for a host without `fetchStackDescriptor`. The same value comes from
   `stackStatus()`. `restartRequired` means a newer copy changes a genesis
   hash the core uses, the network, the generation or the `accountDataStore`
-  contract, and applies once the runtime is built again. A
-  copy on another TLD than the bundled descriptor is refused, and so is one
-  that changes a field a stack allowed reserved values pins. `lastRefresh`
-  says so. `generation` changes when the stack restarts its chains: key cached
-  chain data by it.
+  contract, and applies once the runtime is built again. A copy on another TLD
+  than the bundled descriptor is refused, and so is one that changes a field a
+  stack allowed reserved values pins. `lastRefresh` says so. `generation`
+  changes when the stack restarts its chains: key cached chain data by it.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key. It starts from that copy when it is newer than the bundled
-one and passes the checks a fetched copy has to pass. A stored copy that names a
-value `reservedValues` reserves, or one on another TLD, is ignored, and the core
-starts from the bundled copy. `create` waits a few seconds at most for that
-read, then starts from the bundled copy.
+one and passes the checks a fetched copy has to pass. A stored copy the core
+would refuse, such as one that names a value `reservedValues` reserves or
+changes a field the bundled descriptor pins, the TLD among them, is ignored,
+and the core starts from the bundled copy. `create` waits a few seconds at
+most for that read, then starts from the bundled copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.
