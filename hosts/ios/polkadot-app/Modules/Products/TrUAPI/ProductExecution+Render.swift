@@ -1,7 +1,7 @@
 import Foundation
 import TrUAPIHost
 
-extension TrUAPIProductExecutionProtocol {
+extension TrUAPIWorkerOperations {
     /// Open a render stream, waiting out the window in which the product's
     /// worker is up but has not registered its renderer yet.
     ///

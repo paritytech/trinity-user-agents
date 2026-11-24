@@ -7,6 +7,32 @@ import TrUAPIHost
 /// One headless worker runtime serves every modality, so a worker script is
 /// given the same engine whichever surface asked for it.
 struct TrUAPIWorkerRuntimeTests {
+    @Test(.timeLimit(.minutes(1)))
+    func webKitReportsAnEntryThatThrowsBeforeLoadAndStartsOneAwaitingAHostAction() async throws {
+        let engine = WKWebViewJSEngine(
+            engineBaseUrl: URL(fileURLWithPath: "/"),
+            scriptHandlers: [],
+            hostWindowProvider: { nil },
+            logger: MockLogger()
+        )
+        try await engine.initialize(with: [])
+        let bridge = JSESModuleBridge(engine: engine)
+        await bridge.install()
+        let payload = Data("throw Error('entry failed')".utf8).base64EncodedString()
+        let url = try #require(URL(string: "data:text/javascript;base64,\(payload)"))
+
+        do {
+            try await bridge.executeScript(url: url, isWorkerEntry: true)
+            Issue.record("WebKit accepted a throwing worker entry")
+        } catch JSEngineError.moduleLoadFailed {}
+
+        let waiting = Data("await new Promise(() => {})".utf8).base64EncodedString()
+        let waitingURL = try #require(URL(string: "data:text/javascript;base64,\(waiting)"))
+        try await bridge.executeScript(url: waitingURL, isWorkerEntry: true)
+        await bridge.dispose()
+        await engine.destroy()
+    }
+
     /// The handler is what turns a `getUserMedia` call into the host's own
     /// permission prompt. Without it the engine denies the request outright, so
     /// the same worker script would be prompted under chat and refused here.

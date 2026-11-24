@@ -62,12 +62,16 @@ private final class FakeWorkerManager: ProductWorkerManaging, @unchecked Sendabl
 private let chatProduct: ProductId = try! ProductId("test.dot")
 
 private func makeRustRuntime(
-    workers: StubWorkerManager,
+    workers: StubWorkerRuntime,
+    context: ProductWorkerContext = ProductWorkerContext(),
+    startupTimeout: Duration = .hangGuard,
     renderStartupWindow: Duration = .hangGuard
 ) -> TrUAPIChatHandler {
     TrUAPIChatHandler(
         productId: chatProduct,
-        workers: workers,
+        runtime: { workers },
+        context: context,
+        startupTimeout: startupTimeout,
         renderStartupWindow: renderStartupWindow
     )
 }
@@ -87,8 +91,8 @@ private func disposing(_ runtime: TrUAPIChatHandler, _ body: () async throws -> 
 
 /// A manager whose worker is already up, which is what chat finds whenever
 /// something else, a card on screen, got there first.
-private func workersRunning(_ execution: MockProductExecution) -> StubWorkerManager {
-    let workers = StubWorkerManager()
+private func workersRunning(_ execution: MockProductExecution) -> StubWorkerRuntime {
+    let workers = StubWorkerRuntime()
     workers.publish([chatProduct: execution])
     return workers
 }
@@ -178,7 +182,7 @@ struct ChatRuntimeTests {
     /// back: an unpaired release drops the count of a worker somebody else is
     /// holding, and the core stops it under them.
     @Test func rustRuntimeDisposeBeforeStartTakesAndGivesBackNothing() async {
-        let workers = StubWorkerManager()
+        let workers = StubWorkerRuntime()
         let runtime = makeRustRuntime(workers: workers)
 
         await runtime.dispose()
@@ -195,13 +199,14 @@ struct ChatRuntimeTests {
     /// bot looks healthy.
     @Test func rustRuntimeDisposeLeavesAnotherRuntimesBindingAlone() async throws {
         let workers = workersRunning(MockProductExecution())
-        let live = makeRustRuntime(workers: workers)
-        let duplicate = makeRustRuntime(workers: workers)
+        let contexts = ProductWorkerContexts(presentationFallback: { nil })
+        let live = makeRustRuntime(workers: workers, context: contexts.context(for: chatProduct))
+        let duplicate = makeRustRuntime(workers: workers, context: contexts.context(for: chatProduct))
 
         try await live.start(messagingSupport: .init(bot: nil, context: nil))
         await duplicate.dispose()
 
-        #expect(workers.context(of: chatProduct).chat.currentMessaging != nil)
+        #expect(contexts.context(for: chatProduct).chat.currentMessaging != nil)
 
         await live.dispose()
     }
@@ -210,7 +215,7 @@ struct ChatRuntimeTests {
     /// has to wait for the worker rather than return onto an execution that is
     /// not there yet.
     @Test func rustRuntimeStartWaitsForTheWorkerToComeUp() async throws {
-        let workers = StubWorkerManager()
+        let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
 
@@ -232,8 +237,7 @@ struct ChatRuntimeTests {
     }
 
     @Test(.timeLimit(.minutes(1))) func rustRuntimeReleasesItsClaimWhileReadinessIsPending() async throws {
-        let workers = workersRunning(MockProductExecution())
-        workers.suspendsReadiness = true
+        let workers = StubWorkerRuntime()
         let runtime = makeRustRuntime(workers: workers)
 
         var checks = workers.readinessChecks.makeAsyncIterator()
@@ -242,7 +246,7 @@ struct ChatRuntimeTests {
 
         await runtime.dispose()
         #expect(workers.references.released == [chatProduct])
-        workers.resumeReadiness()
+        workers.publish([chatProduct: MockProductExecution()])
         await #expect(throws: CancellationError.self) { try await starting.value }
 
         #expect(workers.references.log == ["acquire \(chatProduct)", "release \(chatProduct)"])
@@ -252,8 +256,8 @@ struct ChatRuntimeTests {
     /// reference: the core would keep counting it and never stop the worker it
     /// eventually builds.
     @Test func rustRuntimeGivesTheReferenceBackWhenNoWorkerComes() async throws {
-        let workers = StubWorkerManager(startupWindow: .milliseconds(50))
-        let runtime = makeRustRuntime(workers: workers)
+        let workers = StubWorkerRuntime()
+        let runtime = makeRustRuntime(workers: workers, startupTimeout: .milliseconds(50))
 
         await #expect(throws: TimeoutError.self) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
@@ -267,7 +271,7 @@ struct ChatRuntimeTests {
     /// from a real failure.
     @Test func rustRuntimeChatSeamsFailBeforeTheWorkerIsUp() async {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: StubWorkerManager())
+        let runtime = makeRustRuntime(workers: StubWorkerRuntime())
 
         await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
             try await runtime.onUserMessage(text: "hi", roomId: "room")
@@ -329,7 +333,7 @@ struct ChatRuntimeTests {
 
     /// A worker that never comes up must not leave the cell waiting forever.
     @Test func rustRuntimeFailsPendingRendersOnDispose() async throws {
-        let runtime = makeRustRuntime(workers: StubWorkerManager())
+        let runtime = makeRustRuntime(workers: StubWorkerRuntime())
 
         let render = Task {
             await runtime.renderMessage(
@@ -379,7 +383,7 @@ struct ChatRuntimeTests {
     /// in the transient set the render fails once and the cell is dead for the
     /// session, because `ProductMessageDecoder` never evicts.
     @Test func rustRuntimeRetriesRenderIssuedBeforeTheWorkerIsUp() async throws {
-        let workers = StubWorkerManager()
+        let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
         let runtime = makeRustRuntime(workers: workers)

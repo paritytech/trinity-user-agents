@@ -31,35 +31,36 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
     }
 
     let productId: ProductId
-    private let workers: any TrUAPIWorkerManaging
+    private let runtime: ProductWorkerRuntimeProvider
     private let logger: LoggerProtocol
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     private struct State {
-        var claim: (any TrUAPIWorkerClaiming)?
+        var claim: NativeWorkerClaim?
         var disposed = false
     }
 
     init(
         productId: ProductId,
-        workers: any TrUAPIWorkerManaging,
+        runtime: @escaping ProductWorkerRuntimeProvider,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
-        self.workers = workers
+        self.runtime = runtime
         self.logger = logger
     }
 
     func start() async throws {
+        let host = try runtime()
         try state.withLock { state in
             guard !state.disposed, state.claim == nil else { throw CancellationError() }
 
-            state.claim = try workers.claim(productId)
+            state.claim = host.claimWorker(productId: productId)
         }
 
         do {
-            try await workers.waitUntilReady(productId)
+            try await host.waitForWorker(productId)
             guard !state.withLock({ $0.disposed }) else { throw CancellationError() }
         } catch {
             dispose()
@@ -84,7 +85,7 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
     }
 
     func send(action: String, payload: Data, for key: PocketCardKey) {
-        guard let execution = workers.currentExecution(of: key.productId) else { return }
+        guard let execution = try? runtime().currentWorkerExecution(productId: key.productId) else { return }
 
         do {
             try execution.publishRendererAction(
@@ -106,30 +107,27 @@ private extension TrUAPIPocketHandler {
         continuation.finish()
     }
 
-    /// One render per execution the manager publishes: a worker that
-    /// restarts is picked up as a new execution, and its stream replaces the
-    /// one before it.
+    /// A restart replaces the render stream with one on the new execution.
     func followExecutions(
         of key: PocketCardKey,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async {
         var opened: Task<Void, Never>?
-        var current: (any TrUAPIProductExecutionProtocol)?
         defer { opened?.cancel() }
 
         do {
-            for try await execution in workers.executions(of: key.productId) {
-                // The manager publishes every product's execution together,
-                // so this re-sends whenever any other worker starts or stops.
-                // Reopening on those would tear down a live render stream, and
-                // pay the connect retries again, for a worker that never moved.
-                guard execution !== current else { continue }
-                current = execution
-
-                opened?.cancel()
-                guard let execution else { continue }
-
-                opened = Task { await reopening(execution, for: key, into: continuation) }
+            for await state in try runtime().workerExecutionState(productId: key.productId) {
+                switch state {
+                case let .running(execution):
+                    if opened == nil {
+                        opened = Task { await reopening(execution, for: key, into: continuation) }
+                    }
+                case .idle,
+                     .pending,
+                     .failed:
+                    opened?.cancel()
+                    opened = nil
+                }
             }
         } catch {
             logger.error("[pocket] the worker stream for \(key.cardId.value) ended: \(error)")
@@ -141,7 +139,7 @@ private extension TrUAPIPocketHandler {
     /// render is only opened when a different execution is published, and a
     /// stop publishes none.
     func reopening(
-        _ execution: TrUAPIProductExecutionProtocol,
+        _ execution: TrUAPIWorkerOperations,
         for key: PocketCardKey,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async {
@@ -162,7 +160,7 @@ private extension TrUAPIPocketHandler {
     }
 
     func drain(
-        _ execution: TrUAPIProductExecutionProtocol,
+        _ execution: TrUAPIWorkerOperations,
         for key: PocketCardKey,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async throws {
@@ -176,7 +174,7 @@ private extension TrUAPIPocketHandler {
     /// are refused rather than answered. They are asked again at a fixed short
     /// interval instead of backing off, because the wait is a boot, not a fault.
     func connect(
-        _ execution: TrUAPIProductExecutionProtocol,
+        _ execution: TrUAPIWorkerOperations,
         for key: PocketCardKey
     ) async throws -> AsyncThrowingStream<RendererNode, Error> {
         let request = ProductRendererRenderRequest(context: .pocketCard(cardId: key.cardId.value), payload: Data())

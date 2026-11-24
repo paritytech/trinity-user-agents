@@ -1,4 +1,7 @@
 import Foundation
+import BulletinChain
+import ChainRegistry
+import DesignSystem
 @preconcurrency import Products
 import TrUAPIHost
 
@@ -14,7 +17,7 @@ enum TrUAPIWorkerError: Error, CustomStringConvertible {
 
 /// Assembles one product's worker: its archive, its Worker execution, and the
 /// headless engine its entry module runs in.
-struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
+struct TrUAPIWorkerBuilder {
     private let environment: @Sendable () throws -> RustRuntimeEnvironment
     private let contentLoader: any ProductContentLoading
     private let dotNsResolver: any DotNsResolverProtocol
@@ -37,7 +40,8 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
 
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext
+        context: ProductWorkerContext,
+        attempt: NativeWorkerAttempt
     ) async throws -> TrUAPIWorkerRuntime {
         let (source, files) = try await workerSource(for: productId)
 
@@ -52,7 +56,8 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             executionModel: environment().makeWorkerExecution(
                 productId: productId,
                 routers: context.routers,
-                chatMessaging: context.chat
+                chatMessaging: context.chat,
+                attempt: attempt
             ),
             engineFactory: engine.engineFactory,
             logger: logger
@@ -94,5 +99,35 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         }
 
         return installed
+    }
+}
+
+extension TrUAPIWorkerBuilder {
+    init(
+        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime,
+        flowState: SPAFlowState,
+        productFileProvider: any ChatProductFileProviding,
+        gameReminders: any ProductGameReminderScheduling,
+        themeManager: any ThemeManagerProtocol,
+        logger: CoreEventLoggerProtocol
+    ) {
+        self.init(
+            environment: {
+                try RustRuntimeEnvironment(
+                    runtime: runtime(),
+                    chainRegistry: ChainRegistryFacade.sharedRegistry,
+                    notificationScheduler: ProductNotificationScheduler.shared,
+                    gameReminders: gameReminders,
+                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                    hostProvider: flowState.hostProvider,
+                    themeManager: themeManager,
+                    logger: logger
+                )
+            },
+            contentLoader: flowState.contentLoader,
+            dotNsResolver: flowState.dotNsResolver,
+            productFileProvider: productFileProvider,
+            logger: logger
+        )
     }
 }

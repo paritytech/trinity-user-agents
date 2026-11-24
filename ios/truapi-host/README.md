@@ -119,6 +119,12 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ./ios/truapi-host/scripts/test.sh
 ```
 
+## Shared product workers
+
+Install the WebView worker host on the signed-in runtime. Rust requests a start with an attempt specific to this product and boot. Swift opens the execution through that attempt, loads the module into its WKWebView and acknowledges the execution it opened. Rust discards late acknowledgements if demand ended or a replacement has started.
+
+Chat and Pocket each hold the result of `claimWorker(productId:)` and observe the ready execution to send Chat actions or render. Each consumer calls `release()` on its own claim. Rust requests disposal of the WKWebView after the final reference ends.
+
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` and opens the
@@ -249,9 +255,9 @@ for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. A feature calls
 `runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
-on that claim when its work ends. Starting, replacing or ending a render stream
-leaves the reference count unchanged. The first claim and final release reach
-the runtime bridge through `requestWorkerTransition`. Two rules the core
+on that claim when its work ends. The runtime delivers the first start and last
+stop to the installed worker host. Hosts that manage readiness themselves receive
+`requestWorkerTransition` on the runtime bridge. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.

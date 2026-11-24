@@ -1,4 +1,5 @@
 import Foundation
+import class TrUAPIHost.TrUAPIHostRuntime
 import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
@@ -238,16 +239,6 @@ extension ServiceCoordinator {
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
-        RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
-        RootDependencyLocator.setDependency(
-            PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
-                as PublicProfileAvatarViewModelMaking
-        )
-        CoreDurableRecoveryTask.shared.attach(
-            truapiRuntimeProvider,
-            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
-        )
-
         let gameReminders = ProductGameReminderCenter.makeDefault()
         RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
         RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
@@ -258,22 +249,42 @@ extension ServiceCoordinator {
             contentHashCache: ContentHashCache.shared
         )
 
-        // Built here rather than alongside chat: every modality is served from
-        // one worker per product, and hanging the Pocket off chat's assembly
-        // would let any chat service failing take every live card face with it,
-        // silently.
-        var pocket: ProductPocketService?
-        if let service = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider) {
-            RootDependencyLocator.setDependency(service)
-            service.start(
-                runtimeProvider: truapiRuntimeProvider,
-                flowState: spaFlowState,
-                productFileProvider: productFileProvider,
-                chainRegistry: ChainRegistryFacade.sharedRegistry,
-                gameReminders: gameReminders,
-                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak truapiRuntimeProvider] in
+            guard let truapiRuntimeProvider else { throw CancellationError() }
+            return try truapiRuntimeProvider.sharedRuntime()
+        }
+        let contexts = ProductWorkerContexts { [weak truapiRuntimeProvider] in truapiRuntimeProvider?.presentationView }
+        let workerBuilder = TrUAPIWorkerBuilder(
+            runtime: runtime,
+            flowState: spaFlowState,
+            productFileProvider: productFileProvider,
+            gameReminders: gameReminders,
+            themeManager: ThemeManager.shared,
+            logger: logger
+        )
+        let webViewHost = WebViewWorkerHost { productId, attempt in
+            try await workerBuilder.makeRuntime(
+                productId: productId,
+                context: contexts.context(for: productId),
+                attempt: attempt
             )
-            pocket = service
+        }
+        truapiRuntimeProvider.attach(webViewHost: webViewHost)
+
+        RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        RootDependencyLocator.setDependency(
+            PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
+                as PublicProfileAvatarViewModelMaking
+        )
+        CoreDurableRecoveryTask.shared.attach(
+            truapiRuntimeProvider,
+            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
+        )
+
+        let pocket = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider)
+        if let pocket {
+            RootDependencyLocator.setDependency(pocket)
+            pocket.start(runtime: runtime, flowState: spaFlowState)
         }
 
         guard
@@ -337,17 +348,17 @@ extension ServiceCoordinator {
 
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
-            truapiRuntimeProvider: truapiRuntimeProvider,
             spaFlowState: spaFlowState,
             productFileProvider: productFileProvider,
-            pocket: pocket
+            runtime: runtime,
+            contexts: contexts
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
+            workerReloader: ProductWorkerReloader(runtime: runtime),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )
