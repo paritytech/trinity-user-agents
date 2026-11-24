@@ -451,6 +451,69 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
+/// The test stack's descriptor at `sequence`, on the bundled chains and
+/// generation.
+pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
+}
+
+/// `descriptor` moved to the `testnet` TLD.
+pub fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["tld"] = "testnet".into();
+	descriptor
+}
+
+/// `descriptor` without its Bulletin chain. It still passes the descriptor
+/// rules, but the core cannot run it.
+pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.retain(|chain| chain["role"] != "Bulletin");
+	descriptor
+}
+
+/// The `ETag` every [`stored_test_record`] carries.
+const STORED_TEST_ETAG: &str = "\"stored\"";
+
+/// The record a store holds once a reader stored `descriptor`, fetched at
+/// the Unix time `fetched_at` and served with an `ETag`.
+pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
+	let (link, bytes) = sign_test_descriptor(descriptor);
+	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");
+	let served = trinity_stack::Served::Document { bytes: &bytes, etag: Some(STORED_TEST_ETAG) };
+	trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
+		.fetched(&pointer, served, fetched_at)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored")
+}
+
+/// The status of a core running `descriptor`, neither stale nor expired, with
+/// no restart pending.
+pub fn stack_status(
+	descriptor: &serde_json::Value,
+	last_refresh: Option<crate::platform::StackRefreshOutcome>,
+) -> crate::platform::StackStatus {
+	let plain: trinity_stack::Descriptor =
+		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
+	crate::platform::StackStatus {
+		descriptor: serde_json::to_string(&plain).expect("a descriptor always serialises"),
+		generation: plain.generation,
+		stale: false,
+		expired: false,
+		restart_required: false,
+		last_refresh,
+	}
+}
+
+/// The outcome of fetching a copy on another TLD.
+pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
+	Some(crate::platform::StackRefreshOutcome::Refused {
+		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+	})
+}
+
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
 /// verifies it.
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
