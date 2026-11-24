@@ -63,13 +63,20 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
     var bounds by remember { mutableStateOf(Rect.Zero) }
     var frameNanos by remember { mutableLongStateOf(0L) }
     val channel = mask.channel
+    val coordinates = remember(mask.trail) { MaskCoordinates() }
 
     /** What the node draws now, in hundredths of a dp from its top-start corner. */
     fun picture(): JsMaskShapes.Picture {
         val followed = mask.follow?.let { follow ->
             val trail = mask.trail ?: return@let emptyList()
-            val place = trail.origin - bounds.topLeft
-            MaskRules.followed(trail.strokes, follow.width, place, density, if (rtl) bounds.width else null, follow.brush)
+
+            // A press changes the coordinate transform even when the finger is stationary.
+            @Suppress("UNUSED_VARIABLE", "unused")
+            val drawnScale = trail.drawnScale
+            val projection = coordinates.projection
+            val strokes = if (projection == null) trail.strokes else trail.strokes.map { stroke -> stroke.map(projection::point) }
+            val place = if (projection == null) trail.origin - bounds.topLeft else Offset.Zero
+            MaskRules.followed(strokes, follow.width, place, density, if (rtl) bounds.width else null, follow.brush)
         }.orEmpty()
         return JsMaskShapes.Picture(mask.mode, mask.shapes + channel?.added.orEmpty() + followed)
     }
@@ -77,7 +84,9 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
     SideEffect { channel?.source = ::picture }
 
     val share = mask.clearedShare
-    if (share != null) {
+    if (mask.haptics != null || share?.whileDown == true || share?.rescue != null) {
+        MaskProgress(mask, bounds, density) { picture() }
+    } else if (share != null) {
         val dispatch by rememberUpdatedState(LocalJsEventHandler.current)
         val pictureNow by rememberUpdatedState { picture() }
         val trail = mask.trail
@@ -99,7 +108,7 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
             }
             val watch = MaskShareWatch(input())
             snapshotFlow { input() }.collect { input ->
-                if (watch.update(input, follows, ::reached)) dispatch(share.action, JsUiEvent.Type.ButtonClick)
+                if (watch.update(input, follows, reached = ::reached)) dispatch(share.action, JsUiEvent.Type.ButtonClick)
             }
         }
     }
@@ -115,10 +124,15 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
     }
 
     return Modifier
-        .onGloballyPositioned { bounds = Rect(it.positionInRoot(), it.size.toSize()) }
+        .onGloballyPositioned {
+            bounds = Rect(it.positionInRoot(), it.size.toSize())
+            coordinates.node = it
+            coordinates.update(mask.trail?.coordinates)
+        }
         // Offscreen, so the mask reaches through the node only and never into what is drawn behind it.
         .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
         .drawWithContent {
+            coordinates.update(mask.trail?.coordinates)
             drawContent()
             val now = channel?.fade
             val current = picture()

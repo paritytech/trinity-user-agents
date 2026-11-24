@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
+import androidx.compose.ui.geometry.Offset
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import kotlin.math.abs
@@ -17,6 +19,8 @@ internal enum class GestureSettle { COMPLETE, SNAP_BACK, STAY }
  * A gesture node's rules, kept apart from drawing and pointer plumbing so they can be checked on their own.
  */
 internal object GestureRules {
+    fun pressScale(feel: JsPanFeel): Offset = Offset(feel.pressScale, feel.pressScaleY ?: feel.pressScale)
+
     const val PERMILLE = 1000
     const val CATCH_UP_FRAMES = 3
 

@@ -1,12 +1,34 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MaskRulesTest {
+    @Test
+    fun `a collapsed node does not project touch points through an invalid inverse`() {
+        val pan = mockk<LayoutCoordinates> { every { isAttached } returns true }
+        val node = mockk<LayoutCoordinates> {
+            every { isAttached } returns true
+            every { localPositionOf(pan, any()) } returns Offset(Float.NaN, Float.NaN)
+        }
+        val coordinates = MaskCoordinates().apply { this.node = node }
+        coordinates.update(pan)
+        assertEquals(null, coordinates.projection)
+    }
+
+    @Test
+    fun `followed points use the inverse press transform instead of a global offset`() {
+        val frame = MaskProjection(Offset(0f, -50f), Offset(1f, 0f), Offset(0f, 2f))
+        assertEquals(Offset(50f, 30f), frame.point(Offset(50f, 40f)))
+        assertEquals(Offset(50f, 50f), frame.point(Offset(50f, 50f)))
+    }
+
     @Test
     fun `a wire place is hundredths of a dp from the left, or from the right edge right to left`() {
         val point = JsMaskPoint(x = 1050, y = -200)

@@ -123,24 +123,38 @@ internal class MaskShareWatch(private var seen: Input = Input()) {
 
     private var armed = false
     private var sentThisTree = false
+    private var sentLift: Int? = null
+
+    fun treeArrived() {
+        sentThisTree = false
+    }
 
     /** Whether to check the share now; [reached] is asked only then. */
-    fun update(input: Input, follows: Boolean, reached: () -> Boolean): Boolean {
+    fun update(
+        input: Input,
+        follows: Boolean,
+        whileDown: Boolean = false,
+        force: Boolean = false,
+        reached: () -> Boolean,
+    ): Boolean {
         val lifted = input.lifts != seen.lifts
         val added = input.additions != seen.additions
         if (input.trees != seen.trees) sentThisTree = false
         seen = input
         if (follows) {
-            if (lifted) armed = true
-            if (input.down) {
+            if (lifted || input.down && whileDown || force) armed = true
+            if (input.down && !whileDown && !force) {
                 armed = false
                 return false
             }
-            if (!armed || !(lifted || added) || !reached()) return false
+            val lift = input.lifts + if (input.down) 1 else 0
+            if (sentLift == lift || !armed || !(lifted || added || input.down && whileDown || force)) return false
+            if (!force && !reached()) return false
             armed = false
+            sentLift = lift
             return true
         }
-        if (!added || sentThisTree || !reached()) return false
+        if (!(added || force) || sentThisTree || !force && !reached()) return false
         sentThisTree = true
         return true
     }
