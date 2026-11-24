@@ -37,13 +37,21 @@ class ProductChatHostBridge(
     private val productId: ProductId,
     private val chatMessaging: ProductChatMessaging,
 ) : ChatHostBridge {
-    override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
+    override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus =
+        createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
+
+    override suspend fun createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
         val roomIcon = ProductChatIcon.fromString(icon).orReject()
-        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, roomIcon))
-            .orReject()
-            .status
-            .toCoreStatus()
+        val room = ProductChatIdParameter(roomId)
+        val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status
+        chatMessaging.setRoomConfig(room, config.toModel()).orReject()
+        return status.toCoreStatus()
     }
 
     override suspend fun registerBot(botId: String, name: String, icon: String): ChatBotRegistrationStatus =
@@ -73,10 +81,6 @@ class ProductChatHostBridge(
 
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         chatMessaging.roomDeclarations(requireRoom(roomId)).orReject()?.config?.toCore() ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
-
-    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
-        chatMessaging.setRoomConfig(requireRoom(roomId), config.toModel()).orReject()
-    }
 
     override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {
         val room = requireRoom(roomId)
