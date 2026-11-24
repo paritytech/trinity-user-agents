@@ -1,5 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -71,10 +76,23 @@ class ProductRoomFooterCardRenderer(
                 }
                 is LoadingState.Loaded -> {
                     CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
-                        JsWidgetRenderer(
-                            widget = currentState.data,
-                            jsEventHandler = viewModel::handleUiEvent,
-                        )
+                        // Another card docked in its place fades in over this one; a new tree of the same card
+                        // only updates it.
+                        AnimatedContent(
+                            targetState = currentState.data,
+                            transitionSpec = {
+                                fadeIn(tween(CARD_CROSSFADE_MILLIS)) togetherWith fadeOut(tween(CARD_CROSSFADE_MILLIS))
+                            },
+                            contentKey = { it.card },
+                            label = "dockedCardCrossfade",
+                        ) { docked ->
+                            JsWidgetRenderer(
+                                widget = docked.tree,
+                                jsEventHandler = { actionId, eventType ->
+                                    viewModel.handleUiEvent(docked.card, actionId, eventType)
+                                },
+                            )
+                        }
                     }
                 }
                 is LoadingState.Error -> {
@@ -92,3 +110,6 @@ class ProductRoomFooterCardRenderer(
 
     override fun hashCode(): Int = 31 * room.hashCode() + card.hashCode()
 }
+
+/** How long another card docked in the room's footer takes to fade in over the one before. */
+private const val CARD_CROSSFADE_MILLIS = 250
