@@ -44,7 +44,8 @@ pub use returns::ReturnRequest;
 #[cfg(test)]
 pub use scarcity::ASSET_HUB_PIPELINE;
 pub use scarcity::{
-	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
+	HoldingTracker, HoldingTrackerDeps, ScarcityMoveBudget, ScarcityTransfersDeps,
+	with_scarcity_transfers,
 };
 pub use standing::ItemRefusal;
 #[cfg(test)]

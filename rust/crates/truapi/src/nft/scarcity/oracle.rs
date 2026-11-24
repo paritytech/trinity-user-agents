@@ -16,15 +16,16 @@ use crate::{
 
 const OPEN_PASS: &str = "scarcity_transfer_oracle";
 
-/// Decides NFT transfers from what their destinations hold. A transfer signs
-/// revision N of its instance, and only the key holding it at N, or the
-/// collection owner, can move it at N. A transfer that lands leaves the
-/// instance at its destination at revision N + 1 with at least one move
-/// counted. A failed dispatch leaves it at the source, and the owner's
-/// `force_transfer` resets the moves to 0, so the destination holding the
-/// instance at N + 1 with moves counted means this transfer landed, whatever
-/// the destination held before. Any other revision proves nothing, since the
-/// instance may have landed and moved on: the engine's block search decides.
+/// Decides NFT transfers from what their destinations hold. A transfer is
+/// built against revision N of its instance, and only the key holding it at
+/// N, or the collection owner, can move it at N. A transfer that lands,
+/// fee-less or paid, leaves the instance at its destination at revision
+/// N + 1, and a failed dispatch leaves it at the source. So the destination
+/// holding the instance at N + 1 means this transfer landed, whatever the
+/// destination held before. The owner's `force_transfer` into the same
+/// destination at N + 1 looks the same, which needs the owner to target a
+/// fresh key of ours. Any other revision proves nothing, since the instance
+/// may have landed and moved on: the engine's block search decides.
 pub struct ScarcityTransferOracle {
 	chain: Arc<dyn ScarcityChain>,
 }
@@ -88,12 +89,10 @@ impl BuiltTransfer {
 	}
 
 	/// Whether `held`, what the destination holds, is the instance as this
-	/// transfer leaves it: one revision on, with moves counted.
+	/// transfer leaves it: one revision on.
 	fn left_as(&self, held: Option<ScarcityNft>) -> bool {
 		let next_revision = self.signed_state_nonce.checked_add(1);
-		held.is_some_and(|nft| {
-			nft.instance == self.instance && Some(nft.state_nonce) == next_revision && nft.moves > 0
-		})
+		held.is_some_and(|nft| nft.instance == self.instance && Some(nft.state_nonce) == next_revision)
 	}
 }
 

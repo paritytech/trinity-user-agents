@@ -8,7 +8,7 @@ use crate::{
 		DEFAULT_MORTALITY_PERIOD, HashAndNumber, Mortality, StorageWatchError,
 		extrinsic_service_serving,
 	},
-	durable::{DomainId, SubmissionPlan},
+	durable::{DomainId, DurableTxStatus, SubmissionPlan, Window},
 	encrypted_storage::{EncryptedStorage, MemoryEncryptedStorage},
 	host_logic::root_entropy::RootEntropy,
 	nft::{
@@ -16,7 +16,9 @@ use crate::{
 		keys::ItemIndex,
 		scarcity::{
 			chain::TransferContext,
-			testing::{ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE, asset_hub_metadata},
+			testing::{
+				ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE, FixedMoveBudget, asset_hub_metadata,
+			},
 		},
 		testing::{FixedEntropy, TEST_ENTROPY, TEST_INSTALLATION, imported_test_key},
 	},
@@ -160,6 +162,7 @@ fn policy_importing_from(
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: transfer_extrinsics(),
 		genesis: GENESIS,
+		budget: Arc::new(FixedMoveBudget(MoveBudget::new(16))),
 	})
 }
 
@@ -190,6 +193,36 @@ fn prepare_one(registered: &RegisteredTransfer, chain: ScriptedScarcity) -> Opti
 	let batch = [registered.deferred.clone()];
 	let mut prepared = block_on(policy(chain).prepare(&batch)).unwrap();
 	prepared.remove(&registered.deferred.id)
+}
+
+/// `registered` as a paid move whose PGAS claim reached `claim`.
+fn paid_with_claim(registered: RegisteredTransfer, claim: DependencyStatus) -> RegisteredTransfer {
+	let mut paid = registered;
+	let mut params = TransferParams::try_from(&paid.deferred.plan.params).unwrap();
+	params.mode = TransferMode::Paid;
+	paid.deferred.plan.params = params.into();
+	paid.deferred.dependencies = vec![DependencyStatusRecord { id: DurableTxId(0), status: claim }];
+	paid
+}
+
+/// What the NFT at the source looks like once it used `moves` fee-less moves.
+fn held_after_moves(moves: u16) -> ScarcityNft {
+	ScarcityNft { moves, ..held_nft() }
+}
+
+/// Whether the policy builds `params` again after an attempt failed as `kind`.
+fn retries(params: &TransferParams, kind: VerdictFailureKind) -> bool {
+	let entry = DurableTxEntry {
+		id: DurableTxId(1),
+		domain: DomainId::new("nft"),
+		group: None,
+		tx_hash: H256([0x01; 32]),
+		window: Window { birth: FINALIZED.number, period: 64 },
+		status: DurableTxStatus::Pending,
+		scanned_to: None,
+		plan: None,
+	};
+	policy(ScriptedScarcity::default()).can_retry(&entry, &params.clone().into(), kind)
 }
 
 /// An item is available once the best block holds it, so a transfer is judged
@@ -352,6 +385,7 @@ fn without_a_session_a_transfer_waits_until_its_limit() {
 			imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 			extrinsics: transfer_extrinsics(),
 			genesis: GENESIS,
+			budget: Arc::new(FixedMoveBudget(MoveBudget::new(16))),
 		})
 	};
 	let prepare = |registered: &RegisteredTransfer| {
@@ -470,4 +504,71 @@ impl ItemSigner for SignedOut {
 	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
 		Err(AuthorityError::Disconnected)
 	}
+}
+
+/// An exhausted NFT moves only through the paid call, so a paid move is
+/// built as `transfer_by_holder`, which names the instance it moves.
+#[test]
+fn a_paid_transfer_is_built_as_transfer_by_holder() {
+	let registered = paid_with_claim(registered_transfer(0), DependencyStatus::Success);
+	let metadata = asset_hub_metadata();
+
+	let prepared = prepare_one(&registered, holding(&registered, held_after_moves(16)));
+
+	let Some(Preparation::Ready { extrinsic: signed, .. }) = prepared else {
+		panic!("built: {prepared:?}")
+	};
+	let bytes = signed.extrinsic.bytes();
+	let decoded = decode_extrinsic(&mut &bytes[..], &*metadata, metadata.types()).unwrap();
+	assert_eq!(decoded.call_name(), "transfer_by_holder");
+}
+
+/// The node refuses a fee-less move of an exhausted NFT, so building it
+/// would only spend the transfer's attempts.
+#[test]
+fn a_fee_less_transfer_of_an_exhausted_nft_is_given_up() {
+	let registered = registered_transfer(0);
+
+	let exhausted = prepare_one(&registered, holding(&registered, held_after_moves(16)));
+	let last_move = prepare_one(&registered, holding(&registered, held_after_moves(15)));
+
+	assert_eq!(exhausted, Some(Preparation::GiveUp));
+	assert!(matches!(last_move, Some(Preparation::Ready { .. })));
+}
+
+/// An item key has no PGAS of its own, so a paid move whose claim failed
+/// can never pay its fee.
+#[test]
+fn a_paid_transfer_whose_claim_failed_is_given_up() {
+	let registered = paid_with_claim(registered_transfer(0), DependencyStatus::IgnoredFailure);
+
+	let prepared = prepare_one(&registered, holding(&registered, held_after_moves(16)));
+
+	assert_eq!(prepared, Some(Preparation::GiveUp));
+}
+
+/// `transfer_by_holder` clears the key's lock rather than being refused by
+/// it, so a lock holds back only a fee-less move.
+#[test]
+fn a_paid_transfer_from_a_locked_key_is_built() {
+	let registered = paid_with_claim(registered_transfer(0), DependencyStatus::Success);
+	let mut locked = holding(&registered, held_after_moves(16));
+	locked.locked_until.insert(registered.source, NOW + 1);
+
+	let prepared = prepare_one(&registered, locked);
+
+	assert!(matches!(prepared, Some(Preparation::Ready { .. })));
+}
+
+/// A paid attempt that failed at dispatch already cost a fee, so it is not
+/// paid again. Refused or expired attempts cost nothing and are rebuilt.
+#[test]
+fn only_a_paid_attempt_that_failed_at_dispatch_is_not_rebuilt() {
+	let fee_less = TransferParams::try_from(&registered_transfer(0).deferred.plan.params).unwrap();
+	let paid = TransferParams { mode: TransferMode::Paid, ..fee_less.clone() };
+
+	assert!(!retries(&paid, VerdictFailureKind::DispatchFailed));
+	assert!(retries(&paid, VerdictFailureKind::Rejected));
+	assert!(retries(&paid, VerdictFailureKind::Expired));
+	assert!(retries(&fee_less, VerdictFailureKind::DispatchFailed));
 }

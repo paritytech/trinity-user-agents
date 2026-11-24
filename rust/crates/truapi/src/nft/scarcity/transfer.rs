@@ -1,4 +1,4 @@
-//! A fee-less `Scarcity::transfer`, signed by the item key it transfers from.
+//! An NFT transfer, fee-less or paid, signed by the item key it transfers from.
 
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 
@@ -44,12 +44,43 @@ impl ExtrinsicService {
 			.build()
 			.await
 	}
+
+	/// `nft_transfer` as the paid `Scarcity::transfer_by_holder` on the chain
+	/// `genesis`, signed by `signer` with its account nonce and born at the
+	/// block this service picks. The runtime takes the fee from the signer's
+	/// PGAS. It names no revision, so `state_nonce` is not signed over.
+	pub async fn sign_paid_nft_transfer(
+		&self,
+		genesis: H256,
+		signer: &Sr25519Signer,
+		nft_transfer: &NftTransfer,
+	) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+		let args = PaidTransferCallArgs {
+			instance: nft_transfer.instance,
+			to: nft_transfer.destination.0,
+		};
+		self.build_mortal_extrinsic(genesis)
+			.with_call_args("Scarcity", "transfer_by_holder", args)
+			.with_signer(signer)
+			.build()
+			.await
+	}
 }
 
 /// `Scarcity::transfer` arguments.
 #[derive(EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 struct TransferCallArgs {
+	/// The key the NFT goes to.
+	to: [u8; 32],
+}
+
+/// `Scarcity::transfer_by_holder` arguments.
+#[derive(EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+struct PaidTransferCallArgs {
+	/// The instance the signer holds.
+	instance: u64,
 	/// The key the NFT goes to.
 	to: [u8; 32],
 }

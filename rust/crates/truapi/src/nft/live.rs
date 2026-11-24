@@ -28,7 +28,8 @@ use truapi::latest::{
 };
 
 use super::{
-	ImportedSecretStore, ItemKey, NftLedger, NftLedgerDeps, PurseId, ScarcityTransfersDeps,
+	ImportedSecretStore, ItemKey, NftLedger, NftLedgerDeps, PurseId, ScarcityMoveBudget,
+	ScarcityTransfersDeps,
 	scarcity::ASSET_HUB_PIPELINE,
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
 	with_scarcity_transfers,
@@ -149,6 +150,7 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		signer: keys.clone(),
 		imported: imported.clone(),
 		extrinsics: Arc::new(ExtrinsicService::over_chain(chain.clone(), versions)),
+		budget: Arc::new(ScarcityMoveBudget::new(storage.clone(), Arc::new(chain.clone()), genesis)),
 	};
 	let engine =
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));

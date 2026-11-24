@@ -1475,7 +1475,7 @@ fn durable_registry(
 	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> crate::durable::DurableRegistry {
 	use crate::{
-		nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers},
+		nft::{ImportedSecretStore, ScarcityMoveBudget, ScarcityTransfersDeps, with_scarcity_transfers},
 		pgas_claims::with_pgas_claims,
 	};
 
@@ -1488,11 +1488,12 @@ fn durable_registry(
 	let chain = Arc::new(services.chain.clone());
 	let deps = ScarcityTransfersDeps {
 		storage: chain.clone(),
-		heads: chain,
-		genesis: services.asset_hub_chain_genesis_hash().into(),
+		heads: chain.clone(),
+		genesis,
 		signer,
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
+		budget: Arc::new(ScarcityMoveBudget::new(chain.clone(), chain, genesis)),
 	};
 	with_scarcity_transfers(registry, deps)
 }

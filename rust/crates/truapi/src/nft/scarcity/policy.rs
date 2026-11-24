@@ -8,13 +8,14 @@ use subxt::utils::H256;
 
 use super::{
 	chain::{KeyLocks, ScarcityChain, ScarcityNft, TransferContext},
+	move_budget::{MoveBudget, MoveBudgetSource},
 	transfer::NftTransfer,
 };
 use crate::{
 	chain::{ExtrinsicService, MortalExtrinsic},
 	durable::{
-		DeferredDurableTx, DurableTxEntry, DurableTxId, PolicyError, PolicyParams, Preparation,
-		SubmissionPolicy, VerdictFailureKind,
+		DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DurableTxEntry, DurableTxId,
+		PolicyError, PolicyParams, Preparation, SubmissionPolicy, VerdictFailureKind,
 	},
 	host_internal::extrinsic::Sr25519Signer,
 	nft::{ImportedSecretStore, ItemKey, ItemSigner, ItemSlot},
@@ -108,9 +109,12 @@ pub struct ScarcityTransferPolicyDeps {
 	pub extrinsics: Arc<ExtrinsicService>,
 	/// Genesis of the chain that runs the pallet.
 	pub genesis: H256,
+	/// The fee-less move budget, read once per batch.
+	pub budget: Arc<dyn MoveBudgetSource>,
 }
 
-/// Builds NFT transfers: one fee-less `Scarcity::transfer` per spent key.
+/// Builds NFT transfers: one `Scarcity::transfer` or `Scarcity::transfer_by_holder`
+/// per spent key, as its mode says.
 pub struct ScarcityTransferPolicy {
 	deps: ScarcityTransferPolicyDeps,
 }
@@ -127,6 +131,15 @@ struct PlannedTransfer {
 	id: DurableTxId,
 	attempts: u32,
 	params: TransferParams,
+	dependencies: Vec<DependencyStatusRecord>,
+}
+
+impl PlannedTransfer {
+	/// Whether a transaction it waited for, its PGAS claim, failed for good.
+	fn has_failed_dependency(&self) -> bool {
+		let failed = |record: &DependencyStatusRecord| record.status == DependencyStatus::IgnoredFailure;
+		self.dependencies.iter().any(failed)
+	}
 }
 
 /// What the chain says about one planned transfer at the best head.
@@ -146,6 +159,8 @@ struct BatchBuild {
 	extrinsics: ExtrinsicService,
 	/// Unix time of the host's clock, which wait limits are measured in.
 	now: u64,
+	/// The fee-less move budget the runtime declares now.
+	budget: MoveBudget,
 }
 
 impl BatchBuild {
@@ -155,12 +170,13 @@ impl BatchBuild {
 		extrinsics: &ExtrinsicService,
 		genesis: H256,
 		context: TransferContext,
+		budget: MoveBudget,
 	) -> Result<Self, PolicyError> {
 		let extrinsics = extrinsics
 			.cache_runtime_at(genesis, context.birth)
 			.await
 			.map_err(policy_error)?;
-		Ok(Self { extrinsics, now: current_unix_secs() })
+		Ok(Self { extrinsics, now: current_unix_secs(), budget })
 	}
 }
 
@@ -190,10 +206,12 @@ enum SignedTransfer {
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for ScarcityTransferPolicy {
-	/// Every proven failure is built again: the next build reads the chain
+	/// Every proven failure is built again, except a paid attempt that failed
+	/// at dispatch, which already cost a fee. The next build reads the chain
 	/// afresh and gives up once the transfer can never land.
-	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {
-		true
+	fn can_retry(&self, _: &DurableTxEntry, params: &PolicyParams, kind: VerdictFailureKind) -> bool {
+		let paid = TransferParams::try_from(params).is_ok_and(|params| params.mode == TransferMode::Paid);
+		!(paid && kind == VerdictFailureKind::DispatchFailed)
 	}
 
 	async fn prepare(
@@ -203,7 +221,9 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 		let planned = planned_transfers(batch);
 		let context = self.deps.chain.transfer_context().await.map_err(policy_error)?;
 		let views = self.read_transfer_views(context.best.hash, &planned).await?;
-		let build = BatchBuild::born_at(&self.deps.extrinsics, self.deps.genesis, context).await?;
+		let budget = self.deps.budget.current_budget().await.map_err(policy_error)?;
+		let build =
+			BatchBuild::born_at(&self.deps.extrinsics, self.deps.genesis, context, budget).await?;
 		let mut prepared = HashMap::new();
 		for (transfer, view) in planned.iter().zip(views) {
 			if let Some(answer) = self.preparation_of(transfer, view, &build).await {
@@ -244,7 +264,7 @@ impl ScarcityTransferPolicy {
 		view: TransferView,
 		build: &BatchBuild,
 	) -> Option<Preparation> {
-		let nft_transfer = match decide_from_chain(transfer, view) {
+		let nft_transfer = match decide_from_chain(transfer, view, &build.budget) {
 			TransferDecision::GiveUp => return Some(Preparation::GiveUp),
 			TransferDecision::Wait => return give_up_after_limit(transfer, build.now),
 			TransferDecision::Build(nft_transfer) => nft_transfer,
@@ -269,10 +289,12 @@ impl ScarcityTransferPolicy {
 			Ok(None) => return SignedTransfer::Unsignable,
 			Err(error) => return log_unsigned_transfer(error),
 		};
-		build
-			.extrinsics
-			.sign_nft_transfer(self.deps.genesis, &signer, nft_transfer)
-			.await
+		let genesis = self.deps.genesis;
+		let signed = match transfer.params.mode {
+			TransferMode::FeeLess => build.extrinsics.sign_nft_transfer(genesis, &signer, nft_transfer).await,
+			TransferMode::Paid => build.extrinsics.sign_paid_nft_transfer(genesis, &signer, nft_transfer).await,
+		};
+		signed
 			.map(|extrinsic| ready_preparation(transfer, nft_transfer, extrinsic))
 			.map_or_else(log_unsigned_transfer, SignedTransfer::Ready)
 	}
@@ -335,9 +357,12 @@ fn planned_transfers(batch: &[DeferredDurableTx]) -> Vec<PlannedTransfer> {
 
 /// `deferred` as a transfer, or `None` when its params do not decode.
 fn planned_transfer(deferred: &DeferredDurableTx) -> Option<PlannedTransfer> {
-	TransferParams::try_from(&deferred.plan.params)
-		.ok()
-		.map(|params| PlannedTransfer { id: deferred.id, attempts: deferred.attempts, params })
+	TransferParams::try_from(&deferred.plan.params).ok().map(|params| PlannedTransfer {
+		id: deferred.id,
+		attempts: deferred.attempts,
+		params,
+		dependencies: deferred.dependencies.clone(),
+	})
 }
 
 /// One view per transfer from the three reads, which answer in the same order.
@@ -362,25 +387,47 @@ fn give_up_after_limit(transfer: &PlannedTransfer, now: u64) -> Option<Preparati
 	(now >= transfer.params.give_up_after).then_some(Preparation::GiveUp)
 }
 
-/// What the chain says about `transfer`. A source that does not hold the
-/// instance waits, since a reorg can put it back, and a transfer with no
-/// submitted attempt yet waits for its source to hold any. An occupied destination
-/// fails at once.
-fn decide_from_chain(transfer: &PlannedTransfer, view: TransferView) -> TransferDecision {
-	if transfer.attempts >= MAX_ATTEMPTS || view.destination.is_some() {
+/// What the chain says about `transfer`, against the move `budget`. A source
+/// that does not hold the instance waits, since a reorg can put it back, and a
+/// transfer with no submitted attempt yet waits for its source to hold any. An
+/// occupied destination, a paid move whose PGAS claim failed and a fee-less
+/// move of an exhausted NFT fail at once. A lock holds back only a fee-less
+/// move: a paid one clears it.
+fn decide_from_chain(
+	transfer: &PlannedTransfer,
+	view: TransferView,
+	budget: &MoveBudget,
+) -> TransferDecision {
+	if can_never_land(transfer, &view) {
 		return TransferDecision::GiveUp;
 	}
-	let expected = transfer.params.submitted_attempt.map(|attempt| attempt.instance);
-	let is_expected =
-		|held: &ScarcityNft| expected.is_none_or(|instance| held.instance == instance);
-	let held = view.source.filter(is_expected);
-	let Some(held) = held else { return TransferDecision::Wait };
-	if view.locked {
+	let Some(held) = view.source.filter(|held| is_expected_instance(transfer, held)) else {
+		return TransferDecision::Wait;
+	};
+	let fee_less = transfer.params.mode == TransferMode::FeeLess;
+	if fee_less && budget.is_exhausted(held.moves) {
+		return TransferDecision::GiveUp;
+	}
+	if fee_less && view.locked {
 		return TransferDecision::Wait;
 	}
 	let ScarcityNft { instance, state_nonce, .. } = held;
 	let destination = transfer.params.destination;
 	TransferDecision::Build(NftTransfer { instance, state_nonce, destination })
+}
+
+/// Whether `transfer` can never land, whatever its source holds: it used its
+/// attempts, its destination is taken, or it is paid and its claim failed.
+fn can_never_land(transfer: &PlannedTransfer, view: &TransferView) -> bool {
+	let unfunded = transfer.params.mode == TransferMode::Paid && transfer.has_failed_dependency();
+	transfer.attempts >= MAX_ATTEMPTS || view.destination.is_some() || unfunded
+}
+
+/// Whether `held` is the instance `transfer` moves: the one its attempt
+/// signed, or any before its first attempt.
+fn is_expected_instance(transfer: &PlannedTransfer, held: &ScarcityNft) -> bool {
+	let expected = transfer.params.submitted_attempt.map(|attempt| attempt.instance);
+	expected.is_none_or(|instance| held.instance == instance)
 }
 
 fn policy_error(error: impl core::fmt::Display) -> PolicyError {

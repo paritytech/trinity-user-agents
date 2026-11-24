@@ -128,14 +128,14 @@ fn the_instance_at_another_revision_proves_nothing() {
 	}
 }
 
-/// The collection owner can force the instance to any key at the next
-/// revision too, but that resets its moves.
+/// A paid move resets the moves to 0 where it lands, and it must still be
+/// proven once a restart lost its watch.
 #[test]
-fn a_forced_move_to_the_destination_proves_nothing() {
-	let forced = Some(instance_at(SIGNED + 1, 0));
-	let holds = DestinationHolds { at_finalized: forced, at_best: forced };
+fn a_landing_with_its_moves_reset_is_proven() {
+	let paid = Some(instance_at(SIGNED + 1, 0));
+	let holds = DestinationHolds { at_finalized: paid, at_best: paid };
 
-	assert_eq!(proven_at_both_heads(transfer_entry(Some(SIGNED)), holds), (false, false));
+	assert_eq!(proven_at_both_heads(transfer_entry(Some(SIGNED)), holds), (true, true));
 }
 
 /// Until an attempt is built there is no revision to check against.
