@@ -354,10 +354,9 @@ claim starts an attempt. Releasing the last claim stops it.
 
 On native hosts, the Rust controller sends the startup attempt to the WebView
 host. The WebView opens its execution through that attempt, and reports module
-startup and a crash through it. Rust
-publishes the execution when its module has started and its bridge has
-authenticated. On the web, `@parity/truapi-host` delivers
-`requestWorkerTransition` to the host, which reports a crash with `workerExited`.
+startup and a crash through it. Rust publishes the execution when its module
+has started and its bridge has authenticated. On the web, `@parity/truapi-host`
+delivers `requestWorkerTransition` to the host and reports no worker exits.
 
 While claims remain, the ledger retries a crashed worker. The first restart is
 immediate. For repeated exits less than a minute apart, the delay starts at 1 s

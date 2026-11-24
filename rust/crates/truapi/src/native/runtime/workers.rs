@@ -19,20 +19,35 @@ use crate::{
 	platform::{ExecutableKind, ProductContext, ProductId},
 };
 
-/// Operations the native UI thread performs on an individual WebView.
+/// How long an attempt may go without running, from its start and from each lost connection.
+const STARTUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(90);
+
+/// Starts and disposes the WebView of each worker attempt.
+///
+/// Calls arrive on whichever thread changed worker demand or reported a failure, which can be the
+/// thread constructing the runtime or one of the core's own. Return without blocking: the starts
+/// and stops of every product wait behind the call. The core holds no lock meanwhile, so an
+/// implementation may call back into the runtime or the attempt.
 #[uniffi::export(rust, foreign)]
 pub trait NativeHostWebViewWorker: Send + Sync {
-	/// Begin booting the product, reporting readiness or failure through this attempt.
+	/// Begin booting the product, reporting module start or failure through this attempt.
+	///
+	/// The core fails an attempt that is not running 90 seconds after its start, or after it
+	/// lost its connection.
 	fn start(&self, product_id: ProductId, attempt: Arc<NativeWorkerAttempt>);
 
 	/// Dispose only the specified attempt's WebView, even when startup is incomplete.
+	///
+	/// Arrives once for each started attempt, after its [`Self::start`] call has returned,
+	/// including after a failure the attempt reported. It can follow the start of the product's
+	/// next attempt.
 	fn stop(&self, product_id: ProductId, attempt_id: u64);
 }
 
 /// Availability of the product's session-owned worker.
 #[derive(Clone, uniffi::Enum)]
 pub enum NativeWorkerExecutionState {
-	/// The session has no demand for the product.
+	/// The session has no demand for the product, or a reload is replacing its worker.
 	Idle,
 	/// The worker is starting, reconnecting, or waiting for its next start after a failure.
 	Pending,
@@ -52,6 +67,8 @@ pub enum NativeWorkerExecutionState {
 #[uniffi::export(rust, foreign)]
 pub trait NativeWorkerExecutionObserver: Send + Sync {
 	/// Receive the current state at registration, followed by each change in order.
+	///
+	/// `Running` arrives again when the worker's connection is replaced.
 	fn changed(&self, state: NativeWorkerExecutionState);
 
 	/// Finish the observation after the session has delivered its last update.
@@ -243,7 +260,7 @@ impl NativeWorkerAttempt {
 	fn deadline(self: &Arc<Self>, runtime: &NativeTrUApiHostRuntime) -> BackgroundTask {
 		let attempt = self.clone();
 		BackgroundTask::spawn(&runtime.spawner, async move {
-			tokio::time::sleep(core::time::Duration::from_secs(90)).await;
+			tokio::time::sleep(STARTUP_DEADLINE).await;
 			attempt.startup_timeout();
 		})
 	}
@@ -470,6 +487,9 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Revoke all worker claims and dispose their executions when the host session ends.
+	///
+	/// While another thread is delivering a worker start or stop, the disposal completes on that
+	/// thread after this call returns. An observer's `finished` follows it.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();
 	}
