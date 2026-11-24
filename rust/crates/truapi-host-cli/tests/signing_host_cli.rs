@@ -56,26 +56,30 @@ fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
 	profile
 }
 
-/// State from before `v2`, kept under the directory name this run uses, is
-/// neither read nor moved.
+/// State from before `v2` is neither read nor moved, both under the descriptor's namespace,
+/// `paseo-next-v2`, where releases before `v2` kept it, and under the directory name this run
+/// uses.
 #[test]
 fn versioned_state_starts_fresh_and_preserves_previous_state() {
 	for source in ["argument", "environment", "default"] {
 		let temporary = tempfile::tempdir().expect("create temporary state root");
 		let base_path = temporary.path().join("truapi-host");
-		let previous_network = base_path.join(state::offline_state_directory());
-		let previous_profile = previous_network.join("previous_signing_host");
-		let previous_role = previous_network.join("signing-host");
-		std::fs::create_dir_all(&previous_profile).expect("create previous profile");
-		std::fs::create_dir_all(&previous_role).expect("create previous role");
-		let previous_files = [
+		let mut previous_files = vec![
 			(base_path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#),
 			(base_path.join("log-level"), "trace\n"),
-			(previous_role.join("current-session"), "previous\n"),
-			(previous_profile.join("session.json"), r#"{"version":1,"user_id":"previous.01"}"#),
-			(previous_profile.join("core-storage.json"), "previous core state"),
-			(previous_profile.join("paired-hosts.json"), "previous pairings"),
 		];
+		for network in ["paseo-next-v2", state::offline_state_directory()] {
+			let previous_profile = base_path.join(network).join("previous_signing_host");
+			let previous_role = base_path.join(network).join("signing-host");
+			std::fs::create_dir_all(&previous_profile).expect("create previous profile");
+			std::fs::create_dir_all(&previous_role).expect("create previous role");
+			previous_files.extend([
+				(previous_role.join("current-session"), "previous\n"),
+				(previous_profile.join("session.json"), r#"{"version":1,"user_id":"previous.01"}"#),
+				(previous_profile.join("core-storage.json"), "previous core state"),
+				(previous_profile.join("paired-hosts.json"), "previous pairings"),
+			]);
+		}
 		for (path, contents) in &previous_files {
 			std::fs::write(path, contents).expect("seed previous state");
 		}
