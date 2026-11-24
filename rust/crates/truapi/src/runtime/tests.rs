@@ -5540,8 +5540,9 @@ fn is_malformed<T, E>(result: Result<T, CallError<E>>) -> bool {
 fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
 	use futures::executor::block_on;
 
+	let platform = stub_platform();
 	let host =
-		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session_info());
 	let cx = CallContext::default();
 
@@ -5676,6 +5677,27 @@ fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
 			assert!(malformed, "{call} naming {product}");
 		}
 	}
+
+	let reached = [
+		("permission prompt", platform.permission_prompt_products.lock().unwrap().len()),
+		("remote permission prompt", platform.remote_permission_requests.lock().unwrap().len()),
+		("account access prompt", platform.account_access_reviews.lock().unwrap().len()),
+		("sign payload review", platform.sign_payload_reviews.lock().unwrap().len()),
+		("sign raw review", platform.sign_raw_reviews.lock().unwrap().len()),
+		("sign VRF review", platform.sign_vrf_reviews.lock().unwrap().len()),
+		("transaction review", platform.create_transaction_reviews.lock().unwrap().len()),
+		(
+			"statement signing review",
+			platform.statement_store_product_sign_reviews.lock().unwrap().len(),
+		),
+		("product subtree review", platform.product_subtree_reviews.lock().unwrap().len()),
+		("chain connection", platform.chain_connects.lock().unwrap().len()),
+		("wallet request", platform.sent_rpc.lock().unwrap().len()),
+	]
+	.into_iter()
+	.filter(|(_, count)| *count > 0)
+	.collect::<Vec<_>>();
+	assert_eq!(reached, [], "a refused call reached a prompt, the chain or the wallet");
 }
 
 #[test]

@@ -931,6 +931,23 @@ fn a_review_names_the_caller_and_every_product_it_asks_about() {
 	let caller = || ProductId::for_test("caller.dot");
 	let owner = account_id("owner.dot", 0);
 	let both = vec!["caller.dot", "owner.dot"];
+	let legacy_signer = || "5LegacySigner".to_string();
+	let legacy_raw =
+		|| HostSignRawWithLegacyAccountRequest { signer: legacy_signer(), payload: raw_payload() };
+	let legacy_transaction = || LegacyAccountTxPayload {
+		signer: [2; 32],
+		genesis_hash: [1; 32],
+		call_data: vec![],
+		extensions: vec![],
+		tx_ext_version: 0,
+	};
+	let purse_drain = |owner| NftPurseDrainReview {
+		calling_product_id: caller(),
+		from_purse: 0,
+		owner,
+		item_count: 1,
+		destination: NftPurseDrainDestination::Cheque,
+	};
 	let reviews = [
 		(
 			UserConfirmationReview::SignPayload(SignPayloadReview::Product {
@@ -1013,15 +1030,65 @@ fn a_review_names_the_caller_and_every_product_it_asks_about() {
 			UserConfirmationReview::SignVrf(SignVrfReview {
 				calling_product_id: caller(),
 				request: HostAccountSignVrfRequest {
-					account: owner,
+					account: owner.clone(),
 					transcript_label: vec![],
 					items: vec![],
 				},
 			}),
-			both,
+			both.clone(),
 		),
 		(
 			UserConfirmationReview::ProductSubtree(ProductSubtreeReview { product_id: caller() }),
+			vec!["caller.dot"],
+		),
+		(
+			UserConfirmationReview::SignPayload(SignPayloadReview::LegacyAccount {
+				account: owner.clone(),
+				request: HostSignPayloadWithLegacyAccountRequest {
+					signer: legacy_signer(),
+					payload: sign_payload_data(),
+				},
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Product(owner.clone()),
+				request: legacy_raw(),
+				watermarked: true,
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				request: legacy_raw(),
+				watermarked: true,
+			}),
+			vec![],
+		),
+		(
+			UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Product(owner),
+				payload: legacy_transaction(),
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: legacy_transaction(),
+			}),
+			vec![],
+		),
+		(
+			UserConfirmationReview::NftPurseDrain(purse_drain(NftPurseOwner::Product(
+				ProductId::for_test("owner.dot"),
+			))),
+			both,
+		),
+		(
+			UserConfirmationReview::NftPurseDrain(purse_drain(NftPurseOwner::Root)),
 			vec!["caller.dot"],
 		),
 	];
