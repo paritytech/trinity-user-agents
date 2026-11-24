@@ -548,9 +548,7 @@ execution. The container consumes `window.__truapi_localhost` during startup.
 HTTP and WebSocket share the same TCP port. After a disconnect, the host
 replaces the socket. Calls and subscriptions already sent fail and are not
 replayed. Calls not yet sent go out on the replacement once its handshake
-completes. Older SDKs use the compatibility `window.__HOST_API_PORT__`
-MessagePort, which behaves the same way and reports what was lost as a
-`HostFailure` error.
+completes.
 Production builds must omit the tag.
 
 On Unix the wrapped command is the leader of a process group retained by the
@@ -954,8 +952,8 @@ execution, preserving Allow once, Allow always and Deny semantics. These wrapper
 are also used by the full browser container loaded by dev's first blocking
 bootstrap tag.
 
-The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_TRANSPORT__`, and
-the legacy `__HOST_API_PORT__` adapter over that same connection. Published Product
+The runner exposes `window.__HOST_WEBVIEW_MARK__` and `__HOST_API_TRANSPORT__`
+over that same connection. Published Product
 SDK imports discover the host automatically. The injected transport serves one
 client, so a script that imports an SDK built on it takes the connection over
 from the `truapi` global.

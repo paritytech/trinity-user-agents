@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-An interactive explorer for the TrUAPI, the Host API surface exposed to products running inside the Polkadot Desktop Browser webview. It talks to a host over iframe `postMessage` frames or the `window.__HOST_API_PORT__` MessagePort used by native webviews and the local CLI browser bridge.
+An interactive explorer for the TrUAPI, the Host API surface exposed to products running inside the Polkadot Desktop Browser webview. It talks to a host over iframe `postMessage` frames or the `window.__HOST_API_TRANSPORT__` frame channel injected by native webviews and the local CLI browser bridge.
 
 For plain-browser development, run `truapi-host dev -- yarn dev` and open
 `http://localhost:3000`. The layout loads the CLI's development bridge from
@@ -101,14 +101,14 @@ A method without `exampleSource` shows a "Not supported" badge and disables the 
 
 ### Transport
 
-`transport.ts` auto-detects environment (iframe vs webview) and exposes singletons `getTransport()` and `getClient()`. The CLI's development-only blocking script creates a `MessageChannel`, bridges it to the loopback WebSocket, and installs one port as `window.__HOST_API_PORT__` before product code runs. The first call to `subscribeConnectionStatus()` triggers a generated `host_handshake` round-trip. The generated package owns both `TRUAPI_VERSION` and `TRUAPI_CODEC_VERSION`, so callers do not pass the codec version manually. Never create multiple transport or client instances.
+`transport.ts` auto-detects environment (iframe vs webview) and exposes singletons `getTransport()` and `getClient()`. The CLI's development-only blocking script sets the loopback WebSocket URL and runs the shared container, which installs `window.__HOST_API_TRANSPORT__` before product code runs. The first call to `subscribeConnectionStatus()` triggers a generated `host_handshake` round-trip. The generated package owns both `TRUAPI_VERSION` and `TRUAPI_CODEC_VERSION`, so callers do not pass the codec version manually. Never create multiple transport or client instances.
 
 The host accepts TCP frames only from a loopback peer. Browser WebSocket
 requests also need a loopback `Origin`; local non-browser clients may omit it.
 `yarn build` scans the exported `out/` tree and fails if the development bridge
 URL survived production compilation.
 
-In iframe mode the playground talks to its parent window via `postMessage` carrying SCALE-encoded `Uint8Array` frames. In webview mode it pulls a `MessagePort` from `window.__HOST_API_PORT__` (set by the native host) and uses `createMessagePortProvider`. The shared `@parity/truapi` transport also answers inbound `host_handshake_request` frames automatically by decoding the inbound versioned wrapper and encoding the matching `HostHandshakeResponse` variant, so V2 hosts receive V2 responses while V1 hosts remain decodable.
+In iframe mode the playground talks to its parent window via `postMessage` carrying SCALE-encoded `Uint8Array` frames. In webview mode it builds its client over `window.__HOST_API_TRANSPORT__` (set by the native host). The shared `@parity/truapi` transport also answers inbound `host_handshake_request` frames automatically by decoding the inbound versioned wrapper and encoding the matching `HostHandshakeResponse` variant, so V2 hosts receive V2 responses while V1 hosts remain decodable.
 
 ### Generated Artifacts
 

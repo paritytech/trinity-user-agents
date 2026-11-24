@@ -181,9 +181,8 @@ itself:
 
 That script installs the SDK bridge and the shared `js/container` sandbox
 synchronously. Keep it before application scripts, without `async` or `defer`.
-Updated SDKs build their own client over the injected `__HOST_API_TRANSPORT__`
-and keep it across reconnects. Older SDKs use the `__HOST_API_PORT__` adapter,
-which survives a reconnect too. SDK calls and sandbox permission checks share
+Each SDK builds its own client over the injected `__HOST_API_TRANSPORT__`
+and keeps it across reconnects. SDK calls and sandbox permission checks share
 one host WebSocket and its temporary permissions.
 `/script` uses the same fetch and WebSocket permission checks in Bun, and the
 XHR wrapper when that API is available. Dev keeps automatic approvals, and the
