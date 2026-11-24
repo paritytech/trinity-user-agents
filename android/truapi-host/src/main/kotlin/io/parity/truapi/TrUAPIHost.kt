@@ -93,7 +93,6 @@ import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeWebViewWorkerHost
-import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeWorkerExecutionState
 import uniffi.truapi.NativeWorkerExecutionObserver
@@ -1022,7 +1021,7 @@ class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::clas
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
     private var managesWorkers = workers != null
     private val inner: NativeTrUApiHostRuntime = if (workers != null) {
-        NativeTrUApiHostRuntime.withManagedProductWorkers(callbackRetainer, runtimeConfig).also { it.enableProductWorkers(workers) }
+        NativeTrUApiHostRuntime.withManagedProductWorkers(callbackRetainer, runtimeConfig, workers)
     } else {
         NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
     }
@@ -1547,7 +1546,7 @@ class TrUAPIProductExecution internal constructor(
     private val shutDown = AtomicBoolean(false)
 
     /** Acknowledge that this startup attempt has loaded its entry module. */
-    fun reportWorkerReady(attempt: NativeWorkerAttempt): Boolean = attempt.ready(inner)
+    fun reportWorkerModuleStarted(): Boolean = inner.reportWorkerModuleStarted()
 
     /**
      * Register this execution against the host runtime's shared localhost

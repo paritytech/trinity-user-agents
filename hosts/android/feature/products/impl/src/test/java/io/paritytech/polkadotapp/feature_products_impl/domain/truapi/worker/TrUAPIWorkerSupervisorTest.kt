@@ -73,7 +73,7 @@ class TrUAPIWorkerSupervisorTest {
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
 
-        verify(exactly = 1) { executions.single().reportWorkerReady(attempt) }
+        verify(exactly = 1) { executions.single().reportWorkerModuleStarted() }
         verify(exactly = 1) { attempt.failed("WebView renderer exited") }
         assertEquals(1, providers.size)
     }
@@ -89,7 +89,7 @@ class TrUAPIWorkerSupervisorTest {
         advanceUntilIdle()
 
         assertEquals(listOf(false, true), workerScopes.map { it.isActive })
-        verify(exactly = 1) { executions[1].reportWorkerReady(replacement) }
+        verify(exactly = 1) { executions[1].reportWorkerModuleStarted() }
     }
 
     @Test
@@ -100,12 +100,12 @@ class TrUAPIWorkerSupervisorTest {
         runCurrent()
 
         val execution = executions.single()
-        verify(exactly = 0) { execution.reportWorkerReady(any()) }
+        verify(exactly = 0) { execution.reportWorkerModuleStarted() }
         finish("worker import rejected")
         runCurrent()
 
         verify(exactly = 1) { attempt.failed("worker import rejected") }
-        verify(exactly = 0) { execution.reportWorkerReady(any()) }
+        verify(exactly = 0) { execution.reportWorkerModuleStarted() }
     }
 
     @Test
@@ -175,7 +175,7 @@ class TrUAPIWorkerSupervisorTest {
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
-        val execution = mockk<TrUAPIProductExecution> { every { reportWorkerReady(any()) } returns true }.also { executions += it }
+        val execution = mockk<TrUAPIProductExecution> { every { reportWorkerModuleStarted() } returns true }.also { executions += it }
         coEvery { attachWorker(any(), any(), any(), any(), any(), any()) } answers {
             policies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(4)

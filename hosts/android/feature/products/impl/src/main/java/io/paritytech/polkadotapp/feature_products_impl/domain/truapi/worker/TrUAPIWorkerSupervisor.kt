@@ -55,7 +55,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             worker.scope.launch {
                 try {
                     val execution = boot(productId, attempt, worker)
-                    if (!execution.reportWorkerReady(attempt)) dispose(id)
+                    if (!execution.reportWorkerModuleStarted()) dispose(id)
                 } catch (cause: Exception) {
                     ensureActive()
                     Timber.w(cause, "TrUAPI worker for %s failed to start", productId.value)

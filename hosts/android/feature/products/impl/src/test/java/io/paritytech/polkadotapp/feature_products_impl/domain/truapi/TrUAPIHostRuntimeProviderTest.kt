@@ -46,7 +46,7 @@ class TrUAPIHostRuntimeProviderTest {
     @Before
     fun captureRuntimeConfig() {
         mockkObject(NativeTrUApiHostRuntime.Companion)
-        every { NativeTrUApiHostRuntime.withManagedProductWorkers(any(), capture(runtimeConfig)) } returns mockk(relaxed = true)
+        every { NativeTrUApiHostRuntime.withManagedProductWorkers(any(), capture(runtimeConfig), any()) } returns mockk(relaxed = true)
     }
 
     @After
