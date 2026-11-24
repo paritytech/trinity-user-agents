@@ -283,8 +283,6 @@ struct Message {
     reply_to: Option<MessageId>,
     last_edited: Option<Timestamp>,
     reactions: Map<Emoji, AggregatedReaction>,
-    // The extensions of the record that made the message (4.6).
-    extensions: Vec<Extension>,
 }
 ```
 
@@ -430,33 +428,6 @@ fn handle_chat_placeholder(
     get_placeholder: fn() -> ChatPlaceholder
 );
 ```
-
-#### 4.6 Records between Products
-
-The Products of one room can exchange messages with no Host between them, for example over a peer-to-peer protocol. They exchange each `UserChatAction` in a `ChatRecord`, so that every Product reads the room in the same way.
-
-```rust
-struct ChatRecord {
-    // `<origin>.<random>`, where origin is the participant id of the sender.
-    // For a `NewMessage` it is the id of the new message.
-    id: MessageId,
-    // false: the record adds a row. true: it changes a message or the room.
-    control: bool,
-    timestamp: Timestamp,
-    // A `UserChatAction`.
-    action: Vec<u8>,
-    // Data that a reader may ignore, for example a Product text style.
-    extensions: Vec<Extension>,
-}
-
-struct Extension {
-    key: String,
-    value: Vec<u8>,
-}
-```
-
-- A reader drops a record whose `id` starts with the participant id of another origin.
-- A reader that cannot decode `action` shows a row "This message needs a newer version of {product}" when `control` is false, and ignores the record when it is true. It ignores an extension it does not know, and shows a `Custom` message of a type it does not know as its `preview_text`.
 
 ### 5. Message Actions
 
@@ -770,7 +741,6 @@ This RFC follows the same transport and serialization rules as the Host API prot
 17. **Customizable input**: Configurable chat footer — default input with optional payment/attachment buttons, no input, or fully custom.
 18. **Participant actions**: Configurable actions when tapping on a participant.
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
-20. **Records between Products**: One record for the Products of a room, with ids bound to their origin and a rule for what a reader does not know.
 
 #### Non-Functional Requirements
 
@@ -790,7 +760,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 
 #### Limits
 
-A Product refuses an action over a limit, and a reader drops a record over it.
+The Host refuses a request over a limit.
 
 | Item | Limit |
 |---|---|
