@@ -115,6 +115,16 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
 
             view?.controller.present(alert, animated: true)
         }
+
+        func showMaterialsCard(from view: ControllerBackedProtocol?) {
+            let viewModel = DebugMaterialsCardViewModel(
+                loadLayer: DebugMaterialsCardViewModel.bundledLayer,
+                resolver: WidgetDesignTokenResolver(),
+                logger: Logger.shared
+            )
+            let controller = UIHostingController(rootView: DebugMaterialsCardView(viewModel: viewModel))
+            view?.controller.navigationController?.pushViewController(controller, animated: true)
+        }
     #endif
 
     func showDotNsBrowser(from view: ControllerBackedProtocol?) {

@@ -412,6 +412,12 @@ pub enum RendererNode {
         props: MaterialsProps,
         children: Vec<RendererNode>,
     },
+    /// Takes the finger over its children and fires its triggers, as
+    /// [Materials](materials.md#touch) defines.
+    Touch {
+        props: TouchProps,
+        children: Vec<RendererNode>,
+    },
 }
 ```
 
@@ -430,8 +436,8 @@ counts against any cap a host puts on such a file.
 
 ### Actions
 
-An action id is product-chosen and opaque to the host. `Button::click_action` and `TextField::value_change_action` are
-the action sites.
+An action id is product-chosen and opaque to the host. `Button::click_action`, `TextField::value_change_action` and
+`TouchTrigger::action` are the action sites.
 
 Action payload by node, as the host sends it in `HostRendererActionSubscribeItem::payload`:
 
@@ -439,6 +445,7 @@ Action payload by node, as the host sends it in `HostRendererActionSubscribeItem
 | ----------- | ------------ | ---------------------------------------------- |
 | `Button`    | Press        | Empty                                          |
 | `TextField` | Value change | UTF-8 bytes of the new value, no length prefix |
+| `Touch`     | Its trigger  | Empty                                          |
 | `Gesture` | Tap or pan lifecycle | SCALE `GestureEvent` |
 
 The host fills `context` from the render request whose tree the node belongs to. Only the current tree of an open
@@ -507,7 +514,7 @@ The accessibility action uses the same Completed payload as a successful release
 
 A worker that follows a pan itself does not need to send a whole tree per
 move. It gives the `Gesture` a `key` and answers each move with a
-`SetOffset { key, x, y }` item (SCALE index 13) on the same `render`
+`SetOffset { key, x, y }` item (SCALE index 14) on the same `render`
 stream. The host adds the offset to where the current tree places that
 gesture's children and keeps it until the next tree, which replaces it: a
 tree always wins. Being on the same stream, an update can never overtake the
@@ -570,7 +577,7 @@ border, inside its margin; `Materials`, which takes no modifiers, is masked
 through a `Box`.
 
 A mask with a `key` can grow between trees: an `ExtendMask { key, shapes }`
-item (SCALE index 14) on the same stream adds shapes, which the host draws at
+item (SCALE index 15) on the same stream adds shapes, which the host draws at
 once and keeps until the next tree. Shapes can only be added this way; removing
 or moving them takes a tree. The next tree replaces the keyed shapes with its
 own, so a tree always wins, and a worker that sends one puts in it every shape

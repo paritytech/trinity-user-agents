@@ -15,22 +15,25 @@ public struct ProductWidgetChatView: View, Hashable {
     let nodeProvider: any WidgetNodeProviding
     let onAction: WidgetActionHandler?
     let resolveImage: WidgetImageResolver
+    let materials: WidgetMaterials?
 
     public init(
         messageId: String,
         nodeProvider: any WidgetNodeProviding,
         onAction: WidgetActionHandler?,
-        resolveImage: WidgetImageResolver
+        resolveImage: WidgetImageResolver,
+        materials: WidgetMaterials? = nil
     ) {
         self.messageId = messageId
         self.nodeProvider = nodeProvider
         self.onAction = onAction
         self.resolveImage = resolveImage
+        self.materials = materials
     }
 
     public var body: some View {
         if let node = nodeProvider.node {
-            CustomMessageWidgetView(node: node, onAction: onAction, resolveImage: resolveImage)
+            CustomMessageWidgetView(node: node, onAction: onAction, resolveImage: resolveImage, materials: materials)
                 .environment(\.gestureOffsets, nodeProvider.gestureOffsets)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {

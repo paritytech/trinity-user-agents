@@ -17,6 +17,8 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
     /// reads as "never retried" even though the retry is on its way.
     private(set) var renderTask: Task<Void, Never>?
     private let retryDelay: Duration
+    private let materials: ChatMaterialsResolver?
+    var widgetMaterials: WidgetMaterials? { materials?.materials }
 
     /// Streams in a row that end or fail without drawing, after which the body
     /// is given up. The runtime retries the throws that precede a stream; this
@@ -36,6 +38,7 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
         runtime: ChatRuntimeProtocol,
         tokenResolver: any WidgetDesignTokenResolving,
         logger: LoggerProtocol,
+        materials: ChatMaterialsResolver? = nil,
         retryDelay: Duration = .seconds(1)
     ) {
         self.init(
@@ -50,6 +53,7 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
             },
             tokenResolver: tokenResolver,
             logger: logger,
+            materials: materials,
             retryDelay: retryDelay
         )
     }
@@ -60,9 +64,11 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
         render: @escaping () async -> AsyncThrowingStream<ChatRendererOutput, Error>,
         tokenResolver: any WidgetDesignTokenResolving,
         logger: LoggerProtocol,
+        materials: ChatMaterialsResolver? = nil,
         retryDelay: Duration = .seconds(1)
     ) {
         self.messageId = messageId
+        self.materials = materials
         self.render = render
         self.tokenResolver = tokenResolver
         self.logger = logger
@@ -160,6 +166,7 @@ private extension ProductWidgetViewModel {
                 await MainActor.run {
                     // A tree always wins over the offsets set before it.
                     self.gestureOffsets?.treeArrived(masks: resolved?.keyedMasks ?? [:])
+                    if case let .native(tree) = output { self.materials?.follow(tree: tree) }
                     self.node = resolved
                 }
                 drew = true

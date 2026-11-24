@@ -430,7 +430,8 @@ struct RendererNodeMappingTests {
         #expect(props.key == "pad")
     }
 
-    @Test func materialsDrawTheirChildrenPlain() throws {
+    @Test func materialsKeepTheirChildren() throws {
+        // Given
         let materials = RendererNode.materials(
             props: MaterialsProps(layers: []),
             children: [
@@ -438,14 +439,128 @@ struct RendererNodeMappingTests {
             ]
         )
 
-        guard case let .box(props, children) = try #require(materials.toWidgetNode(resolver: resolver)).content,
+        // When
+        let node = try #require(materials.toWidgetNode(resolver: resolver))
+
+        // Then
+        guard case let .materials(index, children) = node.content,
               case let .text(textProps) = children.first?.content
         else {
-            Issue.record("a materials node should draw as a box around its children")
+            Issue.record("a materials node should keep its children")
             return
         }
-        #expect(props.alignment == .topLeading)
+        #expect(index == 0)
         #expect(textProps.text == "kept")
+    }
+
+    /// The core keeps one state per `Touch` node, depth first, so a node drawn under another index
+    /// would scratch another node's trail. A node past a limit draws its children like a box.
+    @Test func touchNodesAreNumberedDepthFirstAndCarryTheCoreVerdict() throws {
+        // Given
+        func touch(_ drag: DragAxis, _ children: [RendererNode]) -> RendererNode {
+            let tap = TouchTrigger(when: .tap(Region(x: 0, y: 0, width: 1_000, height: 1_000)), action: "flip")
+            return .touch(props: TouchProps(drag: drag, trail: nil, triggers: [tap]), children: children)
+        }
+        let materials = RendererNode.materials(props: MaterialsProps(layers: []), children: [])
+        let tree = RendererNode.box(
+            modifiers: [],
+            props: BoxProps(contentAlignment: nil),
+            children: [touch(.any, [materials]), touch(.horizontal, [touch(.any, [])])]
+        )
+
+        // When
+        let node = try #require(tree.toWidgetNode(resolver: resolver))
+
+        // Then
+        guard case let .box(_, children) = node.content,
+              case let .touch(first, firstChildren) = children.first?.content,
+              case let .touch(second, secondChildren) = children.last?.content,
+              case let .touch(nested, _) = secondChildren.first?.content,
+              case let .materials(materialsIndex, _) = firstChildren.first?.content
+        else {
+            Issue.record("each touch node should keep its children")
+            return
+        }
+        #expect(first == WidgetTouchNode(index: 0, drag: .any, takesTouch: true, accessibilityActions: ["flip"]))
+        #expect(second == WidgetTouchNode(
+            index: 1,
+            drag: .horizontal,
+            takesTouch: true,
+            accessibilityActions: ["flip"]
+        ))
+        #expect(nested == WidgetTouchNode(index: 2, drag: .any, takesTouch: false, accessibilityActions: ["flip"]))
+        #expect(materialsIndex == 0)
+    }
+
+    /// The core answers one state per `Materials` node, depth first, so a node drawn under another
+    /// index would draw the layers of a different node. A node hidden inside a text still counts.
+    @Test func materialsAreNumberedDepthFirstLikeTheCore() throws {
+        // Given
+        func materials(_ children: [RendererNode]) -> RendererNode {
+            .materials(props: MaterialsProps(layers: []), children: children)
+        }
+        let text = RendererNode.text(
+            modifiers: [],
+            props: TextProps(style: nil, color: nil),
+            children: [materials([])]
+        )
+        let tree = RendererNode.column(
+            modifiers: [],
+            props: ColumnProps(horizontalAlignment: nil, verticalArrangement: nil),
+            children: [materials([materials([])]), text, materials([])]
+        )
+
+        // When
+        let column = try #require(tree.toWidgetNode(resolver: resolver))
+
+        // Then
+        #expect(materialsIndices(column) == [0, 1, 3])
+    }
+
+    /// Text and button children draw no widget, but the core walks them to any depth.
+    @Test func materialsDeepInsideATextOrAButtonStillShiftTheNextIndex() throws {
+        // Given
+        func materials(_ children: [RendererNode]) -> RendererNode {
+            .materials(props: MaterialsProps(layers: []), children: children)
+        }
+        let boxed = RendererNode.box(modifiers: [], props: BoxProps(contentAlignment: nil), children: [materials([])])
+        let text = RendererNode.text(modifiers: [], props: TextProps(style: nil, color: nil), children: [boxed])
+        let button = RendererNode.button(
+            modifiers: [],
+            props: ButtonProps(text: "Stamp", variant: nil, enabled: nil, loading: nil, clickAction: nil),
+            children: [materials([])]
+        )
+        let tree = RendererNode.column(
+            modifiers: [],
+            props: ColumnProps(horizontalAlignment: nil, verticalArrangement: nil),
+            children: [text, button, materials([])]
+        )
+
+        // When
+        let column = try #require(tree.toWidgetNode(resolver: resolver))
+
+        // Then
+        #expect(materialsIndices(column) == [2])
+        #expect(tree.materialsCount == 3)
+    }
+
+    private func materialsIndices(_ node: CustomMessageWidgetNode) -> [UInt32] {
+        switch node.content {
+        case let .materials(index, children):
+            [index] + children.flatMap(materialsIndices)
+        case let .box(_, children),
+             let .column(_, children),
+             let .row(_, children),
+             let .touch(_, children),
+             let .gesture(_, children):
+            children.flatMap(materialsIndices)
+        case .spacer,
+             .text,
+             .button,
+             .textField,
+             .image:
+            []
+        }
     }
 }
 

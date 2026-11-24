@@ -59,7 +59,7 @@ describe("gesture wire contract", () => {
     it("sends an offset update with the Rust bytes", () => {
         const node = setOffset("piece", 1.2, -0.02);
         expect(node).toEqual({ tag: "SetOffset", value: { key: "piece", x: 120, y: -2 } });
-        const bytes = [13, 20, 112, 105, 101, 99, 101, 120, 0, 0, 0, 254, 255, 255, 255];
+        const bytes = [14, 20, 112, 105, 101, 99, 101, 120, 0, 0, 0, 254, 255, 255, 255];
         expect(Array.from(RendererNode.enc(node))).toEqual(bytes);
         expect(RendererNode.dec(Uint8Array.from(bytes))).toEqual(node);
     });
@@ -81,7 +81,7 @@ describe("gesture wire contract", () => {
             },
         });
         const bytes = [
-            14, 16, 109, 97, 115, 107, 8,
+            15, 16, 109, 97, 115, 107, 8,
             1, 100, 0, 0, 0, 255, 255, 255, 255, 40, 10, 0, 0,
             2, 80, 20, 0, 0, 4, 1, 0, 0, 0, 2, 0, 0, 0,
         ];

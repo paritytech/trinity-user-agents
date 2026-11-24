@@ -80,7 +80,7 @@ pub mod latest {
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
 		ClearedShare, CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
-		ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
+		ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, DragAxis,
 		FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
 		FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit,
 		FundingDetail, FundingDirection, FundingFact, FundingFailure, FundingFrameOutcome,
@@ -96,11 +96,12 @@ pub mod latest {
 		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
 		OperationStartedResult, PanAxis, PanDrag, PanGesture, PanRelease, PanTravel, Parameter,
 		PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
-		RawPayload, RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
-		TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle,
+		RawPayload, Region, RegisteredRingVrfKey, RemotePermission, RendererNode,
+		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TouchCondition,
+		TouchProps, TouchTrigger, TrailProps, TxPayloadExtension, TypographyStyle,
 		VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
@@ -514,13 +515,14 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use materials::{
 			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
-			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform,
-			UniformKind, UniformRole,
+			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole,
+			TouchInputs, TouchPhase, TrailImage, Uniform, UniformKind, UniformRole,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
 			NativeMaterialsObserver, NativeMaterialsResolution, NativePublicProfileObserver,
-			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
+			NativeRendererObserver, NativeSubscription, NativeTouchArea, WsBridgeEndpoint,
+			WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native_debug::{DebugSinkError, WsDebugSink};

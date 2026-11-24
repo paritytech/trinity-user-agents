@@ -25,6 +25,10 @@ public extension CustomMessageWidgetNode {
         case textField(TextFieldProps)
         case image(ImageProps)
         case gesture(GestureProps, children: [CustomMessageWidgetNode])
+        /// Children drawn under a `Materials` node, numbered as `ResolvedMaterials.nodes` counts them.
+        case materials(index: UInt32, children: [CustomMessageWidgetNode])
+        /// Children under a `Touch` node, which takes the finger over them.
+        case touch(WidgetTouchNode, children: [CustomMessageWidgetNode])
     }
 }
 

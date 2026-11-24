@@ -79,6 +79,7 @@ private fun RendererNode.materialsCount(): Int = when (this) {
     is RendererNode.Text -> children.sumOf { it.materialsCount() }
     is RendererNode.Button -> children.sumOf { it.materialsCount() }
     is RendererNode.Gesture -> children.sumOf { it.materialsCount() }
+    is RendererNode.Touch -> children.sumOf { it.materialsCount() }
     is RendererNode.Nil,
     is RendererNode.SetOffset,
     is RendererNode.ExtendMask,
@@ -165,6 +166,7 @@ private class JsWidgetMapping(private val keyed: RendererKeyed) {
             val index = nextMaterialsNode++
             JsWidget.Materials(node = index, children = mapChildren(node.children))
         }
+        is RendererNode.Touch -> JsWidget.Box(children = mapChildren(node.children))
     }
 
     private fun mapChildren(children: List<RendererNode>): List<JsWidget> =

@@ -12,6 +12,12 @@ public protocol DeviceMotionObservable: AnyObject, Sendable {
     func observe(_ receive: @escaping (CMAcceleration) -> Void) -> DeviceMotionToken
 }
 
+/// Where the whole reading comes from, for a reader that needs the attitude beside gravity.
+public protocol DeviceAttitudeObservable: AnyObject, Sendable {
+    /// Same sensor, same reference count and same queue as ``DeviceMotionObservable/observe(_:)``.
+    func observeMotion(_ receive: @escaping (CMDeviceMotion) -> Void) -> DeviceMotionToken
+}
+
 /// Holds a subscription open. Releasing it releases the sensor.
 public final class DeviceMotionToken {
     private let cancel: () -> Void
@@ -39,7 +45,7 @@ public final class DeviceMotionToken {
 /// Reference counted, so the sensor runs only while something is watching. The readings are the
 /// same for everyone, which is what makes sharing them safe: nobody's subscription changes what
 /// anybody else sees.
-public final class DeviceMotionSource: DeviceMotionObservable, @unchecked Sendable {
+public final class DeviceMotionSource: DeviceMotionObservable, DeviceAttitudeObservable, @unchecked Sendable {
     public static let shared = DeviceMotionSource()
 
     /// Fast enough for a specular highlight to track a wrist and for the card shine to feel
@@ -47,7 +53,7 @@ public final class DeviceMotionSource: DeviceMotionObservable, @unchecked Sendab
     public let updateInterval: TimeInterval = 1.0 / 40
 
     private struct State {
-        var observers: [UUID: (CMAcceleration) -> Void] = [:]
+        var observers: [UUID: (CMDeviceMotion) -> Void] = [:]
     }
 
     private let manager = CMMotionManager()
@@ -56,6 +62,10 @@ public final class DeviceMotionSource: DeviceMotionObservable, @unchecked Sendab
     init() {}
 
     public func observe(_ receive: @escaping (CMAcceleration) -> Void) -> DeviceMotionToken {
+        observeMotion { receive($0.gravity) }
+    }
+
+    public func observeMotion(_ receive: @escaping (CMDeviceMotion) -> Void) -> DeviceMotionToken {
         let id = UUID()
         let isFirst = state.withLockUnchecked { state in
             defer { state.observers[id] = receive }
@@ -85,12 +95,12 @@ private extension DeviceMotionSource {
 
         manager.deviceMotionUpdateInterval = updateInterval
         manager.startDeviceMotionUpdates(to: .main) { [weak self] update, _ in
-            guard let self, let gravity = update?.gravity else { return }
+            guard let self, let update else { return }
 
             let observers = state.withLockUnchecked { Array($0.observers.values) }
 
             for receive in observers {
-                receive(gravity)
+                receive(update)
             }
         }
     }

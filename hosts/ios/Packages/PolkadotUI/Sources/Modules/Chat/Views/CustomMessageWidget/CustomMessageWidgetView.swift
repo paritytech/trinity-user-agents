@@ -35,6 +35,31 @@ private struct WidgetImageResolverKey: EnvironmentKey {
     static let defaultValue: WidgetImageResolver? = nil
 }
 
+/// The pictures the image nodes under a `Materials` node have loaded, kept outside view state so
+/// the copy of the children drawn for its base starts from what the visible children show.
+@MainActor
+@Observable
+final class WidgetImageStore {
+    /// Counts the pictures stored, so the base is drawn again each time one arrives.
+    private(set) var stored = 0
+    @ObservationIgnored private var pictures: [CustomMessageWidgetNode.ImageSource: UIImage] = [:]
+
+    nonisolated init() {}
+
+    subscript(source: CustomMessageWidgetNode.ImageSource) -> UIImage? {
+        pictures[source]
+    }
+
+    func store(_ picture: UIImage, for source: CustomMessageWidgetNode.ImageSource) {
+        pictures[source] = picture
+        stored += 1
+    }
+}
+
+private struct WidgetImageStoreKey: EnvironmentKey {
+    static let defaultValue: WidgetImageStore? = nil
+}
+
 extension EnvironmentValues {
     var widgetActionHandler: WidgetActionHandler? {
         get { self[WidgetActionHandlerKey.self] }
@@ -45,6 +70,11 @@ extension EnvironmentValues {
         get { self[WidgetImageResolverKey.self] }
         set { self[WidgetImageResolverKey.self] = newValue }
     }
+
+    var widgetImages: WidgetImageStore? {
+        get { self[WidgetImageStoreKey.self] }
+        set { self[WidgetImageStoreKey.self] = newValue }
+    }
 }
 
 // MARK: - Public Entry Point
@@ -53,21 +83,25 @@ public struct CustomMessageWidgetView: View {
     let node: CustomMessageWidgetNode
     var onAction: WidgetActionHandler?
     var resolveImage: WidgetImageResolver?
+    var materials: WidgetMaterials?
 
     public init(
         node: CustomMessageWidgetNode,
         onAction: WidgetActionHandler? = nil,
-        resolveImage: WidgetImageResolver?
+        resolveImage: WidgetImageResolver?,
+        materials: WidgetMaterials? = nil
     ) {
         self.node = node
         self.onAction = onAction
         self.resolveImage = resolveImage
+        self.materials = materials
     }
 
     public var body: some View {
         WidgetNodeContent(node: node)
             .environment(\.widgetActionHandler, onAction)
             .environment(\.widgetImageResolver, resolveImage)
+            .environment(\.widgetMaterials, materials)
     }
 }
 
@@ -107,6 +141,14 @@ private struct WidgetNodeContent: View {
                     }
                 }
             }
+        case let .materials(index, children):
+            MaterialsNodeView(index: index) {
+                NodeBoxView(props: .init(), children: children, modifiers: node.modifiers)
+            }
+        case let .touch(touch, children):
+            TouchNodeView(node: touch) {
+                NodeBoxView(props: .init(), children: children, modifiers: node.modifiers)
+            }
         }
     }
 }
@@ -124,15 +166,31 @@ private struct NodeImageView: View {
     }
 
     @Environment(\.widgetImageResolver) private var resolveImage
-    @State private var picture: Picture = .loading
+    @Environment(\.widgetImages) private var images
+    @State private var loaded: Picture?
 
     var body: some View {
         content
             .applyWidgetNodeModifiers(modifiers)
             .task(id: props.source) {
-                picture = .loading
-                picture = await resolveImage?(props.source).map(Picture.loaded) ?? .unavailable
+                if let stored = images?[props.source] {
+                    loaded = .loaded(stored)
+                    return
+                }
+                loaded = .loading
+                guard let picture = await resolveImage?(props.source) else {
+                    loaded = .unavailable
+                    return
+                }
+                loaded = .loaded(picture)
+                images?.store(picture, for: props.source)
             }
+    }
+
+    /// A copy drawn in one pass, as a `Materials` base is, cannot wait for its task, so it starts
+    /// from the store.
+    private var picture: Picture {
+        loaded ?? images?[props.source].map(Picture.loaded) ?? .loading
     }
 
     /// Loading and failure both fill the space the node reserves, so a missing

@@ -125,6 +125,8 @@ Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTe
 the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
 platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
 
+Chat message cards draw `Materials` nodes on Metal in builds with `FEATURE_MATERIALS` (Debug, DevCI and Nightly). The core resolves each node and writes its shaders, and `Packages/PolkadotUI` compiles and draws them. Room footers and Pocket cards draw the nodes plain. A `Touch` node hands the finger to the core, which keeps its trail and fires its triggers, and the `Materials` nodes inside read it. Debug Settings > Materials Card draws one core-written layer with no product, then a scratch card and a slider that take touch.
+
 With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and

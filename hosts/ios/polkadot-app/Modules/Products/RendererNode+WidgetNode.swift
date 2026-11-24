@@ -5,7 +5,86 @@ import Products
 import SwiftUI
 
 extension RendererNode {
+    /// `Materials` nodes are numbered depth first, a parent before its children, across the whole tree,
+    /// the order of `ResolvedMaterials.nodes`. `Touch` nodes are numbered the same way among themselves.
     func toWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
+        toWidgetNode(resolver: resolver, counter: MaterialsCounter(takesTouch: rendererTouchNodes(tree: self)))
+    }
+
+    /// How many entries `ResolvedMaterials.nodes` has for this tree.
+    var materialsCount: Int {
+        let counter = MaterialsCounter(takesTouch: [])
+        counter.skip([self])
+        return counter.count
+    }
+
+    /// The props of every `Touch` node, depth first.
+    var touchProps: [TouchProps] {
+        let own: [TouchProps] = if case let .touch(props, _) = self { [props] } else { [] }
+        return own + children.flatMap(\.touchProps)
+    }
+}
+
+private final class MaterialsCounter {
+    private var next: UInt32 = 0
+    private var nextTouch: UInt32 = 0
+    private let takesTouch: [Bool]
+
+    init(takesTouch: [Bool]) {
+        self.takesTouch = takesTouch
+    }
+
+    var count: Int { Int(next) }
+
+    func take() -> UInt32 {
+        defer { next += 1 }
+        return next
+    }
+
+    /// The next `Touch` node, and whether the core lets it take touch.
+    func takeTouch() -> (index: UInt32, takesTouch: Bool) {
+        defer { nextTouch += 1 }
+        return (nextTouch, takesTouch.indices.contains(Int(nextTouch)) && takesTouch[Int(nextTouch)])
+    }
+
+    /// The core also numbers `Materials` and `Touch` nodes inside text and button children, which draw
+    /// no widget.
+    func skip(_ nodes: [RendererNode]) {
+        for node in nodes {
+            if case .materials = node { _ = take() }
+            if case .touch = node { _ = takeTouch() }
+            skip(node.children)
+        }
+    }
+}
+
+private extension RendererNode {
+    var children: [RendererNode] {
+        switch self {
+        case let .materials(_, children),
+             let .touch(_, children),
+             let .gesture(_, _, children),
+             let .box(_, _, children),
+             let .column(_, _, children),
+             let .row(_, _, children),
+             let .text(_, _, children),
+             let .button(_, _, children):
+            children
+        case .nil,
+             .string,
+             .image,
+             .spacer,
+             .textField,
+             .setOffset,
+             .extendMask:
+            []
+        }
+    }
+
+    func toWidgetNode(
+        resolver: any WidgetDesignTokenResolving,
+        counter: MaterialsCounter
+    ) -> CustomMessageWidgetNode? {
         switch self {
         case .nil,
              .string,
@@ -16,17 +95,40 @@ extension RendererNode {
              .textField,
              .setOffset,
              .extendMask:
+            counter.skip(children)
             return leafWidgetNode(resolver: resolver)
 
         case let .gesture(modifiers, props, children):
             return CustomMessageWidgetNode(
-                content: .gesture(props.nodeProps, children: children.widgetNodes(resolver: resolver)),
+                content: .gesture(
+                    props.nodeProps,
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
         case let .materials(_, children):
+            let index = counter.take()
             return CustomMessageWidgetNode(
-                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
+                content: .materials(
+                    index: index,
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
+                modifiers: .empty
+            )
+
+        case let .touch(props, children):
+            let (index, takesTouch) = counter.takeTouch()
+            return CustomMessageWidgetNode(
+                content: .touch(
+                    WidgetTouchNode(
+                        index: index,
+                        drag: props.drag == .horizontal ? .horizontal : .any,
+                        takesTouch: takesTouch,
+                        accessibilityActions: props.triggers.compactMap(\.accessibilityAction)
+                    ),
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
                 modifiers: .empty
             )
 
@@ -35,7 +137,10 @@ extension RendererNode {
                 CustomMessageWidgetNode.BoxProps(alignment: $0.toScale().swiftUIAlignment)
             }
             return CustomMessageWidgetNode(
-                content: .box(boxProps ?? .init(), children: children.widgetNodes(resolver: resolver)),
+                content: .box(
+                    boxProps ?? .init(),
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -45,7 +150,7 @@ extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .column(
                     .init(alignment: alignment, arrangement: arrangement),
-                    children: children.widgetNodes(resolver: resolver)
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
                 ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
@@ -56,7 +161,7 @@ extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .row(
                     .init(alignment: alignment, arrangement: arrangement),
-                    children: children.widgetNodes(resolver: resolver)
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
                 ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
@@ -129,23 +234,37 @@ private extension RendererNode {
              .box,
              .column,
              .row,
-             .materials:
+             .materials,
+             .touch:
             return nil
         }
+    }
+}
+
+private extension TouchTrigger {
+    /// A tap or a drag VoiceOver can stand in for. A trail has no single action to offer.
+    var accessibilityAction: String? {
+        if case .trailCovers = when { nil } else { action }
     }
 }
 
 private extension RendererNode {
     /// The nodes this one contributes to its parent's children: its own, or
     /// none when it does not draw.
-    func widgetNodesInPlace(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
-        toWidgetNode(resolver: resolver).map { [$0] } ?? []
+    func widgetNodesInPlace(
+        resolver: any WidgetDesignTokenResolving,
+        counter: MaterialsCounter
+    ) -> [CustomMessageWidgetNode] {
+        toWidgetNode(resolver: resolver, counter: counter).map { [$0] } ?? []
     }
 }
 
 private extension [RendererNode] {
-    func widgetNodes(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
-        flatMap { $0.widgetNodesInPlace(resolver: resolver) }
+    func widgetNodes(
+        resolver: any WidgetDesignTokenResolving,
+        counter: MaterialsCounter
+    ) -> [CustomMessageWidgetNode] {
+        flatMap { $0.widgetNodesInPlace(resolver: resolver, counter: counter) }
     }
 }
 
@@ -267,109 +386,6 @@ private extension Dimensions {
     }
 }
 
-// MARK: - Token translation
-
-//
-// The design-token resolver is defined over the SCALE token enums, so the core's
-// leaf enums are translated into those rather than duplicating the resolver.
-
-private extension TrUAPIHostShape {
-    func toScale() -> ScaleShape {
-        switch self {
-        case let .rounded(radius): .rounded(BigUInt(radius))
-        case .square: .rounded(0)
-        case .circle: .circle
-        }
-    }
-}
-
-private extension ColorToken {
-    func toScale() -> ScaleColorToken {
-        switch self {
-        case .fgPrimary: .textPrimary
-        case .fgSecondary: .textSecondary
-        case .fgTertiary: .textTertiary
-        case .bgSurfaceMain: .backgroundPrimary
-        case .bgSurfaceContainer: .backgroundSecondary
-        case .bgSurfaceNested: .backgroundTertiary
-        case .fgSuccess: .success
-        case .fgError: .error
-        case .fgWarning: .warning
-        }
-    }
-}
-
-private extension TypographyStyle {
-    func toScale() -> ScaleTypographyStyle {
-        switch self {
-        case .headlineLarge: .titleXL
-        case .titleMediumRegular: .headline
-        case .bodyLargeRegular: .bodyM
-        case .bodyMediumRegular: .bodyS
-        case .bodySmallRegular: .caption
-        }
-    }
-}
-
-private extension ButtonVariant {
-    func toScale() -> ScaleButtonVariant {
-        switch self {
-        case .primary: .primary
-        case .secondary: .secondary
-        case .text: .text
-        }
-    }
-}
-
-private extension ContentAlignment {
-    func toScale() -> ScaleContentAlignment {
-        switch self {
-        case .topStart: .topStart
-        case .topCenter: .topCenter
-        case .topEnd: .topEnd
-        case .centerStart: .centerStart
-        case .center: .center
-        case .centerEnd: .centerEnd
-        case .bottomStart: .bottomStart
-        case .bottomCenter: .bottomCenter
-        case .bottomEnd: .bottomEnd
-        }
-    }
-}
-
-private extension TrUAPIHostHorizontalAlignment {
-    func toScale() -> ScaleHorizontalAlignment {
-        switch self {
-        case .start: .start
-        case .center: .center
-        case .end: .end
-        }
-    }
-}
-
-private extension TrUAPIHostVerticalAlignment {
-    func toScale() -> ScaleVerticalAlignment {
-        switch self {
-        case .top: .top
-        case .center: .center
-        case .bottom: .bottom
-        }
-    }
-}
-
-private extension Arrangement {
-    func toScale() -> ScaleArrangement {
-        switch self {
-        case .start: .start
-        case .end: .end
-        case .center: .center
-        case .spaceBetween: .spaceBetween
-        case .spaceAround: .spaceAround
-        case .spaceEvenly: .spaceEvenly
-        }
-    }
-}
-
 private extension ImageProps {
     var nodeProps: CustomMessageWidgetNode.ImageProps? {
         let nodeSource: CustomMessageWidgetNode.ImageSource
@@ -394,29 +410,6 @@ private extension ImageProps {
                 .fill
             }
         return .init(source: nodeSource, fit: nodeFit)
-    }
-}
-
-private extension BlendingMode {
-    var blendMode: BlendMode {
-        switch self {
-        case .normal: .normal
-        case .multiply: .multiply
-        case .screen: .screen
-        case .overlay: .overlay
-        case .darken: .darken
-        case .lighten: .lighten
-        case .colorDodge: .colorDodge
-        case .colorBurn: .colorBurn
-        case .hardLight: .hardLight
-        case .softLight: .softLight
-        case .difference: .difference
-        case .exclusion: .exclusion
-        case .hue: .hue
-        case .saturation: .saturation
-        case .color: .color
-        case .luminosity: .luminosity
-        }
     }
 }
 

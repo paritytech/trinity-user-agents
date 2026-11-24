@@ -33,7 +33,7 @@ fn req() -> HostFeatureSupportedRequest {
 #[test]
 fn delegates_supported_to_platform() {
 	let resp =
-		futures::executor::block_on(feature_supported(&AlwaysSupported, |_, _| false, req()))
+		futures::executor::block_on(feature_supported(&AlwaysSupported, |_, _| false, false, req()))
 			.unwrap();
 	assert!(resp.supported);
 }
@@ -41,7 +41,7 @@ fn delegates_supported_to_platform() {
 #[test]
 fn delegates_unsupported_to_platform() {
 	let resp =
-		futures::executor::block_on(feature_supported(&AlwaysUnsupported, |_, _| false, req()))
+		futures::executor::block_on(feature_supported(&AlwaysUnsupported, |_, _| false, false, req()))
 			.unwrap();
 	assert!(!resp.supported);
 }
@@ -63,6 +63,7 @@ fn the_core_answers_the_materials_question_not_the_platform() {
 				asked = Some((version, features.to_vec()));
 				draws
 			},
+			!draws,
 			request(),
 		))
 		.unwrap();
@@ -72,4 +73,25 @@ fn the_core_answers_the_materials_question_not_the_platform() {
 	let asked = Some((2, vec!["sl-pressure".to_string()]));
 	assert_eq!(answer(&AlwaysSupported, false), (false, asked.clone()));
 	assert_eq!(answer(&AlwaysUnsupported, true), (true, asked));
+}
+
+/// A product sends a `Touch` node only after a yes, so the answer is the
+/// core's, from whether the host draws materials, whatever the platform says.
+#[test]
+fn the_core_answers_the_touch_question_not_the_platform() {
+	let answer = |platform: &dyn Features, draws_touch: bool| {
+		futures::executor::block_on(feature_supported(
+			platform,
+			|_, _| !draws_touch,
+			draws_touch,
+			HostFeatureSupportedRequest::RendererTouch,
+		))
+		.unwrap()
+		.supported
+	};
+
+	assert_eq!(
+		[answer(&AlwaysSupported, false), answer(&AlwaysUnsupported, true)],
+		[false, true]
+	);
 }

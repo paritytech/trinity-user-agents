@@ -370,7 +370,9 @@ public extension CustomMessageWidgetNode {
         case let .box(_, children),
              let .column(_, children),
              let .row(_, children),
-             let .gesture(_, children):
+             let .gesture(_, children),
+             let .materials(_, children),
+             let .touch(_, children):
             children
         default:
             []

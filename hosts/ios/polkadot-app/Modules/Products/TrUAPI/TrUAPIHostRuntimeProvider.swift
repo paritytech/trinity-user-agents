@@ -210,6 +210,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
+    /// Release builds draw every `Materials` node plain until a slow or crashing material can be switched off.
+    #if FEATURE_MATERIALS
+        static let drawsMaterials = true
+    #else
+        static let drawsMaterials = false
+    #endif
+
     /// Assemble the immutable host-wide config. Every chain fact the core uses
     /// comes from the stack this build bundles, ``TrUAPIBundledStack/current``.
     /// `networkSuffix` is the dotNS TLD the app's own built-in accounts derive
@@ -234,6 +241,7 @@ extension TrUAPIHostRuntimeProvider {
             stack: TrUAPIBundledStack.current.load(),
             databaseDirectory: databaseDirectory,
             pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
+            materialsEnabled: drawsMaterials,
             localSessionSecret: secret,
             localSessionLiteUsername: liteUsername,
             deviceEncryptionKey: deviceEncryptionKey

@@ -5,6 +5,7 @@
 // FEATURE_PRODUCTS   — the browse tab                            (Debug).
 // FEATURE_SIGN_IN    — sign in with Polkadot: the `pair` deeplink
 //                      and the linked-devices settings row       (Debug, DevCI, Nightly).
+// FEATURE_MATERIALS: chat cards draw `Materials` nodes            (Debug, DevCI, Nightly).
 //
 // Release sets none of them: no environment flag, no feature flag.
 //

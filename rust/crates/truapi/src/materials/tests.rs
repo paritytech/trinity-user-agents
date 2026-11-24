@@ -369,3 +369,36 @@ fn gesture_children_keep_material_validation_and_loading() {
 	collect_material_ids(&tree, &mut ids);
 	assert_eq!(ids, HashSet::from([[9; 32]]));
 }
+
+/// Each `Materials` node reads the finger of the nearest `Touch` node around
+/// it, through any layout in between, and only that one.
+#[test]
+fn each_materials_node_knows_the_touch_node_around_it() {
+	use truapi::latest::{DragAxis, TouchProps};
+
+	let materials = || RendererNode::Materials {
+		props: MaterialsProps { layers: Vec::new() },
+		children: Vec::new(),
+	};
+	let props = |drag| TouchProps { drag, trail: None, triggers: Vec::new() };
+	let tree = RendererNode::Box {
+		modifiers: Vec::new(),
+		props: BoxProps { content_alignment: None },
+		children: vec![
+			RendererNode::Touch { props: props(DragAxis::Any), children: vec![materials()] },
+			materials(),
+			RendererNode::Touch {
+				props: props(DragAxis::Horizontal),
+				children: vec![RendererNode::Box {
+					modifiers: Vec::new(),
+					props: BoxProps { content_alignment: None },
+					children: vec![materials()],
+				}],
+			},
+		],
+	};
+
+	let enclosing: Vec<_> =
+		materials_nodes(&tree).iter().map(|node| node.touch.map(|touch| touch.drag)).collect();
+	assert_eq!(enclosing, [Some(DragAxis::Any), None, Some(DragAxis::Horizontal)]);
+}

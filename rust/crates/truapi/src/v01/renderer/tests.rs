@@ -68,7 +68,44 @@ fn renderer_node() -> RendererNode {
 				},
 				children: vec![RendererNode::Nil],
 			},
+			touch_node(),
 		],
+	}
+}
+
+fn touch_node() -> RendererNode {
+	RendererNode::Touch {
+		props: TouchProps {
+			drag: DragAxis::Horizontal,
+			trail: Some(TrailProps { radius: Compact(20) }),
+			triggers: vec![
+				TouchTrigger {
+					when: TouchCondition::Drag {
+						from: Region { x: 0, y: 0, width: 200, height: 1000 },
+						to: Region { x: 900, y: 0, width: 100, height: 1000 },
+					},
+					action: "confirm".to_string(),
+				},
+				TouchTrigger {
+					when: TouchCondition::TrailCovers(600),
+					action: "revealed".to_string(),
+				},
+			],
+		},
+		children: vec![RendererNode::Materials {
+			props: MaterialsProps {
+				layers: vec![MaterialInstance {
+					material: [9; 32],
+					args: vec![
+						Parameter::Touch,
+						Parameter::TouchState,
+						Parameter::Elapsed,
+						Parameter::SamplerFloat(ImageRef::Trail),
+					],
+				}],
+			},
+			children: Vec::new(),
+		}],
 	}
 }
 
@@ -94,6 +131,12 @@ fn variants_encode_only_the_fields_they_carry() {
 	};
 	assert_eq!(materials.encode(), vec![11, 0, 0]);
 
+	let touch = RendererNode::Touch {
+		props: TouchProps { drag: DragAxis::Any, trail: None, triggers: Vec::new() },
+		children: Vec::new(),
+	};
+	assert_eq!(touch.encode(), vec![13, 1, 0, 0, 0]);
+
 	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
 }
 
@@ -101,6 +144,44 @@ fn variants_encode_only_the_fields_they_carry() {
 #[test]
 fn index_10_is_never_read() {
 	assert!(RendererNode::decode(&mut [10u8, 0, 0].as_slice()).is_err());
+}
+
+/// Index 12 is left to the `SlideToConfirm` node of an open pull request, so
+/// the two can land in either order.
+#[test]
+fn index_12_is_not_read() {
+	assert!(RendererNode::decode(&mut [12u8, 0, 0].as_slice()).is_err());
+}
+
+/// The touch arguments come after every older one, so a tree encoded before
+/// them decodes to the same value.
+#[test]
+fn older_arguments_keep_their_indices() {
+	let encoded: Vec<Vec<u8>> = [
+		Parameter::SamplerVec4(ImageRef::Noise),
+		Parameter::Touch,
+		Parameter::TouchState,
+		Parameter::Elapsed,
+		Parameter::SamplerFloat(ImageRef::Trail),
+	]
+	.iter()
+	.map(Encode::encode)
+	.collect();
+
+	assert_eq!(encoded, [vec![7, 1], vec![8], vec![9], vec![10], vec![4, 2]]);
+}
+
+#[test]
+fn a_touch_tree_reads_from_json() {
+	let json = r#"{"tag":"Touch","value":{"props":{"drag":"Horizontal","trail":{"radius":20},
+		"triggers":[{"when":{"tag":"Drag","value":{"from":{"x":0,"y":0,"width":200,"height":1000},
+		"to":{"x":900,"y":0,"width":100,"height":1000}}},"action":"confirm"},
+		{"when":{"tag":"TrailCovers","value":600},"action":"revealed"}]},
+		"children":[{"tag":"Materials","value":{"props":{"layers":[{"material":"0x0909090909090909090909090909090909090909090909090909090909090909",
+		"args":[{"tag":"Touch"},{"tag":"TouchState"},{"tag":"Elapsed"},{"tag":"SamplerFloat","value":{"tag":"Trail"}}]}]},
+		"children":[]}}]}}"#;
+
+	assert_eq!(serde_json::from_str::<RendererNode>(json).unwrap(), touch_node());
 }
 
 #[test]
@@ -254,7 +335,7 @@ fn gesture_payload_has_the_same_bytes_on_hosts_and_clients() {
 #[test]
 fn set_offset_has_the_same_bytes_on_hosts_and_clients() {
 	let node = RendererNode::SetOffset { key: "piece".into(), x: 120, y: -2 };
-	let expected = [13, 20, b'p', b'i', b'e', b'c', b'e', 120, 0, 0, 0, 254, 255, 255, 255];
+	let expected = [14, 20, b'p', b'i', b'e', b'c', b'e', 120, 0, 0, 0, 254, 255, 255, 255];
 	assert_eq!(node.encode(), expected);
 	assert_eq!(RendererNode::decode(&mut expected.as_slice()).unwrap(), node);
 }
@@ -474,7 +555,7 @@ fn extend_mask_has_the_same_bytes_on_hosts_and_clients() {
 	// two little-endian i32, radius as a u32), then a stroke (width, a compact
 	// count of one point).
 	let expected = [
-		14, 16, b'm', b'a', b's', b'k', 8, //
+		15, 16, b'm', b'a', b's', b'k', 8, //
 		1, 100, 0, 0, 0, 255, 255, 255, 255, 40, 10, 0, 0, //
 		2, 80, 20, 0, 0, 4, 1, 0, 0, 0, 2, 0, 0, 0,
 	];

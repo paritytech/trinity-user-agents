@@ -186,6 +186,17 @@ Rules:
    past `ResumePolicy.expiryThreshold` it `expire()`s all of them, otherwise it
    `probe(timeout:)`s each and only silent ones close (`.livenessTimeout`).
 
+## Materials in chat cards
+
+The core resolves the `Materials` nodes of a message tree and writes their Metal shaders. The app compiles and draws them.
+
+- `ChatMaterialsResolver` follows one core resolution per message tree. It opens the resolution of a new tree before it cancels the old one, so a material both trees share stays loaded.
+- `Materials` nodes are numbered depth first, a parent before its children, including those inside text and button children, which is the order of `ResolvedMaterials.nodes`.
+- Only message cards draw them. The room footer and Pocket cards get no resolver and draw the nodes plain.
+- A node that cannot draw on the device is logged and reported to its resolution, which keeps it plain.
+- `FEATURE_MATERIALS` sets `materialsEnabled` in the runtime config. Without it every node draws plain.
+- `MaterialGPU` holds the device, the samplers and the compiled pipelines for every card, and motion comes from `DeviceMotionSource`.
+
 ## Seams
 
 | Seam                          | Where                                    | When to touch                        |
