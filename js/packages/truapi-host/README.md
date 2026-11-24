@@ -64,13 +64,13 @@ refresh it.
   page becomes visible again.
 - `stackChanged(status)`: the `StackStatus` at start, and on each change. For a
   host without `fetchStackDescriptor` only `mismatches` changes, when a chain's
-  answer changes it. `restartRequired` means a newer copy
-  changes a chain, the network, the TLD or the generation, and applies once
-  the runtime is built again. `generation` changes when the stack restarts its
-  chains: key cached chain data by it. `mismatches` lists each chain whose last
-  connection reached one with a different genesis hash from the descriptor's.
-  On a signing host it also lists People's `NetworkSuffix` when that is not the
-  descriptor's `tld`.
+  answer changes it. `restartRequired` means a newer copy changes a chain, the
+  network or the generation, and applies once the runtime is built again. A
+  copy on another TLD than the bundled descriptor is refused, and `lastRefresh`
+  says so. `generation` changes when the stack restarts its chains: key cached
+  chain data by it. `mismatches` lists each chain whose last connection reached
+  one with a different genesis hash from the descriptor's. On a signing host it
+  also lists People's `NetworkSuffix` when that is not the descriptor's `tld`.
 
 After a stack's chains restart from genesis, the same endpoints serve new
 chains with new genesis hashes. To catch that, the core asks every chain
