@@ -3,9 +3,11 @@
 ---
 
 `truapi-host` keeps a stack's state in a directory named after the stack's own id: its key, its URL when it has no key,
-or its path when it is a local file. It used the `id` in the descriptor with `-fork` cut off, so a fork started signed
-in as its source's user, with the source's pairings and product data. Built-in networks keep the directory they have.
-Any other stack gets `stack-<tag>`, and `network-check` prints it as `state_directory`.
+or its canonical path when it is a local file. It used the `id` in the descriptor with `-fork` cut off, so a fork
+started signed in as its source's user, with the source's pairings and product data. Built-in networks keep the
+directory they have. Any other stack gets `stack-<tag>`, and `network-check` prints it as `state_directory`. A local
+file that is moved or renamed, or the same descriptor in another checkout or a temporary file, is another stack: it
+starts with new state and a new signer, and the CLI prints nothing about it.
 
 A stack passed with `--stack` starts empty after the update, unless it is a built-in network given by its link or URL.
 The CLI creates a new signer for it, or takes the old one with `/session --mnemonic`, and it has to be paired again.

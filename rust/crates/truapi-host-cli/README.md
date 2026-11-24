@@ -136,10 +136,14 @@ New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
 Each stack has its own directory under `v2`. A built-in network's is its name,
-such as `v2/paseo-next-v2`. Any other stack gets `stack-<tag>`, named from the
-stack's id, so a fork starts with none of its source's sessions, accounts,
-pairings or stored data. `truapi-host network-check` prints the name as
-`state_directory`, and SPEC.md §13.1 has the rest.
+such as `v2/paseo-next-v2`, also when `--stack` gives its link or URL. Any
+other stack gets `stack-<tag>`, named from the stack's id, so a fork starts
+with none of its source's sessions, accounts, pairings or stored data. A local
+file's id is its canonical path, so a file that is moved or renamed, or the
+same descriptor in another checkout or a temporary file, gets a new directory
+and a new signer, and the CLI prints nothing about it.
+`truapi-host network-check` prints the name as `state_directory`, and SPEC.md
+§13.1 has the rest.
 
 The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices

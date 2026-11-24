@@ -201,8 +201,9 @@ keys do not name the stack, so a host that can run more than one stack gives
 each its own `CoreStorage`, `ProductStorage`, encrypted store and core
 database directory, picked from the stack's pointer before it starts the core.
 A fork has its source's genesis hashes and TLD, so neither tells the two apart,
-and a descriptor's `id` is only what it calls itself. The CLI keeps each
-stack's state under a name made from the id of the stack's pointer.
+and a descriptor's `id` is only what it calls itself. The CLI keeps a built-in
+network's state under the network's name, and any other stack's under a name
+made from the stack's id: its pointer's key or URL, or a local file's path.
 
 #### Descriptor refresh
 

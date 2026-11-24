@@ -1557,14 +1557,17 @@ The layout may contain compatibility paths as well as identity-owned paths:
 ```
 
 `<network>` is the name everything the CLI stores for a stack is kept under. A
-built-in network's is its name, such as `paseo-next-v2`. Any other stack's is
-`stack-<tag>`, where `<tag>` is the first 32 hex digits of the SHA-256 of the
-stack's id (§14.1). It follows the stack's id and not what its descriptor calls
-itself, so a fork starts with none of its source's sessions, accounts, pairings,
-or core or product storage, and a stack named once by a link with its key and
-once by its bare URL is two stacks. `accounts.json` above the stack directories
-holds the default session's accounts for every stack, each under that name as
-its network id (§13.7). `network-check` prints the name as `state_directory`.
+built-in network's is its name, such as `paseo-next-v2`, also when `--stack`
+gives its link or URL. Any other stack's is `stack-<tag>`, where `<tag>` is the
+first 32 hex digits of the SHA-256 of the stack's id (§14.1). It follows the
+stack's id and not what its descriptor calls itself, so a fork starts with none
+of its source's sessions, accounts, pairings, or core or product storage, and a
+stack named once by a link with its key and once by its bare URL is two stacks,
+except a built-in network's, whose bare URL is read with its key. A local
+file's id is its path, so a file that moves starts with new state.
+`accounts.json` above the stack directories holds the default session's
+accounts for every stack, each under that name as its network id (§13.7).
+`network-check` prints the name as `state_directory`.
 
 An explicit mnemonic has no account profile, but its signing runtime uses the
 default/bootstrap signing storage path for core and product state. It does not
