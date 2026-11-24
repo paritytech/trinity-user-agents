@@ -35,7 +35,8 @@ use crate::{
 /// refresh.
 ///
 /// The core keeps the last descriptor it verified in `storage`, and starts
-/// from it when it is newer than the bundled copy.
+/// from it when it is newer than the bundled copy and passes the checks a
+/// fetched copy has to pass.
 pub async fn stack_from_js(
 	runtime_config: &JsValue,
 	storage: Arc<dyn CoreStorage>,
