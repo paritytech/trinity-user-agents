@@ -22,7 +22,7 @@ use std::{
 use futures::{
 	FutureExt, Stream, StreamExt,
 	channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
-	future::{AbortHandle, Abortable, BoxFuture, Shared as SharedFuture, join_all},
+	future::{AbortHandle, Abortable, join_all},
 	select_biased,
 	stream::BoxStream,
 };
@@ -93,11 +93,8 @@ struct Shared {
 	shaders: Mutex<resolve::ShaderCache>,
 }
 
-type CachedMaterial = SharedFuture<BoxFuture<'static, Option<Vec<u8>>>>;
-
 /// One fetch in flight, and the callers it answers.
 struct Fetch {
-	cached: CachedMaterial,
 	callers: Vec<UnboundedSender<Result<Vec<u8>, MaterialFailure>>>,
 	/// What the deadline reported, for a caller who joins after it.
 	failure: Option<MaterialFailure>,
@@ -127,12 +124,8 @@ impl Materials {
 	/// can still come. A material this core cannot read (`InvalidMaterial` or
 	/// `Unsupported`), or a lookup that can never answer, ends the stream.
 	pub fn observe(&self, id: [u8; 32]) -> BoxStream<'static, Result<Vec<u8>, MaterialFailure>> {
-		self.subscribe(id).boxed()
-	}
-
-	fn subscribe(&self, id: [u8; 32]) -> Caller {
 		let (caller, answers) = unbounded();
-		let (cached, started) = {
+		let started = {
 			let mut fetches = self.0.fetches.lock();
 			match fetches.get_mut(&id) {
 				Some(fetch) => {
@@ -140,29 +133,23 @@ impl Materials {
 						let _ = caller.unbounded_send(Err(failure));
 					}
 					fetch.callers.push(caller);
-					(fetch.cached.clone(), None)
+					None
 				},
 				None => {
 					let (abort, registration) = AbortHandle::new_pair();
-					let cached = Self::kept(self.0.db.clone(), id).boxed().shared();
 					fetches.insert(
 						id,
-						Fetch {
-							cached: cached.clone(),
-							callers: vec![caller],
-							failure: None,
-							abort: abort.clone(),
-						},
+						Fetch { callers: vec![caller], failure: None, abort: abort.clone() },
 					);
-					(cached, Some((abort, registration)))
+					Some((abort, registration))
 				},
 			}
 		};
 		if let Some((abort, registration)) = started {
-			let fetch = Abortable::new(self.clone().fetch(id, abort, cached.clone()), registration);
+			let fetch = Abortable::new(self.clone().fetch(id, abort), registration);
 			self.0.spawner.spawn(fetch.map(drop));
 		}
-		Caller { answers, cached, id, materials: self.clone() }
+		Caller { answers, id, materials: self.clone() }.boxed()
 	}
 
 	/// Fetches what the saved Pocket faces draw and the device lacks, so the
@@ -188,11 +175,8 @@ impl Materials {
 		.await;
 	}
 
-	async fn fetch(self, id: [u8; 32], own: AbortHandle, cached: CachedMaterial) {
-		let answer = match cached.await {
-			Some(text) => Ok(text),
-			None => self.fetch_from_bulletin(id, &own).await,
-		};
+	async fn fetch(self, id: [u8; 32], own: AbortHandle) {
+		let answer = self.read_or_fetch(id, &own).await;
 		let mut fetches = self.0.fetches.lock();
 		// Every caller left as the answer came, so the entry may be a newer fetch's.
 		if own.is_aborted() {
@@ -209,11 +193,16 @@ impl Materials {
 		}
 	}
 
-	async fn fetch_from_bulletin(
+	async fn read_or_fetch(
 		&self,
 		id: [u8; 32],
 		own: &AbortHandle,
 	) -> Result<Vec<u8>, MaterialFailure> {
+		match self.kept(id).await {
+			Ok(Some(text)) => return Ok(text),
+			Ok(None) => {},
+			Err(error) => tracing::warn!(%error, "a kept material was not read"),
+		}
 		let mut lookup = self.0.lookup.lookup_preimage(id).fuse();
 		let mut deadline = self.0.timer.sleep(FETCH_DEADLINE).fuse();
 		loop {
@@ -239,19 +228,13 @@ impl Materials {
 		}
 	}
 
-	async fn kept(db: Db, id: [u8; 32]) -> Option<Vec<u8>> {
-		match db
+	async fn kept(&self, id: [u8; 32]) -> Result<Option<Vec<u8>>, DbError> {
+		self.0
+			.db
 			.read(move |conn| {
 				Ok(conn.prepare_cached(KEPT)?.query_row([id], |row| row.get(0)).optional()?)
 			})
 			.await
-		{
-			Ok(text) => text,
-			Err(error) => {
-				tracing::warn!(%error, "a kept material was not read");
-				None
-			},
-		}
 	}
 
 	/// Keeps `text` as material `id` once the core can read it, as a fetch
@@ -308,7 +291,6 @@ impl Materials {
 /// One caller's answers. Dropping it leaves the fetch, which stops once no
 /// caller is left.
 struct Caller {
-	cached: CachedMaterial,
 	answers: UnboundedReceiver<Result<Vec<u8>, MaterialFailure>>,
 	id: [u8; 32],
 	materials: Materials,
