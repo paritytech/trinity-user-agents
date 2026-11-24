@@ -1044,11 +1044,15 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
 copy was signed with another key (every derived account, or the name the CLI
 knows the network by, would change; remove the copy to bundle it on purpose),
-and a built-in network's copy the CLI cannot run on.
+and a built-in network's copy the CLI cannot run on over either chain backend.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields neither truapi-host nor
-the core reads leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
-has every option.
+the core reads, and names the same light specs, leaves it in place and reports it
+as current. `--light-specs <file>` also fetches the light specs of the relay,
+People, Asset Hub and Bulletin, checks them against the descriptor and writes
+them to `<file>` by `sha256`; the script passes it for each stack with a
+`stacks/light-specs/<name>.json`, which the binary ships.
+[SPEC.md](SPEC.md#67-top-level-stack) has every option.
 
 ## Statement-store allowance
 
@@ -1148,7 +1152,8 @@ that reports a genesis other than the one it is routed as is an error; for a bui
 it reports that the stack restarted from genesis and which descriptor is in use, after
 fetching the published descriptor once more when it could not be fetched before. A
 `NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
-within 3 seconds is logged and left to fail on first use.
+within 3 seconds is logged and left to fail on first use. On the light client the
+light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
 with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
 Polkadot, whose signed descriptor the binary ships as a reference, with every node the
@@ -1206,9 +1211,12 @@ the CLI creates and cleans up a unique temporary Unix socket.
 `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
-command uses the selected backend. The light client is slower than RPC,
-supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
-claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
+command uses the selected backend. The light client takes its chain specs from
+the stack's descriptor, so it runs every built-in network and any `--stack`. The
+binary ships the specs of the built-in networks, so they need no spec server; a
+`--stack` naming other specs fetches them once and keeps them under the state
+directory. It is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
+run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 
