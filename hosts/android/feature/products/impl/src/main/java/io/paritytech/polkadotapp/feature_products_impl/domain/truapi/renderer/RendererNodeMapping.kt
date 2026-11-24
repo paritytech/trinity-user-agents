@@ -4,16 +4,23 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
+import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShapes
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
@@ -28,6 +35,10 @@ import uniffi.truapi.ContentAlignment
 import uniffi.truapi.Dimensions
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
+import uniffi.truapi.Mask
+import uniffi.truapi.MaskMode
+import uniffi.truapi.MaskPoint
+import uniffi.truapi.MaskShape
 import uniffi.truapi.Modifier
 import uniffi.truapi.PanAxis
 import uniffi.truapi.PanDrag
@@ -42,11 +53,21 @@ import uniffi.truapi.TypographyStyle
 import uniffi.truapi.VerticalAlignment
 
 /**
+ * What a tree's keyed nodes share with the updates between trees, by key: a gesture's offset, a location pan's
+ * strokes, and a mask's added shapes. None by default, for a tree drawn once.
+ */
+class RendererKeyed(
+    val gesturePosition: (String) -> JsGesturePosition? = { null },
+    val panTrail: (String) -> JsPanTrail? = { null },
+    val maskShapes: (String) -> JsMaskShapes? = { null },
+)
+
+/**
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
-fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { null }): JsWidget =
-    JsWidgetMapping(gesturePosition).map(this)
+fun RendererNode.toJsWidget(keyed: RendererKeyed = RendererKeyed()): JsWidget =
+    JsWidgetMapping(keyed).map(this)
 
 fun RendererNode.hasMaterials(): Boolean = materialsCount() > 0
 
@@ -67,37 +88,37 @@ private fun RendererNode.materialsCount(): Int = when (this) {
     is RendererNode.Image -> 0
 }
 
-private class JsWidgetMapping(private val gesturePosition: (String) -> JsGesturePosition?) {
+private class JsWidgetMapping(private val keyed: RendererKeyed) {
     private var nextMaterialsNode = 0
 
     fun map(node: RendererNode): JsWidget = when (node) {
         is RendererNode.Nil, is RendererNode.SetOffset, is RendererNode.ExtendMask -> JsWidget.Spacer()
         is RendererNode.String -> JsWidget.Text(text = node.text)
         is RendererNode.Box -> JsWidget.Box(
-            modifiers = node.modifiers.toJsModifiers(),
+            modifiers = node.modifiers.toJsModifiers(keyed),
             children = mapChildren(node.children),
             contentAlignment = node.props.contentAlignment?.toJs(),
         )
         is RendererNode.Column -> JsWidget.Column(
-            modifiers = node.modifiers.toJsModifiers(),
+            modifiers = node.modifiers.toJsModifiers(keyed),
             children = mapChildren(node.children),
             horizontalAlignment = node.props.horizontalAlignment?.toJs(),
             verticalArrangement = node.props.verticalArrangement?.toJs(),
         )
         is RendererNode.Row -> JsWidget.Row(
-            modifiers = node.modifiers.toJsModifiers(),
+            modifiers = node.modifiers.toJsModifiers(keyed),
             children = mapChildren(node.children),
             verticalAlignment = node.props.verticalAlignment?.toJs(),
             horizontalArrangement = node.props.horizontalArrangement?.toJs(),
         )
-        is RendererNode.Spacer -> JsWidget.Spacer(modifiers = node.modifiers.toJsModifiers())
+        is RendererNode.Spacer -> JsWidget.Spacer(modifiers = node.modifiers.toJsModifiers(keyed))
         is RendererNode.Text -> {
             skipMaterialsIn(node.children)
             JsWidget.Text(
                 text = node.children.filterIsInstance<RendererNode.String>().joinToString("") { it.text },
                 style = node.props.style?.toJs() ?: JsTypographyStyle.BODY_LARGE_REGULAR,
                 color = node.props.color?.toJs(),
-                modifiers = node.modifiers.toJsModifiers(),
+                modifiers = node.modifiers.toJsModifiers(keyed),
             )
         }
         is RendererNode.Button -> {
@@ -108,7 +129,7 @@ private class JsWidgetMapping(private val gesturePosition: (String) -> JsGesture
                 variant = node.props.variant?.toJs() ?: JsButtonVariant.PRIMARY,
                 enabled = node.props.enabled ?: true,
                 loading = node.props.loading ?: false,
-                modifiers = node.modifiers.toJsModifiers(),
+                modifiers = node.modifiers.toJsModifiers(keyed),
             )
         }
         is RendererNode.TextField -> JsWidget.TextField(
@@ -117,24 +138,25 @@ private class JsWidgetMapping(private val gesturePosition: (String) -> JsGesture
             placeholder = node.props.placeholder,
             label = node.props.label,
             enabled = node.props.enabled ?: true,
-            modifiers = node.modifiers.toJsModifiers(),
+            modifiers = node.modifiers.toJsModifiers(keyed),
         )
         // An image this host cannot draw keeps the size its modifiers give it.
         is RendererNode.Image -> node.props.source.toJsImageSource()?.let { source ->
             JsWidget.Image(
                 source = source,
                 fit = node.props.fit?.toJs() ?: JsImageFit.FILL,
-                modifiers = node.modifiers.toJsModifiers(),
+                modifiers = node.modifiers.toJsModifiers(keyed),
             )
-        } ?: JsWidget.Box(modifiers = node.modifiers.toJsModifiers())
+        } ?: JsWidget.Box(modifiers = node.modifiers.toJsModifiers(keyed))
         is RendererNode.Gesture -> JsWidget.Gesture(
-            position = node.props.key?.let(gesturePosition),
+            position = node.props.key?.let(keyed.gesturePosition),
+            trail = node.props.key?.takeIf { node.props.pan?.location == true }?.let(keyed.panTrail),
             tapAction = node.props.tapAction,
             pan = node.props.pan?.toJs(),
             accessibilityLabel = node.props.accessibilityLabel,
             enabled = node.props.enabled ?: true,
             hapticOnComplete = node.props.hapticOnComplete ?: false,
-            modifiers = node.modifiers.toJsModifiers(),
+            modifiers = node.modifiers.toJsModifiers(keyed),
             children = mapChildren(node.children),
             key = node.props.key,
             feel = node.props.feel?.toJs(),
@@ -146,7 +168,9 @@ private class JsWidgetMapping(private val gesturePosition: (String) -> JsGesture
     }
 
     private fun mapChildren(children: List<RendererNode>): List<JsWidget> =
-        children.filterNot { it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset }.map(::map)
+        children.filterNot {
+            it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset || it is RendererNode.ExtendMask
+        }.map(::map)
 
     // The core numbers `Materials` nodes under a `Text` or `Button` although their children are not drawn.
     private fun skipMaterialsIn(children: List<RendererNode>) {
@@ -173,6 +197,7 @@ private fun PanGesture.toJs(): JsPanGesture = JsPanGesture(
     moveAction = moveAction,
     moveIntervalMs = moveIntervalMs?.toInt() ?: 0,
     endAction = endAction,
+    location = location ?: false,
 )
 
 private fun PanAxis.toJs(): JsPanAxis = when (this) {
@@ -195,7 +220,7 @@ private fun PanDrag.toJs(): JsPanDrag = JsPanDrag(
     holdAtEnd = holdAtEnd ?: true,
 )
 
-private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
+private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed()): List<JsModifier> = buildList {
     var width: Int? = null
     var height: Int? = null
     var minWidth: Int? = null
@@ -248,8 +273,7 @@ private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
             }
             is Modifier.Spin -> add(JsModifier.Spin(modifier.v1.toInt()))
             is Modifier.ExitFade -> add(JsModifier.ExitFade(modifier.v1.toInt()))
-            // The Android mask layer draws masks; until then the node draws whole.
-            is Modifier.Mask -> Unit
+            is Modifier.Mask -> add(modifier.v1.toJs(keyed))
         }
     }
 
@@ -293,6 +317,26 @@ private fun Dimensions.toPadding() = JsModifier.Padding(
     bottom = (bottom ?: top).toDp(),
     start = (start ?: end).toDp(),
 )
+
+private fun Mask.toJs(keyed: RendererKeyed): JsModifier.Mask = JsModifier.Mask(
+    key = key,
+    mode = if (mode == MaskMode.SHOW) JsMaskMode.SHOW else JsMaskMode.HIDE,
+    shapes = shapes.map { it.toJs() },
+    follow = follow?.let { JsMaskFollow(it.pan, it.width.toLong()) },
+    fadeMs = fadeMs?.toLong() ?: 0L,
+    clearedShare = clearedShare?.let { JsClearedShare(it.atPermille.toInt(), it.action) },
+    channel = key?.let(keyed.maskShapes),
+    trail = follow?.pan?.let(keyed.panTrail),
+)
+
+/** A mask's shape, still in the wire's hundredths of a dp. */
+fun MaskShape.toJs(): JsMaskShape = when (this) {
+    is MaskShape.All -> JsMaskShape.All
+    is MaskShape.Circle -> JsMaskShape.Circle(center.toJs(), radius.toLong())
+    is MaskShape.Stroke -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
+}
+
+private fun MaskPoint.toJs() = JsMaskPoint(x, y)
 
 private fun Shape.toJs(): JsShape = when (this) {
     is Shape.Rounded -> JsShape.Rounded(radius = v1.toDp())

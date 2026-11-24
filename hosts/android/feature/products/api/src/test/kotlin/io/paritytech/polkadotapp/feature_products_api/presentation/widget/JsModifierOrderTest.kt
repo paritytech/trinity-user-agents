@@ -61,4 +61,17 @@ class JsModifierOrderTest {
         // A fill, unlike a background, adds no clip.
         assertEquals(listOf(margin, translate, fade, shadow, fill, shimmer, padding, font), ordered)
     }
+
+    @Test
+    fun `a mask turns with a spin, covers everything the node draws, and a node keeps only its last mask`() {
+        val first = JsModifier.Mask(key = "a")
+        val last = JsModifier.Mask(key = "b")
+        val spin = JsModifier.Spin(periodMs = 1000)
+        val shadow = JsModifier.Shadow(0x0000005CL, 0f, 2f, 6f)
+        val fill = JsModifier.Fill(0xFDFDFDFFL)
+
+        val ordered = listOf(background, fill, first, shadow, opacity, last, spin, blending).orderedForCompose()
+
+        assertEquals(listOf(opacity, blending, spin, last, shadow, fill, background), ordered)
+    }
 }

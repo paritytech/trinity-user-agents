@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,10 +31,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -221,6 +225,9 @@ internal fun JsGesture(
         if (inTime) {
             moves.noteAnswer(answered.answer)
             answeredInFrame = position to answered
+            // The answer was written on the render stream's thread; registering it now, on the main thread, makes
+            // the draw that reads it (a mask's added shapes) part of this frame.
+            Snapshot.sendApplyNotifications()
         }
     }
 
@@ -332,6 +339,8 @@ internal fun JsGesture(
                 nodeWidth = it.width
                 nodeHeight = it.height
             }
+            // Where the pan's strokes sit on screen, for masks that follow them.
+            .onGloballyPositioned { coordinates -> current.trail?.origin = coordinates.positionInRoot() }
             .semantics {
                 label?.let { contentDescription = it }
                 role = Role.Button
@@ -365,6 +374,117 @@ internal fun JsGesture(
                         if (ValueAnimator.areAnimatorsEnabled() && popJob?.isActive != true && hitsChild(down.position)) press(feel)
                     }
                     val drag = pan?.drag
+                    if (pan != null && pan.location) {
+                        // Where the finger is, not how far it moved: Started carries the touch-down point, every move
+                        // the finger's place (paced like any keyed pan), and the end the place it lifted. Nothing is
+                        // clamped to travel and nothing completes.
+                        val width = nodeWidth.toFloat()
+                        fun at(point: Offset): Offset =
+                            GestureRules.inside(point.x, point.y, nodeWidth, nodeHeight, rtl).let { Offset(it.first, it.second) }
+
+                        // The trail keeps places from the pan's left edge, whatever the layout direction. A place
+                        // joins it at its touch, before the move is offered, so a mask following the pan draws it in
+                        // this frame.
+                        fun leftToRight(point: Offset): Offset = if (rtl) Offset(width - point.x, point.y) else point
+                        fun trace(point: Offset, begins: Boolean = false) {
+                            val trail = node.trail ?: return
+                            if (begins) trail.begin(leftToRight(point)) else trail.extend(leftToRight(point))
+                            Snapshot.sendApplyNotifications()
+                        }
+                        var total = Offset.Zero
+                        var claimed = false
+                        var lifted = false
+                        var last = at(down.position)
+                        var lastMoveAt: Long? = null
+                        var moveJob: Job? = null
+                        fun offer(point: Offset, at: Long) {
+                            pan.moveAction ?: return
+                            val keyed = node.position
+                            if (keyed != null) {
+                                moves.offer(point)
+                                // Like any keyed pan: the move goes out at its touch, and its answer (a mask's shapes,
+                                // say) is waited for briefly so this frame draws it.
+                                if (GesturePacingSettings.currentSendOnTouch && current.enabled && current.position === keyed) {
+                                    moves.noteAnswer(keyed.value.value.answer)
+                                    val gap = maxOf(minimumGapNanos, pan.moveIntervalMs * NANOS_PER_MS)
+                                    moves.takeTouch(System.nanoTime(), gap)?.let { move ->
+                                        sendKeyed(keyed, pan.moveAction, move, width)
+                                    }
+                                }
+                            } else if (GestureRules.movesNow(at, lastMoveAt, pan.moveIntervalMs)) {
+                                lastMoveAt = at
+                                send(pan.moveAction, JsGesturePhase.MOVED, point.x, point.y, width)
+                            }
+                        }
+
+                        // The pan takes the finger: Started at the touch-down point, then this change's place.
+                        fun claim(change: PointerInputChange) {
+                            claimed = true
+                            node.position?.let { position ->
+                                if (pan.moveAction != null) {
+                                    moves.clear()
+                                    moves.noteAnswer(position.value.value.answer)
+                                    moveJob = scope.launchGestureMoves(moves, position, pan.moveIntervalMs) { point ->
+                                        if (current.enabled && current.position === position) {
+                                            sendKeyed(position, pan.moveAction, point, width)
+                                        } else {
+                                            moves.clear()
+                                        }
+                                    }
+                                }
+                            }
+                            val start = at(down.position)
+                            last = at(change.position)
+                            node.trail?.touch(isDown = true)
+                            trace(start, begins = true)
+                            trace(last)
+                            send(pan.startAction, JsGesturePhase.STARTED, start.x, start.y, width)
+                            offer(last, change.uptimeMillis)
+                            change.consume()
+                        }
+                        // A free location pan starts where the finger lands, so a press with no movement still leaves
+                        // its mark: a following mask draws a dot.
+                        if (GestureRules.claimsAtTouchDown(pan.axis, pan.location)) claim(down)
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (change.changedToUpIgnoreConsumed()) {
+                                    lifted = true
+                                    if (claimed) {
+                                        last = at(change.position)
+                                        trace(last)
+                                        change.consume()
+                                    }
+                                    break
+                                }
+                                if (claimed) {
+                                    last = at(change.position)
+                                    trace(last)
+                                    offer(last, change.uptimeMillis)
+                                    change.consume()
+                                    continue
+                                }
+                                total += change.positionChangeIgnoreConsumed()
+                                when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
+                                    PanDecision.CLAIM -> claim(change)
+                                    PanDecision.RELEASE -> break
+                                    PanDecision.WAIT -> Unit
+                                }
+                            }
+                        } finally {
+                            moveJob?.cancel()
+                            moves.clear()
+                            // After the last place joined the trail, so a mask checking its share on the lift counts it.
+                            node.trail?.touch(isDown = false)
+                            if (claimed) {
+                                send(pan.endAction, if (lifted) JsGesturePhase.ENDED else JsGesturePhase.CANCELLED, last.x, last.y, width)
+                            } else if (lifted && total.getDistance() <= slop) {
+                                send(node.tapAction, JsGesturePhase.TAP, 0f, 0f, width)
+                            }
+                        }
+                        return@awaitEachGesture
+                    }
                     val travel = travelNow()
                     // Without a drag the product owns the place, so every pan starts from zero, as on iOS.
                     val originX = if (drag != null) placeX.value else 0f

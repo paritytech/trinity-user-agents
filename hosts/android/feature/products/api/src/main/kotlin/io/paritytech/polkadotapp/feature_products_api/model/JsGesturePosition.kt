@@ -29,6 +29,14 @@ class JsGesturePosition {
         }
     }
 
+    /** An answer that moves nothing, such as shapes added to a mask: the outstanding move is answered all the same. */
+    fun acknowledge() {
+        lock.withLock {
+            mutableValue.update { it.copy(answer = it.answer + 1) }
+            changed.signalAll()
+        }
+    }
+
     /** A removed target or closed subscription can no longer send pending moves. */
     fun detach() {
         lock.withLock {

@@ -38,6 +38,12 @@ internal object GestureRules {
     }
 
     /**
+     * Whether a pan takes the finger where it lands rather than once it crosses the slop: a free pan that reports the
+     * finger's place, so a press with no movement still reaches the worker and a mask following the pan draws a dot.
+     */
+    fun claimsAtTouchDown(axis: JsPanAxis, location: Boolean): Boolean = location && axis == JsPanAxis.FREE
+
+    /**
      * How far, in px, the children may move: for [JsPanTravel.ParentWidth] the gesture node's own width less its
      * children's, never below zero.
      */
@@ -82,6 +88,12 @@ internal object GestureRules {
     /** A move goes out once [intervalMs] has passed since the last one sent; zero sends every move. */
     fun movesNow(nowMs: Long, lastSentMs: Long?, intervalMs: Int): Boolean =
         lastSentMs == null || nowMs - lastSentMs >= intervalMs.coerceAtLeast(0)
+
+    /** A finger's place inside a node of [widthPx] x [heightPx], from its top-start corner and clamped to it. */
+    fun inside(x: Float, y: Float, widthPx: Int, heightPx: Int, rtl: Boolean): Pair<Float, Float> {
+        val along = x.coerceIn(0f, widthPx.coerceAtLeast(0).toFloat())
+        return (if (rtl) widthPx - along else along) to y.coerceIn(0f, heightPx.coerceAtLeast(0).toFloat())
+    }
 
     /** A node takes a gesture while enabled, and a drag held at the end takes no more. */
     fun accepts(enabled: Boolean, heldAtEnd: Boolean): Boolean = enabled && !heldAtEnd

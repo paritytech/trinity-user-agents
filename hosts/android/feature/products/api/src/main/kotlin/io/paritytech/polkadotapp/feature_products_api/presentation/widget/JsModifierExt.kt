@@ -39,8 +39,9 @@ fun List<JsModifier>.toComposeModifier(): Modifier {
 
 /**
  * Compose applies modifiers outside-in, and each one covers only what the ones after it draw.
- * Opacity and blending therefore have to come before the background and border, or a faded node
- * keeps an opaque background and a blended one never blends the surface it paints.
+ * Opacity, blending and the mask therefore have to come before the background and border, or a faded
+ * node keeps an opaque background, a blended one never blends the surface it paints, and a masked one
+ * keeps its background whole. A node keeps its last mask.
  *
  * The rest follows the frame: margin outside, then the surface, then the content's padding and size.
  * A shaped background also clips the content to its shape, after the border so the border stays whole.
@@ -48,8 +49,10 @@ fun List<JsModifier>.toComposeModifier(): Modifier {
  * The styled modifiers follow the CSS they copy: a translate moves the node inside its margin; a pan's fade and a
  * spin act on all the node draws; a shadow sits under its fill, and a fill, unlike a background, clips nothing; a
  * shimmer lights what the node draws inside its surface. A font is read by the text, an exit fade by its parent.
+ * A mask sits inside a translate and a spin, so its shapes move and turn with the node, and outside the shadow, fill
+ * and surface, so it covers all the node draws.
  */
-internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (this + backgroundClips()).sortedWith(
+internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (lastMaskOnly() + backgroundClips()).sortedWith(
     compareBy {
         when (it) {
             is JsModifier.Margin -> 0
@@ -58,20 +61,26 @@ internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (this + ba
             is JsModifier.FadeWithPan -> 3
             is JsModifier.BlendingMode -> 4
             is JsModifier.Spin -> 5
-            is JsModifier.Shadow -> 6
-            is JsModifier.Fill -> 7
-            is JsModifier.Background -> 8
-            is JsModifier.Border -> 9
-            is JsModifier.Clip -> 10
-            is JsModifier.Shimmer -> 11
-            is JsModifier.Padding -> 12
-            is JsModifier.Size -> 13
-            is JsModifier.FillMaxWidth -> 14
-            is JsModifier.FillMaxHeight -> 15
-            is JsModifier.Font, is JsModifier.ExitFade -> 16
+            is JsModifier.Mask -> 6
+            is JsModifier.Shadow -> 7
+            is JsModifier.Fill -> 8
+            is JsModifier.Background -> 9
+            is JsModifier.Border -> 10
+            is JsModifier.Clip -> 11
+            is JsModifier.Shimmer -> 12
+            is JsModifier.Padding -> 13
+            is JsModifier.Size -> 14
+            is JsModifier.FillMaxWidth -> 15
+            is JsModifier.FillMaxHeight -> 16
+            is JsModifier.Font, is JsModifier.ExitFade -> 17
         }
     }
 )
+
+private fun List<JsModifier>.lastMaskOnly(): List<JsModifier> {
+    val last = lastOrNull { it is JsModifier.Mask }
+    return filter { it !is JsModifier.Mask || it === last }
+}
 
 private fun List<JsModifier>.backgroundClips(): List<JsModifier> =
     filterIsInstance<JsModifier.Background>().mapNotNull { it.shape }.map { JsModifier.Clip(it) }
@@ -95,6 +104,7 @@ fun JsModifier.toComposeModifier(): Modifier = when (this) {
     is JsModifier.Shimmer -> toShimmerModifier()
     is JsModifier.Spin -> toSpinModifier()
     is JsModifier.Font, is JsModifier.ExitFade -> Modifier
+    is JsModifier.Mask -> maskModifier()
 }
 
 private const val OPAQUE = 255f

@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 sealed interface JsModifier {
@@ -158,5 +159,27 @@ sealed interface JsModifier {
     @SerialName("exitFade")
     data class ExitFade(
         val durationMs: Int,
+    ) : JsModifier
+
+    /**
+     * Hides part of the node, or shows only part of it, with shapes in hundredths of a dp from its top-start corner.
+     * @param key Names the mask for shapes added between trees and for a fade between trees
+     * @param follow The location pan whose strokes the host draws into the mask itself
+     * @param fadeMs How long a new tree that changes the keyed mask cross-fades into it
+     * @param clearedShare The share of the node the shapes must cover before the host sends an action
+     * @param channel The shapes added since this tree, and the fade into it
+     * @param trail The followed pan's strokes since this tree
+     */
+    @Serializable
+    @SerialName("mask")
+    data class Mask(
+        val key: String? = null,
+        val mode: JsMaskMode = JsMaskMode.HIDE,
+        val shapes: List<JsMaskShape> = emptyList(),
+        val follow: JsMaskFollow? = null,
+        val fadeMs: Long = 0,
+        val clearedShare: JsClearedShare? = null,
+        @Transient val channel: JsMaskShapes? = null,
+        @Transient val trail: JsPanTrail? = null,
     ) : JsModifier
 }
