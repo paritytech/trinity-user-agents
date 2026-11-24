@@ -680,7 +680,8 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		},
 		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { input }) => {
 			JsValue::from_str(&format!(
-				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {input:?}"
+				"runtimeConfig.productId must be a name of DNS labels ending in a TLD, or a \
+				 localhost identifier, got {input:?}"
 			))
 		},
 		// By length, never by value: an id that trips this is unbounded in

@@ -34,7 +34,8 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
 /// A product identifier in normalized form: trimmed, lowercased, and either a
-/// name dotNS can register or a localhost development identifier.
+/// name of DNS labels ending in a TLD, such as `app.dot` or `example.com`, or a
+/// localhost development identifier.
 ///
 /// Only [`FromStr`] builds one, so two values are equal exactly when they name
 /// the same product executable. Encodes as the identifier string.
@@ -67,8 +68,12 @@ pub enum ProductIdError {
 	/// The identifier was empty or whitespace-only.
 	#[display("product_id must not be empty")]
 	Empty,
-	/// The identifier was not a dotNS or localhost product identifier.
-	#[display("product_id must be a dotNS or localhost product identifier, got {input:?}")]
+	/// The identifier was neither a name of DNS labels ending in a TLD nor a
+	/// localhost development identifier.
+	#[display(
+		"product_id must be a name of DNS labels ending in a TLD, or a localhost identifier, got \
+		 {input:?}"
+	)]
 	Invalid {
 		/// The identifier as received.
 		input: String,

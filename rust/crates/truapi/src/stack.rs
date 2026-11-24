@@ -318,8 +318,11 @@ impl Stack {
 	/// The dotNS TLDs this stack serves names under: Polkadot's reserved TLD,
 	/// then its own when it is another one.
 	///
-	/// The core has no other list of TLDs. Product ids, dotNS links and share
-	/// hosts are all judged against this one.
+	/// The runtime judges every product id it runs or acts for against these,
+	/// and so do navigation and share hosts. The native helpers that take a
+	/// `network_suffix`, such as `parse_product_link` and
+	/// `product_id_matches_network`, judge against the suffix the host passes
+	/// instead.
 	pub fn served_tlds(&self) -> impl Iterator<Item = &str> {
 		let own = (self.tld != RESERVED_TLD).then_some(self.tld.as_str());
 		[RESERVED_TLD].into_iter().chain(own)
