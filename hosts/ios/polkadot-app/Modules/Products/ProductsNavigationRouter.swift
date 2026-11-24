@@ -26,8 +26,8 @@ final class ProductsNavigationRouter: ProductsNavigationRouting, WebPresentable 
     }
 
     @discardableResult
-    func present(view: ControllerBackedProtocol, onUndelivered: (@MainActor () -> Void)?) -> Bool {
-        anchor.present(view: view, onUndelivered: onUndelivered)
+    func present(view: ControllerBackedProtocol) -> Bool {
+        anchor.present(view: view)
     }
 
     func navigateTo(destination: ProductPage) async throws {
@@ -69,7 +69,7 @@ final class ForbiddenNavigationRouter: ProductsNavigationRouting {
     var isReady: Bool { false }
 
     @discardableResult
-    func present(view _: ControllerBackedProtocol, onUndelivered _: (@MainActor () -> Void)?) -> Bool { false }
+    func present(view _: ControllerBackedProtocol) -> Bool { false }
 
     func navigateTo(destination _: ProductPage) async throws {
         throw ProductNativeApiError.navigationForbidden

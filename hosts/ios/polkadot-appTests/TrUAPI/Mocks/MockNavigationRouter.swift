@@ -14,7 +14,7 @@ final class MockNavigationRouter: ProductsNavigationRouting {
     var isReady: Bool { false }
 
     @discardableResult
-    func present(view _: ControllerBackedProtocol, onUndelivered _: (@MainActor () -> Void)?) -> Bool { false }
+    func present(view _: ControllerBackedProtocol) -> Bool { false }
 
     func navigateTo(destination: ProductPage) async throws {
         if let error = errorToThrow { throw error }
