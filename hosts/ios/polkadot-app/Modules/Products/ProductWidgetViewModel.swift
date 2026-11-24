@@ -139,6 +139,16 @@ private extension ProductWidgetViewModel {
                     continue
                 }
 
+                // Shapes added to one keyed mask: no tree to map, and only that mask draws again.
+                if case let .native(.extendMask(key, shapes)) = output {
+                    // Handed over here first, like an offset, so the frame that sent the move can draw these shapes.
+                    gestureOffsets?.deliver(key: key, shapes: shapes.map(\.widgetShape))
+                    await MainActor.run {
+                        self.gestureOffsets?.applyDelivered()
+                    }
+                    continue
+                }
+
                 let resolved: CustomMessageWidgetNode? =
                     switch output {
                     case let .scaleEncoded(hexString):
@@ -149,7 +159,7 @@ private extension ProductWidgetViewModel {
                     }
                 await MainActor.run {
                     // A tree always wins over the offsets set before it.
-                    self.gestureOffsets?.treeArrived()
+                    self.gestureOffsets?.treeArrived(masks: resolved?.keyedMasks ?? [:])
                     self.node = resolved
                 }
                 drew = true

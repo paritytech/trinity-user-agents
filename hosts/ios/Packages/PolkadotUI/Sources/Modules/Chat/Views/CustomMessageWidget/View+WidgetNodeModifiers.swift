@@ -4,7 +4,6 @@ extension View {
     /// `alignment` is where the body sits once a fill modifier has stretched
     /// its frame. A stack sizes to its widest child, so without this a filled
     /// node centres its content instead of honouring its own alignment.
-    @ViewBuilder
     func applyWidgetNodeModifiers(
         _ modifiers: CustomMessageWidgetNode.Modifiers,
         alignment: Alignment = .center
@@ -23,7 +22,7 @@ extension View {
             .modifier(NodeShadowModifier(shadow: modifiers.shadow, background: modifiers.background))
             // 4. Border overlay
             .modifier(NodeBorderModifier(border: modifiers.border))
-            // 5. Compositing, over the node and its background but under the margin
+            // 5. Mask and compositing, over the node and its background but under the margin
             .modifier(NodeSpinModifier(period: modifiers.spinPeriod))
             .modifier(NodeCompositingModifier(modifiers: modifiers))
             .modifier(PanFadeModifier(fade: modifiers.panFade))
@@ -43,6 +42,7 @@ private struct NodeCompositingModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .modifier(NodeMaskModifier(mask: modifiers.mask))
             .opacity(modifiers.opacity ?? 1)
             .modifier(NodeBlendModeModifier(mode: modifiers.blendingMode))
             // `.opacity(0)` only stops the drawing, so a node the product hid
@@ -57,7 +57,6 @@ private struct NodeCompositingModifier: ViewModifier {
 private struct NodeBlendModeModifier: ViewModifier {
     let mode: BlendMode?
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         if let mode {
             content.blendMode(mode)

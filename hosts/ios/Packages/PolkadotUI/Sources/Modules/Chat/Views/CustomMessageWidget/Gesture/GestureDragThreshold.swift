@@ -56,6 +56,8 @@ final class TouchDownPanGestureRecognizer: UIPanGestureRecognizer, DragRecognizi
 /// from where it began, as `UIPanGestureRecognizer`'s is, so the surface's catch-up works the same with either.
 final class ThresholdPanGestureRecognizer: UIGestureRecognizer, DragRecognizing {
     let threshold: CGFloat
+    /// Begins at the touch-down, with no movement, for a pan that takes the finger where it lands.
+    var beginsAtTouchDown = false
     private(set) var touchDown: CGPoint?
     private var start = CGPoint.zero
     private var current = CGPoint.zero
@@ -96,6 +98,10 @@ final class ThresholdPanGestureRecognizer: UIGestureRecognizer, DragRecognizing 
         previous = current
         currentTime = touch.timestamp
         previousTime = currentTime
+        if beginsAtTouchDown {
+            start = current
+            state = .began
+        }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with _: UIEvent) {

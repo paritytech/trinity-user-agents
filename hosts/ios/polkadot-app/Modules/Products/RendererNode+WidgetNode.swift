@@ -72,7 +72,7 @@ private extension RendererNode {
              .string,
              .setOffset,
              .extendMask:
-            // An offset update is a stream item, not part of a tree: inside one it draws nothing.
+            // Offset and mask updates are stream items, not part of a tree: inside one they draw nothing.
             return nil
 
         case let .image(modifiers, props):
@@ -165,6 +165,7 @@ private extension [Modifier] {
         var opacity: CGFloat?
         var blendingMode: BlendMode?
         var style = NodeStyleByValue()
+        var mask: CustomMessageWidgetNode.Mask?
 
         for modifier in self {
             switch modifier {
@@ -213,9 +214,8 @@ private extension [Modifier] {
                  .spin,
                  .exitFade:
                 style.take(modifier)
-            case .mask:
-                // The iPhone mask layer draws masks; until then the node draws whole.
-                break
+            case let .mask(value):
+                mask = value.widgetMask
             }
         }
 
@@ -238,7 +238,8 @@ private extension [Modifier] {
             panFade: style.panFade,
             shimmer: style.shimmer,
             spinPeriod: style.spinPeriod,
-            exitFade: style.exitFade
+            exitFade: style.exitFade,
+            mask: mask
         )
     }
 }
@@ -432,6 +433,7 @@ extension PanGesture {
         value.moveAction = moveAction
         value.endAction = endAction
         value.moveInterval = TimeInterval(moveIntervalMs ?? 0) / 1_000
+        value.reportsLocation = location ?? false
         return value
     }
 }

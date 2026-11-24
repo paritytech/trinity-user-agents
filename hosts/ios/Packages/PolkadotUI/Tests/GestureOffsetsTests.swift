@@ -186,6 +186,23 @@ struct GestureAnswerMailboxTests {
         #expect(mailbox.take() == piece)
         #expect(mailbox.take() == nil)
     }
+
+    @Test("Every mask extension is kept, in order, and a wait wakes on one")
+    func maskAnswersAddUp() {
+        let mailbox = GestureAnswerMailbox()
+        let dot = CustomMessageWidgetNode.Mask.Shape.circle(center: CGPoint(x: 1, y: 2), radius: 3)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.005) {
+            mailbox.deliver(MaskAnswer(key: "veil", shapes: [dot, .all]))
+        }
+        #expect(mailbox.wait(after: 0, until: Date(timeIntervalSinceNow: 1)))
+        mailbox.deliver(MaskAnswer(key: "veil", shapes: []))
+        #expect(mailbox.delivered == 2)
+        #expect(mailbox.takeMaskAnswers() == [
+            MaskAnswer(key: "veil", shapes: [dot, .all]), MaskAnswer(key: "veil", shapes: []),
+        ])
+        #expect(mailbox.takeMaskAnswers().isEmpty)
+        #expect(mailbox.take() == nil, "a mask extension is not an offset")
+    }
 }
 
 @MainActor
@@ -234,6 +251,54 @@ struct GestureOffsetsDeliveryTests {
         pacer.offer(Data([1]))
         #expect(sent == [Data([1])])
         #expect(channel.offset == CGPoint(x: 3, y: 0))
+        #expect(pacer.pacing.sentAt == nil)
+        pacer.stop()
+    }
+
+    @Test("Delivered mask shapes are applied once, whoever applies them first, and an empty one still answers the pan")
+    func maskShapesAppliedOnce() {
+        let offsets = GestureOffsets()
+        let pan = offsets.channel(for: "pad")
+        var answers = 0
+        pan.onAnswer = { answers += 1 }
+        offsets.deliver(key: "veil", shapes: [.all, .circle(center: .zero, radius: 4)])
+        offsets.deliver(key: "veil", shapes: [])
+        offsets.applyDelivered()
+        offsets.applyDelivered()
+        #expect(offsets.mask(for: "veil").added == [.all, .circle(center: .zero, radius: 4)])
+        #expect(pan.offset == nil, "a mask extension moves no gesture")
+        #expect(answers == 2)
+    }
+
+    @Test("A tree drops mask shapes delivered before it and not yet applied, and the followed strokes")
+    func treeDropsDeliveredShapes() {
+        let offsets = GestureOffsets()
+        offsets.trail(for: "pad").begin(at: CGPoint(x: 1, y: 1))
+        offsets.deliver(key: "veil", shapes: [.all])
+        offsets.treeArrived()
+        offsets.applyDelivered()
+        #expect(offsets.mask(for: "veil").added.isEmpty)
+        #expect(offsets.trail(for: "pad").isEmpty)
+    }
+
+    @Test("A masked pan waits for its answer and draws it in the frame that sent the move")
+    func pacerWaitsForShapes() {
+        let offsets = GestureOffsets()
+        let pan = offsets.channel(for: "pad")
+        let pacer = GestureMovePacer()
+        pacer.start(
+            send: { _ in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.001) {
+                    offsets.deliver(key: "veil", shapes: [.all, .all])
+                }
+            },
+            offsets: offsets,
+            sendOnTouch: true,
+            answerWait: 0.5
+        )
+        pan.onAnswer = { [pacer] in pacer.answered() }
+        pacer.offer(Data([1]))
+        #expect(offsets.mask(for: "veil").added.count == 2)
         #expect(pacer.pacing.sentAt == nil)
         pacer.stop()
     }

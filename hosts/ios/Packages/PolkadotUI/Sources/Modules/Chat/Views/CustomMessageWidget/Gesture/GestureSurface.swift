@@ -2,10 +2,13 @@ import SwiftUI
 import UIKit
 
 /// A pan's translation from where it was recognised, and the slop: how far the finger had already moved from its
-/// touch-down point by then, which the translation leaves out.
+/// touch-down point by then, which the translation leaves out. `location` and `touchDown` are where the finger is
+/// and first touched inside the surface, from its top-start corner and clamped to its bounds.
 struct PanTranslation: Equatable {
     var recognized: CGPoint
     var slop: CGPoint
+    var location: CGPoint = .zero
+    var touchDown: CGPoint = .zero
 }
 
 struct GestureSurface: UIViewRepresentable {
@@ -22,6 +25,9 @@ struct GestureSurface: UIViewRepresentable {
     func updateUIView(_ view: GestureSurfaceView, context _: Context) {
         view.isInteractive = props.isEnabled
         view.axis = props.pan?.axis
+        view.startsAtTouchDown = GestureSurfaceView.claimsAtTouchDown(
+            axis: props.pan?.axis, reportsLocation: props.pan?.reportsLocation == true
+        )
         view.acceptsTap = props.tapAction != nil
         view.onPan = onPan
         view.onTap = onTap
@@ -34,6 +40,11 @@ final class GestureSurfaceView: UIView {
     let panRecognizer: any DragRecognizing = GestureSurfaceView.makeDragRecognizer(GestureDragThreshold.current)
     let tapRecognizer = UITapGestureRecognizer()
     var axis: CustomMessageWidgetNode.PanAxis?
+    /// The pan begins where the finger lands, with no movement (`claimsAtTouchDown`).
+    var startsAtTouchDown = false {
+        didSet { (panRecognizer as? ThresholdPanGestureRecognizer)?.beginsAtTouchDown = startsAtTouchDown }
+    }
+
     var isInteractive = false
     var acceptsTap = false
     var onPan: ((CustomMessageWidgetNode.GesturePhase, PanTranslation) -> Void)?
@@ -89,6 +100,12 @@ final class GestureSurfaceView: UIView {
         }
     }
 
+    /// Whether a pan takes the finger where it lands rather than once it crosses the threshold: a free pan that reports
+    /// the finger's place, so a press with no movement still starts a stroke where the finger is.
+    static func claimsAtTouchDown(axis: CustomMessageWidgetNode.PanAxis?, reportsLocation: Bool) -> Bool {
+        reportsLocation && axis == .free
+    }
+
     /// One finger, starting after `threshold` points; nil threshold is the system pan recogniser and its own slop.
     static func makeDragRecognizer(_ threshold: CGFloat?) -> any DragRecognizing {
         guard let threshold else {
@@ -97,6 +114,12 @@ final class GestureSurfaceView: UIView {
             return system
         }
         return ThresholdPanGestureRecognizer(threshold: threshold)
+    }
+
+    /// A point of the surface measured from its top-start corner and clamped to its bounds.
+    static func inside(_ point: CGPoint, _ size: CGSize, mirrored: Bool) -> CGPoint {
+        let across = min(max(point.x, 0), size.width)
+        return CGPoint(x: mirrored ? size.width - across : across, y: min(max(point.y, 0), size.height))
     }
 
     /// In window points; zero when the touch-down was not seen.
@@ -111,6 +134,7 @@ extension GestureSurfaceView: UIGestureRecognizerDelegate {
         guard isInteractive else { return false }
         if recognizer === tapRecognizer { return acceptsTap }
         guard let axis else { return false }
+        if startsAtTouchDown { return true }
         return Self.claimsDrag(
             axis: axis,
             translation: panRecognizer.translation(in: window),
@@ -139,8 +163,16 @@ private extension GestureSurfaceView {
                 touchDown: recognizer.touchDown, location: recognizer.location(in: window), translation: translation
             )
         }
-        var sample = PanTranslation(recognized: translation, slop: slop)
-        if effectiveUserInterfaceLayoutDirection == .rightToLeft {
+        let location = recognizer.location(in: self)
+        let touchDown = recognizer.touchDown.map { convert($0, from: nil) } ?? location
+        let mirrored = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        var sample = PanTranslation(
+            recognized: translation,
+            slop: slop,
+            location: Self.inside(location, bounds.size, mirrored: mirrored),
+            touchDown: Self.inside(touchDown, bounds.size, mirrored: mirrored)
+        )
+        if mirrored {
             sample.recognized.x = -sample.recognized.x
             sample.slop.x = -sample.slop.x
         }

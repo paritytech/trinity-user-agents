@@ -205,4 +205,41 @@ struct ProductWidgetViewModelTests {
         let offset = await MainActor.run { viewModel.gestureOffsets?.channel(for: "piece").offset }
         #expect(offset == nil)
     }
+
+    /// Shapes reach their keyed mask without replacing the tree, in hundredths of a point on the wire.
+    @Test func maskShapesReachTheirMaskWithoutANewTree() async {
+        let viewModel = makeViewModel(serving: [
+            .native(.spacer(modifiers: [])),
+            .native(.extendMask(key: "veil", shapes: [.circle(center: MaskPoint(x: 150, y: -50), radius: 2_600)])),
+            .native(.extendMask(key: "veil", shapes: [.stroke(width: 5_200, points: [MaskPoint(x: 1, y: 2)])]))
+        ])
+
+        await viewModel.renderTask?.value
+
+        let (added, node) = await MainActor.run {
+            (viewModel.gestureOffsets?.mask(for: "veil").added, viewModel.node)
+        }
+        #expect(added == [
+            .circle(center: CGPoint(x: 1.5, y: -0.5), radius: 26),
+            .stroke(width: 52, points: [CGPoint(x: 0.01, y: 0.02)]),
+        ])
+        guard case .spacer = node?.content else {
+            Issue.record("the tree was replaced by the mask update")
+            return
+        }
+    }
+
+    /// A tree that arrives after mask shapes sets the mask itself.
+    @Test func aTreeAfterMaskShapesWins() async {
+        let viewModel = makeViewModel(serving: [
+            .native(.spacer(modifiers: [])),
+            .native(.extendMask(key: "veil", shapes: [.all])),
+            .native(.spacer(modifiers: []))
+        ])
+
+        await viewModel.renderTask?.value
+
+        let added = await MainActor.run { viewModel.gestureOffsets?.mask(for: "veil").added }
+        #expect(added?.isEmpty == true)
+    }
 }

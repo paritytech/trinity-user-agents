@@ -45,6 +45,7 @@ struct NodeGestureView<Content: View>: View {
         .id(settleGeneration)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGSize.self, of: \.size) { width = $0.width; height = $0.height }
+        .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { trail?.origin = $0 }
         .onChange(of: width) { updatePlace() }
         .onChange(of: childWidth) { updatePlace() }
         .onChange(of: childBase) { updatePlace() }
@@ -84,11 +85,24 @@ private extension NodeGestureView {
         return CGPoint(x: offset.x + set.x, y: offset.y + set.y)
     }
 
+    /// The finger's strokes on this keyed location pan, for masks that follow it.
+    var trail: PanTrail? {
+        guard props.pan?.reportsLocation == true else { return nil }
+        return props.key.flatMap { gestureOffsets?.trail(for: $0) }
+    }
+
+    /// A place the surface reports (from its top-start corner) from the pan's top-left corner, as the trail keeps it.
+    func leftToRight(_ point: CGPoint) -> CGPoint {
+        layoutDirection == .rightToLeft ? CGPoint(x: width - point.x, y: point.y) : point
+    }
+
     /// A keyed pan whose worker hears its moves: those are paced instead of sent one by one.
     var pacesMoves: Bool { props.key != nil && props.pan?.moveAction != nil }
 
     func payload(_ phase: CustomMessageWidgetNode.GesturePhase) -> Data {
-        let fraction = GestureMotion.fraction(position, axis: props.pan?.axis ?? .horizontal, travel: panTravel)
+        let fraction = props.pan?.reportsLocation == true
+            ? GestureMotion.fraction(position, axis: .horizontal, travel: width)
+            : GestureMotion.fraction(position, axis: props.pan?.axis ?? .horizontal, travel: panTravel)
         return props.encodePayload(phase, position, fraction)
     }
 
@@ -111,6 +125,10 @@ private extension NodeGestureView {
 
     func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: PanTranslation) {
         guard props.isEnabled, !held, let pan = props.pan else { return }
+        if pan.reportsLocation {
+            receiveLocation(phase, translation, pan)
+            return
+        }
         if case .started = phase {
             cutSettleShort()
             dragging = true
@@ -150,6 +168,54 @@ private extension NodeGestureView {
         case .ended: release(cancelled: false)
         case .cancelled: release(cancelled: true)
         default: break
+        }
+    }
+
+    /// A pan that reports where the finger is: `Started` carries the touch-down point, every move the finger's place
+    /// (paced like any keyed pan), and the end the place it lifted. Nothing is clamped to travel and nothing completes.
+    /// Each place joins the pan's trail before the move is offered, so a mask following the pan draws it in this frame.
+    func receiveLocation(
+        _ phase: CustomMessageWidgetNode.GesturePhase,
+        _ sample: PanTranslation,
+        _ pan: CustomMessageWidgetNode.PanGesture
+    ) {
+        switch phase {
+        case .started:
+            dragging = true
+            lastMove = 0
+            startPacing(pan)
+            trail?.begin(at: leftToRight(sample.touchDown))
+            trail?.extend(to: leftToRight(sample.location))
+            position = sample.touchDown
+            emit(pan.startAction, .started)
+            position = sample.location
+            offerMove(pan)
+        case .moved:
+            guard dragging else { return }
+            trail?.extend(to: leftToRight(sample.location))
+            position = sample.location
+            offerMove(pan)
+        case .ended,
+             .cancelled:
+            guard dragging else { return }
+            trail?.extend(to: leftToRight(sample.location))
+            position = sample.location
+            dragging = false
+            stopPacing()
+            emit(pan.endAction, phase)
+        default: break
+        }
+    }
+
+    func offerMove(_ pan: CustomMessageWidgetNode.PanGesture) {
+        if pacesMoves {
+            pacer.offer(payload(.moved))
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastMove >= pan.moveInterval {
+            lastMove = now
+            emit(pan.moveAction, .moved)
         }
     }
 

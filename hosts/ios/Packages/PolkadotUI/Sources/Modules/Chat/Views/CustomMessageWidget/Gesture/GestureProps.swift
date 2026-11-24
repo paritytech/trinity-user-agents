@@ -40,6 +40,8 @@ public extension CustomMessageWidgetNode {
         public var moveAction: String?
         public var endAction: String?
         public var moveInterval: TimeInterval = 0
+        /// Events carry where the finger is inside the gesture (clamped to its frame) instead of how far it moved.
+        public var reportsLocation = false
 
         public init() {}
     }

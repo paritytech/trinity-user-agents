@@ -274,6 +274,8 @@ public extension CustomMessageWidgetNode {
         public let spinPeriod: TimeInterval?
         /// How long the node fades out for once a tree drops it.
         public let exitFade: TimeInterval?
+        /// Hides part of the node, or shows only part of it.
+        public let mask: Mask?
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -304,7 +306,8 @@ public extension CustomMessageWidgetNode {
             fillWidth: false,
             fillHeight: false,
             opacity: nil,
-            blendingMode: nil
+            blendingMode: nil,
+            mask: nil
         )
 
         public init(
@@ -326,7 +329,8 @@ public extension CustomMessageWidgetNode {
             panFade: PanFade? = nil,
             shimmer: Shimmer? = nil,
             spinPeriod: TimeInterval? = nil,
-            exitFade: TimeInterval? = nil
+            exitFade: TimeInterval? = nil,
+            mask: Mask? = nil
         ) {
             self.padding = padding
             self.margin = margin
@@ -347,6 +351,7 @@ public extension CustomMessageWidgetNode {
             self.shimmer = shimmer
             self.spinPeriod = spinPeriod
             self.exitFade = exitFade
+            self.mask = mask
         }
     }
 }

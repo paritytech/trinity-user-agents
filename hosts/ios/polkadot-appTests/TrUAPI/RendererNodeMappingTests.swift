@@ -350,6 +350,84 @@ struct RendererNodeMappingTests {
         #expect(radius == 0)
     }
 
+    @Test func aMaskModifierCarriesItsShapesInPoints() throws {
+        let mask = Mask(
+            key: "veil",
+            mode: .hide,
+            shapes: [
+                .all,
+                .circle(center: MaskPoint(x: 1_050, y: -200), radius: 2_600),
+                .stroke(width: 5_200, points: [MaskPoint(x: 0, y: 0), MaskPoint(x: 100, y: 250)]),
+            ],
+            follow: MaskFollow(pan: "pad", width: 5_200),
+            fadeMs: 350
+        )
+        let node = RendererNode.image(
+            modifiers: [.width(290), .mask(mask)],
+            props: ImageProps(source: .archive("veil.png"), fit: .fill)
+        )
+        let widget = try #require(node.toWidgetNode(resolver: resolver))
+        let mapped = try #require(widget.modifiers.mask)
+        #expect(mapped.key == "veil" && mapped.mode == .hide)
+        #expect(mapped.shapes == [
+            .all,
+            .circle(center: CGPoint(x: 10.5, y: -2), radius: 26),
+            .stroke(width: 52, points: [.zero, CGPoint(x: 1, y: 2.5)]),
+        ])
+        #expect(mapped.follow == .init(pan: "pad", width: 52))
+        #expect(abs(mapped.fade - 0.35) < 0.0001)
+    }
+
+    @Test func aShowMaskWithNoKeyMapsAsSent() throws {
+        let node = RendererNode.box(
+            modifiers: [.mask(Mask(key: nil, mode: .show, shapes: [], follow: nil, fadeMs: nil))],
+            props: BoxProps(contentAlignment: nil),
+            children: []
+        )
+        let mapped = try #require(node.toWidgetNode(resolver: resolver)?.modifiers.mask)
+        #expect(mapped == CustomMessageWidgetNode.Mask(key: nil, mode: .show))
+    }
+
+    @Test func maskUpdatesInsideATreeDrawNothing() {
+        let node = RendererNode.box(
+            modifiers: [],
+            props: BoxProps(contentAlignment: nil),
+            children: [.extendMask(key: "veil", shapes: [.all])]
+        )
+        guard case let .box(_, children) = node.toWidgetNode(resolver: resolver)?.content else {
+            Issue.record("the box did not map")
+            return
+        }
+        #expect(children.isEmpty)
+    }
+
+    @Test func aLocationPanReportsWhereTheFingerIs() throws {
+        let pan = PanGesture(
+            axis: .free,
+            drag: nil,
+            startAction: "start",
+            moveAction: "move",
+            moveIntervalMs: nil,
+            endAction: "end",
+            location: true
+        )
+        let node = RendererNode.gesture(
+            modifiers: [],
+            props: GestureProps(
+                tapAction: nil, pan: pan, accessibilityLabel: nil, enabled: nil, hapticOnComplete: nil, key: "pad",
+                feel: nil
+            ),
+            children: []
+        )
+        guard case let .gesture(props, _) = try #require(node.toWidgetNode(resolver: resolver)).content else {
+            Issue.record("the gesture did not map")
+            return
+        }
+        #expect(props.pan?.reportsLocation == true)
+        #expect(props.pan?.axis == .free)
+        #expect(props.key == "pad")
+    }
+
     @Test func materialsDrawTheirChildrenPlain() throws {
         let materials = RendererNode.materials(
             props: MaterialsProps(layers: []),
