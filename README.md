@@ -1105,3 +1105,4 @@ with one outstanding move per display frame and full-tree replacement taking
 precedence. See [keyed gesture rendering](hosts/android/README.md#keyed-gesture-rendering).
 
 On Android, a node keeps its blend mode when opacity, a pan fade or an exit fade makes it translucent.
+A following mask counts the current tree's shapes together with new strokes when checking its cleared share after a lift.

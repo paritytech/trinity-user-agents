@@ -74,7 +74,7 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
     val share = mask.clearedShare
     if (share != null) {
         val dispatch by rememberUpdatedState(LocalJsEventHandler.current)
-        val pictureNow by rememberUpdatedState(::picture)
+        val pictureNow by rememberUpdatedState { picture() }
         val trail = mask.trail
         val follows = mask.follow != null
         LaunchedEffect(share, channel, trail, follows) {
