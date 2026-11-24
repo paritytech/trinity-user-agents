@@ -16,7 +16,7 @@ class FundingFlowInteractor @Inject constructor(
     /** The balance asset's decimals. */
     suspend fun cashPrecision(): Int = chainAssetProvider.asset().precision
 
-    suspend fun spendable(): Balance? = balance.spendable()
+    suspend fun spendable(): Result<Balance> = balance.spendable()
 
     suspend fun brand(providerId: ProductId): FundingProviderBrand = branding.brand(providerId)
 }

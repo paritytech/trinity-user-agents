@@ -3,11 +3,13 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEvent
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -29,8 +31,8 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.ProductId
 import kotlin.time.Instant
 
-/** The funding service as plain state: each session's entries are pushed by the test, and every call is recorded. */
-class FakeFundingService : FundingService {
+/** The funding parts as plain state: each session's entries are pushed by the test, and every call is recorded. */
+class FakeFunding : FundingSessions, FundingQuotes, FundingProviderFrames {
     /** Session "intent" as it changes; `null` ends what follows it. */
     val entry = MutableSharedFlow<FundingEntry?>(replay = 1)
     val calls = mutableListOf<String>()
@@ -41,66 +43,66 @@ class FakeFundingService : FundingService {
 
     override fun entries(): Flow<List<FundingEntry>> = listed
 
-    override fun entryState(id: FundingSessionId): Flow<FundingEntry> = entry.takeWhile { it != null }.map { requireNotNull(it) }
+    override fun entryState(id: FundingIntentId): Flow<FundingEntry> = entry.takeWhile { it != null }.map { requireNotNull(it) }
 
-    override fun shown(id: FundingSessionId) = Unit
+    override fun shown(id: FundingIntentId) = Unit
 
     override suspend fun resume(): Result<Unit> = Result.success(Unit)
 
-    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingSessionId?> = Result.success(null)
+    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingIntentId?> = Result.success(null)
 
-    override fun select(selection: FundingSelection, id: FundingSessionId) {
+    override fun select(selection: FundingSelection, id: FundingIntentId) {
         calls += "select ${selection.rail} ${selection.asset} ${selection.country}"
     }
 
-    override fun quote(amount: Balance?, id: FundingSessionId) {
+    override fun quote(amount: Balance?, id: FundingIntentId) {
         calls += "quote ${amount?.value}"
     }
 
-    override suspend fun amountIssue(amount: Balance, spendable: Balance?, id: FundingSessionId): Result<FundingAmountIssue?> = Result.success(null)
+    override suspend fun amountIssue(amount: Balance, spendable: Balance?, id: FundingIntentId): Result<FundingAmountIssue?> = Result.success(null)
 
-    override suspend fun start(id: FundingSessionId, provider: ProductId?): Result<Unit> =
+    override suspend fun start(id: FundingIntentId, provider: ProductId?): Result<Unit> =
         startResult.also { calls += "start ${provider?.value}" }
 
-    override fun stopStarting(id: FundingSessionId) {
-        calls += "stopStarting"
-    }
-
-    override fun leave(id: FundingSessionId) {
+    override fun leave(id: FundingIntentId) {
         calls += "leave"
     }
 
-    override suspend fun cancel(id: FundingSessionId): Result<CancelOutcome> = cancelResult.also { calls += "cancel" }
+    override suspend fun cancel(id: FundingIntentId): Result<CancelOutcome> = cancelResult.also { calls += "cancel" }
 
-    override suspend fun answerCancelOffer(id: FundingSessionId, terms: CancelTerms?): Result<CancelConfirmation> {
+    override suspend fun answerCancelOffer(id: FundingIntentId, terms: CancelTerms?): Result<CancelConfirmation> {
         answeredTerms = terms
         calls += "answer"
         return answerResult
     }
 
-    override suspend fun acknowledge(id: FundingSessionId) = Unit
+    override suspend fun acknowledge(id: FundingIntentId) = Unit
 
-    val eventQueue = MutableSharedFlow<FundingEvent>(extraBufferCapacity = 16)
+    val requestQueue = MutableSharedFlow<FundingEntry>(extraBufferCapacity = 16)
 
-    override val events: Flow<FundingEvent> = eventQueue
+    override val presentationRequests: Flow<FundingEntry> = requestQueue
+
+    val eventQueue = MutableSharedFlow<FundingFrameEvent>(extraBufferCapacity = 16)
+
+    override val events: Flow<FundingFrameEvent> = eventQueue
 
     /** Sessions whose provider waits for its screen to be opened. */
-    val waitingFrames = mutableSetOf<FundingSessionId>()
+    val waitingFrames = mutableSetOf<FundingIntentId>()
 
     /** Every session listed, as [entries] gives them. */
     val listed = MutableStateFlow<List<FundingEntry>>(emptyList())
 
-    override suspend fun openProviderFrame(id: FundingSessionId): Result<Boolean> =
-        Result.success(waitingFrames.remove(id)).also { calls += "openProviderFrame ${id.value}" }
+    override suspend fun open(intentId: FundingIntentId): Result<Boolean> =
+        Result.success(waitingFrames.remove(intentId)).also { calls += "openProviderFrame ${intentId.value}" }
 
-    override suspend fun isFrameWaiting(id: FundingSessionId): Result<Boolean> = Result.success(id in waitingFrames)
+    override suspend fun isWaiting(intentId: FundingIntentId): Result<Boolean> = Result.success(intentId in waitingFrames)
 
-    override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) = Unit
+    override fun answer(request: FundingFrameRequest, outcome: FundingFrameOutcome) = Unit
 }
 
 /** The sheet as plain state, recording where its screens send it. */
 class FakeFundingSheet(state: FundingFlowState, entry: FundingEntry?) : FundingSheet {
-    override val sessionId = FundingSessionId("intent")
+    override val intentId = FundingIntentId("intent")
     override val entry = MutableStateFlow(entry)
     override val flow = MutableStateFlow<FundingFlowState?>(state)
     override val brands: StateFlow<Map<ProductId, FundingProviderBrand>> = MutableStateFlow(emptyMap())
@@ -146,7 +148,7 @@ object FundingFixtures {
         isPresented: Boolean = true,
         progress: FundingProgress? = session?.let { FakeFundingCore.progress() },
     ) = FundingEntry.of(
-        id = FundingSessionId("intent"),
+        id = FundingIntentId("intent"),
         fallbackDirection = FundingDirection.IN,
         fallbackAmount = null,
         session = session,
@@ -155,6 +157,7 @@ object FundingFixtures {
         options = options,
         askedAmount = quotes?.amount?.toBalanceOrNull(),
         quotes = quotes,
+        quotesFailed = false,
         isPresented = isPresented,
     )
 

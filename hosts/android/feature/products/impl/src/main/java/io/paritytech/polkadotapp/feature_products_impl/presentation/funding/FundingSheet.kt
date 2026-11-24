@@ -2,8 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.ProductId
@@ -17,7 +17,7 @@ data class FundingScreenEntry(val screen: FundingScreen, val key: Int)
  * picked so far, and the sheet's stack. Each screen's view model reads only what its screen draws.
  */
 interface FundingSheet {
-    val sessionId: FundingSessionId
+    val intentId: FundingIntentId
 
     /** The session as the funding service last reported it; `null` until it has. */
     val entry: StateFlow<FundingEntry?>

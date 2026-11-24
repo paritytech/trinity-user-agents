@@ -8,13 +8,12 @@ import io.mockk.slot
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotification
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequestId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashNotice
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.entry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.ramp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingFrames
@@ -30,10 +29,9 @@ import org.junit.Test
 import uniffi.truapi.FundingFrameTarget
 
 class FundingSessionPresenterTest {
-    private val service = FakeFundingService()
+    private val service = FakeFunding()
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val notifier = mockk<AppNotifier>(relaxed = true)
-    private val crashNotice = mockk<WorkerCrashNotice>(relaxed = true)
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { brand(ramp) } returns FundingProviderBrand(ramp, "Ramp", null)
     }
@@ -43,12 +41,13 @@ class FundingSessionPresenterTest {
         val frames = FundingFrames(mockk(), mockk(), notifier, testDispatchers())
         val presenter = FundingSessionPresenter(
             service,
+            service,
             frames,
             router,
             interactor,
             notifier,
             mockk { every { applicationContext.getString(any(), any()) } answers { "${(it.invocation.args[1] as Array<*>)[0]} wants to show a screen" } },
-            crashNotice,
+            backgroundScope,
             testDispatchers(),
         )
         backgroundScope.launch { presenter.present() }
@@ -60,7 +59,7 @@ class FundingSessionPresenterTest {
     fun `a new session's sheet opens when the core asks`() = runTest {
         presenting()
 
-        service.eventQueue.emit(FundingEvent.PresentationRequested(entry()))
+        service.requestQueue.emit(entry())
         runCurrent()
 
         coVerify { router.openFundingOverlay(INTENT) }
@@ -72,7 +71,7 @@ class FundingSessionPresenterTest {
         service.waitingFrames += INTENT
         presenting()
 
-        service.eventQueue.emit(FundingEvent.FrameRequested(INTENT, ramp))
+        service.eventQueue.emit(FundingFrameEvent.Requested(INTENT, ramp))
         runCurrent()
 
         assertEquals(listOf("openProviderFrame intent"), service.calls)
@@ -83,7 +82,7 @@ class FundingSessionPresenterTest {
     fun `the screen the core presents opens over whatever is on screen`() = runTest {
         val (_, frames) = presenting()
 
-        service.eventQueue.emit(FundingEvent.FrameOpened(request))
+        service.eventQueue.emit(FundingFrameEvent.Opened(request))
         runCurrent()
 
         assertNotNull(frames.get(FundingFrameRequestId("frame-1")))
@@ -99,7 +98,7 @@ class FundingSessionPresenterTest {
         presenting()
 
         service.waitingFrames += INTENT
-        service.eventQueue.emit(FundingEvent.FrameRequested(INTENT, ramp))
+        service.eventQueue.emit(FundingFrameEvent.Requested(INTENT, ramp))
         runCurrent()
         assertEquals(emptyList<String>(), service.calls)
         assertEquals("Ramp wants to show a screen", notice.captured.message)
@@ -116,7 +115,7 @@ class FundingSessionPresenterTest {
         val notice = slot<AppNotification>()
         every { notifier.notify(capture(notice)) } returns Unit
         val inFlight = entry(session = FundingFixtures.entry().session?.copy(providerId = ramp), isPresented = false)
-        service.listed.value = listOf(inFlight, inFlight.copy(id = FundingSessionId("other")))
+        service.listed.value = listOf(inFlight, inFlight.copy(id = FundingIntentId("other")))
         service.waitingFrames += INTENT
 
         presenting()
@@ -125,17 +124,7 @@ class FundingSessionPresenterTest {
         assertEquals("Ramp wants to show a screen", notice.captured.message)
     }
 
-    @Test
-    fun `a provider that keeps crashing is reported with the app's notice`() = runTest {
-        presenting()
-
-        service.eventQueue.emit(FundingEvent.ProviderNotWorking(ramp))
-        runCurrent()
-
-        verify { crashNotice.onCrashing(ramp) }
-    }
-
     private companion object {
-        val INTENT = FundingSessionId("intent")
+        val INTENT = FundingIntentId("intent")
     }
 }

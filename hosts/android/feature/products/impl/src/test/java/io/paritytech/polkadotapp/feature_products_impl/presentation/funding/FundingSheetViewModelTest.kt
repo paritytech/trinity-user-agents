@@ -7,8 +7,8 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.entry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.ramp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens.FundingDepositViewModel
@@ -37,11 +37,11 @@ import uniffi.truapi.ProductId
 
 class FundingSheetViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
-    private val service = FakeFundingService()
+    private val service = FakeFunding()
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { cashPrecision() } returns FundingFixtures.CASH_PRECISION
-        coEvery { spendable() } returns null
+        coEvery { spendable() } returns Result.failure(IllegalStateException("unread"))
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg<ProductId>().value, null) }
     }
 
@@ -53,6 +53,7 @@ class FundingSheetViewModelTest {
 
     private fun sheet() = FundingSheetViewModel(
         SavedStateHandle(mapOf(FundingBottomSheet.SESSION_ID to "intent")),
+        service,
         service,
         interactor,
         router,
@@ -92,7 +93,7 @@ class FundingSheetViewModelTest {
         advanceUntilIdle()
 
         assertTrue(sheet.isClosed)
-        coVerify { router.closeFundingOverlay(FundingSessionId("intent")) }
+        coVerify { router.closeFundingOverlay(FundingIntentId("intent")) }
     }
 
     @Test
@@ -212,7 +213,7 @@ class FundingSheetViewModelTest {
         ViewModelStore().apply { put("sheet", sheet) }.clear()
 
         assertEquals(2, service.calls.count { it == "leave" })
-        coVerify { router.closeFundingOverlay(FundingSessionId("intent")) }
+        coVerify { router.closeFundingOverlay(FundingIntentId("intent")) }
     }
 
     private fun TestScope.depositOn(sheet: FundingSheetViewModel) =

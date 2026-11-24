@@ -8,11 +8,15 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPhase
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -42,13 +46,14 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @HiltViewModel
 class FundingSheetViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
+    private val quotes: FundingQuotes,
     private val interactor: FundingFlowInteractor,
     private val router: ProductsRouter,
     private val cashFormat: FundingCashFormat,
     timeProvider: TimeProvider,
 ) : BaseViewModel(), FundingSheet {
-    override val sessionId = FundingSessionId(savedStateHandle.get<String>(FundingBottomSheet.SESSION_ID).orEmpty())
+    override val intentId = FundingIntentId(savedStateHandle.get<String>(FundingBottomSheet.SESSION_ID).orEmpty())
 
     private val picks = MutableStateFlow(FundingPicks.NONE)
     private val stack = MutableStateFlow<List<FundingScreenEntry>>(emptyList())
@@ -62,7 +67,7 @@ class FundingSheetViewModel @Inject constructor(
     // Until the session ended; one gone before it ended takes the sheet down.
     override val entry: StateFlow<FundingEntry?> = flow {
         var last: FundingEntry? = null
-        service.entryState(sessionId).collect { next ->
+        sessions.entryState(intentId).collect { next ->
             onEntry(previous = last, entry = next)
             last = next
             emit(next)
@@ -71,7 +76,8 @@ class FundingSheetViewModel @Inject constructor(
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val wallet: StateFlow<FundingWallet?> = flow {
-        emit(FundingWallet(interactor.cashPrecision(), interactor.spendable()))
+        // Unread, the core checks the amount without what a withdrawal can spend.
+        emit(FundingWallet(interactor.cashPrecision(), interactor.spendable().getOrNull()))
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     override val flow: StateFlow<FundingFlowState?> = combine(entry, picks, wallet, ::Triple)
@@ -82,7 +88,9 @@ class FundingSheetViewModel @Inject constructor(
         .map { it.options?.candidates.orEmpty().map { candidate -> candidate.providerId } + listOfNotNull(it.session?.providerId) }
         .distinctUntilChanged()
         .scan(emptyMap<ProductId, FundingProviderBrand>()) { known, ids ->
-            known + ids.filterNot(known::containsKey).associateWith { interactor.brand(it) }
+            known + coroutineScope {
+                ids.filterNot(known::containsKey).map { id -> async { id to interactor.brand(id) } }.awaitAll()
+            }
         }
         .stateIn(this, SharingStarted.Eagerly, emptyMap())
 
@@ -93,7 +101,7 @@ class FundingSheetViewModel @Inject constructor(
         .stateIn(this, SharingStarted.Eagerly, null)
 
     init {
-        service.shown(sessionId)
+        sessions.shown(intentId)
         reportSelection()
     }
 
@@ -104,8 +112,8 @@ class FundingSheetViewModel @Inject constructor(
     override fun requote() {
         val current = stateOf(entry.value, picks.value, wallet.value, flow.value) ?: return
         val amount = current.askAmount ?: return
-        service.select(current.selection, sessionId)
-        service.quote(amount, sessionId)
+        sessions.select(current.selection, intentId)
+        quotes.quote(amount, intentId)
     }
 
     override fun push(screen: FundingScreen) {
@@ -127,7 +135,7 @@ class FundingSheetViewModel @Inject constructor(
     }
 
     override fun close() {
-        service.leave(sessionId)
+        sessions.leave(intentId)
         takeDown()
     }
 
@@ -135,12 +143,12 @@ class FundingSheetViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        service.leave(sessionId)
+        sessions.leave(intentId)
     }
 
     private fun takeDown() {
         isClosed = true
-        launchUnit { router.closeFundingOverlay(sessionId) }
+        launchUnit { router.closeFundingOverlay(intentId) }
     }
 
     private fun onEntry(previous: FundingEntry?, entry: FundingEntry) {
@@ -180,8 +188,10 @@ class FundingSheetViewModel @Inject constructor(
         val chosen = entry.session?.providerId?.takeIf { entry.hasStarted }?.let(resumed::withChosenProvider) ?: resumed
         val picked = picks.applyTo(chosen)
 
-        val shown = previous?.let { picked.copy(rows = it.rows, staleQuotes = it.staleQuotes, askedAmount = it.askedAmount, list = it.list) }
-        return (shown ?: picked).withQuotes(entry.quotes, entry.askedAmount)
+        val shown = previous?.let {
+            picked.copy(rows = it.rows, staleQuotes = it.staleQuotes, askedAmount = it.askedAmount, list = it.list, quotesFailed = it.quotesFailed)
+        }
+        return (shown ?: picked).withQuotes(entry.quotes, entry.askedAmount, entry.quotesFailed)
     }
 
     /**
@@ -215,7 +225,7 @@ class FundingSheetViewModel @Inject constructor(
         flow.filterNotNull()
             .map { it.selection }
             .distinctUntilChanged()
-            .onEach { selection -> if (entry.value?.hasStarted != true) service.select(selection, sessionId) }
+            .onEach { selection -> if (entry.value?.hasStarted != true) sessions.select(selection, intentId) }
             .launchIn(this)
     }
 

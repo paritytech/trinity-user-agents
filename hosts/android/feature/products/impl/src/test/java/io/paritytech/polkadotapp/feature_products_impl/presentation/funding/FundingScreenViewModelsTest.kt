@@ -38,7 +38,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingScreenViewModelsTest {
     private val testDispatcher = StandardTestDispatcher()
-    private val service = FakeFundingService()
+    private val service = FakeFunding()
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)
@@ -49,7 +49,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `the amount is quoted once the user stops typing for 0_6 s`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service)
+        val model = FundingAmountViewModel(sheet, service, service)
 
         model.onKey(FundingKey.Digit('5'))
         advanceTimeBy(300)
@@ -67,7 +67,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `continuing with a quote still waiting asks it at once and shows the summary`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service)
+        val model = FundingAmountViewModel(sheet, service, service)
         model.state.launchIn(backgroundScope)
         model.onKey(FundingKey.Digit('5'))
         runCurrent()
@@ -81,7 +81,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `switching rail drops the quotes on screen`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service)
+        val model = FundingAmountViewModel(sheet, service, service)
 
         model.onRailSelected(FundingRail.BANK)
 
@@ -104,7 +104,7 @@ class FundingScreenViewModelsTest {
 
     @Test
     fun `starting hands the session to the quoted provider, and a refusal lets the user try again`() = runTest(testDispatcher) {
-        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount.toBalanceOrNull()) }, entry())
+        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount.toBalanceOrNull(), failed = false) }, entry())
         val model = FundingSummaryViewModel(sheet, service)
         model.state.launchIn(backgroundScope)
         service.startResult = Result.failure(FundingStartError.NotSelected(null))
@@ -142,7 +142,7 @@ class FundingScreenViewModelsTest {
         val sheet = FakeFundingSheet(flow(), entry(session = FakeFundingCore.session("intent", providerId = ramp)))
         val model = FundingCancelConfirmViewModel(sheet, service)
 
-        service.cancelResult = Result.success(CancelOutcome.ENDED)
+        service.cancelResult = Result.success(CancelOutcome.CANCELLED)
         model.onConfirm()
         advanceUntilIdle()
         assertEquals(listOf("close"), sheet.actions)

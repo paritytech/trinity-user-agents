@@ -40,7 +40,11 @@ pub trait Signing: Send + Sync {
 	/// or signed. A declared handle the call does not contain, or one no
 	/// contact matches, refuses the whole call as `UnknownContact` rather than
 	/// signing something that names somebody else. A call paying nobody from
-	/// the picker leaves it empty.
+	/// the picker leaves it empty. Deprecated for contacts: the returned
+	/// transaction carries the account each declared handle resolves to, so a
+	/// product learns the account of every contact it pays, and products that
+	/// pay the same contact can link it. Contact payments will move to a call
+	/// where the host submits the transaction and returns only its outcome.
 	///
 	/// Fails as `ChainUnavailable` when the chain stays unreachable, such as
 	/// during a halt. Nothing was signed, so the call can be retried. Bound the

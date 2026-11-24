@@ -57,6 +57,8 @@ data class FundingFlowState(
     val askedAmount: Balance?,
     /** The core's list for [askedAmount]; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
+    /** The latest ask did not reach the core, or its list could not be read. */
+    val quotesFailed: Boolean,
     /** Why the typed amount cannot go ahead, as the core last answered for it. */
     val amountIssue: FundingAmountIssue?,
     /** The core could not check the typed amount, which holds it back like an issue would. */
@@ -87,6 +89,7 @@ data class FundingFlowState(
             staleQuotes = emptyMap(),
             askedAmount = null,
             list = null,
+            quotesFailed = false,
             amountIssue = null,
             amountCheckFailed = false,
         )
@@ -154,7 +157,7 @@ data class FundingFlowState(
 
     /** An ask waits for its first list. */
     val quoting: Boolean
-        get() = askedAmount != null && list == null
+        get() = askedAmount != null && list == null && !quotesFailed
 
     val allAnswered: Boolean
         get() = list?.complete == true && rows.isNotEmpty()
@@ -221,8 +224,8 @@ data class FundingFlowState(
      * The service's latest ask, [asked], and its list. Asking the same amount again keeps the quotes on screen greyed
      * while their providers have not answered again.
      */
-    fun withQuotes(newList: FundingQuoteList?, asked: Balance?): FundingFlowState {
-        if (asked == null) return copy(rows = emptyMap(), staleQuotes = emptyMap(), askedAmount = null, list = null)
+    fun withQuotes(newList: FundingQuoteList?, asked: Balance?, failed: Boolean): FundingFlowState {
+        if (asked == null) return copy(rows = emptyMap(), staleQuotes = emptyMap(), askedAmount = null, list = null, quotesFailed = false)
 
         val onScreen = if (asked == askedAmount) quotedProviders.toMap() + staleQuotes else emptyMap()
         val newRows = newList?.rows?.associate { it.providerId to it.state }
@@ -233,6 +236,7 @@ data class FundingFlowState(
             staleQuotes = stale,
             askedAmount = asked,
             list = newList,
+            quotesFailed = failed,
         )
     }
 

@@ -7,7 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRoute
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import uniffi.truapi.ProductId
 
 interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
@@ -36,26 +36,26 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     suspend fun closeTrUAPIProductScan()
 
     /** The funding sheet for the session the core is waiting on. */
-    suspend fun openFundingOverlay(sessionId: FundingSessionId)
+    suspend fun openFundingOverlay(intentId: FundingIntentId)
 
     /**
-     * Takes down the funding sheet for [sessionId], with its provider screen when that sits on top of it; anything else on
+     * Takes down the funding sheet for [intentId], with its provider screen when that sits on top of it; anything else on
      * top is left alone, and so is the sheet under it.
      */
-    suspend fun closeFundingOverlay(sessionId: FundingSessionId)
+    suspend fun closeFundingOverlay(intentId: FundingIntentId)
 
-    suspend fun openFundingEnded(sessionId: FundingSessionId)
+    suspend fun openFundingEnded(intentId: FundingIntentId)
 
-    suspend fun closeFundingEnded(sessionId: FundingSessionId)
+    suspend fun closeFundingEnded(intentId: FundingIntentId)
 
-    /** Whether the funding sheet for [sessionId] is on top, alone or under its own provider screen. */
-    suspend fun isFundingOverlayShown(sessionId: FundingSessionId): Boolean
+    /** Whether the funding sheet for [intentId] is on top, alone or under its own provider screen. */
+    suspend fun isFundingOverlayShown(intentId: FundingIntentId): Boolean
 
     /** A funding provider's own screen, full height, showing [request] over its session. */
     suspend fun openFundingProviderFrame(request: FundingFrameRequest)
 
-    /** Takes down the provider screen for [sessionId], when it is the screen on top. */
-    suspend fun closeFundingProviderFrame(sessionId: FundingSessionId)
+    /** Takes down the provider screen for [intentId], when it is the screen on top. */
+    suspend fun closeFundingProviderFrame(intentId: FundingIntentId)
 
     fun openProductSettings(productId: ProductId)
     fun openProductPermissions(productId: ProductId)

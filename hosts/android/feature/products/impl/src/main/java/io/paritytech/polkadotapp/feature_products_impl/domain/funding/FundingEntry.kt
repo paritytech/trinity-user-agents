@@ -22,7 +22,7 @@ enum class FundingPhase {
 
 /** One funding session as the screens draw it: what the core holds for it, and the quotes of the latest ask on it. */
 data class FundingEntry(
-    val id: FundingSessionId,
+    val id: FundingIntentId,
     val direction: FundingDirection,
     val amount: Balance?,
     val openedAtMs: ULong,
@@ -36,6 +36,8 @@ data class FundingEntry(
     val askedAmount: Balance?,
     /** The core's list for [askedAmount]; `null` from a new ask until its first list. */
     val quotes: FundingQuoteList?,
+    /** The latest ask did not reach the core, or its list could not be read. */
+    val quotesFailed: Boolean,
     /** The core waits on the session's screens for the user to start it or leave. */
     val isPresented: Boolean,
     val phase: FundingPhase,
@@ -56,7 +58,7 @@ data class FundingEntry(
 
     companion object {
         fun of(
-            id: FundingSessionId,
+            id: FundingIntentId,
             fallbackDirection: FundingDirection,
             fallbackAmount: Balance?,
             session: FundingSession?,
@@ -65,6 +67,7 @@ data class FundingEntry(
             options: FundingOptions?,
             askedAmount: Balance?,
             quotes: FundingQuoteList?,
+            quotesFailed: Boolean,
             isPresented: Boolean,
         ) = FundingEntry(
             id = id,
@@ -77,6 +80,7 @@ data class FundingEntry(
             options = options,
             askedAmount = askedAmount,
             quotes = quotes,
+            quotesFailed = quotesFailed,
             isPresented = isPresented,
             phase = phaseOf(session, summary),
         )

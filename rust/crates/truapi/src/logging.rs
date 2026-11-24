@@ -397,6 +397,7 @@ fn admits_host_marker(target: &str) -> bool {
 /// condition. A string a provider, a product or a manifest wrote is none of
 /// those and does not belong in one, for the same reason it does not belong in
 /// a detail line.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "an event reaches no host until it is emitted"]
 pub struct CoreEvent {
 	marker: markers::Marker,
@@ -407,6 +408,16 @@ impl CoreEvent {
 	/// An event of `marker`, carrying nothing yet.
 	pub fn new(marker: markers::Marker) -> Self {
 		Self { marker, attributes: Vec::new() }
+	}
+
+	/// The marker it goes out under.
+	pub fn marker(&self) -> markers::Marker {
+		self.marker
+	}
+
+	/// What it carries so far, in the order it was given.
+	pub fn attributes(&self) -> &[CoreAttribute] {
+		&self.attributes
 	}
 
 	/// Carry `key` as a label, bounded to [`CORE_EVENT_TEXT_MAX_CHARS`].
@@ -772,34 +783,7 @@ fn emit(level: Level, line: &str) {
 
 /// Test helpers for code whose logging reaches the host sink.
 #[cfg(test)]
-pub mod testing {
-	use super::*;
-
-	/// Runs `emit` with the host sink layer on this thread and returns each line
-	/// it forwards as `marker detail`.
-	pub fn host_sink_lines(emit: impl FnOnce()) -> Vec<String> {
-		// A global default stops tracing-core from caching a callsite as never
-		// enabled when a thread with no subscriber registers it first.
-		init();
-		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
-		let recorded = lines.clone();
-		let sink: HostSinkHandle = Arc::new(move |marker: &str, detail: &str| {
-			recorded.lock().unwrap().push(format!("{marker} {detail}"));
-		});
-		// Leaked so each call gets its own slot and parallel tests cannot share a sink.
-		let slot: &'static RwLock<Option<HostSinkHandle>> = Box::leak(Box::new(RwLock::new(Some(sink))));
-		tracing::subscriber::with_default(
-			subscriber(reload::Layer::new(LevelFilter::OFF).0, slot),
-			emit,
-		);
-		core::mem::take(&mut *lines.lock().unwrap())
-	}
-
-	/// Calls the sink `registration` holds, wherever the process-wide slot points now.
-	pub fn forward(registration: &HostSinkRegistration, marker: &str, detail: &str) {
-		registration.sink.log(marker, detail);
-	}
-}
+pub mod testing;
 
 #[cfg(test)]
 mod tests;

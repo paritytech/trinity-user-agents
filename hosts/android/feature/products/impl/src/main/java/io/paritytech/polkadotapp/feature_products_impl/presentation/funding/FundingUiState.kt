@@ -98,6 +98,9 @@ sealed interface FundingSummaryProblem {
 
     data object NoProvider : FundingSummaryProblem
 
+    /** The quotes could not be asked for or read. */
+    data object QuotesFailed : FundingSummaryProblem
+
     /** Every provider gave the same reason for not quoting. */
     data class QuoteRefused(val text: FundingReasonText) : FundingSummaryProblem
 
@@ -231,7 +234,7 @@ data class FundingDepositUiState(
     val moneyMoved: Boolean,
     /** Whether the core lets the user cancel now, and whether that cancel ends the session at once. */
     val cancelAvailability: FundingCancelAvailability,
-    /** "$50", as the figure over the milestones. */
+    /** "$50 CASH", as the figure over the milestones. */
     val figure: String,
     /** Once the session started: its milestones, what is happening now, and when the provider last reported. */
     val progress: FundingLiveProgressUi?,

@@ -27,6 +27,10 @@ sealed class ChatUserInputState {
 
     data object PeerLeft : ChatUserInputState()
 
+    data object ChatRequestCancelled : ChatUserInputState()
+
+    data object ChatRemoved : ChatUserInputState()
+
     data object UnblockUser : ChatUserInputState()
 
     data object IdentitySigningConsentRequired : ChatUserInputState()

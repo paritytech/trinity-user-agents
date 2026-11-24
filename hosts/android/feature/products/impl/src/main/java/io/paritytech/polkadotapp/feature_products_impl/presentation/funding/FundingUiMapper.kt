@@ -94,6 +94,7 @@ fun FundingFlowState.toSummaryUiState(
 private fun FundingFlowState.summaryProblem(start: FundingStartState, failure: FundingFailureReason?): FundingSummaryProblem? = when {
     failure != null -> FundingSummaryProblem.Failed(failure)
     start == FundingStartState.StartFailed -> FundingSummaryProblem.StartFailed
+    quotesFailed && selectedQuote == null -> FundingSummaryProblem.QuotesFailed
     !noProviderQuoted -> null
     else -> when (val issue = unavailableIssue) {
         is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(cashLabel(issue.min))
@@ -339,7 +340,7 @@ fun FundingFlowState.toDepositUiState(
         cancel = session.cancel?.let(::cancelUi),
         moneyMoved = progress?.moneyMoved == true,
         cancelAvailability = progress?.cancel ?: FundingCancelAvailability.UNAVAILABLE,
-        figure = format.figure(amount),
+        figure = format.label(amount),
         progress = progress?.takeIf { session.started }?.let { live ->
             FundingLiveProgressUi(
                 timeline = FundingTimeline.live(live.steps, live.band, direction, failed = session.failure != null),

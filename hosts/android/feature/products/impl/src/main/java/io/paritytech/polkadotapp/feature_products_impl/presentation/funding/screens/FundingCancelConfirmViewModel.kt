@@ -7,7 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionFacts
@@ -29,7 +29,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @HiltViewModel(assistedFactory = FundingCancelConfirmViewModel.Factory::class)
 class FundingCancelConfirmViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
 ) : BaseViewModel() {
     private val isCancelling = MutableStateFlow(false)
 
@@ -42,11 +42,11 @@ class FundingCancelConfirmViewModel @AssistedInject constructor(
         if (isCancelling.value) return@launchUnit
         isCancelling.value = true
 
-        service.cancel(sheet.sessionId)
+        sessions.cancel(sheet.intentId)
             .logFailure("Funding cancel failed")
             .onSuccess { outcome ->
                 when (outcome) {
-                    CancelOutcome.ENDED -> sheet.close()
+                    CancelOutcome.CANCELLED -> sheet.close()
                     CancelOutcome.REQUESTED, CancelOutcome.PENDING -> leave(RCommon.string.funding_cancel_requested)
                     CancelOutcome.TOO_LATE -> leave(RCommon.string.funding_cancel_too_late)
                     CancelOutcome.REFUSED -> leave(RCommon.string.funding_error_cancel_refused)

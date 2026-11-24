@@ -1,22 +1,30 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.common.di.modules.ProcessScope
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Runs calls into the core one after another, off the caller's thread, in the order they were made. The core must see
  * the user's steps, and the read-backs of what it said changed, in the order they happened even when they come from
- * separate coroutines.
+ * separate coroutines or separate funding parts. Runs for as long as [scope] does.
  */
-class FundingCoreCalls(scope: CoroutineScope) {
+@Singleton
+class FundingCoreCalls @Inject constructor(
+    @ProcessScope scope: CoroutineScope,
+    dispatchers: CoroutineDispatchers,
+) {
     private val queue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
 
     init {
-        scope.launch {
+        scope.launch(dispatchers.io) {
             for (call in queue) {
                 try {
                     call()

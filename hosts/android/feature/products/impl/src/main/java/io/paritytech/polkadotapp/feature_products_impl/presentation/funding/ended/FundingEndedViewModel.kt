@@ -8,8 +8,8 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -36,17 +36,17 @@ data class FundingEndedScreenState(
 class FundingEndedViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val interactor: FundingFlowInteractor,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
     private val presenter: FundingSessionPresenter,
     private val router: ProductsRouter,
     private val clipboard: ClipboardService,
     private val cashFormat: FundingCashFormat,
     private val timeProvider: TimeProvider,
 ) : BaseViewModel() {
-    private val sessionId = FundingSessionId(savedStateHandle.get<String>(FundingEndedBottomSheet.SESSION_ID).orEmpty())
+    private val intentId = FundingIntentId(savedStateHandle.get<String>(FundingEndedBottomSheet.SESSION_ID).orEmpty())
 
     private val details = flow {
-        val summary = service.entryState(sessionId).firstOrNull()?.summary
+        val summary = sessions.entryState(intentId).firstOrNull()?.summary
         val ended = summary?.let { FundingEndedMapper(interactor.cashPrecision(), cashFormat).map(it) }
         if (summary == null || ended == null) {
             close()
@@ -75,7 +75,7 @@ class FundingEndedViewModel @Inject constructor(
         showMessage(RCommon.string.funding_deposit_copied)
     }
 
-    private fun close() = launchUnit { router.closeFundingEnded(sessionId) }
+    private fun close() = launchUnit { router.closeFundingEnded(intentId) }
 
     private data class Details(val ended: FundingEndedUiState, val direction: FundingDirection, val providerName: String?)
 
