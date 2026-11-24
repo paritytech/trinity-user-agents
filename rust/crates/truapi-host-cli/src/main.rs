@@ -90,8 +90,8 @@ use crate::{
 	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
-		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
-		SessionClearTarget, SessionProfile,
+		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, PreparedClear,
+		SessionCatalog, SessionClearTarget, SessionProfile,
 	},
 	signing_shell::{
 		ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
@@ -1478,7 +1478,7 @@ async fn run_signing_host(
 	if let Some(command) = exec_command {
 		let cleanup_catalog = session.catalog.clone();
 		let network_name = session.network.state_label();
-		let clear_target =
+		let pending_clear =
 			with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 				if let Some(deeplink) = initial_deeplink {
 					start_deeplink_responder(&mut session, deeplink).await?;
@@ -1495,8 +1495,8 @@ async fn run_signing_host(
 				result
 			})
 			.await?;
-		if let Some(target) = clear_target {
-			clear_sessions_after_shutdown(&cleanup_catalog, &network_name, &target)?;
+		if let Some(clear) = pending_clear {
+			clear_sessions_after_shutdown(&cleanup_catalog, &network_name, clear)?;
 		}
 		return Ok(());
 	}
@@ -1512,7 +1512,7 @@ async fn run_signing_host(
 	restore_paired_responders(&mut session).await;
 	let cleanup_catalog = session.catalog.clone();
 	let network_name = session.network.state_label();
-	let clear_target =
+	let pending_clear =
 		with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 			signing_interactive_loop(
 				&mut session,
@@ -1525,8 +1525,8 @@ async fn run_signing_host(
 			.await
 		})
 		.await?;
-	if let Some(target) = clear_target {
-		clear_sessions_after_shutdown(&cleanup_catalog, &network_name, &target)?;
+	if let Some(clear) = pending_clear {
+		clear_sessions_after_shutdown(&cleanup_catalog, &network_name, clear)?;
 	}
 	Ok(())
 }
@@ -2970,10 +2970,11 @@ fn session_clear_success(
 fn clear_sessions_after_shutdown(
 	catalog: &SessionCatalog,
 	network: &str,
-	target: &SessionClearTarget,
+	clear: PreparedClear,
 ) -> Result<()> {
-	catalog.clear(target)?;
-	let (title, detail) = session_clear_success(network, target, true);
+	let target = clear.target().clone();
+	catalog.clear(clear)?;
+	let (title, detail) = session_clear_success(network, &target, true);
 	terminal_ui::output_success(title, Some(detail));
 	Ok(())
 }
@@ -3498,7 +3499,7 @@ async fn signing_interactive_loop(
 	initial_command: Option<(String, ShellCommand)>,
 	mut ui: ActiveTerminalUi,
 	log_controller: LogController,
-) -> Result<Option<SessionClearTarget>> {
+) -> Result<Option<PreparedClear>> {
 	if let Some((input, command)) = initial_command {
 		ui.command(input.clone());
 		let product_id = product.current();
@@ -3649,13 +3650,20 @@ async fn signing_interactive_loop(
 					ui.system("Session clear cancelled");
 					continue;
 				}
+				let clear = match session.catalog.prepare_clear(&target) {
+					Ok(clear) => clear,
+					Err(error) => {
+						ui.error(error.to_string());
+						continue;
+					},
+				};
 				if active || target == SessionClearTarget::All {
 					session.responders.stop_all();
 					session.runtime_factory.reset_connections();
 					tokio::task::yield_now().await;
-					return Ok(Some(target));
+					return Ok(Some(clear));
 				}
-				match session.catalog.clear(&target) {
+				match session.catalog.clear(clear) {
 					Ok(_) => {
 						let (title, detail) =
 							session_clear_success(&session.network.state_label(), &target, false);
@@ -3850,7 +3858,7 @@ async fn execute_non_interactive_command(
 	product: &frame_server::ProductSelection,
 	command: ShellCommand,
 	log_controller: &LogController,
-) -> Result<Option<SessionClearTarget>> {
+) -> Result<Option<PreparedClear>> {
 	match command {
 		ShellCommand::Pair(PairCommand::Deeplink(deeplink)) => {
 			respond_to_deeplink(session, deeplink).await?
@@ -3959,10 +3967,11 @@ async fn execute_non_interactive_command(
 		},
 		ShellCommand::Session(SessionCommand::Clear(target)) => {
 			validate_session_clear(session, &target)?;
+			let clear = session.catalog.prepare_clear(&target)?;
 			session.responders.stop_all();
 			session.runtime_factory.reset_connections();
 			tokio::task::yield_now().await;
-			return Ok(Some(target));
+			return Ok(Some(clear));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,

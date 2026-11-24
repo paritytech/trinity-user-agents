@@ -150,6 +150,23 @@ pub enum SessionClearTarget {
 	All,
 }
 
+/// A clear whose account store locks are held, made by
+/// [`SessionCatalog::prepare_clear`] and carried out by
+/// [`SessionCatalog::clear`].
+pub struct PreparedClear {
+	target: SessionClearTarget,
+	names: Vec<String>,
+	shared_store: Option<accounts::AccountStoreLock>,
+	_session_stores: Vec<accounts::AccountStoreLock>,
+}
+
+impl PreparedClear {
+	/// The target, with a name resolved as session selection resolves it.
+	pub fn target(&self) -> &SessionClearTarget {
+		&self.target
+	}
+}
+
 #[derive(Serialize, Deserialize)]
 struct SessionInfo {
 	version: u32,
@@ -438,52 +455,67 @@ impl SessionCatalog {
 		}
 	}
 
-	/// Permanently remove the selected local signing-host session data.
+	/// Check `target` and take the account store locks a clear of it needs,
+	/// before anything is removed or a host stops for it.
 	///
-	/// Callers must stop an active runtime before clearing its profile. The
-	/// catalog only removes paths it derives from validated, listed names.
-	///
-	/// The shared account store's lock and the lock of each removed session's
-	/// own store are taken before anything is removed, so a clear a lock
-	/// refuses leaves every session and account in place, and a host
-	/// provisioning one of those sessions cannot write it back afterwards. The
-	/// shared store's records go before the directories, so a clear stopped
-	/// between the two still lists the session and can be run again.
-	pub fn clear(&self, target: &SessionClearTarget) -> Result<Vec<String>> {
+	/// The locks are the shared store's, when there is one, and each removed
+	/// session's own, so a host provisioning one of those sessions cannot write
+	/// it back after the clear. With no shared store there are no records to
+	/// remove, so a host provisioning on another stack does not refuse the
+	/// clear. Fails as [`Self::validate_clear_target`] does, and when another
+	/// process holds one of the locks.
+	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
 		// Resolve once here, so a name promoted away clears the session it
 		// created just as it selects it everywhere else.
-		let resolved;
 		let target = match target {
 			SessionClearTarget::Named(name) => {
-				resolved = SessionClearTarget::Named(self.resolve_session_name(name)?);
-				&resolved
+				SessionClearTarget::Named(self.resolve_session_name(name)?)
 			},
-			SessionClearTarget::All => target,
+			SessionClearTarget::All => SessionClearTarget::All,
 		};
-		self.validate_clear_target(target)?;
-		let names = match target {
+		self.validate_clear_target(&target)?;
+		let names = match &target {
 			SessionClearTarget::Named(name) => vec![name.clone()],
 			SessionClearTarget::All => self.list()?,
 		};
-		let account_store = accounts::AccountStoreLock::acquire(&self.base_path)?;
-		let _session_stores = names
+		let shared_store = accounts::has_account_store(&self.base_path)
+			.then(|| accounts::AccountStoreLock::acquire(&self.base_path))
+			.transpose()?;
+		let session_stores = names
 			.iter()
 			.map(|name| accounts::AccountStoreLock::acquire(&self.profile(name)?.account_base_path))
 			.collect::<Result<Vec<_>>>()?;
-		match target {
+		Ok(PreparedClear { target, names, shared_store, _session_stores: session_stores })
+	}
+
+	/// Permanently remove the session data `clear` names, under the locks it
+	/// holds, and return the names of the sessions removed.
+	///
+	/// Callers must stop an active runtime before clearing its profile. The
+	/// catalog only removes paths it derives from validated, listed names. The
+	/// shared store's records go before the directories, so a clear stopped
+	/// between the two still lists the session and can be run again.
+	pub fn clear(&self, clear: PreparedClear) -> Result<Vec<String>> {
+		let PreparedClear { target, names, shared_store, _session_stores } = clear;
+		if let Some(store) = &shared_store {
+			let lite_username = match &target {
+				SessionClearTarget::Named(name) => Some(name.as_str()),
+				SessionClearTarget::All => None,
+			};
+			store.remove_managed_accounts(&self.network_id, lite_username)?;
+		}
+		match &target {
 			SessionClearTarget::Named(name) => {
 				let was_current = matches!(
 					self.current_session()?,
 					CurrentSession::Pointed(current) if current == *name
 				);
-				account_store.remove_managed_accounts(&self.network_id, Some(name))?;
 				self.remove_named_data(name)?;
 				if was_current {
 					remove_file_if_exists(&self.role_path.join(CURRENT_SESSION_FILE))?;
 				}
 			},
 			SessionClearTarget::All => {
-				account_store.remove_managed_accounts(&self.network_id, None)?;
 				for name in &names {
 					self.remove_named_data(name)?;
 				}

@@ -5,6 +5,11 @@ use std::{
 };
 use tempfile::tempdir;
 
+/// Clears `target` as a host does: its locks first, then the data.
+fn clear(catalog: &SessionCatalog, target: SessionClearTarget) -> Result<Vec<String>> {
+	catalog.clear(catalog.prepare_clear(&target)?)
+}
+
 #[test]
 fn rejects_names_that_could_escape_the_session_root() {
 	for invalid in ["", ".", "..", "Alice", "two words", "../escape", "a/b"] {
@@ -266,7 +271,7 @@ fn clears_one_named_session_and_resets_its_current_pointer() -> Result<()> {
 	fs::write(bob.path.join("state"), "bob")?;
 	catalog.set_current("alice")?;
 
-	assert_eq!(catalog.clear(&SessionClearTarget::Named("alice".to_string()))?, vec!["alice"]);
+	assert_eq!(clear(&catalog, SessionClearTarget::Named("alice".to_string()))?, vec!["alice"]);
 
 	assert!(!alice.path.exists());
 	assert!(bob.path.exists());
@@ -292,7 +297,7 @@ fn clearing_all_sessions_removes_default_and_identity_state_only() -> Result<()>
 	fs::create_dir_all(&unrelated)?;
 	fs::write(unrelated.join("state"), "keep")?;
 
-	let cleared = catalog.clear(&SessionClearTarget::All)?;
+	let cleared = clear(&catalog, SessionClearTarget::All)?;
 
 	assert_eq!(cleared, vec!["alice"]);
 	assert!(!catalog.role_path.exists());
@@ -308,7 +313,7 @@ fn clearing_a_missing_session_has_an_actionable_error() -> Result<()> {
 	let temporary = tempdir()?;
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 
-	let error = catalog.clear(&SessionClearTarget::Named("alice".to_string())).unwrap_err();
+	let error = clear(&catalog, SessionClearTarget::Named("alice".to_string())).unwrap_err();
 
 	assert_eq!(error.to_string(), "session `alice` does not exist; use /session --list");
 	Ok(())
@@ -338,7 +343,7 @@ fn a_clear_an_account_store_lock_refuses_leaves_everything_in_place() -> Result<
 
 		let refusals = [SessionClearTarget::Named("alice".to_string()), SessionClearTarget::All]
 			.map(|target| {
-				catalog.clear(&target).map_err(|error| {
+				clear(&catalog, target).map_err(|error| {
 					error.to_string().split(" (").next().unwrap_or_default().to_owned()
 				})
 			});
@@ -385,7 +390,7 @@ fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
 	let writable = fs::metadata(&catalog.base_path)?.permissions();
 	fs::set_permissions(&catalog.base_path, fs::Permissions::from_mode(0o555))?;
 
-	let cleared = catalog.clear(&SessionClearTarget::Named("alice".to_string()));
+	let cleared = clear(&catalog, SessionClearTarget::Named("alice".to_string()));
 	fs::set_permissions(&catalog.base_path, writable)?;
 
 	assert_eq!(
@@ -396,6 +401,23 @@ fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
 		),
 		(true, vec!["alice".to_string()], stored.to_string())
 	);
+	Ok(())
+}
+
+/// The shared store's lock is held while a host provisions a default session on
+/// any stack. With no shared store there are no records to remove, so that
+/// host does not refuse a clear.
+#[test]
+fn a_clear_with_no_shared_store_is_not_refused_by_its_lock() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let alice = catalog.ensure_profile("alice")?;
+	fs::write(alice.path.join("state"), "alice")?;
+	let _provisioning = accounts::AccountStoreLock::acquire(&catalog.base_path)?;
+
+	let cleared = clear(&catalog, SessionClearTarget::All)?;
+
+	assert_eq!((cleared, alice.path.exists()), (vec!["alice".to_string()], false));
 	Ok(())
 }
 
@@ -675,7 +697,7 @@ fn clearing_by_the_name_that_created_a_session_clears_the_promoted_one() -> Resu
 	let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
 	fs::write(promoted.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
 
-	let cleared = catalog.clear(&SessionClearTarget::Named("worker-0".to_string()))?;
+	let cleared = clear(&catalog, SessionClearTarget::Named("worker-0".to_string()))?;
 
 	assert_eq!(cleared, vec!["alice.01"]);
 	assert!(!promoted.path.exists());
@@ -697,7 +719,7 @@ fn an_alias_whose_target_was_cleared_resolves_to_itself_again() -> Result<()> {
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("worker-0")?;
 	catalog.promote_to_user(&provisional, "alice.01")?;
-	catalog.clear(&SessionClearTarget::Named("alice.01".to_string()))?;
+	clear(&catalog, SessionClearTarget::Named("alice.01".to_string()))?;
 
 	assert_eq!(catalog.resolve_session_name("worker-0")?, "worker-0");
 	Ok(())

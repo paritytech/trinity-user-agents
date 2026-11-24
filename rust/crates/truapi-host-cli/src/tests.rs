@@ -867,7 +867,7 @@ fn clearing_sessions_keeps_managed_script_projects() -> Result<()> {
 	let script = select_script_to_edit(&projects, &mut None)?;
 	sessions::store_session_last_script(&profile.path, &script)?;
 
-	catalog.clear(&SessionClearTarget::All)?;
+	catalog.clear(catalog.prepare_clear(&SessionClearTarget::All)?)?;
 
 	assert_eq!(
 		(projects, script.is_file(), profile.path.exists()),
