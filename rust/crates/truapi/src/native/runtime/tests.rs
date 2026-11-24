@@ -21,7 +21,7 @@ fn the_runtime_forwards_core_warnings_to_its_callbacks() {
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
 		.expect("host runtime config should be valid");
 
 	crate::logging::testing::forward(
@@ -43,8 +43,7 @@ fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-		.expect("host runtime config should be valid");
+	let (host, _claim, worker) = claimed_worker(config, "myapp.dot", callbacks.clone(), None);
 	let screen = host
 		.open_product_execution(
 			callbacks.clone(),
@@ -53,14 +52,6 @@ fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution
 			native_execution_config("myapp.dot", ExecutableKind::App),
 		)
 		.expect("open app execution");
-	let worker = host
-		.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config("myapp.dot", ExecutableKind::Worker),
-		)
-		.expect("open worker execution");
 
 	let key = "myapp.dot/progress".to_string();
 	let mut subscription = screen.platform.subscribe_storage(key.clone());
@@ -86,7 +77,7 @@ fn a_host_pushed_storage_change_reaches_the_products_subscription() {
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
 		.expect("host runtime config should be valid");
 	let execution = host
 		.open_product_execution(
@@ -126,6 +117,7 @@ fn the_native_runtime_installs_the_pairing_observer() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		None,
 	)
 	.expect("host runtime config should be valid");
 
@@ -133,71 +125,13 @@ fn the_native_runtime_installs_the_pairing_observer() {
 }
 
 #[test]
-fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product() {
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
-	let app = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("shared.dot", ExecutableKind::App),
-		)
-		.expect("App execution should open");
-	let chat_host = Arc::new(EventCallbacks::new());
-	let chat = host
-		.open_product_execution(
-			chat_host.clone(),
-			Some(chat_host.clone()),
-			None,
-			native_execution_config("shared.dot", ExecutableKind::Worker),
-		)
-		.expect("Chat execution should open");
-
-	assert!(Arc::ptr_eq(&app.runtime, &chat.runtime));
-	assert!(matches!(
-		app.publish_chat_action(text_chat_action("denied")),
-		Err(crate::ProductRuntimeError::Denied)
-	));
-	chat.publish_chat_action(text_chat_action("buffered"))
-		.expect("Chat action should buffer before connection");
-
-	let replacement = host
-		.open_product_execution(
-			chat_host.clone(),
-			Some(chat_host.clone()),
-			None,
-			native_execution_config("shared.dot", ExecutableKind::Worker),
-		)
-		.expect("replacement Chat execution should open");
-	assert!(matches!(
-		chat.publish_chat_action(text_chat_action("closed")),
-		Err(crate::ProductRuntimeError::Closed)
-	));
-	assert!(!replacement.closed.load(Ordering::Acquire));
-	replacement
-		.publish_chat_action(text_chat_action("fresh"))
-		.expect("replacement execution has a fresh buffer");
-}
-
-#[test]
 fn a_renderer_action_reaches_the_product_that_rendered_it() {
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		Arc::new(EventCallbacks::new()),
+	let (_host, _claim, execution) = claimed_worker(
 		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("chat.dot", ExecutableKind::Worker),
-		)
-		.expect("Worker execution should open");
+		"chat.dot",
+		Arc::new(EventCallbacks::new()),
+		None,
+	);
 
 	let admin = execution.admin();
 	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
@@ -238,11 +172,11 @@ impl crate::NativeMaterialsObserver for Updates {
 	}
 }
 
-fn materials_host() -> Arc<NativeTrUApiHostRuntime> {
+fn materials_worker()
+-> (Arc<NativeTrUApiHostRuntime>, Arc<NativeWorkerClaim>, Arc<NativeProductExecution>) {
 	let mut config = native_host_runtime_config();
 	config.materials_enabled = true;
-	NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-		.expect("host runtime config should be valid")
+	claimed_worker(config, "cards.dot", Arc::new(EventCallbacks::new()), None)
 }
 
 /// A material node that falls back in a body a product rendered is the
@@ -250,15 +184,7 @@ fn materials_host() -> Arc<NativeTrUApiHostRuntime> {
 /// product's failure stream. A report is not one of the user's taps.
 #[test]
 fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
-	let host = materials_host();
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("cards.dot", ExecutableKind::Worker),
-		)
-		.expect("Worker execution should open");
+	let (_host, _claim, execution) = materials_worker();
 	let admin = execution.admin();
 	let mut failures = futures::executor::block_on(truapi::api::Renderer::failure_subscribe(
 		admin.product_runtime().as_ref(),
@@ -297,15 +223,7 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 /// A shut execution's products hear of no more failures.
 #[test]
 fn shutting_an_execution_down_closes_its_failure_stream() {
-	let host = materials_host();
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("cards.dot", ExecutableKind::Worker),
-		)
-		.expect("Worker execution should open");
+	let (_host, _claim, execution) = materials_worker();
 	let admin = execution.admin();
 
 	execution.shutdown();
@@ -323,6 +241,7 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		None,
 	)
 	.expect("host runtime config should be valid");
 	let open_widget = |product_id: &str| {
@@ -372,6 +291,7 @@ fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		None,
 	)
 	.expect("host runtime config should be valid");
 	let execution = host
@@ -405,6 +325,7 @@ fn an_execution_close_does_not_invalidate_shared_bus_connects() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		None,
 	)
 	.expect("host runtime config should be valid");
 	let execution = host
@@ -440,6 +361,7 @@ fn an_unknown_close_still_invalidates_the_executions_own_connects() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		None,
 	)
 	.expect("host runtime config should be valid");
 	let execution = host
@@ -466,6 +388,7 @@ fn native_execution_authorizes_device_permission_from_stored_decision() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
+		None,
 	)
 	.unwrap();
 	let execution = host
@@ -506,6 +429,7 @@ fn native_execution_shares_one_use_permissions_across_connections_only() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
+		None,
 	)
 	.unwrap();
 	let open = || {
@@ -583,6 +507,7 @@ fn the_runtime_opens_the_core_database_at_startup() {
 			database_directory: dir.path().to_string_lossy().into_owned(),
 			..native_host_runtime_config()
 		},
+		None,
 	)
 	.expect("host runtime config should be valid");
 
@@ -622,6 +547,7 @@ fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
 			database_directory: dir.path().to_string_lossy().into_owned(),
 			..native_host_runtime_config()
 		},
+		None,
 	)
 	.expect("host runtime config should be valid");
 
@@ -636,6 +562,7 @@ fn durable_recovery_returns_once_nothing_is_live() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		None,
 	)
 	.expect("host runtime config should be valid");
 
@@ -655,6 +582,7 @@ fn a_missing_database_directory_fails_runtime_creation() {
 			database_directory: missing.to_string_lossy().into_owned(),
 			..native_host_runtime_config()
 		},
+		None,
 	);
 
 	assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));

@@ -16,7 +16,6 @@ use crate::{platform::ProductId, runtime::RuntimeServices, time::Backoff};
 
 /// What the host does with a product's worker after demand on it changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum WorkerTransition {
 	/// Demand went from none to some: the host starts the worker.
 	Start,
