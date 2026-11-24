@@ -12,7 +12,7 @@ use std::{
 
 use core::time::Duration;
 
-use crate::{platform::ProductId, time::Backoff};
+use crate::{platform::ProductId, runtime::RuntimeServices, time::Backoff};
 
 /// What the host does with a product's worker after demand on it changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,12 +191,7 @@ impl WorkerLedger {
 	/// crash up to [`RESTART_BACKOFF_LONGEST`]. The run's
 	/// [`CRASH_NOTICE_AFTER`]th crash tells the host through
 	/// [`WorkerController::worker_crashing`].
-	pub(crate) fn exited(
-		&self,
-		product_id: &ProductId,
-		attempt_id: Option<u64>,
-		now_ms: u64,
-	) -> Option<u64> {
+	fn exited(&self, product_id: &ProductId, attempt_id: Option<u64>, now_ms: u64) -> Option<u64> {
 		let wait_ms = {
 			let mut state = self.state();
 			let demand = state.references.get(product_id)?;
@@ -238,7 +233,7 @@ impl WorkerLedger {
 	/// Restart a crashed worker once its backoff has passed: requests
 	/// [`WorkerTransition::Start`] unless nothing holds the worker any more
 	/// or it was started meanwhile.
-	pub(crate) fn restart(&self, product_id: &ProductId, attempt_id: Option<u64>) {
+	fn restart(&self, product_id: &ProductId, attempt_id: Option<u64>) {
 		{
 			let mut state = self.state();
 			let Some(demand) = state.references.get(product_id) else { return };
@@ -398,6 +393,32 @@ impl Drop for DrainGuard<'_> {
 		if self.armed {
 			self.ledger.state().draining = false;
 		}
+	}
+}
+
+impl RuntimeServices {
+	/// The host reports that `product_id`'s worker stopped without being
+	/// asked to. While something holds it, it is started again once the
+	/// ledger's backoff for its run of crashes has passed.
+	pub fn worker_exited(self: &Arc<Self>, product_id: &ProductId) {
+		self.worker_attempt_exited(product_id, None);
+	}
+
+	/// Apply crash backoff only if the reported attempt still serves this product.
+	pub fn worker_attempt_exited(self: &Arc<Self>, product_id: &ProductId, attempt: Option<u64>) {
+		let Some(wait_ms) =
+			self.worker_ledger.exited(product_id, attempt, crate::current_unix_millis())
+		else {
+			return;
+		};
+		let services = Arc::downgrade(self);
+		let product_id = product_id.clone();
+		self.spawner.spawn(async move {
+			futures_timer::Delay::new(Duration::from_millis(wait_ms)).await;
+			if let Some(services) = services.upgrade() {
+				services.worker_ledger.restart(&product_id, attempt);
+			}
+		});
 	}
 }
 
