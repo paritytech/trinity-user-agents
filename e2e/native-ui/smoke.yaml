@@ -22,10 +22,20 @@ name: Settings and wallet smoke
 - extendedWaitUntil:
     visible: ${USERNAME}
     timeout: 90000
-- tapOn:
-    label: Open the cash card by its top edge, which the Humanity card does not cover
-    id: wallet_cash_card
-    point: "50%,6%"
+# On iOS the Humanity card overlaps the cash card, so the tap goes to the top edge it leaves clear.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: wallet_cash_card
+          point: "50%,6%"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          id: wallet_cash_card
 - tapOn:
     id: wallet_send_payment_button
 - assertVisible:
