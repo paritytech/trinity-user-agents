@@ -45,7 +45,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
             .logFailure("TrUAPI runtime unavailable; Pocket face ${key.cardId.value} stays static")
             .getOrElse { return@flow }
 
-        runtime.acquireWorker(key.productId)
+        val claim = runtime.claimWorker(key.productId)
         try {
             emitAll(
                 workers.execution(key.productId)
@@ -54,7 +54,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
                     .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),
             )
         } finally {
-            runtime.releaseWorker(key.productId)
+            claim.release()
         }
     }
 
