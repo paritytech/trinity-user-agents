@@ -8,12 +8,13 @@ use std::{
 };
 
 use parity_scale_codec::Encode;
-use truapi::latest::GenericError;
+use truapi::{CallContext, latest::GenericError};
 
 use super::*;
 use crate::{
-	platform::HostInfo,
-	runtime::services::RuntimeServices,
+	host_logic::root_entropy::RootEntropy,
+	platform::{HostInfo, ProductContext, ProductId},
+	runtime::{HostRole, LocalActivation, SigningHost, services::RuntimeServices},
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
 		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet,
@@ -946,9 +947,18 @@ fn within_answer_wait<T>(work: impl Future<Output = T>) -> T {
 	}
 }
 
+/// The People metadata an allowance reads before People's suffix.
+const PEOPLE_METADATA: &[u8] =
+	include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
+
+/// The Asset Hub of [`published_test_descriptor`].
+const TEST_STACK_ASSET_HUB: [u8; 32] = [0xcc; 32];
+
 /// A runtime on the stack `refresh` hands out, over a People node that names
-/// `genesis` as its chain and gives `suffix` as its `NetworkSuffix`. Any other
-/// request gets a JSON-RPC error.
+/// `genesis` as its chain, gives `suffix` as its `NetworkSuffix`, and serves the
+/// runtime version and metadata an allowance reads first. Any other request
+/// gets a JSON-RPC error. Asset Hub is out of reach, so activating a wallet
+/// looks up no username.
 fn runtime_on(
 	refresh: &StackRefresh,
 	genesis: [u8; 32],
@@ -958,10 +968,19 @@ fn runtime_on(
 		rpc_responder: Some(Arc::new(move |request| {
 			let request: serde_json::Value =
 				serde_json::from_str(request).expect("the core sends JSON-RPC");
-			let answer = match request["method"].as_str() {
-				Some("chainSpec_v1_genesisHash") => Ok(hex::encode(genesis)),
-				Some("state_getStorage") => Ok(hex::encode(suffix.as_bytes().to_vec().encode())),
-				method => Err(format!("the node serves no {method:?}")),
+			let as_hex = |bytes: &[u8]| serde_json::json!(format!("0x{}", hex::encode(bytes)));
+			let answer = match (request["method"].as_str(), request["params"][0].as_str()) {
+				(Some("chainSpec_v1_genesisHash" | "chain_getBlockHash"), _) => {
+					Ok(as_hex(&genesis))
+				},
+				(Some("state_getRuntimeVersion"), _) => {
+					Ok(serde_json::json!({"specVersion": 1, "transactionVersion": 1}))
+				},
+				(Some("state_call"), Some("Metadata_metadata_at_version")) => {
+					Ok(as_hex(&Some(PEOPLE_METADATA.to_vec()).encode()))
+				},
+				(Some("state_getStorage"), _) => Ok(as_hex(&suffix.as_bytes().to_vec().encode())),
+				(method, _) => Err(format!("the node serves no {method:?}")),
 			};
 			// An error, not a panic: a panic would end the node's answers, and
 			// the call waiting on one would never finish.
@@ -969,7 +988,7 @@ fn runtime_on(
 				Ok(answer) => serde_json::json!({
 					"jsonrpc": "2.0",
 					"id": request["id"],
-					"result": format!("0x{answer}"),
+					"result": answer,
 				}),
 				Err(message) => serde_json::json!({
 					"jsonrpc": "2.0",
@@ -979,6 +998,7 @@ fn runtime_on(
 			};
 			vec![frame.to_string()]
 		})),
+		unreachable_genesis: Some(TEST_STACK_ASSET_HUB),
 		..Default::default()
 	});
 	let services = RuntimeServices::new(
@@ -1053,6 +1073,38 @@ fn a_people_suffix_that_cannot_be_read_is_not_reported() {
 	});
 
 	assert_eq!((failed, refresh.status().mismatches), (Some(true), vec![]));
+}
+
+/// The allowance work is where a signing host reads People's suffix, so it is
+/// the allowance that has to report it. One that read the suffix past the
+/// checks would build proofs with a suffix the host never hears of.
+#[test]
+fn a_statement_store_allowance_reports_a_people_suffix_that_is_not_the_tld() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "testnet");
+	let signing_host = SigningHost::new(services);
+	let product = ProductContext::new(ProductId::for_test("myapp.paseo"));
+
+	// The node serves nothing the allowance reads after the suffix, so the
+	// allowance itself fails.
+	let allocated = within_answer_wait(async {
+		signing_host.activate_local_session(RootEntropy::new([0xab; 16])).await.ok()?;
+		let accounts = signing_host.accounts();
+		let session = accounts.current_session()?;
+		let cx = CallContext::default();
+		Some(accounts.statement_store_allowance_key(&cx, &session, &product).await.is_ok())
+	});
+
+	assert_eq!(
+		(allocated, refresh.status().mismatches),
+		(
+			Some(false),
+			vec![StackMismatch::NetworkSuffix {
+				named: "paseo".to_string(),
+				answered: "testnet".to_string(),
+			}],
+		)
+	);
 }
 
 /// The host is told of a wrong suffix the way it is told of a wrong chain:
