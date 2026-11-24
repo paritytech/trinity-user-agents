@@ -198,8 +198,7 @@ impl AccountStoreLock {
 		file.try_lock_exclusive().map_err(|err| {
 			anyhow::anyhow!(
 				"another truapi-host is using the account store at {} \
-                 ({err}); wait for it to finish, or start this one with \
-                 another --session or --base-path",
+                 ({err}); wait for it to finish, then try again",
 				base_path.display()
 			)
 		})?;

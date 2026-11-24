@@ -243,33 +243,24 @@ fn a_second_store_lock_is_refused_rather_than_waited_on() -> Result<()> {
 	Ok(())
 }
 
-/// The refusal tells the user what to do instead, so every flag it names is
-/// one the commands that provision an account take.
+/// The store is also locked inside a running host, by `/session --clear`,
+/// `/session --mnemonic` and a pairing that moves to a fresh account, where a
+/// flag for another process does not help. The refusal asks only to wait and
+/// try again, which is right wherever it is hit.
 #[test]
-fn a_refused_store_lock_names_flags_the_signing_commands_take() -> Result<()> {
-	use clap::CommandFactory as _;
-
+fn a_refused_store_lock_asks_to_wait_and_try_again() -> Result<()> {
 	let dir = tempdir()?;
 	let _held = AccountStoreLock::acquire(dir.path())?;
 	let Err(refusal) = AccountStoreLock::acquire(dir.path()) else {
 		panic!("a second exclusive lock must be refused");
 	};
 	let refusal = refusal.to_string();
-	let named: Vec<&str> = refusal
-		.split(|character: char| character.is_whitespace() || character == ',')
-		.filter_map(|word| word.strip_prefix("--"))
-		.collect();
-	let cli = crate::Cli::command();
-	let unknown: Vec<(&str, &str)> = ["signing-host", "dev"]
-		.into_iter()
-		.flat_map(|name| named.iter().map(move |flag| (name, *flag)))
-		.filter(|(name, flag)| {
-			let command = cli.find_subcommand(name).expect("the command exists");
-			!command.get_arguments().any(|arg| arg.get_long() == Some(*flag))
-		})
-		.collect();
 
-	assert_eq!((named.is_empty(), unknown), (false, Vec::new()), "{refusal}");
+	assert_eq!(
+		refusal.rsplit_once("; ").map(|(_, advice)| advice),
+		Some("wait for it to finish, then try again"),
+		"{refusal}"
+	);
 	Ok(())
 }
 
