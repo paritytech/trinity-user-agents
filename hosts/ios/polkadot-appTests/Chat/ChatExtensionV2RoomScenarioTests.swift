@@ -167,8 +167,8 @@ struct ChatExtensionV2RoomScenarioTests {
         await productBot.dispose()
     }
 
-    /// A `set_room_config` while the room screen is open reaches the screen with a new configuration
-    /// generation, so the screen reloads its policy without a reopen. The screen reads its policy from the chat
+    /// A `create_room` with another configuration while the room screen is open reaches the screen with a new
+    /// configuration generation, so the screen reloads its policy without a reopen. The screen reads its policy from the chat
     /// stream that `ChatEngine.chatMetadataStream()` follows.
     @Test func aConfigurationChangeReachesAnOpenScreen() async throws {
         let bridge = await fixture.bridge()
@@ -184,7 +184,7 @@ struct ChatExtensionV2RoomScenarioTests {
 
         var changed = config
         changed.reportSeen = false
-        try await bridge.setRoomConfig(roomId: "lobby", config: changed)
+        _ = try await bridge.createRoom(roomId: "lobby", name: metadata.name, icon: "", config: changed)
 
         var reloaded = opened
         while reloaded.roomPolicy?.configGeneration == generation {
@@ -266,11 +266,11 @@ private extension ChatExtensionV2RoomScenarioTests {
         config: ChatRoomConfig,
         preview: ChatRoomPreview?
     ) async throws -> ChatRoomRegistrationStatus {
-        let status = try await bridge.createRoom(roomId: "lobby", name: metadata.name, icon: icon)
+        // The configuration arrives with the room, in one call.
+        let status = try await bridge.createRoom(roomId: "lobby", name: metadata.name, icon: icon, config: config)
 
         if status == .new {
             try await bridge.setRoomMetadata(roomId: "lobby", metadata: metadata)
-            try await bridge.setRoomConfig(roomId: "lobby", config: config)
             if let preview {
                 try await bridge.setRoomPreview(roomId: "lobby", preview: preview)
             }
