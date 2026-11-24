@@ -10,7 +10,8 @@ import javax.inject.Inject
  * in each [WINDOW_MS] window. A `truapi.core` line counts against its marker rather than the whole tag,
  * so one noisy marker cannot hide the others. The first line after a window that dropped lines is
  * preceded by one line that counts them, so a product or connection stuck in a loop sends at most that
- * many lines a minute.
+ * many lines a minute plus the count. A count that no later line follows, because the tag went quiet or
+ * the app stopped, is never sent.
  */
 class HostLogSinkTree internal constructor(
     private val sink: HostLogSink,
@@ -31,7 +32,8 @@ class HostLogSinkTree internal constructor(
 
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
         val name = tag.orEmpty()
-        val key = windowKey(name, message)
+        val marker = coreMarker(name, message)
+        val key = if (marker == null) name else "$name $marker"
         val dropped = synchronized(windows) {
             val now = nowMs()
             val window = windows.getOrPut(key) { Window(now) }
@@ -54,16 +56,20 @@ class HostLogSinkTree internal constructor(
                 Log.WARN,
                 name,
                 "$dropped $key lines dropped over the limit of $LINES_PER_WINDOW a minute",
-                mapOf(DROPPED_ATTRIBUTE to dropped),
+                buildMap {
+                    put(DROPPED_ATTRIBUTE, dropped)
+                    if (marker != null) put(MARKER_ATTRIBUTE, marker)
+                },
             )
         }
         sink.log(priority, name, message, emptyMap())
     }
 
-    private fun windowKey(tag: String, message: String): String {
-        if (tag != CORE_TAG) return tag
+    /** The marker a `truapi.core` line counts against, or null for every other line. */
+    private fun coreMarker(tag: String, message: String): String? {
+        if (tag != CORE_TAG) return null
         val markerEnd = message.indexOf(MARKER_SEPARATOR)
-        return if (markerEnd > 0) "$tag ${message.substring(0, markerEnd)}" else tag
+        return if (markerEnd > 0) message.substring(0, markerEnd) else null
     }
 
     internal companion object {
@@ -73,5 +79,6 @@ class HostLogSinkTree internal constructor(
         const val LINES_PER_WINDOW = 60
         const val WINDOW_MS = 60_000L
         const val DROPPED_ATTRIBUTE = "dropped"
+        const val MARKER_ATTRIBUTE = "marker"
     }
 }

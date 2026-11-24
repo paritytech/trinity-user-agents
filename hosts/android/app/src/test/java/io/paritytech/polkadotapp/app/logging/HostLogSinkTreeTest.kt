@@ -101,7 +101,10 @@ class HostLogSinkTreeTest {
                 Log.WARN,
                 "truapi.core",
                 "10 truapi.core truapi.tracing.warn lines dropped over the limit of $limit a minute",
-                mapOf(HostLogSinkTree.DROPPED_ATTRIBUTE to 10),
+                mapOf(
+                    HostLogSinkTree.DROPPED_ATTRIBUTE to 10,
+                    HostLogSinkTree.MARKER_ATTRIBUTE to "truapi.tracing.warn",
+                ),
             )
         }
     }
