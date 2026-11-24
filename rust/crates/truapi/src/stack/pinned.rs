@@ -3,7 +3,9 @@
 //! [`Pinned`] holds the copy the build bundles, and
 //! [`Pinned::refuse_change`] checks stored and fetched copies against it.
 
-use trinity_stack::Descriptor;
+use std::collections::BTreeMap;
+
+use trinity_stack::{Asset, Descriptor};
 
 use super::{ReservedValuesPolicy, StackError};
 
@@ -61,9 +63,9 @@ impl Pinned {
 		[
 			("the chain roles", !has_same_roles(bundled, copy)),
 			("a chain's genesisHash", !has_same_genesis_hashes(bundled, copy)),
-			("assets", bundled.assets != copy.assets),
-			("contracts", bundled.contracts != copy.contracts),
-			("dotns", bundled.dotns != copy.dotns),
+			("assets", assets_by_role(bundled) != assets_by_role(copy)),
+			("contracts", non_empty(&bundled.contracts) != non_empty(&copy.contracts)),
+			("dotns", non_empty(&bundled.dotns) != non_empty(&copy.dotns)),
 			("coinage", bundled.coinage != copy.coinage),
 			(
 				"the relay's lightSpec.sha256",
@@ -90,6 +92,23 @@ fn has_same_genesis_hashes(bundled: &Descriptor, copy: &Descriptor) -> bool {
 		copy.chain(&chain.role)
 			.is_none_or(|other| other.genesis_hash == chain.genesis_hash)
 	})
+}
+
+/// The descriptor's `assets` by role, empty when it names none. A descriptor
+/// names each asset role once, so the order it lists them in says nothing.
+fn assets_by_role(descriptor: &Descriptor) -> BTreeMap<&str, &Asset> {
+	descriptor
+		.assets
+		.iter()
+		.flatten()
+		.map(|asset| (asset.role.as_str(), asset))
+		.collect()
+}
+
+/// `map`, or `None` when it has no entries: `{}` names no more than a map
+/// left out.
+fn non_empty(map: &Option<BTreeMap<String, String>>) -> Option<&BTreeMap<String, String>> {
+	map.as_ref().filter(|map| !map.is_empty())
 }
 
 /// The digest of the relay's light spec, or `None` when the relay names no

@@ -36,7 +36,7 @@ struct PinnedChange {
 }
 
 /// One change or more to each field a stack allowed reserved values pins.
-const PINNED_FIELD_CHANGES: [PinnedChange; 20] = [
+const PINNED_FIELD_CHANGES: [PinnedChange; 22] = [
 	PinnedChange { make: |copy| copy["tld"] = "paseo".into(), field: "tld" },
 	PinnedChange {
 		make: |copy| chains(copy).push(test_descriptor_chain("Coretime", [0xa9; 32], Some(1005))),
@@ -73,14 +73,13 @@ const PINNED_FIELD_CHANGES: [PinnedChange; 20] = [
 		make: |copy| copy["assets"][0]["pallet"] = "ForeignAssets".into(),
 		field: "assets",
 	},
-	PinnedChange {
-		make: |copy| copy["assets"].as_array_mut().expect("assets is an array").reverse(),
-		field: "assets",
-	},
+	PinnedChange { make: |copy| copy["assets"][1]["role"] = "tip".into(), field: "assets" },
+	PinnedChange { make: |copy| copy["assets"] = serde_json::json!([]), field: "assets" },
 	PinnedChange {
 		make: |copy| copy["contracts"]["multicall"] = hex_of(0xee, 20),
 		field: "contracts",
 	},
+	PinnedChange { make: |copy| copy["contracts"] = serde_json::json!({}), field: "contracts" },
 	PinnedChange { make: |copy| copy["contracts"]["extra"] = hex_of(0xee, 20), field: "contracts" },
 	PinnedChange { make: |copy| copy["dotns"]["popController"] = hex_of(0xee, 20), field: "dotns" },
 	PinnedChange { make: |copy| remove(copy, "dotns"), field: "dotns" },
@@ -175,14 +174,16 @@ fn a_stack_without_reserved_values_pins_only_its_tld() {
 
 /// The operator of a stack allowed reserved values still republishes, moves
 /// endpoints and names a new `generation` without a new build, as long as no
-/// pinned field changes.
+/// pinned field changes. Listing chains or assets in another order changes
+/// none.
 #[test]
 fn a_stack_allowed_reserved_values_follows_every_other_change() {
 	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
 	let allowed = ReservedValuesPolicy::ALLOWED;
-	let unpinned_changes: [fn(&mut serde_json::Value); 9] = [
+	let unpinned_changes: [fn(&mut serde_json::Value); 10] = [
 		|_unchanged| {},
 		|copy| chains(copy).reverse(),
+		|copy| copy["assets"].as_array_mut().expect("assets is an array").reverse(),
 		|copy| copy["generation"] = "second".into(),
 		|copy| copy["network"] = "polkadot-test".into(),
 		|copy| copy["validUntil"] = 1_900_000_000.into(),
@@ -198,5 +199,29 @@ fn a_stack_allowed_reserved_values_follows_every_other_change() {
 	assert_eq!(
 		unpinned_changes.map(|change| pinned.refuse_change(&changed(change), &allowed)),
 		unpinned_changes.map(|_| Ok(()))
+	);
+}
+
+/// A publisher may write `[]` or `{}` for a field the bundled copy leaves
+/// out, or leave out one it writes empty. Neither names anything, so a stack
+/// allowed reserved values takes the copy either way.
+#[test]
+fn an_empty_list_or_map_pins_the_same_as_one_left_out() {
+	let mut left_out = reserved_test_descriptor(1);
+	for field in ["assets", "contracts", "dotns"] {
+		remove(&mut left_out, field);
+	}
+	let mut written_empty = reserved_test_descriptor(1);
+	written_empty["assets"] = serde_json::json!([]);
+	written_empty["contracts"] = serde_json::json!({});
+	written_empty["dotns"] = serde_json::json!({});
+	let allowed = ReservedValuesPolicy::ALLOWED;
+	let refusal = |bundled: &serde_json::Value, copy: &serde_json::Value| {
+		Pinned::new(descriptor(bundled)).refuse_change(&descriptor(copy), &allowed)
+	};
+
+	assert_eq!(
+		[refusal(&left_out, &written_empty), refusal(&written_empty, &left_out)],
+		[Ok(()), Ok(())]
 	);
 }
