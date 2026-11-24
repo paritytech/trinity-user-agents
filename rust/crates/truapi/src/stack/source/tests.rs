@@ -241,7 +241,8 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 }
 
 /// A copy stored before the build reserved one of its values is not run: the
-/// bundled copy starts the host.
+/// bundled copy starts the host. The same record starts a build that does not
+/// reserve that value, so the policy alone is what refuses it.
 #[test]
 fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
@@ -259,9 +260,14 @@ fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 		.stored
 		.expect("a first copy is stored");
 
-	let source = load_reserving(&bundled, Some(&record), reserving_extras());
+	let starts_on =
+		|reserved_values| load_reserving(&bundled, Some(&record), reserved_values).status();
 
-	assert_eq!(source.status(), stack_status(&bundled, None));
+	assert_eq!(
+		[starts_on(reserving_extras()), starts_on(ReservedValuesPolicy::default())],
+		[stack_status(&bundled, None), stack_status(&on_extra_genesis, None)],
+		"only the policy keeps the stored copy from starting the host"
+	);
 }
 
 /// A fresh install starts from the bundled copy, so a build whose policy
