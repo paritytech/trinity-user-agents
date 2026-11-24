@@ -1097,3 +1097,5 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for issue reports, feature proposals, a
 ## License
 
 [MIT](./LICENSE)
+
+The renderer also supports worker-drawn `Gesture` containers with tap and pan actions. Pans can send movement to the worker or move children on the host; see the [renderer contract](docs/rfcs/unified-renderer.md#gesture-container).

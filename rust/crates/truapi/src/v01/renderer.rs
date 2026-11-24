@@ -370,6 +370,163 @@ pub struct ButtonProps {
 	pub click_action: Option<String>,
 }
 
+/// Direction in which a pan recognizer accepts movement.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum PanAxis {
+	/// Horizontal movement; vertical scrolling wins until horizontal intent.
+	Horizontal,
+	/// Vertical movement.
+	Vertical,
+	/// Movement in either direction.
+	Free,
+}
+
+/// Distance available to a dragged child.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum PanTravel {
+	/// Parent width minus child width, clamped at zero.
+	ParentWidth,
+	/// Explicit travel in logical pixels.
+	Points(Size),
+}
+
+/// How a host-owned drag settles when the finger lifts.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum PanRelease {
+	/// Return to the starting position.
+	SnapBack,
+	/// Remain where the finger lifted.
+	Stay,
+	/// Settle to the end on success, otherwise return to the start.
+	Complete {
+		/// Percentage of travel needed, clamped by the host to 1 through 100.
+		#[serde(rename = "thresholdPercent")]
+		threshold_percent: u8,
+	},
+}
+
+/// Motion owned by the host, retained while the node keeps its structural place.
+///
+/// Travel is clamped to a nonnegative range along the pan axis. Free pans move
+/// in both axes, using the same travel limit for each.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PanDrag {
+	/// Bounds used for movement and event fractions.
+	pub travel: PanTravel,
+	/// Settle behavior on release.
+	pub release: PanRelease,
+	/// Keep a completed drag at the end; absent means true.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub hold_at_end: OptionBool,
+}
+
+/// Recognizer configuration and optional actions for a pan.
+///
+/// With no drag, events describe clamped translation relative to the gesture's
+/// start and fraction uses parent width minus child width. The worker may move
+/// the child through new trees. A zero interval requests every move.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PanGesture {
+	/// Accepted movement direction.
+	pub axis: PanAxis,
+	/// Present when the host moves the children itself.
+	pub drag: Option<PanDrag>,
+	/// Action on accepted pan start.
+	pub start_action: Option<String>,
+	/// Action on movement; absent sends no move events.
+	pub move_action: Option<String>,
+	/// Minimum milliseconds between move events; absent means zero.
+	pub move_interval_ms: Option<u16>,
+	/// Action on release or cancellation.
+	pub end_action: Option<String>,
+}
+
+/// A container tracking taps and pans over worker-drawn children.
+///
+/// Enabled defaults to true. Only declared actions are sent, each carrying a
+/// SCALE-encoded [`GestureEvent`]. No visual styling is supplied by the host.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct GestureProps {
+	/// Action on a tap that did not become a pan.
+	pub tap_action: Option<String>,
+	/// Optional pan recognizer.
+	pub pan: Option<PanGesture>,
+	/// Label for the accessibility action.
+	pub accessibility_label: Option<String>,
+	/// Whether gestures are accepted; absent means true.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub enabled: OptionBool,
+	/// Success feedback for `Complete` releases; absent means false.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub haptic_on_complete: OptionBool,
+	/// Names this gesture for [`RendererNode::SetOffset`] updates.
+	///
+	/// A keyed pan with a move action is paced by the host: at most one move
+	/// per display frame, and none while the previous move is unanswered. A
+	/// move is answered by a `SetOffset` for this key or by a new tree. The
+	/// host drops the moves in between and sends only the newest, so no
+	/// backlog builds up. Absent keeps every move, as `moveIntervalMs` says.
+	pub key: Option<String>,
+}
+
+/// Stage of a gesture action.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum GesturePhase {
+	/// A tap with no pan.
+	Tap,
+	/// Accepted pan begins.
+	Started,
+	/// Finger moved.
+	Moved,
+	/// Finger lifted without a `Complete` release succeeding.
+	Ended,
+	/// Gesture recognizer cancelled; never completes an action.
+	Cancelled,
+	/// `Complete` threshold reached on release or by accessibility activation.
+	Completed,
+}
+
+/// Payload of every gesture action, independent of the renderer context.
+///
+/// Coordinates are rounded logical-pixel offsets from the travel origin,
+/// clamped to travel. Fractions range from 0 through 1000 along the primary
+/// axis (horizontal for `Free`), and are zero when travel is zero. Taps use zero.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct GestureEvent {
+	/// Recognizer lifecycle stage.
+	pub phase: GesturePhase,
+	/// Horizontal translation, in hundredths of a logical pixel: a whole
+	/// pixel would let a slow drag report a new place only every few frames.
+	pub x: i32,
+	/// Vertical translation, in hundredths of a logical pixel.
+	pub y: i32,
+	/// Progress along the primary axis, in thousandths.
+	pub fraction_permille: u16,
+}
+
 /// Where image bytes come from: a place the host fetches them from, or the
 /// tree itself. The tree carries no URL. Fetched bytes are PNG, JPEG, WebP or
 /// SVG; inline bytes leave out SVG.
@@ -578,6 +735,35 @@ pub enum RendererNode {
 		/// The content the layers draw over.
 		children: Vec<RendererNode>,
 	},
+	/// Worker-drawn content with tap and pan interaction.
+	#[codec(index = 12)]
+	Gesture {
+		/// Layout and styling.
+		modifiers: Vec<Modifier>,
+		/// Recognizers, actions and optional host-owned movement.
+		props: GestureProps,
+		/// Content to draw and optionally move.
+		children: Vec<RendererNode>,
+	},
+	/// Moves the children of the `Gesture` whose `key` matches, without a new
+	/// tree. Valid only as a whole item of a `render` stream; inside a tree it
+	/// draws nothing.
+	///
+	/// The host adds `x` and `y` (hundredths of a logical pixel, along the
+	/// layout direction) to where the current tree places those children, and
+	/// keeps the offset until the next tree, which replaces it: a tree always
+	/// wins. A key that
+	/// matches no `Gesture` in the current tree is ignored. The item is not a
+	/// tree: a Pocket card does not keep it as a face.
+	#[codec(index = 13)]
+	SetOffset {
+		/// The `key` of the `Gesture` to move.
+		key: String,
+		/// Horizontal offset, in hundredths of a logical pixel.
+		x: i32,
+		/// Vertical offset, in hundredths of a logical pixel.
+		y: i32,
+	},
 }
 
 /// Where a product-rendered body lives, and the id that names it there.
@@ -697,8 +883,13 @@ impl RendererNode {
 			Self::Column { children, .. } |
 			Self::Row { children, .. } |
 			Self::Text { children, .. } |
+			Self::Gesture { children, .. } |
 			Self::Button { children, .. } => children.iter_mut().for_each(Self::clear_refused_inline_images),
-			Self::Nil | Self::String { .. } | Self::Spacer { .. } | Self::TextField { .. } => {},
+			Self::Nil |
+			Self::String { .. } |
+			Self::Spacer { .. } |
+			Self::TextField { .. } |
+			Self::SetOffset { .. } => {},
 		}
 	}
 }

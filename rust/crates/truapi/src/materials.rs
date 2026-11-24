@@ -366,6 +366,7 @@ fn visit_materials<'tree>(
 			nodes.push((props, nested));
 			children
 		},
+		RendererNode::Gesture { children, .. } |
 		RendererNode::Box { children, .. } |
 		RendererNode::Column { children, .. } |
 		RendererNode::Row { children, .. } |
@@ -375,7 +376,8 @@ fn visit_materials<'tree>(
 		RendererNode::String { .. } |
 		RendererNode::Spacer { .. } |
 		RendererNode::TextField { .. } |
-		RendererNode::Image { .. } => return,
+		RendererNode::Image { .. } |
+		RendererNode::SetOffset { .. } => return,
 	};
 	let nested = nested || matches!(node, RendererNode::Materials { .. });
 	for child in children {

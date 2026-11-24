@@ -182,3 +182,121 @@ fn refused_inline_images_are_emptied_throughout_the_tree() {
 
 	assert_eq!(node, tree(Vec::new()));
 }
+
+#[test]
+fn gesture_keeps_its_wire_index_and_children() {
+	let node = RendererNode::Gesture {
+		modifiers: Vec::new(),
+		props: GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: None,
+		},
+		children: vec![RendererNode::Nil],
+	};
+	assert_eq!(node.encode(), vec![12, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+}
+
+#[test]
+fn gesture_modes_round_trip_with_actions_and_motion() {
+	for drag in [
+		None,
+		Some(PanDrag {
+			travel: PanTravel::ParentWidth,
+			release: PanRelease::Complete { threshold_percent: 90 },
+			hold_at_end: OptionBool(Some(true)),
+		}),
+		Some(PanDrag {
+			travel: PanTravel::Points(Compact(240)),
+			release: PanRelease::SnapBack,
+			hold_at_end: OptionBool(Some(false)),
+		}),
+	] {
+		let node = RendererNode::Gesture {
+			modifiers: vec![Modifier::FillWidth(true)],
+			props: GestureProps {
+				tap_action: Some("tap".into()),
+				pan: Some(PanGesture {
+					axis: PanAxis::Horizontal,
+					drag,
+					start_action: Some("start".into()),
+					move_action: Some("move".into()),
+					move_interval_ms: Some(0),
+					end_action: Some("end".into()),
+				}),
+				accessibility_label: Some("Register".into()),
+				enabled: OptionBool(Some(true)),
+				haptic_on_complete: OptionBool(Some(true)),
+				key: Some("piece".into()),
+			},
+			children: vec![renderer_node()],
+		};
+		assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	}
+}
+
+#[test]
+fn gesture_payload_has_the_same_bytes_on_hosts_and_clients() {
+	let event =
+		GestureEvent { phase: GesturePhase::Completed, x: 240, y: 0, fraction_permille: 1000 };
+	let expected = [5, 240, 0, 0, 0, 0, 0, 0, 0, 232, 3];
+	assert_eq!(event.encode(), expected);
+	assert_eq!(GestureEvent::decode(&mut expected.as_slice()).unwrap(), event);
+}
+
+#[test]
+fn set_offset_has_the_same_bytes_on_hosts_and_clients() {
+	let node = RendererNode::SetOffset { key: "piece".into(), x: 120, y: -2 };
+	let expected = [13, 20, b'p', b'i', b'e', b'c', b'e', 120, 0, 0, 0, 254, 255, 255, 255];
+	assert_eq!(node.encode(), expected);
+	assert_eq!(RendererNode::decode(&mut expected.as_slice()).unwrap(), node);
+}
+
+/// An offset update is eleven bytes plus its key, against hundreds for the
+/// tree it moves a part of.
+#[test]
+fn set_offset_is_smaller_than_any_tree_holding_its_gesture() {
+	let offset = RendererNode::SetOffset { key: "piece".into(), x: 120, y: 0 };
+	let tree = RendererNode::Gesture {
+		modifiers: Vec::new(),
+		props: GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: Some("piece".into()),
+		},
+		children: vec![renderer_node()],
+	};
+	assert_eq!(offset.encode().len(), 15);
+	assert!(offset.encode().len() < tree.encode().len());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_offset_and_keyed_gesture_round_trip_through_uniffi() {
+	for node in [
+		RendererNode::SetOffset { key: "piece".into(), x: -7, y: 3 },
+		RendererNode::Gesture {
+			modifiers: Vec::new(),
+			props: GestureProps {
+				tap_action: None,
+				pan: None,
+				accessibility_label: None,
+				enabled: OptionBool(None),
+				haptic_on_complete: OptionBool(None),
+				key: Some("piece".into()),
+			},
+			children: vec![RendererNode::Nil],
+		},
+	] {
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
+		assert_eq!(lifted, node);
+	}
+}

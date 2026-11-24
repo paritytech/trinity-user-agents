@@ -438,6 +438,7 @@ Action payload by node, as the host sends it in `HostRendererActionSubscribeItem
 | ----------- | ------------ | ---------------------------------------------- |
 | `Button`    | Press        | Empty                                          |
 | `TextField` | Value change | UTF-8 bytes of the new value, no length prefix |
+| `Gesture` | Tap or pan lifecycle | SCALE `GestureEvent` |
 
 The host fills `context` from the render request whose tree the node belongs to. Only the current tree of an open
 `render` stream is a source of actions. Actions published before the product subscribes are buffered until it does.
@@ -480,3 +481,44 @@ keeps its cached face, and other surfaces draw as after any other render error.
 ## Open questions
 
 - Whether a pocket card drawn through `Renderer` needs a viewport signal beyond the stream closing.
+
+### Gesture container
+
+`Gesture` (SCALE index 12) draws its children and recognizes taps and pans.
+Every declared gesture action carries a SCALE
+`GestureEvent`: phase (Tap, Started, Moved, Ended, Cancelled, Completed), x and y
+(i32 translation in hundredths of a logical pixel), and fractionPermille (u16,
+0 to 1000).
+The native `encode_gesture_event` and client `decodeGestureEvent` helpers share
+this codec. The action envelope and context do not change.
+
+Without `pan.drag`, the worker receives declared move actions and can redraw the
+moved child using `Margin(start)`. `moveIntervalMs: 0` requests every move. With
+`pan.drag`, the host owns the offset, clamps it to travel and settles using
+SnapBack, Stay, or Complete at the declared threshold. ParentWidth means parent
+width minus child width. Zero travel never completes. Cancelled never completes.
+Only declared actions fire; omitting moveAction eliminates move round trips.
+Host offset and recognizer identity survive tree updates at the same structural
+place. A completed drag stays at the end by default; holdAtEnd false resets it.
+The accessibility action uses the same Completed payload as a successful release.
+
+### Offset updates
+
+A worker that follows a pan itself does not need to send a whole tree per
+move. It gives the `Gesture` a `key` and answers each move with a
+`SetOffset { key, x, y }` item (SCALE index 13) on the same `render`
+stream. The host adds the offset to where the current tree places that
+gesture's children and keeps it until the next tree, which replaces it: a
+tree always wins. Being on the same stream, an update can never overtake the
+tree it moves. Offsets, like gesture positions, are in hundredths of a logical
+pixel: in whole pixels a slow drag (say 35 px a second) could move the
+children only about 35 times a second, however fast the round trip. Inside a tree `SetOffset` draws nothing, and a Pocket card
+does not keep it as a face.
+
+A keyed pan with a move action is paced by the host: at most one move per
+display frame, and none while the previous move is unanswered (by a
+`SetOffset` for the key or by a tree). Moves in between are dropped and only
+the newest is sent, so a slow worker never builds a backlog. A worker should
+likewise answer only the newest move it holds. Start, end and completion
+still send whole trees.
+

@@ -43,7 +43,9 @@ private fun RendererNode.materialsCount(): Int = when (this) {
     is RendererNode.Row -> children.sumOf { it.materialsCount() }
     is RendererNode.Text -> children.sumOf { it.materialsCount() }
     is RendererNode.Button -> children.sumOf { it.materialsCount() }
+    is RendererNode.Gesture -> children.sumOf { it.materialsCount() }
     is RendererNode.Nil,
+    is RendererNode.SetOffset,
     is RendererNode.String,
     is RendererNode.Spacer,
     is RendererNode.TextField,
@@ -54,7 +56,7 @@ private class JsWidgetMapping {
     private var nextMaterialsNode = 0
 
     fun map(node: RendererNode): JsWidget = when (node) {
-        is RendererNode.Nil -> JsWidget.Spacer()
+        is RendererNode.Nil, is RendererNode.SetOffset -> JsWidget.Spacer()
         is RendererNode.String -> JsWidget.Text(text = node.text)
         is RendererNode.Box -> JsWidget.Box(
             modifiers = node.modifiers.toJsModifiers(),
@@ -110,6 +112,8 @@ private class JsWidgetMapping {
                 modifiers = node.modifiers.toJsModifiers(),
             )
         } ?: JsWidget.Box(modifiers = node.modifiers.toJsModifiers())
+        // The Android gesture layer draws the gesture; until then its children draw in a plain box.
+        is RendererNode.Gesture -> JsWidget.Box(children = mapChildren(node.children))
         is RendererNode.Materials -> {
             val index = nextMaterialsNode++
             JsWidget.Materials(node = index, children = mapChildren(node.children))

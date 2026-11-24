@@ -344,3 +344,27 @@ fn a_host_draws_only_the_format_it_reads_and_only_when_on() {
 	assert!(!draws(true, 2, &[]), "a newer format version");
 	assert!(!draws(true, 1, &features(&["sl-pressure"])), "a feature version 1 does not define");
 }
+
+#[test]
+fn gesture_children_keep_material_validation_and_loading() {
+	let tree = RendererNode::Gesture {
+		modifiers: Vec::new(),
+		props: crate::latest::GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: parity_scale_codec::OptionBool(None),
+			haptic_on_complete: parity_scale_codec::OptionBool(None),
+			key: None,
+		},
+		children: vec![RendererNode::Materials {
+			props: MaterialsProps {
+				layers: vec![MaterialInstance { material: [9; 32], args: Vec::new() }],
+			},
+			children: Vec::new(),
+		}],
+	};
+	let mut ids = HashSet::new();
+	collect_material_ids(&tree, &mut ids);
+	assert_eq!(ids, HashSet::from([[9; 32]]));
+}
