@@ -23,7 +23,6 @@ import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashListener
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashNotice
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -90,8 +89,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     private val workerCrashNotice: WorkerCrashNotice,
-    // Lazy: the listener reads the core through this provider.
-    private val workerCrashListener: Lazy<WorkerCrashListener>,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -251,7 +248,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override fun workerCrashing(productId: ProductId, crashes: UInt) {
             Timber.w("TrUAPI worker for %s crashed %d times in a row", productId, crashes.toInt())
-            if (!workerCrashListener.get().onWorkerCrashing(productId)) workerCrashNotice.onCrashing(productId)
+            workerCrashNotice.onCrashing(productId)
         }
 
         // A run returns by itself once nothing is live, so `false` needs no action.

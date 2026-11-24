@@ -37,63 +37,68 @@ class FakeFundingCore : FundingCore {
     val calls = mutableListOf<String>()
     var nextRequestId = 1uL
     var providerTakes = true
+    var quoteRequestFails = false
+    var quotesReadFails = false
     var cancelOutcome = CancelOutcome.REQUESTED
     val waitingFrames = mutableSetOf<String>()
 
     override suspend fun start(): Result<Unit> = Result.success(Unit).also { calls += "start" }
 
-    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<String?> =
-        Result.success<String?>("opened").also { calls += "open $direction ${amount?.value}" }
+    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingIntentId?> =
+        Result.success<FundingIntentId?>(FundingIntentId("opened")).also { calls += "open $direction ${amount?.value}" }
 
-    override suspend fun session(intent: String): Result<FundingSession?> = Result.success(sessions[intent])
+    override suspend fun session(intentId: FundingIntentId): Result<FundingSession?> = Result.success(sessions[intentId.value])
 
-    override suspend fun progress(intent: String): Result<FundingProgress?> = Result.success(progress[intent])
+    override suspend fun progress(intentId: FundingIntentId): Result<FundingProgress?> = Result.success(progress[intentId.value])
 
-    override suspend fun options(intent: String): Result<FundingOptions?> = Result.success(options[intent])
+    override suspend fun options(intentId: FundingIntentId): Result<FundingOptions?> = Result.success(options[intentId.value])
 
-    override suspend fun quotes(intent: String): Result<FundingQuoteList?> = Result.success(quotes[intent])
+    override suspend fun quotes(intentId: FundingIntentId): Result<FundingQuoteList?> =
+        if (quotesReadFails) Result.failure(IllegalStateException("quotes read")) else Result.success(quotes[intentId.value])
 
-    override suspend fun summary(intent: String): Result<FundingSessionSummary?> = Result.success(summaries[intent])
+    override suspend fun summary(intentId: FundingIntentId): Result<FundingSessionSummary?> = Result.success(summaries[intentId.value])
 
     override suspend fun entries(): Result<List<FundingBookEntry>> =
         Result.success(sessions.values.map { FundingBookEntry(it, progress[it.intent] ?: progress()) })
 
     override suspend fun history(): Result<List<FundingSessionSummary>> = Result.success(history.toList())
 
-    override suspend fun select(intent: String, selection: FundingSelection): Result<Unit> =
+    override suspend fun select(intentId: FundingIntentId, selection: FundingSelection): Result<Unit> =
         Result.success(Unit).also { calls += "select ${selection.rail}" }
 
-    override suspend fun requestQuote(intent: String, amount: Balance): Result<ULong?> =
-        Result.success<ULong?>(nextRequestId++).also { calls += "quote ${amount.value}" }
+    override suspend fun requestQuote(intentId: FundingIntentId, amount: Balance): Result<ULong?> {
+        calls += "quote ${amount.value}"
+        return if (quoteRequestFails) Result.failure(IllegalStateException("quote request")) else Result.success(nextRequestId++)
+    }
 
-    override suspend fun startWhenQuoted(intent: String, requestId: ULong): Result<Unit> =
+    override suspend fun startWhenQuoted(intentId: FundingIntentId, requestId: ULong): Result<Unit> =
         Result.success(Unit).also { calls += "startWhenQuoted $requestId" }
 
-    override suspend fun cancelAutoStart(intent: String): Result<Unit> =
+    override suspend fun cancelAutoStart(intentId: FundingIntentId): Result<Unit> =
         Result.success(Unit).also { calls += "cancelAutoStart" }
 
-    override suspend fun amountIssue(intent: String, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?> =
+    override suspend fun amountIssue(intentId: FundingIntentId, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?> =
         Result.success(null)
 
-    override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> {
+    override suspend fun selectProvider(intentId: FundingIntentId, providerId: ProductId, quoteId: String): Result<Boolean> {
         calls += "selectProvider ${providerId.value} $quoteId"
-        if (providerTakes) sessions[intent]?.let { sessions[intent] = it.copy(providerId = providerId) }
+        if (providerTakes) sessions[intentId.value]?.let { sessions[intentId.value] = it.copy(providerId = providerId) }
         return Result.success(providerTakes)
     }
 
-    override suspend fun cancel(intent: String): Result<CancelOutcome> =
+    override suspend fun cancel(intentId: FundingIntentId): Result<CancelOutcome> =
         Result.success(cancelOutcome).also { calls += "cancel" }
 
-    override suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation> =
+    override suspend fun confirmCancel(intentId: FundingIntentId, terms: CancelTerms?): Result<CancelConfirmation> =
         Result.success(CancelConfirmation.ACCEPTED).also { calls += "confirmCancel $terms" }
 
-    override suspend fun acknowledge(intent: String): Result<Boolean> =
-        Result.success(true).also { calls += "acknowledge $intent" }
+    override suspend fun acknowledge(intentId: FundingIntentId): Result<Boolean> =
+        Result.success(true).also { calls += "acknowledge ${intentId.value}" }
 
-    override suspend fun openFrame(intent: String): Result<Boolean> =
-        Result.success(waitingFrames.remove(intent)).also { calls += "openFrame $intent" }
+    override suspend fun openFrame(intentId: FundingIntentId): Result<Boolean> =
+        Result.success(waitingFrames.remove(intentId.value)).also { calls += "openFrame ${intentId.value}" }
 
-    override suspend fun frameWaiting(intent: String): Result<Boolean> = Result.success(intent in waitingFrames)
+    override suspend fun frameWaiting(intentId: FundingIntentId): Result<Boolean> = Result.success(intentId.value in waitingFrames)
 
     companion object {
         fun session(

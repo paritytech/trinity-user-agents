@@ -22,11 +22,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.CancelOutcome
-import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
-import uniffi.truapi.FundingFrameOutcome
-import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
@@ -35,7 +32,7 @@ import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.ProductId
 
-class RealFundingServiceTest {
+class FundingSessionsTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val other = ProductId.parse("other.dot").getOrThrow()
 
@@ -46,13 +43,19 @@ class RealFundingServiceTest {
         options["intent"] = FakeFundingCore.options(ramp, other)
     }
 
-    private fun TestScope.service() = RealFundingService(core, testDispatchers())
+    private lateinit var quotes: RealFundingQuotes
+
+    private fun TestScope.service(): RealFundingSessions {
+        val calls = FundingCoreCalls(this + detached, testDispatchers())
+        quotes = RealFundingQuotes(core, calls)
+        return RealFundingSessions(core, quotes, calls, testDispatchers())
+    }
 
     /** Presents session "intent" as the core does, with its screens up so the presentation holds. */
-    private fun TestScope.presented(service: RealFundingService) = async(detached) { service.present("intent", FundingDirection.IN, null) }
+    private fun TestScope.presented(service: RealFundingSessions) = async(detached) { service.present(INTENT, FundingDirection.IN, null) }
         .also {
-            (this + detached).launch { service.shown("intent") }
-            service.entryState("intent").launchIn(this + detached)
+            (this + detached).launch { service.shown(INTENT) }
+            service.entryState(INTENT).launchIn(this + detached)
         }
 
     @Test
@@ -61,7 +64,7 @@ class RealFundingServiceTest {
         presented(service)
         advanceUntilIdle()
 
-        val entry = service.entryState("intent").first()
+        val entry = service.entryState(INTENT).first()
 
         assertEquals(FundingPhase.SELECTING, entry.phase)
         assertEquals(listOf(ramp, other), entry.options?.candidates?.map { it.providerId })
@@ -74,18 +77,18 @@ class RealFundingServiceTest {
         presented(service)
         advanceUntilIdle()
 
-        service.quote(100.intoBalance(), "intent")
-        service.quote(200.intoBalance(), "intent")
+        quotes.quote(100.intoBalance(), INTENT)
+        quotes.quote(200.intoBalance(), INTENT)
         advanceUntilIdle()
         core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
-        service.changed("intent", FundingChangeKind.QUOTES)
+        quotes.onQuotesChanged(INTENT)
         advanceUntilIdle()
-        assertNull(service.entryState("intent").first().quotes)
+        assertNull(service.entryState(INTENT).first().quotes)
 
         core.quotes["intent"] = FakeFundingCore.list(2uL, "200", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-2")))
-        service.changed("intent", FundingChangeKind.QUOTES)
+        quotes.onQuotesChanged(INTENT)
         advanceUntilIdle()
-        val entry = service.entryState("intent").first()
+        val entry = service.entryState(INTENT).first()
 
         assertEquals(2uL, entry.quotes?.requestId)
         assertEquals(200.intoBalance(), entry.askedAmount)
@@ -96,8 +99,8 @@ class RealFundingServiceTest {
         val service = service()
         presented(service)
 
-        service.select(FundingSelection(FundingRail.CARD, null, null, "DE", "EUR"), "intent")
-        service.quote(100.intoBalance(), "intent")
+        service.select(FundingSelection(FundingRail.CARD, null, null, "DE", "EUR"), INTENT)
+        quotes.quote(100.intoBalance(), INTENT)
         advanceUntilIdle()
 
         assertEquals(listOf("select CARD", "quote 100"), core.calls)
@@ -107,19 +110,19 @@ class RealFundingServiceTest {
     fun `starting on a provider's quote hands it the session and answers the core started`() = runTest {
         val service = service()
         val outcome = presented(service)
-        service.quote(100.intoBalance(), "intent")
+        quotes.quote(100.intoBalance(), INTENT)
         advanceUntilIdle()
         core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
-        service.changed("intent", FundingChangeKind.QUOTES)
+        quotes.onQuotesChanged(INTENT)
         advanceUntilIdle()
 
-        val started = service.start("intent", ramp)
+        val started = service.start(INTENT, ramp)
         advanceUntilIdle()
 
         assertTrue(started.isSuccess)
         assertTrue("selectProvider ramp.dot q-1" in core.calls)
         assertEquals(FundingPresentOutcome.STARTED, outcome.await())
-        assertEquals(FundingPhase.RUNNING, service.entryState("intent").first().phase)
+        assertEquals(FundingPhase.RUNNING, service.entryState(INTENT).first().phase)
     }
 
     @Test
@@ -128,7 +131,7 @@ class RealFundingServiceTest {
         presented(service)
         advanceUntilIdle()
 
-        val started = service.start("intent", ramp)
+        val started = service.start(INTENT, ramp)
 
         assertTrue(started.exceptionOrNull() is FundingStartError.NoQuote)
     }
@@ -138,13 +141,13 @@ class RealFundingServiceTest {
         val service = service()
         presented(service)
         core.providerTakes = false
-        service.quote(100.intoBalance(), "intent")
+        quotes.quote(100.intoBalance(), INTENT)
         advanceUntilIdle()
         core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
-        service.changed("intent", FundingChangeKind.QUOTES)
+        quotes.onQuotesChanged(INTENT)
         advanceUntilIdle()
 
-        val started = service.start("intent", ramp)
+        val started = service.start(INTENT, ramp)
 
         assertTrue(started.exceptionOrNull() is FundingStartError.NotSelected)
     }
@@ -153,15 +156,15 @@ class RealFundingServiceTest {
     fun `starting on the best quote arms the core on the latest ask, and the session's start answers the core`() = runTest {
         val service = service()
         val outcome = presented(service)
-        service.quote(100.intoBalance(), "intent")
+        quotes.quote(100.intoBalance(), INTENT)
         advanceUntilIdle()
 
-        service.start("intent", null)
+        service.start(INTENT, null)
         advanceUntilIdle()
         assertTrue("startWhenQuoted 1" in core.calls)
 
         core.sessions["intent"] = FakeFundingCore.session("intent", providerId = ramp)
-        service.changed("intent", FundingChangeKind.SESSION)
+        service.onSessionChanged(INTENT)
         advanceUntilIdle()
 
         assertEquals(FundingPresentOutcome.STARTED, outcome.await())
@@ -173,8 +176,8 @@ class RealFundingServiceTest {
         presented(service)
         advanceUntilIdle()
 
-        service.start("intent", null)
-        service.quote(100.intoBalance(), "intent")
+        service.start(INTENT, null)
+        quotes.quote(100.intoBalance(), INTENT)
         advanceUntilIdle()
 
         assertTrue("startWhenQuoted 1" in core.calls)
@@ -184,11 +187,11 @@ class RealFundingServiceTest {
     fun `leaving the start screen disarms the core`() = runTest {
         val service = service()
         presented(service)
-        service.quote(100.intoBalance(), "intent")
-        service.start("intent", null)
+        quotes.quote(100.intoBalance(), INTENT)
+        service.start(INTENT, null)
         advanceUntilIdle()
 
-        service.stopStarting("intent")
+        quotes.stopStarting(INTENT)
         advanceUntilIdle()
 
         assertEquals("cancelAutoStart", core.calls.last())
@@ -199,10 +202,10 @@ class RealFundingServiceTest {
         val service = service()
         val outcome = presented(service)
         advanceUntilIdle()
-        val followed = async { service.entryState("intent").toList() }
+        val followed = async { service.entryState(INTENT).toList() }
         advanceUntilIdle()
 
-        service.leave("intent")
+        service.leave(INTENT)
         advanceUntilIdle()
 
         assertEquals(FundingPresentOutcome.DISMISSED, outcome.await())
@@ -213,8 +216,8 @@ class RealFundingServiceTest {
     @Test
     fun `a session whose screens do not come up within ten seconds is taken as dismissed`() = runTest {
         val service = service()
-        val outcome = async(detached) { service.present("intent", FundingDirection.IN, null) }
-        service.entryState("intent").launchIn(this + detached)
+        val outcome = async(detached) { service.present(INTENT, FundingDirection.IN, null) }
+        service.entryState(INTENT).launchIn(this + detached)
 
         advanceTimeBy(9_999)
         assertFalse(outcome.isCompleted)
@@ -226,12 +229,11 @@ class RealFundingServiceTest {
     @Test
     fun `the presentation is asked for through the events`() = runTest {
         val service = service()
-        val event = async { service.events.first() }
+        val requested = async { service.presentationRequests.first() }
         presented(service)
         advanceUntilIdle()
 
-        val requested = event.await() as FundingEvent.PresentationRequested
-        assertEquals("intent", requested.entry.id)
+        assertEquals(INTENT, requested.await().id)
     }
 
     @Test
@@ -240,7 +242,7 @@ class RealFundingServiceTest {
         val outcome = presented(service)
         advanceUntilIdle()
 
-        val cancelled = service.cancel("intent")
+        val cancelled = service.cancel(INTENT)
 
         assertEquals(CancelOutcome.ENDED, cancelled.getOrNull())
         assertEquals(FundingPresentOutcome.DISMISSED, outcome.await())
@@ -252,7 +254,7 @@ class RealFundingServiceTest {
         core.sessions["intent"] = FakeFundingCore.session("intent", providerId = ramp)
         val service = service()
 
-        val cancelled = service.cancel("intent")
+        val cancelled = service.cancel(INTENT)
 
         assertEquals(CancelOutcome.REQUESTED, cancelled.getOrNull())
         assertTrue("cancel" in core.calls)
@@ -262,11 +264,11 @@ class RealFundingServiceTest {
     fun `an ended session ends what follows it after its last state`() = runTest {
         core.sessions["intent"] = FakeFundingCore.session("intent", providerId = ramp)
         val service = service()
-        val followed = async { service.entryState("intent").toList() }
+        val followed = async { service.entryState(INTENT).toList() }
         advanceUntilIdle()
 
         core.sessions["intent"] = FakeFundingCore.session("intent", providerId = ramp, stage = FundingStage.Failed(FundingFailure.Expired, 2uL))
-        service.changed("intent", FundingChangeKind.SESSION)
+        service.onSessionChanged(INTENT)
         advanceUntilIdle()
 
         val states = followed.await()
@@ -279,46 +281,7 @@ class RealFundingServiceTest {
         core.sessions.clear()
         val service = service()
 
-        assertEquals(emptyList<FundingEntry>(), service.entryState("intent").toList())
-    }
-
-    @Test
-    fun `a provider asking for a screen is told to the app, which opens it in the core`() = runTest {
-        val service = service()
-        core.waitingFrames += "intent"
-
-        service.frameRequested(ramp, "intent")
-
-        assertEquals(FundingEvent.FrameRequested("intent", ramp), service.events.first())
-        assertTrue(service.isFrameWaiting("intent").getOrThrow())
-        assertTrue(service.openProviderFrame("intent").getOrThrow())
-        assertFalse(service.isFrameWaiting("intent").getOrThrow())
-        assertFalse(service.openProviderFrame("intent").getOrThrow())
-    }
-
-    @Test
-    fun `a provider's screen the core presents is answered as the app took it down`() = runTest {
-        val service = service()
-        val target = FundingFrameTarget.App("/kyc")
-        val outcome = async(detached) { service.presentFrame(ramp, "intent", target) }
-        val request = (service.events.first() as FundingEvent.FrameOpened).request
-
-        service.answerFrame(request, FundingFrameOutcome.Dismissed)
-
-        assertEquals(FundingFrameTarget.App("/kyc"), request.target)
-        assertEquals(FundingFrameOutcome.Dismissed, outcome.await())
-    }
-
-    @Test
-    fun `the provider closing its screens answers them closed and takes them down`() = runTest {
-        val service = service()
-        val outcome = async(detached) { service.presentFrame(ramp, "intent", FundingFrameTarget.App("/kyc")) }
-        service.events.first()
-
-        service.closeFrames(ramp, "intent")
-
-        assertEquals(FundingFrameOutcome.Closed, outcome.await())
-        assertEquals(FundingEvent.FrameClosed("intent"), service.events.first())
+        assertEquals(emptyList<FundingEntry>(), service.entryState(INTENT).toList())
     }
 
     @Test
@@ -331,7 +294,7 @@ class RealFundingServiceTest {
 
         val entries = service.entries().first()
 
-        assertEquals(listOf("newest", "intent", "older"), entries.map { it.id })
+        assertEquals(listOf("newest", "intent", "older"), entries.map { it.id.value })
     }
 
     // The core's history leaves out a top-up cancelled before anything settled or was refunded.
@@ -355,7 +318,7 @@ class RealFundingServiceTest {
         service.entries().onEach { lists += it }.launchIn(this + detached)
         advanceUntilIdle()
 
-        service.acknowledge("intent")
+        service.acknowledge(INTENT)
         advanceUntilIdle()
 
         assertTrue("acknowledge intent" in core.calls)
@@ -363,15 +326,41 @@ class RealFundingServiceTest {
     }
 
     @Test
-    fun `a crashing provider of a session it has seen is reported, any other product is not`() = runTest {
+    fun `a quote request that does not reach the core keeps the ask, marked failed`() = runTest {
         val service = service()
         presented(service)
-        advanceUntilIdle()
-        val event = async { service.events.first { it is FundingEvent.ProviderNotWorking } }
+        core.quoteRequestFails = true
 
-        assertTrue(service.onWorkerCrashing(ramp))
-        assertFalse(service.onWorkerCrashing(ProductId.parse("chat.dot").getOrThrow()))
-        assertEquals(FundingEvent.ProviderNotWorking(ramp), event.await())
+        quotes.quote(100.intoBalance(), INTENT)
+        advanceUntilIdle()
+        val entry = service.entryState(INTENT).first()
+
+        assertEquals(100.intoBalance(), entry.askedAmount)
+        assertTrue(entry.quotesFailed)
+    }
+
+    @Test
+    fun `a quote list that cannot be read keeps the quotes on screen, marked failed, until a read succeeds`() = runTest {
+        val service = service()
+        presented(service)
+        quotes.quote(100.intoBalance(), INTENT)
+        advanceUntilIdle()
+        core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
+        quotes.onQuotesChanged(INTENT)
+        advanceUntilIdle()
+
+        core.quotesReadFails = true
+        quotes.onQuotesChanged(INTENT)
+        advanceUntilIdle()
+        val failed = service.entryState(INTENT).first()
+        core.quotesReadFails = false
+        quotes.onQuotesChanged(INTENT)
+        advanceUntilIdle()
+        val read = service.entryState(INTENT).first()
+
+        assertEquals(1uL, failed.quotes?.requestId)
+        assertTrue(failed.quotesFailed)
+        assertFalse(read.quotesFailed)
     }
 
     private fun summary(intent: String, openedAtMs: ULong) = mockk<FundingSessionSummary>(relaxed = true) {
@@ -379,5 +368,9 @@ class RealFundingServiceTest {
         every { this@mockk.openedAtMs } returns openedAtMs
         every { direction } returns FundingDirection.IN
         every { stage } returns FundingStage.Failed(FundingFailure.Expired, openedAtMs)
+    }
+
+    private companion object {
+        val INTENT = FundingIntentId("intent")
     }
 }

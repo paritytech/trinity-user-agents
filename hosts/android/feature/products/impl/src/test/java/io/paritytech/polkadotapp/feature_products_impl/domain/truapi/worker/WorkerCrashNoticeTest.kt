@@ -48,5 +48,5 @@ class WorkerCrashNoticeTest {
         assertEquals(listOf(AppNotification.Error("ramp.dot stopped working. Retrying…")), shown)
     }
 
-    private fun TestScope.notice() = WorkerCrashNotice({ resolveProduct }, notifier, contextManager, testDispatchers())
+    private fun TestScope.notice() = WorkerCrashNotice({ resolveProduct }, notifier, contextManager, this, testDispatchers())
 }
