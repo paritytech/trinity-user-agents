@@ -377,7 +377,8 @@ fn visit_materials<'tree>(
 		RendererNode::Spacer { .. } |
 		RendererNode::TextField { .. } |
 		RendererNode::Image { .. } |
-		RendererNode::SetOffset { .. } => return,
+		RendererNode::SetOffset { .. } |
+		RendererNode::ExtendMask { .. } => return,
 	};
 	let nested = nested || matches!(node, RendererNode::Materials { .. });
 	for child in children {

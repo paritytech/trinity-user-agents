@@ -431,6 +431,9 @@ pub enum Modifier {
 	/// place among its siblings' indices for the host to know it left: the
 	/// last child, or one whose followers leave with it.
 	ExitFade(u16),
+	/// Hides part of the node, or shows only part of it. A node keeps its last
+	/// `Mask`.
+	Mask(Mask),
 }
 
 /// Properties of a `Box`.
@@ -584,6 +587,20 @@ pub struct PanGesture {
 	pub move_interval_ms: Option<u16>,
 	/// Action on release or cancellation.
 	pub end_action: Option<String>,
+	/// Report where the finger is instead of how far it moved; absent means
+	/// false.
+	///
+	/// Each event's `x` and `y` are then the finger's place inside the
+	/// gesture, from its top-start corner and clamped to its frame, and
+	/// `fraction_permille` is `x` as a share of the width. `Started` carries
+	/// the touch-down point. The axis still decides which pans the gesture
+	/// claims; there is no travel and no host-owned drag to clamp to. This is
+	/// what a worker drawing under the finger needs.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub location: OptionBool,
 }
 
 /// A container tracking taps and pans over worker-drawn children.
@@ -616,9 +633,10 @@ pub struct GestureProps {
 	///
 	/// A keyed pan with a move action is paced by the host: at most one move
 	/// per display frame, and none while the previous move is unanswered. A
-	/// move is answered by a `SetOffset` for this key or by a new tree. The
-	/// host drops the moves in between and sends only the newest, so no
-	/// backlog builds up. Absent keeps every move, as `moveIntervalMs` says.
+	/// move is answered by the next item of the render stream: a `SetOffset`,
+	/// a [`RendererNode::ExtendMask`] or a new tree. The host drops the moves
+	/// in between and sends only the newest, so no backlog builds up. Absent
+	/// keeps every move, as `moveIntervalMs` says.
 	pub key: Option<String>,
 	/// How the children move when pressed and when a pan lets go; absent
 	/// leaves it to the host.
@@ -700,6 +718,216 @@ pub struct GestureEvent {
 	pub y: i32,
 	/// Progress along the primary axis, in thousandths.
 	pub fraction_permille: u16,
+}
+
+/// Whether a mask's shapes hide the node or are all of it that shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum MaskMode {
+	/// The node is hidden inside the shapes: they cut holes through it, and
+	/// what is behind it shows through.
+	Hide,
+	/// The node shows only inside the shapes.
+	Show,
+}
+
+/// A place in a masked node, in hundredths of a logical pixel from its
+/// top-start corner, along the layout direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct MaskPoint {
+	/// Horizontal place, in hundredths of a logical pixel.
+	pub x: i32,
+	/// Vertical place, in hundredths of a logical pixel.
+	pub y: i32,
+}
+
+/// One shape of a [`Mask`]. Places and sizes are in hundredths of a logical
+/// pixel. A shape may reach outside the node; only the part inside counts.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum MaskShape {
+	/// The whole node.
+	All,
+	/// A filled circle.
+	Circle {
+		/// Its centre.
+		center: MaskPoint,
+		/// Its radius.
+		radius: u32,
+	},
+	/// A line through `points` in order, `width` wide, with round caps and
+	/// joins. A single point is a dot `width` across.
+	Stroke {
+		/// The line's width.
+		width: u32,
+		/// The points it passes through.
+		points: Vec<MaskPoint>,
+	},
+}
+
+/// Lets the host draw a pan's own strokes into a [`Mask`] as the finger
+/// moves, without waiting for the worker.
+///
+/// From the tree on, each stroke of the finger on the `Gesture` keyed `pan`
+/// (touch-down to lift) is added to the mask as a [`MaskShape::Stroke`]
+/// `width` wide through every place the host saw the finger, in the frame of
+/// the touch: before the move is sent, and whether or not pacing drops it. The
+/// pan must report its `location`. Its places are moved from the gesture's
+/// frame to the masked node's by where the two are on screen. Like keyed
+/// shapes, these strokes last until the next tree: a worker that wants them
+/// kept puts them in that tree, as it heard them.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct MaskFollow {
+	/// The `key` of the `Gesture` whose location pan is drawn.
+	pub pan: String,
+	/// The stroke's width, in hundredths of a logical pixel.
+	pub width: u32,
+}
+
+/// Hides part of a node, or shows only part of it, with shapes the worker
+/// sets in the tree and can add to between trees.
+///
+/// Like `Opacity`, it applies to the node with its padding, background and
+/// border, inside its margin. Each shape's edge is anti-aliased; there is no
+/// feathering.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Mask {
+	/// Names this mask for [`RendererNode::ExtendMask`] updates and for a fade
+	/// between trees. Absent: the tree alone sets it.
+	pub key: Option<String>,
+	/// Whether the shapes hide the node or are all that shows of it.
+	pub mode: MaskMode,
+	/// The shapes, in drawing order. A place is inside the mask if any shape
+	/// covers it.
+	pub shapes: Vec<MaskShape>,
+	/// Has the host draw a pan's strokes into the mask itself.
+	pub follow: Option<MaskFollow>,
+	/// When a new tree changes this keyed mask, the host cross-fades from what
+	/// it drew to the tree's mask over this many milliseconds, on the CSS
+	/// `ease` curve; absent or zero changes it at once. Keyed adds and followed
+	/// strokes are always drawn at once. A tree arriving during a fade ends it
+	/// at its target and fades on from there.
+	pub fade_ms: Option<u16>,
+	/// Has the host send an action once the shapes cover enough of the node:
+	/// see [`ClearedShare`].
+	pub cleared_share: Option<ClearedShare>,
+}
+
+/// Sends an action once a [`Mask`]'s shapes cover `at_permille` thousandths
+/// of the node: for a `Hide` mask, the share cleared; for a `Show` mask, the
+/// share shown. The host decides it, so every product and both hosts agree on
+/// it, and a product only names the share and the action.
+///
+/// The shapes are the tree's, those added since by
+/// [`RendererNode::ExtendMask`], and the followed pan's strokes. Their cover is
+/// sampled at the centres of 2 by 2 logical pixel squares laid from the node's
+/// top-start corner ([`cleared_share`]).
+///
+/// With [`Mask::follow`], the host checks when the finger lifts from that pan,
+/// and again whenever shapes are added before it touches down again, so the
+/// shapes a worker adds in answer to the pan's end count; nothing is sent
+/// while the finger is down, and a new touch starts over. With no `follow`,
+/// it checks whenever shapes are added. Either way it sends `action`, with no
+/// payload, at most once per lift (with no `follow`, once per tree), and never
+/// for the tree's own shapes alone: a tree that keeps the mask covered sends
+/// nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ClearedShare {
+	/// The share of the node the shapes must cover, in thousandths. Zero is
+	/// reached on any check; more than 1000 never.
+	pub at_permille: u16,
+	/// The action sent once the share is reached.
+	pub action: String,
+}
+
+impl ClearedShare {
+	/// Whether `covered` samples of `samples` reach the share.
+	pub fn reached(&self, covered: u32, samples: u32) -> bool {
+		u64::from(covered) * 1000 >= u64::from(self.at_permille) * u64::from(samples)
+	}
+}
+
+/// The side of a [`cleared_share`] sample square, in hundredths of a logical
+/// pixel.
+pub const MASK_SAMPLE: u32 = 200;
+
+/// How many of a node's samples its mask `shapes` cover, of how many, for a
+/// node `width` by `height` hundredths of a logical pixel: the rule both hosts
+/// follow for a [`ClearedShare`].
+///
+/// The node is laid with `ceil(width / 200)` by `ceil(height / 200)` samples,
+/// each at the centre of its 2 by 2 logical pixel square from the top-start
+/// corner (`(i * 200 + 100, j * 200 + 100)`). A sample is covered when it lies
+/// in any shape: the whole node; a circle, at most `radius` from its centre; a
+/// stroke, at most `width / 2` from its line (a single point is a dot).
+pub fn cleared_share(shapes: &[MaskShape], width: u32, height: u32) -> (u32, u32) {
+	let columns = width.div_ceil(MASK_SAMPLE);
+	let rows = height.div_ceil(MASK_SAMPLE);
+	let total = columns * rows;
+	if shapes.iter().any(|shape| matches!(shape, MaskShape::All)) {
+		return (total, total);
+	}
+	let mut covered = vec![false; total as usize];
+	let mut mark =
+		|left: f64, top: f64, right: f64, bottom: f64, inside: &dyn Fn(f64, f64) -> bool| {
+			let first =
+				|edge: f64| ((edge - 100.0) / f64::from(MASK_SAMPLE)).ceil().max(0.0) as u32;
+			let last = |edge: f64, count: u32| {
+				let at = ((edge - 100.0) / f64::from(MASK_SAMPLE)).floor();
+				if at < 0.0 { None } else { Some((at as u32).min(count.saturating_sub(1))) }
+			};
+			let (Some(i1), Some(j1)) = (last(right, columns), last(bottom, rows)) else { return };
+			for j in first(top)..=j1 {
+				for i in first(left)..=i1 {
+					let x = f64::from(i * MASK_SAMPLE + 100);
+					let y = f64::from(j * MASK_SAMPLE + 100);
+					if inside(x, y) {
+						covered[(j * columns + i) as usize] = true;
+					}
+				}
+			}
+		};
+	for shape in shapes {
+		match shape {
+			MaskShape::All => {},
+			MaskShape::Circle { center, radius } => {
+				let (cx, cy, r) = (f64::from(center.x), f64::from(center.y), f64::from(*radius));
+				mark(cx - r, cy - r, cx + r, cy + r, &|x, y| {
+					(x - cx).powi(2) + (y - cy).powi(2) <= r * r
+				});
+			},
+			MaskShape::Stroke { width, points } => {
+				let r = f64::from(*width) / 2.0;
+				let at = |p: &MaskPoint| (f64::from(p.x), f64::from(p.y));
+				let segments: Vec<((f64, f64), (f64, f64))> = match points.as_slice() {
+					[] => Vec::new(),
+					[one] => vec![(at(one), at(one))],
+					many => many.windows(2).map(|pair| (at(&pair[0]), at(&pair[1]))).collect(),
+				};
+				for ((ax, ay), (bx, by)) in segments {
+					let inside = |x: f64, y: f64| {
+						let (dx, dy) = (bx - ax, by - ay);
+						let length = dx * dx + dy * dy;
+						let t = if length == 0.0 {
+							0.0
+						} else {
+							(((x - ax) * dx + (y - ay) * dy) / length).clamp(0.0, 1.0)
+						};
+						(x - ax - t * dx).powi(2) + (y - ay - t * dy).powi(2) <= r * r
+					};
+					mark(ax.min(bx) - r, ay.min(by) - r, ax.max(bx) + r, ay.max(by) + r, &inside);
+				}
+			},
+		}
+	}
+	(covered.iter().filter(|c| **c).count() as u32, total)
 }
 
 /// Where image bytes come from: a place the host fetches them from, or the
@@ -939,6 +1167,24 @@ pub enum RendererNode {
 		/// Vertical offset, in hundredths of a logical pixel.
 		y: i32,
 	},
+	/// Adds shapes to the [`Mask`] whose `key` matches, without a new tree.
+	/// Valid only as a whole item of a `render` stream; inside a tree it draws
+	/// nothing.
+	///
+	/// The host draws them at once, over the tree's own shapes, and keeps them
+	/// until the next tree, which replaces them with its own: a tree always
+	/// wins, so a worker that sends a tree puts in it every shape it wants
+	/// kept. A key that matches no mask in the current tree is ignored. It
+	/// answers a paced pan move, as a `SetOffset` does, with or without
+	/// shapes. The item is not a tree: a Pocket card does not keep it as a
+	/// face.
+	#[codec(index = 14)]
+	ExtendMask {
+		/// The `key` of the `Mask` to add to.
+		key: String,
+		/// The shapes to add.
+		shapes: Vec<MaskShape>,
+	},
 }
 
 /// Where a product-rendered body lives, and the id that names it there.
@@ -1064,7 +1310,8 @@ impl RendererNode {
 			Self::String { .. } |
 			Self::Spacer { .. } |
 			Self::TextField { .. } |
-			Self::SetOffset { .. } => {},
+			Self::SetOffset { .. } |
+			Self::ExtendMask { .. } => {},
 		}
 	}
 }

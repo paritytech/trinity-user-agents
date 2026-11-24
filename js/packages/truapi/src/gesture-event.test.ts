@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { RendererNode, type GestureEvent } from "./generated/types.js";
-import { decodeGestureEvent, encodeGestureEvent, setOffset } from "./gesture-event.js";
+import { decodeGestureEvent, encodeGestureEvent, extendMask, maskCircle, maskStroke, setOffset } from "./gesture-event.js";
 
 describe("gesture wire contract", () => {
     it("matches the Rust payload vector", () => {
@@ -66,5 +66,52 @@ describe("gesture wire contract", () => {
 
     it("carries an offset in hundredths of a logical pixel", () => {
         expect(setOffset("piece", 10.606)).toEqual({ tag: "SetOffset", value: { key: "piece", x: 1061, y: 0 } });
+    });
+
+    it("extends a mask with the Rust bytes", () => {
+        const node = extendMask("mask", [maskCircle(1, -0.01, 26), maskStroke(52, [{ x: 0.01, y: 0.02 }])]);
+        expect(node).toEqual({
+            tag: "ExtendMask",
+            value: {
+                key: "mask",
+                shapes: [
+                    { tag: "Circle", value: { center: { x: 100, y: -1 }, radius: 2600 } },
+                    { tag: "Stroke", value: { width: 5200, points: [{ x: 1, y: 2 }] } },
+                ],
+            },
+        });
+        const bytes = [
+            14, 16, 109, 97, 115, 107, 8,
+            1, 100, 0, 0, 0, 255, 255, 255, 255, 40, 10, 0, 0,
+            2, 80, 20, 0, 0, 4, 1, 0, 0, 0, 2, 0, 0, 0,
+        ];
+        expect(Array.from(RendererNode.enc(node))).toEqual(bytes);
+        expect(RendererNode.dec(Uint8Array.from(bytes))).toEqual(node);
+    });
+
+    it("answers a move with an empty extend of a few bytes", () => {
+        expect(Array.from(RendererNode.enc(extendMask("mask.top")))).toHaveLength(11);
+    });
+
+    it("carries a mask modifier after ExitFade, with its cleared share last, as the Rust bytes", () => {
+        const mask = {
+            key: "k",
+            mode: "Show" as const,
+            shapes: [{ tag: "All" as const }],
+            follow: { pan: "p", width: 100 },
+            fadeMs: 350,
+            clearedShare: { atPermille: 550, action: "a" },
+        };
+        const node: RendererNode = { tag: "Box", value: { modifiers: [{ tag: "Mask", value: mask }], props: {}, children: [] } };
+        const bytes = RendererNode.enc(node);
+        expect(Array.from(bytes.slice(0, 24))).toEqual([2, 4, 20, 1, 4, 107, 1, 4, 0, 1, 4, 112, 100, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, 97]);
+        expect(RendererNode.dec(bytes)).toEqual(node);
+    });
+
+    it("carries a location pan as its last flag", () => {
+        const pan = { axis: "Free" as const, location: true };
+        const node: RendererNode = { tag: "Gesture", value: { modifiers: [], props: { pan }, children: [] } };
+        const decoded = RendererNode.dec(RendererNode.enc(node));
+        expect(decoded).toEqual({ tag: "Gesture", value: { modifiers: [], props: { pan: { axis: "Free", location: true } }, children: [] } });
     });
 });

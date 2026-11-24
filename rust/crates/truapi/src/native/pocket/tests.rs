@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use futures::executor::block_on;
-use truapi::latest::RendererNode;
+use truapi::latest::{MaskShape, RendererNode};
 
 use super::*;
 use crate::{store::open_temporary_core_db, test_support::wait_until};
@@ -69,6 +69,31 @@ fn an_offset_update_is_drawn_but_not_kept_as_the_face() {
 	observer.on_update(offset.clone());
 
 	assert_eq!(*drawn.0.lock().unwrap(), vec![face.clone(), offset]);
+	wait_until(
+		|| block_on(cards.face(product.clone(), card(), PocketCardSide::Front)).unwrap() == Some(face.clone()),
+		"the tree is kept",
+	);
+	std::thread::sleep(std::time::Duration::from_millis(50));
+	assert_eq!(block_on(cards.face(product.clone(), card(), PocketCardSide::Front)).unwrap(), Some(face));
+}
+
+#[test]
+fn a_mask_update_is_drawn_but_not_kept_as_the_face() {
+	let (_dir, db) = open_temporary_core_db();
+	let cards = block_on(PocketCards::open(db, Vec::new())).unwrap();
+	let product = ProductId::for_test("loyalty.dot");
+	let card = || "pass".to_string();
+	block_on(cards.add(product.clone(), card(), "Pass".into(), RendererNode::Nil)).unwrap();
+	let drawn = Arc::new(Drawn::default());
+	let observer =
+		keeping_faces(cards.clone(), product.clone(), card(), PocketCardSide::Front, drawn.clone(), &Spawner::for_test());
+	let face = RendererNode::String { text: "Face".into() };
+	let clear = RendererNode::ExtendMask { key: "mask".into(), shapes: vec![MaskShape::All] };
+
+	observer.on_update(face.clone());
+	observer.on_update(clear.clone());
+
+	assert_eq!(*drawn.0.lock().unwrap(), vec![face.clone(), clear]);
 	wait_until(
 		|| block_on(cards.face(product.clone(), card(), PocketCardSide::Front)).unwrap() == Some(face.clone()),
 		"the tree is kept",

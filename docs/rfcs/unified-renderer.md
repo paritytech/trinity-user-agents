@@ -275,6 +275,7 @@ pub enum Modifier {
     /// 0 is transparent, 255 is opaque.
     Opacity(u8),
     BlendingMode(BlendingMode),
+    Mask(Mask),
 }
 ```
 
@@ -516,8 +517,8 @@ children only about 35 times a second, however fast the round trip. Inside a tre
 does not keep it as a face.
 
 A keyed pan with a move action is paced by the host: at most one move per
-display frame, and none while the previous move is unanswered (by a
-`SetOffset` for the key or by a tree). Moves in between are dropped and only
+display frame, and none while the previous move is unanswered (by the next
+item on the stream: a `SetOffset`, an `ExtendMask` or a tree). Moves in between are dropped and only
 the newest is sent, so a slow worker never builds a backlog. A worker should
 likewise answer only the newest move it holds. Start, end and completion
 still send whole trees.
@@ -552,3 +553,64 @@ pressed, the damped spring that takes them home when a pan lets go, and the
 ease and scale "pop" with which a completed pan reaches the end, all by value
 (a design's own constants copy straight in). The host runs it for host-owned
 drags and for the release settle of a worker's every-move pan alike.
+
+### Masks: hiding part of a node, or showing only part of it
+
+The renderer has no free-form drawing. What a drag-to-reveal, a wipe, a
+spotlight, a signature pad or an erase-to-see need is one thing: a node seen only
+partly, where shapes say. Any node can carry a `Mask` modifier (index 20 of
+`Modifier`, after `ExitFade`). It has a `mode`, `Hide` (the node is hidden inside the shapes:
+they cut holes through it) or `Show` (the node shows only inside them), and a
+list of `shapes`: `All` (the whole node), `Circle { center, radius }` and
+`Stroke { width, points }`, a line through the points with round caps and
+joins. Places and sizes are in hundredths of a logical pixel, from the masked
+node's top-start corner along the layout direction, as gesture positions are.
+Like `Opacity`, a mask applies to the node with its padding, background and
+border, inside its margin; `Materials`, which takes no modifiers, is masked
+through a `Box`.
+
+A mask with a `key` can grow between trees: an `ExtendMask { key, shapes }`
+item (SCALE index 14) on the same stream adds shapes, which the host draws at
+once and keeps until the next tree. Shapes can only be added this way; removing
+or moving them takes a tree. The next tree replaces the keyed shapes with its
+own, so a tree always wins, and a worker that sends one puts in it every shape
+it wants kept. An `ExtendMask` answers a paced move, with or without shapes.
+Inside a tree it draws nothing, and a Pocket card does not keep it as a face.
+
+A mask may `follow { pan, width }` a location pan: the host then adds each
+stroke of the finger on the `Gesture` keyed `pan` to the mask itself, through
+every place it saw the finger, in the frame of the touch and before the move
+is sent. The worker answers each move with an empty `ExtendMask`, a dozen bytes,
+and hears the points to decide what happens next. The followed strokes last
+until the next tree, like keyed shapes.
+
+A keyed mask may set `fadeMs`: when a new tree changes it, the host cross-fades
+from the mask it drew to the tree's over that many milliseconds, on the CSS
+`ease` curve. Keyed adds and followed strokes are drawn at once. A tree with
+`[All]` and `fadeMs` fades the rest of a hiding node out.
+
+A mask may also name a `clearedShare { atPermille, action }`: the host sends
+`action` once the shapes cover `atPermille` thousandths of the node (cleared
+by a `Hide` mask, shown by a `Show` one). The host counts every shape it draws
+for the mask: the tree's, the keyed adds and the followed strokes. It samples
+the node at the centres of 2 by 2 logical pixel squares from its top-start
+corner, a part square counting whole, and a sample is covered when it lies
+inside or on the edge of a shape. With `follow`, the host checks when the
+followed pan lifts, and again on each keyed add until the next touch-down, so
+the shapes a worker adds in answer to the lift count; it sends the action at
+most once per lift. Without `follow` it checks on each keyed add, once per
+tree. The tree's own shapes alone never send it. The worker decides what
+follows, typically a tree with `[All]` and `fadeMs`, and ignores a repeat.
+`cleared_share` in the core crate is the reference count the hosts mirror.
+
+To hear where the finger is rather than how far it moved, a pan sets
+`location: true`: each event's `x` and `y` are then the finger's place inside
+the gesture, from its top-start corner and clamped to its frame (hundredths of
+a logical pixel), `Started` carries the touch-down point, and
+`fractionPermille` is `x` as a share of the width. A free location pan starts
+at the touch-down, with no movement, so a press that never moves still sends
+`Started` and `Ended`, and a mask that follows it draws a dot as wide as its
+stroke. A worker drawing the finger's line itself keeps the last point it
+handled and adds the segment from there to the newest point, so the moves the
+host drops between frames leave no gaps.
+

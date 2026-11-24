@@ -82,8 +82,12 @@ struct FaceKeepingObserver {
 impl NativeRendererObserver for FaceKeepingObserver {
 	fn on_update(&self, node: ProductRendererRenderItem) {
 		self.observer.on_update(node.clone());
-		// An offset update moves part of the face on screen; it is not a face.
-		if matches!(node, ProductRendererRenderItem::SetOffset { .. }) {
+		// An offset or mask update changes part of the face on screen; it is
+		// not a face.
+		if matches!(
+			node,
+			ProductRendererRenderItem::SetOffset { .. } | ProductRendererRenderItem::ExtendMask { .. }
+		) {
 			return;
 		}
 		let _ = self.faces.unbounded_send((node, self.cards.next_draw()));
