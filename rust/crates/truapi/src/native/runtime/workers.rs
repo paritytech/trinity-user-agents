@@ -68,18 +68,6 @@ impl NativeProductExecution {
 	}
 }
 
-#[uniffi::export]
-impl NativeProductExecution {
-	/// Acknowledge this worker's module startup. Its authenticated transport may connect later.
-	///
-	/// Returns false for an execution outside the current pending attempt.
-	pub fn report_worker_module_started(&self) -> bool {
-		self.worker_attempt
-			.as_ref()
-			.is_some_and(|attempt| attempt.update_readiness(true))
-	}
-}
-
 enum Phase {
 	Starting {
 		owner: Option<Arc<NativeProductExecution>>,
@@ -170,7 +158,7 @@ impl NativeTrUApiHostRuntime {
 	}
 }
 
-/// The right to open one worker execution and report failure for that attempt.
+/// The right to open one worker execution and report its module start or its failure.
 #[derive(uniffi::Object)]
 pub struct NativeWorkerAttempt {
 	product: ProductId,
@@ -218,6 +206,15 @@ impl NativeWorkerAttempt {
 		);
 		*owner = Some(execution.clone());
 		Ok(execution)
+	}
+
+	/// Acknowledge that the module of this attempt's execution started. Its authenticated
+	/// transport may connect later.
+	///
+	/// Returns false unless this attempt is current, has opened its execution and is still
+	/// starting.
+	pub fn module_started(&self) -> bool {
+		self.update_readiness(true)
 	}
 
 	/// Revoke this attempt after startup failure or renderer loss, applying the ledger's retry

@@ -353,8 +353,8 @@ Each `claim_worker` call holds one reference to a product's worker. The first
 claim starts an attempt. Releasing the last claim stops it.
 
 On native hosts, the Rust controller sends the startup attempt to the WebView
-host. The WebView opens its execution through that attempt, reports module
-startup through the execution, and reports a crash through the attempt. Rust
+host. The WebView opens its execution through that attempt, and reports module
+startup and a crash through it. Rust
 publishes the execution when its module has started and its bridge has
 authenticated. On the web, `@parity/truapi-host` delivers
 `requestWorkerTransition` to the host, which reports a crash with `workerExited`.
