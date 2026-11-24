@@ -1,0 +1,1 @@
+RESULT {"run":3,"thermal":"2","engine":"boa","bootMs":242.5,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":4.156,"renderP95Ms":11.285}

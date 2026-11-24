@@ -1,0 +1,1 @@
+RESULT {"run":2,"thermal":"2","engine":"wasmi","bootMs":330.9,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":11.661,"renderP95Ms":12.236,"linearMemoryKiB":3520}

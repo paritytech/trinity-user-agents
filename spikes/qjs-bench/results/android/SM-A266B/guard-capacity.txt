@@ -1,0 +1,1 @@
+guard capacity: RESULT {"engine":"wasm2c-guard-O2","probe":"guardCapacity","reservationGiB":8,"instances":61,"limit":64}

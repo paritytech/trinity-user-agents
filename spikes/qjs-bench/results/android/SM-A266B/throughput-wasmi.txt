@@ -1,0 +1,5 @@
+codec wasmi: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":29871.010017,"roundTripsPerSecond":66.95454887068675,"bytes":1170000}
+rxjs wasmi: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":2403.090652,"eventsPerSecond":4161.307852318174,"folded":65922}
+pingpong-64 wasmi: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.0861150000000066,"p95Ms":0.09407699999997021}
+pingpong-4k wasmi: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.09169300000002067,"p95Ms":0.160191999999995}
+memcap wasmi: [info] caught: InternalError: out of memory after 6 MiB

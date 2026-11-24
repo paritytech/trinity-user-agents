@@ -1,0 +1,4 @@
+codec cranelift: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":3407.433882,"roundTripsPerSecond":586.951961288269,"bytes":1170000}
+rxjs cranelift: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":264.447461,"eventsPerSecond":37814.69469279571,"folded":65922}
+pingpong-64 cranelift: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.01534600000000097,"p95Ms":0.016193000000001234}
+pingpong-4k cranelift: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.016077000000002784,"p95Ms":0.016807000000000016}

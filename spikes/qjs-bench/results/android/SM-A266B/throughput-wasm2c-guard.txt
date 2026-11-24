@@ -1,0 +1,5 @@
+codec wasm2c-guard: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":2362.5461139999998,"roundTripsPerSecond":846.5443227323182,"bytes":1170000}
+rxjs wasm2c-guard: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":172.19219199999998,"eventsPerSecond":58074.64254825214,"folded":65922}
+pingpong-64 wasm2c-guard: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.006384000000004164,"p95Ms":0.007229999999999848}
+pingpong-4k wasm2c-guard: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.0066160000000010655,"p95Ms":0.007422999999999291}
+memcap wasm2c-guard: [info] caught: InternalError: out of memory after 6 MiB

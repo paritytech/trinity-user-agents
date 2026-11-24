@@ -17,6 +17,8 @@ never see it.
   every outbound frame back to the guest.
 - `runner-wasm2c/`: the same guest translated to C by wasm2c and compiled
   into the runner, with guard pages or explicit bounds checks (T6).
+- `scripts/build-android.sh` and `scripts/run-android.sh`: every runner on
+  an Android phone over adb (T8).
 - `runner-boa/`: the same prelude and bindings on Boa, the JavaScript
   engine written in Rust, for comparison (T6).
 - `benchkit/` and `ios-bench/`: the engines behind a C API, and the SwiftUI
@@ -322,6 +324,53 @@ long throughput workloads.
   2.5 MiB with mmap on the Mac), which a guest that declares its maximum, or
   a smaller initial heap, would win back.
 - The app binary with all four engines is 11.7 MB, unstripped.
+
+## T8: Android
+
+`scripts/build-android.sh` cross-compiles every runner for 64-bit ARM at
+API 29 (the app's minSdk) with cargo-ndk; `scripts/run-android.sh` pushes
+them to `/data/local/tmp` with the workloads and runs the same comparison
+from `adb shell` into `results/android/<model>/`. Memory is the proportional
+set size from `/proc/self/smaps_rollup`, which Android's memory accounting
+uses. The runners are plain processes, not an app or an isolated service, so
+the numbers are engine speed and memory without Binder in the way.
+
+Samsung Galaxy A26 5G (SM-A266B, Exynos 1380, 8 cores), Android 16,
+three runs, medians:
+
+| Galaxy A26 | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, Cranelift | wasm, wasmi | Boa |
+|---|---|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.64 / 0.73 ms | 0.90 / 1.00 ms | 1.49 / 1.67 ms | 1.21 / 1.26 ms | 11.7 / 12.0 ms | 4.16 / 11.3 ms |
+| Boot to idle, 10 workers, p50 | 22 to 28 ms | 27 to 31 ms | 84 to 104 ms | 39 to 47 ms | 292 to 308 ms | 214 to 233 ms |
+| Memory per worker | 2.0 MiB | 2.4 MiB | 3.5 MiB | 2.4 MiB | 3.6 MiB | 6.2 to 6.4 MiB |
+| Codec, round trips/s | 1 119 | 847 | 526 | 587 | 67 | 106 |
+| rxjs, events/s | 75 534 | 58 075 | 36 824 | 37 815 | 4 161 | 7 079 |
+| Ping-pong 64 B / 4 KB, p50 | 4.2 / 4.6 µs | 6.4 / 6.6 µs | 10.7 / 11.5 µs | 15.3 / 16.1 µs | 86 / 92 µs | 23 / 27 µs |
+| Once per process | | | | 2.3 s and 30 MiB to compile | | |
+| 8 MiB cap | | catchable OOM after 6 MiB | catchable OOM after 6 MiB | | catchable OOM after 6 MiB | no heap limit to set |
+
+- **Throttled.** The thermal status read moderate (2) after every replay,
+  with the battery at 28% and a fast charger cycling; at rest it reads 0. The
+  absolute numbers are pessimistic; the ratios between engines are the
+  useful part. A rerun on a cool phone, unplugged above half charge, would
+  firm them up.
+- **Native QuickJS**, the Android engine, renders in 0.64 ms and boots in
+  about 26 ms: well inside the budgets, with the isolated process still to
+  add a Binder hop per frame.
+- **Guard pages fit here:** 61 of 64 8 GiB reservations succeed, so on
+  Android wasm2c with guard pages runs at 1.4 times native.
+- **wasm2c with bounds checks boots slowly on Android**, at about 4 times
+  native against 1.8 times on the iPhone XS. Without mmap the guest's memory
+  grows by `realloc` from its initial size, and every growth copies. A guest
+  that declares its 32 MiB maximum lets the runtime reserve just that much
+  with mmap and grow in place, which removes the copies on both platforms
+  without the 4 GiB reservation iOS refused.
+- **Cranelift's JIT runs from `adb shell`**, but costs 2.3 s and 30 MiB to
+  compile the module, which only precompiling at build time avoids.
+- **Boa needs its enum value representation on Android.** Its default NaN
+  boxing panics on start: Android's ARM64 pointers carry a tag in the top
+  byte. With `jsvalue-enum` it runs, at 6.5 times native on renders.
 
 ## T2: the corpus
 

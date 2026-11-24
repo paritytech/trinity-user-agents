@@ -1,0 +1,1 @@
+RESULT {"run":3,"thermal":"2","engine":"cranelift","bootMs":39.9,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":1.200,"renderP95Ms":1.255}

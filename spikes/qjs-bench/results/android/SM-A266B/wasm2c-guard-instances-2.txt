@@ -1,0 +1,1 @@
+RESULT {"engine":"wasm2c-guard-O2","firstBootMs":30.7,"bootP50Ms":30.5,"firstInstanceMiB":3.56,"perInstanceMiB":2.44,"linearMemoryKiB":3520,"instances":10}

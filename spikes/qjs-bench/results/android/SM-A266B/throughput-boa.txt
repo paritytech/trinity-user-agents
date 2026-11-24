@@ -1,0 +1,4 @@
+codec boa: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":18872.210293999997,"roundTripsPerSecond":105.97592803614826,"bytes":1170000}
+rxjs boa: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":1412.6458060000002,"eventsPerSecond":7078.9152932224815,"folded":65922}
+pingpong-64 boa: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.023268999999999096,"p95Ms":0.03257700000000341}
+pingpong-4k boa: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.026614999999992506,"p95Ms":0.03907600000002276}

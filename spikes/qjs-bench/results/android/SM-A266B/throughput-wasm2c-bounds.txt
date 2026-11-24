@@ -1,0 +1,5 @@
+codec wasm2c-bounds: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":3799.636112,"roundTripsPerSecond":526.3661943004504,"bytes":1170000}
+rxjs wasm2c-bounds: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":271.561884,"eventsPerSecond":36824.01908803961,"folded":65922}
+pingpong-64 wasm2c-bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.010692000000005919,"p95Ms":0.011807000000004564}
+pingpong-4k wasm2c-bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.011500000000012278,"p95Ms":0.012692000000001258}
+memcap wasm2c-bounds: [info] caught: InternalError: out of memory after 6 MiB

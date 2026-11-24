@@ -14,6 +14,7 @@ rquickjs = { version = "=0.14.0", default-features = false, features = ["array-b
 getrandom = "0.3"
 bench-common = { path = "../bench-common" }
 
-# rquickjs ships no prebuilt bindings for iOS; bindgen finds libclang in Xcode.
-[target.'cfg(target_os = "ios")'.dependencies]
+# rquickjs ships no prebuilt bindings for iOS or Android; bindgen finds
+# libclang in Xcode, and cargo-ndk hands it the NDK's sysroot.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 rquickjs = { version = "=0.14.0", default-features = false, features = ["array-buffer", "bindgen"] }

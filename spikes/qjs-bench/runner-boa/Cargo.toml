@@ -9,3 +9,8 @@ bench-common = { path = "../bench-common" }
 # Temporal and Intl are off: workers get neither, and they triple the binary.
 boa_engine = { version = "=0.22.0", default-features = false }
 getrandom = "0.3"
+
+# NaN boxing packs pointers into a double's spare bits, and Boa refuses it on
+# Android, whose ARM64 pointers carry a tag in the top byte.
+[target.'cfg(target_os = "android")'.dependencies]
+boa_engine = { version = "=0.22.0", default-features = false, features = ["jsvalue-enum"] }

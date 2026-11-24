@@ -1,0 +1,1 @@
+RESULT {"run":3,"thermal":"2","engine":"wasm2c-guard-O2","bootMs":35.8,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.928,"renderP95Ms":1.030,"linearMemoryKiB":3520}

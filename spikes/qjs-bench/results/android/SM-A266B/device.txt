@@ -1,0 +1,4 @@
+model: SM-A266B
+android: 16
+soc: s5e8835
+cores: 8

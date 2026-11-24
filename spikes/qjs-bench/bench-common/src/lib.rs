@@ -60,6 +60,7 @@ pub fn percentiles(samples: &mut [f64]) -> (f64, f64) {
 
 /// `rusage_info_v2` from `<sys/resource.h>`. libc declares it, and
 /// `proc_pid_rusage`, for macOS only, though libSystem has both on iOS too.
+#[cfg(target_vendor = "apple")]
 #[repr(C)]
 struct RusageInfoV2 {
     uuid: [u8; 16],
@@ -68,17 +69,33 @@ struct RusageInfoV2 {
     rest: [u64; 10],
 }
 
+#[cfg(target_vendor = "apple")]
 extern "C" {
     fn proc_pid_rusage(pid: libc::c_int, flavor: libc::c_int, buffer: *mut RusageInfoV2) -> libc::c_int;
 }
 
 /// This process's physical footprint in bytes: the number Xcode's memory
 /// gauge and `footprint` report, and what jetsam limits.
+#[cfg(target_vendor = "apple")]
 pub fn footprint_bytes() -> u64 {
     let mut info: RusageInfoV2 = unsafe { std::mem::zeroed() };
     let status = unsafe { proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V2, &mut info) };
     assert_eq!(status, 0, "proc_pid_rusage failed");
     info.phys_footprint
+}
+
+/// This process's proportional set size in bytes, from
+/// `/proc/self/smaps_rollup`: what Android's memory accounting and the
+/// low-memory killer weigh a process by.
+#[cfg(not(target_vendor = "apple"))]
+pub fn footprint_bytes() -> u64 {
+    let rollup = std::fs::read_to_string("/proc/self/smaps_rollup").expect("read /proc/self/smaps_rollup");
+    let kib: u64 = rollup
+        .lines()
+        .find_map(|line| line.strip_prefix("Pss:"))
+        .and_then(|value| value.trim().trim_end_matches("kB").trim().parse().ok())
+        .expect("Pss in smaps_rollup");
+    kib * 1024
 }
 
 static LOG: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());

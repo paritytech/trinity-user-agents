@@ -1,0 +1,1 @@
+RESULT {"engine":"wasmi","compileMs":10.0,"moduleMiB":1.91,"firstBootMs":328.9,"bootP50Ms":308.1,"firstInstanceMiB":5.33,"perInstanceMiB":3.59,"linearMemoryKiB":3520,"instances":10}

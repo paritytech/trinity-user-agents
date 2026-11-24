@@ -1,0 +1,1 @@
+RESULT {"engine":"wasm2c-bounds-O2","firstBootMs":128.6,"bootP50Ms":103.6,"firstInstanceMiB":5.02,"perInstanceMiB":3.46,"linearMemoryKiB":3520,"instances":10}
