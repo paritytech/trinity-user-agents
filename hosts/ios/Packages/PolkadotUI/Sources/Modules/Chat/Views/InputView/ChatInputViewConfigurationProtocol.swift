@@ -6,10 +6,16 @@ public protocol ChatInputViewConfigurationProtocol {
 
     func makeContentView(for handler: ChatInputHandling?) -> UIView
     func equalsTo(configuration: any ChatInputViewConfigurationProtocol) -> Bool
+    /// Whether this slot fades in over `previous` when it replaces it, instead of cutting to it.
+    func crossfades(from previous: any ChatInputViewConfigurationProtocol) -> Bool
 }
 
 public extension ChatInputViewConfigurationProtocol {
     var safeAreaFillColor: UIColor? { nil }
+
+    func crossfades(from _: any ChatInputViewConfigurationProtocol) -> Bool {
+        false
+    }
 }
 
 public protocol ChatInputReplyPresenting: AnyObject {
