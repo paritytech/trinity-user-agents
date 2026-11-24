@@ -3,7 +3,8 @@ use futures::executor::block_on;
 use super::*;
 use crate::durable::{
 	model::{
-		DurableTxFailureKind, DurableTxStatus, PolicyParams, VerdictFailureKind, VerdictStatus,
+		DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyParams, TransactionDependency,
+		VerdictFailureKind, VerdictStatus,
 	},
 	testing::{DeferredTxHarness, RetryQuestion, ScriptedPolicy, block, extrinsic, test_plan},
 };
@@ -75,4 +76,47 @@ fn a_success_is_written_without_asking_the_policy() {
 
 	assert_eq!(harness.status(observed.id), finalized.into());
 	assert_eq!(harness.policy().retry_questions(), vec![]);
+}
+
+/// A submitted row the test policy rebuilds, waiting for `dependency`.
+fn rebuildable_dependent(harness: &DeferredTxHarness, dependency: DurableTxId) -> DurableTxEntry {
+	let id = harness.insert_unwatched(extrinsic(2, 100, 64), Some(test_plan(vec![7])));
+	let waits = TransactionDependency::new(dependency);
+	let write = harness.db().write(move |tx| dao::insert_dependency(tx, id, &waits));
+	block_on(write).unwrap();
+	harness.entry(id)
+}
+
+/// After a reorg drops the dependency, the dependent's attempt fails
+/// because the dependency is missing, which says nothing about whether it
+/// is worth building once the dependency lands again. So it waits again
+/// without asking its policy, which would decline here.
+#[test]
+fn a_dependent_failing_before_its_dependency_settles_waits_again() {
+	let declining = ScriptedPolicy::never_answering().declining_retries();
+	let harness = DeferredTxHarness::with_policy(declining);
+	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
+	let observed = rebuildable_dependent(&harness, dependency);
+
+	write(&harness, &observed, failure(VerdictFailureKind::Expired));
+
+	assert_eq!(harness.status(observed.id), DurableTxStatus::PendingSubmission);
+	assert_eq!(harness.policy().retry_questions(), vec![]);
+}
+
+/// With its dependency in effect, the dependent failed for a reason of its
+/// own, which only its policy can judge.
+#[test]
+fn a_dependent_failing_after_its_dependencies_settled_asks_its_policy() {
+	let declining = ScriptedPolicy::never_answering().declining_retries();
+	let harness = DeferredTxHarness::with_policy(declining);
+	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
+	harness.record_status(dependency, DurableTxStatus::PendingSuccess { at: block(131) });
+	let observed = rebuildable_dependent(&harness, dependency);
+
+	write(&harness, &observed, failure(VerdictFailureKind::Expired));
+
+	let expired = DurableTxStatus::Failure(DurableTxFailureKind::Expired);
+	assert_eq!(harness.status(observed.id), expired);
+	assert_eq!(harness.policy().retry_questions().len(), 1);
 }

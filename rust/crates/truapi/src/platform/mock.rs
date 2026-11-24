@@ -46,9 +46,9 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, CoreStorage,
-	CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
+	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome,
+	CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation,
+	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
 	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
 	UserConfirmationReview,
 };
@@ -130,17 +130,6 @@ pub enum PermissionKind {
 	Remote,
 }
 
-/// One operation a product began and has not ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenOperation {
-	/// Product that began it.
-	pub product_id: ProductId,
-	/// Id the mock handed back, unique among this product's open operations.
-	pub id: u32,
-	/// Label the product gave, empty when it gave none.
-	pub label: String,
-}
-
 /// One permission answer the mock gave, recorded for assertions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionLogEntry {
@@ -188,7 +177,8 @@ pub struct ChatRoomDeclarations {
 	pub metadata: Option<latest::ChatRoomMetadata>,
 	/// The last chat list preview.
 	pub preview: Option<latest::ChatRoomPreview>,
-	/// Every feed update, in order, with whether the host had to store it.
+	/// Every feed update since the last change of `product_source`, in order,
+	/// with whether the host had to store it.
 	pub feed: Vec<(latest::ChatFeedUpdate, bool)>,
 }
 
@@ -361,8 +351,6 @@ pub struct MockPlatform {
 	chat_room_subscribers:
 		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
 	next_chat_message_id: Arc<AtomicU32>,
-	next_operation_id: Arc<AtomicU32>,
-	open_operations: Arc<Mutex<Vec<OpenOperation>>>,
 	/// Current theme. Seeded from the config and replaced by `set_theme`.
 	theme: Arc<Mutex<latest::ThemeVariant>>,
 	theme_subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostThemeSubscribeItem>>>>,
@@ -414,8 +402,6 @@ impl MockPlatform {
 			chat_declarations: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
 			next_chat_message_id: Arc::new(AtomicU32::new(0)),
-			next_operation_id: Arc::new(AtomicU32::new(0)),
-			open_operations: Arc::new(Mutex::new(Vec::new())),
 			theme: Arc::new(Mutex::new(theme)),
 			theme_subscribers: Arc::new(Mutex::new(Vec::new())),
 			scan_answer: Arc::new(Mutex::new(HostScan::Dismissed)),
@@ -536,11 +522,6 @@ impl MockPlatform {
 			.expect("permission log poisoned")
 			.push(PermissionLogEntry { tag: permission, approved: granted, kind });
 		granted
-	}
-
-	/// Operations a product began and has not ended, in the order they began.
-	pub fn open_operations(&self) -> Vec<OpenOperation> {
-		self.open_operations.lock().expect("open operations poisoned").clone()
 	}
 
 	/// Auth state transitions the core emitted, in order.
@@ -755,7 +736,8 @@ impl MockPlatform {
 	}
 
 	/// Apply `change` to the declarations of `room_id`, or fail with the
-	/// injected chat fault.
+	/// injected chat fault. A room that is not in the room list, for example
+	/// one deleted while the call was on its way, keeps no declarations.
 	fn declare_chat_room(
 		&self,
 		room_id: String,
@@ -764,9 +746,39 @@ impl MockPlatform {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
+		// The room list stays locked until the change lands, so a delete cannot
+		// run in between and leave declarations behind.
+		let rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
+		if !rooms.contains_key(&room_id) {
+			return Ok(());
+		}
 		let mut declarations = self.chat_declarations.lock().expect("chat declarations poisoned");
 		change(declarations.entry(room_id).or_default());
 		Ok(())
+	}
+
+	/// Keep `config` as the configuration of `room_id`. A change of
+	/// `product_source` drops the messages and feed updates of the room, as
+	/// the `create_chat_room` contract asks.
+	fn configure_chat_room(&self, room_id: &str, config: latest::ChatRoomConfig) {
+		let source_changed = {
+			let mut declarations =
+				self.chat_declarations.lock().expect("chat declarations poisoned");
+			let room = declarations.entry(room_id.to_string()).or_default();
+			let product_source = room.config.as_ref().is_some_and(|config| config.product_source);
+			let source_changed = product_source != config.product_source;
+			if source_changed {
+				room.feed.clear();
+			}
+			room.config = Some(config);
+			source_changed
+		};
+		if source_changed {
+			self.chat_messages
+				.lock()
+				.expect("chat messages poisoned")
+				.retain(|message| message.room_id != room_id);
+		}
 	}
 
 	/// Drop the registered rooms and bots and the posted-message log.
@@ -827,8 +839,6 @@ impl MockPlatform {
 		self.set_confirm_user_actions(self.config.confirm_user_actions);
 		self.next_notification_id.store(1, Ordering::SeqCst);
 		self.next_chat_message_id.store(0, Ordering::SeqCst);
-		self.open_operations.lock().expect("open operations poisoned").clear();
-		self.next_operation_id.store(0, Ordering::SeqCst);
 	}
 }
 
@@ -1065,8 +1075,10 @@ pub fn mock_stack(
 	bulletin: truapi::Bytes32,
 	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
+	let identity =
+		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, false)
+	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
 		.expect("a mock stack names no reserved value")
 }
 
@@ -1306,35 +1318,6 @@ impl PreimageHost for MockPlatform {
 }
 
 #[async_trait::async_trait]
-impl ProductOperations for MockPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-		let id = self.next_operation_id.fetch_add(1, Ordering::SeqCst);
-		self.open_operations
-			.lock()
-			.expect("open operations poisoned")
-			.push(OpenOperation { product_id: product.product_id.clone(), id, label });
-		Ok(latest::HostWorkerBeginOperationResponse { id })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), latest::HostWorkerOperationError> {
-		// Idempotent by contract, so an unknown or already-ended id is `Ok`.
-		self.open_operations
-			.lock()
-			.expect("open operations poisoned")
-			.retain(|open| open.id != id || open.product_id != product.product_id);
-		Ok(())
-	}
-}
-
-#[async_trait::async_trait]
 impl ScannerPlatform for MockPlatform {
 	async fn scan_code(
 		&self,
@@ -1356,26 +1339,27 @@ impl ChatPlatform for MockPlatform {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
-		// The mock keeps every configuration, in the same call that creates
-		// the room, for a new room and for a room that exists.
-		self.declare_chat_room(room_id.clone(), |room| room.config = Some(request.config))
-			.map_err(|error| latest::HostChatCreateRoomError::Unknown { reason: error.reason })?;
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&room_id) {
+			let status = if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
 					room_id.clone(),
 					latest::ChatRoom {
-						room_id,
+						room_id: room_id.clone(),
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
 					},
 				);
 				latest::ChatRoomRegistrationStatus::New
-			}
+			};
+			// The mock keeps every configuration, in the same call that
+			// creates the room, for a new room and for a room that exists. The
+			// room list stays locked, so a delete cannot run in between.
+			self.configure_chat_room(&room_id, request.config);
+			status
 		};
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
@@ -1505,15 +1489,16 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomPreviewRequest,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatDeleteRoomRequest,
-	) -> Result<(), latest::GenericError> {
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
@@ -1534,7 +1519,7 @@ impl ChatPlatform for MockPlatform {
 		if removed {
 			self.publish_chat_rooms();
 		}
-		Ok(())
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn update_chat_feed(

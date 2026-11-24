@@ -70,18 +70,21 @@ struct ProductWorkerOperationReconcilerTests {
         ProductOperationRecord(productId: productId, id: id, label: nil, startedAt: Date(timeIntervalSince1970: 0))
     }
 
-    @Test("holds one worker per operation and releases when operations disappear")
+    @Test("only the legacy runtime holds workers for restored and newly recorded operations", .timeLimit(.minutes(1)))
     func reconcilesWorkersToOperations() async throws {
         let paymentProduct = try ProductId("getcash.dot")
         let chatProduct = try ProductId("chatapp.dot")
         let store = ControllableOperationStore()
         let manager = CountingWorkerManager()
-        let reconciler = ProductWorkerOperationReconciler(store: store, manager: manager)
+        store.emit([record(paymentProduct, 1)])
+        #expect(ProductWorkerOperationReconciler(usingTrUAPI: true, store: store, manager: manager) == nil)
+        let reconciler = try #require(ProductWorkerOperationReconciler(
+            usingTrUAPI: false,
+            store: store,
+            manager: manager
+        ))
 
         reconciler.start()
-
-        // One operation opens -> one worker.
-        store.emit([record(paymentProduct, 1)])
         await manager.awaitCount(1)
 
         // A second operation for another product -> two workers.
