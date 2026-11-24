@@ -11,4 +11,5 @@ crate-type = ["staticlib"]
 bench-common = { path = "../bench-common" }
 qjs-guest = { path = "../guest" }
 qjs-runner = { path = "../runner" }
+qjs-runner-boa = { path = "../runner-boa" }
 qjs-runner-wasm2c = { path = "../runner-wasm2c" }

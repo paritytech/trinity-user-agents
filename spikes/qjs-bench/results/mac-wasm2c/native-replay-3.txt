@@ -1,1 +1,1 @@
-RESULT {"engine":"quickjs-native","bootMs":7.0,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.182,"renderP95Ms":0.302}
+RESULT {"engine":"quickjs-native","bootMs":8.9,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.187,"renderP95Ms":0.326}

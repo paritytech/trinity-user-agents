@@ -1,0 +1,1 @@
+RESULT {"engine":"boa","firstBootMs":69.1,"bootP50Ms":59.2,"firstInstanceMiB":23.02,"perInstanceMiB":5.61,"instances":10}

@@ -1,1 +1,1 @@
-RESULT {"engine":"wasmi","bootMs":98.2,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":4.441,"renderP95Ms":4.999,"linearMemoryKiB":3520}
+RESULT {"engine":"wasmi","bootMs":105.3,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":4.457,"renderP95Ms":5.162,"linearMemoryKiB":3520}

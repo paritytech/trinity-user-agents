@@ -1,0 +1,11 @@
+[package]
+name = "qjs-runner-boa"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bench-common = { path = "../bench-common" }
+# Temporal and Intl are off: workers get neither, and they triple the binary.
+boa_engine = { version = "=0.22.0", default-features = false }
+getrandom = "0.3"

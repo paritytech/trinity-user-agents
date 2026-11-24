@@ -7,7 +7,8 @@
 //!
 //! Engines: `native` (QuickJS compiled for the device), `wasmi` (the wasm
 //! guest interpreted), `wasm2c` (the wasm guest compiled ahead of time, with
-//! the bounds-check or guard-page variant this library was built with).
+//! the bounds-check or guard-page variant this library was built with) and
+//! `boa` (the Rust JavaScript engine, same prelude and bindings).
 //! Modes: `replay`, `instances` (`count` live workers), `codec`, `rxjs`,
 //! `pingpong-64`, `pingpong-4k`, `memcap` (an 8 MiB cap, wasm only),
 //! `oob-trap` (an out-of-bounds read is caught and the process carries on,
@@ -91,11 +92,13 @@ fn measure(engine: &str, mode: &str, resources: &str, count: usize) -> Result<St
         ("wasmi", "replay") => qjs_runner::replay(GUEST_WASM, &read("w-worker.js")?, &corpus, &Default::default())
             .map_err(|error| error.to_string()),
         ("wasm2c", "replay") => qjs_runner_wasm2c::replay(&read("w-worker.js")?, &corpus, &Default::default()),
+        ("boa", "replay") => qjs_runner_boa::replay(&read("w-worker.js")?, &corpus),
 
         ("native", "instances") => qjs_guest::probe::instances(&read("w-worker.js")?, count),
         ("wasmi", "instances") => qjs_runner::instances(GUEST_WASM, &read("w-worker.js")?, count, &Default::default())
             .map_err(|error| error.to_string()),
         ("wasm2c", "instances") => qjs_runner_wasm2c::instances(&read("w-worker.js")?, count, &Default::default()),
+        ("boa", "instances") => qjs_runner_boa::instances(&read("w-worker.js")?, count),
 
         ("wasm2c", "guard-capacity") => Ok(qjs_runner_wasm2c::guard_capacity(count)),
         ("wasm2c", "oob-trap") => qjs_runner_wasm2c::oob_trap(&read("w-worker.js")?, &Default::default()),
@@ -126,6 +129,7 @@ fn measure(engine: &str, mode: &str, resources: &str, count: usize) -> Result<St
                     .map(drop)
                     .map_err(|error| error.to_string())?,
                 "wasm2c" => qjs_runner_wasm2c::run_to_completion(&source, &Default::default()).map(drop)?,
+                "boa" => qjs_runner_boa::run_to_completion(&source).map(drop)?,
                 other => return Err(format!("unknown engine {other}")),
             }
             bench_common::bench_result(&bench_common::take_logs()).ok_or_else(|| "no BENCH_RESULT line".into())

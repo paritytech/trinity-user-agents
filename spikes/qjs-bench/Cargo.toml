@@ -2,7 +2,7 @@
 # Its own workspace so nothing here reaches the main workspace, its lints or CI.
 [workspace]
 resolver = "2"
-members = ["bench-common", "benchkit", "guest", "runner", "runner-pulley", "runner-wasm2c"]
+members = ["bench-common", "benchkit", "guest", "runner", "runner-boa", "runner-pulley", "runner-wasm2c"]
 
 [workspace.package]
 edition = "2021"

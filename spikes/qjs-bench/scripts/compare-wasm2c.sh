@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the wasm2c runner (guard pages and explicit bounds checks) beside
-# native QuickJS and wasmi, three times each, into results/mac-wasm2c/.
+# native QuickJS, wasmi and Boa, three times each, into results/mac-wasm2c/.
 # Build first: scripts/build-guest.sh, `bun run build` in workloads/,
-# `cargo build --release -p qjs-runner -p qjs-runner-wasm2c`,
+# `cargo build --release -p qjs-runner -p qjs-runner-wasm2c -p qjs-runner-boa`,
 # `cargo build --release -p qjs-guest --bin native-probe`, and
 # `QJS_W2C_MEMCHECK=bounds CARGO_TARGET_DIR=target/w2c-bounds cargo build --release -p qjs-runner-wasm2c`.
 set -euo pipefail
@@ -23,16 +23,20 @@ for run in 1 2 3; do
   "$bounds" "$worker" --native-stack-mib 64 --instances 10 | grep RESULT >"$out/w2c-bounds-instances-$run.txt"
   ./target/release/native-probe "$worker" --replay "$corpus" | grep RESULT >"$out/native-replay-$run.txt"
   ./target/release/qjs-runner "$guest" "$worker" --native-stack-mib 1 --replay "$corpus" | grep RESULT >"$out/wasmi-replay-$run.txt"
+  ./target/release/qjs-runner-boa "$worker" --replay "$corpus" | grep RESULT >"$out/boa-replay-$run.txt"
+  ./target/release/qjs-runner-boa "$worker" --instances 10 | grep RESULT >"$out/boa-instances-$run.txt"
 done
 
+rm -f "$out/throughput.txt"
 for workload in codec rxjs pingpong-64 pingpong-4k; do
-  for engine in guard bounds native wasmi; do
+  for engine in guard bounds native wasmi boa; do
     # The long throughput loops outrun wasmi's default fuel, so metering is off.
     case "$engine" in
       guard) line=$("$guard" "workloads/dist/w-$workload.js" 2>&1 | grep BENCH_RESULT) ;;
       bounds) line=$("$bounds" "workloads/dist/w-$workload.js" --native-stack-mib 64 2>&1 | grep BENCH_RESULT) ;;
       native) line=$(./target/release/native-probe "workloads/dist/w-$workload.js" 2>&1 | grep BENCH_RESULT) ;;
       wasmi) line=$(./target/release/qjs-runner "$guest" "workloads/dist/w-$workload.js" --native-stack-mib 1 --fuel-per-turn 0 2>&1 | grep BENCH_RESULT) ;;
+      boa) line=$(./target/release/qjs-runner-boa "workloads/dist/w-$workload.js" 2>&1 | grep BENCH_RESULT) ;;
     esac
     echo "$workload $engine: $line" | tee -a "$out/throughput.txt"
   done

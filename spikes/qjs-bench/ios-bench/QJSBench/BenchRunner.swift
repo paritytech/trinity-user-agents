@@ -54,7 +54,7 @@ final class BenchRunner: ObservableObject {
     }
 
     private func makeSuite(named suite: String, runs: Int) -> [BenchStep] {
-        let engines = ["native", "wasm2c", "wasmi"]
+        let engines = ["native", "wasm2c", "boa", "wasmi"]
         var steps: [BenchStep] = []
         for engine in engines {
             steps += Array(repeating: BenchStep(engine: engine, mode: "replay"), count: runs)
@@ -65,7 +65,7 @@ final class BenchRunner: ObservableObject {
         steps.append(BenchStep(engine: "wasm2c", mode: "oob-trap"))
         steps.append(BenchStep(engine: "wasm2c", mode: "guard-capacity", count: 64))
         let workloads = suite == "full" ? ["codec", "rxjs", "pingpong-64", "pingpong-4k"] : ["codec"]
-        let throughputEngines = suite == "full" ? engines : ["native", "wasm2c"]
+        let throughputEngines = suite == "full" ? engines : ["native", "wasm2c", "boa"]
         for workload in workloads {
             for engine in throughputEngines {
                 steps.append(BenchStep(engine: engine, mode: workload))

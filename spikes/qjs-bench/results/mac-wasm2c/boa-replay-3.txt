@@ -1,0 +1,1 @@
+RESULT {"engine":"boa","bootMs":75.7,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.672,"renderP95Ms":1.497}

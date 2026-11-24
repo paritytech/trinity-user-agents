@@ -17,6 +17,8 @@ never see it.
   every outbound frame back to the guest.
 - `runner-wasm2c/`: the same guest translated to C by wasm2c and compiled
   into the runner, with guard pages or explicit bounds checks (T6).
+- `runner-boa/`: the same prelude and bindings on Boa, the JavaScript
+  engine written in Rust, for comparison (T6).
 - `benchkit/` and `ios-bench/`: the engines behind a C API, and the SwiftUI
   app that runs them on a simulator or an iPhone (T7).
 - `samples/`: scripts for the T1 checks.
@@ -171,20 +173,27 @@ before the host reads them. Two variants, chosen at build time with
 - `bounds`: an explicit check on every access and a call-depth counter, no
   address-space reservation.
 
-`scripts/compare-wasm2c.sh` runs both beside native QuickJS and wasmi;
+`scripts/compare-wasm2c.sh` runs both beside native QuickJS, wasmi and Boa;
 raw lines are in `results/mac-wasm2c/`. Medians of three runs on the same
-Mac; Cranelift is from the T5 runs.
+Mac; Cranelift is from the T5 runs. Boa (`runner-boa/`, Boa 0.22 with
+Temporal and Intl off) runs the same prelude and bindings natively, with no
+sandbox: it is the memory-safe-language option rather than a contained one.
+The raw files are from the later run that added Boa. That run was noisier
+for the other engines (native p95 0.32 ms, bounds-check boot up to 17 ms), so
+their columns keep the first run's medians; the ratios between engines held.
 
-| Mac | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, Cranelift | wasm, wasmi |
-|---|---|---|---|---|---|
-| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
-| Render round trip p50 / p95 | 0.15 / 0.16 ms | 0.19 / 0.20 ms | 0.31 / 0.38 ms | 0.39 / 0.41 ms | 4.43 / 4.81 ms |
-| Worker bundle, boot to idle | 7.0 ms | 7.8 ms | 11 to 12 ms | 13.8 ms | 98 ms |
-| Memory per instance (10 live) | 2.1 MiB | 2.5 MiB | 2.5 MiB | 2.5 MiB | 3.7 MiB |
-| W3 codec, round trips/s | 4 558 | 3 585 | 2 204 | 1 772 | 154 |
-| W4 rxjs, events/s | 303 986 | 226 398 | 151 721 | 119 352 | 9 497 |
-| W5 ping-pong 64 B / 4 KB, p50 | 0.9 / 1.0 µs | 2.4 / 2.6 µs | 3.4 / 3.6 µs | | 40 / 43 µs |
-| Runner binary, stripped | 1.07 MB | 1.56 MB | 2.40 MB | | 1.71 MB + 0.88 MB guest |
+| Mac | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, Cranelift | wasm, wasmi | Boa |
+|---|---|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.15 / 0.16 ms | 0.19 / 0.20 ms | 0.31 / 0.38 ms | 0.39 / 0.41 ms | 4.43 / 4.81 ms | 0.65 / 1.27 ms |
+| Worker bundle, boot to idle | 7.0 ms | 7.8 ms | 11 to 12 ms | 13.8 ms | 98 ms | 55 to 69 ms |
+| Memory per instance (10 live) | 2.1 MiB | 2.5 MiB | 2.5 MiB | 2.5 MiB | 3.7 MiB | 5.6 MiB |
+| W3 codec, round trips/s | 4 558 | 3 585 | 2 204 | 1 772 | 154 | 841 to 874 |
+| W4 rxjs, events/s | 303 986 | 226 398 | 151 721 | 119 352 | 9 497 | 57 907 to 60 912 |
+| W5 ping-pong 64 B / 4 KB, p50 | 0.9 / 1.0 µs | 2.4 / 2.6 µs | 3.4 / 3.6 µs | | 40 / 43 µs | 2.9 / 4.0 µs |
+| Runner binary, stripped | 1.07 MB | 1.56 MB | 2.40 MB | | 1.71 MB + 0.88 MB guest | 4.09 MB |
+| Contains an engine bug | no | yes | yes | yes | yes | no (Rust prevents most) |
+| Heap cap and turn budget | yes | cap; budget via interrupt | cap; budget via interrupt | fuel and cap | fuel and cap | neither |
 
 - The sandbox costs about 1.3 times native with guard pages and about 2
   times with explicit bounds checks. Both beat Cranelift, because clang
@@ -207,8 +216,9 @@ Mac; Cranelift is from the T5 runs.
 ## T7: the iOS bench app
 
 `benchkit/` is a static library with a three-function C API
-(`benchkit_run`, `benchkit_free`, `benchkit_variant`) over three engines:
-native QuickJS, the wasm guest on wasmi, and the wasm guest through wasm2c.
+(`benchkit_run`, `benchkit_free`, `benchkit_variant`) over four engines:
+native QuickJS, the wasm guest on wasmi, the wasm guest through wasm2c, and
+Boa.
 `ios-bench/` is a SwiftUI app that links it as `build/BenchKit.xcframework`,
 bundles the workloads, runs a suite on launch and prints one JSON line per
 measurement (`BENCH {…}`), also appended to `Documents/results.jsonl`. The
@@ -225,8 +235,8 @@ Launch arguments: `--suite quick|full`, `--runs N`, `--exit`. The quick suite
 replays the corpus three times per engine, boots 10 live workers per engine,
 checks the 8 MiB memory cap on both wasm engines, makes the wasm2c guest
 read out of bounds (`oob-trap`), probes how many 8 GiB guard-page
-reservations fit (`guard-capacity`), and runs the codec workload on native
-and wasm2c. `full` adds rxjs, ping-pong and wasmi throughput.
+reservations fit (`guard-capacity`), and runs the codec workload on native,
+wasm2c and Boa. `full` adds rxjs, ping-pong and wasmi throughput.
 
 Build notes:
 
@@ -245,16 +255,16 @@ Build notes:
 
 Every step passed in both variants. Medians of three replays:
 
-| Simulator | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, wasmi |
-|---|---|---|---|---|
-| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
-| Render round trip p50 / p95 | 0.15 to 0.16 / 0.26 ms | 0.20 / 0.24 ms | 0.31 / 0.39 ms | 4.4 / 4.5 ms |
-| Boot to idle, 10 workers, p50 | 7.1 to 7.4 ms | 8.0 ms | 10.9 ms | 94 to 97 ms |
-| Memory per worker | 1.9 MiB | 2.5 MiB | 2.5 MiB | 3.6 to 4.0 MiB |
-| Codec, round trips/s | 4 342 to 4 398 | 3 427 | 2 191 | |
-| 8 MiB cap | | catchable OOM after 6 MiB | catchable OOM after 6 MiB | catchable OOM after 6 MiB |
-| Out-of-bounds read | | trapped, fresh guest boots | trapped, fresh guest boots | |
-| 8 GiB reservations that fit | | 64 of 64 | 64 of 64 | |
+| Simulator | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, wasmi | Boa |
+|---|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.15 to 0.16 / 0.26 ms | 0.20 / 0.24 ms | 0.31 / 0.39 ms | 4.4 / 4.5 ms | 0.65 / 1.29 ms |
+| Boot to idle, 10 workers, p50 | 7.1 to 7.4 ms | 8.0 ms | 10.9 ms | 94 to 97 ms | 57 ms |
+| Memory per worker | 1.9 MiB | 2.5 MiB | 2.5 MiB | 3.6 to 4.0 MiB | 3.1 MiB (5.6 on the Mac) |
+| Codec, round trips/s | 4 342 to 4 398 | 3 427 | 2 191 | | 836 |
+| 8 MiB cap | | catchable OOM after 6 MiB | catchable OOM after 6 MiB | catchable OOM after 6 MiB | no heap limit to set |
+| Out-of-bounds read | | trapped, fresh guest boots | trapped, fresh guest boots | | |
+| 8 GiB reservations that fit | | 64 of 64 | 64 of 64 | | |
 
 - The ratios match the Mac's, as they should: the simulator runs on the
   Mac's CPU. They say nothing about iPhone speed.
@@ -266,7 +276,11 @@ Every step passed in both variants. Medians of three replays:
   so that row is the first thing the device runs answer, with and without the
   extended virtual addressing entitlement.
 - The device app (`build-ios.sh … device`, unsigned) compiles; its binary is
-  5.0 MB with all three engines.
+  5.0 MB with native QuickJS, wasmi and wasm2c. Boa adds about 3.3 MB to the
+  simulator binary.
+- Boa's memory per worker moves more between runs than the other engines'
+  (3.1 MiB here, 5.6 MiB on the Mac), likely because its garbage collector
+  runs at different points; the device runs will show its spread.
 
 ## T2: the corpus
 
