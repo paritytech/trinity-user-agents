@@ -92,14 +92,11 @@ On an iPhone XS (A12, the oldest supported iPhone), iOS 18.7:
 | iPhone XS                   | QuickJS native   | wasm2c, bounds checks        | Boa                  | wasmi                   |
 | --------------------------- | ---------------- | ---------------------------- | -------------------- | ----------------------- |
 | Contains an engine fault    | no               | yes                          | prevents most (Rust) | yes                     |
-| Render round trip p50 / p95 | 0.37 / 0.46 ms   | 0.75 / 0.79 ms               | 1.59 / 2.76 ms       | 9.1 / 9.4 ms            |
-| Start to idle               | 14 ms            | 26 ms                        | 118 ms               | 203 ms                  |
-| Memory per worker           | 1.9 MiB          | 3.5 MiB                      | 3.1 MiB              | 3.5 MiB                 |
+| Render round trip p50 / p95 | 0.37 / 0.46 ms   | 0.72 / 0.75 ms               | 1.59 / 2.76 ms       | 9.1 / 9.4 ms            |
+| Start to idle               | 14 ms            | 24 ms                        | 118 ms               | 203 ms                  |
+| Memory per worker           | 1.9 MiB          | 2.5 MiB                      | 3.1 MiB              | 3.5 MiB                 |
 | Memory cap                  | heap limit       | catchable out-of-memory      | none                 | catchable out-of-memory |
 | Out-of-bounds read          | reads app memory | traps, a fresh worker starts | not testable         | not run                 |
-
-The iPhone XS run predates the declared maximum memory: its wasm2c memory came from the allocator, which costs about 1
-MiB per worker more than the reservation.
 
 Inside an Android app on a Galaxy A26 (Exynos 1380), Android 16, with the WebView the app runs workers in today:
 
@@ -125,8 +122,7 @@ Galaxy A26 table.
 
 ## Trade-offs
 
-- Both phones pay about twice native QuickJS in CPU for the boundary, and on the Galaxy A26 about 0.5 MiB more per
-  worker.
+- Both phones pay about twice native QuickJS in CPU for the boundary, and about 0.5 to 0.6 MiB more per worker.
 - The turn budget is enforced inside the sandbox, so a worker that first exploits an engine fault can disable it and
   keep a thread busy; the host can then only abandon the thread and count a crash.
 - An Android isolated process would contain even code execution in the engine and could be killed, but needs a service,
