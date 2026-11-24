@@ -23,8 +23,8 @@ The engine does not construct or sign transactions itself. It accepts either a p
 enum RequestedTransactions {
     /// Signed already: recorded as pending and broadcast once committed.
     Presigned(Vec<DurableSubmission>),
-    /// Built later, each through its plan.
-    Deferred(Vec<SubmissionPlan>),
+    /// Built later, each from its params once its dependencies released it.
+    Deferred(Vec<DeferredSubmission>),
 }
 
 pub struct DurableSubmission {
@@ -69,7 +69,8 @@ pub enum DurableTxFailureKind {
     DispatchFailed,
     /// The node refused it before it reached the pool.
     Rejected,
-    /// It waited to be built and its policy will never build it.
+    /// It will never take effect: its policy gave up building it, or a
+    /// dependency it cascades from failed.
     Abandoned,
 }
 ```
@@ -82,13 +83,14 @@ stateDiagram-v2
     [*] --> PendingSubmission: deferred
     [*] --> Pending: presigned
     PendingSubmission --> Pending: policy built an attempt
-    PendingSubmission --> Failure: policy gave up
+    PendingSubmission --> Failure: policy gave up, or a cascading dependency failed
     Pending --> PendingSuccess: took effect at a best block
     PendingSuccess --> Pending: reorg removed that block
     PendingSuccess --> FinalizedSuccess: block finalized
     Pending --> FinalizedSuccess: found in a finalized block
-    Pending --> PendingSubmission: failed, policy retries
-    Pending --> Failure: expired, dispatch failed or rejected
+    Pending --> PendingSubmission: failed, a dependency has not taken effect or policy retries
+    Pending --> Failure: expired, dispatch failed or rejected, or a cascading dependency failed
+    PendingSuccess --> Failure: a cascading dependency failed
     FinalizedSuccess --> [*]
     Failure --> [*]
 ```
@@ -100,11 +102,11 @@ The engine is built on ACID storage. Any such database would work; we use SQLite
 More importantly, consumers can run their own logic as part of the engine's registration transaction:
 
 ```rust
-pub async fn execute_with<T, F>(
+pub async fn execute_with<T, E, F>(
     self: &Arc<Self>,
-    request: DurableRequest,
+    request: DurableRequest<E>,
     on_register: F, // Consumers can run additional logic here
-) -> Result<(Vec<DurableTxId>, T), RegistrationError>
+) -> Result<(Vec<DurableTxId>, T), RegistrationError<E>>
 ```
 
 This makes the engine highly composable. For example, a coinage service built on top of the engine can record its own state (inputs and outputs) in the same registration transaction, check its UTXO invariants, and roll the whole registration back if one is violated.
@@ -194,11 +196,42 @@ pub enum Preparation {
 }
 ```
 
-`can_retry` and `prepare` are separate because `can_retry` runs on the verdict path, before the engine writes a `Failure`. A transaction that can be retried therefore moves straight to `PendingSubmission`, without briefly showing `Failure`. It is a plain function so that it decides from what it is given and never waits on the chain. It is only asked about a submitted attempt's failure (`VerdictFailureKind`: expired, dispatch failed or rejected), never about an abandoned transaction.
+`can_retry` and `prepare` are separate because `can_retry` runs on the verdict path, before the engine writes a `Failure`. A transaction that can be retried therefore moves straight to `PendingSubmission`, without briefly showing `Failure`. It is a plain function so that it decides from what it is given and never waits on the chain. It is only asked about a submitted attempt's failure (`VerdictFailureKind`: expired, dispatch failed or rejected), never about an abandoned transaction, and not while one of the transaction's dependencies has not taken effect (see [Dependencies](#dependencies)).
 
 `prepare`, on the other hand, may take as long as it needs to build a transaction and wait until it is actually valid. For example, a policy that builds a ring-VRF proof might wait in `prepare` until the account is included in the ring.
 
 `prepare` can also return `GiveUp`, which abandons the transaction and marks it as `Failure(Abandoned)`.
+
+### Dependencies
+
+A deferred transaction can wait for other transactions. Each `DeferredSubmission` names its dependencies, and each dependency says what its failure does to the dependent:
+
+```rust
+pub struct DeferredSubmission {
+    pub params: PolicyParams,
+    pub depends_on: Vec<TransactionDependency>,
+}
+
+pub struct TransactionDependency {
+    pub id: DurableTxId,
+    pub on_failure: OnDependencyFailure,
+}
+
+pub enum OnDependencyFailure {
+    /// The default. The dependent is left to its policy.
+    Ignore,
+    /// The dependent fails as `Abandoned`, unless it is already final.
+    Cascade,
+}
+```
+
+A dependency names a transaction already registered, on the same chain, in a domain the engine serves; registration refuses anything else. Composing transactions of two domains therefore takes two registrations: the dependency first, then the dependent with the ids it returned. Only deferred transactions take dependencies, because a presigned one is broadcast at once. The ledger keeps them in `durable_tx_dependency`, where a dependency is always older than its dependent, so no cycle can be stored.
+
+A dependent waits in `PendingSubmission` and is not handed to its policy while a dependency is `PendingSubmission` or `Pending`. It is released once every dependency is `PendingSuccess` or `FinalizedSuccess`, or failed with `Ignore`. A success at the best block is enough because the node checks a transaction against the best block, where the dependency already holds. On one chain, a block that includes the dependent also includes the dependency among its ancestors, so a reorg that drops the dependency drops the dependent too. Each row `prepare` is handed lists its dependencies as `Success` or `IgnoredFailure`, so a policy can give up at once when the one it needed failed.
+
+`Cascade` says the consumer is sure the dependent cannot take effect without its dependency. When such a dependency fails, the end of the next recovery pass fails the dependent as `Abandoned`, together with everything that cascades from it. This holds whether the dependent still waits to be built, was submitted, or took effect at a block that is not finalized: a block that includes it without its dependency will be reorged out, or the dependency was marked wrongly. Only a dependent that is already final keeps its status. Use `Ignore` whenever the dependent might still take effect without the dependency.
+
+A reorg can drop a dependency after its dependent was built. The dependent then goes back to `Pending`, and its attempt eventually expires. A failure written while a dependency is `PendingSubmission` or `Pending` sends the dependent back to `PendingSubmission` without asking `can_retry`, since the missing dependency caused it. It is built again, counting as an attempt, once the dependency takes effect again.
 
 ### Scoping and grouping
 

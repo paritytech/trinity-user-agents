@@ -7,27 +7,14 @@ import TrUAPIHost
 import UIKitExt
 
 /// Runs product workers for as long as the core's reference ledger wants them.
-///
-/// A handler asks for the worker it needs with ``ensureWorker(for:)``, which
-/// registers the request with the core and returns once the worker it decided
-/// to run is up. The core counts those requests and reports only the
-/// transitions across zero: a `.start` boots the product's worker behind its
-/// one Worker execution, a `.stop` tears it down.
 protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     /// May arrive on any thread, including re-entrantly from inside a request,
     /// so the work is handed off rather than done here.
     func demandChanged(productId: ProductId, transition: WorkerTransition)
 
-    /// Registers a request for `productId`'s worker and returns its execution
-    /// once the core has let the worker start.
-    ///
-    /// The request is the caller's from the moment it asks, including when this
-    /// throws, so it is given back with ``releaseWorker(for:)`` either way.
-    /// A handler can be disposed while it is still waiting here, and a release
-    /// that crossed the answer must not be the one that is lost.
-    func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol
+    func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming
 
-    func releaseWorker(for productId: ProductId)
+    func waitUntilReady(_ productId: ProductId) async throws
 
     /// What `productId`'s worker is built against, for the life of the session
     /// rather than of any one worker.
@@ -136,23 +123,17 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         Task { await self.beginFollowing() }
     }
 
-    nonisolated func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
-        try references().acquireWorker(productId: productId)
+    nonisolated func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming {
+        try references().claim(productId)
+    }
 
-        return try await withTimeout(startupWindow) { [self] in
-            for try await execution in executions(of: productId) {
-                if let execution { return execution }
+    nonisolated func waitUntilReady(_ productId: ProductId) async throws {
+        try await withTimeout(startupWindow) { [self] in
+            for try await execution in executions(of: productId) where execution != nil {
+                return
             }
 
             throw TrUAPIWorkerError.noWorker(productId)
-        }
-    }
-
-    nonisolated func releaseWorker(for productId: ProductId) {
-        do {
-            try references().releaseWorker(productId: productId)
-        } catch {
-            logger.error("[truapi] \(productId)'s worker request could not be given back: \(error)")
         }
     }
 
