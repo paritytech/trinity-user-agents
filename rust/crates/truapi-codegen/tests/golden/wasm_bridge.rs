@@ -35,7 +35,6 @@ pub struct JsBridge {
     pub subscribe_chat_rooms: Function,
     pub list_chat_rooms: Function,
     pub read_chat_room_config: Function,
-    pub set_chat_room_config: Function,
     pub set_chat_room_metadata: Function,
     pub set_chat_room_preview: Function,
     pub delete_chat_room: Function,
@@ -98,8 +97,6 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("listChatRooms")),
             read_chat_room_config: get_optional_function(callbacks, "readChatRoomConfig")?
                 .unwrap_or_else(|| missing_callback("readChatRoomConfig")),
-            set_chat_room_config: get_optional_function(callbacks, "setChatRoomConfig")?
-                .unwrap_or_else(|| missing_callback("setChatRoomConfig")),
             set_chat_room_metadata: get_optional_function(callbacks, "setChatRoomMetadata")?
                 .unwrap_or_else(|| missing_callback("setChatRoomMetadata")),
             set_chat_room_preview: get_optional_function(callbacks, "setChatRoomPreview")?
@@ -158,7 +155,6 @@ impl JsBridge {
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some()
                 && get_optional_function(callbacks, "listChatRooms")?.is_some()
                 && get_optional_function(callbacks, "readChatRoomConfig")?.is_some()
-                && get_optional_function(callbacks, "setChatRoomConfig")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomMetadata")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomPreview")?.is_some()
                 && get_optional_function(callbacks, "deleteChatRoom")?.is_some()
@@ -340,24 +336,6 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         )?)
     }
 
-    async fn set_chat_room_config(
-        &self,
-        _product: &crate::platform::ProductContext,
-        _room_id: String,
-        config: latest::ChatRoomConfig,
-    ) -> Result<(), latest::GenericError> {
-        invoke_unit(
-            &self.bridge.set_chat_room_config,
-            vec![
-                Uint8Array::from(_product.encode().as_slice()).into(),
-                JsValue::from_str(&_room_id),
-                Uint8Array::from(config.encode().as_slice()).into(),
-            ],
-        )
-        .await?;
-        Ok(())
-    }
-
     async fn set_chat_room_metadata(
         &self,
         _product: &crate::platform::ProductContext,
@@ -411,8 +389,8 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         _product: &crate::platform::ProductContext,
         _request: latest::HostChatUpdateFeedRequest,
         _persist: bool,
-    ) -> Result<(), truapi::CallError<latest::HostChatUpdateFeedError>> {
-        invoke_unit(
+    ) -> Result<crate::platform::ChatFeedOutcome, latest::GenericError> {
+        let bytes = invoke_bytes_return(
             &self.bridge.update_chat_feed,
             vec![
                 Uint8Array::from(_product.encode().as_slice()).into(),
@@ -420,9 +398,11 @@ impl crate::platform::ChatPlatform for WasmPlatform {
                 JsValue::from_bool(_persist),
             ],
         )
-        .await
-        .map_err(|reason| truapi::CallError::HostFailure { reason })?;
-        Ok(())
+        .await?;
+        Ok(decode_bytes::<crate::platform::ChatFeedOutcome>(
+            bytes,
+            "updateChatFeed response did not decode",
+        )?)
     }
 }
 
