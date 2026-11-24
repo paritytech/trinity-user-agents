@@ -171,7 +171,7 @@ impl Drop for Registry {
 pub struct Session {
 	registry: Registry,
 	worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
-	callbacks: Weak<dyn HostCallbacks>,
+	callbacks: Arc<dyn HostCallbacks>,
 }
 
 impl Session {
@@ -180,7 +180,7 @@ impl Session {
 		callbacks: &Arc<dyn HostCallbacks>,
 		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
 	) -> Self {
-		Self { registry: Registry::default(), worker_host, callbacks: Arc::downgrade(callbacks) }
+		Self { registry: Registry::default(), worker_host, callbacks: callbacks.clone() }
 	}
 }
 
@@ -425,7 +425,7 @@ impl WorkerController for Controller {
 		if let Some(callbacks) = self
 			.0
 			.upgrade()
-			.and_then(|runtime| runtime.worker_session()?.callbacks.upgrade())
+			.and_then(|runtime| Some(runtime.worker_session()?.callbacks.clone()))
 		{
 			callbacks.worker_crashing(product_id.clone(), crashes);
 		}
