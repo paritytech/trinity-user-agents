@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
@@ -51,8 +52,7 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.HostChatActionSubscribeItem
-import uniffi.truapi.NativeChatFeedRejection
-import uniffi.truapi.NativeChatRoomRejection
+import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
@@ -525,18 +525,18 @@ interface ChatHostBridge {
      * and for a room that exists. A change of `productSource` discards the
      * stored messages or the cached pages of the room.
      *
-     * Throw [NativeChatRoomRejection.UnsupportedConfig] for a configuration
-     * the host cannot keep, before it creates or changes anything. The
-     * default keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     * Throw [HostChatCreateRoomException.UnsupportedConfig] for a
+     * configuration the host cannot keep, before it creates or changes
+     * anything. The default keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
      */
-    @Throws(NativeChatRoomRejection::class)
+    @Throws(HostChatCreateRoomException::class)
     suspend fun createRoom(
         roomId: String,
         name: String,
         icon: String,
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
-        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw NativeChatRoomRejection.UnsupportedConfig()
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw HostChatCreateRoomException.UnsupportedConfig()
         return createRoom(roomId, name, icon)
     }
 
@@ -622,13 +622,14 @@ interface ChatHostBridge {
      * stores the change. Without it the host applies the change only to an
      * open room screen and to the chat list preview.
      *
-     * Throw [NativeChatFeedRejection] to refuse the change. The product
-     * receives each case as its own error, and any other exception as
-     * [NativeChatFeedRejection.Rejected].
+     * Return [ChatFeedOutcome.APPLIED], or the outcome that names why the host
+     * did not apply the change. The product receives each outcome as its own
+     * error. Throw only for a failure of the host, which the product receives
+     * as `HostFailure`.
      */
-    @Throws(NativeChatFeedRejection::class)
-    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): Unit =
-        throw NativeChatFeedRejection.Rejected(unservedChatRequestReason("updateFeed"))
+    @Throws(HostRejection::class)
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
+        throw unservedChatRequest("updateFeed")
 }
 
 /**
@@ -638,10 +639,8 @@ interface ChatHostBridge {
 val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
     ChatRoomConfig(productSource = false, reactionDetails = false, reportSeen = false)
 
-private fun unservedChatRequestReason(request: String): String = "this host does not serve chat $request"
-
 private fun unservedChatRequest(request: String): HostRejection =
-    HostRejection.Rejected(unservedChatRequestReason(request))
+    HostRejection.Rejected("this host does not serve chat $request")
 
 /**
  * Native game-reminder surface. Implement and pass to
@@ -909,43 +908,25 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
 
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
-        withFeedRejection { bridge.updateFeed(roomId, update, persist) }
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
+        withHostRejection { bridge.updateFeed(roomId, update, persist) }
 
     /**
-     * Pass a [NativeChatFeedRejection] to the product as it is, and any other
-     * exception as [NativeChatFeedRejection.Rejected]. A [HostRejection] keeps
-     * the reason that the host wrote.
-     */
-    private suspend fun withFeedRejection(operation: suspend () -> Unit) =
-        try {
-            operation()
-        } catch (rejection: NativeChatFeedRejection) {
-            throw rejection
-        } catch (rejection: HostRejection.Rejected) {
-            throw NativeChatFeedRejection.Rejected(rejection.reason).apply { initCause(rejection) }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            throw NativeChatFeedRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
-        }
-
-    /**
-     * Pass a [NativeChatRoomRejection] to the product as it is, and any other
-     * exception as [NativeChatRoomRejection.Rejected]. A [HostRejection] keeps
-     * the reason that the host wrote.
+     * Pass a [HostChatCreateRoomException] to the product as it is, and any
+     * other exception as [HostChatCreateRoomException.Unknown]. A
+     * [HostRejection] keeps the reason that the host wrote.
      */
     private suspend fun <T> withRoomRejection(operation: suspend () -> T): T =
         try {
             operation()
-        } catch (rejection: NativeChatRoomRejection) {
-            throw rejection
+        } catch (refusal: HostChatCreateRoomException) {
+            throw refusal
         } catch (rejection: HostRejection.Rejected) {
-            throw NativeChatRoomRejection.Rejected(rejection.reason).apply { initCause(rejection) }
+            throw HostChatCreateRoomException.Unknown(rejection.reason).apply { initCause(rejection) }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
-            throw NativeChatRoomRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
+            throw HostChatCreateRoomException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 }
 

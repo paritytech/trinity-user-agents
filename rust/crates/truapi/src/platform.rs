@@ -2505,10 +2505,11 @@ pub trait ChatPlatform: Send + Sync {
 
 /// What a host did with one change to the messages of a room.
 ///
-/// It is the answer of the host, not an error, so a web host returns it as it
-/// returns any other value: the web bridge turns each error that a web
+/// It is the answer of the host, not an error, so a host returns it as it
+/// returns any other value: the web and native bridges turn each error that a
 /// callback throws into `HostFailure`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatFeedOutcome {
 	/// The host applied the change.
 	Applied,

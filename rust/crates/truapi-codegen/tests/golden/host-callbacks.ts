@@ -155,8 +155,8 @@ export interface ChainExtensionVersion {
 /**
  * What a host did with one change to the messages of a room.
  *
- * It is the answer of the host, not an error, so a web host returns it as it
- * returns any other value: the web bridge turns each error that a web
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value: the web and native bridges turn each error that a
  * callback throws into `HostFailure`.
  */
 export type ChatFeedOutcome =
@@ -1098,8 +1098,8 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 /**
  * What a host did with one change to the messages of a room.
  *
- * It is the answer of the host, not an error, so a web host returns it as it
- * returns any other value: the web bridge turns each error that a web
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value: the web and native bridges turn each error that a
  * callback throws into `HostFailure`.
  */
 export const ChatFeedOutcome: S.Codec<ChatFeedOutcome> = S.lazy(

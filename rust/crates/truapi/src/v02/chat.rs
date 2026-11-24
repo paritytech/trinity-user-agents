@@ -52,18 +52,22 @@ pub struct HostChatCreateRoomResponse {
 }
 
 /// Chat room registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From, derive_more::Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostChatCreateRoomError {
 	/// Not allowed.
+	#[display("not allowed")]
 	PermissionDenied,
 	/// Catch-all.
 	#[from]
+	#[display("{reason}")]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
 	},
 	/// The host cannot keep the configuration of the request. It created and
 	/// changed nothing.
+	#[display("the host cannot keep this room configuration")]
 	UnsupportedConfig,
 }
 
