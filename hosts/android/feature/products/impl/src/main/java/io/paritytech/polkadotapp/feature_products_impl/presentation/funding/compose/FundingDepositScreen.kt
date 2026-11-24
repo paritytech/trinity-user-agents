@@ -14,7 +14,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
@@ -166,7 +165,7 @@ private fun LiveProgress(figure: String, progress: FundingLiveProgressUi, now: I
             NovaIcon(modifier = Modifier.size(LIVE_GLYPH_SIZE), imageVector = NovaIcons.SyncArrowsOutlined)
         }
         NovaText(
-            text = "$figure ${LocalPaymentAssetBrand.current.symbol}",
+            text = figure,
             style = PolkadotTheme.typography.headline.large,
             color = PolkadotTheme.colors.fg.primary,
             maxLines = 1,

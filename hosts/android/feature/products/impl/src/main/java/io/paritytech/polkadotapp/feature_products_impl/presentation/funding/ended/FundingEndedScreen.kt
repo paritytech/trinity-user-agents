@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
@@ -116,7 +115,7 @@ private fun Headline(ended: FundingEndedUiState, now: Instant) {
         StatusIcon(ended.icon)
         if (ended.figure != null) {
             NovaText(
-                text = "${ended.figure} ${LocalPaymentAssetBrand.current.symbol}",
+                text = ended.figure,
                 style = PolkadotTheme.typography.headline.large,
                 color = when (ended.figureTone) {
                     FundingEndedTone.SUCCESS -> PolkadotTheme.colors.fg.success

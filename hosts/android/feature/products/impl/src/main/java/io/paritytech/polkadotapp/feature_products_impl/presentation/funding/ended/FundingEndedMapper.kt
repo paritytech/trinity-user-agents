@@ -48,7 +48,7 @@ class FundingEndedMapper(
         return FundingEndedUiState(
             succeeded = succeeded,
             icon = if (!succeeded) FundingEndedIcon.FAILED else if (inbound) FundingEndedIcon.IN else FundingEndedIcon.OUT,
-            figure = amount?.let { if (succeeded) (if (inbound) "+" else "-") + format.figure(it) else format.figure(it) },
+            figure = amount?.let { if (succeeded) (if (inbound) "+" else "-") + format.label(it) else format.label(it) },
             figureTone = when {
                 !succeeded -> FundingEndedTone.TERTIARY
                 inbound -> FundingEndedTone.SUCCESS

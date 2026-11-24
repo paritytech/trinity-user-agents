@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIconKind
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.fundingIconModel
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import uniffi.truapi.ProductId
