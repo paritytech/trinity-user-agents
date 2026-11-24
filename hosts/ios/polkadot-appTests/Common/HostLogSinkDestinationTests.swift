@@ -95,6 +95,30 @@ struct HostLogSinkDestinationTests {
         #expect(sink.lines.map(\.message) == ["first", "second"])
     }
 
+    @Test func eachCoreMarkerHasItsOwnWindow() {
+        let sink = RecordingHostLogSink()
+        let clock = ManualClock()
+        let destination = HostLogSinkDestination(sink: sink, now: { clock.now })
+        let limit = HostLogSinkDestination.linesPerWindow
+
+        for index in 0 ..< limit + 10 {
+            send(.warning, "[truapi.core] truapi.tracing.warn: chain call failed \(index)", to: destination)
+        }
+        send(.warning, "[truapi.core] truapi.chain.follow_budget_reached: c1:product open 4s", to: destination)
+
+        #expect(sink.lines.last?.message == "truapi.chain.follow_budget_reached: c1:product open 4s")
+
+        clock.now += HostLogSinkDestination.window
+        send(.warning, "[truapi.core] truapi.tracing.warn: chain call failed again", to: destination)
+
+        #expect(sink.lines.suffix(2).first == RecordingHostLogSink.Line(
+            level: .warning,
+            tag: "truapi.core",
+            message: "10 truapi.core truapi.tracing.warn lines dropped over the limit of \(limit) a minute",
+            attributes: [HostLogSinkDestination.droppedAttribute: .count(10)]
+        ))
+    }
+
     @Test func coreEventsSkipTheLimit() {
         let sink = RecordingHostLogSink()
         let destination = HostLogSinkDestination(sink: sink, now: { 0 })
