@@ -9,9 +9,9 @@ use crate::{
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse,
-		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
+		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductStorage,
+		ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse, StackHost,
+		StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -385,32 +385,6 @@ impl ProductStorage for CallbackPlatform {
 				.map_err(|error| v01::GenericError { reason: error.to_string() })
 		};
 		stream::once(current).chain(rx).boxed()
-	}
-}
-
-#[async_trait::async_trait]
-impl ProductOperations for CallbackPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		self.callbacks
-			.begin_operation(product.product_id.clone(), label)
-			.await
-			.map(|id| v01::HostWorkerBeginOperationResponse { id })
-			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), v01::HostWorkerOperationError> {
-		self.callbacks
-			.end_operation(product.product_id.clone(), id)
-			.await
-			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
 	}
 }
 
@@ -809,7 +783,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomPreviewRequest,
-	) -> Result<(), truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
 		self.chat
 			.set_room_preview(request.room_id, request.preview)
 			.await
@@ -820,15 +794,18 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatDeleteRoomRequest,
-	) -> Result<(), truapi::latest::GenericError> {
-		self.chat
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+		let outcome = self
+			.chat
 			.delete_room(request.room_id)
 			.await
 			.map_err(truapi::latest::GenericError::from)?;
-		if let Ok(rooms) = self.chat.list_rooms().await {
+		if outcome == crate::platform::ChatRoomChangeOutcome::Applied &&
+			let Ok(rooms) = self.chat.list_rooms().await
+		{
 			self.events.notify_chat_rooms_changed(rooms);
 		}
-		Ok(())
+		Ok(outcome)
 	}
 
 	async fn update_chat_feed(
@@ -836,7 +813,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		_product: &ProductContext,
 		request: truapi::latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
 		self.chat
 			.update_feed(request.room_id, request.update, persist)
 			.await

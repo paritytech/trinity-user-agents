@@ -1,8 +1,9 @@
 import Foundation
+import Keystore_iOS
 import Products
 
-/// Owns the product-worker ref counter and its operations, and keeps a worker
-/// alive for every persisted operation.
+/// Owns the legacy product-worker ref counter and restores its persisted operations
+/// when that runtime is selected.
 ///
 /// One instance is created and held by `ServiceCoordinator` (alive while the
 /// main tab bar is), so every consumer (the chats screen, a product's full-page
@@ -15,7 +16,7 @@ final class ProductWorkerFacade {
     let manager: ProductWorkerManaging
     let operations: ProductWorkerOperating
 
-    private let reconciler: ProductWorkerOperationReconciler
+    private let reconciler: ProductWorkerOperationReconciler?
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
@@ -28,11 +29,16 @@ final class ProductWorkerFacade {
 
         self.operations = operations
         self.manager = manager
-        reconciler = ProductWorkerOperationReconciler(store: store, manager: manager, logger: logger)
+        reconciler = ProductWorkerOperationReconciler(
+            usingTrUAPI: SettingsManager.shared.isTrUAPIRuntimeEnabled,
+            store: store,
+            manager: manager,
+            logger: logger
+        )
     }
 
     /// Starts keeping workers alive for persisted operations. Call once at launch.
     func setup() {
-        reconciler.start()
+        reconciler?.start()
     }
 }

@@ -287,16 +287,6 @@ function liveSubscription<T>(
   return stream;
 }
 
-/** One operation a product began and has not ended. */
-export interface OpenOperation {
-  /** Product that began it. */
-  productId: ProductId;
-  /** Id the mock handed back, unique among this product's open operations. */
-  id: number;
-  /** Label the product gave, empty when it gave none. */
-  label: string;
-}
-
 /**
  * One permission answer the mock gave, recorded for assertions.
  *
@@ -388,7 +378,10 @@ export interface ChatRoomDeclarations {
   metadata?: ChatRoomMetadata;
   /** The last chat list preview. */
   preview?: ChatRoomPreview;
-  /** Every feed update, in order, with whether the host had to store it. */
+  /**
+   * Every feed update since the last change of `productSource`, in order,
+   * with whether the host had to store it.
+   */
   feed: [ChatFeedUpdate, boolean][];
 }
 
@@ -587,8 +580,6 @@ export interface MockHost {
   dispose(): void;
   /** Permission answers the mock gave, in order. */
   getPermissionLog(): PermissionLogEntry[];
-  /** Operations a product began and has not ended, in the order they began. */
-  getOpenOperations(): OpenOperation[];
   /** Permissions with an explicit grant, in key order. */
   getGrantedPermissions(): string[];
   /** Answer `permission` with a grant, whatever the configured policy says. */
@@ -959,22 +950,27 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const reviews: UserConfirmationReview[] = [];
   const cancelledNotifications: number[] = [];
   const permissionLog: PermissionLogEntry[] = [];
-  const openOperations: OpenOperation[] = [];
-  let nextOperationId = 0;
   const permissionDecisions = new Map<string, boolean>();
   const chatRooms = new Map<string, ChatRoom>();
   const chatDeclarations = new Map<string, ChatRoomDeclarations>();
+  // A room that is not in the room list, for example one deleted while the
+  // call was on its way, keeps no declarations.
   const declareChatRoom = (
     roomId: string,
     change: (room: ChatRoomDeclarations) => void,
   ): void => {
     if (faults.chatError) throw new Error(faults.chatError);
+    if (!chatRooms.has(roomId)) return;
     const room = chatDeclarations.get(roomId) ?? { feed: [] };
     change(room);
     chatDeclarations.set(roomId, room);
   };
   const chatBots = new Map<string, HostChatRegisterBotRequest>();
   const chatMessages: ChatMessageRecord[] = [];
+  const dropChatMessages = (roomId: string): void => {
+    const kept = chatMessages.filter((message) => message.roomId !== roomId);
+    chatMessages.splice(0, chatMessages.length, ...kept);
+  };
   // Ids start at 1, not 0: the id is what the product cancels by, and a
   // product that treats 0 as "no id" cannot cancel the first notification it
   // ever schedules.
@@ -1192,23 +1188,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
-    productOperations: {
-      async beginOperation(product, label) {
-        const id = nextOperationId++;
-        openOperations.push({ productId: product.productId, id, label });
-        return { id };
-      },
-      async endOperation(product, id) {
-        // Idempotent by contract, so an unknown or already-ended id is fine.
-        // Per product too: another product holding the same id must not drop
-        // this one's demand.
-        const at = openOperations.findIndex(
-          (open) => open.id === id && open.productId === product.productId,
-        );
-        if (at !== -1) openOperations.splice(at, 1);
-      },
-    },
-
     coreStorage: {
       async readCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
@@ -1418,20 +1397,28 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     chat: {
       async createChatRoom(_product, roomId, request) {
         if (faults.chatError) throw new Error(faults.chatError);
+        const status = chatRooms.has(roomId) ? "Exists" : "New";
+        if (status === "New") {
+          chatRooms.set(roomId, {
+            roomId,
+            // A product that creates a room hosts it; a product reaching a room
+            // as a bot registers the bot instead.
+            participatingAs: "RoomHost",
+          });
+        }
         // The mock keeps every configuration, in the same call that creates
-        // the room, for a new room and for a room that exists.
-        declareChatRoom(roomId, (room) => {
-          room.config = request.config;
-        });
-        if (chatRooms.has(roomId)) return "Exists";
-        chatRooms.set(roomId, {
-          roomId,
-          // A product that creates a room hosts it; a product reaching a room
-          // as a bot registers the bot instead.
-          participatingAs: "RoomHost",
-        });
-        publishChatRooms();
-        return "New";
+        // the room, for a new room and for a room that exists. A change of
+        // `productSource` drops what the room holds, as on the Rust mock.
+        const room = chatDeclarations.get(roomId) ?? { feed: [] };
+        const productSource = room.config?.productSource ?? false;
+        if (productSource !== request.config.productSource) {
+          room.feed = [];
+          dropChatMessages(roomId);
+        }
+        room.config = request.config;
+        chatDeclarations.set(roomId, room);
+        if (status === "New") publishChatRooms();
+        return status;
       },
       async registerChatBot(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
@@ -1478,21 +1465,20 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         declareChatRoom(request.roomId, (room) => {
           room.preview = request.preview;
         });
+        return "Applied";
       },
       async deleteChatRoom(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
-        chatRooms.delete(request.roomId);
         chatDeclarations.delete(request.roomId);
-        const kept = chatMessages.filter(
-          (message) => message.roomId !== request.roomId,
-        );
-        chatMessages.splice(0, chatMessages.length, ...kept);
-        publishChatRooms();
+        dropChatMessages(request.roomId);
+        if (chatRooms.delete(request.roomId)) publishChatRooms();
+        return "Applied";
       },
       async updateChatFeed(_product, request, persist) {
         declareChatRoom(request.roomId, (room) => {
           room.feed.push([request.update, persist]);
         });
+        return "Applied";
       },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
@@ -1696,11 +1682,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     simulateReconnect: () => {
       chainStatus = "Idle";
     },
-    getOpenOperations: () => [...openOperations],
     getChatRooms: () => byKey(chatRooms),
     getChatBots: () => byKey(chatBots),
     getChatMessageLog: () => [...chatMessages],
-    chatRoomDeclarations: (roomId) => chatDeclarations.get(roomId),
+    // A copy, as the Rust mock clones: a test that keeps it does not see
+    // later calls, and cannot change the mock through it.
+    chatRoomDeclarations: (roomId) =>
+      structuredClone(chatDeclarations.get(roomId)),
     seedPreimage(value) {
       const key = preimageKey(value);
       const id = hex(key);
@@ -1786,8 +1774,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       this.clearStorage();
       this.clearChatState();
       this.clearStatements();
-      openOperations.length = 0;
-      nextOperationId = 0;
       // Through the setter, so a subscribed product is told rather than left
       // believing the theme it last saw while `getTheme` reports the default.
       this.setTheme(theme);
@@ -1836,6 +1822,17 @@ export interface TestStackChain {
  * production bundle takes a {@link ProductRuntimeConfig.stack} only.
  */
 export interface TestStack {
+  /**
+   * Tells this stack apart from others. Any non-empty string; a host with a
+   * bundled descriptor takes the key in the stack's link.
+   */
+  id: string;
+  /**
+   * The run of the stack's chains, which changes when they restart, as after
+   * a wipe. Any non-empty string; a host with a bundled descriptor takes the
+   * descriptor's `generation`.
+   */
+  generation: string;
   /** The network `getChainInfo` reports. */
   network: string;
   /** The dotNS TLD a signing host derives its reserved identities under. */
@@ -1865,15 +1862,41 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
 
 /**
  * The stack a mock host runs by default: network `mock` under the `paseo`
- * TLD, over the {@link MOCK_GENESIS} chains.
+ * TLD, over the {@link MOCK_GENESIS} chains, with `mock` as its `id` and its
+ * `generation`.
  */
 export function mockTestStack(): TestStack {
   return {
+    id: "mock",
+    generation: "mock",
     network: "mock",
     tld: "paseo",
     people: { genesisHash: MOCK_GENESIS.people },
     bulletin: { genesisHash: MOCK_GENESIS.bulletin },
     assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+  };
+}
+
+/**
+ * `stack` with a `generation` named after its genesis hashes in lowercase,
+ * for a stack whose chains were replaced: other chains are another run. A
+ * stack still on the {@link mockTestStack} chains keeps its `mock`
+ * generation.
+ */
+export function withChainsGeneration(stack: TestStack): TestStack {
+  const genesis = (chain?: TestStackChain): string =>
+    chain === undefined
+      ? "none"
+      : typeof chain.genesisHash === "string"
+        ? chain.genesisHash.toLowerCase()
+        : `0x${hex(chain.genesisHash)}`;
+  const chainsOf = ({ relay, assetHub, people, bulletin }: TestStack) =>
+    [relay, assetHub, people, bulletin].map(genesis).join(":");
+  const mock = mockTestStack();
+  const chains = chainsOf(stack);
+  return {
+    ...stack,
+    generation: chains === chainsOf(mock) ? mock.generation : chains,
   };
 }
 

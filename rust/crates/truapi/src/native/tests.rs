@@ -7,9 +7,9 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest,
-	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError,
+	StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -452,16 +452,6 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
-	async fn begin_operation(
-		&self,
-		_product_id: ProductId,
-		_label: String,
-	) -> Result<u32, HostRejection> {
-		Ok(1)
-	}
-	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
-		Ok(())
-	}
 }
 
 #[async_trait::async_trait]
@@ -588,18 +578,21 @@ impl NativeChatCallbacks for EventCallbacks {
 		&self,
 		room_id: String,
 		_preview: truapi::latest::ChatRoomPreview,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("preview", &room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
-	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection> {
+	async fn delete_room(
+		&self,
+		room_id: String,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("delete", &room_id);
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
 			.retain(|(created, _, _)| *created != room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn update_feed(
@@ -607,7 +600,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		update: truapi::latest::ChatFeedUpdate,
 		persist: bool,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		if let Some(reason) =
 			self.chat_feed_rejection.lock().expect("feed rejection mutex poisoned").clone()
 		{
@@ -617,7 +610,7 @@ impl NativeChatCallbacks for EventCallbacks {
 			.lock()
 			.expect("feed mutex poisoned")
 			.push((room_id, update, persist));
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 }
 
@@ -929,10 +922,16 @@ fn process_runtime_counts_worker_references_per_product() {
 	.expect("host runtime config should be valid");
 	let product = || ProductId::for_test("shared.dot");
 
-	host.acquire_worker(product());
-	host.acquire_worker(product());
-	host.release_worker(product());
-	host.release_worker(product());
+	let first = host.claim_worker(product());
+	let second = host.claim_worker(product());
+	first.release();
+	first.release();
+	drop(first);
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start)]
+	);
+	drop(second);
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
@@ -2028,7 +2027,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 	assert_eq!(ready_rooms(rooms.as_mut(), "the room list").rooms.len(), 1);
 
 	use crate::platform::ChatPlatform as _;
-	futures::executor::block_on(async {
+	let deleted = futures::executor::block_on(async {
 		platform
 			.set_chat_room_metadata(
 				&product,
@@ -2055,6 +2054,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 			.await
 	})
 	.expect("every declaration reaches the host");
+	assert_eq!(deleted, crate::platform::ChatRoomChangeOutcome::Applied);
 
 	assert_eq!(
 		*callbacks.chat_declared.lock().expect("declared mutex poisoned"),
@@ -2075,27 +2075,32 @@ fn native_chat_adapter_applies_a_feed_update_or_reports_the_host_failure() {
 		},
 	};
 
-	let applied = futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
-		&platform,
-		&product,
-		update(),
-		false,
-	));
-	assert_eq!(applied, Ok(()));
+	let apply = |persist: bool| {
+		futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
+			&platform,
+			&product,
+			update(),
+			persist,
+		))
+	};
+	assert_eq!(apply(false), Ok(crate::platform::ChatRoomChangeOutcome::Applied));
+	assert_eq!(apply(true), Ok(crate::platform::ChatRoomChangeOutcome::Applied));
+	// The host stores the update only when the core says so, so the flag
+	// reaches it as the core set it.
 	assert_eq!(
 		*callbacks.chat_feed.lock().expect("feed mutex poisoned"),
-		[("support".to_string(), update().update, false)]
+		[
+			("support".to_string(), update().update, false),
+			("support".to_string(), update().update, true)
+		]
 	);
 
 	*callbacks.chat_feed_rejection.lock().expect("feed rejection mutex poisoned") =
 		Some("store locked".to_string());
-	let rejected = futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
-		&platform,
-		&product,
-		update(),
-		true,
-	));
-	assert_eq!(rejected, Err(truapi::latest::GenericError { reason: "store locked".to_string() }));
+	assert_eq!(
+		apply(true),
+		Err(truapi::latest::GenericError { reason: "store locked".to_string() })
+	);
 }
 
 #[test]
@@ -2653,20 +2658,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
 	}
 
 	let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
@@ -2861,20 +2852,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			&self,
 			_product_id: ProductId,
 		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}

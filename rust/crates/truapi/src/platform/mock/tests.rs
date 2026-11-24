@@ -216,33 +216,6 @@ fn a_storage_subscription_hears_nothing_from_another_key() {
 }
 
 #[test]
-fn an_operation_is_open_until_its_own_product_ends_it() {
-	let p = MockPlatform::new();
-	let mine = mock_product();
-	let theirs = ProductContext::new(ProductId::for_test("other.dot"));
-
-	let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
-	assert_eq!(
-		p.open_operations(),
-		vec![OpenOperation {
-			product_id: crate::platform::ProductId::for_test("mock.dot"),
-			id,
-			label: "sync".to_string(),
-		}]
-	);
-
-	// Ending is per product: another product holding the same id must not
-	// drop this one's demand.
-	block_on(p.end_operation(&theirs, id)).expect("a foreign end is Ok");
-	assert_eq!(p.open_operations().len(), 1);
-
-	block_on(p.end_operation(&mine, id)).expect("end succeeds");
-	assert!(p.open_operations().is_empty());
-	// Idempotent by contract.
-	block_on(p.end_operation(&mine, id)).expect("a repeat end is Ok");
-}
-
-#[test]
 fn storage_error_injected() {
 	let p = MockPlatform::with_config(MockConfig {
 		faults: MockFaults { storage_error: Some("disk".into()), ..Default::default() },
@@ -634,6 +607,25 @@ fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationS
 		.expect("room registration succeeds")
 }
 
+fn empty_preview() -> latest::ChatRoomPreview {
+	latest::ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message: None,
+		last_reaction: None,
+		unseen_reactions: 0,
+		pinned: false,
+		activity: None,
+	}
+}
+
+fn read_status(message_id: &str) -> latest::ChatFeedUpdate {
+	latest::ChatFeedUpdate::StatusChanged {
+		message_id: message_id.to_string(),
+		status: latest::ChatMessageStatus::Read,
+	}
+}
+
 fn post_text(
 	p: &MockPlatform,
 	room_id: &str,
@@ -742,6 +734,42 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 			.expect("the end is ready immediately")
 			.is_none()
 	);
+
+	// The Chat Extension v2 entry points carry the injected reason too, so a
+	// test of a failing host reaches every one of them.
+	let room = || "lobby".to_string();
+	let refusals = vec![
+		block_on(p.list_chat_rooms(&product)).map(drop),
+		block_on(p.read_chat_room_config(&product, room())).map(drop),
+		block_on(p.set_chat_room_metadata(
+			&product,
+			latest::HostChatSetRoomMetadataRequest {
+				room_id: room(),
+				metadata: latest::ChatRoomMetadata {
+					name: "Lobby".to_string(),
+					description: None,
+					icon: None,
+					placeholder: None,
+				},
+			},
+		)),
+		block_on(p.set_chat_room_preview(
+			&product,
+			latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: empty_preview() },
+		))
+		.map(drop),
+		block_on(
+			p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }),
+		)
+		.map(drop),
+		block_on(p.update_chat_feed(
+			&product,
+			latest::HostChatUpdateFeedRequest { room_id: room(), update: read_status("m1") },
+			true,
+		))
+		.map(drop),
+	];
+	assert_eq!(refusals, vec![Err(latest::GenericError { reason: "chat down".into() }); 6]);
 
 	assert!(p.chat_rooms().is_empty());
 	assert!(p.posted_chat_messages().is_empty());
@@ -1027,7 +1055,7 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 			latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
 			true,
 		)),
-		Ok(())
+		Ok(ChatRoomChangeOutcome::Applied)
 	);
 
 	assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));
@@ -1045,4 +1073,87 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		.unwrap();
 	assert_eq!(p.chat_room_declarations("lobby"), None);
 	assert!(p.chat_rooms().is_empty());
+}
+
+// A room whose messages move between the host and the product starts empty
+// on its new side: the stored messages would show next to pages that the
+// product answers.
+#[test]
+fn a_change_of_product_source_drops_what_the_room_holds() {
+	let p = MockPlatform::new();
+	let product = mock_product();
+	let create = |room_id: &str, config: latest::ChatRoomConfig| {
+		block_on(p.create_chat_room(
+			&product,
+			room_id.to_string(),
+			latest::HostChatCreateRoomRequest { config, ..mock_room_request(room_id) },
+		))
+		.expect("room registration succeeds")
+	};
+	let feed = |room_id: &str| {
+		block_on(p.update_chat_feed(
+			&product,
+			latest::HostChatUpdateFeedRequest {
+				room_id: room_id.to_string(),
+				update: read_status("m1"),
+			},
+			true,
+		))
+		.expect("the mock applies the update")
+	};
+	let sourced = latest::ChatRoomConfig { product_source: true, ..Default::default() };
+	for room_id in ["lobby", "other"] {
+		create(room_id, latest::ChatRoomConfig::default());
+		post_text(&p, room_id, "hi").expect("the mock stores the message");
+		feed(room_id);
+	}
+
+	// Another configuration with the same source keeps what the room holds.
+	let details = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
+	assert_eq!(create("lobby", details), latest::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(p.chat_room_declarations("lobby").map(|room| room.feed.len()), Some(1));
+
+	assert_eq!(create("lobby", sourced.clone()), latest::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(
+		p.chat_room_declarations("lobby"),
+		Some(ChatRoomDeclarations { config: Some(sourced), ..Default::default() })
+	);
+	let posted = p.posted_chat_messages();
+	let posted_rooms: Vec<&str> = posted.iter().map(|message| message.room_id.as_str()).collect();
+	assert_eq!(posted_rooms, ["other"]);
+	assert_eq!(p.chat_room_declarations("other").map(|room| room.feed.len()), Some(1));
+}
+
+// A call that reaches the mock after the room is gone, as one sent while the
+// delete was on its way, leaves nothing behind for a deleted room.
+#[test]
+fn a_deleted_room_keeps_no_declarations() {
+	let p = MockPlatform::new();
+	let product = mock_product();
+	create_room(&p, "lobby");
+	block_on(p.delete_chat_room(
+		&product,
+		latest::HostChatDeleteRoomRequest { room_id: "lobby".to_string() },
+	))
+	.expect("the mock deletes the room");
+
+	block_on(p.set_chat_room_preview(
+		&product,
+		latest::HostChatSetRoomPreviewRequest {
+			room_id: "lobby".to_string(),
+			preview: empty_preview(),
+		},
+	))
+	.expect("the mock accepts a late preview");
+	block_on(p.update_chat_feed(
+		&product,
+		latest::HostChatUpdateFeedRequest {
+			room_id: "lobby".to_string(),
+			update: read_status("m1"),
+		},
+		true,
+	))
+	.expect("the mock accepts a late update");
+
+	assert_eq!(p.chat_room_declarations("lobby"), None);
 }
