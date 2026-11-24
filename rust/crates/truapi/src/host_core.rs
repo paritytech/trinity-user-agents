@@ -599,6 +599,9 @@ impl HostRuntime<PairingHost> {
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
 	/// persisted slot, or the Account Holder. `timeout_ms` bounds that wait.
+	///
+	/// `None` while signed out, answered before any other check. Fails for a
+	/// product the stack does not serve, whatever subtree was kept for it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
@@ -700,7 +703,8 @@ impl HostRuntime<SigningHost> {
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `None` while no session is active.
+	/// root, or `None` while no session is active, answered before any other
+	/// check. Fails for a product the stack does not serve.
 	///
 	/// A signing host holds the root, so it answers this locally where a
 	/// pairing host has to ask the Account Holder.

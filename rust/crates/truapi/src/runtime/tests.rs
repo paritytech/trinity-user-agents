@@ -5112,8 +5112,11 @@ fn push_notification_delegates_payload_and_returns_host_id() {
 }
 
 /// A title replaces the product id the person sees, so only a trusted product
-/// may set one. Any other product could otherwise pass for the Polkadot app,
-/// and so could a trusted label under a TLD the stack does not serve.
+/// may set one. Any other product could otherwise pass for the Polkadot app.
+///
+/// Trust is the stack's, so `dim2.testnet` sets none either. The bridges never
+/// run a product the stack does not serve, so this context, built without
+/// their check, tests the trust rule on its own.
 #[test]
 fn push_notification_keeps_a_title_only_from_a_trusted_product() {
 	let delivered_titles = ["dim2.dot", "other.dot", "dim2.testnet"].map(|product| {

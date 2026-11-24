@@ -1106,7 +1106,9 @@ impl WasmPairingHostRuntime {
 
 	/// Resolve a product's hard-subtree public key from the cache, the
 	/// persisted slot, or the Account Holder. `timeoutMs` bounds that wait and
-	/// exceeding it rejects. `undefined` when no session is active.
+	/// exceeding it rejects. `undefined` when no session is active, answered
+	/// before any other check. Rejects for a product the stack does not serve,
+	/// whatever subtree was kept for it.
 	#[wasm_bindgen(js_name = productSubtreePublicKey)]
 	pub async fn product_subtree_public_key(
 		&self,
@@ -1291,7 +1293,8 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `undefined` while no session is active.
+	/// root, or `undefined` while no session is active, answered before any
+	/// other check. Throws for a product the stack does not serve.
 	///
 	/// Paired with `deriveProductAccountPublicKey` and `productAccountAddress`
 	/// this gives a host the product's address without asking the product.

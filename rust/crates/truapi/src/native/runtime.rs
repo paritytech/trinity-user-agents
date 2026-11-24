@@ -1329,7 +1329,9 @@ impl NativeProductExecution {
 	/// Resolve a product's hard-subtree public key for hosts naming the account
 	/// a review will sign with. Answers from the cache, the persisted slot, or
 	/// the Account Holder, and `timeout_ms` bounds that wait. Exceeding it is
-	/// an error; `None` means no active session.
+	/// an error; `None` means no active session, which is answered before any
+	/// other check. A product the stack does not serve is an error, whatever
+	/// subtree was kept for it.
 	pub fn product_subtree_public_key(
 		&self,
 		product_id: ProductId,
