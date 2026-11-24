@@ -75,8 +75,10 @@ refresh it.
 After a stack's chains restart from genesis, the same endpoints serve new
 chains with new genesis hashes. To catch that, the core asks every chain
 connection for its genesis hash before anything else uses it. If the hash is
-not the descriptor's, calls to that chain fail, the core closes the connections
-it opened earlier for it, and `stackStatus()` lists the chain in `mismatches`.
+not the descriptor's, calls to that chain fail and `stackStatus()` lists the
+chain in `mismatches`. The core also asks the connections it opened earlier for
+that chain again, apart from statement subscriptions, and closes those that now
+give a different hash or say the chain is halted.
 While a chain is listed, the core asks `fetchStackDescriptor` every five
 minutes instead of every hour, until `restartRequired` is set.
 

@@ -207,8 +207,13 @@ subscriptions on People.
   connection out.
 - If the hash is different, the call fails with a host failure. For a chain of
   the stack, `StackStatus::mismatches` lists it until a connection reaches the
-  chain the descriptor names. The core also closes the connections it handed out
-  earlier for that chain, because a host may have redialled underneath them.
+  chain the descriptor names. Without delaying that failure, the core also
+  asks the connections it handed out earlier for that chain again, apart from
+  the statement subscriptions, because a host may have redialled underneath
+  them. It closes those that give a different hash or say the chain is halted,
+  as dotli does while it redials. Those that give the right hash, fail another
+  way, or say nothing for 30 seconds stay open, since one endpoint can front
+  several nodes.
 - If the chain cannot be reached, or says nothing for 30 seconds, the call fails
   as unavailable and the next connection asks again. A chain that dotli reports
   as halted is asked again for up to 47 seconds, as a halted follow is, and is

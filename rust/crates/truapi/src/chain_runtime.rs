@@ -18,8 +18,9 @@
 //! into the public API.
 
 use core::{
-	pin::Pin,
+	pin::{Pin, pin},
 	task::{Context, Poll},
+	time::Duration,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::SystemTime;
@@ -38,7 +39,7 @@ use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
 	channel::mpsc,
-	future::{AbortHandle, Abortable, BoxFuture, Shared},
+	future::{AbortHandle, Abortable, BoxFuture, Either, Shared, join_all, select},
 	stream::BoxStream,
 };
 use parity_scale_codec::{Decode, Error as ScaleError, Input};
@@ -99,6 +100,11 @@ use runtime_call_client::RuntimeCallClient;
 
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
 const CONNECT_METHOD: &str = "remote_chain_connect";
+
+/// How long a connection asked for its genesis hash again, after another
+/// connection to its chain found a different one, has to answer before it is
+/// left open.
+const GENESIS_RECHECK_WAIT: Duration = Duration::from_secs(30);
 /// Method tag for failures building or using the legacy Subxt client.
 const LEGACY_CONNECTION: &str = "legacy_connection";
 
@@ -541,9 +547,10 @@ impl ChainRuntime {
 	///
 	/// A connection fails with a host failure when its chain gives a different
 	/// hash or an error, and as unavailable when the chain gives no answer or
-	/// stays halted. A different hash also closes the connections already
-	/// handed out for that chain in every scope, since a host may have
-	/// redialled under them.
+	/// stays halted. After a different hash, the connections already handed
+	/// out for that chain in every scope are asked again in the background,
+	/// and those that now give a different hash or say the chain is halted are
+	/// closed, since a host may have redialled under them.
 	#[must_use]
 	pub fn checking_genesis(mut self, check: Arc<dyn GenesisCheck>) -> Self {
 		self.genesis_check = Some(check);
@@ -564,8 +571,16 @@ impl ChainRuntime {
 		let methods = ChainHeadRpcMethods::new(RpcClient::new(rpc.clone()));
 		let pool = Arc::downgrade(&self.connections);
 		let key = self.connection_key(&genesis_hash);
-		verify_genesis(&methods, genesis_hash, check.as_ref(), self.timer.as_ref(), &pool, &key)
-			.await
+		verify_genesis(
+			&methods,
+			genesis_hash,
+			check.as_ref(),
+			&self.timer,
+			&self.spawner,
+			&pool,
+			&key,
+		)
+		.await
 	}
 
 	/// This runtime seen as `scope`. Shares every map with the original, so a
@@ -1131,7 +1146,8 @@ impl ChainRuntime {
 								&connection.methods,
 								named,
 								check.as_ref(),
-								connection.timer.as_ref(),
+								&connection.timer,
+								&connection.spawner,
 								&registry,
 								&setup_key,
 							)
@@ -2294,27 +2310,37 @@ type ConnectionRegistry = Mutex<HashMap<ConnectionScope, HashMap<String, Connect
 /// fails unless the hash is `named`, the one the connection was opened for.
 ///
 /// A halted chain is asked again on `timer`, and is unavailable when the halt
-/// outlasts the retries. A different hash also closes every connection `pool`
-/// handed out for the chain, which it keeps under `key`, because a host may
-/// have redialled underneath them.
+/// outlasts the retries. A different hash also has each connection `pool`
+/// handed out for the chain, which it keeps under `key`, asked again on
+/// `spawner`, because a host may have redialled underneath it. The call does
+/// not wait for those answers.
 async fn verify_genesis(
 	methods: &ChainHeadRpcMethods<TruapiRpcConfig>,
 	named: [u8; 32],
 	check: &dyn GenesisCheck,
-	timer: &dyn Timer,
+	timer: &Arc<dyn Timer>,
+	spawner: &Spawner,
 	pool: &Weak<ConnectionRegistry>,
 	key: &str,
 ) -> Result<(), RuntimeFailure> {
 	let ask = || methods.chainspec_v1_genesis_hash();
 	let never_cancelled = truapi::CancellationToken::default();
-	let answer = retry_while_halted(ask, says_chain_halted, timer, &never_cancelled).await;
+	let answer = retry_while_halted(ask, says_chain_halted, timer.as_ref(), &never_cancelled).await;
 	let H256(answered) = answer.map_err(|error| no_genesis_hash(error).on_chain(&named))?;
 	check.chain_answered(GenesisHashes { named, answered });
 	if answered == named {
 		return Ok(());
 	}
 	if let Some(pool) = pool.upgrade() {
-		close_connections(&pool, key);
+		let earlier: Vec<Arc<ChainConnection>> = pool
+			.lock()
+			.unwrap()
+			.values()
+			.filter_map(|connections| connections.get(key)?.ready().cloned())
+			.collect();
+		if !earlier.is_empty() {
+			spawner.spawn(close_connections_on_another_chain(earlier, named, timer.clone()));
+		}
 	}
 	let reason = format!(
 		"the chain gave genesis hash {}, not {}",
@@ -2334,20 +2360,34 @@ fn no_genesis_hash(error: SubxtRpcError) -> RuntimeFailure {
 	}
 }
 
-/// Closes every connection `pool` handed out for the chain it keeps under
-/// `key`, in every scope.
-fn close_connections(pool: &ConnectionRegistry, key: &str) {
-	let ready: Vec<Arc<ChainConnection>> = pool
-		.lock()
-		.unwrap()
-		.values()
-		.filter_map(|connections| connections.get(key)?.ready().cloned())
-		.collect();
-	for connection in ready {
-		connection
-			.rpc_client
-			.close("a newer connection for this chain reached one with a different genesis hash");
-	}
+/// Asks each of `connections`, opened for the chain `named`, for its genesis
+/// hash again, and closes those that now reach another chain.
+///
+/// A connection reaches another chain when it gives another hash, or says the
+/// chain is halted, as a host answers while it redials the connection. One
+/// that gives `named`, fails another way, or does not answer within
+/// [`GENESIS_RECHECK_WAIT`] on `timer` stays open: an endpoint can front
+/// several nodes, so one node serving another chain says nothing about the
+/// node behind each connection.
+async fn close_connections_on_another_chain(
+	connections: Vec<Arc<ChainConnection>>,
+	named: [u8; 32],
+	timer: Arc<dyn Timer>,
+) {
+	join_all(connections.iter().map(|connection| async {
+		let ask = pin!(connection.methods.chainspec_v1_genesis_hash());
+		let reaches_another_chain = match select(ask, timer.sleep(GENESIS_RECHECK_WAIT)).await {
+			Either::Left((Ok(H256(answered)), _)) => answered != named,
+			Either::Left((Err(error), _)) => says_chain_halted(&error),
+			Either::Right(_) => false,
+		};
+		if reaches_another_chain {
+			connection
+				.rpc_client
+				.close("the connection no longer reaches the chain it was opened for");
+		}
+	}))
+	.await;
 }
 
 fn scope_released(method: &'static str) -> RuntimeFailure {
