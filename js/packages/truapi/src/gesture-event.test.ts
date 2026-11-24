@@ -93,7 +93,7 @@ describe("gesture wire contract", () => {
         expect(Array.from(RendererNode.enc(extendMask("mask.top")))).toHaveLength(11);
     });
 
-    it("carries a mask modifier after ExitFade, with its cleared share last, as the Rust bytes", () => {
+    it("carries a mask modifier after ExitFade as the Rust bytes", () => {
         const mask = {
             key: "k",
             mode: "Show" as const,
@@ -104,7 +104,10 @@ describe("gesture wire contract", () => {
         };
         const node: RendererNode = { tag: "Box", value: { modifiers: [{ tag: "Mask", value: mask }], props: {}, children: [] } };
         const bytes = RendererNode.enc(node);
-        expect(Array.from(bytes.slice(0, 24))).toEqual([2, 4, 20, 1, 4, 107, 1, 4, 0, 1, 4, 112, 100, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, 97]);
+        // As `a_masked_box_has_the_bytes_the_client_pins` in the core: the follow's absent brush after its width.
+        expect(Array.from(bytes)).toEqual([
+            2, 4, 20, 1, 4, 107, 1, 4, 0, 1, 4, 112, 100, 0, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, 97, 0, 0,
+        ]);
         expect(RendererNode.dec(bytes)).toEqual(node);
     });
 

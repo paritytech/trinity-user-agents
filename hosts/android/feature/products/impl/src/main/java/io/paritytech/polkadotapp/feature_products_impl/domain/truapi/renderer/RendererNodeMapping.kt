@@ -322,6 +322,7 @@ private fun Mask.toJs(keyed: RendererKeyed): JsModifier.Mask = JsModifier.Mask(
     key = key,
     mode = if (mode == MaskMode.SHOW) JsMaskMode.SHOW else JsMaskMode.HIDE,
     shapes = shapes.map { it.toJs() },
+    // The Android stamped-brush layer stamps a followed brush; until then the strokes draw round.
     follow = follow?.let { JsMaskFollow(it.pan, it.width.toLong()) },
     fadeMs = fadeMs?.toLong() ?: 0L,
     clearedShare = clearedShare?.let { JsClearedShare(it.atPermille.toInt(), it.action) },
@@ -334,6 +335,8 @@ fun MaskShape.toJs(): JsMaskShape = when (this) {
     is MaskShape.All -> JsMaskShape.All
     is MaskShape.Circle -> JsMaskShape.Circle(center.toJs(), radius.toLong())
     is MaskShape.Stroke -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
+    // The Android stamped-brush layer stamps the tip; until then the line draws round at its width.
+    is MaskShape.Stamped -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
 }
 
 private fun MaskPoint.toJs() = JsMaskPoint(x, y)
