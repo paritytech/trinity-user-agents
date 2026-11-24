@@ -30,11 +30,14 @@ struct NodeGestureView<Content: View>: View {
     @State private var pressed = false
     /// A completed host drag's pop: when it starts and the scale it starts from.
     @State private var pop: (start: Date, from: CGFloat)?
+    /// The finger of a location pan, for the `Touch` nodes inside it.
+    @State private var fingerFeed = GestureFingerFeed()
 
     var body: some View {
         TimelineView(.animation(paused: pop == nil)) { timeline in
             let popped = popState(at: timeline.date)
             content()
+                .environment(\.gestureFinger, props.pan?.reportsLocation == true ? fingerFeed : nil)
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { childWidth = $0 }
                 .scaleEffect(popped?.scale ?? (pressed ? props.feel?.pressScale ?? 1 : 1), anchor: scaleAnchor)
                 .offset(
@@ -45,7 +48,10 @@ struct NodeGestureView<Content: View>: View {
         .id(settleGeneration)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGSize.self, of: \.size) { width = $0.width; height = $0.height }
-        .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { trail?.origin = $0 }
+        .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: {
+            trail?.origin = $0
+            fingerFeed.origin = $0
+        }
         .onChange(of: width) { updatePlace() }
         .onChange(of: childWidth) { updatePlace() }
         .onChange(of: childBase) { updatePlace() }
@@ -188,21 +194,25 @@ private extension NodeGestureView {
             lastMove = 0
             startPacing(pan)
             trail?.begin(at: leftToRight(sample.touchDown))
+            fingerFeed.send(.down, at: leftToRight(sample.touchDown))
             trail?.extend(to: leftToRight(sample.location))
             position = sample.touchDown
             emit(pan.startAction, .started)
             position = sample.location
+            fingerFeed.send(.move, at: leftToRight(sample.location))
             offerMove(pan)
         case .moved:
             guard dragging else { return }
             trail?.extend(to: leftToRight(sample.location))
             position = sample.location
+            fingerFeed.send(.move, at: leftToRight(sample.location))
             offerMove(pan)
         case .ended,
              .cancelled:
             guard dragging else { return }
             trail?.extend(to: leftToRight(sample.location))
             position = sample.location
+            fingerFeed.send(phase == .ended ? .up : .cancel, at: leftToRight(sample.location))
             dragging = false
             stopPacing()
             emit(pan.endAction, phase)

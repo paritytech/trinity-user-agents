@@ -85,6 +85,7 @@ private extension DebugMaterialsCardViewModel {
         }
         materials.startResolution(nodeCount: tree.materialsCount, touch: factory)
         let drawn = [layers.card] + (revealed ? [] : [layers.scratch]) + (confirmed ? [] : [layers.slider])
+            + [layers.scratch]
         materials.update(nodes: drawn.map { .ready([$0]) }, noise: noise)
     }
 
@@ -148,7 +149,8 @@ private extension DebugMaterialsCardViewModel {
         return """
         {"tag":"Column","value":{"modifiers":[{"tag":"FillWidth","value":true}],
         "props":{"horizontalAlignment":null,"verticalArrangement":null},"children":[
-        \(cardJson(material: layers.card.material)),\(scratch),\(slider)]}}
+        \(cardJson(material: layers.card.material)),\(scratch),\(slider),
+        \(underGestureJson(material: layers.scratch.material))]}}
         """
     }
 
@@ -171,6 +173,22 @@ private extension DebugMaterialsCardViewModel {
         {"tag":"Padding","value":{"top":24,"bottom":24,"start":24,"end":24}}],"props":{"contentAlignment":null},
         "children":[{"tag":"Text","value":{"modifiers":[],"props":{"style":"HeadlineLarge","color":null},
         "children":[{"tag":"String","value":{"text":"You won 1 DOT"}}]}}]}}]}}]}}
+        """
+    }
+
+    /// A layer that reads the `Touch` trail, under a gesture that reports where the finger is: the gesture takes
+    /// the finger and hands it to the `Touch` node inside.
+    static func underGestureJson(material: Data) -> String {
+        """
+        {"tag":"Gesture","value":{"modifiers":[],"props":{"key":"debug-under-gesture",
+        "pan":{"axis":"Free","location":true}},
+        "children":[{"tag":"Touch","value":{"props":{"drag":"Any","trail":{"radius":26},"triggers":[]},
+        "children":[{"tag":"Materials","value":{"props":{"layers":[{"material":"\(material.toHex(includePrefix: true))",
+        "args":[{"tag":"SamplerFloat","value":{"tag":"Trail"}}]}]},
+        "children":[{"tag":"Box","value":{"modifiers":[{"tag":"Width","value":300},{"tag":"Height","value":200},
+        {"tag":"Padding","value":{"top":24,"bottom":24,"start":24,"end":24}}],"props":{"contentAlignment":null},
+        "children":[{"tag":"Text","value":{"modifiers":[],"props":{"style":"HeadlineLarge","color":null},
+        "children":[{"tag":"String","value":{"text":"Trail under a gesture"}}]}}]}}]}}]}}]}}
         """
     }
 

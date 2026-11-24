@@ -10,15 +10,21 @@ struct TouchNodeView<Children: View>: View {
 
     @Environment(\.widgetMaterials) private var materials
     @Environment(\.widgetActionHandler) private var actionHandler
+    /// Inside a gesture that reports where the finger is, the gesture takes the finger and hands it on.
+    @Environment(\.gestureFinger) private var finger
     @State private var size: CGSize = .zero
+    @State private var follower = TouchFeedFollower()
 
     var body: some View {
         let area = touchArea
         children()
             .environment(\.widgetTouchArea, area)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { follower.origin = $0 }
+            .onChange(of: area.map(ObjectIdentifier.init), initial: true) { follow(area) }
+            .onDisappear { finger?.unfollow(follower) }
             .overlay {
-                if let area {
+                if let area, finger == nil {
                     TouchCaptureView(area: area, drag: node.drag) { actions in
                         actions.forEach { actionHandler?($0, nil) }
                     }
@@ -35,6 +41,25 @@ struct TouchNodeView<Children: View>: View {
         guard node.takesTouch, size.width > 0, size.height > 0 else { return nil }
         return materials?.touchArea(index: node.index, size: size)
     }
+
+    /// Takes the gesture's finger samples, moved from the screen into this node's frame.
+    private func follow(_ area: WidgetTouchArea?) {
+        guard let feed = finger else { return }
+        guard let area else {
+            feed.unfollow(follower)
+            return
+        }
+        let handler = actionHandler
+        feed.follow(follower) { [weak area, follower] phase, point in
+            let local = CGPoint(x: point.x - follower.origin.x, y: point.y - follower.origin.y)
+            area?.sample(phase, at: local).forEach { handler?($0, nil) }
+        }
+    }
+}
+
+/// Where a `Touch` node sits on screen, read when a sample arrives.
+private final class TouchFeedFollower {
+    var origin: CGPoint = .zero
 }
 
 private struct TouchCaptureView: UIViewRepresentable {
