@@ -65,10 +65,15 @@ export type LogLevel = string;
  * alongside them, so the build's own stack cannot name them.
  *
  * The core refuses a policy that would reserve less than it says: a field this
- * type does not have, `allowed` together with extra values, which the allowed
- * stack may name anyway, and an extra TLD that no stack can have. It refuses
- * such a policy before it reads the key from the pointer's link and verifies
- * the descriptor under it.
+ * type does not have, an entry it cannot read, such as a genesis hash that is
+ * not 32 bytes or a TLD that is not a string, `allowed` together with extra
+ * values, which the allowed stack may name anyway, and an extra TLD that no
+ * stack can have. It checks the policy after it reads the other fields of
+ * `stack` or `testStack`, so one of those that is missing, unknown or
+ * malformed is reported first. It checks the policy before the stack itself:
+ * before it reads the key from a `stack`'s pointer link and verifies its
+ * descriptor, and before it checks a `testStack`'s identity, TLD and genesis
+ * hashes against the core's rules.
  */
 export interface ReservedValuesPolicy {
   /**
