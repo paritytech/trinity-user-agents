@@ -61,8 +61,8 @@ struct HostLogSinkDestinationTests {
         #expect(sink.lines.filter { $0.tag == "truapi.chain" }.count == limit)
         #expect(sink.lines.last == RecordingHostLogSink.Line(
             level: .info,
-            tag: "truapi.chain",
-            message: "chain connection 2 open"
+            tag: "truapi.auth",
+            message: "auth session restored"
         ))
 
         clock.now += HostLogSinkDestination.window
