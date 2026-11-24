@@ -19,29 +19,44 @@ use crate::{
 	platform::{ExecutableKind, ProductContext, ProductId},
 };
 
-/// Operations the native UI thread performs on an individual WebView.
+/// How long an attempt may go without running, from its start and from each lost connection.
+const STARTUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(90);
+
+/// Starts and disposes the WebView of each worker attempt.
+///
+/// Calls arrive on whichever thread changed worker demand or reported a failure, which can be the
+/// thread constructing the runtime or one of the core's own. Return without blocking: the starts
+/// and stops of every product wait behind the call. The core holds no lock meanwhile, so an
+/// implementation may call back into the runtime or the attempt.
 #[uniffi::export(rust, foreign)]
 pub trait NativeHostWebViewWorker: Send + Sync {
-	/// Begin booting the product, reporting readiness or failure through this attempt.
+	/// Begin booting the product, reporting module start or failure through this attempt.
+	///
+	/// The core fails an attempt that is not running 90 seconds after its start, or after it
+	/// lost its connection.
 	fn start(&self, product_id: ProductId, attempt: Arc<NativeWorkerAttempt>);
 
 	/// Dispose only the specified attempt's WebView, even when startup is incomplete.
+	///
+	/// Arrives once for each started attempt, after its [`Self::start`] call has returned,
+	/// including after a failure the attempt reported. It can follow the start of the product's
+	/// next attempt.
 	fn stop(&self, product_id: ProductId, attempt_id: u64);
 }
 
 /// Availability of the product's session-owned worker.
 #[derive(Clone, uniffi::Enum)]
 pub enum NativeWorkerExecutionState {
-	/// The session has no demand for the product.
+	/// The session has no demand for the product, or a reload is replacing its worker.
 	Idle,
-	/// The current attempt is starting its module or connecting its transport.
+	/// The worker is starting, reconnecting, or waiting for its next start after a failure.
 	Pending,
 	/// The module started and its authenticated transport can accept host calls.
 	Running {
 		/// Consumer operations on this execution.
 		execution: Arc<dyn NativeWorkerExecution>,
 	},
-	/// The worker failed to start or exited while still needed.
+	/// No attempt will start for the current demand.
 	Failed {
 		/// Why this worker is unavailable.
 		reason: String,
@@ -52,6 +67,8 @@ pub enum NativeWorkerExecutionState {
 #[uniffi::export(rust, foreign)]
 pub trait NativeWorkerExecutionObserver: Send + Sync {
 	/// Receive the current state at registration, followed by each change in order.
+	///
+	/// `Running` arrives again when the worker's connection is replaced.
 	fn changed(&self, state: NativeWorkerExecutionState);
 
 	/// Finish the observation after the session has delivered its last update.
@@ -68,18 +85,6 @@ impl NativeProductExecution {
 	}
 }
 
-#[uniffi::export]
-impl NativeProductExecution {
-	/// Acknowledge this worker's module startup. Its authenticated transport may connect later.
-	///
-	/// Returns false for an execution outside the current pending attempt.
-	pub fn report_worker_module_started(&self) -> bool {
-		self.worker_attempt
-			.as_ref()
-			.is_some_and(|attempt| attempt.update_readiness(true))
-	}
-}
-
 enum Phase {
 	Starting {
 		owner: Option<Arc<NativeProductExecution>>,
@@ -91,19 +96,22 @@ enum Phase {
 
 enum Entry {
 	Active { id: u64, phase: Phase, cancel: Box<dyn FnOnce() + Send> },
-	Failed(String),
+	Retrying,
+	Unavailable(String),
 }
 
 impl Entry {
 	fn state(&self) -> NativeWorkerExecutionState {
 		match self {
-			Self::Active { phase: Phase::Starting { .. }, .. } => {
+			Self::Active { phase: Phase::Starting { .. }, .. } | Self::Retrying => {
 				NativeWorkerExecutionState::Pending
 			},
 			Self::Active { phase: Phase::Running(owner), .. } => {
 				NativeWorkerExecutionState::Running { execution: owner.clone() }
 			},
-			Self::Failed(reason) => NativeWorkerExecutionState::Failed { reason: reason.clone() },
+			Self::Unavailable(reason) => {
+				NativeWorkerExecutionState::Failed { reason: reason.clone() }
+			},
 		}
 	}
 
@@ -136,6 +144,18 @@ impl Registry {
 
 	fn changed(&mut self, product: &ProductId) {
 		self.observers.send(product, &self.state(product));
+	}
+
+	fn insert(&mut self, product: &ProductId, entry: Entry) -> Option<Entry> {
+		let pending = |registry: &Self| {
+			matches!(registry.state(product), NativeWorkerExecutionState::Pending)
+		};
+		let was_pending = pending(self);
+		let previous = self.entries.insert(product.clone(), entry);
+		if !(was_pending && pending(self)) {
+			self.changed(product);
+		}
+		previous
 	}
 }
 
@@ -170,7 +190,7 @@ impl NativeTrUApiHostRuntime {
 	}
 }
 
-/// The right to open one worker execution and report failure for that attempt.
+/// The right to open one worker execution and report its module start or its failure.
 #[derive(uniffi::Object)]
 pub struct NativeWorkerAttempt {
 	product: ProductId,
@@ -220,10 +240,19 @@ impl NativeWorkerAttempt {
 		Ok(execution)
 	}
 
+	/// Acknowledge that the module of this attempt's execution started. Its authenticated
+	/// transport may connect later.
+	///
+	/// Returns false unless this attempt is current, has opened its execution and is still
+	/// starting.
+	pub fn module_started(&self) -> bool {
+		self.update_readiness(true)
+	}
+
 	/// Revoke this attempt after startup failure or renderer loss, applying the ledger's retry
 	/// policy.
 	pub fn failed(&self, reason: String) {
-		self.fail_if(reason, |_| true);
+		self.fail_if(&reason, |_| true);
 	}
 }
 
@@ -231,12 +260,12 @@ impl NativeWorkerAttempt {
 	fn deadline(self: &Arc<Self>, runtime: &NativeTrUApiHostRuntime) -> BackgroundTask {
 		let attempt = self.clone();
 		BackgroundTask::spawn(&runtime.spawner, async move {
-			tokio::time::sleep(core::time::Duration::from_secs(90)).await;
+			tokio::time::sleep(STARTUP_DEADLINE).await;
 			attempt.startup_timeout();
 		})
 	}
 
-	fn fail_if(&self, reason: String, applies: impl FnOnce(&Phase) -> bool) {
+	fn fail_if(&self, reason: &str, applies: impl FnOnce(&Phase) -> bool) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
 		let old = {
 			let Some(mut session) = runtime.worker_session() else { return };
@@ -250,21 +279,19 @@ impl NativeWorkerAttempt {
 			{
 				return;
 			}
-			let old = registry
-				.entries
-				.insert(self.product.clone(), Entry::Failed(reason))
-				.expect("current attempt");
-			registry.changed(&self.product);
-			old
+			registry.insert(&self.product, Entry::Retrying).expect("current attempt")
 		};
+		tracing::warn!(
+			product = %self.product,
+			reason = %crate::logging::HostText::new(reason),
+			"a worker attempt failed"
+		);
 		old.stop();
 		runtime.runtime.worker_attempt_exited(&self.product, self.id);
 	}
 
 	fn startup_timeout(&self) {
-		self.fail_if("worker startup timed out".to_owned(), |phase| {
-			matches!(phase, Phase::Starting { .. })
-		});
+		self.fail_if("worker startup timed out", |phase| matches!(phase, Phase::Starting { .. }));
 	}
 
 	/// Publish a worker when its authenticated bridge can receive calls.
@@ -354,9 +381,7 @@ impl WorkerController for Controller {
 			let Some(host) = session.worker_host.clone() else {
 				session
 					.registry
-					.entries
-					.insert(product_id.clone(), Entry::Failed("no worker host configured".into()));
-				session.registry.changed(product_id);
+					.insert(product_id, Entry::Unavailable("no worker host configured".into()));
 				return;
 			};
 			let attempt = Arc::new(NativeWorkerAttempt {
@@ -376,8 +401,7 @@ impl WorkerController for Controller {
 				},
 				cancel: Box::new(move || drop(started)),
 			};
-			let previous = session.registry.entries.insert(product_id.clone(), entry);
-			session.registry.changed(product_id);
+			let previous = session.registry.insert(product_id, entry);
 			(previous, webview)
 		};
 		if let Some(previous) = previous {
@@ -463,6 +487,9 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Revoke all worker claims and dispose their executions when the host session ends.
+	///
+	/// While another thread is delivering a worker start or stop, the disposal completes on that
+	/// thread after this call returns. An observer's `finished` follows it.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();
 	}

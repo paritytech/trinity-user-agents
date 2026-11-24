@@ -1717,11 +1717,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         inner = try open(callbackRetainer, chatRetainer, gameRetainer)
     }
 
-    /// Acknowledge that the WebView loaded this attempt's worker entry.
-    public func reportWorkerModuleStarted() -> Bool {
-        inner.reportWorkerModuleStarted()
-    }
-
     deinit {
         inner.shutdown()
     }
