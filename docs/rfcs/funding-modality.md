@@ -396,14 +396,14 @@ scope for now.
 ## Cancel
 
 `cancel_funding(intent)` is the host's one way to stop a session; the core picks what it does from the session's
-state. It answers `Ended`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or no such session).
+state. It answers `Cancelled`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or no such session).
 
 | State | Effect | Answer |
 | --- | --- | --- |
-| Overlay up, never started | no longer started on its best quote; the overlay closes as though dismissed and the session is dropped | `Ended` |
+| Overlay up, never started | no longer started on its best quote; the overlay closes as though dismissed and the session is dropped | `Cancelled` |
 | Overlay up, a provider already chosen | the session runs as started and its provider is asked to stop | `Requested` |
-| Started, no provider | ends as `Failed { Cancelled }` | `Ended` |
-| Provider serving it, before money moved | the provider is asked to stop; asked again, the session ends | `Requested`, then `Ended` |
+| Started, no provider | ends as `Failed { Cancelled }` | `Cancelled` |
+| Provider serving it, before money moved | the provider is asked to stop; asked again, the session ends | `Requested`, then `Cancelled` |
 | After money moved | the provider is asked, and answers with a refusal or an offer | `Requested`, `Pending` or `TooLate` |
 | Ended, or unknown | nothing | `Refused` |
 

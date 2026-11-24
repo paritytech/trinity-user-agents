@@ -14,7 +14,7 @@ extension CancelOutcome {
 
     var followUp: FollowUp {
         switch self {
-        case .ended: .close
+        case .cancelled: .close
         case .requested,
              .pending: .toast(String(localized: .Funding.activityCancelRequested))
         case .tooLate: .toast(String(localized: .Funding.cancelTooLate))

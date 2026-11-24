@@ -711,7 +711,7 @@ pub enum CancelOutcome {
 	/// The session ended as cancelled: it never started and its overlay
 	/// closed, no provider serves it, or no money moved and its provider was
 	/// asked once already.
-	Ended,
+	Cancelled,
 	/// The provider serving it was asked to cancel.
 	Requested,
 	/// A cancel is already with the provider, or accepted and being settled.
@@ -1762,12 +1762,12 @@ impl FundingSession {
 		}
 		if self.provider_id.is_none() {
 			self.fail(FundingFailure::Cancelled, now_ms);
-			return CancelOutcome::Ended;
+			return CancelOutcome::Cancelled;
 		}
 		if !self.money_moved() {
 			if self.cancel.is_some() {
 				self.fail(FundingFailure::Cancelled, now_ms);
-				return CancelOutcome::Ended;
+				return CancelOutcome::Cancelled;
 			}
 			self.cancel = Some(FundingCancel::Requested);
 			return CancelOutcome::Requested;

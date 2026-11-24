@@ -3611,7 +3611,7 @@ fn a_cancel_that_moved_nothing_is_acknowledged_and_left_out_of_history() {
 	let intent = opened_session(&services, &tasks);
 	assert_eq!(
 		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
-		CancelOutcome::Ended
+		CancelOutcome::Cancelled
 	);
 
 	let owed = futures::executor::block_on(services.acknowledge_funding_session(&intent))
@@ -4270,7 +4270,7 @@ fn cancelling_while_the_overlay_is_up_closes_it_and_drops_the_session() {
 			services.funding().get(&intent).is_none(),
 			again,
 		),
-		(Ok(CancelOutcome::Ended), true, true, true, Ok(CancelOutcome::Refused))
+		(Ok(CancelOutcome::Cancelled), true, true, true, Ok(CancelOutcome::Refused))
 	);
 }
 
@@ -4312,7 +4312,7 @@ fn cancelling_while_the_overlay_is_up_after_choosing_a_provider_asks_it_to_stop(
 			true,
 			Some(intent.clone()),
 			Some((false, Some(FundingCancel::Requested))),
-			Ok(CancelOutcome::Ended),
+			Ok(CancelOutcome::Cancelled),
 			Some(true),
 		)
 	);
@@ -4358,7 +4358,7 @@ fn cancelling_before_the_overlay_shows_never_shows_it() {
 			matches!(opened, Err(super::funding::OpenFundingError::Dismissed)),
 			services.funding().get(&intent).is_none(),
 		),
-		(Ok(CancelOutcome::Ended), false, true, true)
+		(Ok(CancelOutcome::Cancelled), false, true, true)
 	);
 }
 
@@ -4377,7 +4377,7 @@ fn cancelling_a_started_session_ends_it_then_refuses() {
 
 	assert_eq!(
 		(cancel(&intent), cancel(&intent), cancel("fs_unknown")),
-		(Ok(CancelOutcome::Ended), Ok(CancelOutcome::Refused), Ok(CancelOutcome::Refused))
+		(Ok(CancelOutcome::Cancelled), Ok(CancelOutcome::Refused), Ok(CancelOutcome::Refused))
 	);
 }
 
@@ -11480,7 +11480,7 @@ fn a_second_cancel_ends_the_session_and_releases_the_worker() {
 			true,
 			CancelOutcome::Requested,
 			true,
-			CancelOutcome::Ended,
+			CancelOutcome::Cancelled,
 			true,
 			Some(v01::HostFundingStatusSubscribeItem::Failed {
 				reason: v01::FundingFailure::Cancelled

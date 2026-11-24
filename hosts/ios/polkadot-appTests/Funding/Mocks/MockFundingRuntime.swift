@@ -172,7 +172,7 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         return true
     }
 
-    func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
+    func cancelFunding(intent _: String) async throws -> CancelOutcome { .cancelled }
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func fundingHistory() -> [FundingSessionSummary] { state.withLock { $0.history } }
     func openFunding(direction _: FundingDirection, amount _: U128?) async throws -> String? { nil }

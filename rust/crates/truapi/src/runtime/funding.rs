@@ -1161,7 +1161,7 @@ impl FundingRegistry {
 			// Resolves, as `Canceled`, once `finish_presenting` returned.
 			let _ = closed.await;
 			if !self.holds(intent) {
-				return Ok(CancelOutcome::Ended);
+				return Ok(CancelOutcome::Cancelled);
 			}
 			// The session started, by the user or because a provider took
 			// it while the overlay was up, and is cancelled like any started
@@ -1191,7 +1191,7 @@ impl FundingRegistry {
 				let outcome = session.cancel(now_ms);
 				let provider = session.provider_id.clone();
 				let changed = match outcome {
-					CancelOutcome::Ended | CancelOutcome::Requested => vec![target],
+					CancelOutcome::Cancelled | CancelOutcome::Requested => vec![target],
 					CancelOutcome::Pending | CancelOutcome::TooLate | CancelOutcome::Refused => {
 						Vec::new()
 					},

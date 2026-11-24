@@ -667,7 +667,7 @@ fn the_host_hears_of_changes_in_order_and_may_call_back() {
 	assert!(host.registry.set(Arc::downgrade(&registry)).is_ok());
 	assert!(registry.install_platform(host.clone()));
 
-	assert_eq!(block_on(registry.cancel(NOW, "fs_a")).expect("cancelled"), CancelOutcome::Ended);
+	assert_eq!(block_on(registry.cancel(NOW, "fs_a")).expect("cancelled"), CancelOutcome::Cancelled);
 
 	assert_eq!(
 		*host.heard.lock().expect("heard mutex poisoned"),

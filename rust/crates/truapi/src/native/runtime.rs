@@ -479,7 +479,7 @@ impl NativeTrUApiHostRuntime {
 	/// Cancel funding session `intent` at the user's request, whatever it
 	/// went through so far, and say what that did. While its overlay is up
 	/// the core drops `present_funding`, which the host answers by taking the
-	/// overlay down, and the session is gone (`Ended`). Once started, it ends
+	/// overlay down, and the session is gone (`Cancelled`). Once started, it ends
 	/// when no provider serves it; otherwise the provider is asked
 	/// (`Requested`), and before money moved a second cancel ends it. After
 	/// money moved the provider may answer with an offer, read from the
