@@ -62,13 +62,20 @@ export type LogLevel = string;
  * and cannot reserve fewer. A stack that names a reserved value, the core's or
  * the build's, under any chain role starts only when `allowed` is set. Extra
  * values only protect networks the build does not run: `allowed` cannot be set
- * alongside them, so the build's own stack cannot name them.
+ * alongside them, so the build's own stack cannot name them. An extra TLD adds
+ * nothing for a stored or fetched copy, which the core already holds to the
+ * bundled copy's TLD: it only refuses a `stack` or `testStack` on that TLD.
  *
  * The core refuses a policy that would reserve less than it says: a field this
- * type does not have, `allowed` together with extra values, which the allowed
- * stack may name anyway, and an extra TLD that no stack can have. It refuses
- * such a policy before it reads the key from the pointer's link and verifies
- * the descriptor under it.
+ * type does not have, an entry it cannot read, such as a genesis hash that is
+ * not 32 bytes or a TLD that is not a string, `allowed` together with extra
+ * values, which the allowed stack may name anyway, and an extra TLD that no
+ * stack can have. It checks the policy after it reads the other fields of
+ * `stack` or `testStack`, so one of those that is missing, unknown or
+ * malformed is reported first. It checks the policy before the stack itself:
+ * before it reads the key from a `stack`'s pointer link and verifies its
+ * descriptor, and before it checks a `testStack`'s identity, TLD and genesis
+ * hashes against the core's rules.
  *
  * A `stack` that is allowed reserved values is pinned to its bundled
  * descriptor. A copy the core stored or fetched is refused when it gives a

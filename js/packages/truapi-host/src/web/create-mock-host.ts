@@ -1779,18 +1779,14 @@ export function mockTestStack(): TestStack {
 }
 
 /**
- * `stack` with a `generation` named after its genesis hashes in lowercase,
- * for a stack whose chains were replaced: other chains are another run. A
- * stack still on the {@link mockTestStack} chains keeps its `mock`
- * generation.
+ * `stack` with a `generation` named after its genesis hashes as lowercase,
+ * `0x`-prefixed hex, however they are written, for a stack whose chains were
+ * replaced: other chains are another run. A stack still on the
+ * {@link mockTestStack} chains keeps its `mock` generation.
  */
 export function withChainsGeneration(stack: TestStack): TestStack {
   const genesis = (chain?: TestStackChain): string =>
-    chain === undefined
-      ? "none"
-      : typeof chain.genesisHash === "string"
-        ? chain.genesisHash.toLowerCase()
-        : `0x${hex(chain.genesisHash)}`;
+    chain === undefined ? "none" : `0x${normalizeHash(chain.genesisHash)}`;
   const chainsOf = ({ relay, assetHub, people, bulletin }: TestStack) =>
     [relay, assetHub, people, bulletin].map(genesis).join(":");
   const mock = mockTestStack();

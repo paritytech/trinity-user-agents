@@ -53,7 +53,9 @@ one the wallet's reserved identities derive under. An invalid stack makes the
 `TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
 An `extraGenesisHashes` entry of another length fails earlier, where the
 bindings convert the config, and the constructor throws `InternalException`
-instead. Include this configuration update in the embedding app's package
+instead. Its message starts with `Failed to convert arg 'runtime_config'` and
+gives the cause as `could not convert slice to array`, without naming the
+field. Include this configuration update in the embedding app's package
 upgrade.
 
 ### Compatibility
