@@ -141,6 +141,16 @@ impl Stack {
 		&self.state_directory
 	}
 
+	/// How a message about this stack's stored state names it.
+	///
+	/// It is the [`Self::namespace`], with the [`Self::state_directory`] after
+	/// it when the two differ. A fork has its source's namespace, and the
+	/// directory tells which of the two a command clears.
+	pub fn state_label(&self) -> String {
+		let (name, directory) = (self.namespace(), self.state_directory());
+		if name == directory { name.to_owned() } else { format!("{name} ({directory})") }
+	}
+
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
 	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
 	/// derives ends in it (`peopl.<tld>` account and keys), so a person the CLI

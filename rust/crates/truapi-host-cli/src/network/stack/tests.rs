@@ -129,6 +129,21 @@ fn test_stack_state_directory() {
 	);
 }
 
+/// A fork has its source's namespace, so a message about stored state, such as
+/// the one that asks before every session is cleared, names the directory too.
+/// A built-in network's two names are one.
+#[test]
+fn test_state_label_tells_a_fork_from_its_source() {
+	let fork = edit_stack(|descriptor| descriptor["id"] = "paseo-next-v2-fork".into());
+	let fork_id = "https://fork.test.invalid/trinity-stack.json".to_string();
+	let fork = Stack::new(fork_id, fork, &ChainAccess::Rpc).expect("stack is valid");
+
+	assert_eq!(
+		[Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).state_label(), fork.state_label()],
+		["paseo-next-v2", "paseo-next-v2 (stack-c1ff7d592da6515589a30362b8ab952c)"]
+	);
+}
+
 /// A built-in network's state is kept under the name `--network` takes, which
 /// is where its users and the e2e scripts look for it.
 #[test]

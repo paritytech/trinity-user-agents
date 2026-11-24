@@ -1477,7 +1477,7 @@ async fn run_signing_host(
 	let initial_deeplink = args.deeplink.clone();
 	if let Some(command) = exec_command {
 		let cleanup_catalog = session.catalog.clone();
-		let network_name = session.network.namespace().to_owned();
+		let network_name = session.network.state_label();
 		let clear_target =
 			with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 				if let Some(deeplink) = initial_deeplink {
@@ -1511,7 +1511,7 @@ async fn run_signing_host(
 	};
 	restore_paired_responders(&mut session).await;
 	let cleanup_catalog = session.catalog.clone();
-	let network_name = session.network.namespace().to_owned();
+	let network_name = session.network.state_label();
 	let clear_target =
 		with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 			signing_interactive_loop(
@@ -2523,7 +2523,7 @@ async fn prepare_pairing_response(
 					let account_base_path = current_account_base_path(session)?;
 					accounts::mark_account_exhausted(
 						&account_base_path,
-						session.network.state_directory(),
+						&session.network,
 						name,
 						period,
 					)?;
@@ -2797,12 +2797,7 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 	};
 	let period = accounts::current_statement_period()?;
 	let account_base_path = current_account_base_path(session)?;
-	accounts::mark_account_exhausted(
-		&account_base_path,
-		session.network.state_directory(),
-		&name,
-		period,
-	)?;
+	accounts::mark_account_exhausted(&account_base_path, &session.network, &name, period)?;
 	terminal_ui::output_event(SystemEvent::SigningHostAccountExhausted { name, period });
 	Ok(())
 }
@@ -2934,7 +2929,7 @@ fn session_clear_confirmation(
 	let action = match target {
 		SessionClearTarget::Named(name) => format!("Clear session {name}"),
 		SessionClearTarget::All => {
-			format!("Clear all sessions for {}", session.network.namespace())
+			format!("Clear all sessions for {}", session.network.state_label())
 		},
 	};
 	let scope = match target {
@@ -2945,8 +2940,10 @@ fn session_clear_confirmation(
 			"This permanently deletes every local session's signer keys, scripts, storage, and permissions"
 		},
 	};
-	let mut detail =
-		format!("{scope} for {}. On-chain usernames are not removed.", session.network.namespace());
+	let mut detail = format!(
+		"{scope} for {}. On-chain usernames are not removed.",
+		session.network.state_label()
+	);
 	if active {
 		detail.push_str(" The active session is included, so the signing host will stop.");
 	}
@@ -3661,7 +3658,7 @@ async fn signing_interactive_loop(
 				match session.catalog.clear(&target) {
 					Ok(_) => {
 						let (title, detail) =
-							session_clear_success(session.network.namespace(), &target, false);
+							session_clear_success(&session.network.state_label(), &target, false);
 						ui.success(title, Some(detail));
 						let current = session
 							.profile

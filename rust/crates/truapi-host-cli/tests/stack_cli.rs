@@ -471,9 +471,9 @@ fn test_network_check_local_stack() {
 	);
 }
 
-/// A host keeps its state under the name `network-check` prints, and not under the descriptor's
-/// namespace, here `staging`, which a fork has in common with its source. The pairing host stops
-/// at a script that does not exist, after it has opened its storage.
+/// A host keeps its state under the name `network-check` prints and nowhere else, so not under
+/// the descriptor's namespace, which a fork has in common with its source. The pairing host
+/// stops at a script that does not exist, after it has opened its storage.
 #[test]
 fn test_pairing_host_state_directory() {
 	let dir = tempfile::tempdir().unwrap();
@@ -488,9 +488,12 @@ fn test_pairing_host_state_directory() {
 	command.extend([base.to_str().unwrap(), "--script", script.to_str().unwrap()]);
 	let output = host_with_env(&command, &[]);
 
-	let state = base.join("v2").join(report["state_directory"].as_str().unwrap());
-	assert!(state.is_dir(), "{}", stderr(&output));
-	assert!(!base.join("v2/staging").exists());
+	let stored: Vec<_> = fs::read_dir(base.join("v2"))
+		.into_iter()
+		.flatten()
+		.map(|entry| entry.unwrap().file_name().into_string().unwrap())
+		.collect();
+	assert_eq!(stored, [report["state_directory"].as_str().unwrap()], "{}", stderr(&output));
 }
 
 #[test]

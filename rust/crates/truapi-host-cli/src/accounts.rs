@@ -520,12 +520,12 @@ pub fn resolve_cached_signer(
 
 pub fn mark_account_exhausted(
 	base_path: &Path,
-	network_id: &str,
+	network: &Stack,
 	name: &str,
 	period: u32,
 ) -> Result<()> {
 	let _lock = AccountStoreLock::acquire(base_path)?;
-	AccountStore::load(base_path)?.mark_exhausted(network_id, name, period)
+	AccountStore::load(base_path)?.mark_exhausted(network.state_directory(), name, period)
 }
 
 pub fn current_statement_period() -> Result<u32> {

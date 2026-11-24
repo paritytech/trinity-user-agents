@@ -331,7 +331,9 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	assert!(!bob.exists());
 	assert!(unrelated.exists());
 	let stdout = String::from_utf8_lossy(&output.stdout);
-	assert!(stdout.contains("All sessions cleared for paseo-next-v2"));
+	let cleared =
+		format!("All sessions cleared for paseo-next-v2 ({})", state::offline_state_directory());
+	assert!(stdout.contains(&cleared), "{stdout}");
 	assert!(!output.stdout.contains(&0x1b));
 }
 
