@@ -81,7 +81,7 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	let boot = views.latest();
 	let owner = open(&boot);
 	assert!(runtime.current_worker_execution(product.clone()).is_none());
-	assert!(owner.report_worker_module_started());
+	assert!(boot.module_started());
 	assert!(
 		runtime.current_worker_execution(product.clone()).is_none(),
 		"acknowledgement alone cannot serve a render"
@@ -173,7 +173,7 @@ fn a_host_without_worker_support_reports_unavailable_until_the_claim_ends() {
 }
 
 #[tokio::test]
-async fn an_observer_sees_failure_then_the_retried_execution() {
+async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	let (runtime, views, product) = setup();
 	let (send, receive) = mpsc::channel();
 	let _subscription = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
@@ -182,17 +182,17 @@ async fn an_observer_sees_failure_then_the_retried_execution() {
 	views.fail_next_start.store(true, Ordering::Relaxed);
 	let _claim = runtime.claim_worker(product.clone());
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	assert!(
-		matches!(next(), NativeWorkerExecutionState::Failed { reason } if reason == "initial boot error")
-	);
-	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	let owner = open(&views.latest());
+	assert_eq!(views.starts.lock().unwrap().len(), 2);
+	let retry = views.latest();
+	let owner = open(&retry);
 	let _socket = connect(&owner).await;
-	assert!(owner.report_worker_module_started());
+	assert!(retry.module_started());
 	let NativeWorkerExecutionState::Running { execution } = next() else {
-		panic!("the retry must publish its ready execution");
+		panic!("a consumer waiting through the failed start must receive the retry's execution");
 	};
 	assert!(Arc::ptr_eq(&execution, &runtime.current_worker_execution(product).unwrap()));
+	retry.failed("renderer lost".into());
+	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 }
 
 #[tokio::test]
@@ -200,16 +200,16 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 	let (runtime, views, product) = setup();
 	let old_claim = runtime.claim_worker(product.clone());
 	let old = views.latest();
-	let old_owner = open(&old);
+	let _old_owner = open(&old);
 	old_claim.release();
 	let _new_claim = runtime.claim_worker(product.clone());
 	let current = views.latest();
+	assert!(old.open_execution(Arc::new(EventCallbacks::new()), None, None).is_err());
 	let current_owner = open(&current);
-	let callbacks = Arc::new(EventCallbacks::new());
-	assert!(old.open_execution(callbacks, None, None).is_err());
 	let _socket = connect(&current_owner).await;
-	assert!(current_owner.report_worker_module_started());
-	assert!(!old_owner.report_worker_module_started());
+	assert!(!old.module_started());
+	assert!(runtime.current_worker_execution(product.clone()).is_none());
+	assert!(current.module_started());
 	old.failed("late renderer loss".into());
 	runtime
 		.current_worker_execution(product)
@@ -227,7 +227,7 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	let boot = views.latest();
 	let owner = open(&boot);
 	let _socket = connect(&owner).await;
-	assert!(owner.report_worker_module_started());
+	assert!(boot.module_started());
 	let consumer = runtime.current_worker_execution(first).unwrap();
 	let _second = runtime.claim_worker(second.clone());
 	let pending = views.latest();
@@ -264,7 +264,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 	let old = views.latest();
 	let owner = open(&old);
 	let _socket = connect(&owner).await;
-	assert!(owner.report_worker_module_started());
+	assert!(old.module_started());
 	runtime.reload_worker(product.clone());
 	let update = views.latest();
 	assert!(runtime.current_worker_execution(product.clone()).is_none());
@@ -272,9 +272,9 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 		owner.publish_chat_action(text_chat_action("old")),
 		Err(crate::ProductRuntimeError::Closed)
 	));
-	let new_owner = open(&update);
+	let _new_owner = open(&update);
 	claim.release();
-	assert!(!new_owner.report_worker_module_started());
+	assert!(!update.module_started());
 	old.failed("stale during reload".into());
 	runtime.reload_worker(product);
 	assert_eq!(
@@ -296,7 +296,7 @@ async fn losing_the_latest_socket_withdraws_a_worker_until_it_can_receive_calls_
 	let _observing = runtime.observe_worker_execution(product, Arc::new(Observer(send)));
 	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	assert!(owner.report_worker_module_started());
+	assert!(attempt.module_started());
 	let connect = || tokio_tungstenite::connect_async(url.as_str());
 	let (mut first, _) = connect().await.unwrap();
 	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));

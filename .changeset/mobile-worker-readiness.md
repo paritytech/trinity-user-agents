@@ -2,7 +2,7 @@
 "@parity/truapi-host": minor
 ---
 
-Native host SDK breaking change: open a product worker through the startup attempt supplied to the WebView host. Report failure on that attempt. Hosts that previously handled `requestWorkerTransition`, called `openProductExecution` with `Worker`, or reported `workerExited(productId)` must adopt this API. Hosts serving only app or widget executions can omit the WebView host.
+Native host SDK breaking change: open a product worker through the startup attempt supplied to the WebView host. Report module start and failure on that attempt. Hosts that previously handled `requestWorkerTransition`, called `openProductExecution` with `Worker`, or reported `workerExited(productId)` must adopt this API. Hosts serving only app or widget executions can omit the WebView host.
 
 Android and iOS can observe the execution as it starts, reconnects or retries. Rust publishes it after the module starts and its bridge authenticates.
 
