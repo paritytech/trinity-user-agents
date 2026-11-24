@@ -337,9 +337,9 @@ concurrent peers under one host do not share a trace key.
 
 `--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
 default (§14.3). `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
-explicit flag over it. The option is global. With a stack it fails at
-startup, for every command; another combination the light client cannot serve
-fails when the command resolves its network, before it starts.
+explicit flag over it. The option is global. A stack whose descriptor names no
+light spec for a chain the light client runs fails when the command resolves
+its network, before it starts.
 
 ### 4.4 Global stack option
 
@@ -347,7 +347,7 @@ fails when the command resolves its network, before it starts.
 stack instead of a built-in network (§14.1). `HOST_CLI_STACK` supplies the same
 value when the flag is absent, and a blank value is unset. The option is global.
 `stack` and `update` do not run against it, but still refuse it next to
-`--network` or `--chain-backend light-client`.
+`--network`.
 
 ### 4.5 Global network option
 
@@ -585,7 +585,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since every session and account moves to another namespace, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI or the core reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection] [--light-specs <specs>]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since every session and account moves to another namespace, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI or the core reads (§14.1), its light specs, `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. With `--light-specs`, the light specs the copy names for the relay, People, Asset Hub and Bulletin are fetched, checked against it and written to `<specs>` as a JSON object from `sha256` to spec text; a spec that is not named, cannot be fetched or fails the check writes nothing. The script passes it for each stack with a `stacks/light-specs/<name>.json`, which the binary ships (§14.3). |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -1738,13 +1738,16 @@ Every network comes from a Trinity stack descriptor
 | Identity backend | the `dub` service's first URL with `/api/v1` appended |
 | Reserved-identity suffix | `tld` |
 | `DotnsPopController` | `dotns.popController` |
+| Light specs (§14.3) | `lightSpec.sha256` of the relay, People, Asset Hub and Bulletin |
 
 The fields the CLI reads are these, `id` (the product namespace), `generation`,
 and the full `rpc` list of People, Asset Hub and Bulletin; the full list is
 compared because the Polkadot comparison below contacts the reference's nodes.
 The core of every host also reads `contracts`, which the host builds bundle from
 the same copies, so it counts as read too. A published copy that changes none of
-these makes no notice print (below).
+these makes no notice print (below), whatever its light specs: a relay's spec
+rotates with every fresh checkpoint, and the light client fetches the one the
+descriptor names itself.
 
 A descriptor that lacks one of the three roles, gives two of them the same
 genesis hash (the host routes each role by its genesis), has a `tld` that is not a
@@ -1804,14 +1807,15 @@ under the TLD and is stored under the namespace. A refused, rolled-back or
 conflicting published copy leaves the shipped copy in use with a warning; an
 unreachable one does so without a message. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
-light-client` on a built-in whose descriptor in use has genesis hashes other than
-this build's light-client chain specs fails at start, since the stack restarted
-after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
-no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
+light-client` fails at start when the descriptor in use names no `lightSpec` for
+the relay, People, Asset Hub or Bulletin; a newer published copy that runs over
+RPC but names no such `lightSpec` is that error too, rather than a fall back to
+the shipped copy, whose chains may have restarted since.
+`scripts/update-stacks.sh` refreshes the
 shipped copies, and the daily chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 `tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
-on.
+on over either chain backend.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
@@ -1827,7 +1831,17 @@ the checks repeat only when that fetch puts the published copy in use, and
 otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
 that prints both. An endpoint that does not answer within 3 seconds, or a People
 chain without the storage item, is logged and left to fail on first use.
-`--chain-backend light-client` is not checked.
+
+With `--chain-backend light-client` the endpoints are not used, and the light
+specs are checked instead (§14.3). A spec whose bytes differ from the
+descriptor's `sha256`, that implies another genesis hash than its chain's, or
+that is larger than 1 MiB is an error handled like an endpoint's wrong genesis:
+the descriptor is fetched once more when the shipped copy is in use. So is a
+relay spec that cannot be fetched, since every chain syncs through the relay.
+Another spec that cannot be fetched is logged, and fetched again when a command
+connects to its chain. People's `NetworkSuffix` is not compared with the `tld`
+on the light client: reading it needs a synced chain, which takes longer than a
+command may wait before it starts.
 
 `--stack` (§4.4) replaces the network with another stack. A link on any scheme or
 domain is read for its `url` and `key`; a URL is read as a pointer without a
@@ -1835,12 +1849,11 @@ key; any other value is read as a local descriptor file, signed or not, with no
 key checked. A fetched stack is read with no stored copy. An unreachable stack, a
 descriptor that breaks a rule and one past `expiresAt` are errors that name the
 stack; one past `validUntil` is used with a warning. Its endpoints and People's
-`NetworkSuffix` are checked as above. `--chain-backend light-client` is
-refused with `--stack`, since the light client syncs only the networks
-`truapi-provider` bundles. `get_chain_info` reports the descriptor's
-`network`. The product namespace (the state directory) is the descriptor's `id`
-without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
-namespace is its full `id`, so it does not share the `polkadot` namespace.
+`NetworkSuffix` are checked as above, or its light specs with `--chain-backend
+light-client`. `get_chain_info` reports the descriptor's `network`. The product
+namespace (the state directory) is the descriptor's `id` without a trailing
+`-fork`, which must be a lowercase label; the `polkadot-fork` namespace is its
+full `id`, so it does not share the `polkadot` namespace.
 
 The stack's id, which the core takes with the descriptor's `generation`, is the
 key of the link when it has one, and otherwise the URL. The URL of a built-in
@@ -1958,12 +1971,29 @@ dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.
 
-With `light-client`, the embedded smoldot light client syncs the chains from the
-specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
-cannot be combined with `--stack`, nor with a built-in stack that restarted after
-those specs were bundled (§14.1). One light client per network serves the process
-and keeps each chain running after its last connection closes, so a chain syncs
-once per process.
+With `light-client`, the embedded smoldot light client syncs the chains from
+the light specs the stack's descriptor names, so it runs every built-in network
+and any `--stack`. The CLI fetches the `lightSpec.url` of the relay, People,
+Asset Hub and Bulletin with the descriptor's fetch rules (1 MiB, no redirects),
+and `truapi-provider` checks each against the descriptor's `sha256` and the
+chain's genesis hash before it loads it. The descriptor also gives the relay
+each parachain syncs through and the chains that run the statement-store
+protocol. The binary ships the light specs each built-in network's shipped
+copy names (`stacks/light-specs/<network>.json`, by `sha256`), so a built-in
+starts without the spec servers, and any stack naming one of them uses it. A
+checked spec it does not ship is kept in `light-specs/<sha256>.json` under the state
+directory (`$XDG_STATE_HOME/truapi-host`), outside any `--base-path`, and a
+later run reads it from there while it still passes the check. Keeping a spec
+removes the kept ones no run has read for 30 days. Each chain's spec is fetched
+on its own, so one that does not answer delays no other chain. A fetch that
+fails is the answer for every connect waiting on that spec, and for those of
+the next 60 seconds, so the parachains waiting on their relay's spec do not
+each fetch it again. A connect fails as a transport failure, which the chain
+runtime retries, only when the spec cannot be fetched; a spec that is wrong or
+larger than 1 MiB is refused. One light client per
+resolved stack serves the process and keeps each chain running after its last
+connection closes, so a chain syncs once per process. It stores no
+database, so every process syncs from the specs' checkpoints.
 
 CLI commands wait for the chain to sync before their first request, since
 smoldot sends nothing until then and the 30-second limit above would fail it.

@@ -917,9 +917,11 @@ impl HostRuntime<SigningHost> {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did: it ended, its provider was asked, a cancel is already with
-	/// the provider, or it is too late because the balance was credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did: it ended, including one
+	/// whose overlay was up and closes, its provider was asked, a cancel is
+	/// already with the provider, it is too late because the balance was
+	/// credited, or there is nothing to cancel.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
 	pub async fn cancel_funding(
 		&self,
