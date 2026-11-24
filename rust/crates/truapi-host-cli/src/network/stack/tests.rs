@@ -152,10 +152,14 @@ fn test_light_client_without_a_light_spec_error() {
 		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
 	});
 
-	let error = Stack::new(descriptor.clone(), &test_access(ChainBackend::LightClient))
-		.unwrap_err()
-		.to_string();
+	let error = Stack::new(
+		"test-stack".to_string(),
+		descriptor.clone(),
+		&test_access(ChainBackend::LightClient),
+	)
+	.unwrap_err()
+	.to_string();
 
 	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
-	Stack::new(descriptor, &ChainAccess::Rpc).expect("RPC needs no light spec");
+	read_stack(descriptor).expect("RPC needs no light spec");
 }

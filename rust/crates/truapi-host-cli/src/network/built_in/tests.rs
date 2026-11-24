@@ -93,7 +93,8 @@ fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
 
 			let refused = ensure_built_in_runnable(&built_in.pointer(), &without_spec).is_err();
 			refused_by_check.push((*network, chain.role.clone(), refused));
-			let refused = Stack::new(without_spec, &light_client).is_err();
+			let refused =
+				Stack::new(built_in.pointer().stack_id(), without_spec, &light_client).is_err();
 			refused_by_light_client.push((*network, chain.role.clone(), refused));
 		}
 	}
@@ -120,9 +121,10 @@ fn test_built_in_runnable_check_accepts_a_chain_the_light_client_does_not_run() 
 
 	let by_check =
 		ensure_built_in_runnable(&paseo, &with_unrouted_chain).map_err(|error| error.to_string());
-	let by_light_client = Stack::new(with_unrouted_chain, &test_access(ChainBackend::LightClient))
-		.map(drop)
-		.map_err(|error| error.to_string());
+	let by_light_client =
+		Stack::new(paseo.stack_id(), with_unrouted_chain, &test_access(ChainBackend::LightClient))
+			.map(drop)
+			.map_err(|error| error.to_string());
 
 	assert_eq!((by_check, by_light_client), (Ok(()), Ok(())));
 }
