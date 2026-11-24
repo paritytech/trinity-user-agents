@@ -689,6 +689,8 @@ describe("createMockHost TestHostAPI parity", () => {
       ),
     ).toEqual([true, true, true, false]);
     expect(mockRuntimeConfig().testStack).toEqual({
+      id: "mock",
+      generation: "mock",
       network: "mock",
       tld: "paseo",
       people: { genesisHash: MOCK_GENESIS.people },
@@ -943,19 +945,13 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(seen[1]).toEqual(ok({ rooms: [...host.getChatRooms()] }));
   });
 
-  it("reset returns the policies and the open operations too", async () => {
+  it("reset restores the original permission policy", async () => {
     // `reset` says it returns the mock to its constructed state. A policy that
     // survives it lets one case govern the next, which is the whole point.
     const host = createMockHost({ devicePermissions: "allow-all" });
     host.setPermissionBehavior("deny-all");
-    await host.callbacks.productOperations.beginOperation(
-      { productId: asProductId("p"), executionKind: { tag: "Unknown" } },
-      "sync",
-    );
-
     host.reset();
 
-    expect(host.getOpenOperations()).toEqual([]);
     expect(
       await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
     ).toBe("AllowAlways");

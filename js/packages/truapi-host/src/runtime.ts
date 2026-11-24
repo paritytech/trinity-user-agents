@@ -123,9 +123,9 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core stored a newer copy that changes a chain, the network, the TLD
-   * or the generation. It runs that copy from its next
-   * start, so build the runtime again to follow it.
+   * The core stored a newer copy that changes a chain, the network or the
+   * generation. It runs that copy from its next start, so build the runtime
+   * again to follow it. A copy on another TLD is refused and never sets it.
    */
   restartRequired: boolean;
   /** The last finished fetch. Not set before the first one. */
@@ -272,10 +272,6 @@ export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
    * returned disposer is called. Reports failure through `sink.onError` rather
    * than throwing, so a dead render never takes the host's surrounding surface
    * with it.
-   *
-   * An open render holds one worker reference for the provider's product: the
-   * runtime acquires it when the stream starts and releases it when the stream
-   * ends or the disposer runs.
    *
    * Present only on runtimes that keep a live channel to the core.
    */

@@ -216,33 +216,6 @@ fn a_storage_subscription_hears_nothing_from_another_key() {
 }
 
 #[test]
-fn an_operation_is_open_until_its_own_product_ends_it() {
-	let p = MockPlatform::new();
-	let mine = mock_product();
-	let theirs = ProductContext::new(ProductId::for_test("other.dot"));
-
-	let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
-	assert_eq!(
-		p.open_operations(),
-		vec![OpenOperation {
-			product_id: crate::platform::ProductId::for_test("mock.dot"),
-			id,
-			label: "sync".to_string(),
-		}]
-	);
-
-	// Ending is per product: another product holding the same id must not
-	// drop this one's demand.
-	block_on(p.end_operation(&theirs, id)).expect("a foreign end is Ok");
-	assert_eq!(p.open_operations().len(), 1);
-
-	block_on(p.end_operation(&mine, id)).expect("end succeeds");
-	assert!(p.open_operations().is_empty());
-	// Idempotent by contract.
-	block_on(p.end_operation(&mine, id)).expect("a repeat end is Ok");
-}
-
-#[test]
 fn storage_error_injected() {
 	let p = MockPlatform::with_config(MockConfig {
 		faults: MockFaults { storage_error: Some("disk".into()), ..Default::default() },

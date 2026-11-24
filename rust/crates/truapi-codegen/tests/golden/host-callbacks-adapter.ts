@@ -30,7 +30,6 @@ import {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
-  HostWorkerBeginOperationResponse,
   RemotePermissionRequest,
 } from "@parity/truapi";
 import type { GenericError, ProductId } from "@parity/truapi";
@@ -127,8 +126,6 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
-  beginOperation(product: Uint8Array, label: string): Promise<Uint8Array>;
-  endOperation(product: Uint8Array, id: number): Promise<void>;
   read(key: string): Promise<Uint8Array | null | undefined>;
   write(key: string, value: Uint8Array): Promise<void>;
   clear(key: string): Promise<void>;
@@ -335,18 +332,6 @@ export function createWasmRawCallbacks(
         callbacks.preimage.lookupPreimage(key),
         sendItem,
         sendError,
-      ),
-    beginOperation: async (product, label) =>
-      HostWorkerBeginOperationResponse.enc(
-        await callbacks.productOperations.beginOperation(
-          ProductContext.dec(product),
-          label,
-        ),
-      ),
-    endOperation: async (product, id) =>
-      await callbacks.productOperations.endOperation(
-        ProductContext.dec(product),
-        id,
       ),
     read: async (key) => await callbacks.productStorage.read(key),
     write: async (key, value) =>

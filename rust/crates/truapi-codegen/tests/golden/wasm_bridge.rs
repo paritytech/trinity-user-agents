@@ -59,8 +59,6 @@ pub struct JsBridge {
     pub subscribe_pocket_cards: Function,
     pub remove_pocket_card: Function,
     pub lookup_preimage: Function,
-    pub begin_operation: Function,
-    pub end_operation: Function,
     pub read: Function,
     pub write: Function,
     pub clear: Function,
@@ -136,8 +134,6 @@ impl JsBridge {
             remove_pocket_card: get_optional_function(callbacks, "removePocketCard")?
                 .unwrap_or_else(|| missing_callback("removePocketCard")),
             lookup_preimage: get_function(callbacks, "lookupPreimage")?,
-            begin_operation: get_function(callbacks, "beginOperation")?,
-            end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
@@ -703,44 +699,6 @@ impl crate::platform::PreimageHost for WasmPlatform {
             Some(Uint8Array::from(key.as_slice()).into()),
             parse_optional_bytes_item,
         )
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::platform::ProductOperations for WasmPlatform {
-    async fn begin_operation(
-        &self,
-        product: &crate::platform::ProductContext,
-        label: String,
-    ) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.begin_operation,
-            vec![
-                Uint8Array::from(product.encode().as_slice()).into(),
-                JsValue::from_str(&label),
-            ],
-        )
-        .await?;
-        Ok(decode_bytes::<latest::HostWorkerBeginOperationResponse>(
-            bytes,
-            "beginOperation response did not decode",
-        )?)
-    }
-
-    async fn end_operation(
-        &self,
-        product: &crate::platform::ProductContext,
-        id: u32,
-    ) -> Result<(), latest::HostWorkerOperationError> {
-        invoke_unit(
-            &self.bridge.end_operation,
-            vec![
-                Uint8Array::from(product.encode().as_slice()).into(),
-                JsValue::from_f64(f64::from(id)),
-            ],
-        )
-        .await?;
-        Ok(())
     }
 }
 
