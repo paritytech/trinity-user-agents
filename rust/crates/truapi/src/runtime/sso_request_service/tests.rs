@@ -1,11 +1,8 @@
 use super::*;
 use crate::{
-	platform::{AuthState, CoreStorage, ProductId, StackStorageKey},
+	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
-	test_support::{
-		StubPlatform, external_sso_session_info, paseo_test_stack, sso_session_info,
-		test_storage_key,
-	},
+	test_support::{StubPlatform, paseo_test_stack, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -24,14 +21,14 @@ struct CleanupStorage {
 impl CoreStorage for CleanupStorage {
 	async fn read_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.values.lock().unwrap().get(&key.encode()).cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		self.values.lock().unwrap().insert(key.encode(), value);
@@ -42,10 +39,10 @@ impl CoreStorage for CleanupStorage {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
 		let pause = {
 			let mut pause = self.pause.lock().unwrap();
-			if pause.as_ref().is_some_and(|(paused, _)| *paused == key.slot) {
+			if pause.as_ref().is_some_and(|(paused, _)| *paused == key) {
 				pause.take().map(|(_, receiver)| receiver)
 			} else {
 				None
@@ -54,7 +51,7 @@ impl CoreStorage for CleanupStorage {
 		if let Some(pause) = pause {
 			let _ = pause.await;
 		}
-		if self.failure.lock().unwrap().as_ref() == Some(&key.slot) {
+		if self.failure.lock().unwrap().as_ref() == Some(&key) {
 			return Err(GenericError { reason: "storage deletion failed".to_string() });
 		}
 		self.values.lock().unwrap().remove(&key.encode());
@@ -73,7 +70,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		let (_, pairing) =
 			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 		let host = pairing.session().clone();
-		let session = external_sso_session_info();
+		let session = sso_session_info();
 		block_on(host.set_connected_session_for_tests(session.clone()));
 		let blob = encode_persisted_session(&session);
 		let session_id = allowances::session_storage_id(session.sso.as_ref().unwrap());
@@ -84,7 +81,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 			CoreStorageKey::AllowanceKeys { session_id: session_id.clone() },
 			CoreStorageKey::ProductSubtree { session_id, product_id: product_id.clone() },
 		] {
-			block_on(storage.write_core_storage(test_storage_key(key), blob.clone())).unwrap();
+			block_on(storage.write_core_storage(key, blob.clone())).unwrap();
 		}
 		pairing
 			.accounts()
@@ -105,20 +102,14 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		block_on(repeated);
 		assert_eq!(
 			storage.values.lock().unwrap().clone(),
-			BTreeMap::from([(
-				test_storage_key(CoreStorageKey::AutoSigningKeys).encode(),
-				blob.clone()
-			)])
+			BTreeMap::from([(CoreStorageKey::AutoSigningKeys.encode(), blob.clone())])
 		);
 		block_on(host.activate_external_session(&blob)).unwrap();
 		assert_eq!(
 			(host.session_state.current(), storage.values.lock().unwrap().clone()),
 			(
 				Some(session.clone()),
-				BTreeMap::from([(
-					test_storage_key(CoreStorageKey::AutoSigningKeys).encode(),
-					blob.clone()
-				)])
+				BTreeMap::from([(CoreStorageKey::AutoSigningKeys.encode(), blob.clone())])
 			)
 		);
 
@@ -188,7 +179,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 		if changed {
 			stored.public_key = [0x56; 32];
 			block_on(storage.write_core_storage(
-				test_storage_key(CoreStorageKey::AuthSession),
+				CoreStorageKey::AuthSession,
 				encode_persisted_session(&stored),
 			))
 			.unwrap();
@@ -203,20 +194,17 @@ fn login_store_notifications_follow_the_persisted_value() {
 				// A login that is not installed records no run for the
 				// session another writer stored.
 				BTreeMap::from_iter(
-					[(
-						test_storage_key(CoreStorageKey::AuthSession).encode(),
-						encode_persisted_session(&stored),
-					)]
-					.into_iter()
-					.chain((!changed).then(|| {
-						(
-							test_storage_key(CoreStorageKey::SessionUsernamesRun).encode(),
-							crate::test_support::usernames_record(
-								&paseo_test_stack(),
-								&encode_persisted_session(&stored),
-							),
-						)
-					})),
+					[(CoreStorageKey::AuthSession.encode(), encode_persisted_session(&stored))]
+						.into_iter()
+						.chain((!changed).then(|| {
+							(
+								CoreStorageKey::SessionUsernamesRun.encode(),
+								crate::test_support::usernames_record(
+									&paseo_test_stack(),
+									&encode_persisted_session(&stored),
+								),
+							)
+						})),
 				),
 			),
 		);
@@ -229,7 +217,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 /// and the next start looks again.
 #[test]
 fn a_failed_username_lookup_changes_nothing() {
-	let storage = Arc::new(crate::test_support::MemoryCoreStorage::default());
+	let storage = Arc::new(CleanupStorage::default());
 	let platform = Arc::new(StubPlatform {
 		core_storage_override: Some(storage.clone()),
 		chain_connect_error: Some("offline"),
@@ -239,25 +227,12 @@ fn a_failed_username_lookup_changes_nothing() {
 	let host = pairing.session().clone();
 	let session = sso_session_info();
 	let blob = encode_persisted_session(&session);
-	let stored = || {
-		block_on(
-			crate::test_support::test_storage(storage.as_ref()).read(CoreStorageKey::AuthSession),
-		)
-		.unwrap()
-	};
-	block_on(
-		crate::test_support::test_storage(storage.as_ref())
-			.write(CoreStorageKey::AuthSession, blob.clone()),
-	)
-	.unwrap();
+	let stored = || block_on(storage.read_core_storage(CoreStorageKey::AuthSession)).unwrap();
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
 	block_on(host.set_connected_session_for_tests(session.clone()));
 
 	block_on(host.look_up_usernames(session.clone(), Some(blob.clone())));
 
-	let record = block_on(
-		crate::test_support::test_storage(storage.as_ref())
-			.read(CoreStorageKey::SessionUsernamesRun),
-	)
-	.unwrap();
+	let record = block_on(storage.read_core_storage(CoreStorageKey::SessionUsernamesRun)).unwrap();
 	assert_eq!((host.session_state.current(), stored(), record), (Some(session), Some(blob), None));
 }

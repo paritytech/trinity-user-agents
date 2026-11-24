@@ -81,10 +81,12 @@ impl PairingHost {
 	/// Bind account calls to a paired session whose changes reach the host
 	/// accounts that keep its grants.
 	pub fn new(services: Arc<RuntimeServices>, host_config: PairingHostConfig) -> Arc<Self> {
+		let platform = services.platform.clone();
 		let session_state = SessionState::new();
-		let consent = Arc::new(ProductConsent::new(services.clone()));
+		let consent = Arc::new(ProductConsent::new(platform.clone()));
 		let grants = Arc::new(HostGrantStore::new(
-			services.clone(),
+			platform.clone(),
+			services.stack().run(),
 			RemoteAccountHolder::GRANT_KEEPING,
 			session_state.clone(),
 		));
@@ -94,7 +96,8 @@ impl PairingHost {
 			session_state,
 			Arc::new(PairedGrants { grants: grants.clone(), consent: consent.clone() }),
 		);
-		let ring_vrf_registry = RingVrfRegistryStore::new(services.clone());
+		let ring_vrf_registry =
+			RingVrfRegistryStore::new(platform, services.stack().chains().clone());
 		let accounts = Arc::new(HostAccounts::new(
 			services.clone(),
 			Arc::new(RemoteAccountHolder::new(

@@ -5,19 +5,11 @@
 //! the key in the stack's link, starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. It resolves the
 //! [`Stack`] the core runs on.
-//!
-//! The core reaches [`CoreStorage`](crate::platform::CoreStorage) only
-//! through the [`StackStorage`] that [`Stack::storage`] builds. It adds
-//! [`Stack::id`] to every key, so stacks do not share stored state.
 
 mod records;
 mod refresh;
 mod source;
-mod storage;
 
-use std::sync::Arc;
-
-use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode, Error as CodecError, Input, Output};
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
@@ -29,7 +21,6 @@ use crate::dotns_name::DOTNS_TLDS;
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
 pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
-pub use storage::StackStorage;
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -71,35 +62,14 @@ const RESERVED_TLD: &str = "dot";
 /// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
 /// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
 /// and the Asset Hub contracts the core reads.
-///
-/// Two stacks are equal when they name the same stack, chains and contracts.
-/// What a run learned about the host's storage is not part of that.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
 	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
-	/// Whether this stack holds the values the host stored under a slot
-	/// alone, once [`StackStorage`] has asked. Clones share it.
-	holds_unscoped: Arc<Mutex<Option<bool>>>,
 }
-
-impl PartialEq for Stack {
-	fn eq(&self, other: &Self) -> bool {
-		(&self.identity, &self.network, &self.tld, &self.chains, &self.account_data_store) ==
-			(
-				&other.identity,
-				&other.network,
-				&other.tld,
-				&other.chains,
-				&other.account_data_store,
-			)
-	}
-}
-
-impl Eq for Stack {}
 
 /// A stack's id and the generation of its chains.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,15 +91,15 @@ pub struct StackIdentity {
 /// One run of a stack's chains, from one wipe to the next: the descriptor's
 /// `generation` and the genesis hashes of the chains the core reads.
 ///
-/// A wipe changes both. The hashes are compared as well, so a wipe is noticed
-/// even when the operator left `generation` as it was. What the core stored
+/// A wipe changes both. The hashes are compared as well, so a wipe that
+/// changes one is noticed even when the operator left `generation` as it was. What the core stored
 /// about the chains in another run is stale. The relay chain is left out:
 /// the core never reads it, so adding or removing it is not a wipe.
 ///
 /// It encodes as a version byte, then its fields, independent of
 /// [`StackChains`]. An encoding with another version decodes as an error,
 /// which every reader takes for another run.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct StackRun {
 	generation: String,
 	asset_hub: [u8; 32],
@@ -341,18 +311,10 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self {
-			identity,
-			network,
-			tld,
-			chains,
-			account_data_store: None,
-			holds_unscoped: Arc::default(),
-		})
+		Ok(Self { identity, network, tld, chains, account_data_store: None })
 	}
 
-	/// The stack's id. Every storage key includes it. See
-	/// [`StackIdentity::id`].
+	/// The stack's identity. See [`StackIdentity::id`].
 	pub fn id(&self) -> &str {
 		&self.identity.id
 	}

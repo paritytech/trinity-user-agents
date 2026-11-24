@@ -7,7 +7,7 @@
 //! pairing deeplink and observe connection status.
 
 use std::{
-	collections::{HashMap, HashSet},
+	collections::HashMap,
 	fs,
 	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
@@ -33,7 +33,7 @@ use truapi::{
 		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
 		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
 		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
-		StackIdentity, StackStorageKey, ThemeHost, UserConfirmation, UserConfirmationReview,
+		ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -83,10 +83,6 @@ pub enum StorageError {
 	/// A completed write could not be moved to its destination.
 	#[display("persist {}", path.display())]
 	Persist { path: PathBuf, source: std::io::Error },
-	/// The lock that orders the processes sharing a storage file could not
-	/// be taken.
-	#[display("lock {}", path.display())]
-	Lock { path: PathBuf, source: std::io::Error },
 	/// The navigation transcript could not be appended.
 	#[display("could not record navigation in {}", path.display())]
 	RecordNavigation { path: PathBuf, source: std::io::Error },
@@ -108,7 +104,6 @@ impl std::error::Error for StorageError {
 			Self::Sync { source, .. } |
 			Self::Remove { source, .. } |
 			Self::Persist { source, .. } |
-			Self::Lock { source, .. } |
 			Self::RecordNavigation { source, .. } => Some(source),
 			#[cfg(windows)]
 			Self::Replace { source, .. } => Some(source),
@@ -151,8 +146,6 @@ pub struct CliStoragePaths {
 struct PairingStorageScope {
 	network_dir: PathBuf,
 	bootstrap_dir: PathBuf,
-	/// The stack whose last paired user selects the state directory.
-	stack_id: String,
 }
 
 impl CliStoragePaths {
@@ -160,26 +153,18 @@ impl CliStoragePaths {
 		Self { state_dir, product_storage_dir, pairing_scope: None }
 	}
 
-	/// Resolve the user last paired on the stack `stack_id`, falling back to a
-	/// role-level bootstrap directory until the first identity is known.
-	///
-	/// A fork runs in its source's `network_dir`. Each remembers its own last
-	/// user, so pairing as someone else on one does not move the other to a
-	/// directory that lacks its session.
-	pub fn pairing(network_dir: PathBuf, stack_id: &str) -> Self {
+	/// Resolve the last paired user, falling back to a role-level bootstrap
+	/// directory until the first identity is known.
+	pub fn pairing(network_dir: PathBuf) -> Self {
 		let bootstrap_dir = network_dir.join("pairing-host");
-		let state_dir = read_current_pairing_user(&bootstrap_dir, stack_id)
+		let state_dir = read_current_pairing_user(&bootstrap_dir)
 			.map(|user_id| network_dir.join(format!("{user_id}_pairing_host")))
 			.filter(|path| path.is_dir())
 			.unwrap_or_else(|| bootstrap_dir.clone());
 		Self {
 			product_storage_dir: state_dir.join("storage"),
 			state_dir,
-			pairing_scope: Some(PairingStorageScope {
-				network_dir,
-				bootstrap_dir,
-				stack_id: stack_id.to_owned(),
-			}),
+			pairing_scope: Some(PairingStorageScope { network_dir, bootstrap_dir }),
 		}
 	}
 }
@@ -191,8 +176,6 @@ pub struct CliPlatform {
 	/// `Features::feature_supported` answers from.
 	served_chains: Roles<[u8; 32]>,
 	extension_versions: truapi::platform::ExtensionVersionMap,
-	/// The stack this host runs. Every core storage key includes its id.
-	stack_identity: StackIdentity,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
@@ -281,7 +264,6 @@ impl CliPlatform {
 			chain,
 			served_chains: network.genesis(),
 			extension_versions: network.extension_versions(),
-			stack_identity: network.identity(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
 			device_storage: Mutex::new(device_storage),
@@ -311,7 +293,7 @@ impl CliPlatform {
 		*self.approval.lock().expect("approval policy mutex poisoned") = approval;
 	}
 
-	fn core_key(key: &StackStorageKey) -> Vec<u8> {
+	fn core_key(key: &CoreStorageKey) -> Vec<u8> {
 		use parity_scale_codec::Encode;
 		key.encode()
 	}
@@ -351,11 +333,8 @@ impl CliPlatform {
 	}
 
 	/// Whether a slot belongs to the install rather than the signed-in user.
-	///
-	/// Which stack holds the entries stored with no stack id is one answer for
-	/// every user, so a fork and its source agree on it whoever is signed in.
-	fn is_device_scoped(slot: &CoreStorageKey) -> bool {
-		matches!(slot, CoreStorageKey::DeviceEncryptionKey | CoreStorageKey::UnscopedEntriesOwner)
+	fn is_device_scoped(key: &CoreStorageKey) -> bool {
+		matches!(key, CoreStorageKey::DeviceEncryptionKey)
 	}
 
 	fn persist_device_storage(&self) -> Result<(), StorageError> {
@@ -363,7 +342,7 @@ impl CliPlatform {
 			return Ok(());
 		};
 		let storage = self.device_storage.lock().expect("device storage mutex poisoned");
-		save_stack_entries(path, &storage, &self.stack_key_prefix())
+		save_hex_key_map(path, &storage)
 	}
 
 	fn persist_core_storage(&self) -> Result<(), StorageError> {
@@ -373,51 +352,7 @@ impl CliPlatform {
 			return Ok(());
 		};
 		let storage = self.core_storage.lock().expect("core storage mutex poisoned");
-		save_stack_entries(&path, &storage, &self.stack_key_prefix())
-	}
-
-	/// The store that holds `slot`.
-	fn store(&self, slot: &CoreStorageKey) -> &Mutex<HashMap<Vec<u8>, Vec<u8>>> {
-		if Self::is_device_scoped(slot) { &self.device_storage } else { &self.core_storage }
-	}
-
-	/// The value held under `slot` alone.
-	///
-	/// Read from the file, not the copy loaded at start: the host on a fork or
-	/// its source may have recorded which of them holds these entries, and the
-	/// one that does may have cleared some since.
-	fn read_unscoped(&self, slot: &CoreStorageKey) -> Result<Option<Vec<u8>>, StorageError> {
-		use parity_scale_codec::Encode;
-		let key = slot.encode();
-		Ok(match self.store_path(slot) {
-			Some(path) => read_storage_file(&path)?.remove(&key),
-			None => {
-				self.store(slot).lock().expect("core storage mutex poisoned").get(&key).cloned()
-			},
-		})
-	}
-
-	/// Whether the core recorded this host's stack as the one that holds the
-	/// entries stored with no stack id.
-	fn holds_unscoped(&self) -> Result<bool, StorageError> {
-		use parity_scale_codec::Encode;
-		let owner = self.read_unscoped(&CoreStorageKey::UnscopedEntriesOwner)?;
-		Ok(owner == Some(self.stack_identity.id.encode()))
-	}
-
-	/// The file that persists the store of `slot`, if any.
-	fn store_path(&self, slot: &CoreStorageKey) -> Option<PathBuf> {
-		if Self::is_device_scoped(slot) {
-			self.device_storage_path.clone()
-		} else {
-			self.core_storage_path.lock().expect("core storage path mutex poisoned").clone()
-		}
-	}
-
-	/// What every key of this host's stack starts with: its SCALE-encoded id.
-	fn stack_key_prefix(&self) -> Vec<u8> {
-		use parity_scale_codec::Encode;
-		self.stack_identity.id.encode()
+		save_hex_key_map(&path, &storage)
 	}
 
 	/// Current identity-owned state directory (or the pairing bootstrap before
@@ -435,7 +370,7 @@ impl CliPlatform {
 		let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
 		let current_state = self.state_dir.lock().expect("state path mutex poisoned").clone();
 		if current_state.as_ref() == Some(&target_state) {
-			persist_current_pairing_user(&scope.bootstrap_dir, &scope.stack_id, user_id)?;
+			persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
 			return Ok(());
 		}
 
@@ -450,69 +385,33 @@ impl CliPlatform {
 		// allowances, and product KV remain isolated to their previous user.
 		let transient_keys = [
 			CoreStorageKey::AuthSession,
+			CoreStorageKey::SessionUsernamesRun,
 			CoreStorageKey::PairingDeviceIdentity,
 			CoreStorageKey::LastProcessedPairingStatement,
 		]
-		.map(|slot| {
-			Self::core_key(&StackStorageKey { stack: self.stack_identity.id.clone(), slot })
-		});
-		let stack_key_prefix = self.stack_key_prefix();
-		// Entries stored with no stack id come along only when the core gave
-		// them to this stack. A fork and its source share the bootstrap
-		// directory, and the other may be the one that holds them.
-		let holds_unscoped = migrating_bootstrap && self.holds_unscoped()?;
-		let (carried, carried_unscoped, bootstrap_path) = {
+		.map(|key| Self::core_key(&key));
+		let carried = {
 			// Keep the same path -> storage lock order used by persistence so
 			// an auth transition cannot deadlock with a concurrent core write.
 			let current_path =
 				self.core_storage_path.lock().expect("core storage path mutex poisoned");
 			let mut current = self.core_storage.lock().expect("core storage mutex poisoned");
 			if migrating_bootstrap {
-				// Another stack's entries stay where that stack will look.
-				let own = current
-					.iter()
-					.filter(|(key, _)| key.starts_with(&stack_key_prefix))
-					.map(|(key, value)| (key.clone(), value.clone()))
-					.collect::<Vec<_>>();
-				// Taken from the file, not the copy loaded at start, which can
-				// still hold an entry the core has cleared since.
-				let unscoped = match current_path.as_deref() {
-					Some(path) if holds_unscoped => read_storage_file(path)?
-						.into_iter()
-						.filter(|(key, _)| is_unscoped(key))
-						.collect::<Vec<_>>(),
-					_ => Vec::new(),
-				};
-				(own, unscoped, current_path.clone())
+				current.drain().collect::<Vec<_>>()
 			} else {
 				let carried = transient_keys
 					.iter()
 					.filter_map(|key| current.remove(key).map(|value| (key.clone(), value)))
 					.collect::<Vec<_>>();
 				if let Some(path) = current_path.as_deref() {
-					save_stack_entries(path, &current, &stack_key_prefix)?;
+					save_hex_key_map(path, &current)?;
 				}
-				(carried, Vec::new(), None)
+				carried
 			}
 		};
 
-		// The stack's own entries are the login in progress, so they replace
-		// what the user's directory holds. One stored with no stack id there
-		// is as current as the bootstrap's, and stays.
-		let moved = carried
-			.iter()
-			.chain(&carried_unscoped)
-			.map(|(key, _)| key.clone())
-			.collect::<HashSet<_>>();
-		let target_core = update_storage_file(&target_core_path, |stored| {
-			stored.extend(carried);
-			for (key, value) in carried_unscoped {
-				stored.entry(key).or_insert(value);
-			}
-		})?;
-		if let Some(path) = bootstrap_path {
-			update_storage_file(&path, |stored| stored.retain(|key, _| !moved.contains(key)))?;
-		}
+		let mut target_core = load_hex_key_map(&target_core_path);
+		target_core.extend(carried);
 		let mut target_products = load_product_storage(&target_product_dir);
 		if migrating_bootstrap {
 			target_products.extend(
@@ -533,7 +432,8 @@ impl CliPlatform {
 		*self.product_storage_dir.lock().expect("product storage path mutex poisoned") =
 			Some(target_product_dir);
 		*self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
-		persist_current_pairing_user(&scope.bootstrap_dir, &scope.stack_id, user_id)
+		self.persist_core_storage()?;
+		persist_current_pairing_user(&scope.bootstrap_dir, user_id)
 	}
 
 	pub async fn decide(&self, action: &str, detail: String) -> bool {
@@ -707,13 +607,10 @@ impl ProductOperations for CliPlatform {
 impl CoreStorage for CliPlatform {
 	async fn read_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, api::GenericError> {
-		let store = if Self::is_device_scoped(&key.slot) {
-			&self.device_storage
-		} else {
-			&self.core_storage
-		};
+		let store =
+			if Self::is_device_scoped(&key) { &self.device_storage } else { &self.core_storage };
 		Ok(store
 			.lock()
 			.expect("core storage mutex poisoned")
@@ -723,10 +620,10 @@ impl CoreStorage for CliPlatform {
 
 	async fn write_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), api::GenericError> {
-		let device_scoped = Self::is_device_scoped(&key.slot);
+		let device_scoped = Self::is_device_scoped(&key);
 		{
 			let store = if device_scoped { &self.device_storage } else { &self.core_storage };
 			store
@@ -738,60 +635,13 @@ impl CoreStorage for CliPlatform {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), api::GenericError> {
-		let device_scoped = Self::is_device_scoped(&key.slot);
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
+		let device_scoped = Self::is_device_scoped(&key);
 		{
 			let store = if device_scoped { &self.device_storage } else { &self.core_storage };
 			store.lock().expect("core storage mutex poisoned").remove(&Self::core_key(&key));
 		}
 		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }?;
-		Ok(())
-	}
-
-	async fn read_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, api::GenericError> {
-		Ok(self.read_unscoped(&slot)?)
-	}
-
-	async fn write_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), api::GenericError> {
-		use parity_scale_codec::Encode;
-		// The core writes here only to claim the values stored with no stack
-		// id. The first claim stays: of a fork and its source claiming at
-		// once, the later one then reads back the other's id and takes none.
-		let key = slot.encode();
-		let path = self.store_path(&slot);
-		let mut store = self.store(&slot).lock().expect("core storage mutex poisoned");
-		let Some(path) = path else {
-			store.entry(key).or_insert(value);
-			return Ok(());
-		};
-		let stored = update_storage_file(&path, |stored| {
-			stored.entry(key.clone()).or_insert(value);
-		})?;
-		if let Some(kept) = stored.get(&key) {
-			store.insert(key, kept.clone());
-		}
-		Ok(())
-	}
-
-	async fn clear_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-	) -> Result<(), api::GenericError> {
-		use parity_scale_codec::Encode;
-		let key = slot.encode();
-		if let Some(path) = self.store_path(&slot) {
-			update_storage_file(&path, |stored| {
-				stored.remove(&key);
-			})?;
-		}
-		self.store(&slot).lock().expect("core storage mutex poisoned").remove(&key);
 		Ok(())
 	}
 }
@@ -1507,107 +1357,24 @@ fn pairing_storage_name(user_id: &str) -> std::borrow::Cow<'_, str> {
 
 const CURRENT_PAIRING_USER_FILE: &str = "current-user";
 
-/// The file naming the user last paired on the stack `stack_id`.
-fn current_pairing_user_file(stack_id: &str) -> String {
-	let digest = hex::encode(Sha256::digest(stack_id.as_bytes()));
-	format!("{CURRENT_PAIRING_USER_FILE}.{}", &digest[..16])
-}
-
-/// The user last paired on the stack `stack_id`. A directory written before
-/// each stack had its own file names one user for every stack.
-fn read_current_pairing_user(bootstrap_dir: &Path, stack_id: &str) -> Option<String> {
-	let user_id = [current_pairing_user_file(stack_id), CURRENT_PAIRING_USER_FILE.to_owned()]
-		.iter()
-		.find_map(|file| fs::read_to_string(bootstrap_dir.join(file)).ok())?
+fn read_current_pairing_user(bootstrap_dir: &Path) -> Option<String> {
+	let user_id = fs::read_to_string(bootstrap_dir.join(CURRENT_PAIRING_USER_FILE))
+		.ok()?
 		.trim()
 		.to_string();
 	crate::sessions::validate_name(&user_id).ok()?;
 	Some(user_id)
 }
 
-fn persist_current_pairing_user(
-	bootstrap_dir: &Path,
-	stack_id: &str,
-	user_id: &str,
-) -> Result<(), StorageError> {
+fn persist_current_pairing_user(bootstrap_dir: &Path, user_id: &str) -> Result<(), StorageError> {
 	fs::create_dir_all(bootstrap_dir)
 		.map_err(|source| StorageError::Create { path: bootstrap_dir.to_path_buf(), source })?;
-	let file = current_pairing_user_file(stack_id);
-	let path = bootstrap_dir.join(&file);
-	let temporary = bootstrap_dir.join(format!(".{file}.{}.tmp", std::process::id()));
+	let path = bootstrap_dir.join(CURRENT_PAIRING_USER_FILE);
+	let temporary =
+		bootstrap_dir.join(format!(".{CURRENT_PAIRING_USER_FILE}.{}.tmp", std::process::id()));
 	fs::write(&temporary, format!("{user_id}\n"))
 		.map_err(|source| StorageError::Write { path: temporary.clone(), source })?;
 	fs::rename(&temporary, &path).map_err(|source| StorageError::Persist { path, source })
-}
-
-/// Writes the entries of `memory` whose keys start with `stack_key_prefix` to
-/// the file at `path`, replacing that stack's entries there.
-///
-/// Every other entry stays as the file has it now. A fork and its source
-/// write one file from two processes, and neither holds a current copy of the
-/// other's entries.
-fn save_stack_entries(
-	path: &Path,
-	memory: &HashMap<Vec<u8>, Vec<u8>>,
-	stack_key_prefix: &[u8],
-) -> Result<(), StorageError> {
-	update_storage_file(path, |stored| {
-		stored.retain(|key, _| !key.starts_with(stack_key_prefix));
-		let own = memory.iter().filter(|(key, _)| key.starts_with(stack_key_prefix));
-		stored.extend(own.map(|(key, value)| (key.clone(), value.clone())));
-	})?;
-	Ok(())
-}
-
-/// Whether `key` is a slot alone, as stored before keys included a stack id.
-fn is_unscoped(key: &[u8]) -> bool {
-	truapi::describe_core_storage_key(key).is_ok_and(|description| description.stack.is_none())
-}
-
-/// Applies `change` to what the core storage file at `path` holds now, writes
-/// the result back and returns it.
-///
-/// The file stays locked from the read to the write, so a change another
-/// process makes to it in between is not lost.
-fn update_storage_file(
-	path: &Path,
-	change: impl FnOnce(&mut HashMap<Vec<u8>, Vec<u8>>),
-) -> Result<HashMap<Vec<u8>, Vec<u8>>, StorageError> {
-	let _lock = lock_storage_file(path)?;
-	let mut stored = load_hex_key_map(path);
-	change(&mut stored);
-	save_hex_key_map(path, &stored)?;
-	Ok(stored)
-}
-
-/// What the core storage file at `path` holds now, read under its lock.
-fn read_storage_file(path: &Path) -> Result<HashMap<Vec<u8>, Vec<u8>>, StorageError> {
-	let _lock = lock_storage_file(path)?;
-	Ok(load_hex_key_map(path))
-}
-
-/// An exclusive advisory lock on the storage file at `path`, released when
-/// the returned file is dropped.
-///
-/// The lock is taken on `<file>.lock` beside it, because every write replaces
-/// the storage file itself.
-fn lock_storage_file(path: &Path) -> Result<fs::File, StorageError> {
-	use fs2::FileExt;
-	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
-	let lock_path = path.with_file_name(format!("{name}.lock"));
-	if let Some(parent) = lock_path.parent() {
-		fs::create_dir_all(parent)
-			.map_err(|source| StorageError::Create { path: parent.to_path_buf(), source })?;
-	}
-	let file = fs::OpenOptions::new()
-		.create(true)
-		.truncate(false)
-		.write(true)
-		.open(&lock_path)
-		.map_err(|source| StorageError::Lock { path: lock_path.clone(), source })?;
-	file.lock_exclusive()
-		.map_err(|source| StorageError::Lock { path: lock_path, source })?;
-	Ok(file)
 }
 
 fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), StorageError> {

@@ -1,5 +1,13 @@
 use super::*;
-use crate::test_support::{StubPlatform, paseo_test_stack, test_services, test_services_on};
+use crate::{
+	platform::CoreStorage,
+	test_support::{StubPlatform, paseo_test_stack},
+};
+
+/// The chains of the [`paseo_test_stack`], which the rings in these tests are on.
+fn paseo_chains() -> StackChains {
+	paseo_test_stack().chains().clone()
+}
 
 fn handle(owner: &str, index: u32) -> ProductAccountId {
 	ProductAccountId {
@@ -19,7 +27,7 @@ fn ring(byte: u8) -> RingLocation {
 #[test]
 fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	let platform = Arc::new(StubPlatform::default());
-	let store = RingVrfRegistryStore::new(test_services(platform.clone()));
+	let store = RingVrfRegistryStore::new(platform.clone(), paseo_chains());
 	let first_root = [1; 32];
 	let second_root = [2; 32];
 	let key = handle("owner.dot", 7);
@@ -31,7 +39,7 @@ fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	assert_eq!(entry.rings, vec![ring(1), ring(2)]);
 	assert!(futures::executor::block_on(store.entry(second_root, &key)).unwrap().is_none());
 
-	let reloaded = RingVrfRegistryStore::new(test_services(platform));
+	let reloaded = RingVrfRegistryStore::new(platform, paseo_chains());
 	assert_eq!(futures::executor::block_on(reloaded.entry(first_root, &key)).unwrap(), Some(entry));
 }
 
@@ -66,14 +74,14 @@ fn a_registry_keeps_what_is_on_the_chains_the_stack_still_runs() {
 			SelectedProvider { ring: bulletin_ring, handle: on_bulletin.clone() },
 		],
 	};
-	futures::executor::block_on(
-		crate::test_support::test_storage(platform.as_ref())
-			.write(CoreStorageKey::RingVrfRegistry { root_public_key: root }, stored.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::RingVrfRegistry { root_public_key: root },
+		stored.encode(),
+	))
 	.expect("stub core storage writes");
 
-	let read = |stack| {
-		let store = RingVrfRegistryStore::new(test_services_on(platform.clone(), stack));
+	let read = |stack: crate::platform::Stack| {
+		let store = RingVrfRegistryStore::new(platform.clone(), stack.chains().clone());
 		futures::executor::block_on(async {
 			(
 				store.entry(root, &on_people).await.unwrap().is_some(),
@@ -93,7 +101,7 @@ fn a_registry_keeps_what_is_on_the_chains_the_stack_still_runs() {
 
 #[test]
 fn first_registrar_remains_selected_until_explicitly_changed() {
-	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_chains());
 	let root = [1; 32];
 	let location = ring(1);
 	let first = handle("first.dot", 0);
@@ -120,7 +128,7 @@ fn first_registrar_remains_selected_until_explicitly_changed() {
 
 #[test]
 fn registration_rejects_a_conflicting_public_key_for_the_same_handle() {
-	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_chains());
 	let root = [1; 32];
 	let key = handle("owner.dot", 7);
 	futures::executor::block_on(store.register(root, key.clone(), ring(1), [1; 32])).unwrap();
@@ -141,7 +149,7 @@ fn registration_rejects_a_conflicting_public_key_for_the_same_handle() {
 
 #[test]
 fn stale_owner_snapshot_preserves_a_local_registration() {
-	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_chains());
 	let root = [1; 32];
 	let local = handle("owner.dot", 7);
 	let remote = RegisteredRingVrfKey {
@@ -176,7 +184,7 @@ fn stale_owner_snapshot_preserves_a_local_registration() {
 
 #[test]
 fn owner_snapshot_rejects_a_conflicting_local_registration() {
-	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_chains());
 	let root = [1; 32];
 	let key = handle("owner.dot", 7);
 	futures::executor::block_on(store.register(root, key.clone(), ring(1), [1; 32])).unwrap();

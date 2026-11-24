@@ -85,31 +85,16 @@ A runtime built from it does not refresh: it calls neither stack callback, and
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
-The `coreStorage` callbacks take a `StackStorageKey`. Store each value under
-the whole key, such as `encodeCoreStorageKey(key)`. A host that keeps a slot
-under a fixed key of its own, such as a session shared between origins, has to
-put `stack` in that key as well.
-
-A host that stored core state before keys had a stack implements
-`readUnscopedCoreStorage`, `writeUnscopedCoreStorage` and
-`clearUnscopedCoreStorage`. They take the slot alone, and the key the host
-stored a slot under before is `CoreStorageKey.enc(slot)`. The first stack to
-run after the update takes those values and records that through
-`writeUnscopedCoreStorage`; other stacks never see them.
-`describeCoreStorageKey` also describes such a key, without a `stack`, so a
-sweep of a product's state finds both. `createHeadlessHostCallbacks` and the
-web worker runtime treat a host without the three as holding nothing. A host
-that reads but drops what `writeUnscopedCoreStorage` writes cannot record
-which stack took those values, so no stack reads them.
-
-After a wipe a stack has the same id and new chains. The core sees that by the
-`generation` and the Asset Hub, People and Bulletin genesis hashes, and stops
-using what it read from the old chains: cached manifests and allowance keys are
-ignored until they are read again, the ring-VRF registry loses the rings on
-chains the stack no longer runs, and the session's usernames are looked up
-again. The session and stored permissions are kept. A session is installed at
-once and its usernames are looked up afterwards; a lookup that fails, as on a
-device that is offline, changes nothing.
+After a wipe a stack has the same id and new chains. The core sees that at its
+next start by the `generation` and the Asset Hub, People and Bulletin genesis
+hashes, and stops using what it read from the old chains: a cached manifest is
+ignored until it is read again, allowance keys until the wallet grants them
+again, the ring-VRF registry keeps only the rings on chains the stack lists,
+and the session's usernames are looked up again. The session and stored
+permissions are kept. A session restored from storage or passed to
+`activateExternalSession` is installed at once and its usernames are looked up
+afterwards. A lookup that fails, as on a device that is offline, changes
+nothing; one that finds no username clears the stored ones.
 
 The core vouches for the usernames in an `AuthSession` blob through the
 `SessionUsernamesRun` slot, which holds the run they were read in and a hash of
@@ -119,9 +104,11 @@ blob passed to `activateExternalSession` that the slot does not vouch for has
 its usernames looked up again on every activation; when nothing is recorded,
 its usernames are shown until that lookup answers.
 
-An install updated to this version with no wipe loses only this: a pairing
-host asks for each product's allowance again, because the stored keys carry no
-run, and the stored session's usernames are looked up once in the background.
+An install updated to this version with no wipe loses this: cached manifests
+are read again, so a grant that rests on one is refused until the device is
+online; a pairing host asks for each product's allowance again, because the
+stored keys carry no run; and the stored session's usernames are looked up in
+the background.
 
 ## Bundler requirements
 

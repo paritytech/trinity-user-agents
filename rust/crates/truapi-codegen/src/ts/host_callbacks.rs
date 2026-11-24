@@ -1147,12 +1147,6 @@ fn adapter_unary_impl(
 		{
 			format!("{ty}.enc(await {call})")
 		},
-		// A host may leave out a method the trait gives a default body. When
-		// that default answers nothing, as `()` or `None`, a missing method
-		// answers the same.
-		TypeRef::Unit | TypeRef::Option(_) if method.has_default => {
-			format!("await {host_method}?.({args})")
-		},
 		_ => format!("await {call}"),
 	};
 	Ok(format!("async ({params}) => {body}"))

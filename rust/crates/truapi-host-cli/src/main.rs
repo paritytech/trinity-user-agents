@@ -86,7 +86,7 @@ use truapi::{
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner, SignerAccount},
-	chain::ChainBackend,
+	chain::{ChainAccess, ChainBackend},
 	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -132,8 +132,8 @@ struct Cli {
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
 	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
-	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
-	/// and `previewnet` only, without `--stack`).
+	/// `light-client` syncs them with the embedded light client, from the light
+	/// specs the stack's descriptor names.
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
 	/// Built-in network to run against; paseo-next-v2 when neither this nor
@@ -606,12 +606,19 @@ async fn main() -> Result<()> {
 		None => normalized(std::env::var(STACK_ENV).ok())
 			.map(|value| StackArg { value, source: STACK_ENV }),
 	};
+	// Outside any `--base-path`: a light spec is the same for every session.
+	let chain_access = match cli.chain_backend {
+		ChainBackend::Rpc => ChainAccess::Rpc,
+		ChainBackend::LightClient => {
+			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
+		},
+	};
 	// Only a host keeps the descriptor it ran on: `stack` and the one-off
 	// commands have no state of their own to protect from an older copy.
 	let hosts =
 		matches!(cli.command, Command::PairingHost(_) | Command::Dev(_) | Command::SigningHost(_));
 	let stack_copies = hosts.then(|| command_base_path(&cli.command).join("stacks"));
-	let source = NetworkSource::new(cli.chain_backend, cli.network, stack, stack_copies)?;
+	let source = NetworkSource::new(chain_access, cli.network, stack, stack_copies)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
@@ -1256,8 +1263,7 @@ async fn run_pairing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
-	let storage_paths =
-		CliStoragePaths::pairing(base_path.join(network.namespace()), &network.identity().id);
+	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new_pairing(
 			network.namespace(),
@@ -1736,7 +1742,7 @@ async fn start_signing_host(
 	)?;
 	apply_local_product_grants(
 		platform.as_ref(),
-		&network.core_stack().context("invalid stack")?,
+		&network.core_stack().context("invalid stack")?.run(),
 		&args.product_config,
 	)
 	.await?;
@@ -2156,7 +2162,7 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// failure this feature would otherwise cause.
 async fn apply_local_product_grants(
 	platform: &CliPlatform,
-	stack: &truapi::platform::Stack,
+	run: &truapi::platform::StackRun,
 	paths: &[PathBuf],
 ) -> Result<()> {
 	if paths.is_empty() {
@@ -2167,7 +2173,7 @@ async fn apply_local_product_grants(
 		.duration_since(std::time::UNIX_EPOCH)
 		.context("system clock is before the Unix epoch")?
 		.as_secs();
-	let applied = product_config::apply(platform, stack, &configs, now).await?;
+	let applied = product_config::apply(platform, run, &configs, now).await?;
 	if applied.is_empty() {
 		return Ok(());
 	}

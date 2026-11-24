@@ -6,13 +6,11 @@ import type { ChatRoom } from "@parity/truapi";
 import type {
   CoreStorageKey,
   ProductContext,
-  StackStorageKey,
 } from "../generated/host-callbacks.js";
 import {
   createMockHost,
   MOCK_GENESIS,
   mockRuntimeConfig,
-  mockTestStack,
 } from "./create-mock-host.js";
 import { createWebWorkerPairingHostRuntime } from "./index.js";
 import { encodeStatement } from "./loopback-statements.js";
@@ -58,12 +56,6 @@ async function drain<T>(
   return items;
 }
 
-/** `slot` of the mock host's stack, as the core addresses it. */
-const inMockStack = (slot: CoreStorageKey): StackStorageKey => ({
-  stack: mockTestStack().id,
-  slot,
-});
-
 describe("createMockHost callbacks", () => {
   it("product storage round-trips and is namespaced from core", async () => {
     const { callbacks } = createMockHost();
@@ -73,9 +65,7 @@ describe("createMockHost callbacks", () => {
     );
     // A product key never collides with a core slot.
     expect(
-      await callbacks.coreStorage.readCoreStorage(
-        inMockStack({ tag: "AuthSession" }),
-      ),
+      await callbacks.coreStorage.readCoreStorage({ tag: "AuthSession" }),
     ).toBeUndefined();
     await callbacks.productStorage.clear("k");
     expect(await callbacks.productStorage.read("k")).toBeUndefined();
@@ -104,13 +94,13 @@ describe("createMockHost callbacks", () => {
 
   it("core storage round-trips per slot", async () => {
     const { callbacks } = createMockHost();
-    const key = inMockStack({
+    const key: CoreStorageKey = {
       tag: "PermissionAuthorization",
       value: {
         scope: "p.dot",
         request: { tag: "Device", value: "Camera" },
       },
-    });
+    };
     await callbacks.coreStorage.writeCoreStorage(key, new Uint8Array([9]));
     expect(await callbacks.coreStorage.readCoreStorage(key)).toEqual(
       new Uint8Array([9]),
@@ -734,7 +724,7 @@ describe("createMockHost TestHostAPI parity", () => {
     const host = createMockHost();
     const { coreStorage } = host.callbacks;
     const manifest = (productLabel: string) =>
-      inMockStack({ tag: "ProductManifest", value: { productLabel } });
+      ({ tag: "ProductManifest", value: { productLabel } }) as const;
 
     await coreStorage.writeCoreStorage(manifest("a.dot"), new Uint8Array([1]));
     await coreStorage.writeCoreStorage(manifest("b.dot"), new Uint8Array([2]));
@@ -936,20 +926,16 @@ describe("createMockHost TestHostAPI parity", () => {
       storage.callbacks.productStorage.clearProduct(asProductId("mock.dot")),
     ).rejects.toThrow("disk");
     await expect(
-      storage.callbacks.coreStorage.readCoreStorage(
-        inMockStack({ tag: "AuthSession" }),
-      ),
+      storage.callbacks.coreStorage.readCoreStorage({ tag: "AuthSession" }),
     ).rejects.toThrow("disk");
     await expect(
       storage.callbacks.coreStorage.writeCoreStorage(
-        inMockStack({ tag: "AuthSession" }),
+        { tag: "AuthSession" },
         new Uint8Array([1]),
       ),
     ).rejects.toThrow("disk");
     await expect(
-      storage.callbacks.coreStorage.clearCoreStorage(
-        inMockStack({ tag: "AuthSession" }),
-      ),
+      storage.callbacks.coreStorage.clearCoreStorage({ tag: "AuthSession" }),
     ).rejects.toThrow("disk");
 
     const navigation = createMockHost({ faults: { navigateError: "blocked" } });

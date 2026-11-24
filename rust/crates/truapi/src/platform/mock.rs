@@ -49,8 +49,7 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProductStorageKey, ProviderError, ScannerPlatform, StackStorageKey, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -800,13 +799,9 @@ fn hex_key(bytes: &[u8; 32]) -> String {
 	bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Stable string key for a typed core-storage slot of one stack.
-fn core_key(key: &StackStorageKey) -> String {
-	format!("{}@{}", slot_key(&key.slot), key.stack)
-}
-
-fn slot_key(slot: &CoreStorageKey) -> String {
-	match slot {
+/// Stable string key for a typed core-storage slot.
+fn core_key(key: &CoreStorageKey) -> String {
+	match key {
 		CoreStorageKey::AuthSession => "core:auth-session".to_string(),
 		CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
 		CoreStorageKey::PermissionAuthorization { scope, request } => {
@@ -853,7 +848,6 @@ fn slot_key(slot: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
-		CoreStorageKey::UnscopedEntriesOwner => "core:unscoped-entries-owner".to_string(),
 		CoreStorageKey::StackRecord { stack_id } => format!("core:stack-record:{stack_id}"),
 	}
 }
@@ -962,7 +956,7 @@ impl ProductStorage for MockPlatform {
 impl CoreStorage for MockPlatform {
 	async fn read_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.storage_error {
 			return Err(latest::GenericError { reason: reason.clone() });
@@ -972,7 +966,7 @@ impl CoreStorage for MockPlatform {
 
 	async fn write_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), latest::GenericError> {
 		if let Some(reason) = &self.config.faults.storage_error {
@@ -982,7 +976,7 @@ impl CoreStorage for MockPlatform {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), latest::GenericError> {
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), latest::GenericError> {
 		if let Some(reason) = &self.config.faults.storage_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}

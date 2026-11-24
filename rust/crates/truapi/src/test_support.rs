@@ -2,9 +2,8 @@
 //! recording json-rpc connection, and SSO statement/frame builders.
 
 use std::{
-	collections::HashMap,
 	sync::{
-		Arc, LazyLock, Mutex,
+		Arc, Mutex,
 		atomic::{AtomicBool, AtomicUsize, Ordering},
 	},
 	task::{Context, Poll},
@@ -31,10 +30,9 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
-	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
-	StackStorage, StackStorageKey, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
+	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -365,81 +363,6 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 /// Identity of every [`test_stack`].
 pub const TEST_STACK_ID: &str = "test-stack";
 
-/// `slot` under [`TEST_STACK_ID`], the key a test host stores it by.
-pub fn test_storage_key(slot: CoreStorageKey) -> StackStorageKey {
-	StackStorageKey { stack: TEST_STACK_ID.to_string(), slot }
-}
-
-/// Host storage in memory that keeps a value under whatever key it is given.
-#[derive(Default)]
-pub struct MemoryCoreStorage(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
-
-impl MemoryCoreStorage {
-	/// Stores `value` under `slot` alone, as a host did before keys included
-	/// a stack id.
-	pub fn store_unscoped(&self, slot: CoreStorageKey, value: Vec<u8>) {
-		self.0.lock().expect("storage mutex poisoned").insert(slot.encode(), value);
-	}
-}
-
-#[async_trait::async_trait]
-impl PlatformCoreStorage for MemoryCoreStorage {
-	async fn read_core_storage(
-		&self,
-		key: StackStorageKey,
-	) -> Result<Option<Vec<u8>>, v01::GenericError> {
-		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
-	}
-
-	async fn write_core_storage(
-		&self,
-		key: StackStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
-		Ok(())
-	}
-
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
-		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
-		Ok(())
-	}
-
-	async fn read_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, v01::GenericError> {
-		Ok(self.0.lock().expect("storage mutex poisoned").get(&slot.encode()).cloned())
-	}
-
-	async fn write_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		self.store_unscoped(slot, value);
-		Ok(())
-	}
-
-	async fn clear_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-	) -> Result<(), v01::GenericError> {
-		self.0.lock().expect("storage mutex poisoned").remove(&slot.encode());
-		Ok(())
-	}
-}
-
-/// Core storage for the [`paseo_test_stack`], kept in `host`.
-///
-/// Every caller shares one stack, and with it whether that stack holds the
-/// values a host stored under a slot alone, which the first test to ask
-/// settles for all. A test about those values builds its own stack.
-pub fn test_storage<S: PlatformCoreStorage + ?Sized>(host: &S) -> StackStorage<'_, S> {
-	static STACK: LazyLock<crate::platform::Stack> = LazyLock::new(paseo_test_stack);
-	STACK.storage(host)
-}
-
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -461,17 +384,6 @@ pub fn test_stack(
 /// session `blob` were read in `stack`'s run.
 pub fn usernames_record(stack: &crate::platform::Stack, blob: &[u8]) -> Vec<u8> {
 	stack.run().stamp(&sp_crypto_hashing::blake2_256(blob))
-}
-
-/// Whether `platform` holds no core value but the record of the run the
-/// stored session's usernames were read in.
-///
-/// A session leaves that record behind when it ends. It names no secret, so
-/// a check that nothing of a session is left stored allows it.
-pub fn only_the_usernames_run_is_stored(platform: &StubPlatform) -> bool {
-	let stored = platform.local_storage.lock().expect("local storage mutex poisoned");
-	let run = core_storage_test_key(CoreStorageKey::SessionUsernamesRun);
-	stored.keys().all(|key| *key == run)
 }
 
 /// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
@@ -580,31 +492,6 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 		.to_link(trinity_stack::DEFAULT_LINK_BASE)
 }
 
-/// Runtime services over `platform` on the [`paseo_test_stack`].
-pub fn test_services(
-	platform: Arc<dyn crate::platform::Platform>,
-) -> Arc<crate::runtime::RuntimeServices> {
-	test_services_on(platform, paseo_test_stack())
-}
-
-/// Runtime services over `platform` on `stack`.
-pub fn test_services_on(
-	platform: Arc<dyn crate::platform::Platform>,
-	stack: crate::platform::Stack,
-) -> Arc<crate::runtime::RuntimeServices> {
-	crate::runtime::RuntimeServices::new(
-		platform,
-		HostInfo {
-			name: "Test Host".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		stack,
-		crate::Spawner::for_test(),
-	)
-}
-
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 	(
@@ -703,9 +590,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	(host_session, responder_session)
 }
 
-/// [`sso_session_info`] as a host that keeps the session itself holds it:
-/// without usernames, which the core looks up whenever it activates such a
-/// session.
+/// [`sso_session_info`] without usernames, as for an account that has none.
 pub fn external_sso_session_info() -> crate::host_logic::session::SessionInfo {
 	crate::host_logic::session::SessionInfo {
 		lite_username: None,
@@ -1407,7 +1292,7 @@ impl PlatformProductOperations for StubPlatform {
 impl PlatformCoreStorage for StubPlatform {
 	async fn read_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		if let Some(storage) = &self.core_storage_override {
 			return storage.read_core_storage(key).await;
@@ -1415,7 +1300,7 @@ impl PlatformCoreStorage for StubPlatform {
 		if self.core_storage_pending {
 			futures::future::pending::<()>().await;
 		}
-		if let CoreStorageKey::AuthSession = key.slot {
+		if let CoreStorageKey::AuthSession = key {
 			if let Some(reason) = self.session_error {
 				return Err(v01::GenericError { reason: reason.to_string() });
 			}
@@ -1425,7 +1310,7 @@ impl PlatformCoreStorage for StubPlatform {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
-			(&key.slot, self.permission_storage_error)
+			(&key, self.permission_storage_error)
 		{
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
@@ -1433,19 +1318,19 @@ impl PlatformCoreStorage for StubPlatform {
 			.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.get(&stub_storage_key(&key))
+			.get(&core_storage_test_key(key))
 			.cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
 		if let Some(storage) = &self.core_storage_override {
 			return storage.write_core_storage(key, value).await;
 		}
-		if let CoreStorageKey::AuthSession = key.slot {
+		if let CoreStorageKey::AuthSession = key {
 			self.session_writes
 				.lock()
 				.expect("session write list mutex poisoned")
@@ -1466,15 +1351,15 @@ impl PlatformCoreStorage for StubPlatform {
 		self.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.insert(stub_storage_key(&key), value);
+			.insert(core_storage_test_key(key), value);
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		if let Some(storage) = &self.core_storage_override {
 			return storage.clear_core_storage(key).await;
 		}
-		if let CoreStorageKey::AuthSession = key.slot {
+		if let CoreStorageKey::AuthSession = key {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
@@ -1484,17 +1369,13 @@ impl PlatformCoreStorage for StubPlatform {
 		self.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.remove(&stub_storage_key(&key));
+			.remove(&core_storage_test_key(key));
 		Ok(())
 	}
 }
 
-/// The stub core-storage map's key for `slot` of the [`test_stack`].
-pub fn core_storage_test_key(slot: CoreStorageKey) -> String {
-	stub_storage_key(&test_storage_key(slot))
-}
-
-fn stub_storage_key(key: &StackStorageKey) -> String {
+/// Stable string key used by the stub core-storage map.
+pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 

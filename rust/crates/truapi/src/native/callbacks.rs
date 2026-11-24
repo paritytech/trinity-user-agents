@@ -126,18 +126,15 @@ pub trait HostCallbacks: Send + Sync {
 	fn auth_state_changed(&self, state: AuthState);
 
 	/// Read a core-owned host-private storage slot. `key` is a SCALE-encoded
-	/// [`StackStorageKey`](crate::platform::StackStorageKey), or a
-	/// [`CoreStorageKey`] alone when the core looks for a value stored with no
-	/// stack id.
+	/// [`CoreStorageKey`].
 	async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
-	/// Persist a core-owned host-private storage slot. `key` is encoded as
-	/// for [`Self::core_storage_read`]; the one slot the core writes alone is
-	/// [`CoreStorageKey::UnscopedEntriesOwner`].
+	/// Persist a core-owned host-private storage slot. `key` is a
+	/// SCALE-encoded [`CoreStorageKey`].
 	async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection>;
 
-	/// Clear a core-owned host-private storage slot. `key` is encoded as for
-	/// [`Self::core_storage_read`].
+	/// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
+	/// [`CoreStorageKey`].
 	async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
 	/// Open a JSON-RPC connection for a chain. Return a host-assigned
@@ -559,7 +556,10 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// Show the funding overlay for session `intent`, which `product_id`
 	/// opened, or the host itself when `None`, on the screen `direction`
 	/// names, and report whether the user started or dismissed it. `amount`
-	/// is a decimal string of CASH units.
+	/// is a decimal string of CASH units. A `cancel_funding` while the
+	/// overlay is up drops this call, which cancels the Swift `Task` or the
+	/// Kotlin coroutine running it: take the overlay down on cancellation
+	/// (`withTaskCancellationHandler`, `invokeOnCancellation`).
 	async fn present_funding(
 		&self,
 		product_id: Option<ProductId>,

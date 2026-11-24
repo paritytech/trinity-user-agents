@@ -2,7 +2,7 @@
 
 use crate::{
 	host_logic::statement_store::SUBMIT_STATEMENT_METHOD,
-	platform::{AuthState, CoreStorageKey, Stack},
+	platform::{AuthState, CoreStorage, CoreStorageKey, Stack},
 	runtime::{
 		ProductRuntimeHost,
 		sso_request_service::SsoRequestService,
@@ -11,6 +11,7 @@ use crate::{
 	},
 	test_support::*,
 };
+use parity_scale_codec::Encode;
 use std::sync::Mutex;
 use truapi::{
 	api::Signing,
@@ -333,7 +334,7 @@ fn a_product_reset_during_activation_keeps_the_new_session() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let session = external_sso_session_info();
+	let session = sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
@@ -652,6 +653,37 @@ fn a_paired_registration_records_the_phones_key_locally() {
 	);
 }
 
+/// Host storage in memory that keeps a value under whatever key it is given.
+#[derive(Default)]
+struct MemoryCoreStorage(Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl CoreStorage for MemoryCoreStorage {
+	async fn read_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, truapi::latest::GenericError> {
+		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
+	}
+
+	async fn write_core_storage(
+		&self,
+		key: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
+		Ok(())
+	}
+
+	async fn clear_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
+		Ok(())
+	}
+}
+
 /// A pairing host over `storage` whose Asset Hub the stub does not serve, so
 /// a session's usernames resolve to nothing.
 fn pairing_host_on_unserved_asset_hub(storage: Arc<MemoryCoreStorage>) -> Arc<PairingHost> {
@@ -682,15 +714,14 @@ fn alices_session_blob() -> Vec<u8> {
 /// Stores `blob` as the core's session and `record` as what the core recorded
 /// about its usernames.
 fn store_session(storage: &MemoryCoreStorage, blob: &[u8], record: Option<Vec<u8>>) {
-	let storage = test_storage(storage);
 	futures::executor::block_on(async {
 		storage
-			.write(CoreStorageKey::AuthSession, blob.to_vec())
+			.write_core_storage(CoreStorageKey::AuthSession, blob.to_vec())
 			.await
 			.expect("memory storage writes");
 		if let Some(record) = record {
 			storage
-				.write(CoreStorageKey::SessionUsernamesRun, record)
+				.write_core_storage(CoreStorageKey::SessionUsernamesRun, record)
 				.await
 				.expect("memory storage writes");
 		}

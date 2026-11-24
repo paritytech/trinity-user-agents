@@ -2,10 +2,7 @@ import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import {
-  CoreStorageKey,
-  StackStorageKey,
-} from "../generated/host-callbacks.js";
+import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import type {
   StackCallbacks,
@@ -82,22 +79,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       },
     ];
     expect(
-      keys.map((slot) =>
-        describeCoreStorageKey(StackStorageKey.enc({ stack: "stack", slot })),
-      ),
-    ).toEqual([
-      { stack: "stack", kind: "ProductManifest", productLabel: "peopl" },
-      { stack: "stack", kind: "AutoSigningKey", productId: "peopl.dot" },
-      {
-        stack: "stack",
-        kind: "PermissionAuthorization",
-        productLabel: "caller",
-      },
-    ]);
-    // A host sweeping a product's state also finds what it stored under the
-    // slot alone, before keys included a stack.
-    expect(
-      keys.map((slot) => describeCoreStorageKey(CoreStorageKey.enc(slot))),
+      keys.map((key) => describeCoreStorageKey(CoreStorageKey.enc(key))),
     ).toEqual([
       { kind: "ProductManifest", productLabel: "peopl" },
       { kind: "AutoSigningKey", productId: "peopl.dot" },
@@ -116,7 +98,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const coreStorage = mock.callbacks.coreStorage;
     const readCoreStorage = coreStorage.readCoreStorage.bind(coreStorage);
     coreStorage.readCoreStorage = async (key) => {
-      invoked.push(`readCoreStorage:${key.slot.tag}`);
+      invoked.push(`readCoreStorage:${key.tag}`);
       return readCoreStorage(key);
     };
 
@@ -135,7 +117,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
     // The real core reads its auth session on startup, which crosses the bridge
-    // into the mock's readCoreStorage with a SCALE-decoded StackStorageKey.
+    // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Building the runtime also reads the stack record, so the auth session

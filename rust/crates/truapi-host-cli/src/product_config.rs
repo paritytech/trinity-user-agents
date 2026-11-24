@@ -30,7 +30,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use truapi::{
 	encode_cached_root_manifest,
-	platform::{CoreStorage, CoreStorageKey, ProductId, Stack},
+	platform::{CoreStorage, CoreStorageKey, ProductId, StackRun},
 };
 
 /// The developer-authored config for one product.
@@ -109,8 +109,11 @@ impl AppliedGrants {
 	}
 }
 
-/// Seed each config's manifest into the core's cache for `stack`, so its grants
-/// resolve for the life of this run.
+/// Seed each config's manifest into the core's cache, so its grants resolve for
+/// the life of this run.
+///
+/// `run` is the `Stack::run` of the stack the host is on. The core skips a
+/// cached manifest that names another.
 ///
 /// `now_secs` is the time the manifests count as read from. The core honours a
 /// cached manifest for a fixed lifetime and then reads through to the chain, so
@@ -119,18 +122,16 @@ impl AppliedGrants {
 /// again on the same period.
 pub async fn apply(
 	platform: &dyn CoreStorage,
-	stack: &Stack,
+	run: &StackRun,
 	configs: &[LocalProductConfig],
 	now_secs: u64,
 ) -> Result<AppliedGrants> {
-	let (storage, run) = (stack.storage(platform), stack.run());
 	let mut lines = Vec::with_capacity(configs.len());
 	for config in configs {
-		let manifest = config.root_manifest_json();
-		storage
-			.write(
+		platform
+			.write_core_storage(
 				CoreStorageKey::product_manifest(&config.product_name),
-				encode_cached_root_manifest(Some(&manifest), now_secs, &run),
+				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs, run),
 			)
 			.await
 			.map_err(|error| anyhow::anyhow!("{error:?}"))

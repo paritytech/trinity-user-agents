@@ -232,7 +232,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		"the stale allocation must not restore durable AutoSigning authority"
 	);
 	assert!(
-		only_the_usernames_run_is_stored(&platform),
+		platform.local_storage.lock().expect("local storage mutex poisoned").is_empty(),
 		"stale allowance completions must not restore durable slot secrets"
 	);
 	assert!(
@@ -495,7 +495,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 			.contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
 	);
 	assert!(
-		only_the_usernames_run_is_stored(&platform),
+		platform.local_storage.lock().expect("local storage mutex poisoned").is_empty(),
 		"a replacement wallet must not leave the prior session's durable allowance secrets"
 	);
 	assert!(

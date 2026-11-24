@@ -35,7 +35,7 @@ pub use crate::{
 	stack::{
 		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
 		StackFetchResponse, StackHost, StackIdentity, StackRecords, StackRefresh,
-		StackRefreshOutcome, StackRun, StackStatus, StackStorage,
+		StackRefreshOutcome, StackRun, StackStatus,
 	},
 };
 
@@ -1212,9 +1212,10 @@ pub enum CoreStorageKey {
 	},
 	/// Cached root manifest of one product, as published to dotNS.
 	///
-	/// The value carries the manifest JSON alongside the time it was read. The
-	/// core honours it for a bounded lifetime, which is what makes a revoked
-	/// trust grant eventually take effect.
+	/// The value carries the manifest JSON alongside the time it was read and
+	/// the [`StackRun`] it was read in. The core honours it in that run for a
+	/// bounded lifetime, which is what makes a revoked trust grant eventually
+	/// take effect.
 	#[codec(index = 12)]
 	ProductManifest {
 		/// Bare product label whose manifest was cached.
@@ -1246,34 +1247,13 @@ pub enum CoreStorageKey {
 		/// The stack's `stack_id`, the key in its link.
 		stack_id: String,
 	},
-	/// Id of the stack that holds the values a host stored under a slot alone,
-	/// before keys included a stack id.
-	///
-	/// Kept under the slot alone itself, so every stack the host runs reads the
-	/// same entry. See [`StackStorage`].
-	#[codec(index = 18)]
-	UnscopedEntriesOwner,
 	/// The [`StackRun`] the usernames in the `AuthSession` blob were read in,
 	/// with a hash of that blob, so it vouches for that blob only. A host that
 	/// keeps the `AuthSession` value under a key of its own keeps this one
 	/// next to it. When it vouches for another run or another blob, the core
 	/// installs the session and looks its usernames up again.
-	#[codec(index = 19)]
+	#[codec(index = 18)]
 	SessionUsernamesRun,
-}
-
-/// The key a host stores core-owned state under: a [`CoreStorageKey`] slot
-/// and the id of the stack it belongs to.
-///
-/// `stack` is [`Stack::id`]. A fork has the same genesis hashes as its source
-/// and a different id, so the two never share a key. A host stores each value
-/// under the whole encoded key, never under the slot alone.
-#[derive(Encode, Decode)]
-pub struct StackStorageKey {
-	/// Id of the stack the slot belongs to.
-	pub stack: String,
-	/// The slot.
-	pub slot: CoreStorageKey,
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1315,17 +1295,12 @@ impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
 	}
 }
 
-/// Stable metadata describing one strictly decoded core storage key: a
-/// [`StackStorageKey`], or a [`CoreStorageKey`] slot alone.
+/// Stable metadata describing one strictly decoded [`CoreStorageKey`].
 ///
-/// `kind` is the Rust variant name of the slot and is part of the host
-/// embedding contract. `owner` distinguishes full product identities from
-/// shared manifest labels.
+/// `kind` is the Rust variant name and is part of the host embedding contract.
+/// `owner` distinguishes full product identities from shared manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStorageKeyDescription {
-	/// Identity of the stack the slot belongs to. `None` for a slot alone,
-	/// which a host stored before keys included a stack id.
-	pub stack: Option<String>,
 	/// Stable storage-key variant name.
 	pub kind: &'static str,
 	/// Product or manifest label that owns this slot.
@@ -1341,31 +1316,29 @@ pub enum CoreStorageKeyOwner {
 	ProductLabel(String),
 }
 
-/// Failure to decode exactly one core storage key.
+/// Failure to decode exactly one [`CoreStorageKey`].
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum CoreStorageKeyDescriptionError {
 	/// The bytes are not a valid SCALE-encoded key.
-	#[display("invalid StackStorageKey encoding")]
+	#[display("invalid CoreStorageKey encoding")]
 	InvalidEncoding,
 	/// A valid key was followed by additional bytes.
-	#[display("StackStorageKey encoding contains trailing bytes")]
+	#[display("CoreStorageKey encoding contains trailing bytes")]
 	TrailingBytes,
 }
 
-/// Strictly decode one SCALE-encoded core storage key and return stable
+/// Strictly decode one SCALE-encoded [`CoreStorageKey`] and return stable
 /// metadata suitable for choosing host-private storage policy.
-///
-/// The key is a [`StackStorageKey`], or a [`CoreStorageKey`] alone as a host
-/// stored it before keys included a stack id. Bytes that decode as a
-/// [`StackStorageKey`] are one; the errors are those of that decoding.
 pub fn describe_core_storage_key(
 	encoded: &[u8],
 ) -> Result<CoreStorageKeyDescription, CoreStorageKeyDescriptionError> {
-	let (stack, slot) = match decode_exactly::<StackStorageKey>(encoded) {
-		Ok(StackStorageKey { stack, slot }) => (Some(stack), slot),
-		Err(error) => (None, decode_exactly::<CoreStorageKey>(encoded).map_err(|_| error)?),
-	};
-	let (kind, owner) = match slot {
+	let mut input = encoded;
+	let key = CoreStorageKey::decode(&mut input)
+		.map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
+	if !input.is_empty() {
+		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
+	}
+	let (kind, owner) = match key {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
 		CoreStorageKey::PermissionAuthorization { scope, .. } => {
@@ -1399,21 +1372,10 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
-		CoreStorageKey::UnscopedEntriesOwner => ("UnscopedEntriesOwner", None),
 		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 		CoreStorageKey::SessionUsernamesRun => ("SessionUsernamesRun", None),
 	};
-	Ok(CoreStorageKeyDescription { stack, kind, owner })
-}
-
-fn decode_exactly<T: Decode>(encoded: &[u8]) -> Result<T, CoreStorageKeyDescriptionError> {
-	let mut input = encoded;
-	let decoded =
-		T::decode(&mut input).map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
-	if !input.is_empty() {
-		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
-	}
-	Ok(decoded)
+	Ok(CoreStorageKeyDescription { kind, owner })
 }
 
 impl CoreStorageKey {
@@ -1618,11 +1580,6 @@ mod tests;
 
 /// Host-private persistence for core-owned state.
 ///
-/// Every key includes the id of the stack it belongs to, and the core only
-/// uses keys of the stack it runs. Stacks therefore do not share entries. The
-/// `unscoped` methods reach the entries a host stored before keys included a
-/// stack id.
-///
 /// Clearing product-indexed slots is the host's job. The core drops the ones
 /// it is holding when a session ends, but a product it never opened this run
 /// has no entry to drop, so those slots outlive the disconnect. A host that
@@ -1638,53 +1595,18 @@ mod tests;
 #[async_trait::async_trait]
 pub trait CoreStorage: Send + Sync {
 	/// Read a core-owned value by typed slot.
-	async fn read_core_storage(
-		&self,
-		key: StackStorageKey,
-	) -> Result<Option<Vec<u8>>, GenericError>;
+	async fn read_core_storage(&self, key: CoreStorageKey)
+	-> Result<Option<Vec<u8>>, GenericError>;
 
 	/// Write a core-owned value by typed slot.
 	async fn write_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError>;
 
 	/// Clear a core-owned value by typed slot.
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError>;
-
-	/// Read a value the host holds under `slot` alone, with no stack id.
-	///
-	/// A host that stored core state before keys included a stack id serves
-	/// those entries here, by the key it stored them under: the SCALE-encoded
-	/// slot. Only one stack reads them, see [`StackStorage`]. A host with no
-	/// such entries has none to return.
-	async fn read_unscoped_core_storage(
-		&self,
-		_slot: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(None)
-	}
-
-	/// Write `value` under `slot` alone, with no stack id.
-	///
-	/// The core writes only [`CoreStorageKey::UnscopedEntriesOwner`] here. A
-	/// host that serves [`Self::read_unscoped_core_storage`] has to keep it, or
-	/// no stack reads the entries. A host whose storage two processes share
-	/// keeps the first value written instead of replacing it, so stacks that
-	/// claim the entries at once agree on one owner.
-	async fn write_unscoped_core_storage(
-		&self,
-		_slot: CoreStorageKey,
-		_value: Vec<u8>,
-	) -> Result<(), GenericError> {
-		Ok(())
-	}
-
-	/// Clear the value the host holds under `slot` alone, with no stack id.
-	async fn clear_unscoped_core_storage(&self, _slot: CoreStorageKey) -> Result<(), GenericError> {
-		Ok(())
-	}
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -2354,7 +2276,9 @@ pub enum FundingPresentOutcome {
 #[async_trait::async_trait]
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
+	/// host itself when `product` is `None`. A cancel while the overlay is up
+	/// drops this call, and the host takes the overlay down when it is
+	/// dropped.
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,

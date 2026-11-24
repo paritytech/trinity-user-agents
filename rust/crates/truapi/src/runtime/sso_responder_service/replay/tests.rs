@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use crate::test_support::{MemoryCoreStorage, StubPlatform, paseo_test_stack, test_storage};
+use crate::test_support::StubPlatform;
 
 /// A request that has not expired at any `now` these tests use.
 const REQUEST: ReplayRequest<'static> =
@@ -91,10 +91,10 @@ fn legacy_unbounded_entries_do_not_block_new_requests() {
 				})
 				.collect(),
 		};
-		write_ledger(&test_storage(&platform), request_scope, &ledger).await.unwrap();
+		write_ledger(&platform, request_scope, &ledger).await.unwrap();
 
 		let result = execute_once(
-			&test_storage(&platform),
+			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
 			ReplayRequest { id: "fresh", expires_at_unix_secs: Some(200) },
@@ -107,7 +107,7 @@ fn legacy_unbounded_entries_do_not_block_new_requests() {
 
 		assert_eq!(result, ReplayExecution::Executed("executed"));
 		assert_eq!(
-			read_ledger(&test_storage(&platform), request_scope).await.unwrap(),
+			read_ledger(&platform, request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
 					request_id: "fresh".to_string(),
@@ -143,13 +143,13 @@ fn full_ledger_rejects_before_acknowledging_or_executing_the_request() {
 		for index in 0..MAX_REQUEST_LEDGER_ENTRIES {
 			ledger.start(format!("request-{index}"), None, 0).unwrap();
 		}
-		write_ledger(&test_storage(&platform), request_scope, &ledger).await.unwrap();
+		write_ledger(&platform, request_scope, &ledger).await.unwrap();
 		let acknowledgements = AtomicUsize::new(0);
 		let executions = Arc::new(AtomicUsize::new(0));
 		let request_executions = executions.clone();
 
 		let error = execute_once(
-			&test_storage(&platform),
+			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
 			ReplayRequest { id: "overflow", expires_at_unix_secs: None },
@@ -184,7 +184,7 @@ fn completed_request_survives_store_reconstruction() {
 		let locks = SsoReplayLocks::default();
 		let request_scope = scope(1, 2, 3);
 		let first = execute_once(
-			&test_storage(&platform),
+			&platform,
 			&locks,
 			request_scope,
 			REQUEST,
@@ -196,7 +196,7 @@ fn completed_request_survives_store_reconstruction() {
 		.unwrap();
 		assert_eq!(first, ReplayExecution::Executed("executed"));
 		assert_eq!(
-			read_ledger(&test_storage(&platform), request_scope).await.unwrap(),
+			read_ledger(&platform, request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
 					request_id: REQUEST.id.to_string(),
@@ -208,7 +208,7 @@ fn completed_request_survives_store_reconstruction() {
 
 		let reconstructed_locks = SsoReplayLocks::default();
 		let replay = execute_once(
-			&test_storage(&platform),
+			&platform,
 			&reconstructed_locks,
 			request_scope,
 			REQUEST,
@@ -229,7 +229,7 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 		let platform = StubPlatform::default();
 		let request_scope = scope(1, 2, 3);
 		let failure = execute_once(
-			&test_storage(&platform),
+			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
 			REQUEST,
@@ -241,7 +241,7 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 		.unwrap_err();
 		assert_eq!(failure, "simulated process failure");
 		assert_eq!(
-			read_ledger(&test_storage(&platform), request_scope).await.unwrap(),
+			read_ledger(&platform, request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
 					request_id: REQUEST.id.to_string(),
@@ -254,7 +254,7 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 		let executions = Arc::new(AtomicUsize::new(0));
 		let replay_executions = executions.clone();
 		let replay = execute_once(
-			&test_storage(&platform),
+			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
 			REQUEST,
@@ -283,7 +283,7 @@ fn request_ids_are_isolated_by_root_and_peer() {
 		for request_scope in [scope(1, 2, 3), scope(2, 2, 3), scope(1, 4, 3), scope(1, 2, 4)] {
 			let executions = executions.clone();
 			let outcome = execute_once(
-				&test_storage(&platform),
+				&platform,
 				&locks,
 				request_scope,
 				REQUEST,
@@ -315,7 +315,7 @@ fn duplicate_request_is_acknowledged_again_but_not_executed_twice() {
 		for expected in [ReplayExecution::Executed(()), ReplayExecution::Duplicate] {
 			let executions = executions.clone();
 			let actual = execute_once(
-				&test_storage(&platform),
+				&platform,
 				&locks,
 				scope(1, 2, 3),
 				REQUEST,
@@ -337,45 +337,6 @@ fn duplicate_request_is_acknowledged_again_but_not_executed_twice() {
 		assert_eq!(
 			(acknowledgements.load(Ordering::SeqCst), executions.load(Ordering::SeqCst)),
 			(2, 1)
-		);
-	});
-}
-
-/// A wallet that served a request and then updated holds its ledger under a
-/// key with no stack id. The request statement can still be on the channel,
-/// so the wallet has to find that ledger and refuse to run the request again.
-#[test]
-fn a_request_served_before_keys_included_a_stack_is_not_executed_again() {
-	futures::executor::block_on(async {
-		let host = MemoryCoreStorage::default();
-		let mut ledger = RequestLedger::default();
-		ledger.start(REQUEST.id.to_string(), REQUEST.expires_at_unix_secs, 100).unwrap();
-		ledger.complete(REQUEST.id);
-		host.store_unscoped(
-			scope(1, 2, 3).storage_key(),
-			VersionedRequestLedger::V1(ledger).encode(),
-		);
-		let executions = Arc::new(AtomicUsize::new(0));
-		let stack = paseo_test_stack();
-
-		let counted = executions.clone();
-		let outcome = execute_once(
-			&stack.storage(&host),
-			&SsoReplayLocks::default(),
-			scope(1, 2, 3),
-			REQUEST,
-			100,
-			async { Ok(()) },
-			move || async move {
-				counted.fetch_add(1, Ordering::SeqCst);
-				Ok::<_, String>(())
-			},
-		)
-		.await;
-
-		assert_eq!(
-			(outcome, executions.load(Ordering::SeqCst)),
-			(Ok(ReplayExecution::Duplicate), 0)
 		);
 	});
 }

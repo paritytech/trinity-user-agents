@@ -12,7 +12,7 @@
 use core::{future::Future, time::Duration};
 
 use crate::platform::{
-	CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId, StackRun, StackStorage,
+	CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId, StackRun,
 };
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
@@ -177,7 +177,7 @@ mod tests;
 /// manifest is read again.
 pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 
-/// A cached root manifest lookup and when it was made.
+/// A cached root manifest lookup, when it was made and in which run.
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
 /// reads today, so a later consumer needs no cache migration.
@@ -376,14 +376,11 @@ async fn scope_grant(
 		return Err(Refusal { because: RefusedBecause::NotGranted, source, scopes });
 	}
 	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
-		let because =
-			match stored_account_decision(&services.stack().storage(platform), caller_id, target)
-				.await
-			{
-				StoredDecision::Denied => RefusedBecause::UserDenied,
-				StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
-				StoredDecision::Absent => return Ok(()),
-			};
+		let because = match stored_account_decision(platform, caller_id, target).await {
+			StoredDecision::Denied => RefusedBecause::UserDenied,
+			StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
+			StoredDecision::Absent => return Ok(()),
+		};
 		return Err(Refusal { because, source, scopes });
 	}
 	Ok(())
@@ -406,7 +403,7 @@ enum StoredDecision {
 /// refusal, and the prompt that would settle it belongs to the call the user
 /// actually made, not to a grant lookup.
 async fn stored_account_decision(
-	storage: &StackStorage<'_, dyn Platform + '_>,
+	platform: &dyn Platform,
 	caller_id: &ProductId,
 	target: &ProductId,
 ) -> StoredDecision {
@@ -428,7 +425,7 @@ async fn stored_account_decision(
 		CoreStorageKey::account_access_authorization(caller_id, target),
 	];
 	for key in candidates {
-		match authorization_status(storage, key).await {
+		match authorization_status(platform, key).await {
 			Ok(PermissionAuthorizationStatus::Denied) => return StoredDecision::Denied,
 			Ok(
 				PermissionAuthorizationStatus::NotDetermined |
@@ -676,9 +673,8 @@ async fn root_manifest(
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
 	let key = CoreStorageKey::product_manifest(target);
-	let storage = services.stack().storage(platform);
 	let run = services.stack().run();
-	let read = cached_dotns_json(&storage, &run, key, CachePolicy::UseCache, || async {
+	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, target) = (services.chain.clone(), target.clone());
 		services
@@ -720,9 +716,8 @@ pub async fn read_worker_manifest(
 	policy: CachePolicy,
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
 	let key = worker_manifest_cache_key(product_id);
-	let storage = services.stack().storage(platform);
 	let run = services.stack().run();
-	let (json, read) = cached_dotns_json(&storage, &run, key, policy, || async {
+	let (json, read) = cached_dotns_json(platform, &run, key, policy, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
@@ -788,9 +783,8 @@ pub async fn publishes_app(
 	ceiling: Duration,
 ) -> Option<bool> {
 	let key = app_manifest_cache_key(product_id);
-	let storage = services.stack().storage(platform);
 	let run = services.stack().run();
-	let read = cached_dotns_json(&storage, &run, key, CachePolicy::UseCache, || async {
+	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
 		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
 			.await
 			.map_err(|error| error.reason())
@@ -836,7 +830,7 @@ pub enum CachePolicy {
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
 async fn cached_dotns_json<F, E>(
-	storage: &StackStorage<'_, dyn Platform + '_>,
+	platform: &dyn Platform,
 	run: &StackRun,
 	key: CoreStorageKey,
 	policy: CachePolicy,
@@ -853,7 +847,7 @@ where
 	// an entry is one a publisher could never withdraw. Treating it as stale
 	// costs one lookup and cannot be worse than that.
 	if policy == CachePolicy::UseCache &&
-		let Ok(Some(bytes)) = storage.read(key.clone()).await &&
+		let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
 		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
 		cached.run == *run &&
 		cached.fetched_at_secs <= now &&
@@ -864,6 +858,6 @@ where
 
 	let json = fetch().await?;
 	let entry = CachedManifest { run: run.clone(), fetched_at_secs: now, json: json.clone() };
-	let _ = storage.write(key, entry.encode()).await;
+	let _ = platform.write_core_storage(key, entry.encode()).await;
 	Ok((json, DotnsRead::Fetched))
 }

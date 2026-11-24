@@ -46,8 +46,7 @@ const silentChain = {
 function memoryStorage() {
   const entries = new Map();
   return {
-    tagsWritten: () =>
-      [...entries.keys()].map((key) => JSON.parse(key).slot.tag),
+    tagsWritten: () => [...entries.keys()].map((key) => JSON.parse(key).tag),
     coreStorage: {
       async readCoreStorage(key) {
         return entries.get(JSON.stringify(key));

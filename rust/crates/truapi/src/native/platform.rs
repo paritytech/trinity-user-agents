@@ -10,9 +10,8 @@ use crate::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest,
-		StackFetchResponse, StackHost, StackStatus, StackStorageKey, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -419,7 +418,7 @@ impl ProductOperations for CallbackPlatform {
 impl CoreStorage for CallbackPlatform {
 	async fn read_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		self.callbacks
 			.core_storage_read(key.encode())
@@ -429,7 +428,7 @@ impl CoreStorage for CallbackPlatform {
 
 	async fn write_core_storage(
 		&self,
-		key: StackStorageKey,
+		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
 		self.callbacks
@@ -438,40 +437,9 @@ impl CoreStorage for CallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
-	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		self.callbacks
 			.core_storage_clear(key.encode())
-			.await
-			.map_err(v01::GenericError::from)
-	}
-
-	async fn read_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, v01::GenericError> {
-		self.callbacks
-			.core_storage_read(slot.encode())
-			.await
-			.map_err(v01::GenericError::from)
-	}
-
-	async fn write_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		self.callbacks
-			.core_storage_write(slot.encode(), value)
-			.await
-			.map_err(v01::GenericError::from)
-	}
-
-	async fn clear_unscoped_core_storage(
-		&self,
-		slot: CoreStorageKey,
-	) -> Result<(), v01::GenericError> {
-		self.callbacks
-			.core_storage_clear(slot.encode())
 			.await
 			.map_err(v01::GenericError::from)
 	}

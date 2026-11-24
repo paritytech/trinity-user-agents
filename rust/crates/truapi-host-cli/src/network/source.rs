@@ -2,29 +2,28 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Result, anyhow, bail};
 
 use super::{
 	Network, NetworkChoice, NetworkSource, Stack, StackArg,
 	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin, built_in_key},
-	checks::{refuse_light_client, verify_chains},
+	checks::verify_chains,
 };
 use crate::{
-	chain::ChainBackend,
+	chain::ChainAccess,
 	stack_descriptor::{FETCH_TIMEOUT, load_descriptor},
 };
 
 impl NetworkSource {
 	/// `--chain-backend` with `--network` or the stack. Fails for `--network`
-	/// with a stack, and for the light client with a stack; each message
-	/// names where the stack came from.
+	/// with a stack, in a message that names where the stack came from.
 	///
 	/// `stack_copies` is a directory to keep the published descriptor a
 	/// built-in network last ran on, which it then starts from while the
 	/// published one is unreachable. Without one it starts from the bundled
 	/// copy.
 	pub fn new(
-		chain_backend: ChainBackend,
+		chain_access: ChainAccess,
 		network: Option<Network>,
 		stack: Option<StackArg>,
 		stack_copies: Option<PathBuf>,
@@ -33,44 +32,22 @@ impl NetworkSource {
 			(Some(_), Some(StackArg { source, .. })) => {
 				bail!("--network cannot be used with {source}; unset one of them")
 			},
-			(None, Some(stack)) => {
-				let StackArg { value, source } = &stack;
-				let bundled = truapi_provider::known_networks().collect::<Vec<_>>().join(", ");
-				ensure!(
-					chain_backend != ChainBackend::LightClient,
-					"--chain-backend light-client cannot run {source} {value}: the light client \
-					 syncs only the networks truapi-provider bundles ({bundled}); use \
-					 --chain-backend rpc"
-				);
-				NetworkChoice::Stack(stack)
-			},
+			(None, Some(stack)) => NetworkChoice::Stack(stack),
 			(network, None) => NetworkChoice::BuiltIn(network.unwrap_or_default()),
 		};
-		Ok(Self { chain_backend, network, stack_copies })
+		Ok(Self { chain_access, network, stack_copies })
 	}
 
 	/// The network a command runs against, the built-in network or the stack,
 	/// once its chains pass the checks. Fails as [`Stack::new`] and
 	/// [`verify_chains`] do, for an unreachable or expired `--stack`, and when
-	/// the light client cannot serve the network. A built-in network whose
-	/// published descriptor is unreachable runs on its bundled copy; when that
+	/// the light client is asked for a chain the stack names no light spec
+	/// for. A built-in network whose published descriptor is unreachable runs
+	/// on the copy the host last ran on, or else its bundled copy; when that
 	/// copy fails a check, the descriptor is fetched once more and the checks
 	/// repeat only when the published copy is then in use.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
-		let (stack, built_in) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
-		let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {
-			return Ok(stack);
-		};
-		if built_in.map(|origin| origin.copy) != Some(BuiltInCopy::Unreachable) {
-			return Err(error);
-		}
-		tracing::info!("{error}; fetching the published descriptor again");
-		let (stack, built_in) = self.resolve_routes(FETCH_TIMEOUT).await?;
-		if built_in.as_ref().map(|origin| origin.copy) != Some(BuiltInCopy::Published) {
-			return Err(error);
-		}
-		verify_chains(&stack, built_in.as_ref()).await??;
-		Ok(stack)
+		checked(|fetch_timeout| self.resolve_routes(fetch_timeout)).await
 	}
 
 	/// [`Self::resolve_checked`] without contacting any chain; only a
@@ -92,7 +69,7 @@ impl NetworkSource {
 				let stack = load_descriptor(&stack_arg.value, key.as_deref())
 					.await
 					.and_then(|(stack_id, descriptor)| {
-						Stack::new(stack_id, descriptor, self.chain_backend)
+						Stack::new(stack_id, descriptor, &self.chain_access)
 					})
 					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)
@@ -101,16 +78,38 @@ impl NetworkSource {
 				let (stack, origin) = network
 					.resolve_built_in(
 						fetch_timeout,
-						self.chain_backend,
+						&self.chain_access,
 						self.stack_copies.as_deref(),
 					)
 					.await?;
 				(stack, Some(origin))
 			},
 		};
-		refuse_light_client(&stack)?;
 		Ok((stack, built_in))
 	}
+}
+
+/// The stack `resolve` gives once its chains pass the checks, as
+/// [`NetworkSource::resolve_checked`] describes. `resolve` is given the
+/// timeout for a built-in's published descriptor.
+async fn checked<Resolved>(resolve: impl Fn(Duration) -> Resolved) -> Result<Stack>
+where
+	Resolved: Future<Output = Result<(Stack, Option<BuiltInOrigin>)>>,
+{
+	let (stack, built_in) = resolve(BUILT_IN_REFRESH_TIMEOUT).await?;
+	let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {
+		return Ok(stack);
+	};
+	if built_in.map(|origin| origin.copy) != Some(BuiltInCopy::Unreachable) {
+		return Err(error);
+	}
+	tracing::info!("{error}; fetching the published descriptor again");
+	let (stack, built_in) = resolve(FETCH_TIMEOUT).await?;
+	if built_in.as_ref().map(|origin| origin.copy) != Some(BuiltInCopy::Published) {
+		return Err(error);
+	}
+	verify_chains(&stack, built_in.as_ref()).await??;
+	Ok(stack)
 }
 
 #[cfg(test)]
