@@ -51,4 +51,44 @@ class HostLogSinkTreeTest {
 
         verify(exactly = 0) { sink.log(any(), any(), any(), any()) }
     }
+
+    @Test
+    fun `a looping tag sends a bounded number of lines and then counts what it dropped`() {
+        var now = 0L
+        Timber.uprootAll()
+        Timber.plant(HostLogSinkTree(sink) { now })
+        val limit = HostLogSinkTree.LINES_PER_WINDOW
+
+        repeat(limit + 500) { Timber.tag("truapi.product").w("chainHead follow p:$it restarted 1 ms after the stop") }
+        Timber.tag("truapi.chain").i("chain connection 2 open")
+
+        verify(exactly = limit) { sink.log(Log.WARN, "truapi.product", any(), emptyMap()) }
+        verify(exactly = 1) { sink.log(Log.INFO, "truapi.chain", "chain connection 2 open", emptyMap()) }
+
+        now += HostLogSinkTree.WINDOW_MS
+        Timber.tag("truapi.product").w("chainHead follow p:9999 restarted 1 ms after the stop")
+
+        verify(exactly = 1) {
+            sink.log(
+                Log.WARN,
+                "truapi.product",
+                "500 truapi.product lines dropped over the limit of $limit a minute",
+                mapOf(HostLogSinkTree.DROPPED_ATTRIBUTE to 500),
+            )
+            sink.log(Log.WARN, "truapi.product", "chainHead follow p:9999 restarted 1 ms after the stop", emptyMap())
+        }
+    }
+
+    @Test
+    fun `a window that dropped nothing sends no count`() {
+        var now = 0L
+        Timber.uprootAll()
+        Timber.plant(HostLogSinkTree(sink) { now })
+
+        Timber.tag("truapi.product").w("first")
+        now += HostLogSinkTree.WINDOW_MS
+        Timber.tag("truapi.product").w("second")
+
+        verify(exactly = 2) { sink.log(any(), any(), any(), any()) }
+    }
 }
