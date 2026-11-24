@@ -185,21 +185,10 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
 
-	/// Request a product worker transition. `Start` means the host runs the
-	/// worker now; `Stop` means it is no longer needed and may stop. Every
-	/// transition arrives here, in ledger order: the ones the host asks for
-	/// through [`NativeTrUApiHostRuntime::acquire_worker`] and
-	/// [`NativeTrUApiHostRuntime::release_worker`], and the ones the core
-	/// causes on a product's behalf, such as an open render stream.
+	/// Report a product's first claim (`Start`) or final release (`Stop`) in ledger order.
 	///
-	/// Demand is runtime-wide, so this is invoked only on the callbacks the
-	/// runtime was built with, never on the per-execution callbacks passed to
-	/// [`NativeTrUApiHostRuntime::open_product_execution`]. Can arrive on any
-	/// thread, including synchronously on the calling thread during
-	/// [`NativeTrUApiHostRuntime::acquire_worker`] and
-	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
-	/// thread and re-entrantly: hand the transition off rather than blocking
-	/// on another thread from inside it.
+	/// The callback belongs to the host runtime and can run synchronously on the thread that
+	/// acquires or releases a claim. Dispatch work to the appropriate thread without blocking.
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// The product's worker crashed `crashes` times in a row while it was
@@ -293,17 +282,6 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		product_id: ProductId,
 	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
-
-	/// Record a pending operation, whose id keeps the product's worker alive
-	/// until it ends.
-	async fn begin_operation(
-		&self,
-		product_id: ProductId,
-		label: String,
-	) -> Result<u32, HostRejection>;
-	/// End a pending operation. Idempotent: an unknown or already-ended id
-	/// succeeds, so a retry after an ambiguous failure is safe.
-	async fn end_operation(&self, product_id: ProductId, id: u32) -> Result<(), HostRejection>;
 }
 
 /// Native Chat storage and UI adapter. Hosts that support the Chat modality
@@ -329,7 +307,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 		room_id: String,
 		name: String,
 		icon: String,
-		config: truapi::latest::ChatRoomConfig,
+		config: latest::ChatRoomConfig,
 	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError>;
 
 	/// Register or resolve a native product Chat bot.
@@ -372,40 +350,43 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Return the configuration of the last `create_room` of a room. The core
 	/// reads it before each feed update, preview and query of the room.
-	async fn room_config(
-		&self,
-		room_id: String,
-	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
+	async fn room_config(&self, room_id: String) -> Result<latest::ChatRoomConfig, HostRejection>;
 
 	/// Replace the name, description, icon and empty-room text of a room. An
 	/// icon of `None` keeps the icon, and an empty icon removes it.
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
-		metadata: truapi::latest::ChatRoomMetadata,
+		metadata: latest::ChatRoomMetadata,
 	) -> Result<(), HostRejection>;
 
-	/// Replace how a room shows in the chat list.
+	/// Replace how a room shows in the chat list. A host that does not serve it
+	/// answers `Unsupported`.
 	async fn set_room_preview(
 		&self,
 		room_id: String,
-		preview: truapi::latest::ChatRoomPreview,
-	) -> Result<(), HostRejection>;
+		preview: latest::ChatRoomPreview,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen.
-	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
+	/// screen. A room that does not exist is not an error. A host that does not
+	/// serve it answers `Unsupported`.
+	async fn delete_room(
+		&self,
+		room_id: String,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change; without it the host applies it only to an open room
 	/// screen and the chat list preview. The host answers
 	/// [`ChatFeedOutcome::Applied`], or the outcome that names why it did not
-	/// apply the change. It throws only for a failure of its own, which the
-	/// product receives as `HostFailure`.
+	/// apply the change. A host that does not serve it answers
+	/// [`ChatFeedOutcome::Unsupported`]. It throws only for a failure of its
+	/// own, which the product receives as `HostFailure`.
 	async fn update_feed(
 		&self,
 		room_id: String,
-		update: truapi::latest::ChatFeedUpdate,
+		update: latest::ChatFeedUpdate,
 		persist: bool,
 	) -> Result<ChatFeedOutcome, HostRejection>;
 }
@@ -602,7 +583,10 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// Show the funding overlay for session `intent`, which `product_id`
 	/// opened, or the host itself when `None`, on the screen `direction`
 	/// names, and report whether the user started or dismissed it. `amount`
-	/// is a decimal string of CASH units.
+	/// is a decimal string of CASH units. A `cancel_funding` while the
+	/// overlay is up drops this call, which cancels the Swift `Task` or the
+	/// Kotlin coroutine running it: take the overlay down on cancellation
+	/// (`withTaskCancellationHandler`, `invokeOnCancellation`).
 	async fn present_funding(
 		&self,
 		product_id: Option<ProductId>,

@@ -45,6 +45,7 @@ import uniffi.truapi.ChatPreviewReaction
 import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoomActivity
 import uniffi.truapi.ChatRoomBadge
+import uniffi.truapi.ChatRoomChangeOutcome
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomParticipation
@@ -236,7 +237,7 @@ class ProductChatHostBridgeTest {
         // The configuration arrives with the room, in one call.
         bridge.createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reactionDetails = true))
         bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null, placeholder = null))
-        bridge.setRoomPreview(
+        val previewed = bridge.setRoomPreview(
             ROOM,
             ChatRoomPreview(
                 5uL,
@@ -248,7 +249,11 @@ class ProductChatHostBridgeTest {
                 activity = null,
             ),
         )
-        bridge.deleteRoom(ROOM)
+        val deleted = bridge.deleteRoom(ROOM)
+
+        // This host serves both requests, so the product must not receive Unsupported for them.
+        assertEquals(ChatRoomChangeOutcome.APPLIED, previewed)
+        assertEquals(ChatRoomChangeOutcome.APPLIED, deleted)
 
         coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true)) }
         coVerify { messaging.setRoomMetadata(room, "Lobby", null, ChatRoomMetadataModel("Play here", placeholder = null)) }

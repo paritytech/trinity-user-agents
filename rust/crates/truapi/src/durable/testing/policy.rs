@@ -5,14 +5,17 @@ use std::{
 	sync::atomic::{AtomicU8, Ordering},
 };
 
-use futures::future::{BoxFuture, pending, ready};
+use futures::{
+	channel::oneshot,
+	future::{BoxFuture, pending, ready},
+};
 use parking_lot::Mutex;
 
 use super::{extrinsic, insert_with_plan};
 use crate::{
 	chain::{EncodedExtrinsic, MortalExtrinsic},
 	durable::{
-		engine::DurableSubmission,
+		engine::{DeferredSubmission, DurableSubmission},
 		model::{
 			DeferredDurableTx, DomainId, DurableTxEntry, DurableTxId, PolicyParams, SubmissionPlan,
 			VerdictFailureKind,
@@ -25,6 +28,11 @@ use crate::{
 /// A plan with `params`.
 pub fn test_plan(params: Vec<u8>) -> SubmissionPlan {
 	SubmissionPlan { params: PolicyParams(params) }
+}
+
+/// A deferred submission built from `params` that waits for nothing.
+pub fn test_submission(params: Vec<u8>) -> DeferredSubmission {
+	DeferredSubmission::independent(PolicyParams(params))
 }
 
 /// What a [`ScriptedPolicy`] answers for one batch.
@@ -47,7 +55,7 @@ pub struct ScriptedPolicy {
 	retry_answer: RetryAnswer,
 	script: PrepareScript,
 	retry_questions: Mutex<Vec<RetryQuestion>>,
-	batches: Mutex<Vec<Vec<DurableTxId>>>,
+	batches: Mutex<Vec<Vec<DeferredDurableTx>>>,
 }
 
 /// One [`SubmissionPolicy::can_retry`] call.
@@ -120,7 +128,12 @@ impl ScriptedPolicy {
 
 	/// The ids of every batch asked, in order.
 	pub fn batches(&self) -> Vec<Vec<DurableTxId>> {
-		self.batches.lock().clone()
+		self.batches.lock().iter().map(|batch| batch_ids(batch)).collect()
+	}
+
+	/// Every row handed over in any batch, in the order asked.
+	pub fn rows_asked(&self) -> Vec<DeferredDurableTx> {
+		self.batches.lock().iter().flatten().cloned().collect()
 	}
 }
 
@@ -139,14 +152,39 @@ impl SubmissionPolicy for ScriptedPolicy {
 
 	async fn prepare(&self, batch: &[DeferredDurableTx]) -> PrepareAnswer {
 		let ids: Vec<DurableTxId> = batch.iter().map(|deferred| deferred.id).collect();
-		self.batches.lock().push(ids.clone());
+		self.batches.lock().push(batch.to_vec());
 		(self.script)(&ids).await
 	}
+}
+
+/// The ids of the rows of `batch`, in order.
+fn batch_ids(batch: &[DeferredDurableTx]) -> Vec<DurableTxId> {
+	batch.iter().map(|row| row.id).collect()
 }
 
 /// The same `preparation` for every id of `ids`.
 pub fn answer_all_with(ids: &[DurableTxId], preparation: Preparation) -> PrepareAnswer {
 	Ok(ids.iter().map(|id| (*id, preparation.clone())).collect())
+}
+
+/// A script whose first build waits until the returned sender fires, and
+/// every build answers with new bytes.
+pub fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
+	let (release, released) = oneshot::channel::<()>();
+	let gate = Mutex::new(Some(released));
+	let builds = AtomicU8::new(0);
+	let script: PrepareScript = Box::new(move |ids| {
+		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
+		let answer = answer_all_with(ids, Preparation::Ready { extrinsic: built, params: None });
+		let first_gate = gate.lock().take();
+		Box::pin(async move {
+			if let Some(released) = first_gate {
+				let _ = released.await;
+			}
+			answer
+		})
+	});
+	(release, script)
 }
 
 /// The bytes build `index` of [`ScriptedPolicy::building_everything`]

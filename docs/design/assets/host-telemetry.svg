@@ -82,7 +82,7 @@
 
   <rect x="1000" y="205" width="150" height="62" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
   <circle cx="1136" cy="219" r="9" fill="#1f7a4d"/><text x="1136" y="223" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
-  <text x="1014" y="228" class="monob">SentryLogTree</text>
+  <text x="1014" y="228" class="mono" style="font-size:12px;font-weight:600">HostLogSinkTree</text>
   <text x="1014" y="247" class="sub">tag truapi. + INFO+</text>
   <text x="1014" y="261" class="sub">this is the real gate</text>
 
@@ -214,5 +214,5 @@
   <text x="1114" y="1037" class="numl">and marker 46 is refused by construction</text>
 
   <text x="40" y="1104" class="sub">Verified against the tree</text>
-  <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; SentryLogTree.kt &#183; HostLogSinkDestination.swift</text>
+  <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; HostLogSinkTree.kt &#183; HostLogSinkDestination.swift</text>
 </svg>
