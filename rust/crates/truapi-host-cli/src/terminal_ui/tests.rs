@@ -708,6 +708,30 @@ fn navigation_request_shows_the_destination() {
 }
 
 #[test]
+fn notifications_show_the_title_above_the_text() {
+	let delivered = SystemEvent::NotificationDelivered {
+		id: 3,
+		title: Some("Daily Dollar".to_string()),
+		text: "Your scratch card is ready".to_string(),
+		deeplink: None,
+	};
+	let scheduled = SystemEvent::NotificationScheduled {
+		id: 4,
+		title: None,
+		text: "Later".to_string(),
+		scheduled_at: 5,
+	};
+
+	assert_eq!(
+		[delivered.human(), scheduled.human()],
+		[
+			"• Notification #3\n  Daily Dollar\n  Your scratch card is ready",
+			"• Notification #4 scheduled\n  Later\n  Unix time 5 ms",
+		]
+	);
+}
+
+#[test]
 fn pairing_image_lifecycle_has_actionable_terminal_copy() {
 	let mut app = test_app();
 	app.handle_system_event(SystemEvent::PairingImagePasteReady);
