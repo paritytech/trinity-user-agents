@@ -15,7 +15,11 @@ use super::*;
 use crate::{
 	host_logic::root_entropy::RootEntropy,
 	platform::{HostInfo, ProductContext, ProductId},
-	runtime::{HostRole, LocalActivation, SigningHost, services::RuntimeServices},
+	runtime::{
+		HostRole, LocalActivation, SigningHost,
+		services::RuntimeServices,
+		statement_allowance::{StatementAllowanceError, slot::SlotError},
+	},
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
 		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet,
@@ -1065,20 +1069,40 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 	);
 }
 
-/// A People chain that holds no usable suffix fails the allowance work with
-/// that error. Nothing is listed for the host: a mismatch would have to name
-/// a value People never gave.
+/// What the host is told once People has given `testnet` as its suffix.
+fn testnet_suffix_listed() -> Vec<StackMismatch> {
+	vec![StackMismatch::NetworkSuffix {
+		named: "paseo".to_string(),
+		answered: "testnet".to_string(),
+	}]
+}
+
+/// A People chain that holds no suffix of one to sixteen bytes fails the
+/// allowance work with that error. The failed read says nothing about the
+/// suffix People holds, so a suffix listed before stays listed.
 #[test]
-fn a_people_suffix_that_cannot_be_read_is_not_reported() {
+fn a_people_suffix_that_cannot_be_read_leaves_the_listing_as_it_was() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "");
+	let stack = refresh.stack();
+	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
+	checks.people_suffix_answered(b"testnet");
 
-	let failed = within_answer_wait(async {
+	let read = within_answer_wait(async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
-		Some(services.people_network_suffix(people.rpc()).await.is_err())
+		Some(services.people_network_suffix(people.rpc()).await)
 	});
 
-	assert_eq!((failed, refresh.status().mismatches), (Some(true), vec![]));
+	assert!(
+		matches!(
+			read,
+			Some(Err(StatementAllowanceError::Slot(SlotError::InvalidNetworkSuffixLength {
+				len: 0
+			})))
+		),
+		"the empty suffix fails the read: {read:?}"
+	);
+	assert_eq!(refresh.status().mismatches, testnet_suffix_listed());
 }
 
 /// The allowance work is where a signing host reads People's suffix, so it is
