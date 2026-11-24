@@ -28,15 +28,15 @@ struct NodeGestureView<Content: View>: View {
     @State private var height: CGFloat = 0
     /// The feel's press: the children grown while a finger holds them.
     @State private var pressed = false
-    /// A completed host drag's pop: when it starts and the scale it starts from.
-    @State private var pop: (start: Date, from: CGFloat)?
+    /// A completed host drag's pop: when it starts and the scales it starts from, across and down.
+    @State private var pop: (start: Date, from: CGSize)?
 
     var body: some View {
         TimelineView(.animation(paused: pop == nil)) { timeline in
             let popped = popState(at: timeline.date)
             content()
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { childWidth = $0 }
-                .scaleEffect(popped?.scale ?? (pressed ? props.feel?.pressScale ?? 1 : 1), anchor: scaleAnchor)
+                .scaleEffect(popped?.scale ?? pressScale, anchor: scaleAnchor)
                 .offset(
                     x: (shown.x + (popped?.past ?? 0)) * (layoutDirection == .rightToLeft ? -1 : 1),
                     y: shown.y
@@ -78,6 +78,12 @@ private extension NodeGestureView {
     }
 
     var travel: CGFloat { max(props.pan?.drag?.travelPoints ?? (width - childWidth), 0) }
+
+    /// The feel's press, across and down, while a finger holds the children.
+    var pressScale: CGSize {
+        guard pressed, let feel = props.feel else { return CGSize(width: 1, height: 1) }
+        return CGSize(width: feel.pressScale, height: feel.pressScaleY ?? feel.pressScale)
+    }
 
     /// The worker's offset for this keyed gesture, read here alone so an update draws only this view.
     var channel: GestureOffsetChannel? { props.key.flatMap { gestureOffsets?.channel(for: $0) } }
@@ -347,7 +353,7 @@ private extension NodeGestureView {
             let approach = feel.approach(distance: panTravel - along)
             withAnimation(CustomMessageWidgetNode.PanFeel.easeOutQuad(approach)) { setOffset(end) }
             // The pop peaks as the children arrive; until it starts they keep the scale they were pressed to.
-            let from = pressed ? feel.pressScale : 1
+            let from = pressScale
             pressed = false
             pop = (Date().addingTimeInterval(approach - feel.approachDuration), from)
             return
@@ -363,11 +369,15 @@ private extension NodeGestureView {
         unpress()
     }
 
-    /// The pop's scale and the distance past the end at `date`, or nil when none plays.
-    func popState(at date: Date) -> (scale: CGFloat, past: CGFloat)? {
+    /// The pop's scale across and down and the distance past the end at `date`, or nil when none plays. Each axis
+    /// starts from the scale it was pressed to.
+    func popState(at date: Date) -> (scale: CGSize, past: CGFloat)? {
         guard let pop, let feel = props.feel else { return nil }
         let frames = date.timeIntervalSince(pop.start) * 60
-        if let state = feel.pop(at: frames, from: pop.from) { return state }
+        let across = feel.pop(at: frames, from: pop.from.width)
+        if let across, let down = feel.pop(at: frames, from: pop.from.height) {
+            return (CGSize(width: across.scale, height: down.scale), across.past)
+        }
         Task { @MainActor in self.pop = nil }
         return nil
     }

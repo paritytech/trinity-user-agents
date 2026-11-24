@@ -364,7 +364,11 @@ struct RendererNodeMappingTests {
             ],
             follow: MaskFollow(pan: "pad", width: 5_200, brush: nib),
             fadeMs: 350,
-            clearedShare: ClearedShare(atPermille: 550, action: "done")
+            clearedShare: ClearedShare(
+                atPermille: 550, action: "done", whileDown: true,
+                rescue: ShareRescue(afterMs: 1_500, fromPermille: 450)
+            ),
+            haptics: MaskHaptics(everyPermille: 100, step: .tick, reach: .success)
         )
         let node = RendererNode.image(
             modifiers: [.width(290), .mask(mask)],
@@ -381,7 +385,10 @@ struct RendererNodeMappingTests {
         ])
         #expect(mapped.follow == .init(pan: "pad", width: 52, brush: tip))
         #expect(abs(mapped.fade - 0.35) < 0.0001)
-        #expect(mapped.clearedShare == .init(atPermille: 550, action: "done"))
+        #expect(mapped.clearedShare == .init(
+            atPermille: 550, action: "done", whileDown: true, rescue: .init(after: 1.5, fromPermille: 450)
+        ))
+        #expect(mapped.haptics == .init(everyPermille: 100, step: .tick, reach: .success))
     }
 
     @Test func aShowMaskWithNoKeyMapsAsSent() throws {
@@ -432,6 +439,33 @@ struct RendererNodeMappingTests {
         #expect(props.pan?.reportsLocation == true)
         #expect(props.pan?.axis == .free)
         #expect(props.key == "pad")
+    }
+
+    @Test func aPressFeelScalesTheAxesApart() throws {
+        let feel = { (down: UInt16?) in
+            PanFeel(
+                pressScalePermille: 1_040, pressMs: 120, unpressMs: 200, springOmegaCenti: 1_800,
+                springDampingCenti: 80, approachMs: 300, approachReference: 100, popPermille: [], popOffset: 0,
+                pressScaleYPermille: down
+            )
+        }
+        let mapped = try [feel(960), feel(nil)].map { feel in
+            let node = RendererNode.gesture(
+                modifiers: [],
+                props: GestureProps(
+                    tapAction: nil, pan: nil, accessibilityLabel: nil, enabled: nil, hapticOnComplete: nil, key: nil,
+                    feel: feel
+                ),
+                children: []
+            )
+            guard case let .gesture(props, _) = try #require(node.toWidgetNode(resolver: resolver)).content else {
+                throw MappingFailure()
+            }
+            return try #require(props.feel)
+        }
+        #expect(abs(mapped[0].pressScale - 1.04) < 0.0001)
+        #expect(abs((mapped[0].pressScaleY ?? 0) - 0.96) < 0.0001)
+        #expect(mapped[1].pressScaleY == nil, "no y scale presses both axes by pressScale")
     }
 
     @Test func materialsDrawTheirChildrenPlain() throws {
@@ -492,3 +526,5 @@ private extension PolkadotUI.LabelStyle {
         attributes()[.font] as? UIFont
     }
 }
+
+private struct MappingFailure: Error {}

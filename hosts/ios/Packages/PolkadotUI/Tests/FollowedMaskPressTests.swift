@@ -25,6 +25,21 @@ struct FollowedMaskPressTests {
         #expect(width == 20)
         #expect(abs(point.x - expected.x) < 0.01 && abs(point.y - expected.y) < 0.01, "drawn at \(point)")
     }
+
+    @Test("A press that scales the axes apart keeps the followed stroke under the finger on both")
+    func strokeStaysUnderTheFingerWithAxesApart() async throws {
+        let scene = try MaskScene(pressScale: 1.2, pressScaleY: 0.8)
+        try await scene.stroke(at: CGPoint(x: 150, y: 70))
+        let shapes = try scene.drawnShapes()
+
+        // About the centre (100, 50): 50 across at 1.2 and 20 down at 0.8.
+        let expected = CGPoint(x: 100 + 50 / 1.2, y: 50 + 20 / 0.8)
+        guard case let .stroke(_, points) = try #require(shapes.first), let point = points.first else {
+            Issue.record("expected one followed stroke, got \(shapes)")
+            return
+        }
+        #expect(abs(point.x - expected.x) < 0.01 && abs(point.y - expected.y) < 0.01, "drawn at \(point)")
+    }
 }
 
 /// A 200 by 100 pan over a red node of the same size whose mask hides it under the pan's strokes, 20 wide.
@@ -34,7 +49,7 @@ private final class MaskScene {
     private let window: UIWindow
     private let host: UIViewController
 
-    init(pressScale: CGFloat) throws {
+    init(pressScale: CGFloat, pressScaleY: CGFloat? = nil) throws {
         var props = CustomMessageWidgetNode.GestureProps { _, _, _ in Data() }
         props.key = "pan"
         var pan = CustomMessageWidgetNode.PanGesture()
@@ -44,6 +59,7 @@ private final class MaskScene {
         if pressScale != 1 {
             var feel = CustomMessageWidgetNode.PanFeel()
             feel.pressScale = pressScale
+            feel.pressScaleY = pressScaleY
             props.feel = feel
         }
         let mask = CustomMessageWidgetNode.Mask(key: "veil", follow: .init(pan: "pan", width: 20))
