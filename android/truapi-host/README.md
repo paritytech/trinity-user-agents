@@ -89,13 +89,13 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 ## Shared product workers
 
-Pass the WebView worker host when creating the runtime. Rust asks the host to start one WebView for the first claim on a product. The host opens an execution through that startup attempt, loads the worker module and acknowledges the same execution. Rust publishes the ready execution to Chat and Pocket.
+Pass a `NativeWebViewWorkerHost` as `workers` when creating the runtime. An app or widget host can omit it. Rust asks the host to start one WebView for the first claim on a product. The host opens an execution through that startup attempt, loads the worker module and acknowledges the same execution. Rust publishes the ready execution to Chat and Pocket.
 
 A consumer calls `claimWorker(productId)` and holds the returned claim for as long as it needs the worker. Collect `workerExecutionState(productId)` to follow startup and retries. The running execution exposes Chat and renderer operations. Call `claim.release()` when the consumer leaves. Releasing the same claim twice is safe. Rust requests WebView disposal when the last claim or core-held reference ends.
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ExecutableKind.WORKER`:
+A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) for the worker opened by its WebView host.
 
 ```kotlin
 import io.parity.truapi.*
@@ -105,11 +105,8 @@ import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostRuntimeConfig
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductId
 
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
@@ -141,24 +138,18 @@ val runtime = TrUAPIHostRuntime(
         hostName = "My Chat Host",
         stack = bundledStack,
     ),
+    workers = workers,
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
 runtime.activateLocalSession(secret)
 
-val execution = runtime.openProductExecution(
-    bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("chat.dot").getOrThrow(), ExecutableKind.WORKER),
-    chat = MyChatBridge(store),
-)
+// In NativeWebViewWorkerHost.start(productId, attempt):
+val execution = attempt.openExecution(bridge, chat = MyChatBridge(store), game = null)
 val endpoint = execution.startWsBridge()
 val bootstrap = LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token)
 ```
 
-Install `bootstrap` and `ContainerScriptBundle` at document start before loading the product, as in the example below.
-
-Chat requires an active session: `openProductExecution` succeeds without one,
-but every Chat call then answers `Denied` until `activateLocalSession` or SSO
-pairing completes.
+Install `bootstrap` and `ContainerScriptBundle` at document start. Once the WebView has loaded the worker module, call `execution.reportWorkerModuleStarted()`. If startup fails or the WebView process exits, call `attempt.failed(reason)`.
 
 The core bounds and screens the product-supplied fields it forwards — ids,
 names, icons, message bodies, URLs, and the action and media counts. Ids and

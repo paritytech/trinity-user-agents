@@ -372,10 +372,10 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 
 Core side (`feature/products/impl/.../domain/truapi/`):
 - Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
-- `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
-  `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER)` through
-  `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
-  down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
+- Rust calls `TrUAPIWorkerSupervisor.start(productId, attempt)` to create a hidden WebView. The supervisor
+  opens the worker execution through the attempt, installs the bootstrap and loads the entry module. It reports
+  module startup on the execution. Chat and Pocket can share that worker. Rust calls `stop(productId, attemptId)`
+  to dispose of its WebView.
 - `TrUAPIPocketFaceStreams` takes one `claimWorker` claim per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
   renderer actions. The core serves a product's Pocket calls from its own collection, so the worker's execution takes

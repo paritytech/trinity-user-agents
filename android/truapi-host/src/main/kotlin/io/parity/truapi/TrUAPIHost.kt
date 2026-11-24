@@ -108,7 +108,6 @@ import uniffi.truapi.NativeRuntimeConfigException
 import uniffi.truapi.StatementRenewalTarget
 import uniffi.truapi.TrackedStatementRenewalTarget
 import uniffi.truapi.StatementRenewalReport
-import uniffi.truapi.WorkerTransition
 import uniffi.truapi.WsBridgeEndpoint
 import uniffi.truapi.WsBridgeStartException
 import uniffi.truapi.HostRuntimeConfig
@@ -365,22 +364,6 @@ interface HostBridge {
     suspend fun transactionExtensionVersions(): ExtensionVersionMap = ExtensionVersionMap(chains = emptyList())
 
     /**
-     * Request a product worker transition. `Start` means run the worker now;
-     * `Stop` means it is no longer needed and may stop. Every transition
-     * arrives here in ledger order, the ones the app asks for by taking a
-     * reference of its own included.
-     *
-     * Demand is runtime-wide, so the core invokes this only on the bridge
-     * [TrUAPIHostRuntime] was built with, never on the per-execution bridge
-     * passed to [TrUAPIHostRuntime.openProductExecution]. Can arrive on any
-     * thread, including synchronously on the calling thread during
-     * `claimWorker` or a claim's `release`, often the main thread and
-     * re-entrantly: marshal the work off rather than blocking on another
-     * thread from inside it.
-     */
-    fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
-
-    /**
      * The product's worker crashed [crashes] times in a row while it was
      * needed: tell the user that product is not working. The core keeps
      * starting it again, waiting longer each time, so this needs no answer.
@@ -406,8 +389,7 @@ interface HostBridge {
      * While [pending] is true, keep a background task running that awaits
      * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
      * Reported on change, starting with the state the runtime finds at
-     * launch. Runtime-wide, like [requestWorkerTransition], and arrives on a core
-     * thread: marshal the work off rather than blocking.
+     * launch. This runtime-wide callback arrives on a core thread.
      */
     fun durableWorkChanged(pending: Boolean) {}
 
@@ -576,11 +558,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
         runCatching { bridge.onCoreEvent(marker, attributes) }
-    }
-
-    // Infallible across the FFI for the same reason `onCoreLog` is.
-    override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
-        runCatching { bridge.requestWorkerTransition(productId, transition) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
@@ -1009,7 +986,7 @@ object LocalhostBridgeBootstrap {
 /**
  * Process-owned Rust host runtime. Product executables open independent
  * connections from this object and share its authentication and core services.
- * Supply [workers] to let Rust manage shared WebView workers and report their readiness.
+ * Supply [workers] when the host can launch product WebViews for worker claims.
  */
 class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
@@ -1019,12 +996,8 @@ class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::clas
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
-    private var managesWorkers = workers != null
-    private val inner: NativeTrUApiHostRuntime = if (workers != null) {
-        NativeTrUApiHostRuntime.withManagedProductWorkers(callbackRetainer, runtimeConfig, workers)
-    } else {
-        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
-    }
+    private var closed = false
+    private val inner = NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig, workers)
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -1118,7 +1091,7 @@ class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::clas
     }
 
     /**
-     * Open one executable connection with a host-assigned immutable context.
+     * Open an app or widget connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
      * modality omit it. Pass [game] to hold game reminders, and omit it where
      * the host cannot.
@@ -1434,10 +1407,9 @@ class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::clas
 
     @Synchronized
     override fun close() {
-        if (managesWorkers) {
-            managesWorkers = false
-            inner.shutdownProductWorkers()
-        }
+        if (closed) return
+        closed = true
+        inner.shutdownProductWorkers()
         inner.close()
     }
 }
