@@ -115,7 +115,10 @@ struct HostLogSinkDestinationTests {
             level: .warning,
             tag: "truapi.core",
             message: "10 truapi.core truapi.tracing.warn lines dropped over the limit of \(limit) a minute",
-            attributes: [HostLogSinkDestination.droppedAttribute: .count(10)]
+            attributes: [
+                HostLogSinkDestination.droppedAttribute: .count(10),
+                HostLogSinkDestination.markerAttribute: .text("truapi.tracing.warn")
+            ]
         ))
     }
 
