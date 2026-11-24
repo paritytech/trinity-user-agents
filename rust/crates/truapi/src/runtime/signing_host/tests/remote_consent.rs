@@ -128,3 +128,51 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 		}
 	}
 }
+
+/// A paired host names the caller itself. A trusted label under a TLD the
+/// stack does not serve is refused before any grant, prompt or key is used,
+/// instead of passing as the trusted product without a prompt.
+#[test]
+fn a_relayed_caller_the_stack_does_not_serve_is_refused() {
+	let platform = Arc::new(StubPlatform::default());
+	cache_grant(&platform, "peopl.dot", "{}");
+	let (_, authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let session = authority.accounts().current_session().unwrap();
+	register_full_person_key(&authority, &session, &full_person_ring_location());
+
+	let alias = paired_request(
+		&authority,
+		"peopl.testnet",
+		HostAccountGetAliasRequest {
+			key_handle: full_person_key_handle(),
+			context: v01::ProductProofContext {
+				product_id: ProductId::for_test("peopl.dot"),
+				suffix: v01::DerivationIndex::Index(0),
+			},
+			ring_location: full_person_ring_location(),
+		},
+	);
+	let list = paired_request(
+		&authority,
+		"peopl.testnet",
+		HostAccountListRingVrfKeysRequest {
+			owner: ProductId::for_test("peopl.dot"),
+			disclosure: RingVrfKeyDisclosure::PublicKey,
+		},
+	);
+
+	let unserved = Err(RingVrfError::Unknown {
+		reason: "product peopl.testnet is not under a TLD the dot stack serves".to_string(),
+	});
+	assert_eq!(
+		(
+			alias.map(|_| ()),
+			list.map(|_| ()),
+			platform.account_access_reviews.lock().unwrap().len()
+		),
+		(unserved.clone(), unserved, 0)
+	);
+}

@@ -476,8 +476,8 @@ localhost ids, and names under `dot` or under its own TLD (`Stack::serves`).
 
 The core checks this wherever a product id enters the runtime: the product a
 host asks it to run (`ProductContext::served_by`), a call that names another
-product (answered `MalformedFrame`), every key derivation in the signing
-wallet, the manifest readers and worker references. `runtime::served` describes
+product (answered `MalformedFrame`), the caller a paired host names, every key
+derivation in the signing wallet, the manifest readers and worker references. `runtime::served` describes
 how a checked value reaches the account calls. Native hosts run the same checks
 through a `Stack` they open from the bundled copy.
 
