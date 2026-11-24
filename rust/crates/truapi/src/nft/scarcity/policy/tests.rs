@@ -101,6 +101,7 @@ fn registered_transfer_until(attempts: u32, give_up_after: u64) -> RegisteredTra
 		destination: DESTINATION,
 		submitted_attempt: None,
 		give_up_after,
+		mode: TransferMode::FeeLess,
 	};
 	deferred_transfer(params, attempts)
 }
@@ -124,6 +125,7 @@ fn registered_import_until(give_up_after: u64) -> RegisteredTransfer {
 		destination: DESTINATION,
 		submitted_attempt: None,
 		give_up_after,
+		mode: TransferMode::FeeLess,
 	};
 	deferred_transfer(params, 0)
 }

@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, ty
 
 use super::{
 	handoff::HandoffTag,
-	holding::HeldItem,
+	holding::TrackedHolding,
 	keys::{ItemIndex, ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
 };
@@ -359,18 +359,24 @@ pub fn observe_item_keys(db: &Db) -> BoxStream<'static, Result<Vec<ItemKey>, DbE
 }
 
 const UPSERT_HOLDING: &str = "INSERT INTO nft_holding
-	(key, collection, item, instance) VALUES (:key, :collection, :item, :instance)
+	(key, collection, item, instance, moves) VALUES (:key, :collection, :item, :instance, :moves)
 	ON CONFLICT (key) DO UPDATE SET collection = excluded.collection, item = excluded.item,
-		instance = excluded.instance";
+		instance = excluded.instance, moves = excluded.moves";
 
-/// Records that `key` holds `held`. The instance is stored as the
+/// Records that `key` holds `holding`. The instance is stored as the
 /// bit pattern of an `i64`, since SQLite integers are signed.
-pub fn upsert_holding(tx: &Transaction<'_>, key: &ItemKey, held: &HeldItem) -> Result<(), DbError> {
+pub fn upsert_holding(
+	tx: &Transaction<'_>,
+	key: &ItemKey,
+	holding: &TrackedHolding,
+) -> Result<(), DbError> {
+	let held = &holding.item;
 	tx.prepare_cached(UPSERT_HOLDING)?.execute(named_params! {
 		":key": key.0,
 		":collection": held.collection,
 		":item": held.item,
 		":instance": i64::try_from(held.instance).expect("instance ids fit in i64"),
+		":moves": holding.moves,
 	})?;
 	Ok(())
 }

@@ -8,7 +8,7 @@ use futures::{StreamExt, stream::BoxStream};
 use super::{
 	dao,
 	handoff::{HandoffError, HandoffRequest, record_handoff, validate_handoff},
-	holding::{HeldItem, record_holdings},
+	holding::{TrackedHolding, record_holdings},
 	import::{
 		ImportPlan, ImportRequest, StartImportError, plan_imports, validate_imports_can_start,
 	},
@@ -373,7 +373,7 @@ impl NftLedger {
 	/// Stores what each key holds, in one write. Called by the tracker.
 	pub async fn record_holdings(
 		&self,
-		holdings: Vec<(ItemKey, Option<HeldItem>)>,
+		holdings: Vec<(ItemKey, Option<TrackedHolding>)>,
 	) -> Result<(), DbError> {
 		self.db.write(move |tx| record_holdings(tx, &holdings)).await
 	}

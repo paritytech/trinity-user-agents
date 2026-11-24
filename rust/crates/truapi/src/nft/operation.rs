@@ -14,7 +14,7 @@ use super::{
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferMode, TransferParams, TransferSigner},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
@@ -167,6 +167,7 @@ pub fn plan_transfers(
 				destination,
 				submitted_attempt: None,
 				give_up_after,
+				mode: TransferMode::FeeLess,
 			}
 			.into()
 		})

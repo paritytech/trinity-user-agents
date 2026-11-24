@@ -5,12 +5,12 @@ use super::*;
 use crate::{
 	durable::{DurableTxId, RegistrationError},
 	nft::{
-		HandoffRequest, HandoffTag, HeldItem, ImportRequest, NftLedger, PurseId, PurseTag,
+		HandoffRequest, HandoffTag, ImportRequest, NftLedger, PurseId, PurseTag,
 		TransferRequest, TransferType,
 		keys::ItemIndex,
 		testing::{
 			TEST_INSTALLATION, fail_transfer, finalize_transfer, imported_test_key,
-			stored_transfer_params, test_ledger,
+			stored_transfer_params, test_ledger, unmoved_holding,
 		},
 	},
 	store::{Db, open_temporary_core_db},
@@ -65,7 +65,7 @@ fn start_return(
 }
 
 fn hold(imported: &Imported, key: ItemKey) {
-	let held = HeldItem { collection: 1, item: 1, instance: 100 };
+	let held = unmoved_holding(100);
 	block_on(imported.ledger.record_holdings(vec![(key, Some(held))])).unwrap();
 }
 
@@ -117,6 +117,7 @@ fn a_return_moves_each_landed_item_back_to_its_cheque_key() {
 			destination: deposited.cheque_keys[index],
 			submitted_attempt: None,
 			give_up_after: returns[index].give_up_after,
+			mode: TransferMode::FeeLess,
 		})
 		.collect();
 	assert_eq!(returns, expected);

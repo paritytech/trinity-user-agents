@@ -25,7 +25,7 @@ mod standing;
 mod testing;
 
 pub use handoff::{HandoffError, HandoffRequest, HandoffTag};
-pub use holding::HeldItem;
+pub use holding::{HeldItem, TrackedHolding};
 pub use import::{ImportRequest, StartImportError};
 pub use imported_secrets::ImportedSecretStore;
 pub use item::{AllocateItemsError, PageRequest};
@@ -48,4 +48,4 @@ pub use scarcity::{
 };
 pub use standing::ItemRefusal;
 #[cfg(test)]
-pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};
+pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger, unmoved_holding};

@@ -382,7 +382,7 @@ mod operations {
 
 	use super::*;
 	use crate::{
-		nft::{HeldItem, NftLedger, PurseTag},
+		nft::{NftLedger, PurseTag, unmoved_holding},
 		platform::{NftPurseDrainDestination, NftPurseDrainReview},
 	};
 
@@ -426,7 +426,7 @@ mod operations {
 		pub fn held_items(&self, purse: PurseId, count: u32) -> Vec<v01::NftPurseItemKey> {
 			let count = NonZeroU32::new(count).unwrap();
 			let keys = block_on(self.ledger.allocate_items(purse, count)).unwrap();
-			let held = HeldItem { collection: 1, item: 1, instance: 7 };
+			let held = unmoved_holding(7);
 			let holdings = keys.iter().map(|key| (*key, Some(held))).collect();
 			block_on(self.ledger.record_holdings(holdings)).unwrap();
 			keys.into_iter().map(|key| v01::NftPurseItemKey(key.0)).collect()

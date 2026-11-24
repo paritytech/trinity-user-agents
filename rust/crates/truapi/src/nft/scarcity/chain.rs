@@ -12,7 +12,7 @@ use subxt::{
 use crate::{
 	chain::{ChainHeads, HashAndNumber, StorageWatchError, WatchedStorage},
 	chain_runtime::RuntimeFailure,
-	nft::{HeldItem, ItemKey},
+	nft::{HeldItem, ItemKey, TrackedHolding},
 };
 
 /// The `Scarcity::NftsByOwner` entry, naming what each account holds.
@@ -55,6 +55,12 @@ pub struct ScarcityNft {
 impl From<ScarcityNft> for HeldItem {
 	fn from(nft: ScarcityNft) -> Self {
 		HeldItem { collection: nft.collection, item: nft.item, instance: nft.instance }
+	}
+}
+
+impl From<ScarcityNft> for TrackedHolding {
+	fn from(nft: ScarcityNft) -> Self {
+		TrackedHolding { item: nft.into(), moves: nft.moves }
 	}
 }
 

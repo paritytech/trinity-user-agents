@@ -56,6 +56,20 @@ pub struct TransferParams {
 	/// still waits is given up. Fixed at registration, so a restart never
 	/// extends it.
 	pub give_up_after: u64,
+	/// How the NFT moves, decided at registration. The last field, so stored
+	/// params gained it by appending one byte.
+	pub mode: TransferMode,
+}
+
+/// How a transfer moves its NFT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub enum TransferMode {
+	/// `Scarcity::transfer` under `AsScarcity`: no fee and nonce 0, valid while
+	/// the NFT has a fee-less move left.
+	FeeLess,
+	/// `Scarcity::transfer_by_holder`, an ordinary signed transaction from the
+	/// item key, with its account nonce, whose fee the key pays.
+	Paid,
 }
 
 /// The live attempt of a transfer. Later attempts move the same instance.

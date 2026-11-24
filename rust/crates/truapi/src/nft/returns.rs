@@ -11,7 +11,7 @@ use super::{
 	operation::{
 		OperationKey, StartOperationError, TransferProgress, TransferState, nft_domain, progress_of,
 	},
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferMode, TransferParams, TransferSigner},
 };
 use crate::{
 	durable,
@@ -193,6 +193,7 @@ fn return_params(item: &ReturnableItem, give_up_after: u64) -> PolicyParams {
 		destination: item.origin,
 		submitted_attempt: None,
 		give_up_after,
+		mode: TransferMode::FeeLess,
 	}
 	.into()
 }

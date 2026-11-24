@@ -9,7 +9,7 @@ use crate::{
 		keys::ItemIndex,
 		scarcity::{
 			chain::{KeyLocks, TransferContext},
-			policy::TransferSigner,
+			policy::{TransferMode, TransferSigner},
 		},
 	},
 };
@@ -81,6 +81,7 @@ fn transfer_entry(signed_state_nonce: Option<u64>) -> DurableTxEntry {
 		destination: DESTINATION,
 		submitted_attempt,
 		give_up_after: 0,
+		mode: TransferMode::FeeLess,
 	};
 	DurableTxEntry {
 		id: DurableTxId(1),

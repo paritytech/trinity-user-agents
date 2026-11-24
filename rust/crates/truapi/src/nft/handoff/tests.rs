@@ -6,8 +6,8 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
 	nft::{
-		HeldItem, ItemSecret, ItemSecrets, NftLedger, NftLedgerDeps, PageRequest, PurseTag,
-		testing::test_ledger_deps,
+		ItemSecret, ItemSecrets, NftLedger, NftLedgerDeps, PageRequest, PurseTag,
+		testing::{test_ledger_deps, unmoved_holding},
 	},
 	store::{CORE_DB_FILE, Db, open_temporary_core_db},
 };
@@ -28,7 +28,7 @@ fn held_items_with(count: u32, deps: impl FnOnce(Db) -> NftLedgerDeps) -> HeldIt
 	block_on(ledger.create_purse("from".to_owned(), PurseTag::default())).unwrap();
 	let keys = block_on(ledger.allocate_items(FROM, NonZeroU32::new(count).unwrap())).unwrap();
 	let holding = |(index, key): (usize, &ItemKey)| {
-		(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
+		(*key, Some(unmoved_holding(100 + index as u64)))
 	};
 	block_on(ledger.record_holdings(keys.iter().enumerate().map(holding).collect())).unwrap();
 	HeldItems { dir, db, ledger, keys }

@@ -12,7 +12,7 @@ use crate::{
 	Spawner,
 	background_task::BackgroundTask,
 	chain::{DecodedEntryChanges, WatchedHead, WatchedStorage},
-	nft::{HeldItem, ItemKey, NftLedger},
+	nft::{ItemKey, NftLedger, TrackedHolding},
 };
 
 /// What one watch reports for the keys it covers.
@@ -111,8 +111,8 @@ fn find_new_keys(watched: &HashSet<ItemKey>, keys: Vec<ItemKey>) -> Vec<ItemKey>
 	keys.into_iter().filter(|key| !watched.contains(key)).collect()
 }
 
-fn holding_of(owner: AccountId32, nft: Option<ScarcityNft>) -> (ItemKey, Option<HeldItem>) {
-	(ItemKey(owner.0), nft.map(HeldItem::from))
+fn holding_of(owner: AccountId32, nft: Option<ScarcityNft>) -> (ItemKey, Option<TrackedHolding>) {
+	(ItemKey(owner.0), nft.map(TrackedHolding::from))
 }
 
 #[cfg(test)]

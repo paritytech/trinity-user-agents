@@ -13,7 +13,7 @@ use super::{
 		DestinationKeys, OperationKey, StartOperationError, TransferState, allocate_destinations,
 		latest_per_source, nft_domain, progress_of, record_inputs, validate_not_moving,
 	},
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferMode, TransferParams, TransferSigner},
 };
 use crate::{
 	durable,
@@ -114,6 +114,7 @@ fn reclaim_params(
 		destination,
 		submitted_attempt: None,
 		give_up_after,
+		mode: TransferMode::FeeLess,
 	}
 	.into()
 }

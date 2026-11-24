@@ -6,7 +6,7 @@ use futures::executor::block_on;
 use truapi::latest::GenericError;
 
 use super::{
-	holding::HeldItem,
+	holding::{HeldItem, TrackedHolding},
 	imported_secrets::ImportedSecretStore,
 	keys::{
 		ImportedItemKey, ItemIndex, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner,
@@ -166,7 +166,7 @@ pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Ve
 		.iter()
 		.enumerate()
 		.map(|(index, key)| {
-			(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
+			(*key, Some(unmoved_holding(100 + index as u64)))
 		})
 		.collect();
 	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
@@ -206,4 +206,10 @@ fn update_transfer(db: &Db, id: DurableTxId, statement: &'static str) {
 		Ok(())
 	});
 	block_on(written).expect("status is written");
+}
+
+/// A holding of `instance` in collection 1, item 1, with every fee-less
+/// move left.
+pub fn unmoved_holding(instance: u64) -> TrackedHolding {
+	TrackedHolding { item: HeldItem { collection: 1, item: 1, instance }, moves: 0 }
 }
