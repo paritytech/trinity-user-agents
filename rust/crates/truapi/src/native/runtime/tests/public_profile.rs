@@ -35,9 +35,9 @@ fn profile_runtime(platform: Arc<StubPlatform>, db: Db) -> Arc<NativeTrUApiHostR
 	};
 	let core = HostRuntime::<SigningHost>::new(platform, signing, Spawner::for_test());
 	assert!(core.set_core_db(db));
-	let mut host = native_host_runtime_no_session();
-	Arc::get_mut(&mut host).unwrap().runtime = Arc::new(core);
-	host
+	let mut host = Arc::into_inner(native_host_runtime_no_session()).unwrap();
+	host.runtime = Arc::new(core);
+	Arc::new(host)
 }
 
 #[tokio::test]
