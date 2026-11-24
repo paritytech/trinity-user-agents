@@ -436,8 +436,8 @@ describe("connectWebSocketHost", () => {
         );
     });
 
-    it("keeps a natively injected port when the socket closes", async () => {
-        currentWindow = installFakeWebviewWindow();
+    it("keeps the iframe's port when the socket closes", async () => {
+        currentWindow = installFakeIframeWindow({});
         const channel = trackChannel();
         const sandbox = await importSandbox();
         currentWindow.win.__HOST_API_PORT__ = channel.port1;
@@ -545,7 +545,7 @@ function installFakeWebviewWindow() {
     const harness = installFakeIframeWindow({});
     // Top-level, so isIframe() reads false.
     (harness.win as unknown as { top: Window }).top = harness.win;
-    harness.win.__HOST_WEBVIEW_MARK__ = true;
+    (harness.win as unknown as { __HOST_WEBVIEW_MARK__: boolean }).__HOST_WEBVIEW_MARK__ = true;
     return harness;
 }
 
@@ -711,34 +711,14 @@ describe("sandbox after the pipe closes", () => {
         expect(statuses).toEqual(["connected", "disconnected", "connected"]);
     });
 
-    it("keeps a marked webview page hosted after the port is dropped", async () => {
-        const channel = trackChannel();
-        const harness = installFakeWebviewWindow();
-        currentWindow = harness;
-        const sandbox = await importSandbox();
-        harness.win.__HOST_API_PORT__ = channel.port1;
-        expect(sandbox.isCorrectEnvironment()).toBe(true);
-        expect(sandbox.getClientSync()).not.toBeNull();
-        await settle();
-
-        closePipe(channel.port1);
-
-        expect(harness.win.__HOST_API_PORT__).toBeUndefined();
-        expect(sandbox.isCorrectEnvironment()).toBe(true);
-    });
-
-    it("treats a MessagePort from a locked getter as an ordinary terminal connection", async () => {
-        const channel = trackChannel();
+    it("does not host a marked webview holding a port but no transport", async () => {
         currentWindow = installFakeWebviewWindow();
-        Object.defineProperty(currentWindow.win, "__HOST_API_PORT__", {
-            get: () => channel.port1,
-        });
         const sandbox = await importSandbox();
-        const client = sandbox.getClientSync()!;
-        await settle();
-        closePipe(channel.port1);
-        await expect(Promise.resolve(client.system.handshake())).rejects.toThrow(
-            "message port closed unexpectedly",
-        );
+        currentWindow.win.__HOST_API_PORT__ = trackChannel().port1;
+
+        expect({
+            hosted: sandbox.isCorrectEnvironment(),
+            client: sandbox.getClientSync(),
+        }).toEqual({ hosted: false, client: null });
     });
 });

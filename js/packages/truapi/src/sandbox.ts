@@ -59,9 +59,7 @@ declare global {
   interface Window {
     /** Frame channel supplied by the embedding host. */
     __HOST_API_TRANSPORT__?: HostTransport;
-    /** Set by webview hosts (Polkadot Desktop / Mobile) to mark the embedding. */
-    __HOST_WEBVIEW_MARK__?: boolean;
-    /** Injected by webview hosts to carry the host-side `MessagePort`. */
+    /** The iframe host's `MessagePort`, which a rebuilt client reuses. */
     __HOST_API_PORT__?: MessagePort;
   }
 }
@@ -104,19 +102,16 @@ function isIframe(): boolean {
 }
 
 /**
- * Detect whether the app is running inside a TrUAPI host container: an iframe
- * (including a cross-origin parent), a marked webview, or a window carrying an
- * injected host transport or message port. Synchronous, so it can gate hot paths.
+ * Detect whether the SDK can build a client here: a WebSocket endpoint chosen
+ * with {@link connectWebSocketHost}, an injected host transport, or an iframe
+ * (including a cross-origin parent). Synchronous, so it can gate hot paths.
  */
 export function isCorrectEnvironment(): boolean {
   if (webSocketEndpoint !== null) return true;
   const win = hostWindow();
   if (!win) return false;
   if (win.__HOST_API_TRANSPORT__) return true;
-  if (isIframe()) return true;
-  if (win.__HOST_WEBVIEW_MARK__ === true) return true;
-  if (win.__HOST_API_PORT__ != null) return true;
-  return false;
+  return isIframe();
 }
 
 /**
@@ -143,33 +138,7 @@ function resolveHostOrigin(): string | null {
   return null;
 }
 
-const HOST_PORT_TIMEOUT_MS = 20_000;
 const IFRAME_READY_INTERVAL_MS = 50;
-
-/**
- * Resolve the host-injected `MessagePort`, polling `window.__HOST_API_PORT__`
- * until it appears or the timeout elapses. Rejects on timeout or abort.
- *
- * TODO(cleanup): this polling is defensive against the port not being injected
- * yet. Once hosts guarantee the iframe / `__HOST_API_PORT__` is wired before any
- * product code runs, read `window.__HOST_API_PORT__` directly and drop the
- * poll loop + timeout.
- */
-async function waitForWebviewPort(
-  signal?: AbortSignal,
-  timeoutMs = HOST_PORT_TIMEOUT_MS,
-): Promise<MessagePort> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (signal?.aborted) throw new Error("waitForWebviewPort aborted");
-    const port = liveHostPort();
-    if (port) return port;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(
-    `Timed out waiting for window.__HOST_API_PORT__ (${timeoutMs}ms)`,
-  );
-}
 
 /**
  * Create an iframe provider that negotiates the transport from the first valid
@@ -295,41 +264,29 @@ function createIframeCompatibilityProvider(
 }
 
 /**
- * Build the {@link WireProvider} matching the detected environment (iframe or
- * webview). `onEstablished` fires once the host channel is live.
+ * Build the {@link WireProvider} for a WebSocket endpoint, or for the iframe
+ * embedding when there is none. `onEstablished` fires once the host channel is
+ * live.
  */
 function createSandboxProvider(
   endpoint: string | null,
   onEstablished: () => void,
 ): WireProvider {
-  // Both branches settle off a promise, so the pipe may be dead by then.
+  if (endpoint === null)
+    return createIframeCompatibilityProvider(onEstablished);
+
+  // The socket opens off a promise, so the pipe may be dead by then.
   let closed = false;
-  const established = () => {
-    if (!closed) onEstablished();
-  };
-  const watchClose = <T extends WireProvider>(provider: T): T => {
-    provider.subscribeClose?.(() => {
-      closed = true;
-    });
-    return provider;
-  };
-
-  if (endpoint !== null) {
-    const provider = watchClose(createWebSocketProvider(endpoint));
-    provider.opened.then(established, () => {});
-    return provider;
-  }
-  if (isIframe()) return createIframeCompatibilityProvider(established);
-
-  const portController = new AbortController();
-  const portPromise = waitForWebviewPort(portController.signal);
-  const provider = watchClose(createMessagePortProvider(portPromise));
-  portPromise.then(established, () => {});
-  const baseDispose = provider.dispose;
-  provider.dispose = () => {
-    portController.abort();
-    baseDispose?.();
-  };
+  const provider = createWebSocketProvider(endpoint);
+  provider.subscribeClose?.(() => {
+    closed = true;
+  });
+  provider.opened.then(
+    () => {
+      if (!closed) onEstablished();
+    },
+    () => {},
+  );
   return provider;
 }
 
@@ -460,9 +417,9 @@ export function connectWebSocketHost(url: string): TrUApiClient | null {
  * Subscribe to connection-status changes. The callback fires immediately with
  * the current status and on every transition. Status is `"connecting"` while
  * the client waits for the host channel, `"connected"` once the channel is
- * established (`truapi-init` MessagePort handover, first legacy frame, or
- * webview port), and `"disconnected"` outside a host container or when the
- * provider reports the pipe closed. Returns an unsubscribe function.
+ * established (`truapi-init` MessagePort handover or first legacy frame), and
+ * `"disconnected"` outside a host container or when the provider reports the
+ * pipe closed. Returns an unsubscribe function.
  */
 export function subscribeConnectionStatus(
   callback: (status: ConnectionStatus) => void,
