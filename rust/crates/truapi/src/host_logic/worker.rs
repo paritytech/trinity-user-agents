@@ -28,14 +28,11 @@ pub enum WorkerTransition {
 /// Requests arrive in ledger order, whether the host or core took or dropped
 /// the reference that crossed zero.
 pub trait WorkerController: Send + Sync {
-	/// Request that the host start the worker or allow it to stop.
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition);
+	/// Start the identified attempt for a product with demand.
+	fn start_worker(&self, product_id: &ProductId, attempt_id: u64);
 
-	/// Start one identifiable attempt. A host that manages its own readiness can
-	/// handle this through its usual start transition.
-	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
-		self.request_worker_transition(product_id, WorkerTransition::Start);
-	}
+	/// Stop the product's current attempt after the last release or before replacement.
+	fn stop_worker(&self, product_id: &ProductId);
 
 	/// The product's worker crashed `crashes` times in a row while it was
 	/// needed, so the host tells the user it is not working. The core keeps
@@ -363,9 +360,7 @@ impl WorkerLedger {
 				LedgerEvent::Start { product_id, attempt_id } => {
 					controller.start_worker(&product_id, attempt_id)
 				},
-				LedgerEvent::Stop { product_id } => {
-					controller.request_worker_transition(&product_id, WorkerTransition::Stop)
-				},
+				LedgerEvent::Stop { product_id } => controller.stop_worker(&product_id),
 				LedgerEvent::Crashing { product_id, consecutive_crashes } => {
 					controller.worker_crashing(&product_id, consecutive_crashes)
 				},

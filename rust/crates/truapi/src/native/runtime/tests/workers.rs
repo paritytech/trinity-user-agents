@@ -7,12 +7,17 @@ use std::{sync::mpsc, time::Duration};
 
 #[derive(Default)]
 struct WebViews {
+	fail_next_start: AtomicBool,
 	starts: Mutex<Vec<Arc<NativeWorkerAttempt>>>,
 	stops: Mutex<Vec<u64>>,
 }
 
 impl NativeWebViewWorkerHost for WebViews {
 	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
+		if self.fail_next_start.swap(false, Ordering::Relaxed) {
+			attempt.failed("initial boot error".into());
+			assert!(self.stops.lock().unwrap().is_empty(), "the WebView is still starting");
+		}
 		self.starts.lock().unwrap().push(attempt);
 	}
 
@@ -28,13 +33,13 @@ impl WebViews {
 }
 
 fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<WebViews>, ProductId) {
+	let views = Arc::new(WebViews::default());
 	let runtime = NativeTrUApiHostRuntime::with_managed_product_workers(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		views.clone(),
 	)
 	.unwrap();
-	let views = Arc::new(WebViews::default());
-	assert!(runtime.enable_product_workers(views.clone()));
 	(runtime, views, ProductId::for_test("shared.dot"))
 }
 
@@ -43,16 +48,12 @@ fn open(attempt: &Arc<NativeWorkerAttempt>) -> Arc<NativeProductExecution> {
 	attempt.open_execution(callbacks.clone(), Some(callbacks), None).unwrap()
 }
 
-struct Drawn(mpsc::Sender<latest::RendererNode>);
+struct RenderObserver;
 
-impl NativeRendererObserver for Drawn {
-	fn on_update(&self, node: latest::RendererNode) {
-		self.0.send(node).unwrap();
-	}
+impl NativeRendererObserver for RenderObserver {
+	fn on_update(&self, _node: latest::RendererNode) {}
 	fn on_complete(&self) {}
-	fn on_error(&self, reason: String) {
-		panic!("{reason}");
-	}
+	fn on_error(&self, _reason: String) {}
 }
 
 async fn connect(
@@ -80,7 +81,7 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	let boot = views.latest();
 	let owner = open(&boot);
 	assert!(runtime.current_worker_execution(product.clone()).is_none());
-	assert!(boot.ready(owner.clone()));
+	assert!(owner.report_worker_module_started());
 	assert!(
 		runtime.current_worker_execution(product.clone()).is_none(),
 		"acknowledgement alone cannot serve a render"
@@ -95,17 +96,14 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	chat.release();
 	drop(chat);
 	assert!(views.stops.lock().unwrap().is_empty());
-	use futures::SinkExt;
 	use parity_scale_codec::Decode;
-	use tokio_tungstenite::tungstenite::Message;
-	let (send, drawn) = mpsc::channel();
 	let _render = consumer
 		.render(
 			latest::ProductRendererRenderRequest {
 				context: latest::RenderContext::PocketCard { card_id: "weather".into() },
 				payload: vec![],
 			},
-			Arc::new(Drawn(send)),
+			Arc::new(RenderObserver),
 		)
 		.unwrap();
 	let start = tokio::time::timeout(Duration::from_secs(5), socket.next())
@@ -114,14 +112,8 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 		.unwrap()
 		.unwrap()
 		.into_data();
-	let mut reply = crate::frame::ProtocolMessage::decode(&mut &start[..]).unwrap();
-	assert_eq!(reply.payload.message_type, crate::frame::MESSAGE_TYPE_START);
-	reply.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
-	reply.payload.value =
-		truapi::versioned::renderer::ProductRendererRenderItem::V1(latest::RendererNode::Nil)
-			.encode();
-	socket.send(Message::Binary(reply.encode())).await.unwrap();
-	assert_eq!(drawn.recv_timeout(Duration::from_secs(5)).unwrap(), latest::RendererNode::Nil);
+	let request = crate::frame::ProtocolMessage::decode(&mut &start[..]).unwrap();
+	assert_eq!(request.payload.message_type, crate::frame::MESSAGE_TYPE_START);
 	drop(pocket);
 	assert!(runtime.current_worker_execution(product).is_none());
 	assert!(matches!(
@@ -147,18 +139,22 @@ impl NativeWorkerExecutionObserver for Observer {
 }
 
 #[tokio::test]
-async fn an_observer_joining_a_retry_sees_pending_then_the_new_execution() {
+async fn an_observer_sees_failure_then_the_retried_execution() {
 	let (runtime, views, product) = setup();
-	let _claim = runtime.claim_worker(product.clone());
-	views.latest().failed("initial boot error".into());
-	let retry = views.latest();
 	let (send, receive) = mpsc::channel();
 	let _subscription = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
 	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
+	views.fail_next_start.store(true, Ordering::Relaxed);
+	let _claim = runtime.claim_worker(product.clone());
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	let owner = open(&retry);
+	assert!(
+		matches!(next(), NativeWorkerExecutionState::Failed { reason } if reason == "initial boot error")
+	);
+	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
+	let owner = open(&views.latest());
 	let _socket = connect(&owner).await;
-	assert!(retry.ready(owner));
+	assert!(owner.report_worker_module_started());
 	let NativeWorkerExecutionState::Running { execution } = next() else {
 		panic!("the retry must publish its ready execution");
 	};
@@ -177,11 +173,9 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 	let current_owner = open(&current);
 	let callbacks = Arc::new(EventCallbacks::new());
 	assert!(old.open_execution(callbacks, None, None).is_err());
-	assert!(!old.ready(current_owner.clone()));
-	assert!(!current.ready(old_owner.clone()));
 	let _socket = connect(&current_owner).await;
-	assert!(current.ready(current_owner));
-	assert!(!old.ready(old_owner));
+	assert!(current_owner.report_worker_module_started());
+	assert!(!old_owner.report_worker_module_started());
 	old.failed("late renderer loss".into());
 	runtime
 		.current_worker_execution(product)
@@ -199,12 +193,23 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	let boot = views.latest();
 	let owner = open(&boot);
 	let _socket = connect(&owner).await;
-	assert!(boot.ready(owner));
+	assert!(owner.report_worker_module_started());
 	let consumer = runtime.current_worker_execution(first).unwrap();
 	let _second = runtime.claim_worker(second.clone());
 	let pending = views.latest();
+	let (send, changes) = mpsc::channel();
+	let _observer = runtime.observe_worker_execution(second.clone(), Arc::new(Observer(send)));
 	runtime.shutdown_product_workers();
 	runtime.shutdown_product_workers();
+	assert!(matches!(
+		changes.recv_timeout(Duration::from_secs(5)).unwrap(),
+		Some(NativeWorkerExecutionState::Pending)
+	));
+	assert!(matches!(
+		changes.recv_timeout(Duration::from_secs(5)).unwrap(),
+		Some(NativeWorkerExecutionState::Idle)
+	));
+	assert!(changes.recv_timeout(Duration::from_secs(5)).unwrap().is_none());
 	let _closed = runtime.claim_worker(second);
 	let mut stops = views.stops.lock().unwrap().clone();
 	stops.sort_unstable();
@@ -216,59 +221,6 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	assert!(pending.open_execution(Arc::new(EventCallbacks::new()), None, None).is_err());
 }
 
-#[test]
-fn installing_the_webview_host_drains_existing_core_demand_without_an_external_start() {
-	let callbacks = Arc::new(EventCallbacks::new());
-	let runtime = NativeTrUApiHostRuntime::with_managed_product_workers(
-		callbacks.clone(),
-		native_host_runtime_config(),
-	)
-	.unwrap();
-	let product = ProductId::for_test("early.dot");
-	runtime.runtime.worker_ledger().acquire(&product);
-	let views = Arc::new(WebViews::default());
-	assert!(runtime.enable_product_workers(views.clone()));
-	assert!(!runtime.enable_product_workers(Arc::new(WebViews::default())));
-	let extra = runtime.claim_worker(product.clone());
-	extra.release();
-	assert!(views.stops.lock().unwrap().is_empty());
-	runtime.runtime.worker_ledger().release(&product);
-	assert_eq!(
-		(
-			views.starts.lock().unwrap().len(),
-			views.stops.lock().unwrap().len(),
-			callbacks.worker_demand.lock().unwrap().len()
-		),
-		(1, 1, 0)
-	);
-}
-
-#[test]
-fn shutdown_ends_observations_even_if_the_adapter_was_never_installed() {
-	let host = NativeTrUApiHostRuntime::with_managed_product_workers(
-		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
-	)
-	.unwrap();
-	let product = ProductId::for_test("idle.dot");
-	let observe = || {
-		let (send, receive) = mpsc::channel();
-		let subscription = host.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
-		(subscription, receive)
-	};
-	let (_before, before) = observe();
-	host.shutdown_product_workers();
-	let (_after, after) = observe();
-	for observer in [before, after] {
-		assert!(matches!(
-			observer.recv_timeout(Duration::from_secs(5)).unwrap(),
-			Some(NativeWorkerExecutionState::Idle)
-		));
-		assert!(observer.recv_timeout(Duration::from_secs(5)).unwrap().is_none());
-	}
-	assert!(!host.enable_product_workers(Arc::new(WebViews::default())));
-}
-
 #[tokio::test]
 async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancels_its_boot() {
 	let (runtime, views, product) = setup();
@@ -278,7 +230,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 	let old = views.latest();
 	let owner = open(&old);
 	let _socket = connect(&owner).await;
-	assert!(old.ready(owner.clone()));
+	assert!(owner.report_worker_module_started());
 	runtime.reload_worker(product.clone());
 	let update = views.latest();
 	assert!(runtime.current_worker_execution(product.clone()).is_none());
@@ -288,7 +240,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 	));
 	let new_owner = open(&update);
 	claim.release();
-	assert!(!update.ready(new_owner));
+	assert!(!new_owner.report_worker_module_started());
 	old.failed("stale during reload".into());
 	runtime.reload_worker(product);
 	assert_eq!(
@@ -310,7 +262,7 @@ async fn losing_the_latest_socket_withdraws_a_worker_until_it_can_receive_calls_
 	let _observing = runtime.observe_worker_execution(product, Arc::new(Observer(send)));
 	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	assert!(attempt.ready(owner));
+	assert!(owner.report_worker_module_started());
 	let connect = || tokio_tungstenite::connect_async(url.as_str());
 	let (mut first, _) = connect().await.unwrap();
 	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));

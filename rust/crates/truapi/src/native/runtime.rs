@@ -653,17 +653,19 @@ impl NativeTrUApiHostRuntime {
 		)
 	}
 
-	/// Construct a runtime whose worker demand waits for its WebView adapter.
+	/// Construct a runtime that starts and stops the session's product workers.
 	///
-	/// Install the session adapter with `enable_product_workers`. Any earlier demand is
-	/// queued, including references acquired by services while the runtime is being built.
+	/// Demand acquired during initialization is delivered before returning.
 	#[uniffi::constructor]
 	pub fn with_managed_product_workers(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: HostRuntimeConfig,
+		worker_host: Arc<dyn NativeWebViewWorkerHost>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		let workers = workers::Workers::managed(&callbacks);
-		Self::from_resolved(callbacks, runtime_config.try_into()?, workers)
+		let workers = workers::Workers::managed(&callbacks, worker_host);
+		let runtime = Self::from_resolved(callbacks, runtime_config.try_into()?, workers)?;
+		workers::install_controller(&runtime);
+		Ok(runtime)
 	}
 
 	/// Install the host's contacts adapter, which owns the contact list and
@@ -1391,26 +1393,23 @@ impl NativeProductExecution {
 			self.events.note_early_chain_close();
 		}
 	}
+}
 
-	/// Push a complete native Chat room-list replacement to this execution.
-	pub fn notify_chat_rooms_changed(&self, rooms: Vec<v01::ChatRoom>) {
+#[uniffi::export]
+impl NativeWorkerExecution for NativeProductExecution {
+	fn notify_chat_rooms_changed(&self, rooms: Vec<latest::ChatRoom>) {
 		self.events.notify_chat_rooms_changed(rooms);
 	}
 
-	/// Publish one native Chat action, buffering it until the product
-	/// connection subscribes.
-	pub fn publish_chat_action(
+	fn publish_chat_action(
 		&self,
-		action: v01::HostChatActionSubscribeItem,
+		action: latest::HostChatActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_chat()?;
 		self.chat_connection.publish(action.into())
 	}
 
-	/// Ask the product to draw one body, delivering each replacement tree to
-	/// `observer` until the returned subscription is cancelled. A Pocket
-	/// card's newest face is also kept, so the card has it offline.
-	pub fn render(
+	fn render(
 		&self,
 		request: truapi::latest::ProductRendererRenderRequest,
 		observer: Arc<dyn NativeRendererObserver>,
@@ -1438,12 +1437,7 @@ impl NativeProductExecution {
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
 
-	/// Follow the resolved materials of `tree`, a body this execution's product rendered in
-	/// `context`: `observer` gets it now and after each change, until
-	/// cancelled. A node that falls back is logged and reported to the product
-	/// through `Renderer::failure_subscribe`. Unless `float_filterable`, the
-	/// shaders filter 32-bit float images themselves.
-	pub fn resolve_materials(
+	fn resolve_materials(
 		&self,
 		tree: latest::RendererNode,
 		context: latest::RenderContext,
@@ -1469,16 +1463,17 @@ impl NativeProductExecution {
 		)
 	}
 
-	/// Publish one action triggered inside a product-rendered body, buffering
-	/// it until the product connection subscribes.
-	pub fn publish_renderer_action(
+	fn publish_renderer_action(
 		&self,
 		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		self.renderer_connection.publish(item.into())
 	}
+}
 
+#[uniffi::export]
+impl NativeProductExecution {
 	/// Permanently shut down this executable and all of its connection state.
 	///
 	/// This is named `shutdown` rather than `close` because UniFFI Kotlin

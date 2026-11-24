@@ -48,8 +48,7 @@ use crate::SigningHost;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
-	host_logic::{root_entropy::RootEntropy, worker::WorkerTransition},
-	runtime::HostRole,
+	host_logic::root_entropy::RootEntropy, runtime::HostRole,
 };
 
 mod generated_bridge;
@@ -907,17 +906,23 @@ struct WasmWorkerController {
 	crashing: Option<SendWrapper<Function>>,
 }
 
-impl crate::host_logic::worker::WorkerController for WasmWorkerController {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		let name = match transition {
-			WorkerTransition::Start => "Start",
-			WorkerTransition::Stop => "Stop",
-		};
+impl WasmWorkerController {
+	fn request(&self, product_id: &ProductId, transition: &str) {
 		let _ = self.request.call2(
 			&JsValue::NULL,
 			&JsValue::from_str(product_id.as_str()),
-			&JsValue::from_str(name),
+			&JsValue::from_str(transition),
 		);
+	}
+}
+
+impl crate::host_logic::worker::WorkerController for WasmWorkerController {
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.request(product_id, "Start");
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.request(product_id, "Stop");
 	}
 
 	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
