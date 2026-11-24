@@ -137,6 +137,33 @@ fn a_tld_that_is_not_a_dns_label_is_refused() {
 	);
 }
 
+/// The core reads a host ending in `.li` as a share host and a name under
+/// `localhost` as a development server, so a stack on either TLD would have
+/// its products read both ways.
+#[test]
+fn a_tld_the_core_reads_another_way_is_refused() {
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let tlds = ["li", "localhost"];
+
+	assert_eq!(
+		tlds.map(|tld| {
+			(
+				Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true).err(),
+				bundled(&test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]), false).err(),
+			)
+		}),
+		tlds.map(|tld| {
+			let taken = || Some(StackError::TakenTld { tld: tld.into() });
+			(taken(), taken())
+		}),
+	);
+}
+
 /// A fork with its own TLD runs products under it and under Polkadot's, and
 /// under no third TLD.
 #[test]

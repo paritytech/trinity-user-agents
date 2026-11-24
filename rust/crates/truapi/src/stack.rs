@@ -18,7 +18,11 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::{CallError, ProductId, dotns_name::is_dns_label};
+use crate::{
+	CallError, ProductId,
+	dotns_name::is_dns_label,
+	product_id::{LOCALHOST_PRODUCT_LABEL, PRODUCT_SHARE_SUFFIX},
+};
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
@@ -165,6 +169,13 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
+	/// The TLD is one the core reads another way: every share host ends in
+	/// `li`, and a name under `localhost` is a development server.
+	#[display("stack tld {tld:?} names share hosts or development servers")]
+	TakenTld {
+		/// The descriptor's TLD.
+		tld: String,
+	},
 	/// The stack runs on Polkadot's TLD, which this build does not allow.
 	#[display("stack uses Polkadot's reserved tld {RESERVED_TLD}, which this build does not allow")]
 	ReservedTld,
@@ -260,6 +271,11 @@ impl Stack {
 		}
 		if !is_dns_label(&tld) {
 			return Err(StackError::InvalidTld { tld });
+		}
+		if PRODUCT_SHARE_SUFFIX.strip_prefix('.') == Some(tld.as_str()) ||
+			tld == LOCALHOST_PRODUCT_LABEL
+		{
+			return Err(StackError::TakenTld { tld });
 		}
 		let StackChains { relay, asset_hub, people, bulletin } = chains;
 		if relay == Some([0; 32]) {
