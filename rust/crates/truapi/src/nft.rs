@@ -15,6 +15,7 @@ mod ledger;
 #[cfg(test)]
 mod live;
 mod operation;
+mod paid_moves;
 mod purse;
 mod reclaim;
 mod recovery;

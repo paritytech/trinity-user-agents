@@ -46,6 +46,7 @@ use crate::{
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::root_entropy::RootEntropy,
 	nft::HoldingTracker,
+	pgas_claims::PgasClaims,
 	nft_purse::{
 		FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize, ScriptedStatements,
 	},
@@ -160,10 +161,12 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		db: db.clone(),
 		installation,
 		keys,
-		durable: engine,
+		durable: engine.clone(),
 		secrets,
 		imported,
 		recovery: Arc::new(super::NftRecovery::off()),
+		budget: Arc::new(ScarcityMoveBudget::new(storage.clone(), Arc::new(chain.clone()), genesis)),
+		claims: PgasClaims::new(engine.clone()),
 	};
 	let ledger = NftLedger::new(deps);
 	let tracking = super::HoldingTrackerDeps {

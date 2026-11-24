@@ -1146,6 +1146,10 @@ impl HostRuntime<SigningHost> {
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let chain = Arc::new(self.services.chain.clone());
+		let genesis = self.services.asset_hub_chain_genesis_hash().into();
+		let budget = Arc::new(crate::nft::ScarcityMoveBudget::new(chain.clone(), chain, genesis));
+		let claims = crate::pgas_claims::PgasClaims::new(durable.clone());
 		let deps = crate::nft::NftLedgerDeps {
 			db,
 			installation,
@@ -1154,6 +1158,8 @@ impl HostRuntime<SigningHost> {
 			secrets,
 			imported,
 			recovery,
+			budget,
+			claims,
 		};
 		Some(crate::nft::NftLedger::new(deps))
 	}

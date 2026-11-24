@@ -6,6 +6,7 @@ use std::sync::Arc;
 use parity_scale_codec::Decode;
 use subxt::{Metadata, utils::H256};
 
+use super::policy::TransferMode;
 use crate::{
 	chain::{ChainHeads, StorageWatchError, WatchedStorage},
 	chain_runtime::RuntimeFailure,
@@ -28,6 +29,27 @@ impl MoveBudget {
 	pub fn is_exhausted(&self, moves: u16) -> bool {
 		moves >= self.maximum_moves
 	}
+
+	/// How an NFT that used `moves` fee-less moves goes to `destination`:
+	/// paid once it has no fee-less move left, or for a cheque key once it
+	/// would arrive with none left.
+	pub fn transfer_mode(&self, moves: u16, destination: DestinationKind) -> TransferMode {
+		let moves_on_arrival = match destination {
+			DestinationKind::Holder => moves,
+			DestinationKind::ChequeKey => moves.saturating_add(1),
+		};
+		if self.is_exhausted(moves_on_arrival) { TransferMode::Paid } else { TransferMode::FeeLess }
+	}
+}
+
+/// What the destination of a move needs from the NFT that arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationKind {
+	/// Its holder pays for later moves itself.
+	Holder,
+	/// The sender reclaims from it, so the NFT must arrive with a fee-less
+	/// move left.
+	ChequeKey,
 }
 
 /// Where the chain's move budget is read now. A trait because the live test

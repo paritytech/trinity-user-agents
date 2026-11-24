@@ -16,10 +16,10 @@ use std::sync::Arc;
 use subxt::utils::H256;
 
 pub use holdings::ScarcityHoldings;
-pub use move_budget::{MoveBudgetSource, ScarcityMoveBudget};
+pub use move_budget::{DestinationKind, MoveBudget, MoveBudgetSource, ScarcityMoveBudget};
 pub use policy::{TRANSFER_WAIT_LIMIT_SECS, TransferMode, TransferParams, TransferSigner};
 #[cfg(test)]
-pub use testing::ASSET_HUB_PIPELINE;
+pub use testing::{ASSET_HUB_PIPELINE, FixedMoveBudget};
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
 
 use self::{

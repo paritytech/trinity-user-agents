@@ -13,13 +13,15 @@ use super::{
 	dao,
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
+	paid_moves::{MovePayments, PaidMoveError, UnplannedSource},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferMode, TransferParams, TransferSigner},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
 	durable::{
-		DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId, PolicyParams, group_exists,
+		DeferredSubmission, DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId,
+		group_exists,
 	},
 	installation::InstallationId,
 	store::DbError,
@@ -79,9 +81,18 @@ pub enum StartOperationError {
 	/// The destination keys could not be allocated.
 	#[error(transparent)]
 	Allocate(#[from] AllocateItemsError),
+	/// The move budget could not be read, or a claim not registered.
+	#[error(transparent)]
+	PaidMoves(#[from] PaidMoveError),
 	/// The database failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
+}
+
+impl From<UnplannedSource> for StartOperationError {
+	fn from(UnplannedSource(source): UnplannedSource) -> Self {
+		Self::ItemUnavailable(source)
+	}
 }
 
 impl From<ItemRefusal> for StartOperationError {
@@ -142,14 +153,15 @@ pub struct DestinationKeys<'a> {
 	pub deriver: &'a dyn ItemKeyDeriver,
 }
 
-/// Works out, inside the registration write, the params of each transfer of
-/// `request`, or refuses: the operation exists, an item is not idle in
-/// `from`, or destination keys cannot be allocated.
+/// Works out, inside the registration write, each transfer of `request`,
+/// paid as `payments` says, or refuses: the operation exists, an item is not
+/// idle in `from`, or destination keys cannot be allocated.
 pub fn plan_transfers(
 	tx: &Transaction<'_>,
 	request: &TransferRequest,
 	keys: DestinationKeys<'_>,
-) -> Result<Vec<PolicyParams>, StartOperationError> {
+	payments: &MovePayments,
+) -> Result<Vec<DeferredSubmission>, StartOperationError> {
 	validate_operation_unused(tx, &request.operation)?;
 	let sources = idle_items::<StartOperationError>(tx, request.from, &request.transfer.inputs())?;
 	let destinations = match request.transfer {
@@ -157,21 +169,41 @@ pub fn plan_transfers(
 		TransferType::Foreign { into, .. } => vec![into],
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	Ok(sources
-		.into_iter()
-		.zip(destinations)
-		.map(|(IdleItem { key: source, slot }, destination)| {
-			TransferParams {
-				source,
-				signer: TransferSigner::Derived(slot),
-				destination,
-				submitted_attempt: None,
-				give_up_after,
-				mode: TransferMode::FeeLess,
-			}
-			.into()
-		})
-		.collect())
+	let submission = |(source, destination): (IdleItem, ItemKey)| {
+		transfer_submission(&source, destination, give_up_after, payments)
+	};
+	let submissions = sources.into_iter().zip(destinations).map(submission);
+	Ok(submissions.collect::<Result<_, UnplannedSource>>()?)
+}
+
+/// The transfer of `source` to `destination`, given up at `give_up_after`,
+/// paid as `payments` says for its key.
+fn transfer_submission(
+	source: &IdleItem,
+	destination: ItemKey,
+	give_up_after: u64,
+	payments: &MovePayments,
+) -> Result<DeferredSubmission, UnplannedSource> {
+	let payment = payments.payment_of(&source.key)?;
+	let params = TransferParams {
+		source: source.key,
+		signer: TransferSigner::Derived(source.slot),
+		destination,
+		submitted_attempt: None,
+		give_up_after,
+		mode: payment.transfer_mode(),
+	};
+	Ok(payment.submission(params))
+}
+
+/// Each item of `request` with the fee-less moves its NFT used, read before
+/// the registration write, or the refusal [`validate_can_start`] answers.
+pub fn read_source_moves(
+	conn: &Connection,
+	request: &TransferRequest,
+) -> Result<Vec<(ItemKey, Option<u16>)>, StartOperationError> {
+	let sources = idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs())?;
+	Ok(sources.into_iter().map(|source| (source.key, source.moves)).collect())
 }
 
 /// Refuses `request` when its operation is already registered or one of its

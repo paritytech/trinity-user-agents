@@ -16,7 +16,7 @@ use super::{
 	operation::nft_domain,
 	purse::PurseId,
 	recovery::NftRecovery,
-	scarcity::TransferParams,
+	scarcity::{FixedMoveBudget, MoveBudget, TransferParams},
 };
 use crate::{
 	durable::{
@@ -28,6 +28,7 @@ use crate::{
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::root_entropy::RootEntropy,
 	installation::{InstallationId, InstallationIdProvider},
+	pgas_claims::{BuiltClaim, ClaimBuildError, ClaimSlot, PgasClaimBuilder, PgasClaims, with_pgas_claims},
 	runtime::AuthorityError,
 	store::Db,
 };
@@ -37,6 +38,9 @@ pub const TEST_INSTALLATION: InstallationId = InstallationId([0x1d; 32]);
 
 /// The entropy every test ledger derives item keys from.
 pub const TEST_ENTROPY: [u8; 16] = [0x42; 16];
+
+/// The fee-less move budget of every test ledger, as on Paseo Next.
+pub const TEST_MAXIMUM_MOVES: u16 = 16;
 
 /// A ledger over `db` that allocates under [`TEST_INSTALLATION`] and
 /// derives from [`TEST_ENTROPY`].
@@ -48,27 +52,45 @@ pub fn test_ledger(db: Db) -> NftLedger {
 /// registered with an engine that never builds them.
 pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 	let entropy = Arc::new(FixedEntropy::new(TEST_ENTROPY));
+	let durable = unbuilt_transfers_engine(db.clone());
 	NftLedgerDeps {
-		db: db.clone(),
+		db,
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 		keys: entropy.clone(),
-		durable: unbuilt_transfers_engine(db),
+		durable: durable.clone(),
 		secrets: entropy,
 		imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 		recovery: Arc::new(NftRecovery::off()),
+		budget: Arc::new(FixedMoveBudget(MoveBudget::new(TEST_MAXIMUM_MOVES))),
+		claims: PgasClaims::new(durable),
 	}
 }
 
-/// An engine over `db` that serves the NFT domain, whose transfers stay waiting
-/// to be built.
+/// An engine over `db` that serves the NFT domain and the PGAS claims its
+/// paid moves wait for, whose transactions all stay waiting to be built.
 pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
+	let genesis = subxt::utils::H256::zero();
 	let registry = DurableRegistry::new().with_domain(
 		nft_domain(),
-		subxt::utils::H256::zero(),
+		genesis,
 		Arc::new(Unobservable),
 		Arc::new(NeverBuilds),
 	);
-	engine_on(db, registry)
+	engine_on(db, with_pgas_claims(registry, genesis, Arc::new(SignedOut)))
+}
+
+/// Builds no PGAS claim, since no session is ever signed in, so claims wait.
+struct SignedOut;
+
+#[async_trait::async_trait]
+impl PgasClaimBuilder for SignedOut {
+	async fn build_claim(
+		&self,
+		_: subxt::utils::AccountId32,
+		_: &std::collections::BTreeSet<ClaimSlot>,
+	) -> Result<BuiltClaim, ClaimBuildError> {
+		Err(ClaimBuildError::NoSession)
+	}
 }
 
 /// A transfer policy that leaves every transfer waiting.
@@ -176,7 +198,7 @@ pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Ve
 /// The params of every registered transfer, in registration order.
 pub fn stored_transfer_params(db: &Db) -> Vec<TransferParams> {
 	let stored = |conn: &rusqlite::Connection| {
-		let mut statement = conn.prepare("SELECT policy_params FROM durable_tx ORDER BY id")?;
+		let mut statement = conn.prepare("SELECT policy_params FROM durable_tx WHERE domain = 'nft' ORDER BY id")?;
 		let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
 		Ok(rows.collect::<Result<Vec<_>, _>>()?)
 	};
@@ -212,4 +234,9 @@ fn update_transfer(db: &Db, id: DurableTxId, statement: &'static str) {
 /// move left.
 pub fn unmoved_holding(instance: u64) -> TrackedHolding {
 	TrackedHolding { item: HeldItem { collection: 1, item: 1, instance }, moves: 0 }
+}
+
+/// [`unmoved_holding`] of an NFT that used `moves` fee-less moves.
+pub fn holding_after_moves(instance: u64, moves: u16) -> TrackedHolding {
+	TrackedHolding { moves, ..unmoved_holding(instance) }
 }

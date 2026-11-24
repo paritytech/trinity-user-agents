@@ -17,15 +17,18 @@ use super::{
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
-		latest_per_source, nft_domain, plan_transfers, progress_of, record_inputs,
-		validate_can_start,
+		latest_per_source, nft_domain, plan_transfers, progress_of, read_source_moves,
+		record_inputs, validate_can_start,
 	},
+	paid_moves::{MovePayments, PaidMoveError, claim_paid_sources, transfer_modes},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims, record_reclaim_inputs},
 	recovery::NftRecovery,
 	returns::{
-		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
+		ReturnRequest, StartedReturn, plan_returns, read_return_items, read_returned_moves,
+		validated_return_items,
 	},
+	scarcity::{DestinationKind, MoveBudgetSource},
 };
 use crate::{
 	durable::{
@@ -33,6 +36,7 @@ use crate::{
 		RegistrationError,
 	},
 	installation::{InstallationId, InstallationIdProvider},
+	pgas_claims::PgasClaims,
 	store::{Db, DbError},
 };
 
@@ -52,6 +56,10 @@ pub struct NftLedgerDeps {
 	pub imported: ImportedSecretStore,
 	/// Backup recovery, which new purse ids wait for.
 	pub recovery: Arc<NftRecovery>,
+	/// The fee-less move budget, which decides whether a move is paid.
+	pub budget: Arc<dyn MoveBudgetSource>,
+	/// Registers the PGAS claims paid moves wait for.
+	pub claims: PgasClaims,
 }
 
 /// Layer 1's store of purses and their items.
@@ -64,13 +72,25 @@ pub struct NftLedger {
 	secrets: Arc<dyn ItemSecrets>,
 	imported: ImportedSecretStore,
 	recovery: Arc<NftRecovery>,
+	budget: Arc<dyn MoveBudgetSource>,
+	claims: PgasClaims,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys, durable, secrets, imported, recovery } = deps;
-		Self { db, installation, keys, durable, secrets, imported, recovery }
+		let NftLedgerDeps {
+			db,
+			installation,
+			keys,
+			durable,
+			secrets,
+			imported,
+			recovery,
+			budget,
+			claims,
+		} = deps;
+		Self { db, installation, keys, durable, secrets, imported, recovery, budget, claims }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
@@ -149,8 +169,9 @@ impl NftLedger {
 		if items.is_empty() {
 			return Err(RegistrationError::Hook(StartOperationError::NoItems));
 		}
+		let payments = self.pay_for_transfers(&request).await.map_err(RegistrationError::Hook)?;
 		let installation = self.current_installation().await?;
-		let planned = self.planned_transfers(request, installation);
+		let planned = self.planned_transfers(request, installation, payments);
 		self.durable
 			.execute_with(planned, move |tx, ids| record_inputs(tx, items, ids))
 			.await
@@ -177,16 +198,41 @@ impl NftLedger {
 		})
 	}
 
-	/// `request` as a durable request whose transfers are planned in its write.
+	/// `request` as a durable request whose transfers are planned in its
+	/// write, each paid as `payments` says.
 	fn planned_transfers(
 		&self,
 		request: TransferRequest,
 		installation: InstallationId,
+		payments: MovePayments,
 	) -> DurableRequest<StartOperationError> {
 		let group = request.operation.group().clone();
 		self.planned_in_write(group, installation, move |tx, keys| {
-			plan_transfers(tx, &request, keys)
+			plan_transfers(tx, &request, keys, &payments)
 		})
+	}
+
+	/// How each item of `request` pays for its move, with the PGAS claims of
+	/// the paid ones registered.
+	async fn pay_for_transfers(
+		&self,
+		request: &TransferRequest,
+	) -> Result<MovePayments, StartOperationError> {
+		let read_request = request.clone();
+		let sources = self.db.read(move |conn| Ok(read_source_moves(conn, &read_request))).await??;
+		self.pay_for_moves(sources, DestinationKind::Holder).await
+	}
+
+	/// How each of `sources` pays for its move to a `destination`, with the
+	/// PGAS claims of the paid ones registered, each in its own write.
+	async fn pay_for_moves(
+		&self,
+		sources: Vec<(ItemKey, Option<u16>)>,
+		destination: DestinationKind,
+	) -> Result<MovePayments, StartOperationError> {
+		let budget = self.budget.current_budget().await.map_err(PaidMoveError::Budget)?;
+		let modes = transfer_modes(&budget, &sources, destination)?;
+		Ok(claim_paid_sources(&self.claims, modes).await?)
 	}
 
 	/// A durable request of the operation `group` whose transfers `plan` works
@@ -202,14 +248,13 @@ impl NftLedger {
 		Plan: FnOnce(
 				&rusqlite::Transaction<'_>,
 				DestinationKeys<'_>,
-			) -> Result<Vec<PolicyParams>, StartOperationError>
+			) -> Result<Vec<DeferredSubmission>, StartOperationError>
 			+ Send
 			+ 'static,
 	{
 		let deriver = self.keys.clone();
 		DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
 			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
-				.map(independent_submissions)
 		})
 	}
 
@@ -249,7 +294,7 @@ impl NftLedger {
 		let operation = request.operation.clone();
 		let group = operation.group().clone();
 		let planned = self.planned_in_write(group, installation, move |tx, keys| {
-			plan_reclaims(tx, &request, keys)
+			plan_reclaims(tx, &request, keys).map(independent_submissions)
 		});
 		let record = move |tx: &rusqlite::Transaction<'_>, ids: &[_]| {
 			record_reclaim_inputs(tx, &operation, ids)
@@ -266,10 +311,17 @@ impl NftLedger {
 		&self,
 		request: ReturnRequest,
 	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
+		let read_request = request.clone();
+		let sources = self.db.read(move |conn| Ok(read_returned_moves(conn, &read_request))).await;
+		let sources = sources?.map_err(RegistrationError::Hook)?;
+		let payments = self
+			.pay_for_moves(sources, DestinationKind::ChequeKey)
+			.await
+			.map_err(RegistrationError::Hook)?;
 		let group = request.operation.group().clone();
 		let import = request.import.clone();
 		let planned = DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
-			plan_returns(tx, &request).map(independent_submissions)
+			plan_returns(tx, &request, &payments)
 		});
 		self.durable
 			.execute_with(planned, move |tx, ids| {
@@ -307,7 +359,9 @@ impl NftLedger {
 		installation: InstallationId,
 	) -> DurableRequest<StartOperationError> {
 		let group = plan.operation.group().clone();
-		self.planned_in_write(group, installation, move |tx, keys| plan_imports(tx, &plan, keys))
+		self.planned_in_write(group, installation, move |tx, keys| {
+			plan_imports(tx, &plan, keys).map(independent_submissions)
+		})
 	}
 
 	/// The latest transfer of each key `operation` moves, in registration

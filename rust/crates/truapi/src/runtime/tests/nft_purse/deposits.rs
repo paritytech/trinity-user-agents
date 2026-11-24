@@ -16,7 +16,7 @@ use super::{
 	*,
 };
 use crate::{
-	nft::OperationKey,
+	nft::{ItemKey, OperationKey, unmoved_holding},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview},
 };
 
@@ -313,11 +313,14 @@ fn deposited_items(purses: &Purses, cheque: &v01::NftPurseCheque) -> Vec<v01::Nf
 }
 
 /// A cheque of `count` items deposited into [`TICKETS`], with the deposit
-/// finalized.
+/// finalized and the tracker having seen the keys it minted hold their NFTs.
 fn deposited_cheque(count: u32) -> (Purses, v01::NftPurseCheque) {
 	let (purses, cheque) = ephemeral_cheque(count);
 	deposit(&purses.host, cheque.clone(), TICKETS).unwrap();
 	finalize_waiting_moves(&purses);
+	let minted = deposited_items(&purses, &cheque);
+	let holdings = minted.iter().map(|key| (ItemKey(key.0), Some(unmoved_holding(7)))).collect();
+	block_on(purses.ledger.record_holdings(holdings)).unwrap();
 	(purses, cheque)
 }
 

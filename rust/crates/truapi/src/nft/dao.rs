@@ -28,6 +28,9 @@ pub enum KeyStanding {
 		instance: u64,
 		/// Where it sits in the derivation tree.
 		slot: ItemSlot,
+		/// Fee-less moves the NFT used, or `None` before the tracker
+		/// recorded them.
+		moves: Option<u16>,
 	},
 }
 
@@ -227,7 +230,7 @@ pub fn available_items(
 
 const KEY_STANDINGS: &str = concat!(
 	"SELECT item.key AS key, item.purse AS purse, item.installation AS installation,
-	item.idx AS idx, holding.instance AS instance, ",
+	item.idx AS idx, holding.instance AS instance, holding.moves AS moves, ",
 	spent!(),
 	" AS spent FROM nft_item AS item
 	JOIN nft_holding AS holding ON holding.key = item.key
@@ -321,22 +324,33 @@ pub fn handoff_keys(
 }
 
 const UNCONSUMED_KEYS: &str = "SELECT item.key AS key, item.purse AS purse,
-	item.installation AS installation, item.idx AS idx FROM nft_item AS item
+	item.installation AS installation, item.idx AS idx, holding.moves AS moves
+	FROM nft_item AS item LEFT JOIN nft_holding AS holding ON holding.key = item.key
 	WHERE item.key IN rarray(:keys) AND NOT EXISTS (SELECT 1 FROM nft_consumption AS spent
 	LEFT JOIN durable_tx AS tx ON tx.id = spent.tx
 	WHERE spent.key = item.key AND (spent.kind = 'HANDOFF' OR tx.status != 'FAILURE'))
 	ORDER BY item.key";
 
-/// Each of `keys` that is ours and that nothing consumed, with its slot,
-/// ordered by key. A key is consumed once it is handed off or spent by a
-/// transaction that did not fail, landed or not. No holding is needed.
+/// An item key that nothing consumed.
+pub struct UnconsumedItem {
+	/// Where the key sits in the derivation tree.
+	pub slot: ItemSlot,
+	/// Fee-less moves its NFT used, when the tracker recorded a holding.
+	pub moves: Option<u16>,
+}
+
+/// Each of `keys` that is ours and that nothing consumed, ordered by key. A
+/// key is consumed once it is handed off or spent by a transaction that did
+/// not fail, landed or not. No holding is needed.
 pub fn unconsumed_keys(
 	conn: &Connection,
 	keys: &[ItemKey],
-) -> Result<Vec<(ItemKey, ItemSlot)>, DbError> {
+) -> Result<Vec<(ItemKey, UnconsumedItem)>, DbError> {
 	let mut statement = conn.prepare_cached(UNCONSUMED_KEYS)?;
-	let rows =
-		statement.query_map(named_params! { ":keys": key_array(keys) }, keyed_slot_from_row)?;
+	let rows = statement.query_map(named_params! { ":keys": key_array(keys) }, |row| {
+		let (key, slot) = keyed_slot_from_row(row)?;
+		Ok((key, UnconsumedItem { slot, moves: row.get("moves")? }))
+	})?;
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -401,6 +415,7 @@ fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, KeyStandin
 		KeyStanding::Idle {
 			instance: u64::try_from(instance).expect("stored instance ids are non-negative"),
 			slot,
+			moves: row.get("moves")?,
 		},
 	))
 }
