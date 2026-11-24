@@ -441,9 +441,14 @@ impl SessionCatalog {
 	/// Permanently remove the selected local signing-host session data.
 	///
 	/// Callers must stop an active runtime before clearing its profile. The
-	/// catalog only removes paths it derives from validated, listed names. The
-	/// account store's lock is taken before anything is removed, so a clear
-	/// the lock refuses leaves every session and account in place.
+	/// catalog only removes paths it derives from validated, listed names.
+	///
+	/// The shared account store's lock and the lock of each removed session's
+	/// own store are taken before anything is removed, so a clear a lock
+	/// refuses leaves every session and account in place, and a host
+	/// provisioning one of those sessions cannot write it back afterwards. The
+	/// shared store's records go before the directories, so a clear stopped
+	/// between the two still lists the session and can be run again.
 	pub fn clear(&self, target: &SessionClearTarget) -> Result<Vec<String>> {
 		// Resolve once here, so a name promoted away clears the session it
 		// created just as it selects it everywhere else.
@@ -456,30 +461,36 @@ impl SessionCatalog {
 			SessionClearTarget::All => target,
 		};
 		self.validate_clear_target(target)?;
+		let names = match target {
+			SessionClearTarget::Named(name) => vec![name.clone()],
+			SessionClearTarget::All => self.list()?,
+		};
 		let account_store = accounts::AccountStoreLock::acquire(&self.base_path)?;
+		let _session_stores = names
+			.iter()
+			.map(|name| accounts::AccountStoreLock::acquire(&self.profile(name)?.account_base_path))
+			.collect::<Result<Vec<_>>>()?;
 		match target {
 			SessionClearTarget::Named(name) => {
 				let was_current = matches!(
 					self.current_session()?,
 					CurrentSession::Pointed(current) if current == *name
 				);
+				account_store.remove_managed_accounts(&self.network_id, Some(name))?;
 				self.remove_named_data(name)?;
 				if was_current {
 					remove_file_if_exists(&self.role_path.join(CURRENT_SESSION_FILE))?;
 				}
-				account_store.remove_managed_accounts(&self.network_id, Some(name))?;
-				Ok(vec![name.clone()])
 			},
 			SessionClearTarget::All => {
-				let names = self.list()?;
+				account_store.remove_managed_accounts(&self.network_id, None)?;
 				for name in &names {
 					self.remove_named_data(name)?;
 				}
 				remove_dir_if_exists(&self.role_path)?;
-				account_store.remove_managed_accounts(&self.network_id, None)?;
-				Ok(names)
 			},
 		}
+		Ok(names)
 	}
 
 	fn remove_named_data(&self, name: &str) -> Result<()> {

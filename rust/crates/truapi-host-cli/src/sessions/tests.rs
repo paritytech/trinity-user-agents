@@ -314,33 +314,87 @@ fn clearing_a_missing_session_has_an_actionable_error() -> Result<()> {
 	Ok(())
 }
 
-/// A clear the account store's lock refuses removes nothing, so it never leaves
-/// a session's directory gone while its account, mnemonic included, stays in
-/// the store.
+/// A clear that a held account store lock refuses removes nothing and names the
+/// store that is held. That covers the shared store, so no session goes while
+/// its account, mnemonic included, stays there, and the session's own store,
+/// which a host provisioning that session holds and would write back after a
+/// clear that went ahead.
 #[test]
-fn a_clear_the_account_store_lock_refuses_leaves_everything_in_place() -> Result<()> {
+fn a_clear_an_account_store_lock_refuses_leaves_everything_in_place() -> Result<()> {
+	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"testnet","mnemonic":"m","lite_username":"alice","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
+	for held_store in ["shared", "session"] {
+		let temporary = tempdir()?;
+		let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+		let default = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
+		let alice = catalog.ensure_profile("alice")?;
+		fs::write(default.path.join("core-storage.json"), "{}")?;
+		fs::write(alice.path.join("accounts.json"), stored)?;
+		fs::write(catalog.base_path.join("accounts.json"), stored)?;
+		let held = match held_store {
+			"shared" => catalog.base_path.clone(),
+			_ => alice.account_base_path.clone(),
+		};
+		let _held = accounts::AccountStoreLock::acquire(&held)?;
+
+		let refusals = [SessionClearTarget::Named("alice".to_string()), SessionClearTarget::All]
+			.map(|target| {
+				catalog.clear(&target).map_err(|error| {
+					error.to_string().split(" (").next().unwrap_or_default().to_owned()
+				})
+			});
+
+		let refusal =
+			format!("another truapi-host is using the account store at {}", held.display());
+		assert_eq!(
+			(
+				refusals,
+				default.path.join("core-storage.json").is_file(),
+				fs::read_to_string(alice.path.join("accounts.json")).ok(),
+				fs::read_to_string(catalog.base_path.join("accounts.json")).ok(),
+			),
+			(
+				[Err(refusal.clone()), Err(refusal)],
+				true,
+				Some(stored.to_string()),
+				Some(stored.to_string()),
+			),
+			"{held_store}"
+		);
+	}
+	Ok(())
+}
+
+/// A clear that cannot remove the shared store's records keeps the session, so
+/// it is still listed and the clear can run again. Had the directory gone
+/// first, the record whose lite username is the session's name would stay with
+/// no session to clear, and the default session would be promoted into that
+/// name again.
+#[cfg(unix)]
+#[test]
+fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
+	use std::os::unix::fs::PermissionsExt as _;
+
 	let temporary = tempdir()?;
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
-	let default = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
 	let alice = catalog.ensure_profile("alice")?;
-	fs::write(default.path.join("core-storage.json"), "{}")?;
 	fs::write(alice.path.join("state"), "alice")?;
-	let store = temporary.path().join("accounts.json");
 	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"testnet","mnemonic":"m","lite_username":"alice","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
-	fs::write(&store, stored)?;
-	let _held = accounts::AccountStoreLock::acquire(temporary.path())?;
+	fs::write(catalog.base_path.join("accounts.json"), stored)?;
+	// The lock file has to exist before its directory stops taking new files.
+	drop(accounts::AccountStoreLock::acquire(&catalog.base_path)?);
+	let writable = fs::metadata(&catalog.base_path)?.permissions();
+	fs::set_permissions(&catalog.base_path, fs::Permissions::from_mode(0o555))?;
 
-	let refused = [SessionClearTarget::Named("alice".to_string()), SessionClearTarget::All]
-		.map(|target| catalog.clear(&target).is_err());
+	let cleared = catalog.clear(&SessionClearTarget::Named("alice".to_string()));
+	fs::set_permissions(&catalog.base_path, writable)?;
 
 	assert_eq!(
 		(
-			refused,
-			default.path.join("core-storage.json").is_file(),
-			alice.path.join("state").is_file(),
-			fs::read_to_string(&store)?,
+			cleared.is_err(),
+			catalog.list()?,
+			fs::read_to_string(catalog.base_path.join("accounts.json"))?,
 		),
-		([true, true], true, true, stored.to_string())
+		(true, vec!["alice".to_string()], stored.to_string())
 	);
 	Ok(())
 }
