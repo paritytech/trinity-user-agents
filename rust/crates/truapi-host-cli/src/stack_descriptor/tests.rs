@@ -215,3 +215,17 @@ async fn two_local_files_are_two_stacks_and_one_file_is_one() {
 		(id(source).await, id(fork).await, id(respelled).await);
 	assert_eq!((source_id == fork_id, source_id == respelled_id), (false, true));
 }
+
+/// A lossy conversion turns every byte that is not UTF-8 into one replacement
+/// character, so two files whose paths differ only there would be one stack
+/// and share their state. Such a path is refused instead.
+#[cfg(unix)]
+#[test]
+fn a_local_file_path_that_is_not_utf8_is_refused() {
+	use std::{ffi::OsString, os::unix::ffi::OsStringExt as _};
+
+	let path_with = |byte: u8| PathBuf::from(OsString::from_vec(vec![b'/', byte, b'.', b'j']));
+	let ids = [path_with(0xfe), path_with(0xff), PathBuf::from("/s.json")]
+		.map(|path| canonical_file_id(path).ok());
+	assert_eq!(ids, [None, None, Some("file:/s.json".to_string())]);
+}

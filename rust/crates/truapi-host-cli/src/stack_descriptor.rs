@@ -3,6 +3,7 @@
 
 use std::{
 	fs,
+	path::PathBuf,
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -72,6 +73,7 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 ///
 /// The id is the pointer's. A local file has no pointer of its own, so its id is `file:` followed
 /// by its canonical path: two files are two stacks, and a file that moves becomes another stack.
+/// A file whose canonical path is not UTF-8 is refused.
 pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
 	let (pointer, bytes, source) = read_stack(stack, key).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
@@ -91,7 +93,16 @@ pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, 
 
 fn local_file_id(path: &str) -> Result<String> {
 	let canonical = fs::canonicalize(path).with_context(|| format!("cannot resolve {path}"))?;
-	Ok(format!("file:{}", canonical.display()))
+	canonical_file_id(canonical)
+}
+
+/// `file:` followed by `canonical`. Fails when `canonical` is not UTF-8, since
+/// a lossy conversion would give two such paths one id.
+fn canonical_file_id(canonical: PathBuf) -> Result<String> {
+	let canonical = canonical.into_os_string().into_string().map_err(|canonical| {
+		anyhow!("{} is not a UTF-8 path, so it cannot name a stack", canonical.display())
+	})?;
+	Ok(format!("file:{canonical}"))
 }
 
 /// One value for each chain role a host routes.
