@@ -52,6 +52,7 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod legacy_asset_hub;
 mod scripted_chain;
+mod tests;
 
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
@@ -348,6 +349,9 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// Identity of every [`test_stack`].
+pub const TEST_STACK_ID: &str = "test-stack";
+
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -356,8 +360,12 @@ pub fn test_stack(
 	bulletin: [u8; 32],
 	asset_hub: [u8; 32],
 ) -> crate::platform::Stack {
+	let identity = crate::platform::StackIdentity {
+		id: TEST_STACK_ID.to_string(),
+		generation: "test-generation".to_string(),
+	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
+	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
 }
 
@@ -1932,76 +1940,6 @@ fn method_keyed_responses(
 			}
 		}
 	}))
-}
-
-#[test]
-#[should_panic(
-	expected = "`state_getStorage` was called 2 times, and the script has 1 response(s) for it"
-)]
-fn method_keyed_responses_do_not_replay_an_exhausted_answer() {
-	use futures::StreamExt;
-
-	let request =
-		|id| format!(r#"{{"jsonrpc":"2.0","id":"{id}","method":"state_getStorage","params":[]}}"#);
-	let sent = Arc::new(Mutex::new(vec![request(1), request(2)]));
-	let mut responses =
-		method_keyed_responses(sent, vec![("state_getStorage", "null".to_string())]);
-
-	futures::executor::block_on(async {
-		responses.next().await.expect("first scripted response");
-		responses.next().await.expect("second scripted response");
-	});
-}
-
-fn assert_rpc_responses_are_connection_local(platform: StubPlatform) {
-	use futures::FutureExt;
-
-	futures::executor::block_on(async {
-		let first = platform.connect([0xaa; 32]).await.unwrap();
-		let second = platform.connect([0xaa; 32]).await.unwrap();
-		let mut first_responses = first.responses();
-		let mut second_responses = second.responses();
-		let mut expected_requests = Vec::new();
-
-		for index in 1..=2 {
-			let request = format!(
-				r#"{{"jsonrpc":"2.0","id":"truapi:{index}","method":"state_getStorage","params":[]}}"#
-			);
-			let response =
-				format!(r#"{{"jsonrpc":"2.0","id":"truapi:{index}","result":"0x0{index}"}}"#);
-			first.send(request.clone());
-			assert_eq!(first_responses.next().await, Some(response.clone()));
-			assert_eq!(second_responses.next().now_or_never(), None);
-
-			second.send(request.clone());
-			assert_eq!(second_responses.next().await, Some(response));
-			expected_requests.extend([request.clone(), request]);
-		}
-
-		assert_eq!(*platform.sent_rpc.lock().unwrap(), expected_requests);
-	});
-}
-
-#[test]
-fn scripted_rpc_responses_wait_for_their_own_connection_request() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_responses: vec![
-			r#"{"jsonrpc":"2.0","id":"truapi:1","result":"0x01"}"#.to_string(),
-			r#"{"jsonrpc":"2.0","id":"truapi:2","result":"0x02"}"#.to_string(),
-		],
-		..Default::default()
-	});
-}
-
-#[test]
-fn method_keyed_rpc_responses_count_requests_per_connection() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_method_responses: vec![
-			("state_getStorage", r#""0x01""#.to_string()),
-			("state_getStorage", r#""0x02""#.to_string()),
-		],
-		..Default::default()
-	});
 }
 
 async fn wait_for_matching_request_id(sent: Arc<Mutex<Vec<String>>>, response: &str) {

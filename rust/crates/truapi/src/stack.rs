@@ -3,11 +3,10 @@
 //! The core takes all of its chain configuration from the stack.
 //! [`StackRefresh::load`] checks the descriptor a host build bundles against
 //! the key in the stack's link, starts from it or from a newer copy the core
-//! stored, and fetches newer copies while the core runs. The [`Stack`] it
-//! resolves holds the network, the dotNS TLD, each chain's genesis hash and
-//! the `AccountDataStore` contract address, and answers `get_chain_info`. A
-//! runtime built on that [`Stack`] also checks the genesis hash of each chain
-//! it connects to, and the refresh reports the ones that differ.
+//! stored, and fetches newer copies while the core runs. It resolves the
+//! [`Stack`] the core runs on. A runtime built on that [`Stack`] also checks
+//! the genesis hash of each chain it connects to, and the refresh reports the
+//! ones that differ.
 
 mod records;
 mod refresh;
@@ -66,14 +65,15 @@ const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
-/// the genesis hash of each chain role the core uses, and the Asset Hub
-/// contracts the core reads.
+/// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
+/// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
+/// and the Asset Hub contracts the core reads.
 ///
 /// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
 /// hands out also carries the checks of its chains, which equality ignores.
 #[derive(derive_more::Debug, Clone, derive_more::PartialEq, derive_more::Eq)]
 pub struct Stack {
+	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
@@ -81,6 +81,23 @@ pub struct Stack {
 	#[debug(skip)]
 	#[partial_eq(skip)]
 	checks: Option<StackChecks>,
+}
+
+/// A stack's id and the generation of its chains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackIdentity {
+	/// An opaque, non-empty string that tells this stack apart from others,
+	/// including a fork with its source's genesis hashes.
+	///
+	/// [`Stack::from_descriptor`], which [`Stack::bundled`] and
+	/// [`StackRefresh::load`] build through, takes
+	/// `trinity_stack::Pointer::stack_id` of the pointer, the key in hex. The CLI takes the same
+	/// for a link or a URL, and `file:` and the canonical path for a local descriptor file. A
+	/// test host passes any string.
+	pub id: String,
+	/// The descriptor's `generation`, which changes whenever the stack
+	/// restarts its chains, as after a wipe. Must not be empty.
+	pub generation: String,
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -127,6 +144,12 @@ pub enum StackError {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
 	},
+	/// The stack's id or generation is empty.
+	#[display("stack {field} is empty")]
+	EmptyIdentity {
+		/// `id` or `generation`.
+		field: &'static str,
+	},
 	/// The TLD is not one the core serves dotNS names under.
 	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
 	UnsupportedTld {
@@ -164,16 +187,18 @@ impl Stack {
 	) -> Result<Self, StackError> {
 		let pointer = signed_pointer(pointer)?;
 		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
-		Self::from_descriptor(&verified.descriptor, allows_reserved_values)
+		Self::from_descriptor(&pointer, &verified.descriptor, allows_reserved_values)
 	}
 
-	/// The stack a verified descriptor names, when the core can run it.
-	/// `allows_reserved_values` is whether the build lets it use Polkadot's
-	/// genesis hashes and the `dot` TLD.
+	/// The stack a verified descriptor read from `pointer` names, when the
+	/// core can run it. Its id is the pointer's and its generation the
+	/// descriptor's. `allows_reserved_values` is whether the build lets it use
+	/// Polkadot's genesis hashes and the `dot` TLD.
 	///
 	/// Fails with a [`StackError`] naming the rule the descriptor breaks.
 	/// `validUntil` and `expiresAt` are not checked.
 	pub fn from_descriptor(
+		pointer: &Pointer,
 		descriptor: &Descriptor,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
@@ -189,7 +214,10 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
+		let identity =
+			StackIdentity { id: pointer.stack_id(), generation: descriptor.generation.clone() };
 		let stack = Self::new(
+			identity,
 			descriptor.network.clone(),
 			descriptor.tld.clone(),
 			chains,
@@ -202,14 +230,19 @@ impl Stack {
 	/// bundled descriptor, such as the CLI's. It names no contracts.
 	///
 	/// Applies the same TLD and reserved-value rules as
-	/// [`Self::from_descriptor`], and refuses an all-zero Relay or Asset Hub
-	/// genesis hash.
+	/// [`Self::from_descriptor`], and refuses an empty id or generation and an
+	/// all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
+		let fields = [("id", &identity.id), ("generation", &identity.generation)];
+		if let Some((field, _)) = fields.into_iter().find(|(_, value)| value.is_empty()) {
+			return Err(StackError::EmptyIdentity { field });
+		}
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
 		}
@@ -226,7 +259,17 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { network, tld, chains, account_data_store: None, checks: None })
+		Ok(Self { identity, network, tld, chains, account_data_store: None, checks: None })
+	}
+
+	/// The stack's identity. See [`StackIdentity::id`].
+	pub fn id(&self) -> &str {
+		&self.identity.id
+	}
+
+	/// The run of the stack's chains. See [`StackIdentity::generation`].
+	pub fn generation(&self) -> &str {
+		&self.identity.generation
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
