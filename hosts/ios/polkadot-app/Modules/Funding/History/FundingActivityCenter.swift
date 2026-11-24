@@ -15,7 +15,7 @@ protocol FundingFlowTracking: AnyObject {
 /// shows the sessions in flight before starting another, and the tab bar
 /// asks whether a session's flow is on screen.
 @MainActor
-protocol FundingActivityCenterProtocol: FundingFlowTracking {
+protocol FundingActivityCenterProtocol: FundingFlowTracking, Sendable {
     /// Starts following the sessions, shown through `router`.
     func attach(router: FundingFlowRouting)
     /// Shows the sessions in flight in `direction` before starting another.
