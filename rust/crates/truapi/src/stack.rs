@@ -88,8 +88,8 @@ const RESERVED_TLD: &str = "dot";
 /// chain role, or changes `assets`, `contracts`, `dotns`, `coinage` or the
 /// `sha256` of the relay's `lightSpec`, the file that carries the relay's sync
 /// checkpoint. Only a new build changes what the descriptor names for those.
-/// A stack from [`Stack::new`], such as the CLI's or a test host's, has no
-/// bundled copy and pins nothing.
+/// The core pins nothing for a stack from [`Stack::new`], such as a
+/// `testStack`.
 ///
 /// The pins cover the descriptor, not the chains. The core does not check a
 /// genesis hash against the chain a host reads, so what a host reads over
