@@ -200,6 +200,9 @@ private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
             is Modifier.FillHeight -> if (modifier.v1) add(JsModifier.FillMaxHeight())
             is Modifier.Opacity -> add(JsModifier.Opacity(modifier.v1.toInt()))
             is Modifier.BlendingMode -> add(JsModifier.BlendingMode(modifier.v1.toJs()))
+            // The Android style layer draws the modifiers given by value; until then they are left out.
+            is Modifier.Fill, is Modifier.Shadow, is Modifier.Translate, is Modifier.Font,
+            is Modifier.FadeWithPan, is Modifier.Shimmer, is Modifier.Spin, is Modifier.ExitFade -> Unit
         }
     }
 

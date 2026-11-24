@@ -197,6 +197,16 @@ private extension [Modifier] {
                 opacity = CGFloat(value) / 255
             case let .blendingMode(mode):
                 blendingMode = mode.blendMode
+            // The iPhone style layer draws the modifiers given by value; until then they are left out.
+            case .fill,
+                 .shadow,
+                 .translate,
+                 .font,
+                 .fadeWithPan,
+                 .shimmer,
+                 .spin,
+                 .exitFade:
+                break
             }
         }
 
