@@ -961,8 +961,8 @@ const TEST_STACK_ASSET_HUB: [u8; 32] = [0xcc; 32];
 
 /// A runtime on the stack `refresh` hands out, over nodes that each name the
 /// chain they were dialled for, apart from People's, which names `genesis`.
-/// People gives `suffix` as its `NetworkSuffix`, and each node serves the
-/// runtime version and People metadata an allowance reads first. Any other
+/// Each node serves a runtime version, and People also its metadata and
+/// `suffix` as its `NetworkSuffix`, which an allowance reads first. Any other
 /// storage is empty, and any other request gets a JSON-RPC error. Asset Hub is
 /// out of reach, so activating a wallet looks up no username.
 fn runtime_on(
@@ -984,7 +984,7 @@ fn runtime_on(
 				(Some("state_getRuntimeVersion"), _) => {
 					Ok(serde_json::json!({"specVersion": 1, "transactionVersion": 1}))
 				},
-				(Some("state_call"), Some("Metadata_metadata_at_version")) => {
+				(Some("state_call"), Some("Metadata_metadata_at_version")) if people => {
 					Ok(as_hex(&Some(PEOPLE_METADATA.to_vec()).encode()))
 				},
 				(Some("state_getStorage"), Some(key)) if people && key == suffix_key => {
