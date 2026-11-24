@@ -4337,18 +4337,12 @@ fn cancelling_before_the_overlay_shows_never_shows_it() {
 	))
 	.expect("shown");
 
-	let (cancelled, opened) = std::thread::scope(|scope| {
-		let cancelling =
-			scope.spawn(|| futures::executor::block_on(services.cancel_funding(&intent)));
-		wait_until(|| services.funding().overlay_cancelled(&intent), "overlay cancelled");
-		while !cancelling.is_finished() {
-			futures::executor::block_on(tasks.run());
-			std::thread::sleep(Duration::from_millis(5));
-		}
-		(
-			cancelling.join().expect("cancelling thread"),
-			futures::executor::block_on(finished).expect("overlay finished"),
-		)
+	let (cancelled, opened) = futures::executor::block_on(async {
+		// The cancel waits on the overlay, whose task has not run yet.
+		let mut cancelling = core::pin::pin!(services.cancel_funding(&intent));
+		assert!(futures::poll!(&mut cancelling).is_pending());
+		tasks.run().await;
+		(cancelling.await, finished.await.expect("overlay finished"))
 	});
 
 	assert_eq!(

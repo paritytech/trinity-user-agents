@@ -57,9 +57,8 @@ use std::{
 use core::{hash::Hash, ops::ControlFlow, time::Duration};
 
 use futures::{
-	FutureExt,
 	channel::{mpsc, oneshot},
-	future::{self, BoxFuture, Either, Shared},
+	future::{self, BoxFuture, Either},
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
@@ -436,8 +435,11 @@ pub struct FundingRegistry {
 	/// The number the next provider frame takes, so a frame that replaced
 	/// another outlives it.
 	next_frame: AtomicU64,
-	/// Each overlay that is up, by session, for a cancel to close.
-	overlays: Mutex<HashMap<String, Overlay>>,
+	/// Each overlay that is up, by session: a cancel closes it by taking its
+	/// sender, and the overlay settles by taking it back. Whoever removes it
+	/// under this lock decides, so a cancel and the host's answer never both
+	/// ask the provider.
+	overlays: Mutex<HashMap<String, CloseOverlay>>,
 	/// What funding telemetry keeps across facts. Taken after `held` when
 	/// both are, never before.
 	telemetry: Mutex<Telemetry>,
@@ -447,61 +449,10 @@ pub struct FundingRegistry {
 	emitted: Mutex<Vec<CoreEvent>>,
 }
 
-/// An overlay that is up, as a cancel reaches it.
-struct Overlay {
-	/// Whether a cancel closed it, decided under the `overlays` lock so a
-	/// cancel and the host's answer cannot both ask the provider.
-	state: OverlayState,
-	/// Resolves once [`RuntimeServices::finish_presenting`] returns, after
-	/// the session was started or discarded.
-	closed: Shared<oneshot::Receiver<()>>,
-}
-
-/// Where an overlay that is up stands for a cancel.
-enum OverlayState {
-	/// Open: a cancel closes it through this sender.
-	Open(oneshot::Sender<()>),
-	/// A cancel closed it before the overlay settled, and asks the provider
-	/// itself.
-	Cancelled,
-	/// The overlay settled without a cancel: a cancel now finds the session
-	/// as `finish_presenting` leaves it.
-	Settled,
-}
-
-/// The overlay [`RuntimeServices::finish_presenting`] shows, from its side,
-/// registered before its session is held so a cancel always finds it.
-/// Dropping it lets every cancel waiting on the overlay go on.
-struct ShownOverlay {
-	registry: Arc<FundingRegistry>,
-	intent: String,
-	/// Hears a cancel closing the overlay. Its sender stays in the registry
-	/// until [`Self::settle`], so it only resolves by a cancel.
-	close: oneshot::Receiver<()>,
-	/// Dropped with the overlay, which resolves [`Overlay::closed`].
-	_closed: oneshot::Sender<()>,
-}
-
-impl ShownOverlay {
-	/// Stop a cancel from closing the overlay, and say whether one did.
-	fn settle(&self) -> bool {
-		let mut overlays = lock(&self.registry.overlays);
-		overlays.get_mut(&self.intent).is_some_and(|overlay| {
-			matches!(
-				core::mem::replace(&mut overlay.state, OverlayState::Settled),
-				OverlayState::Cancelled
-			)
-		})
-	}
-}
-
-impl Drop for ShownOverlay {
-	fn drop(&mut self) {
-		// Removed before `_closed` drops, so a cancel woken by it finds no
-		// overlay left.
-		lock(&self.registry.overlays).remove(&self.intent);
-	}
-}
+/// Closes an overlay that is up for a cancel. The cancel sends the sender
+/// it waits on, which the overlay holds until it started or discarded the
+/// session and drops on return.
+type CloseOverlay = oneshot::Sender<oneshot::Sender<()>>;
 
 /// A session's provider frames, each with its number and the provider
 /// showing it.
@@ -1157,9 +1108,10 @@ impl FundingRegistry {
 		now_ms: u64,
 		intent: &str,
 	) -> Result<CancelOutcome, FundingSessionError> {
-		if let Some(closed) = self.close_overlay(intent) {
-			// Resolves, as `Canceled`, once `finish_presenting` returned.
-			let _ = closed.await;
+		if let Some(settled) = self.close_overlay(intent) {
+			// Resolves, as `Canceled`, once `finish_presenting` started or
+			// discarded the session.
+			let _ = settled.await;
 			if !self.holds(intent) {
 				return Ok(CancelOutcome::Cancelled);
 			}
@@ -1218,52 +1170,45 @@ impl FundingRegistry {
 		Ok(outcome)
 	}
 
-	/// Let a cancel close session `intent`'s overlay from now until the
-	/// returned overlay drops. `None` when an overlay for `intent` is
-	/// already up.
-	fn show_overlay(self: &Arc<Self>, intent: &str) -> Option<ShownOverlay> {
+	/// Let a cancel close session `intent`'s overlay until
+	/// [`Self::settle_overlay`], returning what hears it. `None` when an
+	/// overlay for `intent` is already up.
+	fn show_overlay(&self, intent: &str) -> Option<oneshot::Receiver<oneshot::Sender<()>>> {
 		let (close, closing) = oneshot::channel();
-		let (done, closed) = oneshot::channel();
 		match lock(&self.overlays).entry(intent.to_string()) {
-			Entry::Occupied(_) => return None,
+			Entry::Occupied(_) => None,
 			Entry::Vacant(entry) => {
-				entry.insert(Overlay { state: OverlayState::Open(close), closed: closed.shared() });
+				entry.insert(close);
+				Some(closing)
 			},
 		}
-		Some(ShownOverlay {
-			registry: self.clone(),
-			intent: intent.to_string(),
-			close: closing,
-			_closed: done,
-		})
 	}
 
-	/// Close session `intent`'s overlay for a cancel, unless it settled
-	/// already. Returns what resolves once `finish_presenting` returns, or
-	/// `None` when no overlay is up.
-	fn close_overlay(&self, intent: &str) -> Option<Shared<oneshot::Receiver<()>>> {
+	/// Close session `intent`'s overlay for a cancel. Returns what resolves
+	/// once the overlay started or discarded the session, or `None` when no
+	/// overlay is up to close: it settled already, another cancel closed it,
+	/// or its task is gone.
+	fn close_overlay(&self, intent: &str) -> Option<oneshot::Receiver<()>> {
 		let mut overlays = lock(&self.overlays);
-		let overlay = overlays.get_mut(intent)?;
-		// A second cancel, or one after the overlay settled, leaves the state
-		// as it found it.
-		overlay.state = match core::mem::replace(&mut overlay.state, OverlayState::Settled) {
-			OverlayState::Open(close) => {
-				// An overlay still showing closes; one the host answered
-				// meanwhile reads `Cancelled` when it settles.
-				let _ = close.send(());
-				OverlayState::Cancelled
-			},
-			state => state,
-		};
-		Some(overlay.closed.clone())
+		let close = overlays.remove(intent)?;
+		let (settled, settling) = oneshot::channel();
+		// Sent under the lock, so an overlay settling that finds itself
+		// removed also finds what this cancel waits on.
+		close.send(settled).ok()?;
+		Some(settling)
 	}
 
-	/// Whether a cancel closed session `intent`'s overlay before it settled.
-	#[cfg(test)]
-	pub fn overlay_cancelled(&self, intent: &str) -> bool {
-		lock(&self.overlays)
-			.get(intent)
-			.is_some_and(|overlay| matches!(overlay.state, OverlayState::Cancelled))
+	/// Stop a cancel from closing session `intent`'s overlay, `closing`
+	/// being what [`Self::show_overlay`] returned, and say whether a cancel
+	/// closed it first.
+	fn settle_overlay(&self, intent: &str, closing: &oneshot::Receiver<oneshot::Sender<()>>) -> bool {
+		match lock(&self.overlays).entry(intent.to_string()) {
+			Entry::Occupied(entry) if entry.get().is_connected_to(closing) => {
+				entry.remove();
+				false
+			},
+			_ => true,
+		}
 	}
 
 	/// Whether session `intent` is held, in full or in the pack.
@@ -2886,16 +2831,19 @@ impl RuntimeServices {
 		// Up before the session is held, so a cancel from the moment the
 		// caller can name the session closes the overlay rather than finding
 		// a session it cannot cancel.
-		let overlay = registry.show_overlay(&session.intent).ok_or(OpenFundingError::AlreadyExists)?;
+		let closing =
+			registry.show_overlay(&session.intent).ok_or(OpenFundingError::AlreadyExists)?;
 		// Live while the overlay is up, so the overlay can quote and pick a
 		// provider, but stored only once the user starts it: an overlay the
 		// app is killed under leaves no session behind.
-		let presented = registry
-			.present(now_ms, session.clone())
-			.await
-			.map_err(OpenFundingError::Session)?;
-		if !presented {
-			return Err(OpenFundingError::AlreadyExists);
+		let presented = match registry.present(now_ms, session.clone()).await {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(OpenFundingError::AlreadyExists),
+			Err(error) => Err(OpenFundingError::Session(error)),
+		};
+		if let Err(error) = presented {
+			registry.settle_overlay(&session.intent, &closing);
+			return Err(error);
 		}
 		let opened = CoreEvent::new(markers::FUNDING_OVERLAY_OPENED)
 			.flag("amount_preset", amount.is_some());
@@ -2906,7 +2854,7 @@ impl RuntimeServices {
 		let services = self.clone();
 		let product = product.cloned();
 		self.spawner.spawn(async move {
-			let result = services.finish_presenting(platform, product, session, overlay).await;
+			let result = services.finish_presenting(platform, product, session, closing).await;
 			if let Err(error @ (OpenFundingError::Present(_) | OpenFundingError::Session(_))) =
 				&result
 			{
@@ -2948,14 +2896,15 @@ impl RuntimeServices {
 		registry.report_facts(intent, None, None, vec![closed]);
 	}
 
-	/// Show `overlay` for presented `session`, then start or discard it by
-	/// what the user did, or by a cancel closing the overlay.
+	/// Show the overlay for presented `session`, then start or discard it by
+	/// what the user did, or by a cancel closing the overlay through
+	/// `closing`.
 	async fn finish_presenting(
 		self: Arc<Self>,
 		platform: Arc<dyn FundingPlatform>,
 		product: Option<ProductContext>,
 		session: FundingSession,
-		mut overlay: ShownOverlay,
+		mut closing: oneshot::Receiver<oneshot::Sender<()>>,
 	) -> Result<FundingSession, OpenFundingError> {
 		let registry = self.funding();
 		let presentation = FundingPresentation {
@@ -2978,16 +2927,18 @@ impl RuntimeServices {
 		// showed never calls the host. It closes the overlay as though the
 		// user dismissed it, and dropping the host's call tells the host to
 		// take it down.
-		let presented = match future::select(&mut overlay.close, present).await {
-			Either::Left(_) => Ok(FundingPresentOutcome::Dismissed),
-			Either::Right((presented, _)) => presented,
+		let (presented, settled) = match future::select(&mut closing, present).await {
+			Either::Left((settled, _)) => (Ok(FundingPresentOutcome::Dismissed), settled.ok()),
+			Either::Right((presented, _)) => (presented, None),
 		};
 		// Whether a cancel closed the overlay, or came as the host answered:
-		// that cancel then asks the provider itself, once the session settled
-		// here. A cancel after this asks again, as a cancel of a session the
-		// user left.
+		// whichever removed the overlay first decides. A cancel that did
+		// waits until this returns, holding `_settled`, then asks the
+		// provider itself if the session started. A cancel after this finds
+		// no overlay and asks again, as a cancel of a session the user left.
 		self.report_overlay_closed(&session.intent, &presented);
-		let cancelled = overlay.settle();
+		let cancelled = registry.settle_overlay(&session.intent, &closing);
+		let _settled = settled.or_else(|| closing.try_recv().ok().flatten());
 		self.funding_quotes().end(&session.intent);
 		// A provider handed the session while the overlay was up keeps its
 		// worker: its hold for the session is taken before the overlay's go.
