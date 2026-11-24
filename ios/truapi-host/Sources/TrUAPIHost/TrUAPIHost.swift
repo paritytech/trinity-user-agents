@@ -170,22 +170,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// core builds its own extrinsics the same way. Defaults to none.
     func transactionExtensionVersions() async throws -> ExtensionVersionMap
 
-    /// Request a product worker transition. `.start` means run the worker now;
-    /// `.stop` means it is no longer needed and may stop. Every
-    /// transition arrives here in ledger order, the ones the app asks for by
-    /// taking a reference of its own included.
-    ///
-    /// Demand is runtime-wide, so the core invokes this only on the bridge
-    /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
-    /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``.
-    /// Can arrive on any thread, including synchronously on the calling
-    /// thread when a worker claim is acquired or released, often the main thread
-    /// and re-entrantly: hand the transition off rather than blocking on
-    /// another thread from inside it. Defaults to a no-op for a host that
-    /// runs no workers.
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition)
-
     /// The product's worker crashed `crashes` times in a row while it was
     /// needed: tell the user that product is not working. The core keeps
     /// starting it again, waiting longer each time, so this needs no answer.
@@ -209,8 +193,8 @@ public protocol HostBridge: AnyObject, Sendable {
     /// While `pending` is true, keep a background task running that awaits
     /// ``TrUAPIHostRuntime/runDurableRecovery()``; false means nothing needs
     /// it. Reported on change, starting with the state the runtime finds at
-    /// launch. Runtime-wide, like `requestWorkerTransition`, and arrives on a
-    /// core thread: hand it off rather than blocking. Defaults to a no-op
+    /// launch. The runtime delivers it on a core thread. Hand it off without
+    /// blocking that thread. Defaults to a no-op
     /// for a host that runs no durable work.
     func durableWorkChanged(pending: Bool)
 
@@ -540,7 +524,6 @@ public extension HostBridge {
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
     func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
@@ -831,10 +814,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreEvent(marker: marker, attributes: attributes)
     }
 
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
-        bridge.requestWorkerTransition(productId: productId, transition: transition)
-    }
-
     func workerCrashing(productId: ProductId, crashes: UInt32) {
         bridge.workerCrashing(productId: productId, crashes: crashes)
     }
@@ -1100,12 +1079,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
-        let inner: NativeTrUApiHostRuntime
-        if let workerHost {
-            inner = try .withManagedProductWorkers(callbacks: adapter, runtimeConfig: runtimeConfig, workerHost: workerHost)
-        } else {
-            inner = try .withRuntimeConfig(callbacks: adapter, runtimeConfig: runtimeConfig)
-        }
+        let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
+            callbacks: adapter, runtimeConfig: runtimeConfig, workerHost: workerHost
+        )
         self.inner = inner
         self.notificationCenter = notificationCenter
         // iOS reclaims a suspended app's listening sockets. Rebinding waits on
@@ -1420,14 +1396,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Revoke this session's workers and finish their observations.
     public func shutdownProductWorkers() {
         inner.shutdownProductWorkers()
-    }
-
-    /// Report an unexpected exit for a worker started through
-    /// ``HostBridge/requestWorkerTransition(productId:transition:)``.
-    /// The core requests another start while references remain. A managed
-    /// WebView reports failures on its own `NativeWorkerAttempt`.
-    public func workerExited(productId: ProductId) {
-        inner.workerExited(productId: productId)
     }
 
     /// Forget one product: revoke its grants and Allow once answers, then

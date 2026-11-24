@@ -127,9 +127,8 @@ Chat and Pocket each hold the result of `claimWorker(productId:)` and observe th
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ExecutableKind.worker`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving Chat passes a `ChatHostBridge` when its WebView host opens
+the worker attempt. Chat requires an active session.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -168,21 +167,8 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     func listRooms() throws -> [ChatRoom] { store.rooms() }
 }
 
-let runtime = try TrUAPIHostRuntime(
-    bridge: bridge,
-    runtimeConfig: HostRuntimeConfig(
-        hostName: "My Chat Host",
-        stack: bundledStack
-    )
-)
-// Chat needs an active session; without one every Chat call answers denied.
-try runtime.activateLocalSession(secret: secret)
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
-    chat: MyChatBridge(store: store)
-)
+// In the WebView host's start(productId:attempt:) callback.
+let execution = try attempt.openExecution(bridge: bridge, chat: MyChatBridge(store: store))
 let endpoint = try execution.startWsBridge()
 ```
 
@@ -256,9 +242,8 @@ back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. A feature calls
 `runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
 on that claim when its work ends. The runtime delivers the first start and last
-stop to the installed worker host. Hosts that manage readiness themselves receive
-`requestWorkerTransition` on the runtime bridge. Two rules the core
-cannot check are the host's to keep: send a render context only for a surface
+stop to the installed worker host. Two rules the core cannot check are the
+host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
 
@@ -333,8 +318,8 @@ that runs no durable work.
 
 ## Game
 
-A host that can hold reminders implements `GameHostBridge`, passed as `game:`
-to `openProductExecution`. Hosts without the bridge pass nothing and Game
+A host that can hold reminders implements `GameHostBridge` and passes it
+as `game:` when opening the execution. Hosts without the bridge pass nothing and Game
 calls answer unsupported, as they do for every product but the game product,
 `dim2`.
 
@@ -353,11 +338,8 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
     }
 }
 
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("dim2.dot"), executionKind: .worker),
-    game: MyGameBridge(reminders: reminderStore)
-)
+// In the WebView host's start(productId:attempt:) callback for dim2.
+let execution = try attempt.openExecution(bridge: bridge, game: MyGameBridge(reminders: reminderStore))
 ```
 
 The host holds one reminder per product: a `scheduleReminder` replaces the

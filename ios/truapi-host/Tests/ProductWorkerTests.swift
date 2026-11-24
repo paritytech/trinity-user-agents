@@ -23,6 +23,8 @@ struct ProductWorkerTests {
         defer { socket.cancel(with: .normalClosure, reason: nil) }
         #expect(owner.reportWorkerModuleStarted())
         let execution = try #require(await executions.next())
+        let render = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "live"), payload: Data()))
+        defer { withExtendedLifetime(render) {} }
         chat.release()
         chat.release()
         try execution.publishRendererAction(HostRendererActionSubscribeItem(
