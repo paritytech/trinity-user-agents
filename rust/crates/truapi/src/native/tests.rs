@@ -3851,3 +3851,68 @@ fn set_offset_and_gesture_key_read_from_json() {
 	};
 	assert_eq!(props.key.as_deref(), Some("piece"));
 }
+
+#[test]
+fn mask_extend_mask_and_location_pan_read_from_json() {
+	let extend: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"ExtendMask","value":{"key":"mask","shapes":[{"tag":"All"},
+		{"tag":"Circle","value":{"center":{"x":100,"y":-5},"radius":2600}}]}}"#,
+	)
+	.unwrap();
+	assert_eq!(
+		extend,
+		latest::RendererNode::ExtendMask {
+			key: "mask".into(),
+			shapes: vec![
+				latest::MaskShape::All,
+				latest::MaskShape::Circle {
+					center: latest::MaskPoint { x: 100, y: -5 },
+					radius: 2600
+				},
+			],
+		}
+	);
+	let masked: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"Box","value":{"modifiers":[{"tag":"Mask","value":{"key":"mask","mode":"Hide",
+		"shapes":[{"tag":"Stroke","value":{"width":5200,"points":[{"x":1,"y":2}]}}],
+		"follow":{"pan":"pan","width":5200},"fadeMs":350,
+		"clearedShare":{"atPermille":550,"action":"cleared"}}}],"props":{},"children":[]}}"#,
+	)
+	.unwrap();
+	let latest::RendererNode::Box { modifiers, .. } = masked else {
+		panic!("box was not decoded");
+	};
+	let [latest::Modifier::Mask(mask)] = modifiers.as_slice() else {
+		panic!("mask was not decoded");
+	};
+	assert_eq!(mask.key.as_deref(), Some("mask"));
+	assert_eq!(mask.mode, latest::MaskMode::Hide);
+	assert_eq!(mask.follow.as_ref().map(|f| (f.pan.as_str(), f.width)), Some(("pan", 5200)));
+	assert_eq!(mask.fade_ms, Some(350));
+	assert_eq!(
+		mask.cleared_share,
+		Some(latest::ClearedShare { at_permille: 550, action: "cleared".into() })
+	);
+	let bare: latest::Modifier =
+		serde_json::from_str(r#"{"tag":"Mask","value":{"mode":"Show","shapes":[]}}"#).unwrap();
+	assert_eq!(
+		bare,
+		latest::Modifier::Mask(latest::Mask {
+			key: None,
+			mode: latest::MaskMode::Show,
+			shapes: Vec::new(),
+			follow: None,
+			fade_ms: None,
+			cleared_share: None,
+		})
+	);
+	let gesture: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"Gesture","value":{"modifiers":[],"props":{"key":"pan",
+		"pan":{"axis":"Free","moveAction":"move","location":true}},"children":[]}}"#,
+	)
+	.unwrap();
+	let latest::RendererNode::Gesture { props, .. } = gesture else {
+		panic!("gesture was not decoded");
+	};
+	assert_eq!(props.pan.unwrap().location.0, Some(true));
+}

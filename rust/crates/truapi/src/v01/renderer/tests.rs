@@ -228,6 +228,7 @@ fn gesture_modes_round_trip_with_actions_and_motion() {
 					move_action: Some("move".into()),
 					move_interval_ms: Some(0),
 					end_action: Some("end".into()),
+					location: OptionBool(None),
 				}),
 				accessibility_label: Some("Register".into()),
 				enabled: OptionBool(Some(true)),
@@ -356,6 +357,166 @@ fn modifiers_by_value_round_trip_through_scale() {
 	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
 }
 
+const fn point(x: i32, y: i32) -> MaskPoint {
+	MaskPoint { x, y }
+}
+
+fn mask(shapes: Vec<MaskShape>, follow: Option<MaskFollow>, fade_ms: Option<u16>) -> Mask {
+	Mask {
+		key: Some("mask".into()),
+		mode: MaskMode::Hide,
+		shapes,
+		follow,
+		fade_ms,
+		cleared_share: None,
+	}
+}
+
+/// A location pan over a picture that carries a keyed mask.
+fn masked_tree(mask: Mask) -> RendererNode {
+	RendererNode::Gesture {
+		modifiers: vec![Modifier::Width(Compact(280)), Modifier::Height(Compact(300))],
+		props: GestureProps {
+			tap_action: None,
+			pan: Some(PanGesture {
+				axis: PanAxis::Free,
+				drag: None,
+				start_action: Some("pan.start".into()),
+				move_action: Some("pan.move".into()),
+				move_interval_ms: None,
+				end_action: Some("pan.end".into()),
+				location: OptionBool(Some(true)),
+			}),
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: Some("pan".into()),
+			feel: None,
+		},
+		children: vec![RendererNode::Box {
+			modifiers: vec![Modifier::FillWidth(true), Modifier::Mask(mask)],
+			props: BoxProps { content_alignment: None },
+			children: vec![renderer_node()],
+		}],
+	}
+}
+
+fn every_shape() -> Vec<MaskShape> {
+	vec![
+		MaskShape::Circle { center: point(1200, -300), radius: 2600 },
+		MaskShape::Stroke {
+			width: 5200,
+			points: vec![point(0, 0), point(1050, 2075), point(-5, 30000)],
+		},
+		MaskShape::Stroke { width: 300, points: vec![point(4, 4)] },
+		MaskShape::All,
+	]
+}
+
+#[test]
+fn a_masked_node_round_trips_with_every_shape_follow_fade_and_share() {
+	for mask in [
+		mask(Vec::new(), None, None),
+		mask(every_shape(), Some(MaskFollow { pan: "pan".into(), width: 5200 }), Some(350)),
+		Mask {
+			key: None,
+			mode: MaskMode::Show,
+			shapes: every_shape(),
+			follow: None,
+			fade_ms: Some(0),
+			cleared_share: Some(ClearedShare { at_permille: 550, action: "cleared".into() }),
+		},
+	] {
+		let node = masked_tree(mask);
+		assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	}
+}
+
+/// The mask is the modifier after `ExitFade`; an empty unkeyed one is a byte
+/// per field.
+#[test]
+fn a_mask_is_the_modifier_after_exit_fade() {
+	let empty = Modifier::Mask(Mask {
+		key: None,
+		mode: MaskMode::Hide,
+		shapes: Vec::new(),
+		follow: None,
+		fade_ms: None,
+		cleared_share: None,
+	});
+	assert_eq!(empty.encode(), vec![20, 0, 0, 0, 0, 0, 0]);
+	let show = Modifier::Mask(Mask {
+		key: Some("k".into()),
+		mode: MaskMode::Show,
+		shapes: vec![MaskShape::All],
+		follow: Some(MaskFollow { pan: "p".into(), width: 100 }),
+		fade_ms: Some(350),
+		cleared_share: Some(ClearedShare { at_permille: 550, action: "a".into() }),
+	});
+	// The share follows the fade: present, 550 as a little-endian u16, the action.
+	assert_eq!(
+		show.encode(),
+		vec![20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, b'a']
+	);
+	assert_eq!(Modifier::decode(&mut show.encode().as_slice()).unwrap(), show);
+}
+
+#[test]
+fn extend_mask_has_the_same_bytes_on_hosts_and_clients() {
+	let node = RendererNode::ExtendMask {
+		key: "mask".into(),
+		shapes: vec![
+			MaskShape::Circle { center: point(100, -1), radius: 2600 },
+			MaskShape::Stroke { width: 5200, points: vec![point(1, 2)] },
+		],
+	};
+	// Index 14, the key, a compact count of two shapes: a circle (centre as
+	// two little-endian i32, radius as a u32), then a stroke (width, a compact
+	// count of one point).
+	let expected = [
+		14, 16, b'm', b'a', b's', b'k', 8, //
+		1, 100, 0, 0, 0, 255, 255, 255, 255, 40, 10, 0, 0, //
+		2, 80, 20, 0, 0, 4, 1, 0, 0, 0, 2, 0, 0, 0,
+	];
+	assert_eq!(node.encode(), expected);
+	assert_eq!(RendererNode::decode(&mut expected.as_slice()).unwrap(), node);
+}
+
+/// With `follow` the host draws the stroke itself, so a move's answer is an
+/// empty extend: the key and an empty list. Sending the segment instead is
+/// still a few dozen bytes, and either stays far smaller than the tree.
+#[test]
+fn answering_a_move_costs_a_few_bytes() {
+	let empty = RendererNode::ExtendMask { key: "mask.top".into(), shapes: Vec::new() };
+	assert_eq!(empty.encode().len(), 11);
+	let segment = RendererNode::ExtendMask {
+		key: "mask.top".into(),
+		shapes: vec![MaskShape::Stroke {
+			width: 5200,
+			points: vec![point(0, 0), point(900, 1300)],
+		}],
+	};
+	assert_eq!(segment.encode().len(), 33);
+	let stroke = MaskShape::Stroke { width: 5200, points: (0..400).map(|i| point(i, i)).collect() };
+	let tree = masked_tree(mask(vec![stroke], None, None));
+	assert!(segment.encode().len() * 50 < tree.encode().len());
+}
+
+#[test]
+fn a_location_pan_is_a_flag_after_the_end_action() {
+	let pan = |location| PanGesture {
+		axis: PanAxis::Free,
+		drag: None,
+		start_action: None,
+		move_action: None,
+		move_interval_ms: None,
+		end_action: None,
+		location: OptionBool(location),
+	};
+	assert_eq!(pan(None).encode(), vec![2, 0, 0, 0, 0, 0, 0]);
+	assert_eq!(pan(Some(true)).encode(), vec![2, 0, 0, 0, 0, 0, 1]);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn modifiers_by_value_round_trip_through_uniffi() {
@@ -435,5 +596,91 @@ fn a_gesture_feel_round_trips_through_scale_json_and_uniffi() {
 	{
 		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
 		assert_eq!(<RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), node);
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn masks_and_extends_round_trip_through_uniffi() {
+	for node in [
+		masked_tree(mask(
+			every_shape(),
+			Some(MaskFollow { pan: "pan".into(), width: 5200 }),
+			Some(350),
+		)),
+		RendererNode::ExtendMask { key: "mask".into(), shapes: every_shape() },
+		RendererNode::ExtendMask { key: "mask".into(), shapes: Vec::new() },
+	] {
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
+		assert_eq!(lifted, node);
+	}
+}
+
+/// A 10 by 6 logical pixel node is 5 by 3 samples, at 1, 3, 5, 7, 9 by 1, 3, 5.
+const NODE: (u32, u32) = (1000, 600);
+
+#[test]
+fn the_cleared_share_samples_two_pixel_squares_from_the_top_start_corner() {
+	assert_eq!(cleared_share(&[], NODE.0, NODE.1), (0, 15));
+	assert_eq!(cleared_share(&[MaskShape::All], NODE.0, NODE.1), (15, 15));
+	// A part square counts as a whole sample: 1001 wide is 6 columns.
+	assert_eq!(cleared_share(&[], 1001, 600), (0, 18));
+	assert_eq!(cleared_share(&[], 0, 600), (0, 0));
+}
+
+#[test]
+fn a_shape_covers_the_samples_on_its_edge_and_not_one_past_it() {
+	// A circle at the first sample, its radius exactly the 200 to the next.
+	let circle = |radius| [MaskShape::Circle { center: point(100, 100), radius }];
+	assert_eq!(cleared_share(&circle(200), NODE.0, NODE.1), (3, 15));
+	assert_eq!(cleared_share(&circle(199), NODE.0, NODE.1), (1, 15));
+	// A stroke along the middle row, 400 wide: its edges pass through the
+	// rows above and below.
+	let row = |width| [MaskShape::Stroke { width, points: vec![point(100, 300), point(900, 300)] }];
+	assert_eq!(cleared_share(&row(400), NODE.0, NODE.1), (15, 15));
+	assert_eq!(cleared_share(&row(398), NODE.0, NODE.1), (5, 15));
+	// Round caps: a dot is a circle half its width across.
+	let dot = [MaskShape::Stroke { width: 400, points: vec![point(500, 300)] }];
+	assert_eq!(cleared_share(&dot, NODE.0, NODE.1), (5, 15));
+	// A shape reaching outside the node counts only the samples inside it.
+	let outside = [MaskShape::Circle { center: point(-100, -100), radius: 300 }];
+	assert_eq!(cleared_share(&outside, NODE.0, NODE.1), (1, 15));
+	// Overlapping shapes count a sample once.
+	let twice = [circle(200)[0].clone(), circle(200)[0].clone()];
+	assert_eq!(cleared_share(&twice, NODE.0, NODE.1), (3, 15));
+}
+
+#[test]
+fn a_cleared_share_is_reached_exactly_at_its_line() {
+	let share = |at_permille| ClearedShare { at_permille, action: "a".into() };
+	assert!(share(550).reached(713, 1295));
+	assert!(!share(550).reached(712, 1295));
+	assert!(share(500).reached(2, 4));
+	assert!(!share(500).reached(1, 4));
+	assert!(share(0).reached(0, 4));
+	assert!(!share(1001).reached(4, 4));
+	assert!(!share(u16::MAX).reached(u32::MAX, u32::MAX));
+}
+
+/// A node that takes no modifiers, such as `Materials`, is masked through a
+/// `Box` that carries the mask; the wrapped node's own bytes do not change.
+#[test]
+fn a_mask_wraps_any_node_and_leaves_its_bytes_unchanged() {
+	let materials = RendererNode::Materials {
+		props: MaterialsProps {
+			layers: vec![MaterialInstance { material: [7; 32], args: vec![Parameter::Float(0)] }],
+		},
+		children: vec![RendererNode::Nil],
+	};
+	for child in [materials, renderer_node(), masked_tree(mask(Vec::new(), None, None))] {
+		let wrapped = RendererNode::Box {
+			modifiers: vec![Modifier::Mask(mask(every_shape(), None, Some(350)))],
+			props: BoxProps { content_alignment: None },
+			children: vec![child.clone()],
+		};
+		let bytes = wrapped.encode();
+		assert!(bytes.ends_with(&child.encode()), "{child:?}");
+		assert_eq!(RendererNode::decode(&mut bytes.as_slice()).unwrap(), wrapped);
 	}
 }

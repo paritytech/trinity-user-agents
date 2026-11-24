@@ -60,6 +60,7 @@ private fun RendererNode.materialsCount(): Int = when (this) {
     is RendererNode.Gesture -> children.sumOf { it.materialsCount() }
     is RendererNode.Nil,
     is RendererNode.SetOffset,
+    is RendererNode.ExtendMask,
     is RendererNode.String,
     is RendererNode.Spacer,
     is RendererNode.TextField,
@@ -70,7 +71,7 @@ private class JsWidgetMapping(private val gesturePosition: (String) -> JsGesture
     private var nextMaterialsNode = 0
 
     fun map(node: RendererNode): JsWidget = when (node) {
-        is RendererNode.Nil, is RendererNode.SetOffset -> JsWidget.Spacer()
+        is RendererNode.Nil, is RendererNode.SetOffset, is RendererNode.ExtendMask -> JsWidget.Spacer()
         is RendererNode.String -> JsWidget.Text(text = node.text)
         is RendererNode.Box -> JsWidget.Box(
             modifiers = node.modifiers.toJsModifiers(),
@@ -247,6 +248,8 @@ private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
             }
             is Modifier.Spin -> add(JsModifier.Spin(modifier.v1.toInt()))
             is Modifier.ExitFade -> add(JsModifier.ExitFade(modifier.v1.toInt()))
+            // The Android mask layer draws masks; until then the node draws whole.
+            is Modifier.Mask -> Unit
         }
     }
 

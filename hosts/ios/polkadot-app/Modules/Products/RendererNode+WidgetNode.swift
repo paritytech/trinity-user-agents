@@ -14,7 +14,8 @@ extension RendererNode {
              .text,
              .button,
              .textField,
-             .setOffset:
+             .setOffset,
+             .extendMask:
             return leafWidgetNode(resolver: resolver)
 
         case let .gesture(modifiers, props, children):
@@ -69,7 +70,8 @@ private extension RendererNode {
         switch self {
         case .nil,
              .string,
-             .setOffset:
+             .setOffset,
+             .extendMask:
             // An offset update is a stream item, not part of a tree: inside one it draws nothing.
             return nil
 
@@ -211,6 +213,9 @@ private extension [Modifier] {
                  .spin,
                  .exitFade:
                 style.take(modifier)
+            case .mask:
+                // The iPhone mask layer draws masks; until then the node draws whole.
+                break
             }
         }
 
