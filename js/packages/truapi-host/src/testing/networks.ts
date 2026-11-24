@@ -5,6 +5,7 @@
 
 import {
   mockTestStack,
+  withChainsGeneration,
   type MockHostConfig,
   type MockRuntimeConfig,
   type TestStack,
@@ -55,7 +56,8 @@ export type LoopbackStatements = boolean | "default";
  * route each chain, the chains `featureSupported` reports served, and the test
  * stack the core answers `getChainInfo` from. A role `networks` leaves out
  * keeps the {@link mockTestStack} chain, because the core needs Asset Hub,
- * People and Bulletin to start.
+ * People and Bulletin to start. The stack's `generation` names the genesis
+ * hashes it ends up with, or stays `mock` when they are all the mock's.
  *
  * A single proxy carries no genesis hash: an unhashed proxy takes every
  * request, so routing survives a chain reset while only the DECLARED hash --
@@ -73,12 +75,13 @@ export function fromNetworks(
   mock: Pick<MockHostConfig, "chainProxies" | "servedChains">;
   runtimeConfig: { testStack: TestStack };
 } {
-  const testStack: TestStack = { ...mockTestStack(), network: "paseo" };
+  let testStack: TestStack = { ...mockTestStack(), network: "paseo" };
   for (const entry of networks) {
     const split = splitChainId(entry.id);
     testStack.network = split.network || testStack.network;
     testStack[split.role] = { genesisHash: entry.genesisHash };
   }
+  testStack = withChainsGeneration(testStack);
   // Only the People chain carries the statement store, so serving it locally on
   // the hub as well would claim a store where none exists. A suite that declares
   // no People chain has no such proxy to carry it, and a single unhashed proxy

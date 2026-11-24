@@ -17,9 +17,10 @@ pub struct HeldCopy {
 
 impl HeldCopy {
 	/// Whether the core can switch to `newer` while it runs: nothing it built
-	/// its services from differs, and the chains did not restart.
+	/// its services from differs, including the generation, so the chains did
+	/// not restart.
 	pub fn runs_as(&self, newer: &Self) -> bool {
-		self.stack == newer.stack && self.descriptor.generation == newer.descriptor.generation
+		self.stack == newer.stack
 	}
 }
 
@@ -58,7 +59,11 @@ impl CopyRules {
 	///
 	/// Fails with the rule it breaks.
 	pub fn hold(&self, verified: Verified) -> Result<HeldCopy, StackError> {
-		let stack = Stack::from_descriptor(&verified.descriptor, self.allows_reserved_values)?;
+		let stack = Stack::from_descriptor(
+			&self.pointer,
+			&verified.descriptor,
+			self.allows_reserved_values,
+		)?;
 		self.pinned.refuse_change(&verified.descriptor)?;
 		Ok(HeldCopy { descriptor: verified.descriptor, stack })
 	}

@@ -2,7 +2,7 @@ import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { deepLinkUrl, hostPageUrl, productUrlFor } from "./host-page-url.js";
 import { createTestHostServer } from "./server.js";
-import { mockTestStack } from "../web/create-mock-host.js";
+import { MOCK_GENESIS, mockTestStack } from "../web/create-mock-host.js";
 
 describe("createTestHostServer host configuration", () => {
   it("returns a URL carrying the configuration it was given", async () => {
@@ -50,6 +50,7 @@ describe("createTestHostServer host configuration", () => {
     expect(JSON.parse(url.searchParams.get("runtimeConfig")!)).toEqual({
       testStack: {
         ...mockTestStack(),
+        generation: `none:${genesisHash}:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`,
         network: "paseo",
         assetHub: { genesisHash },
       },
