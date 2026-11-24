@@ -2073,27 +2073,32 @@ fn native_chat_adapter_applies_a_feed_update_or_reports_the_host_failure() {
 		},
 	};
 
-	let applied = futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
-		&platform,
-		&product,
-		update(),
-		false,
-	));
-	assert_eq!(applied, Ok(()));
+	let apply = |persist: bool| {
+		futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
+			&platform,
+			&product,
+			update(),
+			persist,
+		))
+	};
+	assert_eq!(apply(false), Ok(()));
+	assert_eq!(apply(true), Ok(()));
+	// The host stores the update only when the core says so, so the flag
+	// reaches it as the core set it.
 	assert_eq!(
 		*callbacks.chat_feed.lock().expect("feed mutex poisoned"),
-		[("support".to_string(), update().update, false)]
+		[
+			("support".to_string(), update().update, false),
+			("support".to_string(), update().update, true)
+		]
 	);
 
 	*callbacks.chat_feed_rejection.lock().expect("feed rejection mutex poisoned") =
 		Some("store locked".to_string());
-	let rejected = futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
-		&platform,
-		&product,
-		update(),
-		true,
-	));
-	assert_eq!(rejected, Err(truapi::latest::GenericError { reason: "store locked".to_string() }));
+	assert_eq!(
+		apply(true),
+		Err(truapi::latest::GenericError { reason: "store locked".to_string() })
+	);
 }
 
 #[test]

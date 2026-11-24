@@ -590,7 +590,7 @@ pub enum HostChatUpdateFeedError {
 	UnknownMessage,
 	/// `New` names a message the room holds already.
 	DuplicateMessage,
-	/// The text is over its limit.
+	/// The text or the custom payload is over its limit.
 	MessageTooLarge,
 	/// In a room the host stores: `New` from `"user"`, or `Edited` or `Deleted`
 	/// of a message the product did not write.

@@ -645,11 +645,9 @@ fn validate_chat_room_badge(badge: ChatRoomBadge) -> Result<ChatRoomBadge, ChatF
 
 /// Validate what a message says.
 ///
-/// A size rejection names `text`, the field a product shrinks by sending
-/// less.
-pub fn validate_chat_message_body(
-	body: ChatMessageBody,
-) -> Result<ChatMessageBody, ChatFieldError> {
+/// A size rejection names `text` or `payload`, the field a product shrinks by
+/// sending less.
+fn validate_chat_message_body(body: ChatMessageBody) -> Result<ChatMessageBody, ChatFieldError> {
 	Ok(match body {
 		ChatMessageBody::Text { text } => {
 			ChatMessageBody::Text { text: validate_chat_body("text", &text)? }
@@ -709,7 +707,7 @@ fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFi
 
 /// Validate one message, as a product writes it into a feed or answers it in
 /// a page.
-pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
+fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
 	let mut seen = BTreeSet::new();
 	let reactions = message
 		.reactions
@@ -2296,7 +2294,8 @@ pub trait PreimageHost: Send + Sync {
 /// byte-for-byte, keeping line breaks and tabs, so a product reads back the
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
 /// fetch or open is restricted to `https` or an inline raster image and
-/// delivered as the parser resolved it.
+/// delivered as the parser resolved it. The one exception is the node of a HOP
+/// media item: a `wss` URL that the core screens only as a name.
 ///
 /// The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
 /// `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -2363,12 +2362,14 @@ pub trait ChatPlatform: Send + Sync {
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 
-	/// The current product-scoped room list, read one time. The core uses it to
-	/// check that a product hosts a room, before each change to a room. A host
-	/// that cannot read its rooms returns an error, not an empty list. If a
-	/// Rust host does not implement this method, the core uses the first item
-	/// of the room list subscription. A host whose subscription registers a
-	/// listener implements it: otherwise each check leaves a listener behind.
+	/// The current product-scoped room list, read one time.
+	///
+	/// The core uses it to check that a product hosts a room, before each
+	/// change to a room. A host that cannot read its rooms returns an error,
+	/// not an empty list. If a Rust host does not implement this method, the
+	/// core uses the first item of the room list subscription. A host whose
+	/// subscription registers a listener implements it: otherwise each check
+	/// leaves a listener behind.
 	async fn list_chat_rooms(
 		&self,
 		product: &ProductContext,
@@ -2378,8 +2379,10 @@ pub trait ChatPlatform: Send + Sync {
 		})
 	}
 
-	/// The configuration of the last `create_chat_room` of a room. The core
-	/// reads it to decide whether the host stores the messages of the room.
+	/// The configuration of the last `create_chat_room` of a room.
+	///
+	/// The core reads it to decide whether the host stores the messages of the
+	/// room.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
@@ -2388,8 +2391,9 @@ pub trait ChatPlatform: Send + Sync {
 		Ok(ChatRoomConfig::default())
 	}
 
-	/// Replace the name, description, icon and empty-room text of a room. An
-	/// icon of `None` keeps the icon, and an empty icon removes it. If a Rust
+	/// Replace the name, description, icon and empty-room text of a room.
+	///
+	/// An icon of `None` keeps the icon, and an empty icon removes it. If a Rust
 	/// host does not implement this method, it ignores the metadata. The room
 	/// keeps the name and icon of `create_chat_room`.
 	async fn set_chat_room_metadata(
@@ -2406,37 +2410,42 @@ pub trait ChatPlatform: Send + Sync {
 		_product: &ProductContext,
 		_request: HostChatSetRoomPreviewRequest,
 	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("setChatRoomPreview"))
+		Err(chat_method_not_served("setRoomPreview"))
 	}
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen. The core calls it only for a room the product hosts.
+	/// screen.
+	///
+	/// The core calls it for every room except one that the product takes
+	/// part in as a bot, so a room that does not exist is not an error.
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatDeleteRoomRequest,
 	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("deleteChatRoom"))
+		Err(chat_method_not_served("deleteRoom"))
 	}
 
-	/// Apply one change to the messages of a room. With `persist` the host
-	/// stores the change, because it keeps the messages of the room. Without
-	/// it the host applies the change only to an open room screen and the chat
-	/// list preview. A failure of the host reaches the product as
-	/// `HostFailure`.
+	/// Apply one change to the messages of a room.
+	///
+	/// With `persist` the host stores the change, because it keeps the
+	/// messages of the room. Without it the host applies the change only to an
+	/// open room screen and the chat list preview. A failure of the host
+	/// reaches the product as `HostFailure`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
 	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("updateChatFeed"))
+		Err(chat_method_not_served("updateFeed"))
 	}
 }
 
-/// The failure of a chat platform method a host does not serve yet.
-fn chat_method_not_served(method: &str) -> GenericError {
-	GenericError { reason: format!("this host does not serve {method}") }
+/// The failure of a chat request a host does not serve yet, named as the
+/// product calls it. The Swift and Kotlin bridges give the same reason.
+fn chat_method_not_served(request: &str) -> GenericError {
+	GenericError { reason: format!("this host does not serve chat {request}") }
 }
 
 /// Host-implemented balance view: what a payment request can spend right now,

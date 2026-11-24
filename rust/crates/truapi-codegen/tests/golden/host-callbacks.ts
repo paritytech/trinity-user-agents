@@ -1744,7 +1744,8 @@ export interface ChainProvider {
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
- * delivered as the parser resolved it.
+ * delivered as the parser resolved it. The one exception is the node of a HOP
+ * media item: a `wss` URL that the core screens only as a name.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1817,18 +1818,22 @@ export interface ChatPlatform {
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
 
   /**
-   * The current product-scoped room list, read one time. The core uses it to
-   * check that a product hosts a room, before each change to a room. A host
-   * that cannot read its rooms returns an error, not an empty list. If a
-   * Rust host does not implement this method, the core uses the first item
-   * of the room list subscription. A host whose subscription registers a
-   * listener implements it: otherwise each check leaves a listener behind.
+   * The current product-scoped room list, read one time.
+   *
+   * The core uses it to check that a product hosts a room, before each
+   * change to a room. A host that cannot read its rooms returns an error,
+   * not an empty list. If a Rust host does not implement this method, the
+   * core uses the first item of the room list subscription. A host whose
+   * subscription registers a listener implements it: otherwise each check
+   * leaves a listener behind.
    */
   listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
 
   /**
-   * The configuration of the last `create_chat_room` of a room. The core
-   * reads it to decide whether the host stores the messages of the room.
+   * The configuration of the last `create_chat_room` of a room.
+   *
+   * The core reads it to decide whether the host stores the messages of the
+   * room.
    */
   readChatRoomConfig?(
     product: ProductContext,
@@ -1836,8 +1841,9 @@ export interface ChatPlatform {
   ): Promise<ChatRoomConfig>;
 
   /**
-   * Replace the name, description, icon and empty-room text of a room. An
-   * icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
+   * Replace the name, description, icon and empty-room text of a room.
+   *
+   * An icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
    * host does not implement this method, it ignores the metadata. The room
    * keeps the name and icon of `create_chat_room`.
    */
@@ -1856,7 +1862,10 @@ export interface ChatPlatform {
 
   /**
    * Delete a room with its messages, cache and declarations, and close its
-   * screen. The core calls it only for a room the product hosts.
+   * screen.
+   *
+   * The core calls it for every room except one that the product takes
+   * part in as a bot, so a room that does not exist is not an error.
    */
   deleteChatRoom?(
     product: ProductContext,
@@ -1864,11 +1873,12 @@ export interface ChatPlatform {
   ): Promise<void>;
 
   /**
-   * Apply one change to the messages of a room. With `persist` the host
-   * stores the change, because it keeps the messages of the room. Without
-   * it the host applies the change only to an open room screen and the chat
-   * list preview. A failure of the host reaches the product as
-   * `HostFailure`.
+   * Apply one change to the messages of a room.
+   *
+   * With `persist` the host stores the change, because it keeps the
+   * messages of the room. Without it the host applies the change only to an
+   * open room screen and the chat list preview. A failure of the host
+   * reaches the product as `HostFailure`.
    */
   updateChatFeed?(
     product: ProductContext,

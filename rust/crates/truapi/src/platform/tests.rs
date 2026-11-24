@@ -1279,7 +1279,10 @@ impl ChatPlatform for ChatHostWithoutDeclarations {
 fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 	let host = ChatHostWithoutDeclarations;
 	let product = ProductContext::new(ProductId::for_test("chat.dot"));
-	let refused = |method: &str| Err(chat_method_not_served(method));
+	// The Swift and Kotlin bridges refuse with the same reason.
+	let refused = |request: &str| {
+		Err(GenericError { reason: format!("this host does not serve chat {request}") })
+	};
 
 	assert_eq!(
 		futures::executor::block_on(host.read_chat_room_config(&product, "support".to_string())),
@@ -1316,14 +1319,14 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 				},
 			},
 		)),
-		refused("setChatRoomPreview")
+		refused("setRoomPreview")
 	);
 	assert_eq!(
 		futures::executor::block_on(host.delete_chat_room(
 			&product,
 			HostChatDeleteRoomRequest { room_id: "support".to_string() },
 		)),
-		refused("deleteChatRoom")
+		refused("deleteRoom")
 	);
 	assert_eq!(
 		futures::executor::block_on(host.update_chat_feed(
@@ -1334,6 +1337,6 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 			},
 			true,
 		)),
-		Err(chat_method_not_served("updateChatFeed"))
+		refused("updateFeed")
 	);
 }

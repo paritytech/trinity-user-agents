@@ -307,7 +307,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 		room_id: String,
 		name: String,
 		icon: String,
-		config: truapi::latest::ChatRoomConfig,
+		config: latest::ChatRoomConfig,
 	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError>;
 
 	/// Register or resolve a native product Chat bot.
@@ -350,28 +350,25 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Return the configuration of the last `create_room` of a room. The core
 	/// reads it before each feed update of the room.
-	async fn room_config(
-		&self,
-		room_id: String,
-	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
+	async fn room_config(&self, room_id: String) -> Result<latest::ChatRoomConfig, HostRejection>;
 
 	/// Replace the name, description, icon and empty-room text of a room. An
 	/// icon of `None` keeps the icon, and an empty icon removes it.
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
-		metadata: truapi::latest::ChatRoomMetadata,
+		metadata: latest::ChatRoomMetadata,
 	) -> Result<(), HostRejection>;
 
 	/// Replace how a room shows in the chat list.
 	async fn set_room_preview(
 		&self,
 		room_id: String,
-		preview: truapi::latest::ChatRoomPreview,
+		preview: latest::ChatRoomPreview,
 	) -> Result<(), HostRejection>;
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen.
+	/// screen. A room that does not exist is not an error.
 	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
 
 	/// Apply one change to the messages of a room. With `persist` the host
@@ -381,7 +378,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn update_feed(
 		&self,
 		room_id: String,
-		update: truapi::latest::ChatFeedUpdate,
+		update: latest::ChatFeedUpdate,
 		persist: bool,
 	) -> Result<(), HostRejection>;
 }
