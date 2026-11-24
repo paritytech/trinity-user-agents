@@ -1,12 +1,17 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsAnimatedProperty
+import io.paritytech.polkadotapp.feature_products_api.model.JsBurst
+import io.paritytech.polkadotapp.feature_products_api.model.JsBurstTrigger
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsCurve
+import io.paritytech.polkadotapp.feature_products_api.model.JsEmitSource
+import io.paritytech.polkadotapp.feature_products_api.model.JsEmitter
 import io.paritytech.polkadotapp.feature_products_api.model.JsEnter
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
@@ -25,11 +30,13 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
+import io.paritytech.polkadotapp.feature_products_api.model.JsParticleLook
 import io.paritytech.polkadotapp.feature_products_api.model.JsPose
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrack
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrackPlay
+import io.paritytech.polkadotapp.feature_products_api.model.JsValueRange
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,6 +48,8 @@ import uniffi.truapi.AnimatedProperty
 import uniffi.truapi.Background
 import uniffi.truapi.BorderStyle
 import uniffi.truapi.BoxProps
+import uniffi.truapi.Burst
+import uniffi.truapi.BurstTrigger
 import uniffi.truapi.ButtonProps
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ClearedShare
@@ -49,11 +58,14 @@ import uniffi.truapi.ColumnProps
 import uniffi.truapi.Curve
 import uniffi.truapi.Dimensions
 import uniffi.truapi.DropShadow
+import uniffi.truapi.EmitSource
+import uniffi.truapi.Emitter
 import uniffi.truapi.Enter
 import uniffi.truapi.Fill
 import uniffi.truapi.GestureProps
 import uniffi.truapi.Haptic
 import uniffi.truapi.HorizontalAlignment
+import uniffi.truapi.ImageSource
 import uniffi.truapi.Keyframe
 import uniffi.truapi.Keyframes
 import uniffi.truapi.Mask
@@ -74,6 +86,7 @@ import uniffi.truapi.PanFeel
 import uniffi.truapi.PanGesture
 import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
+import uniffi.truapi.ParticleLook
 import uniffi.truapi.Pose
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
@@ -84,6 +97,7 @@ import uniffi.truapi.TextProps
 import uniffi.truapi.Track
 import uniffi.truapi.TrackPlay
 import uniffi.truapi.Translate
+import uniffi.truapi.ValueRange
 
 class RendererNodeMappingTest {
     @Test
@@ -106,6 +120,69 @@ class RendererNodeMappingTest {
         assertEquals(3100L, timeline.frames.last().atMs)
         assertEquals(2, timeline.repeat)
         assertTrue(timeline.alternate)
+    }
+
+    @Test
+    fun `an emitter keeps its wire units, its looks in order and a pan source's trail`() {
+        val emitter = Emitter(
+            looks = listOf(
+                ParticleLook.Circle(800u, 0xFF0000FFu),
+                ParticleLook.Rectangle(600u, 300u, 0x00FF00FFu),
+                ParticleLook.Image(ImageSource.Bulletin("look"), 1200u, 1200u),
+                ParticleLook.Image(ImageSource.Inline(byteArrayOf(1)), 1200u, 1200u),
+            ),
+            source = EmitSource.Pan("pan"),
+            ratePerS = 30u,
+            ratePer100pt = 12u,
+            lifeMs = 900u,
+            speed = ValueRange(4000, 1000),
+            angleCentideg = -9000,
+            spreadCentideg = 6000u,
+            gravity = -2500,
+            spin = ValueRange(-18000, 18000),
+            fadeFromPermille = 600u,
+            endScalePermille = 200u,
+            maxAlive = 2000u,
+            bursts = listOf(Burst(20u, BurstTrigger.Appear), Burst(5u, BurstTrigger.Action("done")), Burst(8u, BurstTrigger.Change(3u))),
+        )
+        val trail = JsPanTrail()
+        val keyed = RendererKeyed(panTrail = { key -> trail.takeIf { key == "pan" } })
+        val mapped = RendererNode.Spacer(listOf(Modifier.Emit(emitter))).toJsWidget(keyed) as JsWidget.Spacer
+        val emit = mapped.modifiers.single() as JsModifier.Emit
+        assertSame(trail, emit.trail)
+        assertEquals(
+            JsEmitter(
+                looks = listOf(
+                    JsParticleLook.Circle(800, 0xFF0000FF),
+                    JsParticleLook.Rectangle(600, 300, 0x00FF00FF),
+                    JsParticleLook.Image(JsImageSource.Bulletin("look"), 1200, 1200),
+                    JsParticleLook.Image(null, 1200, 1200),
+                ),
+                source = JsEmitSource.Pan("pan"),
+                ratePerS = 30,
+                ratePer100pt = 12,
+                lifeMs = 900,
+                speed = JsValueRange(4000, 1000),
+                angleCentideg = -9000,
+                spreadCentideg = 6000,
+                gravity = -2500,
+                spin = JsValueRange(-18000, 18000),
+                fadeFromPermille = 600,
+                endScalePermille = 200,
+                maxAlive = 2000,
+                bursts = listOf(
+                    JsBurst(20, JsBurstTrigger.Appear),
+                    JsBurst(5, JsBurstTrigger.Action("done")),
+                    JsBurst(8, JsBurstTrigger.Change(3)),
+                ),
+            ),
+            emit.emitter,
+        )
+        val point = RendererNode.Spacer(listOf(Modifier.Emit(emitter.copy(source = EmitSource.Point(MaskPoint(10, 20))))))
+            .toJsWidget(keyed) as JsWidget.Spacer
+        val fixed = point.modifiers.single() as JsModifier.Emit
+        assertEquals(JsEmitSource.Point(10, 20), fixed.emitter.source)
+        assertEquals(null, fixed.trail)
     }
 
     @Test

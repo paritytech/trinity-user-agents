@@ -75,12 +75,24 @@ fun JsWidgetRenderer(
 ) {
     val places = remember { GesturePanPlaces() }
     val motion = rendererMotionEnabled()
+    val overlay = remember { ParticleOverlay() }
+    val actions = remember { ParticleActions() }
+    // Emitters hear each action as it goes out, before the worker does.
+    val handler: JsUiEventHandler = remember(jsEventHandler, actions) {
+        { actionId, eventType ->
+            actions.sent(actionId)
+            jsEventHandler(actionId, eventType)
+        }
+    }
+    LaunchedEffect(overlay) { overlay.run() }
     CompositionLocalProvider(
-        LocalJsEventHandler provides jsEventHandler,
+        LocalJsEventHandler provides handler,
         LocalGesturePanPlaces provides places,
         LocalRendererMotionEnabled provides motion,
+        LocalParticleActions provides actions,
+        LocalParticleOverlay provides overlay,
     ) {
-        JsWidgetContent(widget, modifier)
+        JsWidgetContent(widget, modifier.then(overlay.modifier))
     }
 }
 

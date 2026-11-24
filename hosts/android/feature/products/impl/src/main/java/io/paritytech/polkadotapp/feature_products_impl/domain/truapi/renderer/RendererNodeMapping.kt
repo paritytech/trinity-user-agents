@@ -4,10 +4,14 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsAnimatedProperty
 import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
+import io.paritytech.polkadotapp.feature_products_api.model.JsBurst
+import io.paritytech.polkadotapp.feature_products_api.model.JsBurstTrigger
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsCurve
+import io.paritytech.polkadotapp.feature_products_api.model.JsEmitSource
+import io.paritytech.polkadotapp.feature_products_api.model.JsEmitter
 import io.paritytech.polkadotapp.feature_products_api.model.JsEnter
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
@@ -31,23 +35,28 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
+import io.paritytech.polkadotapp.feature_products_api.model.JsParticleLook
 import io.paritytech.polkadotapp.feature_products_api.model.JsPose
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrack
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrackPlay
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
+import io.paritytech.polkadotapp.feature_products_api.model.JsValueRange
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.toJsImageSource
 import uniffi.truapi.AnimatedProperty
 import uniffi.truapi.Arrangement
 import uniffi.truapi.BlendingMode
+import uniffi.truapi.BurstTrigger
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
 import uniffi.truapi.Curve
 import uniffi.truapi.Dimensions
+import uniffi.truapi.EmitSource
+import uniffi.truapi.Emitter
 import uniffi.truapi.Haptic
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
@@ -65,6 +74,7 @@ import uniffi.truapi.PanFeel
 import uniffi.truapi.PanGesture
 import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
+import uniffi.truapi.ParticleLook
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.Size
@@ -303,8 +313,7 @@ private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed())
                 )))
             }
             is Modifier.Animate -> add(JsModifier.Animate(modifier.v1.toJs()))
-            // The Android particle layer draws emitters; until then the node draws with no particles.
-            is Modifier.Emit -> Unit
+            is Modifier.Emit -> add(JsModifier.Emit(modifier.v1.toJs(), (modifier.v1.source as? EmitSource.Pan)?.v1?.let(keyed.panTrail)))
             // The Android parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
             is Modifier.Parallax -> Unit
         }
@@ -397,6 +406,43 @@ private fun Track.toJs() = JsTrack(
         is TrackPlay.Keyframes -> JsTrackPlay.Keyframes(
             value.v1.frames.take(32).map { JsKeyframe(it.atMs.toLong(), it.value, it.curve.toJs()) },
             value.v1.repeat.toInt(), value.v1.alternate ?: false,
+        )
+    },
+)
+
+private fun Emitter.toJs() = JsEmitter(
+    looks = looks.map { look ->
+        when (look) {
+            is ParticleLook.Circle -> JsParticleLook.Circle(look.diameter.toLong(), look.color.toLong())
+            is ParticleLook.Rectangle -> JsParticleLook.Rectangle(look.width.toLong(), look.height.toLong(), look.color.toLong())
+            // An image this host cannot fetch keeps its place among the looks and draws no particle.
+            is ParticleLook.Image -> JsParticleLook.Image(look.source.toJsImageSource(), look.width.toLong(), look.height.toLong())
+        }
+    },
+    source = when (val source = source) {
+        is EmitSource.Pan -> JsEmitSource.Pan(source.v1)
+        is EmitSource.Point -> JsEmitSource.Point(source.v1.x, source.v1.y)
+        is EmitSource.Area -> JsEmitSource.Area
+    },
+    ratePerS = ratePerS.toInt(),
+    ratePer100pt = ratePer100pt.toInt(),
+    lifeMs = lifeMs.toInt(),
+    speed = JsValueRange(speed.min, speed.max),
+    angleCentideg = angleCentideg.toInt(),
+    spreadCentideg = spreadCentideg.toInt(),
+    gravity = gravity,
+    spin = JsValueRange(spin.min, spin.max),
+    fadeFromPermille = fadeFromPermille.toInt(),
+    endScalePermille = endScalePermille.toInt(),
+    maxAlive = maxAlive.toInt(),
+    bursts = bursts.map { burst ->
+        JsBurst(
+            count = burst.count.toInt(),
+            on = when (val on = burst.on) {
+                is BurstTrigger.Appear -> JsBurstTrigger.Appear
+                is BurstTrigger.Action -> JsBurstTrigger.Action(on.v1)
+                is BurstTrigger.Change -> JsBurstTrigger.Change(on.v1.toLong())
+            },
         )
     },
 )

@@ -191,4 +191,15 @@ sealed interface JsModifier {
     @Serializable
     @SerialName("animate")
     data class Animate(val track: JsTrack) : JsModifier
+
+    /**
+     * Sends particles from the node, drawn over it in its frame and unclipped.
+     * @param trail The keyed location pan's strokes, for a pan source
+     */
+    @Serializable
+    @SerialName("emit")
+    data class Emit(
+        val emitter: JsEmitter,
+        @Transient val trail: JsPanTrail? = null,
+    ) : JsModifier
 }
