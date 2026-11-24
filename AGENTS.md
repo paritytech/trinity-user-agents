@@ -17,7 +17,8 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         deferred ones through their domain's submission policy, and its
+                         deferred ones through their domain's submission policy once the
+                         transactions they depend on take effect, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, the tracker of what they hold on
@@ -110,7 +111,8 @@ hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
 stacks/                    generated copies, which host builds bundle, of each signed known stack's
-                           link and descriptor; `scripts/update-stacks.sh` writes them from
+                           link and descriptor, and in `light-specs/` the light specs truapi-host
+                           ships for its built-ins; `scripts/update-stacks.sh` writes them from
                            `rust/crates/trinity-stack/known-stacks.json`
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate

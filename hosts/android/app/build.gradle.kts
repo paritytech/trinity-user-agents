@@ -225,7 +225,7 @@ sentry {
     }
 }
 
-// The iOS host turns no log line into a Sentry event, and SentryLogTree covers the truapi lines.
+// The iOS host turns no log line into a Sentry event, and HostLogSinkTree already matches the truapi lines.
 configurations.configureEach {
     exclude(group = "io.sentry", module = "sentry-android-timber")
 }

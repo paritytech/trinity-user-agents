@@ -18,6 +18,8 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
 - [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
+- [Funding modality](docs/design/funding-modality.md)
+- [Building a funding provider](docs/guides/funding-provider.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -174,7 +176,8 @@ hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
 stacks/                    Generated link and signed descriptor of each signed known Trinity stack, which
-                           host builds bundle; scripts/update-stacks.sh writes them from the crate's list
+                           host builds bundle, and in light-specs/ the light specs truapi-host ships for
+                           its built-ins; scripts/update-stacks.sh writes them from the crate's list
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -364,7 +367,9 @@ Each domain registers the chain it lives on, its completion oracle and one
 submission policy. A domain can also defer a transaction before it can be
 signed. Its policy builds it later, and builds it again when a proven failure
 is one it accepts to retry; a presigned transaction may carry a plan for that
-policy too.
+policy too. A deferred transaction can wait for others on the same chain: it is
+built once each has taken effect at a best block, and fails with one marked to
+cascade.
 
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
