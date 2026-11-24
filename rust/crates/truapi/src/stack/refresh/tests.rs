@@ -793,6 +793,38 @@ fn a_chain_found_wrong_during_a_fetch_is_reported_while_it_is_out() {
 	);
 }
 
+/// A record can take half a minute to store, and a full disk or a kill can
+/// lose it. A host told of the copy a fetch brought before then could act on
+/// one the next start never reads, so a chain's answer meanwhile is reported
+/// on top of what the host was told before the fetch.
+#[test]
+fn a_chain_found_wrong_while_a_record_is_stored_is_reported_without_the_fetched_copy() {
+	let records = Arc::<MemoryRecords>::default();
+	records.stuck.store(true, Ordering::SeqCst);
+	let newer = published_test_descriptor_at(2);
+	let started = start(records, vec![published(&newer)]);
+	let at_start = started.next_status();
+	// The fetch's timeout, then the store's.
+	started.wait_for_sleeps(2);
+
+	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
+	let while_storing = started.next_status();
+	started.advance(STORE_TIMEOUT);
+	let once_the_store_failed = started.next_status();
+
+	let not_stored = StackRefreshOutcome::NotStored { reason: "not stored within 30s".to_string() };
+	assert_eq!(
+		[while_storing, once_the_store_failed],
+		[
+			StackStatus { mismatches: people_gave(TEST_STACK_WIPED_PEOPLE), ..at_start },
+			StackStatus {
+				mismatches: people_gave(TEST_STACK_WIPED_PEOPLE),
+				..stack_status(&newer, Some(not_stored))
+			},
+		]
+	);
+}
+
 /// An operator may publish the new descriptor some time after the wipe. The
 /// first fetch then brings nothing new. The loop keeps asking every five
 /// minutes, or the chain would stay out of use until the hourly fetch.
