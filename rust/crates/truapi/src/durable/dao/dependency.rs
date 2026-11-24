@@ -1,6 +1,7 @@
 //! Queries over `durable_tx_dependency`: what each deferred transaction
 //! waits for.
 
+use const_format::concatcp;
 use futures::stream::BoxStream;
 use rusqlite::{
 	Connection, OptionalExtension, Transaction, named_params,
@@ -18,19 +19,15 @@ use crate::{
 
 /// SQL that holds for a `durable_tx` row some dependency still blocks: one
 /// that has not taken effect yet, or one that failed with `CASCADE`.
-macro_rules! blocked_by_dependency {
-	() => {
-		"EXISTS (SELECT 1 FROM durable_tx_dependency
-            JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
-            WHERE durable_tx_dependency.tx_id = durable_tx.id
-            AND (dependency.status IN ('PENDING_SUBMISSION', 'PENDING')
-                OR (dependency.status = 'FAILURE' AND durable_tx_dependency.on_failure = 'CASCADE')))"
-	};
-}
+pub const BLOCKED_BY_DEPENDENCY: &str = "EXISTS (SELECT 1 FROM durable_tx_dependency
+    JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
+    WHERE durable_tx_dependency.tx_id = durable_tx.id
+    AND (dependency.status IN ('PENDING_SUBMISSION', 'PENDING')
+        OR (dependency.status = 'FAILURE' AND durable_tx_dependency.on_failure = 'CASCADE')))";
 
-const RELEASED_DOMAINS: &str = concat!(
+const RELEASED_DOMAINS: &str = concatcp!(
 	"SELECT id, attempts, domain FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND NOT ",
-	blocked_by_dependency!(),
+	BLOCKED_BY_DEPENDENCY,
 	" ORDER BY id"
 );
 
@@ -42,10 +39,10 @@ pub fn observe_released_domains(db: &Db) -> BoxStream<'static, Result<Vec<Domain
 	db.observe(RELEASED_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
 }
 
-const RELEASED_SUBMISSIONS: &str = concat!(
+const RELEASED_SUBMISSIONS: &str = concatcp!(
 	"SELECT id, domain, group_id, policy_params, attempts FROM durable_tx
     WHERE status = 'PENDING_SUBMISSION' AND domain = :domain AND NOT ",
-	blocked_by_dependency!(),
+	BLOCKED_BY_DEPENDENCY,
 	" ORDER BY id"
 );
 
