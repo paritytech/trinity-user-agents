@@ -37,7 +37,8 @@ use truapi::latest::{
 };
 
 use super::{
-	funding::{lock, within},
+	funding::lock,
+	funding_telemetry::{self, FundingAttributes as _, QuotesSettled, Region},
 	services::RuntimeServices,
 };
 use crate::{
@@ -46,9 +47,11 @@ use crate::{
 		funding_providers::{FundingSelection, LearnedLimit, LearnedSupport},
 		funding_view,
 	},
+	logging::CoreEvent,
 	platform::{
 		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
 	},
+	time::within,
 	unix_time::current_unix_millis,
 };
 
@@ -102,6 +105,12 @@ struct Watch {
 	/// Whether to hand the session to the best quote once every row
 	/// answered.
 	start_when_quoted: bool,
+	/// When the request started, in Unix milliseconds.
+	started_ms: u64,
+	/// Time from the request to the first quote shown.
+	first_quote_ms: Option<u64>,
+	/// Whether every row answered once already.
+	settled: bool,
 }
 
 impl Drop for Watch {
@@ -111,19 +120,43 @@ impl Drop for Watch {
 }
 
 impl FundingQuotes {
-	/// Make `ask` session `intent`'s quote request, replacing, and so
-	/// stopping, the one before it. Returns the request's id and what its
-	/// rounds run under.
-	fn start(&self, intent: &str, ask: FundingQuoteAsk) -> (u64, AbortRegistration) {
+	/// Make `ask` session `intent`'s quote request at `now_ms`, replacing,
+	/// and so stopping, the one before it. Returns the request's id, what its
+	/// rounds run under, and the request it replaced when that had shown a
+	/// list but not settled.
+	fn start(
+		&self,
+		intent: &str,
+		ask: FundingQuoteAsk,
+		now_ms: u64,
+	) -> (u64, AbortRegistration, Option<QuotesSettled>) {
 		let (rounds, registration) = AbortHandle::new_pair();
 		let mut watches = lock(&self.watches);
 		watches.next_request += 1;
 		let request_id = watches.next_request;
-		watches.by_session.insert(
-			intent.to_string(),
-			Watch { request_id, ask, list: None, rounds, start_when_quoted: false },
-		);
-		(request_id, registration)
+		let watch = Watch {
+			request_id,
+			ask,
+			list: None,
+			rounds,
+			start_when_quoted: false,
+			started_ms: now_ms,
+			first_quote_ms: None,
+			settled: false,
+		};
+		let superseded = watches
+			.by_session
+			.insert(intent.to_string(), watch)
+			.filter(|replaced| !replaced.settled)
+			.and_then(|mut replaced| {
+				Some(QuotesSettled {
+					list: replaced.list.take()?,
+					superseded: true,
+					first_quote_ms: replaced.first_quote_ms,
+					settle_ms: now_ms.saturating_sub(replaced.started_ms),
+				})
+			});
+		(request_id, registration, superseded)
 	}
 
 	/// The id of session `intent`'s running request when it asks `ask`.
@@ -172,25 +205,43 @@ impl FundingQuotes {
 			.is_some_and(|watch| core::mem::take(&mut watch.start_when_quoted))
 	}
 
-	/// Keep `list` as what session `intent`'s host is shown, and say whether
-	/// to show it: only a list of the session's
-	/// current request, while the session can still be quoted. A session that
-	/// cannot loses its request.
-	fn publish(&self, intent: &str, list: &FundingQuoteList, quotable: bool) -> bool {
+	/// Keep `list` as what session `intent`'s host is shown at `now_ms`,
+	/// and say whether to show it: only a list of the session's current
+	/// request, while the session can still be quoted. A session that cannot
+	/// loses its request. `None` when it is not shown; otherwise the request
+	/// settling, the first time every row answered.
+	fn publish(
+		&self,
+		intent: &str,
+		list: &FundingQuoteList,
+		quotable: bool,
+		now_ms: u64,
+	) -> Option<Option<QuotesSettled>> {
 		let mut watches = lock(&self.watches);
-		let Some(watch) = watches
+		let watch = watches
 			.by_session
 			.get_mut(intent)
-			.filter(|watch| watch.request_id == list.request_id)
-		else {
-			return false;
-		};
-		if quotable {
-			watch.list = Some(list.clone());
-			return true;
+			.filter(|watch| watch.request_id == list.request_id)?;
+		if !quotable {
+			watches.by_session.remove(intent);
+			return None;
 		}
-		watches.by_session.remove(intent);
-		false
+		watch.list = Some(list.clone());
+		let quoted = list
+			.rows
+			.iter()
+			.any(|row| matches!(row.state, FundingQuoteState::Quoted { .. }));
+		if quoted && watch.first_quote_ms.is_none() {
+			watch.first_quote_ms = Some(now_ms.saturating_sub(watch.started_ms));
+		}
+		let settles = list.complete && !watch.settled;
+		watch.settled |= settles;
+		Some(settles.then(|| QuotesSettled {
+			list: list.clone(),
+			superseded: false,
+			first_quote_ms: watch.first_quote_ms,
+			settle_ms: now_ms.saturating_sub(watch.started_ms),
+		}))
 	}
 
 	/// The quote `quote_id` that `provider_id` offered in the list session
@@ -246,7 +297,7 @@ impl FundingQuotes {
 	#[cfg(test)]
 	pub(crate) fn show(&self, intent: &str, ask: FundingQuoteAsk, rows: Vec<FundingQuoteRow>) {
 		let amount = ask.amount;
-		let (request_id, _) = self.start(intent, ask);
+		let (request_id, ..) = self.start(intent, ask, 0);
 		let list = FundingQuoteList {
 			request_id,
 			rows,
@@ -257,7 +308,7 @@ impl FundingQuotes {
 			issue: None,
 			complete: false,
 		};
-		self.publish(intent, &list, true);
+		self.publish(intent, &list, true, 0);
 	}
 }
 
@@ -343,7 +394,12 @@ impl RuntimeServices {
 		let direction =
 			self.funding().get(intent).map_or(ask.direction, |session| session.direction);
 		let ask = FundingQuoteAsk { direction, ..ask };
-		let (request_id, registration) = self.funding_quotes().start(intent, ask.clone());
+		let (request_id, registration, superseded) =
+			self.funding_quotes().start(intent, ask.clone(), current_unix_millis());
+		if let Some(superseded) = superseded {
+			let fact = self.funding().telemetry().quotes_superseded(intent, superseded);
+			self.funding().report_facts(intent, None, Some(&ask), Vec::from_iter(fact));
+		}
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
@@ -369,6 +425,7 @@ impl RuntimeServices {
 			None => self.detected_funding_country().await,
 		};
 		let ask = FundingQuoteAsk { country, ..ask };
+		self.funding().telemetry().asked_in(&intent, Region::of(ask.country.as_deref()));
 		let mut rows: Vec<FundingQuoteRow> = Vec::new();
 		loop {
 			// The providers changing starts the next round at once, so one
@@ -459,7 +516,7 @@ impl RuntimeServices {
 			if let Err(error) =
 				services.select_funding_provider(&intent, &provider_id, &quote_id).await
 			{
-				warn!(%intent, %error, "funding session not started when quoted");
+				warn!(error = <&str>::from(&error), "funding session not started when quoted");
 			}
 		});
 	}
@@ -511,8 +568,9 @@ impl RuntimeServices {
 	/// longer be quoted. Returns whether it was shown.
 	fn publish_quotes(self: &Arc<Self>, intent: &str, list: &mut FundingQuoteList) -> bool {
 		// A session the core no longer knows loses its request.
+		let now_ms = current_unix_millis();
 		let Some(session) = self.funding().get(intent) else {
-			return self.funding_quotes().publish(intent, list, false);
+			return self.funding_quotes().publish(intent, list, false, now_ms).is_some();
 		};
 		list.best = best_quote(session.direction, &list.rows, |provider_id| {
 			self.funding_providers().is_quote_target(provider_id)
@@ -521,8 +579,14 @@ impl RuntimeServices {
 		list.refusal = funding_view::quotes_refusal(&list.rows);
 		list.issue = funding_view::quotes_issue(&list.rows);
 		let quotable = !session.is_terminal() && session.provider_id.is_none();
-		if !self.funding_quotes().publish(intent, list, quotable) {
+		let Some(settled) = self.funding_quotes().publish(intent, list, quotable, now_ms) else {
 			return false;
+		};
+		let settled = self.funding().telemetry().quotes_shown(intent, settled);
+		if let Some(settled) = settled {
+			let asked = self.funding_quotes().asked(intent);
+			self.funding()
+				.report_facts(intent, Some(&session), asked.as_ref(), vec![settled]);
 		}
 		if let Some(platform) = self.funding().platform() {
 			platform.funding_quotes_changed(intent.to_string(), Some(list.clone()));
@@ -714,20 +778,58 @@ fn best_quote(
 	rows: &[FundingQuoteRow],
 	selectable: impl Fn(&ProductId) -> bool,
 ) -> Option<ProductId> {
-	let quoted = rows.iter().filter_map(|row| match &row.state {
-		FundingQuoteState::Quoted { quote } if selectable(&row.provider_id) => Some((row, quote)),
-		_ => None,
-	});
-	// Amounts in the asset are compared at each quote's own decimals.
-	let best = match direction {
-		FundingDirection::In => {
-			quoted.min_by_key(|(_, quote)| scaled(quote.send_amount, quote.asset_decimals))
-		},
-		FundingDirection::Out => quoted
-			.rev()
-			.max_by_key(|(_, quote)| scaled(quote.receive_amount, quote.asset_decimals)),
-	};
-	best.map(|(row, _)| row.provider_id.clone())
+	rows.iter()
+		.filter_map(|row| match &row.state {
+			FundingQuoteState::Quoted { quote } if selectable(&row.provider_id) => {
+				Some((row, quote))
+			},
+			_ => None,
+		})
+		.min_by_key(|(_, quote)| user_cost(direction, quote))
+		.map(|(row, _)| row.provider_id.clone())
+}
+
+/// What `quote` costs the user in `direction`, lower being better: what
+/// they pay inbound, and how much less than the most they could receive
+/// outbound. Amounts in the asset are compared at each quote's own
+/// decimals.
+fn user_cost(direction: FundingDirection, quote: &FundingQuote) -> u128 {
+	match direction {
+		FundingDirection::In => scaled(quote.send_amount, quote.asset_decimals),
+		FundingDirection::Out => u128::MAX - scaled(quote.receive_amount, quote.asset_decimals),
+	}
+}
+
+/// What handing a session in `direction` to `provider_id` on `choice` logs,
+/// against the list `shown` it was picked from: the quote's rank by what the
+/// user gets, how many quoted, and buckets of its fees and time.
+pub(crate) fn chosen_fact(
+	direction: FundingDirection,
+	shown: Option<&FundingQuoteList>,
+	provider_id: &ProductId,
+	choice: &FundingChoice,
+) -> CoreEvent {
+	let quoted: Vec<(&ProductId, &FundingQuote)> = shown
+		.iter()
+		.flat_map(|list| &list.rows)
+		.filter_map(|row| match &row.state {
+			FundingQuoteState::Quoted { quote } => Some((&row.provider_id, quote)),
+			_ => None,
+		})
+		.collect();
+	let cost = user_cost(direction, &choice.quote);
+	let better = quoted
+		.iter()
+		.filter(|(other, quote)| *other != provider_id && user_cost(direction, quote) < cost)
+		.count();
+	let quote = &choice.quote;
+	let fees = quote.provider_fee.saturating_add(quote.network_fee);
+	CoreEvent::new(crate::markers::FUNDING_PROVIDER_CHOSEN)
+		.flag("best", shown.and_then(|list| list.best.as_ref()) == Some(provider_id))
+		.tag("fee_bucket", funding_telemetry::fee_bucket(fees, quote.send_amount))
+		.tag("eta_bucket", funding_telemetry::eta_bucket(quote.eta_secs))
+		.count("rank", better as u64 + 1)
+		.count("quote_count", quoted.len() as u64)
 }
 
 /// `amount` in an asset with `decimals`, at 18 decimals, so amounts quoted at

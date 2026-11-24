@@ -33,7 +33,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
         let themeManager: ThemeManagerProtocol
-        let logger: LoggerProtocol
+        let logger: CoreEventLoggerProtocol
     }
 
     let storage: HostStorageBackend
@@ -41,13 +41,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
+    /// Weak because the face owns the runtime that retains this bridge.
+    private weak var cardFace: (any ExpandedCardFaceShowing)?
     private let cachedTheme = OSAllocatedUnfairLock(
         uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
     )
     private var themeObservation: Task<Void, Never>?
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
         self.dependencies = dependencies
+        self.cardFace = cardFace
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -65,6 +68,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     func onCoreLog(marker: String, detail: String) {
         dependencies.logger.logCoreLine(marker: marker, detail: detail)
+    }
+
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
+        dependencies.logger.logCoreEvent(marker: marker, attributes: attributes)
     }
 
     func navigateTo(url: String) async throws {
@@ -122,6 +129,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 {
         try await dependencies.notificationScheduler.schedule(
             productId: dependencies.productId,
+            title: request.title,
             request: request.toScheduledNotificationRequest()
         )
     }
@@ -170,6 +178,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         cachedTheme.withLock { $0 }
     }
 
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        guard let cardFace else { return .notPresented }
+
+        return await cardFace.setFaceShown(shown)
+    }
+
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
         switch request {
         case let .chain(genesisHash):
@@ -181,6 +195,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return dependencies.chainRegistry.getConnection(for: chain.chainId) != nil
+        case .materials:
+            return false
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import Individuality
 import MessageExchangeKit
 import StatementStore
@@ -15,7 +16,7 @@ final class PolkadotHandshakeSender {
     private let chainId: ChainModel.Id
     private let chainRegistry: ChainRegistryProtocol
     private let priorityProvider: HostHandshakePriorityProviding
-    private let sssManager: AllowanceManaging
+    private let sssManager: any AllowanceManaging<StatementStoreAllowanceHolder>
     private let logger: LoggerProtocol
 
     init(
@@ -23,7 +24,7 @@ final class PolkadotHandshakeSender {
         chainId: ChainModel.Id,
         chainRegistry: ChainRegistryProtocol,
         priorityProvider: HostHandshakePriorityProviding,
-        sssManager: AllowanceManaging,
+        sssManager: any AllowanceManaging<StatementStoreAllowanceHolder>,
         logger: LoggerProtocol
     ) {
         self.payloadFactory = payloadFactory
@@ -142,7 +143,12 @@ private extension PolkadotHandshakeSender {
         let accountId = input.hostData.statementAccountId
         logger.debug("Allocating SSS allowance...")
         do {
-            try await sssManager.allocate(accountId: accountId, policy: .ignore, priority: .high, domain: .device)
+            try await sssManager.allocate(
+                holder: .remote(accountId: accountId),
+                policy: .ignore,
+                priority: .high,
+                domain: .device
+            )
             logger.debug("SSS allowance allocated successfully")
         } catch {
             logger.error("SSS allowance allocation failed: \(error)")

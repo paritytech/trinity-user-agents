@@ -9,7 +9,7 @@ use crate::Bytes32;
 /// build a valid-looking transfer to an address nobody controls. A handle is
 /// not an address, and the type is where that is said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ContactHandle {
 	/// The handle's bytes.
 	pub bytes: Bytes32,
@@ -23,9 +23,9 @@ pub struct ContactHandle {
 pub enum ContactPickOutcome {
 	/// The user chose someone.
 	///
-	/// `handle` is the same value for this person in every product, and on every
-	/// host of this user. It is not an address and cannot be turned into one:
-	/// the core resolves it when it builds a transaction, so a product can name
+	/// `handle` is the same value for this person on every host of this user,
+	/// and a different one in every other product. It is not an address and cannot be turned into
+	/// one: the core resolves it when it builds a transaction, so a product can name
 	/// a recipient it never learns the account of.
 	Picked {
 		/// Stable pseudonym for the chosen contact.
@@ -65,4 +65,24 @@ pub enum HostContactsPickError {
 		/// Human-readable reason.
 		reason: String,
 	},
+}
+
+/// Request for the usernames of the chat contacts of the user.
+///
+/// Carries no arguments: the host answers from the contacts it already holds,
+/// with no prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostContactsUsernamesRequest {}
+
+/// The dotNS usernames of the unblocked chat contacts of the user.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostContactsUsernamesResponse {
+	/// One username per contact, in host order, and empty when the user has no
+	/// contacts. A contact without a username is left out, and so is any name
+	/// the host holds that is not a bare dotNS label.
+	///
+	/// Each entry is a bare dotNS label with no top-level domain, as the host
+	/// last stored it: a personhood name (`alice`) or a device name with its
+	/// two-digit index (`alice.07`).
+	pub usernames: Vec<String>,
 }

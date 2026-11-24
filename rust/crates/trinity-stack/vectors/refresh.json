@@ -481,6 +481,58 @@
   },
   {
     "build": "refresh/42.json",
+    "name": "a-request-time-ahead-of-the-clock-is-due",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": {
+      "maxAge": 3600
+    },
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792152000
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unreachable",
+          "stores": false
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792152000
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065601
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
     "name": "an-unsigned-store-never-moves-back-past-its-build-copy",
     "pointer": {
       "key": null,

@@ -40,9 +40,8 @@ The app ships two parallel distribution tracks:
 
 The `vanilla` edition is a first-class release track aimed at privacy-focused users
 running [GrapheneOS](https://grapheneos.org/). It carries the same core app
-functionality and is fully operational without Google Play Services. Google Sign-In,
-Firebase Auth, Firebase Analytics, and Firebase Crashlytics are excluded from the
-`vanilla` APK.
+functionality and is fully operational without Google Play Services. Google Sign-In
+and Firebase Auth are excluded from the `vanilla` APK.
 
 Both editions do initialize the default `FirebaseApp`, because **Firebase Remote
 Config is required for the app to function** (`tools/remoteconfig:impl` drives feature
@@ -192,7 +191,6 @@ Firebase services the app uses, so you can enable them in that project:
 | Remote Config | both | All runtime configuration (§4.1). Mandatory. |
 | Authentication (Google provider) + Firestore | `gp` | Cloud backups: the encryption-key record is stored in the `users-<suffix>` collection (`-debug`, `-nightly`, `-safetynet`, `-production`) of the database named by `FIRESTORE_DATABASE_ID`. Security rules must let a signed-in user read/write their own document. |
 | Cloud Messaging | `gp` | Push notifications. |
-| Crashlytics, Analytics | `gp` | Crash and usage reporting. |
 
 ### 4.1 Remote Config keys
 
@@ -212,8 +210,10 @@ without it. JSON values are stored as Remote Config strings.
 | `cross_chain_transfers` | JSON object | cross-chain transfers | `feature/cross-chain-transfers` | `{ "chains": [...], "customTeleports": [...] }` — XCM transfer directions. Schema: `feature/cross-chain-transfers/impl/.../data/model/DynamicCrossChainConfigRemote.kt`. |
 | `coinage_instance_id` | string (unsigned integer) | Coinage | `feature/coinage` | Instance id of the Coinage deployment. |
 | `account_data_store_config` | JSON object | Coinage | `feature/coinage` | `{ "contractAddress": "0x…" }` — the account data store contract. |
+| `coinage_privacy_config` | JSON object | Coinage voucher readiness (optional) | `feature/coinage` — `RemoteConfigCoinagePrivacyConfigProvider` | `{"balanced":{"ringFillPercent":20,"anonymityMinutes":10,"anonymityMembers":8},"maxPrivacy":{"ringFillPercent":90,"anonymityMinutes":10,"anonymityMembers":16}}` (the bundled defaults) — when a Balanced or Max privacy voucher becomes spendable. `ringFillPercent` (0–100) releases it once the ring reaches `ceil(capacity × ringFillPercent / 100)` members; `0` releases it as soon as it lands in a ring. `anonymityMinutes` × `anonymityMembers` (both > 0) is the member-minutes budget of the slower route: ready once minutes since inclusion × (members − unloaded) reaches it, so under the Balanced defaults 8 members wait 10 min and 16 wait 5 min, while a 400-member ring under the Max defaults waits about 24 s. That route stays shut until the inclusion time and the ring's unloaded count have been read, which is where a restored install starts, and it closes again whenever that count cannot be re-read. Every field is optional: a missing or out-of-range field takes its own default, while a value that cannot be parsed (`7.5`, `"abc"`) drops the whole key to the defaults. A published value is activated by the first sync that succeeds after start, so it normally takes effect at the next start; until then the last activated value applies, or the bundled defaults on a new install. Minimum privacy is not configurable. |
 | `payment_asset_config` | JSON object | payment asset branding (optional) | `feature/tokens` — `RealPaymentAssetBrandProvider` | `{ "symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg" }` — the payment asset's symbol and logos: a square mark for amounts and chat payments, a wide mark-plus-wordmark for the balance card, as absolute `http(s)` URLs (SVG or PNG). Every field is optional; anything missing or failing to load falls back to `CURRENCY_SYMBOL` and the built-in mark. The last activated value applies at start-up and the object is re-read right after the first sync; logos load on display through the app image loader and are cached by URL, so publish a changed logo under a new URL. |
 | `collectibles_enabled` | boolean | collectibles (optional) | `feature/wallet` | Feature gate for the Collectibles card on the Pocket tab. The card opens the `stash` product on the network's dotNS suffix. |
+| `materials_enabled` | boolean | Pocket card materials (optional) | `feature/products` | Lets the TrUAPI core draw shader materials on Pocket cards. Read from the last activated values when the core runtime starts, so a change applies at the next app start; unset or unreadable reads as off. |
 
 A chain descriptor in `chains` / `chains_v2` is a JSON object deserialised into
 `chains/src/main/java/io/paritytech/polkadotapp/chains/multiNetwork/chain/remote/model/ChainRemote.kt`
@@ -400,7 +400,7 @@ Outputs land in `app/build/outputs/apk/gp/<buildType>/`.
 ### 6.2 `vanilla` edition (GrapheneOS / GMS-free)
 
 The `vanilla` edition produces an APK with **no Google Play Services dependency**: no
-Play Integrity, no GMS-backed Sign-In, no Analytics or Crashlytics. It is designed to
+Play Integrity, no GMS-backed Sign-In. It is designed to
 run correctly on [GrapheneOS](https://grapheneos.org/) and any other Android
 distribution that does not ship Google Play Services. Firebase Remote Config is the
 one Firebase service it keeps, because the app cannot function without it; it needs no

@@ -3,10 +3,10 @@ package io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase
 import io.novasama.substrate_sdk_android.encrypt.keypair.Keypair
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionRefCounter
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.holdingConnection
-import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.utils.filterNotNull
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
@@ -17,12 +17,14 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.Co
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.ConfiguredInstanceCoins
 import io.paritytech.polkadotapp.feature_coinage_impl.data.model.OnChainCoinInfo
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogD
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogE
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogI
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogW
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase.RealClaimReceivedCoinsUseCase.Companion.DETECTION_TIMEOUT
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
@@ -51,6 +53,7 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
     private val assetValueUseCase: CoinageAssetValueUseCase,
     private val submissionUseCase: CoinageTransferSubmissionUseCase,
     private val timeProvider: TimeProvider,
+    private val configuredInstanceCoins: ConfiguredInstanceCoins,
     private val chainConnectionRefCounter: ChainConnectionRefCounter,
 ) : ClaimReceivedCoinsUseCase {
     private companion object {
@@ -72,8 +75,8 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
         coinKeys: List<CoinPrivateKey>,
         groupId: CoinageOperationGroupId,
         retryUntil: Instant,
-    ): Flow<CoinageTransferDetection> = channelFlow {
-        send(CoinageTransferDetection.Detecting)
+    ): Flow<Result<CoinageTransferDetection>> = channelFlow {
+        send(Result.success(CoinageTransferDetection.Detecting))
 
         val keys = coinKeys.associateBy { key -> key.deriveKeypair().accountId() }
 
@@ -85,21 +88,27 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
 
         var settled: List<CoinageTransactionState>
         var chainAnswered = false
+        val rejected = mutableSetOf<AccountId>()
 
         while (true) {
             settled = awaitKnownOperationsSettled(groupId, keys.keys, report = ::send)
 
             // Each coin is registered once. Rebuilding a claim that failed is its submission policy's job, into
             // the coin it recorded; a second claim here would mint into a coin nothing would ever wait on.
-            val unregistered = keys.keys - settled.registeredCoins()
+            val unregistered = keys.keys - settled.registeredCoins() - rejected
 
-            // Every coin has a claim, and none of them can change any more. Claim finished.
             if (unregistered.isEmpty()) break
 
-            val look = awaitOnChainWithTimeout(onChain, unregistered)
+            val look = awaitOnChainWithTimeout(onChain, unregistered)?.let { configuredInstanceCoins.splitOrNull(it) }
             if (look != null) chainAnswered = true
 
-            val claimable = look.orEmpty()
+            val foreign = look?.foreign.orEmpty()
+            if (foreign.isNotEmpty()) {
+                coinageLogW("Claim rejected coins of another instance group=${groupId.value} coins=${foreign.size}")
+                rejected += foreign
+            }
+
+            val claimable = look?.own.orEmpty()
 
             when {
                 // Coin detected => register its claim
@@ -122,7 +131,7 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
         // may be called final. Logged like any other report: how a claim ended is the line worth having
         // when someone says they were paid less than they were sent.
         val verdict = settled.toVerdict(keys.keys)
-        logDetection(groupId, verdict)
+        verdict.onSuccess { logDetection(groupId, it) }
         send(verdict)
 
         // The chain subscription never ends by itself, and this flow does not finish while a child of its
@@ -139,12 +148,12 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
     private suspend fun awaitKnownOperationsSettled(
         groupId: CoinageOperationGroupId,
         coins: Set<AccountId>,
-        report: suspend (CoinageTransferDetection) -> Unit,
+        report: suspend (Result<CoinageTransferDetection>) -> Unit,
     ): List<CoinageTransactionState> {
         return transactionService.subscribeOperationGroupStatuses(groupId)
             .onEach { states ->
                 val detection = states.toProgress(coins)
-                logDetection(groupId, detection)
+                detection.onSuccess { logDetection(groupId, it) }
                 report(detection)
             }
             .first { states -> states.none { it.status.isLive } }
@@ -231,23 +240,24 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
      * Nothing here may say claiming is over — only the caller's loop knows that — so a shortfall is never
      * announced while another attempt could still make it up.
      */
-    private suspend fun List<CoinageTransactionState>.toProgress(coins: Set<AccountId>): CoinageTransferDetection {
+    private suspend fun List<CoinageTransactionState>.toProgress(coins: Set<AccountId>): Result<CoinageTransferDetection> {
         val arrived = filter { it.status.isArrived }
         val outstanding = coins - arrivedCoins()
 
         return when {
-            outstanding.isEmpty() ->
-                CoinageTransferDetection.Claimed(valueMintedBy(arrived), finalized = (coins - finalizedCoins()).isEmpty())
+            outstanding.isEmpty() -> valueMintedBy(arrived).map { amount ->
+                CoinageTransferDetection.Claimed(amount, finalized = (coins - finalizedCoins()).isEmpty())
+            }
 
             // Part of the payment is settled and the rest is waiting on a retry. Only worth saying when a
             // claim actually failed: on the happy path claims land one at a time, and reporting the running
             // total would walk the user through every inclusion of a payment that is simply in progress.
             arrived.isNotEmpty() && outstanding.any { it in failedCoins() } ->
-                CoinageTransferDetection.ClaimingRest(valueMintedBy(arrived))
+                valueMintedBy(arrived).map(CoinageTransferDetection::ClaimingRest)
 
-            isEmpty() -> CoinageTransferDetection.Detecting
+            isEmpty() -> Result.success(CoinageTransferDetection.Detecting)
 
-            else -> CoinageTransferDetection.Claiming
+            else -> Result.success(CoinageTransferDetection.Claiming)
         }
     }
 
@@ -257,24 +267,24 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
      * The same two questions as [toProgress], answered in the past tense — which is the only place a
      * shortfall may be called final.
      */
-    private suspend fun List<CoinageTransactionState>.toVerdict(coins: Set<AccountId>): CoinageTransferDetection {
+    private suspend fun List<CoinageTransactionState>.toVerdict(coins: Set<AccountId>): Result<CoinageTransferDetection> {
         val arrived = filter { it.status.isArrived }
         val notArrived = coins - arrivedCoins()
 
         return when {
-            notArrived.isEmpty() ->
-                CoinageTransferDetection.Claimed(valueMintedBy(arrived), finalized = (coins - finalizedCoins()).isEmpty())
+            notArrived.isEmpty() -> valueMintedBy(arrived).map { amount ->
+                CoinageTransferDetection.Claimed(amount, finalized = (coins - finalizedCoins()).isEmpty())
+            }
 
-            arrived.isNotEmpty() -> CoinageTransferDetection.ClaimedPartially(valueMintedBy(arrived))
+            arrived.isNotEmpty() -> valueMintedBy(arrived).map(CoinageTransferDetection::ClaimedPartially)
 
-            else -> CoinageTransferDetection.NotClaimed
+            else -> Result.success(CoinageTransferDetection.NotClaimed)
         }
     }
 
     private suspend fun valueMintedBy(states: List<CoinageTransactionState>) =
         assetValueUseCase.valueOf(states.flatMap { it.outputs })
             .logFailure("Failed to value claimed coins")
-            .getOrDefault(Balance.ZERO)
 
     private fun logDetection(groupId: CoinageOperationGroupId, detection: CoinageTransferDetection) {
         val group = groupId.value
@@ -308,7 +318,7 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
                         read.logFailure("Can't fetch info for coins")
                             // Important: ignore failed reads via mapNotNull
                             .getOrNull()
-                            ?.filterValuesNotNull()
+                            ?.filterNotNull()
                     }
 
                 emitAll(reads)
@@ -319,6 +329,3 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
 
     private fun Keypair.accountId(): AccountId = publicKey.toDataByteArray()
 }
-
-private fun <K, V : Any> Map<K, V?>.filterValuesNotNull(): Map<K, V> =
-    mapNotNull { (key, value) -> value?.let { key to it } }.toMap()

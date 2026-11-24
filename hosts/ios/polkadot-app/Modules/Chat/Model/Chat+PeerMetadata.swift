@@ -11,6 +11,7 @@ extension Chat {
         case inputField(InputField)
         case incomingRequest
         case outgoingRequest
+        case cancelledRequest
         case blockedUser
         case productCard(messageType: String, payload: Data)
         case empty

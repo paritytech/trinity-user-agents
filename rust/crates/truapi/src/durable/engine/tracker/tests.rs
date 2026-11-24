@@ -17,7 +17,8 @@ use crate::{
 	durable::{
 		oracle::{DurableRegistry, Unobservable},
 		testing::{
-			FakeChain, GENESIS, block, block_hash, engine_with_spawner, extrinsic, without_plan,
+			FakeChain, ServesTestDomains, block, block_hash, engine_with_spawner, extrinsic,
+			without_plan,
 		},
 	},
 	test_support::wait_until,
@@ -72,7 +73,7 @@ fn register(
 	let (spawner, finished) = Spawner::counting();
 	let (dir, engine, timer) = engine_with_spawner(
 		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+		DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)),
 		spawner,
 	);
 	let nudges = engine.recovery_wakes.subscribe();
@@ -101,9 +102,10 @@ fn inclusion_in_a_best_block_with_success_records_that_block() {
 	fixture.wait_for(DurableTxStatus::PendingSuccess { at: block(135) });
 }
 
-/// Not finalized, so a failed dispatch there proposes nothing.
+/// Not finalized, so a failed dispatch in a best block never fails the
+/// transaction.
 #[test]
-fn a_failed_dispatch_in_a_best_block_proposes_nothing() {
+fn a_failed_dispatch_in_a_best_block_leaves_a_pending_transaction_pending() {
 	let (mut fixture, events) = watched();
 	fixture
 		.chain
@@ -115,6 +117,22 @@ fn a_failed_dispatch_in_a_best_block_proposes_nothing() {
 	fixture.wait_released();
 	assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
 	assert!(fixture.nudged());
+}
+
+/// The extrinsic moves to a best block where it failed: the success
+/// recorded earlier no longer describes the best chain.
+#[test]
+fn a_failed_dispatch_in_a_best_block_demotes_a_recorded_success() {
+	let (fixture, events) = watched();
+	let hash = fixture.tx.extrinsic.hash();
+	fixture.chain.include(135, hash, DispatchOutcome::Succeeded);
+	events.unbounded_send(WatchEvent::InBestBlock(block_hash(135))).unwrap();
+	fixture.wait_for(DurableTxStatus::PendingSuccess { at: block(135) });
+	fixture.chain.include(136, hash, DispatchOutcome::Failed(String::new()));
+
+	events.unbounded_send(WatchEvent::InBestBlock(block_hash(136))).unwrap();
+
+	fixture.wait_for(DurableTxStatus::Pending);
 }
 
 /// The watch decided the transaction itself, so starting recovery would
@@ -194,7 +212,7 @@ fn inclusion_whose_outcome_cannot_be_read_records_nothing() {
 /// A reorg retracts the best block the success was recorded at; a success
 /// resting on a block that is gone is no evidence.
 #[test]
-fn a_retraction_of_the_recorded_block_clears_the_record() {
+fn a_retraction_clears_the_record() {
 	let (fixture, events) = watched();
 	fixture
 		.chain
@@ -208,10 +226,10 @@ fn a_retraction_of_the_recorded_block_clears_the_record() {
 }
 
 /// The extrinsic moves to a block whose outcome cannot be read, and that
-/// block is retracted. The earlier recorded success is not what was
-/// retracted.
+/// block is retracted. The watch recorded the earlier success itself, and
+/// the extrinsic is no longer in any best block, so the record goes.
 #[test]
-fn a_retraction_of_a_block_that_was_not_recorded_leaves_the_record() {
+fn a_retraction_clears_the_record_whichever_block_it_names() {
 	let (fixture, events) = watched();
 	fixture
 		.chain
@@ -222,10 +240,27 @@ fn a_retraction_of_a_block_that_was_not_recorded_leaves_the_record() {
 
 	events.unbounded_send(WatchEvent::InBestBlock(block_hash(136))).unwrap();
 	events.unbounded_send(WatchEvent::NoLongerInBestBlock).unwrap();
+
+	fixture.wait_for(DurableTxStatus::Pending);
+}
+
+/// The node evicts the retraction from its report buffer, then reports the
+/// extrinsic in a best block where it failed. That report alone is enough
+/// to drop the stale success.
+#[test]
+fn a_dropped_retraction_followed_by_a_failed_best_block_leaves_no_stale_success() {
+	let (fixture, events) = watched();
+	let hash = fixture.tx.extrinsic.hash();
+	fixture.chain.include(135, hash, DispatchOutcome::Succeeded);
+	events.unbounded_send(WatchEvent::InBestBlock(block_hash(135))).unwrap();
+	fixture.wait_for(DurableTxStatus::PendingSuccess { at: block(135) });
+	fixture.chain.include(137, hash, DispatchOutcome::Failed(String::new()));
+
+	events.unbounded_send(WatchEvent::InBestBlock(block_hash(137))).unwrap();
 	drop(events);
 
 	fixture.wait_released();
-	assert_eq!(fixture.entry().status, DurableTxStatus::PendingSuccess { at: block(135) });
+	assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
 }
 
 /// The connection closes mid-watch. The transaction stays pending with its

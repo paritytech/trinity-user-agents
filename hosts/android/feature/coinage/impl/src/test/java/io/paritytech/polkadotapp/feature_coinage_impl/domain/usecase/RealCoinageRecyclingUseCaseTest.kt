@@ -412,7 +412,7 @@ class RealCoinageRecyclingUseCaseTest {
     private fun voucherInRecycler(ringVrfKeyIndex: Int) = createVoucher(
         ringVrfKeyIndex = ringVrfKeyIndex,
         exponent = 1,
-        location = RecyclerVoucher.Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 32, enteredAt = null),
+        location = RecyclerVoucher.Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 32, enteredAt = null, recyclerUnloaded = null),
     )
 
     /** Runs the block the use case hands to the builder, instead of only checking that it was handed over. */

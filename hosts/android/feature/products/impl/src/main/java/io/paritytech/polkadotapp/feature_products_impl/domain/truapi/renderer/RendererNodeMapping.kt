@@ -5,25 +5,22 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
-import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
-import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_api.model.toJsImageSource
 import uniffi.truapi.Arrangement
 import uniffi.truapi.BlendingMode
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
 import uniffi.truapi.Dimensions
-import uniffi.truapi.Effect
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
-import uniffi.truapi.ImageSource
 import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
@@ -35,65 +32,98 @@ import uniffi.truapi.VerticalAlignment
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
-fun RendererNode.toJsWidget(): JsWidget = when (this) {
-    is RendererNode.Nil -> JsWidget.Spacer()
-    is RendererNode.String -> JsWidget.Text(text = text)
-    is RendererNode.Box -> JsWidget.Box(
-        modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
-        contentAlignment = props.contentAlignment?.toJs(),
-    )
-    is RendererNode.Column -> JsWidget.Column(
-        modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
-        horizontalAlignment = props.horizontalAlignment?.toJs(),
-        verticalArrangement = props.verticalArrangement?.toJs(),
-    )
-    is RendererNode.Row -> JsWidget.Row(
-        modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
-        verticalAlignment = props.verticalAlignment?.toJs(),
-        horizontalArrangement = props.horizontalArrangement?.toJs(),
-    )
-    is RendererNode.Spacer -> JsWidget.Spacer(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Text -> JsWidget.Text(
-        text = children.filterIsInstance<RendererNode.String>().joinToString("") { it.text },
-        style = props.style?.toJs() ?: JsTypographyStyle.BODY_LARGE_REGULAR,
-        color = props.color?.toJs(),
-        modifiers = modifiers.toJsModifiers(),
-    )
-    is RendererNode.Button -> JsWidget.Button(
-        text = props.text,
-        onClick = props.clickAction,
-        variant = props.variant?.toJs() ?: JsButtonVariant.PRIMARY,
-        enabled = props.enabled ?: true,
-        loading = props.loading ?: false,
-        modifiers = modifiers.toJsModifiers(),
-    )
-    is RendererNode.TextField -> JsWidget.TextField(
-        value = props.text,
-        onValueChange = props.valueChangeAction,
-        placeholder = props.placeholder,
-        label = props.label,
-        enabled = props.enabled ?: true,
-        modifiers = modifiers.toJsModifiers(),
-    )
-    // An image this host cannot draw keeps the size its modifiers give it.
-    is RendererNode.Image -> props.source.toJs()?.let { source ->
-        JsWidget.Image(
-            source = source,
-            fit = props.fit?.toJs() ?: JsImageFit.FILL,
-            modifiers = modifiers.toJsModifiers(),
-        )
-    } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Effect -> JsWidget.Effect(
-        effect = props.effect.toJs(),
-        children = children.toJsChildren(),
-    )
+fun RendererNode.toJsWidget(): JsWidget = JsWidgetMapping().map(this)
+
+fun RendererNode.hasMaterials(): Boolean = materialsCount() > 0
+
+private fun RendererNode.materialsCount(): Int = when (this) {
+    is RendererNode.Materials -> 1 + children.sumOf { it.materialsCount() }
+    is RendererNode.Box -> children.sumOf { it.materialsCount() }
+    is RendererNode.Column -> children.sumOf { it.materialsCount() }
+    is RendererNode.Row -> children.sumOf { it.materialsCount() }
+    is RendererNode.Text -> children.sumOf { it.materialsCount() }
+    is RendererNode.Button -> children.sumOf { it.materialsCount() }
+    is RendererNode.Nil,
+    is RendererNode.String,
+    is RendererNode.Spacer,
+    is RendererNode.TextField,
+    is RendererNode.Image -> 0
 }
 
-private fun List<RendererNode>.toJsChildren(): List<JsWidget> =
-    filterNot { it is RendererNode.Nil || it is RendererNode.String }.map { it.toJsWidget() }
+private class JsWidgetMapping {
+    private var nextMaterialsNode = 0
+
+    fun map(node: RendererNode): JsWidget = when (node) {
+        is RendererNode.Nil -> JsWidget.Spacer()
+        is RendererNode.String -> JsWidget.Text(text = node.text)
+        is RendererNode.Box -> JsWidget.Box(
+            modifiers = node.modifiers.toJsModifiers(),
+            children = mapChildren(node.children),
+            contentAlignment = node.props.contentAlignment?.toJs(),
+        )
+        is RendererNode.Column -> JsWidget.Column(
+            modifiers = node.modifiers.toJsModifiers(),
+            children = mapChildren(node.children),
+            horizontalAlignment = node.props.horizontalAlignment?.toJs(),
+            verticalArrangement = node.props.verticalArrangement?.toJs(),
+        )
+        is RendererNode.Row -> JsWidget.Row(
+            modifiers = node.modifiers.toJsModifiers(),
+            children = mapChildren(node.children),
+            verticalAlignment = node.props.verticalAlignment?.toJs(),
+            horizontalArrangement = node.props.horizontalArrangement?.toJs(),
+        )
+        is RendererNode.Spacer -> JsWidget.Spacer(modifiers = node.modifiers.toJsModifiers())
+        is RendererNode.Text -> {
+            skipMaterialsIn(node.children)
+            JsWidget.Text(
+                text = node.children.filterIsInstance<RendererNode.String>().joinToString("") { it.text },
+                style = node.props.style?.toJs() ?: JsTypographyStyle.BODY_LARGE_REGULAR,
+                color = node.props.color?.toJs(),
+                modifiers = node.modifiers.toJsModifiers(),
+            )
+        }
+        is RendererNode.Button -> {
+            skipMaterialsIn(node.children)
+            JsWidget.Button(
+                text = node.props.text,
+                onClick = node.props.clickAction,
+                variant = node.props.variant?.toJs() ?: JsButtonVariant.PRIMARY,
+                enabled = node.props.enabled ?: true,
+                loading = node.props.loading ?: false,
+                modifiers = node.modifiers.toJsModifiers(),
+            )
+        }
+        is RendererNode.TextField -> JsWidget.TextField(
+            value = node.props.text,
+            onValueChange = node.props.valueChangeAction,
+            placeholder = node.props.placeholder,
+            label = node.props.label,
+            enabled = node.props.enabled ?: true,
+            modifiers = node.modifiers.toJsModifiers(),
+        )
+        // An image this host cannot draw keeps the size its modifiers give it.
+        is RendererNode.Image -> node.props.source.toJsImageSource()?.let { source ->
+            JsWidget.Image(
+                source = source,
+                fit = node.props.fit?.toJs() ?: JsImageFit.FILL,
+                modifiers = node.modifiers.toJsModifiers(),
+            )
+        } ?: JsWidget.Box(modifiers = node.modifiers.toJsModifiers())
+        is RendererNode.Materials -> {
+            val index = nextMaterialsNode++
+            JsWidget.Materials(node = index, children = mapChildren(node.children))
+        }
+    }
+
+    private fun mapChildren(children: List<RendererNode>): List<JsWidget> =
+        children.filterNot { it is RendererNode.Nil || it is RendererNode.String }.map(::map)
+
+    // The core numbers `Materials` nodes under a `Text` or `Button` although their children are not drawn.
+    private fun skipMaterialsIn(children: List<RendererNode>) {
+        nextMaterialsNode += children.sumOf { it.materialsCount() }
+    }
+}
 
 private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
     var width: Int? = null
@@ -158,22 +188,12 @@ private fun Shape.toJs(): JsShape = when (this) {
     is Shape.Square -> JsShape.Square
 }
 
-private fun ImageSource.toJs(): JsImageSource? = when (this) {
-    is ImageSource.Bulletin -> JsImageSource.Bulletin(v1)
-    is ImageSource.Archive -> JsImageSource.Archive(v1)
-    is ImageSource.Inline -> null
-}
-
 private fun ImageFit.toJs(): JsImageFit = when (this) {
     ImageFit.NONE -> JsImageFit.NONE
     ImageFit.FILL -> JsImageFit.FILL
     ImageFit.COVER -> JsImageFit.COVER
     ImageFit.CONTAIN -> JsImageFit.CONTAIN
     ImageFit.SCALE_DOWN -> JsImageFit.SCALE_DOWN
-}
-
-private fun Effect.toJs(): JsEffect = when (this) {
-    Effect.RAINBOW -> JsEffect.RAINBOW
 }
 
 private fun BlendingMode.toJs(): JsBlendingMode = when (this) {

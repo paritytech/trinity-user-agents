@@ -5,13 +5,13 @@ use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use subxt::tx::Signer;
 use truapi::{
-	CallContext, HostAdmin, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHostRuntime,
+	CallContext, HostAdmin, HostRuntime, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHost,
 	Sr25519Signer,
 	api::{Preimage, ResourceAllocation},
 	chain::{EvmContractCaller, PreparedEvmTransaction},
 	host_logic::{
 		dotns_gateway::{ContentResolver, DotnsRegistry, account_to_h160, read_view},
-		product_account::{derive_identity_keypair, personhood_product_id},
+		product_account::personhood_product_id,
 	},
 	latest,
 	platform::ProductContext,
@@ -37,12 +37,13 @@ impl ChainProfile {
 	/// Finds the profile record and verifies the identity owns `username` before anything is
 	/// allocated or uploaded.
 	pub async fn connect(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		network: &Stack,
-		entropy: &[u8],
 		username: &str,
 	) -> Result<Self> {
-		let signer = Sr25519Signer::from_keypair(&derive_identity_keypair(entropy, network.tld())?);
+		let signer = runtime
+			.identity_signer()
+			.map_err(|error| anyhow!("no identity to sign as: {}", error.reason))?;
 		let mut reader = AssetHubReader::connect(network).await?;
 		let location = ProfileRecordLocation::resolve(&mut reader, username)
 			.await?
@@ -103,19 +104,17 @@ impl<'a> ProfileBackend for ChainProfileBackend<'a> {
 				latest::DerivationIndex::Index(0),
 			)],
 		};
-		let response = self
-			.product
-			.product_runtime()
-			.request(
-				&CallContext::default(),
-				HostRequestResourceAllocationRequest::from_latest(
-					request,
-					HostRequestResourceAllocationRequest::LATEST,
-				),
-			)
-			.await
-			.map_err(|error| anyhow!("smart contract allowance failed: {error:?}"))?
-			.into_latest();
+		let response = ResourceAllocation::request(
+			self.product.product_runtime().as_ref(),
+			&CallContext::default(),
+			HostRequestResourceAllocationRequest::from_latest(
+				request,
+				HostRequestResourceAllocationRequest::LATEST,
+			),
+		)
+		.await
+		.map_err(|error| anyhow!("smart contract allowance failed: {error:?}"))?
+		.into_latest();
 		ensure!(
 			response.outcomes == [latest::AllocationOutcome::Allocated],
 			"smart contract allowance was not allocated: {:?}",
@@ -133,19 +132,14 @@ impl<'a> ProfileBackend for ChainProfileBackend<'a> {
 	}
 
 	async fn upload(&mut self, bytes: Vec<u8>) -> Result<[u8; 32]> {
-		let key = self
-			.product
-			.product_runtime()
-			.submit(
-				&CallContext::default(),
-				RemotePreimageSubmitRequest::from_latest(
-					bytes,
-					RemotePreimageSubmitRequest::LATEST,
-				),
-			)
-			.await
-			.map_err(|error| anyhow!("avatar upload failed: {error:?}"))?
-			.into_latest();
+		let key = Preimage::submit(
+			self.product.product_runtime().as_ref(),
+			&CallContext::default(),
+			RemotePreimageSubmitRequest::from_latest(bytes, RemotePreimageSubmitRequest::LATEST),
+		)
+		.await
+		.map_err(|error| anyhow!("avatar upload failed: {error:?}"))?
+		.into_latest();
 		<[u8; 32]>::try_from(key).map_err(|key| anyhow!("upload returned a {}-byte key", key.len()))
 	}
 

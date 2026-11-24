@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 use std::fs::read_to_string;
 
 fn product() -> ProductContext {
@@ -97,4 +98,20 @@ fn removal_follows_the_protocol_rules_and_republishes_the_list() {
 		})
 		.collect();
 	assert_eq!(kinds, ["remove_refused", "remove_absent", "removed"]);
+}
+
+/// A phone stops drawing a card once it leaves the Pocket, so the CLI stops
+/// following its faces then, and not while the card is still held.
+#[test]
+fn a_card_counts_as_removed_once_it_leaves_the_products_list() {
+	let (host, _transcript) = host("loyalty,humanity");
+	let product = product();
+	let mut removed = Box::pin(host.removed(&product, "loyalty"));
+	assert!((&mut removed).now_or_never().is_none(), "the card is still held");
+
+	remove(&host, "humanity").expect("humanity is removable");
+	assert!((&mut removed).now_or_never().is_none(), "another card's removal is not this one's");
+
+	remove(&host, "loyalty").expect("loyalty is removable");
+	assert_eq!((&mut removed).now_or_never(), Some(()));
 }

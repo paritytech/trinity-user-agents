@@ -9,7 +9,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use futures::stream;
-use tracing::{instrument, warn};
+use tracing::warn;
 
 #[cfg(test)]
 use record::ProfileEntry;
@@ -27,7 +27,7 @@ use crate::{
 		namehash_under,
 	},
 	platform::is_dns_label,
-	runtime::{DotnsLookup, DotnsLookupKind},
+	runtime::DotnsLookup,
 	unix_time::current_unix_secs,
 };
 
@@ -65,9 +65,6 @@ pub enum PublicProfileError {
 	/// Not a username the core resolves.
 	#[error("not a dotNS username")]
 	InvalidUsername,
-	/// The stack has no Asset Hub chain.
-	#[error("no Asset Hub configured")]
-	AssetHubNotConfigured,
 	/// The chain was out of reach, or the lookup failed.
 	#[error("dotNS lookup failed: {}", .0.reason())]
 	#[from(DotnsError)]
@@ -156,7 +153,7 @@ impl ProfileRecordLocation {
 /// Native hosts persist records in the core database. Browser reads are uncached.
 pub struct PublicProfilesService {
 	chain: ChainRuntime,
-	genesis: Option<[u8; 32]>,
+	genesis: [u8; 32],
 	cache: dao::Cache,
 }
 
@@ -180,7 +177,7 @@ impl PublicProfilesService {
 	/// Uses the host's shared chain and executor.
 	///
 	/// Native hosts must install the core database before resolving profiles.
-	pub fn new(chain: ChainRuntime, genesis: Option<[u8; 32]>, spawner: Spawner) -> Self {
+	pub fn new(chain: ChainRuntime, genesis: [u8; 32], spawner: Spawner) -> Self {
 		Self { chain, genesis, cache: dao::Cache::new(spawner) }
 	}
 
@@ -233,29 +230,6 @@ impl PublicProfilesService {
 		}))
 	}
 
-	/// Resolves a profile, reusing fresh native metadata when allowed.
-	///
-	/// Records are fresh for one hour; `force` bypasses that freshness policy.
-	/// Browsers always resolve through dotNS. Missing or malformed records are empty.
-	/// Lookup and storage failures return errors.
-	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
-	pub async fn resolve(
-		self: &Arc<Self>,
-		username: &str,
-		force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		validate_username(username)?;
-		if !force {
-			let now = current_unix_secs();
-			if let Some(cached) =
-				self.stored_record(username).await?.filter(|cached| cached.is_fresh(now))
-			{
-				return Ok(PublicProfile { avatar: cached.record.avatar() });
-			}
-		}
-		self.refresh_profile(username).await
-	}
-
 	async fn refresh_profile(
 		self: &Arc<Self>,
 		username: &str,
@@ -268,10 +242,7 @@ impl PublicProfilesService {
 	}
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
-		let genesis = self.genesis.ok_or(PublicProfileError::AssetHubNotConfigured)?;
-		let mut lookup =
-			DotnsLookup::pinned_to_best_block(&self.chain, genesis, DotnsLookupKind::PublicProfile)
-				.await?;
+		let mut lookup = DotnsLookup::at_best_block(&self.chain, self.genesis).await?;
 		Self::read_record_from(&mut lookup, username).await
 	}
 

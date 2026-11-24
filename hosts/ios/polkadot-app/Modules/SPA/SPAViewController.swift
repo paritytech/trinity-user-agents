@@ -70,6 +70,7 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
+        setContentScrollView(rootView.webView.scrollView, for: .top)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -124,8 +125,7 @@ private extension SPAViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs,
-                 .bundled:
+            case .dotNs:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
@@ -156,10 +156,6 @@ private extension SPAViewController {
     }
 
     func setupNavigationBar() {
-        if configuration.isRootScreen {
-            setTitle(String(localized: .tabBrowse))
-        }
-
         if configuration.showMoreButton, configuration.presentation != .browserTab {
             setupMoreButton()
         }
@@ -192,11 +188,8 @@ private extension SPAViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.isRootScreen {
-            rootView.setupRootLayout()
-        } else {
-            rootView.setupDefaultLayout()
-        }
+        // The Browse page does not read the safe area yet, so the host insets it.
+        rootView.setupWebViewLayout(pageReadsSafeArea: !configuration.isRootScreen)
     }
 
     // MARK: - Actions
@@ -209,7 +202,6 @@ private extension SPAViewController {
 // MARK: - SPAViewProtocol
 
 extension SPAViewController: SPAViewProtocol {
-    var pageScrollView: UIScrollView { rootView.webView.scrollView }
     var pageWebView: WKWebView { rootView.webView }
 
     func navigate(to url: URL) {
@@ -272,9 +264,12 @@ extension SPAViewController: SPAViewProtocol {
     }
 }
 
-// MARK: - RootScreen
+// MARK: - NavigationBarHiding
 
-extension SPAViewController: RootScreen {}
+extension SPAViewController: NavigationBarHiding {
+    /// The Browse tab's root shows no bar. The status strip carries the tab's name.
+    var hidesNavigationBar: Bool { configuration.isRootScreen }
+}
 
 // MARK: - StatusBarTitleProviding
 

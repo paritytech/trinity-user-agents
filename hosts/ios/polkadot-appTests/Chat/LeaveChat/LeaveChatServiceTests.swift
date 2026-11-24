@@ -118,8 +118,11 @@ private extension LeaveChatServiceTests {
     func makeService() -> LeaveChatService {
         LeaveChatService(
             outboxService: StubLeaveOutbox(),
-            allowanceCleanupService: cleanupService,
-            signingConsentStore: consentStore(),
+            removalCleanupService: ChatRemovalCleanupService(
+                allowanceCleanupService: cleanupService,
+                signingConsentStore: consentStore(),
+                storageFacade: facade
+            ),
             storageFacade: facade
         )
     }
