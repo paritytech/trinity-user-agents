@@ -12,6 +12,10 @@ status: draft
 | **Description** | Apps and workers observe updates to their shared product storage. |
 | **Authors**     | Sergey Zhuravlev                         |
 
+## Summary
+
+A product can subscribe to a storage key to receive its current value and subsequent writes and clears from its app or worker.
+
 ## Motivation
 
 An app and its worker share a product storage namespace. Subscribing to a key lets the app show progress as the worker records it, including an initial value when the screen reopens.
