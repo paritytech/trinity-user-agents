@@ -7,6 +7,11 @@ or its path when it is a local file. It used the `id` in the descriptor with `-f
 in as its source's user, with the source's pairings and product data. Built-in networks keep the directory they have.
 Any other stack gets `stack-<tag>`, and `network-check` prints it as `state_directory`.
 
-A stack passed with `--stack` starts empty after the update. The CLI creates a new signer for it, or takes the old one
-with `/session --mnemonic`, and it has to be paired again. The old data stays in `<base-path>/<version>/<id>`, which for
-a fork is its source's directory, and the accounts saved for it stay in `accounts.json` under that old name.
+A stack passed with `--stack` starts empty after the update, unless it is a built-in network given by its link or URL.
+The CLI creates a new signer for it, or takes the old one with `/session --mnemonic`, and it has to be paired again.
+The old data stays where it was, under the descriptor's `id` without `-fork`: sessions, pairings and product data in
+`<base-path>/v2/<id>`, and the default session's accounts, mnemonics included, in `<base-path>/v2/accounts.json`.
+For a fork of a built-in network, `<id>` is that network's name, so the built-in network keeps using what the fork
+stored there: it can sign with an account the fork attested on the fork's chains, and restore a session the fork
+created. On the built-in network, `/session --clear <name>` removes one such session, and `/session --clear-all`
+removes everything stored for the network, its own sessions and accounts included.
