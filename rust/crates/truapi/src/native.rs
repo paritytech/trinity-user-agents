@@ -56,8 +56,8 @@ pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
 };
 pub use errors::{
-	HostRejection, NativeChatFeedRejection, NativeChatFieldError, NativeCoreDatabaseError,
-	NativeRendererError,
+	HostRejection, NativeChatFeedRejection, NativeChatFieldError, NativeChatRoomRejection,
+	NativeCoreDatabaseError, NativeRendererError,
 };
 pub use funding::funding_status_in_flight;
 pub use funding_feed::{FundingChangeKind, funding_resume_pending};

@@ -23,6 +23,7 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.NativeChatRoomRejection
 import uniffi.truapi.ProductId
 
 /**
@@ -34,13 +35,24 @@ class ProductChatHostBridge(
     private val productId: ProductId,
     private val chatMessaging: ProductChatMessaging,
 ) : ChatHostBridge {
-    override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
+    override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus =
+        createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
+
+    // The room screen reads the messages of a room from the host store only, so this host refuses a room whose product
+    // keeps the messages, before it creates anything.
+    override suspend fun createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
+        if (config.productSource) throw NativeChatRoomRejection.UnsupportedConfig()
         val roomIcon = ProductChatIcon.fromString(icon).orReject()
-        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, roomIcon))
-            .orReject()
-            .status
-            .toCoreStatus()
+        val room = ProductChatIdParameter(roomId)
+        val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status
+        chatMessaging.setRoomConfig(room, config.toModel()).orReject()
+        return status.toCoreStatus()
     }
 
     override suspend fun registerBot(botId: String, name: String, icon: String): ChatBotRegistrationStatus =
@@ -70,13 +82,6 @@ class ProductChatHostBridge(
 
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         chatMessaging.roomDeclarations(requireRoom(roomId)).orReject()?.config?.toCore() ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
-
-    // The room screen reads the messages of a room from the host store only, so this host refuses a room whose product
-    // keeps the messages.
-    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
-        if (config.productSource) throw HostRejection.Rejected("this host does not serve product-source rooms")
-        chatMessaging.setRoomConfig(requireRoom(roomId), config.toModel()).orReject()
-    }
 
     override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {
         val room = requireRoom(roomId)

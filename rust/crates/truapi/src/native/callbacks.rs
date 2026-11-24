@@ -10,7 +10,7 @@ use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 use super::NativeTrUApiHostRuntime;
 use super::{
 	config::ProductExecutionConfig,
-	errors::{HostRejection, NativeChatFeedRejection},
+	errors::{HostRejection, NativeChatFeedRejection, NativeChatRoomRejection},
 };
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
@@ -321,12 +321,20 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// the core resolved for the room, and every later call names the room with
 	/// it: the id that the core derived, or, for a product built against the
 	/// earlier client, the id that the product gave.
+	///
+	/// In the same step the host keeps `config` for the room across restarts,
+	/// for a new room and for a room that exists. A change of `product_source`
+	/// discards the stored messages or the cached pages of the room. A host
+	/// that cannot keep `config` refuses it with
+	/// [`NativeChatRoomRejection::UnsupportedConfig`] before it creates or
+	/// changes anything.
 	async fn create_room(
 		&self,
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<latest::ChatRoomRegistrationStatus, HostRejection>;
+		config: truapi::latest::ChatRoomConfig,
+	) -> Result<latest::ChatRoomRegistrationStatus, NativeChatRoomRejection>;
 
 	/// Register or resolve a native product Chat bot.
 	async fn register_bot(
@@ -366,21 +374,15 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// Return the current product-scoped native Chat room list.
 	async fn list_rooms(&self) -> Result<Vec<latest::ChatRoom>, HostRejection>;
 
-	/// Return the configuration the product last declared for a room, or the
-	/// default configuration when it declared none. The core reads it before
-	/// each feed update, preview and posted message of the room.
+	/// Return the configuration of the last `create_room` of a room, or the
+	/// default configuration for a room the host does not know. The core reads
+	/// it before each feed update, preview and posted message of the room. For
+	/// a posted message it reads it for the room the product names, before any
+	/// check that the product created the room.
 	async fn room_config(
 		&self,
 		room_id: String,
 	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
-
-	/// Replace the configuration of a room whole, and keep it across
-	/// restarts. The core calls it after each `create_room` of the product.
-	async fn set_room_config(
-		&self,
-		room_id: String,
-		config: truapi::latest::ChatRoomConfig,
-	) -> Result<(), HostRejection>;
 
 	/// Replace the name, description, icon and empty-room text of a room. An
 	/// icon of `None` keeps the icon, and an empty icon removes it.
