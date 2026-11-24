@@ -22,7 +22,7 @@ public extension CustomMessageWidgetNode.Mask {
 
 /// How much of a node a mask's shapes cover, by the rule the core gives (`cleared_share`): the node is laid with
 /// 2 by 2 point squares from its top-start corner, a part square counting as whole, and a square is covered when its
-/// centre lies in any shape (on the edge counts).
+/// centre lies in any shape (on the edge counts); a stamped line covers what its stamps do (`MaskBrush::stamps`).
 enum MaskCoverage {
     /// The side of a sample square, in points.
     static let side: CGFloat = 2
@@ -74,6 +74,12 @@ enum MaskCoverage {
                         width: abs(b.x - a.x) + 2 * r, height: abs(b.y - a.y) + 2 * r
                     )
                     mark(box) { x, y in distanceSquared(x, y, a, b) <= r * r }
+                }
+            case let .stamped(width, brush, points):
+                let reach = width / 2
+                for centre in brush.stamps(width: width, along: points) {
+                    let box = CGRect(x: centre.x - reach, y: centre.y - reach, width: width, height: width)
+                    mark(box) { x, y in brush.covers(width: width, centre: centre, point: CGPoint(x: x, y: y)) }
                 }
             }
         }
