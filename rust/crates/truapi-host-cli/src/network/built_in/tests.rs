@@ -467,23 +467,110 @@ fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
 	);
 }
 
+/// A copies directory, and the path in it a host keeps the test stack's
+/// descriptor at, holding `kept` when given.
+fn copies_directory(kept: Option<&[u8]>) -> (tempfile::TempDir, std::path::PathBuf) {
+	let base = tempfile::tempdir().expect("a temporary directory");
+	let path = base.path().join("stacks").join("test.json");
+	if let Some(kept) = kept {
+		fs::create_dir_all(base.path().join("stacks")).expect("the copies directory");
+		fs::write(&path, kept).expect("the kept copy");
+	}
+	(base, path)
+}
+
+/// What the next run reads from the copies directory at `path`.
+fn read_back(path: &Path) -> Option<Vec<u8>> {
+	read_kept_copy(path).expect("the kept copy reads")
+}
+
+/// A run of a host on the bundled copy of sequence 10, with `published`
+/// fetched when given and `kept` in its copies directory: the sequence it runs
+/// on, which copy that is, and what the next run reads from the directory.
+fn run_and_keep(
+	published: Option<&[u8]>,
+	kept: Option<&[u8]>,
+) -> (u32, BuiltInCopy, Option<Vec<u8>>) {
+	let (_base, path) = copies_directory(kept);
+	let bundled = sign_copy(10, "g1");
+	let refresh = refresh_with_kept_copy(
+		"test",
+		&test_pointer(),
+		&bundled,
+		published,
+		Some(&path),
+		NOW,
+		&ChainAccess::Rpc,
+	)
+	.expect("a descriptor is usable");
+	(refresh.stack.descriptor().sequence, refresh.copy, read_back(&path))
+}
+
 /// The copy a host keeps has to be there for its next run, which starts from
 /// it when the published descriptor is unreachable. A host that has kept
 /// nothing reads none, its first copy creates the directory, and a later one
 /// replaces it.
 #[test]
 fn a_kept_copy_is_read_back_by_the_next_run() {
-	let base = tempfile::tempdir().expect("a temporary directory");
-	let path = base.path().join("stacks").join("test.json");
-	let before = read_kept_copy(&path);
+	let (_base, path) = copies_directory(None);
+	let (published, republished) = (sign_copy(11, "g2"), sign_copy(12, "g2"));
+	let before = read_back(&path);
 
-	keep_copy(&path, b"published");
-	let kept = read_kept_copy(&path);
-	keep_copy(&path, b"republished");
+	keep_copy(&path, &test_pointer(), &published, NOW);
+	let kept = read_back(&path);
+	keep_copy(&path, &test_pointer(), &republished, NOW);
+
+	assert_eq!((before, kept, read_back(&path)), (None, Some(published), Some(republished)));
+}
+
+/// A kept copy that is not a descriptor, such as one cut short, or that is
+/// larger than any descriptor the CLI fetches, is not one the host kept. The
+/// host passes it over, starting from the bundled copy while the published
+/// one is unreachable, and keeps the published one over it once that arrives.
+/// A file that large is not read.
+#[test]
+fn a_corrupt_kept_copy_is_passed_over_and_replaced() {
+	let published = sign_copy(11, "g2");
+	let cut_short = published[..published.len() / 2].to_vec();
+	let oversized = vec![b' '; MAX_FETCH_BYTES + 1];
 
 	assert_eq!(
-		(before, kept, read_kept_copy(&path)),
-		(None, Some(b"published".to_vec()), Some(b"republished".to_vec()))
+		[
+			run_and_keep(None, Some(&cut_short)),
+			run_and_keep(Some(&published), Some(&cut_short)),
+			run_and_keep(None, Some(&oversized)),
+			run_and_keep(Some(&published), Some(&oversized)),
+		],
+		[
+			(10, BuiltInCopy::Unreachable, Some(cut_short.clone())),
+			(11, BuiltInCopy::Published, Some(published.clone())),
+			(10, BuiltInCopy::Unreachable, None),
+			(11, BuiltInCopy::Published, Some(published.clone())),
+		]
+	);
+}
+
+/// A kept copy that cannot be read may be the descriptor of the chains after
+/// a wipe, so the command stops instead of going back to the bundled copy,
+/// whose chains may be gone.
+#[test]
+fn a_kept_copy_that_cannot_be_read_stops_the_command() {
+	let (_base, path) = copies_directory(None);
+	fs::create_dir_all(&path).expect("a directory where the copy goes");
+
+	let refreshed = refresh_with_kept_copy(
+		"test",
+		&test_pointer(),
+		&sign_copy(10, "g1"),
+		None,
+		Some(&path),
+		NOW,
+		&ChainAccess::Rpc,
+	);
+
+	assert_eq!(
+		refreshed.err().map(|error| error.to_string()),
+		Some(format!("could not read the stack descriptor kept at {}", path.display()))
 	);
 }
 
@@ -507,26 +594,39 @@ fn a_kept_copy_older_than_the_bundled_one_is_passed_over() {
 	);
 }
 
-/// A host keeps the published copy it runs on, and only that one. A copy it
-/// did not take must not become the copy the next offline run starts from,
-/// and the copy kept already is not written again.
+/// A host keeps the published copy it runs on, and only that one, so a copy
+/// it did not take never becomes the copy its next offline run starts from.
+/// Nor does it keep one over a later copy, such as the one another host
+/// starting at the same time kept after this one read the file.
 #[test]
-fn only_a_published_copy_in_use_is_kept() {
-	let kept = |last_run: Option<&'static [u8]>, in_use: BuiltInCopy| {
-		let copies = Copies { bundled: b"bundled", published: Some(b"published"), last_run };
-		copy_to_keep(&copies, in_use)
-	};
-	let unreachable = Copies { bundled: b"bundled", published: None, last_run: Some(b"earlier") };
-	let published: Option<&[u8]> = Some(b"published");
+fn only_a_published_copy_in_use_replaces_the_kept_one() {
+	let (kept, published, later) = (sign_copy(11, "g2"), sign_copy(12, "g2"), sign_copy(13, "g2"));
+	let other_tld = sign_edited(|descriptor| {
+		descriptor["sequence"] = 12.into();
+		descriptor["generation"] = "g2".into();
+		descriptor["tld"] = "testnet".into();
+	});
+	let kept_after =
+		|published: Option<&[u8]>, kept: Option<&[u8]>| run_and_keep(published, kept).2;
+	let (_base, raced) = copies_directory(Some(&later));
+	keep_copy(&raced, &test_pointer(), &published, NOW);
 
 	assert_eq!(
 		[
-			kept(None, BuiltInCopy::Published),
-			kept(Some(b"earlier"), BuiltInCopy::Published),
-			kept(Some(b"published"), BuiltInCopy::Published),
-			kept(Some(b"earlier"), BuiltInCopy::Rejected),
-			copy_to_keep(&unreachable, BuiltInCopy::Unreachable),
+			kept_after(Some(&published), None),
+			kept_after(Some(&published), Some(&kept)),
+			kept_after(Some(&other_tld), None),
+			kept_after(Some(&other_tld), Some(&kept)),
+			kept_after(None, Some(&kept)),
+			read_back(&raced),
 		],
-		[published, published, None, None, None]
+		[
+			Some(published.clone()),
+			Some(published),
+			None,
+			Some(kept.clone()),
+			Some(kept),
+			Some(later),
+		]
 	);
 }

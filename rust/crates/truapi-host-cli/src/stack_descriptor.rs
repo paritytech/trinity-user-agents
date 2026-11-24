@@ -16,7 +16,7 @@ const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest body `fetch` reads. A descriptor is a few kilobytes, and the
 /// largest light spec, a relay's with its checkpoint, is under 300 KiB.
-const MAX_FETCH_BYTES: usize = 1024 * 1024;
+pub const MAX_FETCH_BYTES: usize = 1024 * 1024;
 
 pub fn refused(error: trinity_stack::Error) -> anyhow::Error {
 	anyhow!("refused ({}): {error}", error.code())

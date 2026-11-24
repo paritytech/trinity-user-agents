@@ -1,10 +1,18 @@
 //! The built-in networks: each stack's bundled descriptor, its refresh from
 //! the published copy, and the notice when that copy is in use.
 
-use std::{collections::HashMap, fs, io, path::Path, sync::LazyLock, time::Duration};
+use std::{
+	collections::HashMap,
+	fs,
+	io::{self, Read},
+	path::Path,
+	sync::LazyLock,
+	time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::ValueEnum;
+use fs2::FileExt;
 use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 
 use super::{Network, Stack};
@@ -12,8 +20,8 @@ use crate::{
 	chain::ChainAccess,
 	platform::atomic_write,
 	stack_descriptor::{
-		FetchError, describe_pin_change, fetch, light_client_chains, pointer_of, reads_same,
-		refused, unix_now,
+		FetchError, MAX_FETCH_BYTES, describe_pin_change, fetch, light_client_chains, pointer_of,
+		reads_same, refused, unix_now,
 	},
 };
 
@@ -168,10 +176,11 @@ impl Network {
 	/// Fails when the descriptor in use is expired or is not a stack the CLI
 	/// can run on.
 	///
-	/// A published descriptor that is in use is kept in `copy_directory`.
-	/// While the published one is unreachable, that copy stands in for it, so
-	/// a host that ran on a stack after a wipe does not go back to the bundled
-	/// copy's chains, which are gone.
+	/// A published descriptor that is in use is kept in `copy_directory`,
+	/// unless the copy kept there is the same or later. While the published
+	/// one is unreachable, that copy stands in for it, so a host that ran on a
+	/// stack after a wipe does not go back to the bundled copy's chains, which
+	/// are gone. Fails when the kept copy cannot be read.
 	pub async fn resolve_built_in(
 		self,
 		fetch_timeout: Duration,
@@ -192,14 +201,17 @@ impl Network {
 			Ok(_) => {},
 		}
 		let copy_path = copy_directory.map(|directory| directory.join(format!("{name}.json")));
-		let last_run = copy_path.as_deref().and_then(read_kept_copy);
 		let now = unix_now() as i64;
 		let published = fetched.as_deref().ok();
-		let copies = Copies { bundled: built_in.bundle, published, last_run: last_run.as_deref() };
-		let refresh = refresh_from_last_run(name, &pointer, &copies, now, chain_access)?;
-		if let (Some(path), Some(published)) = (&copy_path, copy_to_keep(&copies, refresh.copy)) {
-			keep_copy(path, published);
-		}
+		let refresh = refresh_with_kept_copy(
+			name,
+			&pointer,
+			built_in.bundle,
+			published,
+			copy_path.as_deref(),
+			now,
+			chain_access,
+		)?;
 		match &refresh.notice {
 			Some(notice) if notice.new_generation => tracing::warn!("{notice}"),
 			Some(notice) => tracing::info!("{notice}"),
@@ -294,27 +306,73 @@ impl std::fmt::Display for StackNotice {
 	}
 }
 
-/// The published descriptor a host kept at `path` on an earlier run. `None`
-/// when it kept none, and when the file cannot be read, with a warning.
-fn read_kept_copy(path: &Path) -> Option<Vec<u8>> {
-	match fs::read(path) {
-		Ok(copy) => Some(copy),
-		Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-		Err(error) => {
-			let path = path.display();
-			tracing::warn!("could not read the stack descriptor kept at {path}: {error}");
-			None
-		},
+/// The published descriptor a host kept at `path` on an earlier run, or
+/// `None` when it kept none.
+///
+/// A file larger than any descriptor the CLI fetches is not a copy the host
+/// kept, so it is passed over with a warning, unread. Fails when the file
+/// cannot be read: starting from the bundled copy instead could take the host
+/// back to chains a wipe replaced.
+fn read_kept_copy(path: &Path) -> Result<Option<Vec<u8>>> {
+	let context = || format!("could not read the stack descriptor kept at {}", path.display());
+	let file = match fs::File::open(path) {
+		Ok(file) => file,
+		Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+		Err(error) => return Err(error).with_context(context),
+	};
+	let mut copy = Vec::new();
+	let limit = u64::try_from(MAX_FETCH_BYTES + 1).expect("the fetch limit fits in a u64");
+	file.take(limit).read_to_end(&mut copy).with_context(context)?;
+	if copy.len() > MAX_FETCH_BYTES {
+		let path = path.display();
+		tracing::warn!(
+			"the stack descriptor kept at {path} is larger than {MAX_FETCH_BYTES} bytes; not using it"
+		);
+		return Ok(None);
+	}
+	Ok(Some(copy))
+}
+
+/// Keeps `published`, the copy in use, at `path` for a run that cannot fetch
+/// it, when [`accept`] takes it over the copy kept there. The same copy, or a
+/// later one that another host starting at the same time kept, stays. A
+/// failure is a warning: this run has its descriptor, and the next one keeps
+/// it again.
+fn keep_copy(path: &Path, pointer: &Pointer, published: &[u8], now_unix_seconds: i64) {
+	if let Err(error) = replace_older_copy(path, pointer, published, now_unix_seconds) {
+		let path = path.display();
+		tracing::warn!("could not keep the stack descriptor at {path}: {error:#}");
 	}
 }
 
-/// Keeps `published` at `path` for a run that cannot fetch it. A failure is a
-/// warning: this run has its descriptor, and the next one keeps it again.
-fn keep_copy(path: &Path, published: &[u8]) {
-	if let Err(error) = atomic_write(path, published) {
-		let path = path.display();
-		tracing::warn!("could not keep the stack descriptor at {path}: {error}");
+/// [`keep_copy`], holding a lock on `<path>.lock` from the read of the kept
+/// copy to the write, so another host cannot write in between.
+fn replace_older_copy(
+	path: &Path,
+	pointer: &Pointer,
+	published: &[u8],
+	now_unix_seconds: i64,
+) -> Result<()> {
+	let lock_path = path.with_extension("json.lock");
+	if let Some(directory) = lock_path.parent() {
+		fs::create_dir_all(directory)
+			.with_context(|| format!("could not create {}", directory.display()))?;
 	}
+	let lock = fs::OpenOptions::new()
+		.create(true)
+		.truncate(false)
+		.write(true)
+		.open(&lock_path)
+		.with_context(|| format!("could not open {}", lock_path.display()))?;
+	lock.lock_exclusive()
+		.with_context(|| format!("could not lock {}", lock_path.display()))?;
+	let kept = read_kept_copy(path)?;
+	let newer = accept(pointer, kept.as_deref(), Fetched::Document(published), now_unix_seconds)
+		.is_ok_and(|taken| taken.status == Status::Updated);
+	if newer {
+		atomic_write(path, published)?;
+	}
+	Ok(())
 }
 
 /// Whether `last_run` is older than `bundled`, as after an update of the CLI
@@ -339,12 +397,27 @@ fn not_taken(status: &Status) -> Option<String> {
 	}
 }
 
-/// The published copy to keep for a run that cannot fetch it: the one
-/// `in_use`, unless it is the copy kept already.
-fn copy_to_keep<'a>(copies: &Copies<'a>, in_use: BuiltInCopy) -> Option<&'a [u8]> {
-	copies
-		.published
-		.filter(|published| in_use == BuiltInCopy::Published && copies.last_run != Some(published))
+/// [`refresh_from_last_run`] with the copy kept at `copy_path` as `last_run`,
+/// which then keeps `published` there when it is in use. Without `copy_path`
+/// nothing is read or kept. Fails as [`read_kept_copy`] does.
+fn refresh_with_kept_copy(
+	id: &str,
+	pointer: &Pointer,
+	bundled: &[u8],
+	published: Option<&[u8]>,
+	copy_path: Option<&Path>,
+	now_unix_seconds: i64,
+	chain_access: &ChainAccess,
+) -> Result<StackRefresh> {
+	let last_run = copy_path.map(read_kept_copy).transpose()?.flatten();
+	let copies = Copies { bundled, published, last_run: last_run.as_deref() };
+	let refresh = refresh_from_last_run(id, pointer, &copies, now_unix_seconds, chain_access)?;
+	if let (Some(path), Some(published), BuiltInCopy::Published) =
+		(copy_path, published, refresh.copy)
+	{
+		keep_copy(path, pointer, published, now_unix_seconds);
+	}
+	Ok(refresh)
 }
 
 /// The copies of a built-in stack's descriptor a refresh chooses between.

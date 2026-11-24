@@ -1125,7 +1125,7 @@ A command reaches its chains in one of two ways:
   resolves one fetches the descriptor its operator publishes, verifies it against
   the stack's key, and uses it when it is newer than the signed copy this release
   ships in `stacks/`; an unreachable descriptor falls back silently to the copy a
-  host command last ran on, or else the shipped copy, and a non-2xx answer is
+  host command kept, or else the shipped copy, and a non-2xx answer is
   logged as a warning. When the published
   descriptor changes a field the CLI reads, the CLI prints one line saying that it is
   in use and that a later release ships it; when the stack restarted from genesis the

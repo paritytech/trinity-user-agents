@@ -1517,7 +1517,8 @@ The layout may contain compatibility paths as well as identity-owned paths:
   accounts.json.lock
   log-level
   stacks/
-    <network>.json                    # published descriptor a host last ran on
+    <network>.json                    # published descriptor a host last took
+    <network>.json.lock
 
   <network>/
     signing-host/
@@ -1822,13 +1823,18 @@ with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 on over either chain backend.
 
 A host command (`pairing-host`, `signing-host`, `dev`) keeps the published
-descriptor a built-in network runs on in
-`<base-path>/<version>/stacks/<network>.json`.
+descriptor it takes for a built-in network in
+`<base-path>/<version>/stacks/<network>.json`, before the chain checks below.
+It leaves a copy kept there that is the same or later, such as one another
+host starting at the same time kept, and holds `<network>.json.lock` from its
+read of the copy to its write.
 While the published descriptor cannot be fetched, and when it is refused or
 older than that copy, the host starts from that copy, under the same rules as a
 fetched one. A kept copy older than the bundled one, as after an update of the
-CLI, is not used. A host that ran on a stack after a wipe therefore does not go
-back to the bundled copy's chains, which the core would take for another wipe.
+CLI, is not used, nor is one larger than any descriptor the CLI fetches. A kept
+copy that cannot be read stops the command. A host that ran on a stack after a
+wipe therefore does not go back to the bundled copy's chains, which the core
+would take for another wipe.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
