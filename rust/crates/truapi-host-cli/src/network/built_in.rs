@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// How long a command waits for a built-in stack's published descriptor
-/// before it runs on the bundled copy.
+/// before it runs on the copy the host last ran on, or else the bundled one.
 pub const BUILT_IN_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A known stack this build ships a signed copy of, so a command starts
@@ -118,8 +118,9 @@ impl Network {
 	}
 
 	/// The published descriptor when it is newer than the bundled copy,
-	/// otherwise the bundled copy, with which of the two is in use. Logs a
-	/// notice when the published descriptor changes a field the CLI reads.
+	/// otherwise the copy this host last ran on or the bundled copy, with
+	/// whether the published one is in use. Logs a notice when the published
+	/// descriptor changes a field the CLI reads.
 	/// Fails when the descriptor in use is expired or is not a stack the CLI
 	/// can run on.
 	///
@@ -141,7 +142,7 @@ impl Network {
 		let fetched = fetch(url, fetch_timeout).await;
 		match &fetched {
 			Err(cause @ FetchError::Http(_)) => tracing::warn!(
-				"the {name} stack descriptor at {url} returned {cause}; using the bundled copy"
+				"the {name} stack descriptor at {url} returned {cause}; not using it"
 			),
 			Err(cause) => tracing::debug!("{name} stack descriptor is unreachable: {cause}"),
 			Ok(_) => {},
@@ -211,12 +212,13 @@ impl BuiltInOrigin {
 				 ({url}) was published"
 			),
 			BuiltInCopy::Unreachable => format!(
-				"the {id} stack restarted from genesis after the bundled descriptor in use was \
-				 built, and the published copy at {url} could not be fetched"
+				"the {id} stack restarted from genesis after the descriptor in use was \
+				 published, and the published copy at {url} could not be fetched"
 			),
 			BuiltInCopy::Rejected => format!(
-				"the {id} stack restarted from genesis after the bundled descriptor in use was \
-				 built, and the published copy at {url} was rejected, as the warning above reports"
+				"the {id} stack restarted from genesis after the descriptor in use was \
+				 published, and the published copy at {url} was rejected, as the warning above \
+				 reports"
 			),
 		}
 	}
@@ -264,14 +266,16 @@ impl std::fmt::Display for StackNotice {
 /// from an earlier run, standing in for `published` while that is
 /// unreachable.
 ///
-/// `last_run` goes through the same rules as a fetched copy, so one older
-/// than the bundled copy, or one that no longer verifies, leaves the bundled
-/// copy in use. Whichever copy is in use without `published` is reported as
+/// `last_run` goes through the same rules as a fetched copy, so one that no
+/// longer verifies leaves the bundled copy in use, with a warning. One older
+/// than the bundled copy, as after an update of the CLI, is passed over
+/// without one. Whichever copy is in use without `published` is reported as
 /// [`BuiltInCopy::Unreachable`]: the published descriptor may still arrive.
 ///
 /// A `published` copy that [`accept`] does not take over `last_run`, such as
-/// one with a lower `sequence`, is a rollback. It and a `published` copy that
-/// [`refresh_stack`] refuses leave `last_run` in use, and are reported as
+/// one with a lower `sequence` or one that does not verify, is not used, with
+/// a warning that says why. It and a `published` copy that [`refresh_stack`]
+/// refuses leave `last_run` in use, and are reported as
 /// [`BuiltInCopy::Rejected`].
 fn refresh_from_last_run(
 	id: &str,
@@ -282,16 +286,28 @@ fn refresh_from_last_run(
 	now_unix_seconds: i64,
 	chain_backend: ChainBackend,
 ) -> Result<StackRefresh> {
-	let rolled_back = published.zip(last_run).is_some_and(|(published, last_run)| {
-		let taken = accept(pointer, Some(last_run), Fetched::Document(published), now_unix_seconds);
-		!taken.is_ok_and(|taken| matches!(taken.status, Status::Updated | Status::Unchanged))
+	let last_run = last_run.filter(|last_run| {
+		let over_bundled =
+			accept(pointer, Some(bundled), Fetched::Document(last_run), now_unix_seconds);
+		!over_bundled.is_ok_and(|taken| taken.status == Status::Rollback)
 	});
-	if rolled_back {
+	let not_taken = published.zip(last_run).and_then(|(published, last_run)| {
+		let taken = accept(pointer, Some(last_run), Fetched::Document(published), now_unix_seconds);
+		match taken.map(|taken| taken.status) {
+			Ok(Status::Updated | Status::Unchanged) => None,
+			Ok(Status::Rollback) => Some("has a lower sequence".to_owned()),
+			Ok(Status::Refused(error)) | Err(error) => {
+				Some(format!("is refused ({}): {error}", error.code()))
+			},
+			Ok(status) => Some(format!("is a {}", status.code())),
+		}
+	});
+	if let Some(reason) = &not_taken {
 		tracing::warn!(
-			"the published {id} stack descriptor is older than the one this host last ran on; \
-			 keeping that one"
+			"the published {id} stack descriptor {reason}; keeping the one this host last ran on"
 		);
 	}
+	let rolled_back = not_taken.is_some();
 	let refresh_from = |document: Option<&[u8]>, name: &str| {
 		let fetched = document.map_or(Fetched::Unreachable, Fetched::Document);
 		refresh_stack(id, name, pointer, bundled, fetched, now_unix_seconds, chain_backend)

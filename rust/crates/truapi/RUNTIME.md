@@ -489,15 +489,15 @@ for raw bytes signed inside the `<Bytes>` watermark.
   with the run they were read in; one from another run, or stored without a
   run, is ignored until it is written again. The ring-VRF registry is the
   wallet's own record, so it is kept, without the rings on chains the stack
-  no longer runs. The `SessionUsernamesRun` slot records the run in which the
+  does not list. The `SessionUsernamesRun` slot records the run in which the
   usernames of the `AuthSession` blob were read, with a hash of that blob.
   A session is installed without waiting on dotNS, whether it is restored
   from the slot or passed to `activate_external_session`. When the record
   does not vouch for its blob, or vouches for a blob with no username, its
   usernames are looked up afterwards: they are kept meanwhile when nothing is
   recorded, and dropped when the record names another run or blob. A lookup
-  that fails changes nothing. The session and the stored permissions are
-  kept.
+  that fails changes nothing, and one that finds no username clears the stored
+  ones. The session and the stored permissions are kept.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

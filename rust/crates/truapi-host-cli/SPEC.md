@@ -1516,6 +1516,8 @@ The layout may contain compatibility paths as well as identity-owned paths:
   accounts.json
   accounts.json.lock
   log-level
+  stacks/
+    <network>.json                    # published descriptor a host last ran on
 
   <network>/
     signing-host/
@@ -1579,6 +1581,7 @@ When switching from one resolved user to another, only transient authentication
 keys move:
 
 - `AuthSession`;
+- `SessionUsernamesRun`, which vouches for the usernames in that value;
 - `PairingDeviceIdentity`; and
 - `LastProcessedPairingStatement`.
 
@@ -1801,8 +1804,9 @@ published copy that changes the `tld` or the `id`, or that the CLI cannot run on
 (for instance one without a `dub` service), is not used: the shipped copy stays
 in use with a warning that names the published URL, since every account derives
 under the TLD and is stored under the namespace. A refused, rolled-back or
-conflicting published copy leaves the shipped copy in use with a warning; an
-unreachable one does so without a message. A result past `expiresAt` is an
+conflicting published copy is not used, with a warning; an unreachable one is
+passed over without a message. The copy in use is then the one a host command
+kept (below), or else the shipped copy. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
 light-client` on a built-in whose descriptor in use has genesis hashes other than
 this build's light-client chain specs fails at start, since the stack restarted
@@ -1818,19 +1822,19 @@ descriptor a built-in network runs on in
 `<base-path>/<version>/stacks/<network>.json`.
 While the published descriptor cannot be fetched, and when it is refused or
 older than that copy, the host starts from that copy, under the same rules as a
-fetched one, so one older than the bundled copy is not used. A host that ran
-on a stack after a wipe therefore does not go back to the bundled copy's
-chains, which the core would take for another wipe.
+fetched one. A kept copy older than the bundled one, as after an update of the
+CLI, is not used. A host that ran on a stack after a wipe therefore does not go
+back to the bundled copy's chains, which the core would take for another wipe.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
 the same connection once its genesis matches, for its `NetworkSuffix`. An
 endpoint that reports another genesis is an error; for a built-in it reports that
 the stack restarted from genesis and which descriptor is in use: the published
-one and its URL, or the bundled one because the published copy at its URL could
+one and its URL, or an earlier one because the published copy at its URL could
 not be fetched or was rejected (refused, a rollback, a conflict, a TLD or id
 change, or a copy the CLI cannot run on).
-When the bundled copy is in use because the published one could not be fetched,
+When the published descriptor could not be fetched,
 a failed check first fetches the published descriptor again (10-second timeout);
 the checks repeat only when that fetch puts the published copy in use, and
 otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error

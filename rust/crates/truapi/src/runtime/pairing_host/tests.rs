@@ -11,6 +11,7 @@ use crate::{
 	},
 	test_support::*,
 };
+use parity_scale_codec::Encode;
 use std::sync::Mutex;
 use truapi::{
 	api::Signing,
@@ -333,7 +334,7 @@ fn a_product_reset_during_activation_keeps_the_new_session() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let session = external_sso_session_info();
+	let session = sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
@@ -650,6 +651,37 @@ fn a_paired_registration_records_the_phones_key_locally() {
 		),
 		(Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
 	);
+}
+
+/// Host storage in memory that keeps a value under whatever key it is given.
+#[derive(Default)]
+struct MemoryCoreStorage(Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl CoreStorage for MemoryCoreStorage {
+	async fn read_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, truapi::latest::GenericError> {
+		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
+	}
+
+	async fn write_core_storage(
+		&self,
+		key: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
+		Ok(())
+	}
+
+	async fn clear_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
+		Ok(())
+	}
 }
 
 /// A pairing host over `storage` whose Asset Hub the stub does not serve, so

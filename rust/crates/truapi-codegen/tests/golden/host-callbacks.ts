@@ -236,9 +236,10 @@ export type CoreStorageKey =
   /**
    * Cached root manifest of one product, as published to dotNS.
    *
-   * The value carries the manifest JSON alongside the time it was read. The
-   * core honours it for a bounded lifetime, which is what makes a revoked
-   * trust grant eventually take effect.
+   * The value carries the manifest JSON alongside the time it was read and
+   * the `StackRun` it was read in. The core honours it in that run for a
+   * bounded lifetime, which is what makes a revoked trust grant eventually
+   * take effect.
    */
   | { tag: "ProductManifest"; value: { productLabel: string } }
   /**

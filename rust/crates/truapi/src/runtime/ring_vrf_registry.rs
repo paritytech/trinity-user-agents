@@ -27,12 +27,14 @@ struct RegistrySnapshot {
 }
 
 impl RegistrySnapshot {
-	/// The snapshot without the rings on chains that `chains` no longer has.
+	/// The snapshot without the rings on chains that are not among `chains`.
 	///
 	/// A wipe replaces a stack's chains and the rings on them, while a
-	/// registration on a chain the stack still runs stays valid. An entry left
-	/// with no ring is dropped, and an owner that lost a ring is no longer
-	/// listed completely, so its listing is read again.
+	/// registration on a chain the stack still runs stays valid. A ring on a
+	/// chain the stack never listed goes too, since nothing stored tells it
+	/// from one on a wiped chain. An entry left with no ring is dropped, and an
+	/// owner that lost a ring is no longer listed completely, so its listing is
+	/// read again.
 	fn on_chains(mut self, chains: &StackChains) -> Self {
 		let kept = |ring: &RingLocation| chains.contains(ring.chain_id);
 		let mut incomplete = Vec::new();

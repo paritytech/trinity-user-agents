@@ -91,15 +91,15 @@ pub struct StackIdentity {
 /// One run of a stack's chains, from one wipe to the next: the descriptor's
 /// `generation` and the genesis hashes of the chains the core reads.
 ///
-/// A wipe changes both. The hashes are compared as well, so a wipe is noticed
-/// even when the operator left `generation` as it was. What the core stored
+/// A wipe changes both. The hashes are compared as well, so a wipe that
+/// changes one is noticed even when the operator left `generation` as it was. What the core stored
 /// about the chains in another run is stale. The relay chain is left out:
 /// the core never reads it, so adding or removing it is not a wipe.
 ///
 /// It encodes as a version byte, then its fields, independent of
 /// [`StackChains`]. An encoding with another version decodes as an error,
 /// which every reader takes for another run.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct StackRun {
 	generation: String,
 	asset_hub: [u8; 32],

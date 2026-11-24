@@ -177,7 +177,7 @@ mod tests;
 /// manifest is read again.
 pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 
-/// A cached root manifest lookup and when it was made.
+/// A cached root manifest lookup, when it was made and in which run.
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
 /// reads today, so a later consumer needs no cache migration.

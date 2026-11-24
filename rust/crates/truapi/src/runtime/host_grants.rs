@@ -189,7 +189,9 @@ enum Barrier<'a> {
 impl HostGrantStore {
 	/// Bind retained capabilities to the host's storage, kept as `keeping` says.
 	///
-	/// Grants are only kept for the session `session_state` selects.
+	/// Grants are only kept for the session `session_state` selects. Allowance
+	/// keys are stored with `run`, the run of the stack's chains, and read back
+	/// only in it.
 	pub fn new(
 		storage: Arc<dyn CoreStorage>,
 		run: StackRun,

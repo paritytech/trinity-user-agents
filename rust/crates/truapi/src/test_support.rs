@@ -386,17 +386,6 @@ pub fn usernames_record(stack: &crate::platform::Stack, blob: &[u8]) -> Vec<u8> 
 	stack.run().stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
-/// Whether `platform` holds no core value but the record of the run the
-/// stored session's usernames were read in.
-///
-/// A session leaves that record behind when it ends. It names no secret, so
-/// a check that nothing of a session is left stored allows it.
-pub fn only_the_usernames_run_is_stored(platform: &StubPlatform) -> bool {
-	let stored = platform.local_storage.lock().expect("local storage mutex poisoned");
-	let run = core_storage_test_key(CoreStorageKey::SessionUsernamesRun);
-	stored.keys().all(|key| *key == run)
-}
-
 /// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
 /// and `asset_hub`: what a cached manifest must name to be read on it.
 pub fn test_run(asset_hub: [u8; 32]) -> crate::platform::StackRun {
@@ -503,34 +492,6 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 		.to_link(trinity_stack::DEFAULT_LINK_BASE)
 }
 
-/// Host storage in memory that keeps a value under whatever key it is given.
-#[derive(Default)]
-pub struct MemoryCoreStorage(Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
-
-#[async_trait::async_trait]
-impl PlatformCoreStorage for MemoryCoreStorage {
-	async fn read_core_storage(
-		&self,
-		key: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, v01::GenericError> {
-		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
-	}
-
-	async fn write_core_storage(
-		&self,
-		key: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
-		Ok(())
-	}
-
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
-		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
-		Ok(())
-	}
-}
-
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 	(
@@ -629,9 +590,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	(host_session, responder_session)
 }
 
-/// [`sso_session_info`] as a host that keeps the session itself holds it:
-/// without usernames, which the core looks up whenever it activates such a
-/// session.
+/// [`sso_session_info`] without usernames, as for an account that has none.
 pub fn external_sso_session_info() -> crate::host_logic::session::SessionInfo {
 	crate::host_logic::session::SessionInfo {
 		lite_username: None,

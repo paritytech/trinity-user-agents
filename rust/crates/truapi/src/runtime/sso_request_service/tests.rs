@@ -2,7 +2,7 @@ use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
-	test_support::{StubPlatform, external_sso_session_info, paseo_test_stack, sso_session_info},
+	test_support::{StubPlatform, paseo_test_stack, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -70,7 +70,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		let (_, pairing) =
 			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 		let host = pairing.session().clone();
-		let session = external_sso_session_info();
+		let session = sso_session_info();
 		block_on(host.set_connected_session_for_tests(session.clone()));
 		let blob = encode_persisted_session(&session);
 		let session_id = allowances::session_storage_id(session.sso.as_ref().unwrap());

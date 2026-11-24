@@ -618,8 +618,10 @@ impl HostRuntime<PairingHost> {
 	/// Activate a canonical session blob supplied by an external encrypted
 	/// session owner without writing the blob to core storage.
 	///
-	/// Success means decoding, username resolution, replacement fencing, and
-	/// connected-session installation have completed.
+	/// Success means decoding, replacement fencing, and connected-session
+	/// installation have completed. The session's usernames are looked up
+	/// afterwards when the core does not vouch for the ones in the blob, or
+	/// the blob has none.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
 		self.role.session().activate_external_session(blob).await.map_err(Into::into)
@@ -627,9 +629,11 @@ impl HostRuntime<PairingHost> {
 
 	/// Await restoration of the persisted auth-session blob.
 	///
-	/// Success means decoding, username resolution, stale-read fencing, and
-	/// connected-session installation have completed, so product frames may
-	/// immediately use the restored authority session.
+	/// Success means decoding, stale-read fencing, and connected-session
+	/// installation have completed, so product frames may immediately use the
+	/// restored authority session. The session's usernames are looked up
+	/// afterwards when the core does not vouch for the ones in the blob, or
+	/// the blob has none.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
 		self.role.session().activate_stored_session().await.map_err(Into::into)

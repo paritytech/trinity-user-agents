@@ -49,7 +49,7 @@ fn without_usernames(session: SessionInfo) -> SessionInfo {
 
 /// What [`CoreStorageKey::SessionUsernamesRun`] says about the usernames in a
 /// session blob.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq)]
 enum BlobUsernames {
 	/// They were read for this blob in the run the stack's chains are in.
 	Current,

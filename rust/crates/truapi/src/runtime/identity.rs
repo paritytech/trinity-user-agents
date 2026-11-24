@@ -31,7 +31,7 @@ use tracing::{debug, instrument, warn};
 
 /// Budget for the whole username resolution of one session: every attempt for
 /// the identity account plus the root-key fallback share it, so a slow or dead
-/// endpoint delays session installation by at most this long.
+/// endpoint delays a login by at most this long.
 const LOOKUP_BUDGET: Duration = Duration::from_secs(45);
 
 /// Fills in missing usernames by querying the dotNS contracts on Asset Hub.

@@ -60,15 +60,15 @@ fn test_restart_hint_by_copy() {
 	let unreachable = BuiltInOrigin { copy: BuiltInCopy::Unreachable, ..published };
 	assert_eq!(
 		unreachable.restart_hint(),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json could not be fetched"
+		"the previewnet stack restarted from genesis after the descriptor in use was published, \
+		 and the published copy at https://stack.example/s.json could not be fetched"
 	);
 	let rejected = BuiltInOrigin { copy: BuiltInCopy::Rejected, ..unreachable };
 	assert_eq!(
 		rejected.restart_hint(),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json was rejected, as the \
-		 warning above reports"
+		"the previewnet stack restarted from genesis after the descriptor in use was published, \
+		 and the published copy at https://stack.example/s.json was rejected, as the warning \
+		 above reports"
 	);
 }
 

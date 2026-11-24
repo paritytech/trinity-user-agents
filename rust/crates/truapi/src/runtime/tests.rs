@@ -799,8 +799,8 @@ fn stored_identity_disclosure(
 	.expect("stub core storage reads")
 }
 
-/// After a wipe the stack has a new generation and a new Asset Hub. A grant
-/// cached from the old one must not apply. The stored permission is kept.
+/// After a wipe the stack has a new generation. A grant cached in the old
+/// one must not apply. The stored permission is kept.
 #[test]
 fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
 	let platform = stub_platform();
@@ -8104,7 +8104,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
-	let session = external_sso_session_info();
+	let session = sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
 	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
@@ -8218,7 +8218,7 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let first = external_sso_session_info();
+	let first = sso_session_info();
 	let mut replacement = first.clone();
 	replacement.public_key = [0x44; 32];
 	replacement.identity_account_id = Some([0x55; 32]);

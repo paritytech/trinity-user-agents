@@ -34,8 +34,8 @@ impl CoreStorage for MemStorage {
 
 #[test]
 fn entries_stored_with_string_ids_read_and_write_unchanged() {
-	// Installs already hold entries keyed by the id string, so the stored
-	// format must stay that string.
+	// An entry names its product by the id string, so the stored format must
+	// stay that string.
 	let stored =
 		vec![("dotli.dot".to_string(), AllowanceResource::StatementStore, vec![2u8; 64])].encode();
 	let entries = decode_entries(&stored).expect("string-keyed entries decode");

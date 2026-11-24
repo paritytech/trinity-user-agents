@@ -53,9 +53,10 @@ impl NetworkSource {
 	/// once its chains pass the checks. Fails as [`Stack::new`] and
 	/// [`verify_chains`] do, for an unreachable or expired `--stack`, and when
 	/// the light client cannot serve the network. A built-in network whose
-	/// published descriptor is unreachable runs on its bundled copy; when that
-	/// copy fails a check, the descriptor is fetched once more and the checks
-	/// repeat only when the published copy is then in use.
+	/// published descriptor is unreachable runs on the copy the host last ran
+	/// on, or else its bundled copy; when that copy fails a check, the
+	/// descriptor is fetched once more and the checks repeat only when the
+	/// published copy is then in use.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
 		let (stack, built_in) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
 		let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {

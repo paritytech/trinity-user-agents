@@ -139,10 +139,10 @@ pub async fn remove_allowance_key(
 /// Remove every persisted allowance key for `product_id` in the active SSO
 /// session while preserving entries owned by other products.
 ///
-/// Keys stored in another run, or without a run, cannot be told apart by
-/// product here, so all of them are cleared: the product's key must not come
-/// back when the stack returns to that run, and this run would replace them
-/// on its next write anyway.
+/// Keys stored in another run, or without a run, are cleared whole rather
+/// than sorted by product: the product's key must not come back when the
+/// stack returns to that run, and this run would replace them on its next
+/// write anyway.
 pub async fn clear_product_allowance_keys(
 	storage: &(impl CoreStorage + ?Sized),
 	run: &StackRun,
