@@ -1077,7 +1077,8 @@ fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
 	let reacted = |count: usize| ChatMessage {
 		reactions: (0..count)
 			.map(|index| ChatReactionSummary {
-				emoji: format!("e{index}"),
+				// One distinct emoji of the Emoticons block for each reaction.
+				emoji: char::from_u32(0x1f600 + index as u32).expect("an emoji").to_string(),
 				count: 1,
 				reacted_by_user: false,
 				unseen: false,
@@ -1097,6 +1098,78 @@ fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
 			emoji: "👍".to_string(),
 		}),
 		Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+	);
+}
+
+// The chat modality RFC limits a reaction to one extended grapheme cluster of
+// at most 64 bytes, and a reader drops a longer one. The core refuses it
+// first, in each place a v2 reaction reaches a host.
+#[test]
+fn a_reaction_is_one_emoji_of_at_most_64_bytes() {
+	let placed = |emoji: &str| {
+		validate_chat_feed_update(ChatFeedUpdate::ReactionPlaced {
+			message_id: "m1".to_string(),
+			participant_id: "contact".to_string(),
+			emoji: emoji.to_string(),
+		})
+		.map(|update| match update {
+			ChatFeedUpdate::ReactionPlaced { emoji, .. } => emoji,
+			other => unreachable!("a reaction stays a reaction: {other:?}"),
+		})
+	};
+	// Sequences that a reader sees as one emoji: a ZWJ family, a keycap, a
+	// skin tone, a subdivision flag, a regional flag.
+	for emoji in [
+		"\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
+		"1\u{fe0f}\u{20e3}",
+		"\u{1f44d}\u{1f3fd}",
+		"\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}",
+		"\u{1f1ee}\u{1f1f3}",
+	] {
+		assert_eq!(placed(emoji), Ok(emoji.to_string()), "{emoji:?} is one emoji");
+	}
+	assert_eq!(placed(" 👍 "), Ok("👍".to_string()));
+	assert_eq!(placed("ok"), Err(ChatFieldError::NotOneGrapheme { field: "emoji" }));
+	assert_eq!(placed("👍👍"), Err(ChatFieldError::NotOneGrapheme { field: "emoji" }));
+	assert_eq!(placed(" "), Err(ChatFieldError::Empty { field: "emoji" }));
+	// One grapheme cluster over the byte limit: a letter with 40 marks.
+	let stacked = format!("e{}", "\u{0301}".repeat(40));
+	assert_eq!(
+		placed(&stacked),
+		Err(ChatFieldError::TooLong { field: "emoji", limit: CHAT_EMOJI_MAX_BYTES })
+	);
+
+	// A reaction summary and the reaction of a room preview have the same rule.
+	let summarized = ChatMessage {
+		reactions: vec![ChatReactionSummary {
+			emoji: "ok".to_string(),
+			count: 1,
+			reacted_by_user: false,
+			unseen: false,
+		}],
+		..text_message("m1")
+	};
+	assert_eq!(
+		validate_chat_message(summarized),
+		Err(ChatFieldError::NotOneGrapheme { field: "emoji" })
+	);
+	let preview = ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message: None,
+		last_reaction: Some(ChatPreviewReaction {
+			emoji: "ok".to_string(),
+			by_user: false,
+			message: None,
+			removed: false,
+		}),
+		unseen_reactions: 0,
+		pinned: false,
+		activity: None,
+	};
+	assert_eq!(
+		validate_chat_room_preview(preview),
+		Err(ChatFieldError::NotOneGrapheme { field: "emoji" })
 	);
 }
 
@@ -1310,25 +1383,19 @@ impl ChatPlatform for ChatHostWithoutDeclarations {
 }
 
 // The Rust defaults have the same contract as the Swift and Kotlin bridges.
-// A host without the declaration callbacks accepts the declarations that
-// change nothing, and refuses all other declarations.
+// A host without the declaration callbacks reads every room as the default
+// configuration, accepts the metadata, which changes nothing, and refuses all
+// other declarations. The configuration itself arrives in `create_chat_room`,
+// which has no default.
 #[test]
 fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 	let host = ChatHostWithoutDeclarations;
 	let product = ProductContext::new(ProductId::for_test("chat.dot"));
-	let config = |config: ChatRoomConfig| {
-		futures::executor::block_on(host.set_chat_room_config(
-			&product,
-			"support".to_string(),
-			config,
-		))
-	};
 	let refused = |method: &str| Err(chat_method_not_served(method));
 
-	assert_eq!(config(ChatRoomConfig::default()), Ok(()));
 	assert_eq!(
-		config(ChatRoomConfig { product_source: true, ..Default::default() }),
-		refused("setChatRoomConfig")
+		futures::executor::block_on(host.read_chat_room_config(&product, "support".to_string())),
+		Ok(ChatRoomConfig::default())
 	);
 	assert_eq!(
 		futures::executor::block_on(host.set_chat_room_metadata(
@@ -1369,5 +1436,16 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 			HostChatDeleteRoomRequest { room_id: "support".to_string() },
 		)),
 		refused("deleteChatRoom")
+	);
+	assert_eq!(
+		futures::executor::block_on(host.update_chat_feed(
+			&product,
+			HostChatUpdateFeedRequest {
+				room_id: "support".to_string(),
+				update: ChatFeedUpdate::Deleted { message_id: "m1".to_string() },
+			},
+			true,
+		)),
+		Err(chat_method_not_served("updateChatFeed"))
 	);
 }

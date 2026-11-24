@@ -36,6 +36,7 @@ import {
 import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
+  ChatFeedOutcome,
   CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
@@ -82,11 +83,6 @@ export interface RawCallbacks {
   ): (() => void) | void;
   listChatRooms?(product: Uint8Array): Promise<Uint8Array>;
   readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
-  setChatRoomConfig?(
-    product: Uint8Array,
-    roomId: string,
-    config: Uint8Array,
-  ): Promise<void>;
   setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
   setChatRoomPreview?(product: Uint8Array, request: Uint8Array): Promise<void>;
   deleteChatRoom?(product: Uint8Array, request: Uint8Array): Promise<void>;
@@ -94,7 +90,7 @@ export interface RawCallbacks {
     product: Uint8Array,
     request: Uint8Array,
     persist: boolean,
-  ): Promise<void>;
+  ): Promise<Uint8Array>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   contactUsernames?(product: Uint8Array): Promise<Uint8Array>;
@@ -212,12 +208,6 @@ export function createWasmRawCallbacks(
                 roomId,
               ),
             ),
-          setChatRoomConfig: async (product, roomId, config) =>
-            await chat.setChatRoomConfig(
-              ProductContext.dec(product),
-              roomId,
-              ChatRoomConfig.dec(config),
-            ),
           setChatRoomMetadata: async (product, request) =>
             await chat.setChatRoomMetadata(
               ProductContext.dec(product),
@@ -234,10 +224,12 @@ export function createWasmRawCallbacks(
               HostChatDeleteRoomRequest.dec(request),
             ),
           updateChatFeed: async (product, request, persist) =>
-            await chat.updateChatFeed(
-              ProductContext.dec(product),
-              HostChatUpdateFeedRequest.dec(request),
-              persist,
+            ChatFeedOutcome.enc(
+              await chat.updateChatFeed(
+                ProductContext.dec(product),
+                HostChatUpdateFeedRequest.dec(request),
+                persist,
+              ),
             ),
         }
       : {}),

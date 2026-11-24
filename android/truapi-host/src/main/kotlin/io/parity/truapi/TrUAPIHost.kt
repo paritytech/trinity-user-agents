@@ -52,6 +52,7 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.NativeChatFeedRejection
+import uniffi.truapi.NativeChatRoomRejection
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
@@ -511,9 +512,33 @@ interface ChatHostBridge {
      * client, the id that the product gave. The core has bounded and normalized
      * these arguments and screened the icon scheme; escaping them for the
      * surface that renders them is still the host's job.
+     *
+     * The default four-argument [createRoom] calls it for a room with
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG].
      */
     @Throws(HostRejection::class)
     suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
+
+    /**
+     * Create or resolve a room as the three-argument [createRoom] does, and
+     * keep [config] for it in the same step, across restarts, for a new room
+     * and for a room that exists. A change of `productSource` discards the
+     * stored messages or the cached pages of the room.
+     *
+     * Throw [NativeChatRoomRejection.UnsupportedConfig] for a configuration
+     * the host cannot keep, before it creates or changes anything. The
+     * default keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     */
+    @Throws(NativeChatRoomRejection::class)
+    suspend fun createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus {
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw NativeChatRoomRejection.UnsupportedConfig()
+        return createRoom(roomId, name, icon)
+    }
 
     /**
      * Register or resolve a native product Chat bot. The core has bounded and
@@ -557,32 +582,25 @@ interface ChatHostBridge {
     // The members below have defaults for a host that does not serve the Chat
     // Extension v2 requests yet. The product receives a rejection for each
     // request, with two exceptions. The host ignores metadata and keeps the
-    // name and icon of `createRoom`. The host accepts a configuration that
-    // keeps the behaviour that it serves.
+    // name and icon of `createRoom`. The host creates a room with the
+    // configuration that keeps the behaviour that it serves, and refuses any
+    // other before it creates anything.
 
     /**
-     * Return the configuration the product last declared for a room, or
-     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] when it declared none. The core reads it
-     * before each feed update, preview and posted message of the room.
+     * Return the configuration of the last `createRoom` of a room, or
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] for a room the host does not know. The
+     * core reads it before each feed update, preview and posted message of the
+     * room. For a posted message it reads it for the room the product names,
+     * before any check that the product created the room.
      */
     @Throws(HostRejection::class)
     suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
 
     /**
-     * Replace the configuration of a room whole, and keep it across restarts,
-     * when the product declares one with `createRoom`. A room the product
-     * declared none for has [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A change of
-     * `productSource` discards the stored messages or the cached pages of the
-     * room.
-     */
-    @Throws(HostRejection::class)
-    suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
-        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw unservedChatRequest("setRoomConfig")
-    }
-
-    /**
      * Replace the name, description, icon and empty-room text of a room. An
-     * icon of `null` keeps the icon, and an empty icon removes it.
+     * icon of `null` keeps the icon, and an empty icon removes it. The default
+     * ignores the metadata, and the room keeps the name and icon of
+     * `createRoom`.
      */
     @Throws(HostRejection::class)
     suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
@@ -863,7 +881,8 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         roomId: String,
         name: String,
         icon: String,
-    ): ChatRoomRegistrationStatus = withHostRejection { bridge.createRoom(roomId, name, icon) }
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus = withRoomRejection { bridge.createRoom(roomId, name, icon, config) }
 
     override suspend fun registerBot(
         botId: String,
@@ -882,9 +901,6 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         withHostRejection { bridge.roomConfig(roomId) }
 
-    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) =
-        withHostRejection { bridge.setRoomConfig(roomId, config) }
-
     override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) =
         withHostRejection { bridge.setRoomMetadata(roomId, metadata) }
 
@@ -898,17 +914,38 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     /**
      * Pass a [NativeChatFeedRejection] to the product as it is, and any other
-     * exception as [NativeChatFeedRejection.Rejected].
+     * exception as [NativeChatFeedRejection.Rejected]. A [HostRejection] keeps
+     * the reason that the host wrote.
      */
     private suspend fun withFeedRejection(operation: suspend () -> Unit) =
         try {
             operation()
         } catch (rejection: NativeChatFeedRejection) {
             throw rejection
+        } catch (rejection: HostRejection.Rejected) {
+            throw NativeChatFeedRejection.Rejected(rejection.reason).apply { initCause(rejection) }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
             throw NativeChatFeedRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
+        }
+
+    /**
+     * Pass a [NativeChatRoomRejection] to the product as it is, and any other
+     * exception as [NativeChatRoomRejection.Rejected]. A [HostRejection] keeps
+     * the reason that the host wrote.
+     */
+    private suspend fun <T> withRoomRejection(operation: suspend () -> T): T =
+        try {
+            operation()
+        } catch (rejection: NativeChatRoomRejection) {
+            throw rejection
+        } catch (rejection: HostRejection.Rejected) {
+            throw NativeChatRoomRejection.Rejected(rejection.reason).apply { initCause(rejection) }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw NativeChatRoomRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
         }
 }
 
