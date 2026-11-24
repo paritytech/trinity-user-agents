@@ -244,12 +244,15 @@ The check has three limits:
 
 The core also checks People's `NetworkSuffix.NetworkSuffix` against the
 descriptor's `tld`. It makes no request for this. A signing host already reads
-the suffix when it builds allowance proofs, and the core compares that value. If
-it differs, `StackStatus::mismatches` lists it until a later read gives the
-`tld` or the runtime ends. The core keeps the suffix in memory only, so a
-runtime built again, after a relaunch or after `restart_required`, lists no
-suffix until its own allowance work reads one. A suffix that is not listed may
-not have been read yet.
+People's suffix when it builds statement store and Bulletin allowance proofs,
+and when it renews a statement store allowance, and the core compares that
+value. Only People's suffix is compared: a PGAS claim reads Asset Hub's
+`NetworkSuffix`, which the core does not check. If People's suffix differs,
+`StackStatus::mismatches` lists it until a later read gives the `tld` or the
+runtime ends. The core keeps the suffix in memory only, so a runtime built
+again, after a relaunch or after `restart_required`, lists no suffix until its
+own allowance work reads one. A suffix that is not listed may not have been
+read yet.
 
 This is only a report. The core keeps using People and does not fetch the
 descriptor any sooner. It matters because the core derives its identities under

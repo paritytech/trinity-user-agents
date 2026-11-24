@@ -315,9 +315,13 @@ impl RuntimeServices {
 	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
 	///
 	/// The suffix also goes to the stack's checks, which report one that is
-	/// not the stack's `tld`. Fails when the read fails or People holds no
-	/// suffix of one to sixteen bytes. A failed read changes nothing the
-	/// checks report: a suffix reported before stays reported.
+	/// not the stack's `tld`. They take it as People's whatever chain `people`
+	/// reaches, so read another chain's suffix, such as Asset Hub's, with
+	/// `statement_allowance::slot::read_network_suffix`.
+	///
+	/// Fails when the read fails or People holds no suffix of one to sixteen
+	/// bytes. A failed read changes nothing the checks report: a suffix
+	/// reported before stays reported.
 	pub async fn people_network_suffix(
 		&self,
 		people: &statement_allowance::rpc::RpcClient,
