@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigMaterialsSwitch
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
@@ -86,6 +87,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val pinnedPocketCards: PinnedPocketCards,
     private val coreEventLogger: CoreEventLogger,
     private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
+    private val materialsSwitch: RemoteConfigMaterialsSwitch,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     private val workerCrashNotice: WorkerCrashNotice,
@@ -174,6 +176,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
             deviceEncryptionKey = deviceEncryptionKey,
+            materialsEnabled = materialsSwitch.isOn(),
         )
     }
 

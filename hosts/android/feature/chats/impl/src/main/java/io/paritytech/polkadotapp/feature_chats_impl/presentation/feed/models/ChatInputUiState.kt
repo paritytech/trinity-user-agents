@@ -22,6 +22,8 @@ sealed class ChatInputUiState {
 
     object PeerLeft : ChatInputUiState()
 
+    object ChatRequestCancelled : ChatInputUiState()
+
     object UnblockUser : ChatInputUiState()
 
     object IdentitySigningConsent : ChatInputUiState()

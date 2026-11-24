@@ -31,11 +31,11 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomRegistrationStatus,
   FundingFrameOutcome,
   FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -512,13 +512,14 @@ export type FundingQuoteUnavailable =
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export interface HostContactLookup {
   /**
-   * The key every handle here was minted under. Per session, and never
-   * given to a product.
+   * The key every handle here was minted under. Per session and product,
+   * and never given to a product.
    */
   handleKey: Bytes32;
 
@@ -1334,8 +1335,9 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export const HostContactLookup: S.Codec<HostContactLookup> = S.lazy(
   (): S.Codec<HostContactLookup> =>
@@ -1754,12 +1756,17 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. `room_id` is the id
+   * that the core derived from the product and `request.room_id_source`, or,
+   * for a product built against the earlier client, the id that the product
+   * gave. The host stores the room under this id, and every later call names
+   * the room with it.
    */
   createChatRoom(
     product: ProductContext,
+    roomId: string,
     request: HostChatCreateRoomRequest,
-  ): Promise<HostChatCreateRoomResponse>;
+  ): Promise<ChatRoomRegistrationStatus>;
 
   /**
    * Register or resolve a product-scoped native chat bot. Host-owned in the
@@ -2060,7 +2067,9 @@ export interface Features {
 export interface FundingPlatform {
   /**
    * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
+   * host itself when `product` is ``undefined``. A cancel while the overlay is up
+   * drops this call, and the host takes the overlay down when it is
+   * dropped.
    */
   presentFunding(
     product: ProductContext | undefined,

@@ -94,6 +94,7 @@ class SyncEntityCollector @Inject constructor(
         ChatMessage.Status.NEW,
         ChatMessage.Status.IS_SENT -> OutgoingStatusScale.SENT
 
+        ChatMessage.Status.IS_DELIVERED,
         ChatMessage.Status.IS_READ -> OutgoingStatusScale.DELIVERED
 
         // Failed-to-deliver messages were never sent; the wire scale has no failed state, so treat as not-yet-delivered.
@@ -104,6 +105,7 @@ class SyncEntityCollector @Inject constructor(
         ChatMessage.Status.PROCESSING,
         ChatMessage.Status.NEW,
         ChatMessage.Status.IS_SENT,
+        ChatMessage.Status.IS_DELIVERED,
         // DELIVERY_FAILED is only ever set on outgoing messages; map defensively for exhaustiveness.
         ChatMessage.Status.DELIVERY_FAILED -> IncomingStatusScale.NEW
 

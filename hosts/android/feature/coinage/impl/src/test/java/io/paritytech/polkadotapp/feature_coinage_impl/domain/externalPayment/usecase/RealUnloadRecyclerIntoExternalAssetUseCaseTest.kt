@@ -421,7 +421,7 @@ class RealUnloadRecyclerIntoExternalAssetUseCaseTest {
 
     private fun voucherInRecycler(index: Int, recycler: Int = index, exponent: Int = 1) = voucherOf(
         index = index,
-        location = Location.InRecycler(RecyclerIndex(BigInteger.valueOf(recycler.toLong())), recyclerMembers = 767, enteredAt = null),
+        location = Location.InRecycler(RecyclerIndex(BigInteger.valueOf(recycler.toLong())), recyclerMembers = 767, enteredAt = null, recyclerUnloaded = null),
         exponent = exponent,
     )
 

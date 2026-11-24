@@ -314,7 +314,10 @@ pub trait HostCallbacks: Send + Sync {
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeChatCallbacks: Send + Sync {
-	/// Create or resolve a native product Chat room.
+	/// Create or resolve a native product Chat room. `room_id` is the id that
+	/// the core resolved for the room, and every later call names the room with
+	/// it: the id that the core derived, or, for a product built against the
+	/// earlier client, the id that the product gave.
 	async fn create_room(
 		&self,
 		room_id: String,
@@ -553,7 +556,10 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// Show the funding overlay for session `intent`, which `product_id`
 	/// opened, or the host itself when `None`, on the screen `direction`
 	/// names, and report whether the user started or dismissed it. `amount`
-	/// is a decimal string of CASH units.
+	/// is a decimal string of CASH units. A `cancel_funding` while the
+	/// overlay is up drops this call, which cancels the Swift `Task` or the
+	/// Kotlin coroutine running it: take the overlay down on cancellation
+	/// (`withTaskCancellationHandler`, `invokeOnCancellation`).
 	async fn present_funding(
 		&self,
 		product_id: Option<ProductId>,

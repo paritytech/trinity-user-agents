@@ -723,13 +723,13 @@ pub trait AccountHolder: Send + Sync + 'static {
 
 	/// Mint and resolve contact handles under the session's root entropy source.
 	///
-	/// Handles match across products and host roles. The key stays inside
-	/// `ContactHandles`, so no product can recover contacts by hashing
-	/// candidate accounts.
-	fn contact_handles(
+	/// The handle key of `product_id`, alike on both host roles. No product
+	/// receives it, so none can recover contacts by hashing candidate accounts.
+	fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<super::contacts::ContactHandles, AuthorityError>;
+		product_id: &ProductId,
+	) -> Result<super::contacts::ContactHandleKey, AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.
@@ -770,28 +770,4 @@ pub fn authority_session_validation_id(session: &SessionInfo) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// An SSO answer is only a string, so a chain the signing host could not
-	/// reach must survive the trip to reach the product as `ChainUnavailable`,
-	/// while every other failure reads back as it was sent.
-	#[test]
-	fn a_signing_host_failure_keeps_its_kind_through_the_sso_answer() {
-		let failures = [
-			AuthorityError::ChainUnavailable {
-				reason: "cannot select a metadata block".to_string(),
-			},
-			AuthorityError::Rejected,
-			AuthorityError::Unknown { reason: "the payload did not decode".to_string() },
-		];
-
-		let relayed: Vec<AuthorityError> = failures
-			.iter()
-			.cloned()
-			.map(|failure| SsoRemoteResponseError::Failure(failure.into_sso_reason()).into())
-			.collect();
-
-		assert_eq!(relayed, failures);
-	}
-}
+mod tests;
