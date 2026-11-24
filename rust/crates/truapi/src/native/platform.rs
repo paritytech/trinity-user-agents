@@ -705,11 +705,8 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	{
 		let status: truapi::latest::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(room_id, request.name, request.icon)
-			.await
-			.map_err(|error| truapi::latest::HostChatCreateRoomError::Unknown {
-				reason: error.to_string(),
-			})?;
+			.create_room(room_id, request.name, request.icon, request.config)
+			.await?;
 
 		if status == truapi::latest::ChatRoomRegistrationStatus::New &&
 			let Ok(rooms) = self.chat.list_rooms().await
@@ -797,18 +794,6 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		self.chat.room_config(room_id).await.map_err(truapi::latest::GenericError::from)
 	}
 
-	async fn set_chat_room_config(
-		&self,
-		_product: &ProductContext,
-		room_id: String,
-		config: truapi::latest::ChatRoomConfig,
-	) -> Result<(), truapi::latest::GenericError> {
-		self.chat
-			.set_room_config(room_id, config)
-			.await
-			.map_err(truapi::latest::GenericError::from)
-	}
-
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
@@ -851,11 +836,11 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		_product: &ProductContext,
 		request: truapi::latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), truapi::CallError<truapi::latest::HostChatUpdateFeedError>> {
-		self.chat
-			.update_feed(request.room_id, request.update, persist)
-			.await
-			.map_err(Into::into)
+	) -> Result<crate::platform::ChatFeedOutcome, truapi::latest::GenericError> {
+		match self.chat.update_feed(request.room_id, request.update, persist).await {
+			Ok(()) => Ok(crate::platform::ChatFeedOutcome::Applied),
+			Err(rejection) => rejection.into_outcome(),
+		}
 	}
 }
 

@@ -26,6 +26,17 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     }
 
     func createRoom(roomId: String, name: String, icon: String) async throws -> ChatRoomRegistrationStatus {
+        try await createRoom(roomId: roomId, name: name, icon: icon, config: .hostDefault)
+    }
+
+    /// The room and the configuration that the product declares for it arrive in one call. The room keeps the
+    /// configuration across restarts, also when it exists.
+    func createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig
+    ) async throws -> ChatRoomRegistrationStatus {
         logger.debug("[truapi:chat-bridge] createRoom \(roomId)")
         // Same validation `postMessage` applies: an empty id names no room, and
         // the chat identifier built from it would be malformed.
@@ -38,6 +49,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             name: name.nilIfEmpty,
             icon: icon.nilIfEmpty
         ))
+        try await chatMessaging.setRoomConfig(roomId: roomId, config: Chat.RoomConfig(config))
         return switch result.status {
         case .new: .new
         case .exists: .exists
@@ -109,11 +121,6 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
     func roomConfig(roomId: String) async throws -> ChatRoomConfig {
         try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
-    }
-
-    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
-        logger.debug("[truapi:chat-bridge] setRoomConfig \(roomId)")
-        try await chatMessaging.setRoomConfig(roomId: requireRoomId(roomId), config: Chat.RoomConfig(config))
     }
 
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
