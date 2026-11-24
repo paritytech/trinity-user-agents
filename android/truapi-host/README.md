@@ -100,7 +100,7 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
 | `setRoomFooter` | Shows the text input, or nothing |
 
-The core checks that the product created the room before it calls any of these, except `createRoom` and `roomConfig`.
+The core checks that the product created the room before it calls any of these, except `createRoom` and `deleteRoom`. It calls `deleteRoom` for every room except one that the product takes part in as a bot, so a room that does not exist is not an error.
 
 ```kotlin
 import io.parity.truapi.*
@@ -121,19 +121,19 @@ import uniffi.truapi.ProductId
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override fun createRoom(roomId: String, name: String, icon: String) =
+    override suspend fun createRoom(roomId: String, name: String, icon: String) =
         createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
 
     // The room and its configuration land in one write.
-    override fun createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) =
+    override suspend fun createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) =
         if (store.putRoom(roomId, name, icon, config)) ChatRoomRegistrationStatus.NEW
         else ChatRoomRegistrationStatus.EXISTS
 
-    override fun registerBot(botId: String, name: String, icon: String) =
+    override suspend fun registerBot(botId: String, name: String, icon: String) =
         if (store.putBot(botId, name, icon)) ChatBotRegistrationStatus.NEW
         else ChatBotRegistrationStatus.EXISTS
 
-    override fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (content is ChatMessageContent.File) {
             // Declining a variant is how a host opts out of rendering one.
             throw HostRejection.Rejected("this host cannot render file cards")
@@ -141,9 +141,9 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
         return store.append(roomId, content, alt)
     }
 
-    override fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
 
-    override fun listRooms(): List<ChatRoom> = store.rooms()
+    override suspend fun listRooms(): List<ChatRoom> = store.rooms()
 
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         store.config(roomId) ?: HOST_DEFAULT_CHAT_ROOM_CONFIG

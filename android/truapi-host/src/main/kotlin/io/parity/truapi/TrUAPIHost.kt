@@ -555,7 +555,12 @@ interface ChatHostBridge {
     @Throws(HostRejection::class)
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
-    /** Return the current product-scoped native Chat rooms. */
+    /**
+     * Return the current product-scoped native Chat rooms. The core checks the
+     * room of each change to a room against this list, so a host that cannot
+     * read its rooms throws: an empty list makes the core answer `UnknownRoom`
+     * for a room that exists.
+     */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
 
@@ -607,10 +612,11 @@ interface ChatHostBridge {
 
 /**
  * The configuration of a room that declares nothing: the host stores the
- * messages and serves every part of the room itself.
+ * messages and serves every part of the room itself. Each read builds a new
+ * value, because the generated record is mutable.
  */
-val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
-    ChatRoomConfig(productSource = false, reactionDetails = false)
+val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig
+    get() = ChatRoomConfig(productSource = false, reactionDetails = false)
 
 private fun unservedChatRequest(request: String): HostRejection =
     HostRejection.Rejected("this host does not serve chat $request")
