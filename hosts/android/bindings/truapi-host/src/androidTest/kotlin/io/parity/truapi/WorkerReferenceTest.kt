@@ -2,6 +2,7 @@ package io.parity.truapi
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -74,14 +75,14 @@ class WorkerReferenceTest {
                         received.receive()
                         first.cancelAndJoin()
                         received.receive()
-                        val render = launch { face.collect {} }
+                        val render = async { runCatching { face.collect {} } }
                         received.receive()
                         pocket.release()
                         pocket.release()
                         assertFalse(workers.stopped.isDone)
                         chat.release()
                         assertEquals(attempt.id(), workers.stopped.get(10, TimeUnit.SECONDS))
-                        render.cancelAndJoin()
+                        assertTrue(render.await().exceptionOrNull() is RendererStreamException)
                     }
                 } finally {
                     socket.cancel()
