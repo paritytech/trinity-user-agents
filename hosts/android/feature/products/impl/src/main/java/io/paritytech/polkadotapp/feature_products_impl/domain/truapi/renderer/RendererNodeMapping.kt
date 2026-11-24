@@ -277,6 +277,8 @@ private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed())
             is Modifier.Mask -> add(modifier.v1.toJs(keyed))
             // The Android enter-and-keyframes layer plays these; until then the node draws as the tree does.
             is Modifier.Enter, is Modifier.Animate -> Unit
+            // The Android particle layer draws emitters; until then the node draws with no particles.
+            is Modifier.Emit -> Unit
         }
     }
 

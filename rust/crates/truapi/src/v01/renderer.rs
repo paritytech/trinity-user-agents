@@ -623,6 +623,191 @@ pub struct Track {
 	pub play: TrackPlay,
 }
 
+/// What one particle of an [`Emitter`] looks like. Sizes are hundredths of a
+/// logical pixel and colours `0xRRGGBBAA`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ParticleLook {
+	/// A filled circle.
+	Circle {
+		/// Its diameter.
+		diameter: u32,
+		/// Its colour.
+		color: u32,
+	},
+	/// A filled rectangle.
+	Rectangle {
+		/// Its width.
+		width: u32,
+		/// Its height.
+		height: u32,
+		/// Its colour.
+		color: u32,
+	},
+	/// An image drawn at this size, fetched or refused as an `Image` node's
+	/// is; one that cannot be drawn draws no particle.
+	Image {
+		/// Where its bytes come from.
+		source: ImageSource,
+		/// Its width.
+		width: u32,
+		/// Its height.
+		height: u32,
+	},
+}
+
+/// Where an [`Emitter`]'s particles start, in the node's frame.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum EmitSource {
+	/// Where the finger is on the `Gesture` with this `key`, whose pan must
+	/// report its `location`; its places are moved to the node's frame by
+	/// where the two are on screen, as a [`MaskFollow`]'s are. It emits only
+	/// while the finger is down, along the way it went between frames, and
+	/// bursts from where the finger last was.
+	Pan(String),
+	/// A place in the node, in hundredths of a logical pixel from its
+	/// top-start corner.
+	Point(MaskPoint),
+	/// Anywhere in the node, evenly at random.
+	Area,
+}
+
+/// A value an [`Emitter`] picks for each particle, evenly at random between
+/// `min` and `max` (the two swapped when `max` is less).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ValueRange {
+	/// The least value.
+	pub min: i32,
+	/// The greatest value.
+	pub max: i32,
+}
+
+impl ValueRange {
+	/// The value at `share` of the way from `min` to `max`, `share` being the
+	/// host's even random number in 0 through 1.
+	pub fn pick(&self, share: f64) -> f64 {
+		let (low, high) = (f64::from(self.min.min(self.max)), f64::from(self.min.max(self.max)));
+		low + (high - low) * share.clamp(0.0, 1.0)
+	}
+}
+
+/// What sets off an emitter's [`Burst`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum BurstTrigger {
+	/// The node appearing, as an [`Enter`] plays.
+	Appear,
+	/// The host sending this action from the body's current tree, whichever
+	/// node sends it: a button, a gesture's phase, a mask's cleared share. The
+	/// burst starts as the action is sent, with no round trip to the worker.
+	Action(String),
+	/// A tree carrying a different value here than the tree before it, which
+	/// lets a worker set off a burst by changing a count. The first tree with
+	/// the emitter never bursts.
+	Change(u32),
+}
+
+/// A number of particles an [`Emitter`] sends at once.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Burst {
+	/// How many particles.
+	pub count: u16,
+	/// What sets it off.
+	pub on: BurstTrigger,
+}
+
+/// Sends particles from a node, drawn and moved by the host on its own
+/// clock: confetti, sparks, dust or debris.
+///
+/// Each particle takes one of `looks` at random and starts at the `source`.
+/// It leaves at a speed picked from `speed`, in a direction `angle_centideg`
+/// clockwise from the end direction, spread evenly across `spread_centideg`
+/// around it, and falls with `gravity`. It turns at a speed picked from
+/// `spin`, from upright. It is drawn whole until `fade_from_permille` of its
+/// life, then fades to nothing at its end, and its size goes from its look's
+/// to `end_scale_permille` of it over its life. [`Self::place_at`] is the
+/// rule both hosts follow.
+///
+/// Particles are drawn over the node's content and its children, in its
+/// frame and unclipped, and take no room in the layout. They keep moving
+/// across trees that keep the emitter; a tree without it lets the live ones
+/// finish. At most `max_alive` are alive at once (the host caps it at 512);
+/// the rest are not sent. The host sends none where the person asked for less
+/// motion, and a host that cannot draw them draws the node alone.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Emitter {
+	/// What the particles look like; empty sends none.
+	pub looks: Vec<ParticleLook>,
+	/// Where they start.
+	pub source: EmitSource,
+	/// Particles sent each second while the source is live: while the
+	/// finger is down for a pan, always for a point or the area.
+	pub rate_per_s: u16,
+	/// Particles sent for each 100 logical pixels the finger moves, for a pan
+	/// source; spaced evenly along the way.
+	pub rate_per_100pt: u16,
+	/// How long each lives, in milliseconds.
+	pub life_ms: u16,
+	/// Speed, in hundredths of a logical pixel a second.
+	pub speed: ValueRange,
+	/// The middle direction, in hundredths of a degree clockwise from the end
+	/// direction: 9000 is down, -9000 up.
+	pub angle_centideg: i16,
+	/// The full width of the directions around it, in hundredths of a degree.
+	pub spread_centideg: u16,
+	/// Downward acceleration, in hundredths of a logical pixel a second
+	/// squared; negative rises.
+	pub gravity: i32,
+	/// Turning speed, in hundredths of a degree a second, clockwise.
+	pub spin: ValueRange,
+	/// The share of life after which a particle fades, in thousandths; 1000
+	/// or more never fades.
+	pub fade_from_permille: u16,
+	/// The size at the end of life, in thousandths of the look's.
+	pub end_scale_permille: u16,
+	/// The most particles alive at once.
+	pub max_alive: u16,
+	/// Particles sent at once when something happens.
+	pub bursts: Vec<Burst>,
+}
+
+impl Emitter {
+	/// Where a particle is `age_ms` after it left `start` at `speed` in
+	/// `direction` (in radians, clockwise from the end direction), with its
+	/// opacity and scale as shares of its look's: `(x, y, opacity, scale)`,
+	/// or `None` once its life is over. Places and speeds are hundredths of a
+	/// logical pixel, and per second.
+	pub fn place_at(
+		&self,
+		start: (f64, f64),
+		speed: f64,
+		direction: f64,
+		age_ms: u32,
+	) -> Option<(f64, f64, f64, f64)> {
+		if age_ms >= u32::from(self.life_ms) {
+			return None;
+		}
+		let seconds = f64::from(age_ms) / 1000.0;
+		let life = f64::from(age_ms) / f64::from(self.life_ms);
+		let x = start.0 + speed * direction.cos() * seconds;
+		let y = start.1 +
+			speed * direction.sin() * seconds +
+			f64::from(self.gravity) * seconds * seconds / 2.0;
+		let fade_from = (f64::from(self.fade_from_permille) / 1000.0).min(1.0);
+		let opacity = if life <= fade_from { 1.0 } else { (1.0 - life) / (1.0 - fade_from) };
+		let end_scale = f64::from(self.end_scale_permille) / 1000.0;
+		Some((x, y, opacity, 1.0 + (end_scale - 1.0) * life))
+	}
+}
+
 /// Layout and styling applied to one node.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(tag = "tag", content = "value")]
@@ -682,6 +867,8 @@ pub enum Modifier {
 	Enter(Enter),
 	/// Moves a part of how the node is drawn on the host's clock.
 	Animate(Track),
+	/// Sends particles from the node. A node keeps its last `Emit`.
+	Emit(Emitter),
 }
 
 /// Properties of a `Box`.
@@ -1738,12 +1925,22 @@ pub enum MaterialFailure {
 
 impl RendererNode {
 	/// Empty the bytes of every inline image a host must not draw, so it
-	/// draws as empty space at its size.
+	/// draws as empty space at its size: `Image` nodes, material arguments and
+	/// particle looks.
 	///
 	/// An inline image may be drawn only as PNG, JPEG or WebP, recognised by
 	/// its first bytes, and at most 64 KiB. SVG is refused because it can load
 	/// outside addresses.
 	pub fn clear_refused_inline_images(&mut self) {
+		for modifier in self.modifiers_mut() {
+			if let Modifier::Emit(emitter) = modifier {
+				for look in &mut emitter.looks {
+					if let ParticleLook::Image { source, .. } = look {
+						source.clear_if_refused();
+					}
+				}
+			}
+		}
 		match self {
 			Self::Image { props, .. } => props.source.clear_if_refused(),
 			Self::Materials { props, children } => {
@@ -1770,6 +1967,27 @@ impl RendererNode {
 			Self::TextField { .. } |
 			Self::SetOffset { .. } |
 			Self::ExtendMask { .. } => {},
+		}
+	}
+}
+
+impl RendererNode {
+	fn modifiers_mut(&mut self) -> &mut [Modifier] {
+		match self {
+			Self::Box { modifiers, .. } |
+			Self::Column { modifiers, .. } |
+			Self::Row { modifiers, .. } |
+			Self::Spacer { modifiers } |
+			Self::Text { modifiers, .. } |
+			Self::Button { modifiers, .. } |
+			Self::TextField { modifiers, .. } |
+			Self::Image { modifiers, .. } |
+			Self::Gesture { modifiers, .. } => modifiers,
+			Self::Nil |
+			Self::String { .. } |
+			Self::Materials { .. } |
+			Self::SetOffset { .. } |
+			Self::ExtendMask { .. } => &mut [],
 		}
 	}
 }

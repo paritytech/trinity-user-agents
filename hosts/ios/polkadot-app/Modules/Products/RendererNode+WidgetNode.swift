@@ -220,6 +220,9 @@ private extension [Modifier] {
                  .animate:
                 // The iPhone enter-and-keyframes layer plays these; until then the node draws as the tree does.
                 break
+            case .emit:
+                // The iPhone particle layer draws emitters; until then the node draws with no particles.
+                break
             }
         }
 

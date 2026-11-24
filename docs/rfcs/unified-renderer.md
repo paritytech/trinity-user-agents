@@ -711,3 +711,47 @@ Where the person asked for less motion, the host plays none of it: an `Enter`
 node draws as the tree does, a timeline holds its end (its first keyframe if it
 plays for ever), and a `Follow` changes at once. A host that cannot play them
 draws the same.
+
+### Particle emitters
+
+Confetti, sparks, dust and debris are many small things moving on their own,
+which a worker cannot draw frame by frame. `Emit(Emitter)` (modifier index 23)
+has the host send and move them from any node, on its own clock. Particles are
+drawn over the node's content and children, in its frame and unclipped, and
+take no room in the layout.
+
+Each particle takes one of the emitter's `looks` at random: a `Circle`, a
+`Rectangle` or an `Image` at a given size (fetched or refused as an `Image`
+node's is). It starts at the `source`:
+
+- `Pan(key)`: where the finger is on the `Gesture` keyed `key`, a location pan,
+  moved to the node's frame as a mask's followed strokes are. It sends
+  `ratePerS` a second and `ratePer100pt` for every 100 logical pixels the
+  finger moves, spaced along the way it went between frames, only while the
+  finger is down.
+- `Point { x, y }`: a place in the node; `ratePerS` a second, always.
+- `Area`: anywhere in the node, evenly at random; `ratePerS` a second, always.
+
+| Field | What it says | Units and range | Default |
+| --- | --- | --- | --- |
+| `lifeMs` | how long a particle lives | milliseconds | |
+| `speed { min, max }` | its speed, picked evenly at random | hundredths of a logical pixel a second; ends swapped when `max` is less | |
+| `angleCentideg`, `spreadCentideg` | its direction, spread evenly across the full width around the middle | hundredths of a degree clockwise from the end direction: 9000 down | |
+| `gravity` | downward acceleration | hundredths of a logical pixel a second squared; negative rises | |
+| `spin { min, max }` | its turning speed from upright | hundredths of a degree a second, clockwise | |
+| `fadeFromPermille` | the share of life after which it fades linearly to nothing at its end | thousandths; 1000 or more never fades | |
+| `endScalePermille` | its size at the end of life, reached linearly | thousandths of the look's size | |
+| `maxAlive` | the most particles alive at once; the rest are not sent | capped at 512 | |
+| `bursts` | `{ count, on }`: particles sent at once from the source | | none |
+
+A burst goes `on` the node appearing (`Appear`, as an `Enter` plays), on the
+host sending an `Action` from the body's current tree, whichever node sends it,
+with no round trip to the worker, or on a tree carrying a `Change` value
+different from the tree before, so a worker sets one off by changing a count.
+A `Pan` source bursts from where the finger last was. `Emitter::place_at` in
+the core crate gives a particle's place, opacity and scale for its age, the
+rule both hosts follow.
+
+Live particles keep moving across trees that keep the emitter; a tree without
+it lets them finish. The host sends none where the person asked for less
+motion, and a host that cannot draw them draws the node alone.
