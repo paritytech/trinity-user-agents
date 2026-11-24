@@ -14,11 +14,7 @@ fn root_public_key(entropy: &RootEntropy) -> [u8; 32] {
 
 async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
 	let network = Network::default().bundled_stack(ChainBackend::Rpc);
-	let catalog = SessionCatalog::new(
-		base_path.to_path_buf(),
-		network.namespace(),
-		&network.state_directory(),
-	)?;
+	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.state_directory())?;
 	catalog.set_current(name)?;
 	start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None).await
 }
@@ -29,7 +25,7 @@ fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
 		"version": 1,
 		"accounts": [{
 			"name": "auto-1",
-			"network": session.network.namespace(),
+			"network": session.network.state_directory(),
 			"mnemonic": SESSION_MNEMONIC,
 			"lite_username": "pending.01",
 			"public_key_hex": "0x00",
@@ -474,7 +470,7 @@ fn paired_device_list_reports_an_empty_session() {
 #[test]
 fn a_session_name_promoted_away_still_selects_its_own_session() -> Result<()> {
 	let temporary = tempfile::tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("worker-0")?;
 	catalog.promote_to_user(&provisional, "alice.01")?;
 	let args =
@@ -487,7 +483,7 @@ fn a_session_name_promoted_away_still_selects_its_own_session() -> Result<()> {
 #[test]
 fn a_base_path_with_several_provisioned_sessions_and_no_pointer_refuses_to_guess() -> Result<()> {
 	let temporary = tempfile::tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	for name in ["alice.01", "bob.02"] {
 		let profile = catalog.ensure_profile(name)?;
 		std::fs::write(profile.path.join("accounts.json"), "{}")?;
@@ -507,7 +503,7 @@ fn a_base_path_with_several_provisioned_sessions_and_no_pointer_refuses_to_guess
 fn a_lost_pointer_reselects_the_provisioned_session_instead_of_the_bootstrap_profile() -> Result<()>
 {
 	let temporary = tempfile::tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice.01")?;
 	std::fs::write(profile.path.join("accounts.json"), "{}")?;
 
@@ -865,7 +861,7 @@ fn rerun_without_a_selected_script_does_not_create_or_edit_a_project() -> Result
 fn clearing_sessions_keeps_managed_script_projects() -> Result<()> {
 	let temporary = tempfile::tempdir()?;
 	let base = Some(temporary.path().to_path_buf());
-	let catalog = SessionCatalog::new(state_base_path(base.clone()), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(state_base_path(base.clone()), "testnet")?;
 	let profile = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
 	let projects = script_project_directory(base);
 	let script = select_script_to_edit(&projects, &mut None)?;

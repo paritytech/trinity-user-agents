@@ -1,10 +1,11 @@
 //! The checks that make a descriptor a [`Stack`] the CLI can run on.
 
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use trinity_stack::Descriptor;
 use truapi::platform::DOTNS_TLDS;
 
-use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
+use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, built_in::built_in_name, namespace_of};
 use crate::{chain::ChainBackend, stack_descriptor::ROLE_NAMES};
 
 impl Stack {
@@ -23,8 +24,8 @@ impl Stack {
 		let id = &descriptor.id;
 		ensure!(
 			id != POLKADOT_NAMESPACE,
-			"a stack cannot run under the {POLKADOT_NAMESPACE} namespace, which may \
-			 contain sessions of real Polkadot identities; use a stack with another id"
+			"a stack cannot run under the {POLKADOT_NAMESPACE} namespace, which would \
+			 present it as Polkadot; use a stack with another id"
 		);
 		ensure!(
 			truapi::platform::is_dns_label(namespace_of(id)),
@@ -51,7 +52,22 @@ impl Stack {
 				"the {id} stack has no dotns.popController, which the CLI resolves usernames through"
 			)
 		})?;
-		Ok(Self { stack_id, descriptor, chain_backend, chains, identity_backend, pop_controller })
+		let state_directory = match built_in_name(&stack_id) {
+			Some(network) => network.to_owned(),
+			None => {
+				let digest = Sha256::digest(stack_id.as_bytes());
+				format!("stack-{}", hex::encode(&digest[..16]))
+			},
+		};
+		Ok(Self {
+			stack_id,
+			state_directory,
+			descriptor,
+			chain_backend,
+			chains,
+			identity_backend,
+			pop_controller,
+		})
 	}
 }
 

@@ -142,9 +142,9 @@ struct Cli {
 	network: Option<Network>,
 	/// Run against this Trinity stack instead of a built-in network: a
 	/// descriptor URL, a stack link (`polkadotapp://stack?...`) or a local
-	/// descriptor file. Its chains, identity backend and TLD are used, under
-	/// the product namespace of the descriptor's `id` without a trailing
-	/// `-fork`. Defaults to `HOST_CLI_STACK` when that is not blank.
+	/// descriptor file. Its chains, identity backend and TLD are used, and its
+	/// state is kept apart from every other stack's. Defaults to
+	/// `HOST_CLI_STACK` when that is not blank.
 	#[arg(long, global = true, value_name = "STACK")]
 	stack: Option<String>,
 	#[command(subcommand)]
@@ -715,6 +715,7 @@ fn print_network(stack: &Stack) {
 		serde_json::json!({
 			"schema_version": 1,
 			"network": stack.namespace(),
+			"state_directory": stack.state_directory(),
 			"namespace": stack.tld(),
 			"identity_backend_base": stack.identity_backend(),
 			"people": chain(&chains.people),
@@ -1369,8 +1370,7 @@ async fn run_signing_host(
 	let product_id = product.current();
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path.clone());
-	let session_catalog =
-		SessionCatalog::new(base_path.clone(), network.namespace(), &network.state_directory())?;
+	let session_catalog = SessionCatalog::new(base_path.clone(), network.state_directory())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
 	let initial_session_names = session_catalog.list()?;
 	let (terminal_ui, ui_handle) = if interactive {
@@ -2514,7 +2514,7 @@ async fn prepare_pairing_response(
 					let account_base_path = current_account_base_path(session)?;
 					accounts::mark_account_exhausted(
 						&account_base_path,
-						session.network.namespace(),
+						session.network.state_directory(),
 						name,
 						period,
 					)?;
@@ -2790,7 +2790,7 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 	let account_base_path = current_account_base_path(session)?;
 	accounts::mark_account_exhausted(
 		&account_base_path,
-		session.network.namespace(),
+		session.network.state_directory(),
 		&name,
 		period,
 	)?;
@@ -3107,7 +3107,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	)?;
 	if is_lite_label(&name) &&
 		accounts::AccountStore::load(&provisional_profile.account_base_path)?
-			.created_at(session.network.namespace(), account.as_deref())?
+			.created_at(session.network.state_directory(), account.as_deref())?
 			.is_none()
 	{
 		bail!("session {name:?} has no saved account; choose a username base to create one");

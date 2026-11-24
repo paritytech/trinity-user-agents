@@ -200,9 +200,9 @@ Nothing a host keeps for one stack is visible to another. The core's storage
 keys do not name the stack, so a host that can run more than one stack gives
 each its own `CoreStorage`, `ProductStorage`, encrypted store and core
 database directory, picked from the stack's pointer before it starts the core.
-A fork has its source's genesis hashes and TLD, so only the pointer tells the
-two apart. The CLI keeps each stack's state in a directory named from the
-stack's id.
+A fork has its source's genesis hashes and TLD, so neither tells the two apart,
+and a descriptor's `id` is only what it calls itself. The CLI keeps each
+stack's state under a name made from the id of the stack's pointer.
 
 #### Descriptor refresh
 

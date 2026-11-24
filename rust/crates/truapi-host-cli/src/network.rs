@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use clap::ValueEnum;
-use sha2::{Digest, Sha256};
 use trinity_stack::Descriptor;
 use truapi::platform::{
 	ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError, StackIdentity,
@@ -55,8 +54,8 @@ pub async fn within_check_timeout<T>(
 	})
 }
 
-/// The namespace no stack runs under, since it may contain sessions of real
-/// Polkadot identities.
+/// The namespace no stack runs under, so that the CLI presents none as
+/// Polkadot.
 const POLKADOT_NAMESPACE: &str = "polkadot";
 
 /// The product namespace of the stack whose descriptor names itself `id`: `id`
@@ -99,6 +98,7 @@ pub struct StackArg {
 #[derive(Debug)]
 pub struct Stack {
 	stack_id: String,
+	state_directory: String,
 	descriptor: Descriptor,
 	chain_backend: ChainBackend,
 	chains: Roles<ChainEndpoint>,
@@ -114,31 +114,25 @@ pub struct ChainEndpoint {
 }
 
 impl Stack {
-	/// The product namespace, which names this network in the account store
-	/// and in what the CLI prints: the descriptor's `id` without a trailing
-	/// `-fork`, so a fork has its source's accounts, except that the
-	/// `polkadot-fork` namespace is its full `id`. State other than accounts is
-	/// kept per stack, in [`Self::state_directory`].
+	/// The product namespace, the name the CLI prints for this network and
+	/// picks its light-client chain specs by: the descriptor's `id` without a
+	/// trailing `-fork`, except that the `polkadot-fork` namespace is its full
+	/// `id`. Nothing is stored under it; see [`Self::state_directory`].
 	pub fn namespace(&self) -> &str {
 		namespace_of(&self.descriptor.id)
 	}
 
-	/// The directory under the versioned base path that holds this stack's
-	/// sessions, pairings, and core and product storage.
+	/// The name everything the CLI stores for this stack is kept under: its
+	/// directory under the versioned base path, and its network in the account
+	/// store.
 	///
 	/// A built-in network's is its name. Any other stack's is `stack-` and the
-	/// first 16 hex digits of the SHA-256 of its id. The name comes from the
-	/// pointer's identity alone, so no two stacks share state, a fork and its
-	/// source included, and a descriptor cannot choose another stack's
-	/// directory by what it calls itself.
-	pub fn state_directory(&self) -> String {
-		match built_in::built_in_name(&self.stack_id) {
-			Some(network) => network.to_owned(),
-			None => {
-				let digest = Sha256::digest(self.stack_id.as_bytes());
-				format!("stack-{}", hex::encode(&digest[..8]))
-			},
-		}
+	/// first 32 hex digits of the SHA-256 of its id. It follows the stack's id
+	/// and not what the descriptor calls itself, so a fork does not read its
+	/// source's state, and a descriptor cannot pick another stack's by the
+	/// `id` it declares.
+	pub fn state_directory(&self) -> &str {
+		&self.state_directory
 	}
 
 	/// The network's dotNS TLD without the dot, as its runtimes report it in

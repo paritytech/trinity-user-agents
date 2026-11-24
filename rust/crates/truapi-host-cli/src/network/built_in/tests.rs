@@ -5,8 +5,8 @@ use super::{super::testing::edit_descriptor, *};
 /// A bundled copy that no longer opens with its pointer would leave the
 /// built-in network, or the check that tells a Polkadot fork from Polkadot,
 /// with nothing to start from when the published copy is unreachable. A
-/// built-in's descriptor `id` is its `--network` value, so the namespace a
-/// user selects is the one its state is stored under.
+/// built-in's descriptor `id` is its `--network` value, so the CLI prints the
+/// network under the name a user selects it by.
 #[test]
 fn test_bundled_stack_pointers() {
 	let built_ins = Network::value_variants()
@@ -162,8 +162,8 @@ fn test_refresh_tld_change_bundle() {
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 }
 
-/// The id is the namespace every account is saved under, so a
-/// refresh that changes it would move them all.
+/// The CLI names a built-in network and its light-client chain specs by the
+/// id, so a refresh that changes it is not taken.
 #[test]
 fn test_refresh_id_change_bundle() {
 	let renamed_copy = sign_edited(|descriptor| {

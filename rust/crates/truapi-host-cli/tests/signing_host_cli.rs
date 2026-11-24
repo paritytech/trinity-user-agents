@@ -5,27 +5,27 @@
 mod bundled;
 #[path = "common/offline.rs"]
 mod offline;
+#[path = "common/state.rs"]
+mod state;
 
 use std::{
 	path::{Path, PathBuf},
 	process::{Command, Stdio},
 };
 
-use sha2::{Digest, Sha256};
-
 fn command() -> Command {
 	offline::offline_host_command()
 }
 
 /// The state directory of the stack [`command`] runs on, from the base path.
-///
-/// A stack given as a local file is a stack of its own, whatever `id` its descriptor declares,
-/// so the directory is named from the file's path and is not paseo-next-v2's.
 fn state_directory() -> PathBuf {
-	let file = std::fs::canonicalize(&*offline::OFFLINE_PASEO_NEXT_V2_STACK)
-		.expect("the offline stack file exists");
-	let digest = Sha256::digest(format!("file:{}", file.display()));
-	Path::new("v2").join(format!("stack-{}", hex::encode(&digest[..8])))
+	Path::new("v2").join(state::offline_state_name())
+}
+
+/// The account store `template`, with `@stack` as each record's network, for the stack
+/// [`command`] runs on.
+fn accounts_json(template: &str) -> String {
+	template.replace("@stack", &state::offline_state_name())
 }
 
 fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
@@ -331,7 +331,7 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	assert!(!bob.exists());
 	assert!(unrelated.exists());
 	let stdout = String::from_utf8_lossy(&output.stdout);
-	assert!(stdout.contains("All sessions cleared for paseo-next-v2"));
+	assert!(stdout.contains(&format!("All sessions cleared for {}", state::offline_state_name())));
 	assert!(!output.stdout.contains(&0x1b));
 }
 
@@ -441,11 +441,11 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
 	std::fs::create_dir_all(&state_path).expect("create active state root");
 	std::fs::write(
         state_path.join("accounts.json"),
-        r#"{
+        accounts_json(r#"{
   "version": 1,
   "accounts": [{
     "name": "auto-1",
-    "network": "paseo-next-v2",
+    "network": "@stack",
     "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "lite_username": "cachedalice.01",
     "public_key_hex": "0x00",
@@ -453,7 +453,7 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
     "created_at_unix": 1,
     "attested": true
   }]
-}"#,
+}"#),
     )
     .expect("seed local account store");
 
@@ -489,11 +489,11 @@ fn imported_session_restores_the_exact_bound_account() {
 	std::fs::create_dir_all(&role_path).expect("create signing-host state");
 	std::fs::write(
         profile.join("accounts.json"),
-        r#"{
+        accounts_json(r#"{
   "version": 1,
   "accounts": [{
     "name": "imported",
-    "network": "paseo-next-v2",
+    "network": "@stack",
     "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "lite_username": "importedalice.01",
     "public_key_hex": "0x00",
@@ -502,7 +502,7 @@ fn imported_session_restores_the_exact_bound_account() {
     "attested": true,
     "origin": "imported"
   }]
-}"#,
+}"#),
     )
     .expect("seed imported account store");
 	std::fs::write(
@@ -544,11 +544,11 @@ fn imported_session_without_dotns_username_restores_by_account_binding() {
 	std::fs::create_dir_all(&role_path).expect("create signing-host state");
 	std::fs::write(
         profile.join("accounts.json"),
-        r#"{
+        accounts_json(r#"{
   "version": 1,
   "accounts": [{
     "name": "imported",
-    "network": "paseo-next-v2",
+    "network": "@stack",
     "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "lite_username": "",
     "public_key_hex": "0x00",
@@ -557,7 +557,7 @@ fn imported_session_without_dotns_username_restores_by_account_binding() {
     "attested": true,
     "origin": "imported"
   }]
-}"#,
+}"#),
     )
     .expect("seed username-less imported account store");
 	std::fs::write(

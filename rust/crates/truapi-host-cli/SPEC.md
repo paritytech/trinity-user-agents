@@ -585,7 +585,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since every account moves to another namespace, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI or the core reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since the CLI names the network by it, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI or the core reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -1556,13 +1556,15 @@ The layout may contain compatibility paths as well as identity-owned paths:
         <product-file>.json
 ```
 
-`<network>` is the stack's state directory. A built-in network's is its name,
-such as `paseo-next-v2`. Any other stack's is `stack-<tag>`, where `<tag>` is
-the first 16 hex digits of the SHA-256 of the stack's id (§14.1). The directory
-follows the stack's id and not what its descriptor calls itself, so no two
-stacks share sessions, pairings, or core or product storage: a fork starts
-with none of its source's. `accounts.json` above the stack directories is
-shared, and names each account's network by its product namespace (§14.1).
+`<network>` is the name everything the CLI stores for a stack is kept under. A
+built-in network's is its name, such as `paseo-next-v2`. Any other stack's is
+`stack-<tag>`, where `<tag>` is the first 32 hex digits of the SHA-256 of the
+stack's id (§14.1). It follows the stack's id and not what its descriptor calls
+itself, so a fork starts with none of its source's sessions, accounts, pairings,
+or core or product storage, and a stack named once by a link with its key and
+once by its bare URL is two stacks. `accounts.json` above the stack directories
+holds the default session's accounts for every stack, each under that name as
+its network id (§13.7). `network-check` prints the name as `state_directory`.
 
 An explicit mnemonic has no account profile, but its signing runtime uses the
 default/bootstrap signing storage path for core and product state. It does not
@@ -1791,8 +1793,8 @@ a fork. A fork made less than Polkadot's finality lag ago therefore cannot run
 until Polkadot finalizes past the fork. An endpoint with no Polkadot genesis is
 not compared. `network-check`, which contacts no chain, does not compare.
 
-A stack with the id `polkadot` cannot run, since that namespace may contain
-sessions of real Polkadot identities.
+A stack with the id `polkadot` cannot run, since the CLI would present it as
+Polkadot.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
 ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
@@ -1808,7 +1810,7 @@ changed. A newer copy that changes none of them is used without a line. A
 published copy that changes the `tld` or the `id`, or that the CLI cannot run on
 (for instance one without a `dub` service), is not used: the shipped copy stays
 in use with a warning that names the published URL, since every account derives
-under the TLD and is stored under the namespace. A refused, rolled-back or
+under the TLD and the CLI names the network by the `id`. A refused, rolled-back or
 conflicting published copy leaves the shipped copy in use with a warning; an
 unreachable one does so without a message. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
@@ -1846,11 +1848,11 @@ stack; one past `validUntil` is used with a warning. Its endpoints and People's
 `NetworkSuffix` are checked as above. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
 `truapi-provider` bundles. `get_chain_info` reports the descriptor's
-`network`. The product namespace, which accounts are saved under, is the
-descriptor's `id` without a trailing `-fork`, which must be a lowercase label,
-so a fork has its source's accounts; the `polkadot-fork` namespace is its full
-`id`, so it does not share the `polkadot` namespace. Everything else a stack
-stores is in its own state directory (§13.1).
+`network`. The product namespace, the name the CLI prints for the network, is
+the descriptor's `id` without a trailing `-fork`, which must be a lowercase
+label; the `polkadot-fork` namespace is its full `id`, so it is not the
+`polkadot` namespace. Nothing is stored under the namespace: a stack's state is
+in its own directory (§13.1).
 
 The stack's id, which the core takes with the descriptor's `generation`, is the
 key of the link when it has one, and otherwise the URL. The URL of a built-in
@@ -1868,8 +1870,9 @@ it came from, `--stack` or `HOST_CLI_STACK`.
 
 `network-check` resolves the network as any command does, fetching only the
 descriptor, and prints as JSON `schema_version`, `network` (the product
-namespace), `namespace` (the network's TLD), `identity_backend_base`, and `ws`
-and `genesis` for `people`, `asset_hub` and `bulletin`.
+namespace), `state_directory` (the name the stack's state is kept under,
+§13.1), `namespace` (the network's TLD), `identity_backend_base`, and `ws` and
+`genesis` for `people`, `asset_hub` and `bulletin`.
 
 #### `pcf-devnet`
 
@@ -1878,8 +1881,8 @@ chains, from the descriptor PCF signs (the known stack `pcf-devnet`). Reserved
 identities derive under `.dot`. The identity backend is the descriptor's `dub`
 service.
 
-Sessions are per network (`SessionCatalog::new` keys on the network id), so a
-signer provisioned on one network is not visible from another. Each network means
+Sessions and accounts are per stack (§13.1), so a signer provisioned on one
+network is not visible from another. Each network means
 its own identity on one machine, which is deliberate: the lite username and the
 statement-store allowance are per chain.
 

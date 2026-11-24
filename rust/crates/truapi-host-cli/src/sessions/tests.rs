@@ -33,7 +33,7 @@ fn derives_lite_username_prefix_from_session_name() {
 #[test]
 fn persists_and_lists_the_current_network_session() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	catalog.set_current("alice")?;
 
 	assert_eq!(catalog.current_session()?, CurrentSession::Pointed("alice".to_string()));
@@ -48,7 +48,7 @@ fn persists_and_lists_the_current_network_session() -> Result<()> {
 #[test]
 fn signer_binding_roundtrips_in_one_session_metadata_record() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice.01")?;
 
 	catalog.store_signer_binding(&profile, "alice.01", "imported")?;
@@ -61,7 +61,7 @@ fn signer_binding_roundtrips_in_one_session_metadata_record() -> Result<()> {
 #[test]
 fn account_binding_does_not_require_a_dotns_username() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("imported-0123456789abcdef")?;
 
 	catalog.store_account_binding(&profile, "imported")?;
@@ -74,7 +74,7 @@ fn account_binding_does_not_require_a_dotns_username() -> Result<()> {
 #[test]
 fn paired_hosts_are_persisted_in_statement_order_and_preserve_metadata() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	catalog.store_signer_binding(&profile, "alice.dot", "imported")?;
 	let session_metadata = fs::read(profile.path.join(SESSION_INFO_FILE))?;
@@ -112,7 +112,7 @@ fn paired_hosts_are_persisted_in_statement_order_and_preserve_metadata() -> Resu
 #[test]
 fn repairing_a_host_updates_its_public_key_without_creating_a_duplicate() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let original = paired_host(1, 11, "original");
 	let replacement = paired_host(1, 33, "replacement");
@@ -129,7 +129,7 @@ fn repairing_a_host_updates_its_public_key_without_creating_a_duplicate() -> Res
 #[test]
 fn removing_a_paired_host_is_exact_and_preserves_session_metadata() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	catalog.store_signer_binding(&profile, "alice.dot", "imported")?;
 	let session_metadata = fs::read(profile.path.join(SESSION_INFO_FILE))?;
@@ -153,7 +153,7 @@ fn removing_a_paired_host_is_exact_and_preserves_session_metadata() -> Result<()
 #[test]
 fn concurrent_upsert_and_removal_preserve_unrelated_hosts() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let removed = paired_host(1, 11, "removed");
 	let preserved = paired_host(2, 22, "preserved");
@@ -204,7 +204,7 @@ fn concurrent_upsert_and_removal_preserve_unrelated_hosts() -> Result<()> {
 #[test]
 fn legacy_version_one_metadata_starts_with_no_paired_hosts() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let legacy_metadata = br#"{"version":1,"user_id":"alice.dot","account_name":"imported"}"#;
 	fs::write(profile.path.join(SESSION_INFO_FILE), legacy_metadata)?;
@@ -223,7 +223,7 @@ fn legacy_version_one_metadata_starts_with_no_paired_hosts() -> Result<()> {
 #[test]
 fn unsupported_paired_host_records_are_not_overwritten() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let path = profile.path.join(PAIRED_HOSTS_FILE);
 	let unsupported = serde_json::to_vec_pretty(&serde_json::json!({
@@ -259,7 +259,7 @@ fn paired_host(statement_byte: u8, encryption_byte: u8, name: &str) -> PairedHos
 #[test]
 fn clears_one_named_session_and_resets_its_current_pointer() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let alice = catalog.ensure_profile("alice")?;
 	let bob = catalog.ensure_profile("bob")?;
 	fs::write(alice.path.join("state"), "alice")?;
@@ -283,7 +283,7 @@ fn clears_one_named_session_and_resets_its_current_pointer() -> Result<()> {
 #[test]
 fn clearing_all_sessions_removes_default_and_identity_state_only() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let default = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
 	let alice = catalog.ensure_profile("alice")?;
 	fs::write(default.path.join("core-storage.json"), "{}")?;
@@ -306,7 +306,7 @@ fn clearing_all_sessions_removes_default_and_identity_state_only() -> Result<()>
 #[test]
 fn clearing_a_missing_session_has_an_actionable_error() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 
 	let error = catalog.clear(&SessionClearTarget::Named("alice".to_string())).unwrap_err();
 
@@ -317,7 +317,7 @@ fn clearing_a_missing_session_has_an_actionable_error() -> Result<()> {
 #[test]
 fn promotes_a_provisional_profile_to_the_username_host_root() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("pgtest")?;
 	fs::write(provisional.path.join("accounts.json"), "{}")?;
 	fs::create_dir_all(&provisional.product_storage_dir)?;
@@ -336,7 +336,7 @@ fn promotes_a_provisional_profile_to_the_username_host_root() -> Result<()> {
 #[test]
 fn default_profile_uses_the_bootstrap_storage_locations() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.profile(DEFAULT_SESSION_NAME)?;
 
 	assert_eq!(profile.account_base_path, temporary.path());
@@ -348,7 +348,7 @@ fn default_profile_uses_the_bootstrap_storage_locations() -> Result<()> {
 #[test]
 fn promoting_the_default_profile_preserves_paired_hosts() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let default_profile = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
 	let host = paired_host(1, 11, "first");
 	catalog.store_paired_host(&default_profile, host.clone())?;
@@ -363,7 +363,7 @@ fn promoting_the_default_profile_preserves_paired_hosts() -> Result<()> {
 #[test]
 fn session_metadata_preserves_user_id_and_last_script() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let scripts = profile.path.join("scripts");
 	fs::create_dir_all(&scripts)?;
@@ -390,7 +390,7 @@ fn session_metadata_preserves_user_id_and_last_script() -> Result<()> {
 #[test]
 fn stale_or_escaping_last_script_is_never_opened() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let scripts = profile.path.join("scripts");
 	fs::create_dir_all(&scripts)?;
@@ -409,7 +409,7 @@ fn stale_or_escaping_last_script_is_never_opened() -> Result<()> {
 #[test]
 fn session_metadata_preserves_an_explicit_script_outside_scratch_storage() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.ensure_profile("alice")?;
 	let script = temporary.path().join("product-script.ts");
 	fs::write(&script, "console.log('product');")?;
@@ -425,7 +425,7 @@ fn session_metadata_preserves_an_explicit_script_outside_scratch_storage() -> Re
 #[test]
 fn a_lost_pointer_recovers_the_only_provisioned_session() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let alice = catalog.ensure_profile("alice.01")?;
 	fs::write(alice.path.join("accounts.json"), "{}")?;
 	catalog.set_current("alice.01")?;
@@ -438,7 +438,7 @@ fn a_lost_pointer_recovers_the_only_provisioned_session() -> Result<()> {
 #[test]
 fn a_pointer_naming_a_removed_session_recovers_the_remaining_one() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let alice = catalog.ensure_profile("alice.01")?;
 	fs::write(alice.path.join("accounts.json"), "{}")?;
 	catalog.set_current("alice.01")?;
@@ -451,7 +451,7 @@ fn a_pointer_naming_a_removed_session_recovers_the_remaining_one() -> Result<()>
 #[test]
 fn a_lost_pointer_with_several_provisioned_sessions_is_ambiguous() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	for name in ["alice.01", "bob.02"] {
 		let profile = catalog.ensure_profile(name)?;
 		fs::write(profile.path.join("accounts.json"), "{}")?;
@@ -469,7 +469,7 @@ fn a_lost_pointer_with_several_provisioned_sessions_is_ambiguous() -> Result<()>
 #[test]
 fn an_unprovisioned_session_directory_is_not_recovered() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	catalog.ensure_profile("alice.01")?;
 
 	assert_eq!(catalog.current_session()?, CurrentSession::Fresh);
@@ -481,7 +481,7 @@ fn an_unprovisioned_session_directory_is_not_recovered() -> Result<()> {
 fn a_username_prefix_selects_creation_order_instead_of_the_numerical_suffix() -> Result<()> {
 	for (first, second) in [("workbench.42", "workbench.73"), ("workbench.73", "workbench.42")] {
 		let temporary = tempdir()?;
-		let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+		let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 		saved_session(&catalog, first, None, 100)?;
 		saved_session(&catalog, second, None, 200)?;
 		saved_session(&catalog, "workbenchextra.99", None, 300)?;
@@ -502,7 +502,7 @@ fn a_username_prefix_selects_creation_order_instead_of_the_numerical_suffix() ->
 #[test]
 fn a_broken_binding_cannot_silently_select_an_older_identity() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	saved_session(&catalog, "workbench.42", None, 100)?;
 	let broken = saved_session(&catalog, "workbench.73", None, 200)?;
 	catalog.store_signer_binding(&broken, "workbench.73", "missing")?;
@@ -522,7 +522,7 @@ fn a_broken_binding_cannot_silently_select_an_older_identity() -> Result<()> {
 #[test]
 fn equal_creation_times_require_an_exact_session_name() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	saved_session(&catalog, "workbench.42", None, 100)?;
 	saved_session(&catalog, "workbench.73", None, 100)?;
 
@@ -572,7 +572,7 @@ fn saved_session(
 #[test]
 fn a_promoted_session_still_resolves_under_the_name_that_created_it() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("worker-0")?;
 
 	let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
@@ -585,7 +585,7 @@ fn a_promoted_session_still_resolves_under_the_name_that_created_it() -> Result<
 #[test]
 fn clearing_by_the_name_that_created_a_session_clears_the_promoted_one() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("worker-0")?;
 	let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
 	fs::write(promoted.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
@@ -600,7 +600,7 @@ fn clearing_by_the_name_that_created_a_session_clears_the_promoted_one() -> Resu
 #[test]
 fn an_unpromoted_name_resolves_to_itself() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 
 	assert_eq!(catalog.resolve_session_name("worker-0")?, "worker-0");
 	Ok(())
@@ -609,7 +609,7 @@ fn an_unpromoted_name_resolves_to_itself() -> Result<()> {
 #[test]
 fn an_alias_whose_target_was_cleared_resolves_to_itself_again() -> Result<()> {
 	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet", "testnet")?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("worker-0")?;
 	catalog.promote_to_user(&provisional, "alice.01")?;
 	catalog.clear(&SessionClearTarget::Named("alice.01".to_string()))?;

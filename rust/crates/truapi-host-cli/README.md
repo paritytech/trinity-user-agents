@@ -135,12 +135,14 @@ through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
-Each stack keeps its sessions, pairings, and core and product storage in a
-directory of its own under `v2`. A built-in network's is its name, such as
-`v2/paseo-next-v2`. A stack given with `--stack` that is not a built-in
-network's gets `v2/stack-<tag>`, named from the stack's id, so a fork starts
-with none of its source's sessions or stored data. The account store,
-`v2/accounts.json`, is shared.
+Everything the CLI stores for a stack is kept under one name: the stack's
+directory under `v2`, and its network in an account store. A built-in network's
+is its name, such as `v2/paseo-next-v2`. A stack given with `--stack` that is
+not a built-in network's gets `stack-<tag>`, named from the stack's id, so a
+fork starts with none of its source's sessions, accounts, pairings or stored
+data. A stack named once by a link with its key and once by its bare URL has
+two ids, and so two directories. `truapi-host network-check` prints the name as
+`state_directory`.
 
 The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices
@@ -1040,8 +1042,8 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
-copy was signed with another key (every derived account, or the namespace every
-account is saved under, would change; remove the copy to bundle it on purpose),
+copy was signed with another key (every derived account, or the name the CLI
+knows the network by, would change; remove the copy to bundle it on purpose),
 and a built-in network's copy the CLI cannot run on.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields neither truapi-host nor
@@ -1118,8 +1120,8 @@ Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
 descriptors target previewnet, so its statements, its host chain routes and its
 own chain reads all land on one network. The CLI mints the identity backend's
-bearer token itself (SPEC.md §12.3). Sessions are per network, so each network
-gets its own signer identity on the same machine.
+bearer token itself (SPEC.md §12.3). Sessions and accounts are per stack, so
+each network gets its own signer identity on the same machine.
 
 A command reaches its chains in one of two ways:
 
@@ -1154,8 +1156,8 @@ reference lists for that chain contacted at once. At the lower of the endpoint's
 Polkadot's finalized block, an equal block hash stops the command: the endpoint is
 Polkadot itself, or a fork that has not finalized past its fork point. It also stops when
 the endpoint, or every Polkadot node, does not answer within 3 seconds at a step, and the
-error names that side. A stack with the id `polkadot` cannot run, since that namespace
-may contain sessions of real Polkadot identities.
+error names that side. A stack with the id `polkadot` cannot run, since the CLI would
+present it as Polkadot.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \
@@ -1177,10 +1179,10 @@ stack that lacks one of those roles, gives two of them one genesis hash, has a
 no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
-chain. `get_chain_info` reports the descriptor's `network`. Accounts are saved
-under the product namespace, the descriptor's `id` without a trailing `-fork`,
-so a fork has its source's accounts; the `polkadot-fork` namespace is its full
-`id`. Everything else the stack stores is in its own
+chain. `get_chain_info` reports the descriptor's `network`. The product
+namespace, the name the CLI prints for the network, is the descriptor's `id`
+without a trailing `-fork`, except that the `polkadot-fork` namespace is its
+full `id`. Nothing is stored under it: the stack's state is in its own
 [state directory](#state-directory). Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
@@ -1189,9 +1191,10 @@ RPC.
 
 `truapi-host network-check` prints the resolved routing of either as JSON
 without contacting a chain, so a harness can check it before starting a session:
-`schema_version`; `network`, the product namespace; `namespace`, the network's
-`tld`; `identity_backend_base`; and `ws` and `genesis` for `people`,
-`asset_hub` and `bulletin`.
+`schema_version`; `network`, the product namespace; `state_directory`, the name
+the stack's state is kept under; `namespace`, the network's `tld`;
+`identity_backend_base`; and `ws` and `genesis` for `people`, `asset_hub` and
+`bulletin`.
 
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies the identity backend's bearer token
 instead of the CLI minting one. For username registration, an injected token's

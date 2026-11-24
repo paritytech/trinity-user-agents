@@ -79,7 +79,7 @@ Without `fetchStackDescriptor` the core stays on the copy it started from. The
 
 The keys the storage callbacks receive do not name the stack. A host that can
 run more than one stack keeps `coreStorage` and `productStorage` apart per
-stack, for example under a prefix made from `stackId(pointer)` of
+stack, for example under a prefix made from `stackId(decodeLink(pointer))` of
 `@parity/trinity-stack`, so a session, a permission or a product's data stored
 on one stack is not read on another.
 

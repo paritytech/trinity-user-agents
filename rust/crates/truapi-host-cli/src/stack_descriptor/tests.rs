@@ -155,8 +155,8 @@ fn test_reads_same_by_field() {
 }
 
 /// A source and its fork can both be local files with one descriptor `id`. If
-/// every local file were one stack, the core would give them one set of keys
-/// and the fork would read the source's session.
+/// every local file were one stack, the CLI would keep their state in one
+/// directory and the fork would read the source's session.
 #[tokio::test]
 async fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	let directory = tempfile::tempdir().expect("tempdir");
