@@ -55,7 +55,7 @@ class TrUAPIChatWorker(
         val claim = runtime.claimWorker(productId)
         workerJob.invokeOnCompletion {
             runCatching { claim.release() }
-                .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
+                .onFailure { Timber.w(it, "TrUAPI worker claim release failed for %s", productId.value) }
         }
         scope.launch {
             workers.executionState(productId)
