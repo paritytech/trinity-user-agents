@@ -2,7 +2,7 @@
 
 [Maestro](https://maestro.dev) flows that drive the iOS and Android host apps through their own screens. One flow serves both apps: it finds elements by the iOS accessibility identifiers in `hosts/ios/Packages/ExternalAccessibility` and by Android test tags with the same names, which the app exposes as resource ids.
 
-- `smoke.yaml`: starts the signed-in app, finds the account's username on the Pocket tab, opens the cash card's Send screen and backs out, opens Settings, and returns to Chats.
+- `smoke.yaml`: starts the signed-in app, finds the account's username on the Pocket tab, opens the cash card's Send screen, confirming a restored balance first when the app asks, and backs out, opens Settings, and returns to Chats.
 - `flows/`: steps the smoke flow shares, such as opening a tab. iOS tucks its docklet away after a few idle seconds, so opening a tab there swipes it back in first. The e2e Android build keeps its docklet on screen.
 - `run.mjs`: runs `smoke.yaml` and writes a JUnit report, Maestro's debug output and `report.md` to `--out`.
 

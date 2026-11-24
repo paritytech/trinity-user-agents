@@ -36,6 +36,20 @@ name: Settings and wallet smoke
     commands:
       - tapOn:
           id: wallet_cash_card
+# A freshly restored Android account asks for its balance to be confirmed before it offers Send.
+- retry:
+    maxRetries: 3
+    commands:
+      - runFlow:
+          when:
+            visible: Balance restored
+          commands:
+            - tapOn: Close
+            - tapOn: "Yes, I.m done"
+      - extendedWaitUntil:
+          visible:
+            id: wallet_send_payment_button
+          timeout: 10000
 - tapOn:
     id: wallet_send_payment_button
 - assertVisible:
