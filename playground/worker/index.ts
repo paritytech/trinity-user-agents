@@ -31,7 +31,6 @@ const BOT_ID = "truapi-diagnosis-bot";
 const HOST_STORED_ROOM: ChatRoomConfig = {
   productSource: false,
   reactionDetails: false,
-  reportSeen: false,
 };
 // A one-pixel PNG: the icon rules of `createRoom` accept an inline image.
 const DIAGNOSIS_ROOM_ICON =
@@ -245,7 +244,7 @@ async function runRoomDeclarationProbe(): Promise<void> {
     roomId = await ensureRoom(
       `${diagnosticRoomSource}-v2`,
       `TrUAPI Diagnosis v2 ${runId}`,
-      { productSource: false, reactionDetails: true, reportSeen: true },
+      { productSource: false, reactionDetails: true },
     );
 
     const metadata = await chat.setRoomMetadata({

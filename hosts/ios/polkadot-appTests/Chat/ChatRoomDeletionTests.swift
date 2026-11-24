@@ -63,7 +63,7 @@ struct ChatRoomDeletionTests {
     }
 }
 
-private let config = Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
+private let config = Chat.RoomConfig(productSource: false, reactionDetails: true)
 
 private extension ChatRoomDeletionTests {
     func chatId(_ roomId: String) -> Chat.Id {

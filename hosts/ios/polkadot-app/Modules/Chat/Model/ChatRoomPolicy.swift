@@ -19,7 +19,6 @@ struct ChatRoomPolicy: Equatable {
     }
 
     let messageStore: MessageStore
-    let reportsSeen: Bool
     let footer: Footer
     /// Goes up by one at each configuration that the product sets, so an open room knows to reload.
     var configGeneration: Int64 = 0
@@ -29,9 +28,13 @@ extension ChatRoomPolicy {
     /// The policy of a room that declares nothing.
     static let defaults = ChatRoomPolicy(
         messageStore: .host,
-        reportsSeen: false,
         footer: .input
     )
+
+    /// A room whose product keeps the messages tells the product which messages the user saw.
+    var reportsSeen: Bool {
+        messageStore == .product
+    }
 
     /// The policy of a room from what its product declared. A nil value of a declaration uses the default.
     init(footer: Chat.RoomFooter?, declarations: Chat.RoomDeclarations?) {
@@ -39,7 +42,6 @@ extension ChatRoomPolicy {
 
         self.init(
             messageStore: config.productSource ? .product : .host,
-            reportsSeen: config.reportSeen,
             footer: Self.footer(of: footer),
             configGeneration: declarations?.configGeneration ?? 0
         )

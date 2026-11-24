@@ -18,13 +18,11 @@ import uniffi.truapi.ProductId
 fun ChatRoomConfig.toModel() = ChatRoomConfigModel(
     productSource = productSource,
     reactionDetails = reactionDetails,
-    reportSeen = reportSeen,
 )
 
 fun ChatRoomConfigModel.toCore() = ChatRoomConfig(
     productSource = productSource,
     reactionDetails = reactionDetails,
-    reportSeen = reportSeen,
 )
 
 fun ChatRoomMetadata.toModel() = ChatRoomMetadataModel(description = description, placeholder = placeholder)

@@ -36,7 +36,6 @@ import {
 import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
-  ChatFeedOutcome,
   CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
@@ -90,7 +89,7 @@ export interface RawCallbacks {
     product: Uint8Array,
     request: Uint8Array,
     persist: boolean,
-  ): Promise<Uint8Array>;
+  ): Promise<void>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   contactUsernames?(product: Uint8Array): Promise<Uint8Array>;
@@ -224,12 +223,10 @@ export function createWasmRawCallbacks(
               HostChatDeleteRoomRequest.dec(request),
             ),
           updateChatFeed: async (product, request, persist) =>
-            ChatFeedOutcome.enc(
-              await chat.updateChatFeed(
-                ProductContext.dec(product),
-                HostChatUpdateFeedRequest.dec(request),
-                persist,
-              ),
+            await chat.updateChatFeed(
+              ProductContext.dec(product),
+              HostChatUpdateFeedRequest.dec(request),
+              persist,
             ),
         }
       : {}),

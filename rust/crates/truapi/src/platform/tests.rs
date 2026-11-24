@@ -952,29 +952,16 @@ fn hop(node: &str, size: u64) -> ChatResource {
 	ChatResource::Hop { identifier: [1; 32], ticket: [2; 32], node: node.to_string(), size }
 }
 
-// A node that is not `wss://` is not one the apps dial.
+// The node of a HOP file reaches the host as text.
 #[test]
-fn a_hop_file_is_media_with_a_wss_node() {
-	let file = hop("wss://hop.example", 1_000);
-	assert_eq!(validate_chat_media_resource("media", file.clone()), Ok(file));
+fn the_node_of_a_hop_file_is_screened_as_a_name() {
 	assert_eq!(
-		validate_chat_media_resource("media", hop("https://hop.example", 1_000)),
-		Err(ChatFieldError::RejectedScheme { field: "media" })
+		validate_chat_media_resource("media", hop(" wss://hop.example ", 1_000)),
+		Ok(hop("wss://hop.example", 1_000))
 	);
 	assert_eq!(
-		validate_chat_media_resource(
-			"media",
-			hop("wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
-		),
-		Err(ChatFieldError::TooLong {
-			field: "media",
-			limit: CHAT_HOP_FILE_MAX_BYTES as usize
-		})
-	);
-	// A file with zero bytes is empty, not too long.
-	assert_eq!(
-		validate_chat_media_resource("media", hop("wss://hop.example", 0)),
-		Err(ChatFieldError::Empty { field: "media" })
+		validate_chat_media_resource("media", hop("wss://hop\u{202e}.example", 1_000)),
+		Err(ChatFieldError::UnsafeCharacter { field: "media" })
 	);
 }
 
@@ -1065,7 +1052,7 @@ fn a_message_body_is_bounded_in_text() {
 }
 
 #[test]
-fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
+fn a_message_is_screened_in_every_identifier() {
 	assert_eq!(
 		validate_chat_message(text_message(" m1 ")).map(|message| message.message_id),
 		Ok("m1".to_string())
@@ -1074,23 +1061,6 @@ fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
 		validate_chat_message(text_message("m\u{200d}1")),
 		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
 	);
-	let reacted = |count: usize| ChatMessage {
-		reactions: (0..count)
-			.map(|index| ChatReactionSummary {
-				// One distinct emoji of the Emoticons block for each reaction.
-				emoji: char::from_u32(0x1f600 + index as u32).expect("an emoji").to_string(),
-				count: 1,
-				reacted_by_user: false,
-				unseen: false,
-			})
-			.collect(),
-		..text_message("m1")
-	};
-	assert!(validate_chat_message(reacted(CHAT_REACTIONS_MAX)).is_ok());
-	assert_eq!(
-		validate_chat_message(reacted(CHAT_REACTIONS_MAX + 1)),
-		Err(ChatFieldError::TooMany { field: "reactions", limit: CHAT_REACTIONS_MAX })
-	);
 	assert_eq!(
 		validate_chat_feed_update(ChatFeedUpdate::ReactionPlaced {
 			message_id: "m1".to_string(),
@@ -1098,78 +1068,6 @@ fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
 			emoji: "👍".to_string(),
 		}),
 		Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
-	);
-}
-
-// The chat modality RFC limits a reaction to one extended grapheme cluster of
-// at most 64 bytes, and a reader drops a longer one. The core refuses it
-// first, in each place a v2 reaction reaches a host.
-#[test]
-fn a_reaction_is_one_emoji_of_at_most_64_bytes() {
-	let placed = |emoji: &str| {
-		validate_chat_feed_update(ChatFeedUpdate::ReactionPlaced {
-			message_id: "m1".to_string(),
-			participant_id: "contact".to_string(),
-			emoji: emoji.to_string(),
-		})
-		.map(|update| match update {
-			ChatFeedUpdate::ReactionPlaced { emoji, .. } => emoji,
-			other => unreachable!("a reaction stays a reaction: {other:?}"),
-		})
-	};
-	// Sequences that a reader sees as one emoji: a ZWJ family, a keycap, a
-	// skin tone, a subdivision flag, a regional flag.
-	for emoji in [
-		"\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
-		"1\u{fe0f}\u{20e3}",
-		"\u{1f44d}\u{1f3fd}",
-		"\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}",
-		"\u{1f1ee}\u{1f1f3}",
-	] {
-		assert_eq!(placed(emoji), Ok(emoji.to_string()), "{emoji:?} is one emoji");
-	}
-	assert_eq!(placed(" 👍 "), Ok("👍".to_string()));
-	assert_eq!(placed("ok"), Err(ChatFieldError::NotOneGrapheme { field: "emoji" }));
-	assert_eq!(placed("👍👍"), Err(ChatFieldError::NotOneGrapheme { field: "emoji" }));
-	assert_eq!(placed(" "), Err(ChatFieldError::Empty { field: "emoji" }));
-	// One grapheme cluster over the byte limit: a letter with 40 marks.
-	let stacked = format!("e{}", "\u{0301}".repeat(40));
-	assert_eq!(
-		placed(&stacked),
-		Err(ChatFieldError::TooLong { field: "emoji", limit: CHAT_EMOJI_MAX_BYTES })
-	);
-
-	// A reaction summary and the reaction of a room preview have the same rule.
-	let summarized = ChatMessage {
-		reactions: vec![ChatReactionSummary {
-			emoji: "ok".to_string(),
-			count: 1,
-			reacted_by_user: false,
-			unseen: false,
-		}],
-		..text_message("m1")
-	};
-	assert_eq!(
-		validate_chat_message(summarized),
-		Err(ChatFieldError::NotOneGrapheme { field: "emoji" })
-	);
-	let preview = ChatRoomPreview {
-		timestamp: None,
-		badge: None,
-		last_message: None,
-		last_reaction: Some(ChatPreviewReaction {
-			emoji: "ok".to_string(),
-			by_user: false,
-			message: None,
-			removed: false,
-		}),
-		unseen_reactions: 0,
-		pinned: false,
-		activity: None,
-	};
-	assert_eq!(
-		validate_chat_room_preview(preview),
-		Err(ChatFieldError::NotOneGrapheme { field: "emoji" })
 	);
 }
 
@@ -1192,13 +1090,10 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 		icon: None,
 		placeholder: None,
 	};
-	assert!(validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES)).is_ok());
+	assert!(validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES)).is_ok());
 	assert_eq!(
-		validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES + 1)),
-		Err(ChatFieldError::TooLong {
-			field: "description",
-			limit: CHAT_DESCRIPTION_MAX_BYTES
-		})
+		validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES + 1)),
+		Err(ChatFieldError::TooLong { field: "description", limit: CHAT_BODY_MAX_BYTES })
 	);
 	assert_eq!(
 		validate_chat_room_metadata(ChatRoomMetadata {
@@ -1220,18 +1115,11 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 	);
 
 	// The core bounds the empty-room text as it bounds a description.
-	let placeholder =
-		|text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
-	assert!(
-		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES)))
-			.is_ok()
-	);
+	let placeholder = |text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
+	assert!(validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES))).is_ok());
 	assert_eq!(
-		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES + 1))),
-		Err(ChatFieldError::TooLong {
-			field: "placeholder",
-			limit: CHAT_DESCRIPTION_MAX_BYTES
-		})
+		validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES + 1))),
+		Err(ChatFieldError::TooLong { field: "placeholder", limit: CHAT_BODY_MAX_BYTES })
 	);
 
 	// An image badge has the rules of an icon and needs an image. An

@@ -49,7 +49,7 @@ final class UserDataModel59MigrationTests {
         #expect(UserStorageVersion.version59.nextVersion() == nil)
 
         let facade = UserDataStorageTestFacade()
-        let config = Chat.RoomConfig(productSource: true, reactionDetails: false, reportSeen: true)
+        let config = Chat.RoomConfig(productSource: true, reactionDetails: true)
         let preview = Chat.RoomPreview(
             timestamp: 42,
             badge: .image("https://example.com/badge.png"),

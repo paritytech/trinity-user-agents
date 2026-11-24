@@ -1466,7 +1466,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           chatDeclarations.get(roomId)?.config ?? {
             productSource: false,
             reactionDetails: false,
-            reportSeen: false,
           }
         );
       },
@@ -1494,7 +1493,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         declareChatRoom(request.roomId, (room) => {
           room.feed.push([request.update, persist]);
         });
-        return "Applied";
       },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription

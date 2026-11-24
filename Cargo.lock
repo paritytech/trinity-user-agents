@@ -6079,7 +6079,6 @@ dependencies = [
  "truapi-provider",
  "truapi-verifiable",
  "unicode-normalization",
- "unicode-segmentation",
  "uniffi",
  "url",
  "verifiable",
