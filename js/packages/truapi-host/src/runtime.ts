@@ -62,7 +62,9 @@ export type LogLevel = string;
  * and cannot reserve fewer. A stack that names a reserved value, the core's or
  * the build's, under any chain role starts only when `allowed` is set. Extra
  * values only protect networks the build does not run: `allowed` cannot be set
- * alongside them, so the build's own stack cannot name them.
+ * alongside them, so the build's own stack cannot name them. An extra TLD adds
+ * nothing for a stored or fetched copy, which the core already holds to the
+ * bundled copy's TLD: it only refuses a `stack` or `testStack` on that TLD.
  *
  * The core refuses a policy that would reserve less than it says: a field this
  * type does not have, an entry it cannot read, such as a genesis hash that is

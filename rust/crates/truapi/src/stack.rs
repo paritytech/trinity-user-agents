@@ -69,7 +69,10 @@ const RESERVED_TLD: &str = "dot";
 /// value, the core's or the build's, under any chain role starts only when
 /// `allowed` is set. Extra values only protect networks the build does not
 /// run: `allowed` cannot be set alongside them, so the build's own stack
-/// cannot name them.
+/// cannot name them. An extra TLD adds nothing for a stored or fetched copy,
+/// which the core already holds to the bundled copy's TLD: it only refuses a
+/// stack on that TLD that the build starts from, its bundled copy or one from
+/// [`Stack::new`].
 ///
 /// The core refuses a policy that would reserve less than it says: `allowed`
 /// together with extra values, which the allowed stack may name anyway, and
