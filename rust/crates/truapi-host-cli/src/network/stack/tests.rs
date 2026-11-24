@@ -101,11 +101,10 @@ fn test_stack_namespace() {
 	}
 }
 
-/// Everything the CLI stores for a stack is kept under a name that follows
-/// the stack's id. A fork runs on a pointer of its own, so it does not read
-/// its source's state, and neither does a stack whose descriptor only declares
-/// a built-in network's `id`. A descriptor that renames itself keeps its
-/// stack's state.
+/// The state directory follows the stack's id and ignores the descriptor's
+/// `id`. A fork has an id of its own, so it does not read its source's state,
+/// and neither does a stack that only declares a built-in network's `id`. A
+/// descriptor that renames itself keeps its stack's state.
 #[test]
 fn test_stack_state_directory() {
 	let on = |stack_id: &str, id: &str| {

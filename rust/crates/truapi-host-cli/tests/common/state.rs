@@ -1,10 +1,9 @@
 use super::offline::offline_host_command;
 
-/// The name the state of the stack [`offline_host_command`] runs on is kept under, as
-/// `network-check` reports it: its directory under `v2`, and its network in an account store.
+/// The state name of the stack [`offline_host_command`] runs on, as `network-check` reports it.
 ///
-/// A stack given as a local file is a stack of its own, whatever `id` its descriptor declares,
-/// so this is not paseo-next-v2.
+/// It is the stack's directory under `v2` and its network in an account store. A local file is
+/// a stack of its own, so this is not paseo-next-v2, whatever `id` the descriptor declares.
 pub fn offline_state_name() -> String {
 	let output = offline_host_command()
 		.arg("network-check")

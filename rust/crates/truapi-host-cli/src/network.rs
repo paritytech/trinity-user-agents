@@ -121,23 +121,22 @@ pub struct ChainEndpoint {
 }
 
 impl Stack {
-	/// The product namespace, the name the CLI prints for this network: the
-	/// descriptor's `id` without a trailing `-fork`, except that the
-	/// `polkadot-fork` namespace is its full `id`. Nothing is stored under it;
-	/// see [`Self::state_directory`].
+	/// The product namespace: the name the CLI prints for this network.
+	///
+	/// It is the descriptor's `id` without a trailing `-fork`, except that
+	/// `polkadot-fork` stays whole. Nothing is stored under it; see
+	/// [`Self::state_directory`].
 	pub fn namespace(&self) -> &str {
 		namespace_of(&self.descriptor.id)
 	}
 
-	/// The name everything the CLI stores for this stack is kept under: its
-	/// directory under the versioned base path, and its network in the account
-	/// store.
+	/// The name the CLI keeps this stack's state under.
 	///
-	/// A built-in network's is its name. Any other stack's is `stack-` and the
-	/// first 32 hex digits of the SHA-256 of its id. It follows the stack's id
-	/// and not what the descriptor calls itself, so a fork does not read its
-	/// source's state, and a descriptor cannot pick another stack's by the
-	/// `id` it declares.
+	/// It is the stack's directory under the versioned base path, and its
+	/// network in the account store. A built-in network uses its own name.
+	/// Any other stack uses `stack-` and the first 32 hex digits of the
+	/// SHA-256 of its id. The descriptor's `id` plays no part, so a fork does
+	/// not read its source's state.
 	pub fn state_directory(&self) -> &str {
 		&self.state_directory
 	}
