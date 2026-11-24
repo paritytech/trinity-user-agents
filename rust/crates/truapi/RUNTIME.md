@@ -198,7 +198,10 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start,
+whichever has the higher `sequence`. The bundled descriptor has to be one the
+core can run under the build's policy even when the stored one is newer, so a
+build that refuses its own bundle fails on every device, not only on fresh
+installs. It never waits on the network to start,
 and waits a few seconds at most for the stored copy before it starts from the
 bundled one.
 

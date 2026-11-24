@@ -1713,7 +1713,7 @@ export const MOCK_GENESIS = {
 
 /** One chain of a {@link TestStack}. */
 export interface TestStackChain {
-  /** The chain's genesis hash, as 0x-prefixed hex or bytes. */
+  /** The chain's genesis hash, as hex or bytes. The `0x` prefix is optional. */
   genesisHash: string | Uint8Array;
 }
 

@@ -68,7 +68,9 @@ const RESERVED_TLD: &str = "dot";
 /// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
 /// reserve more here and cannot reserve fewer. A stack that names a reserved
 /// value, the core's or the build's, under any chain role starts only when
-/// `allowed` is set.
+/// `allowed` is set. Extra values only protect networks the build does not
+/// run: `allowed` cannot be set alongside them, so the build's own stack
+/// cannot name them.
 ///
 /// The core refuses a policy that would reserve less than it says: `allowed`
 /// together with extra values, which the allowed stack may name anyway, and

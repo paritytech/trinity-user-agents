@@ -39,13 +39,16 @@ impl CopyRules {
 	/// the build ships, under `reserved_values`, the build's policy, already
 	/// checked.
 	///
-	/// Fails when `bundled` does not verify under the pointer.
+	/// Fails when `bundled` does not verify under the pointer or is not a
+	/// stack the core can run under `reserved_values`, even when a newer stored
+	/// copy exists.
 	pub fn new(
 		pointer: Pointer,
 		bundled: &[u8],
 		reserved_values: ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let bundled = open(bundled, &pointer).map_err(StackError::Descriptor)?;
+		Stack::from_descriptor(&pointer, &bundled.descriptor, &reserved_values)?;
 		Ok(Self { pointer, reserved_values, pinned: Pinned::new(bundled.descriptor) })
 	}
 
