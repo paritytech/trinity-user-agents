@@ -1,4 +1,5 @@
 import { asProductId } from "@parity/truapi";
+import { hexToBytes } from "@parity/truapi/scale";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
@@ -166,9 +167,9 @@ suite("real WASM core ↔ createMockHost bridge", () => {
   });
 
   it("holds a stack to the reserved values its build adds", async () => {
-    // A build that reserves previewnet's TLD or one of its genesis hashes does
-    // not start previewnet, and one that allows its stack every reserved value
-    // has none of its own to add.
+    // A build that reserves previewnet's TLD or one of its genesis hashes, as
+    // hex or as bytes, does not start previewnet, and one that allows its
+    // stack every reserved value has none of its own to add.
     const start = await pairingHostStarter();
     const stack = bundledTestStack();
     const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
@@ -180,11 +181,13 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     await expect(reserving({ extraTlds: ["testnet"] })).rejects.toThrow(
       "runtimeConfig.stack: stack uses the reserved tld testnet",
     );
-    await expect(
-      reserving({ extraGenesisHashes: [genesisHash] }),
-    ).rejects.toThrow(
-      `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
-    );
+    for (const extraGenesisHash of [genesisHash, hexToBytes(genesisHash)]) {
+      await expect(
+        reserving({ extraGenesisHashes: [extraGenesisHash] }),
+      ).rejects.toThrow(
+        `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
+      );
+    }
     await expect(
       reserving({ allowed: true, extraTlds: ["testnet"] }),
     ).rejects.toThrow(
