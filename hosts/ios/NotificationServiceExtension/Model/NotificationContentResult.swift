@@ -38,11 +38,11 @@ extension NotificationContentResult {
         )
     }
 
-    static func createUnsupportedResult(badgeCount: Int? = nil) -> NotificationContentResult {
+    static func createNewMessageResult(badgeCount: Int? = nil) -> NotificationContentResult {
         .init(
             title: String(localized: .commonTitle),
             subtitle: nil,
-            body: String(localized: .unsupportedMessage),
+            body: String(localized: .unsupportedContent),
             badgeCount: badgeCount
         )
     }

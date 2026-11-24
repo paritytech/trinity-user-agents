@@ -36,13 +36,13 @@ use truapi::{latest, v01, versioned::FromLatest};
 use crate::{
 	Spawner,
 	frame::ProtocolMessage,
-	host_logic::worker::WorkerLedger,
+	host_logic::{root_entropy::RootEntropy, worker::WorkerLedger},
 	runtime::{
 		AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-		DevicePairingObserver, FundingProviderLink, HostAccounts, HostSession, LocalActivation,
-		PairedSsoPeer, PairingHostRole, ProductConnection, ProductRuntimeAdmin, ProductRuntimeHost,
-		ResponderExit, ResumePairingError, RuntimeServices, SigningHostRole,
-		SsoAccountHolderService, SsoResponderService,
+		DevicePairingObserver, FundingProviderLink, HostAccounts, HostRole, HostSession,
+		LocalActivation, PairedSsoPeer, PairingHost, ProductConnection, ProductRuntimeAdmin,
+		ProductRuntimeHost, ResponderExit, ResumePairingError, RuntimeServices, SigningHost,
+		SsoAccountHolderService,
 	},
 	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
@@ -177,29 +177,297 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 	ProductContext::new_with_execution(product_id.clone(), ExecutableKind::App)
 }
 
-/// A seedless pairing host: the user's keys live in an external wallet reached
-/// over the SSO pairing channel.
+/// Services shared by every product connection on a host.
 ///
-/// Owns the shared services plus pairing-host state. Local-session activation
-/// is a signing-host operation and is not present here.
-pub struct PairingHostRuntime {
+/// Use [`PairingHost`] for a paired wallet or [`SigningHost`] for a local wallet.
+/// The role supplies the accounts and session for each connection.
+pub struct HostRuntime<Role> {
 	services: Arc<RuntimeServices>,
-	pairing_host: Arc<PairingHostRole>,
+	role: Arc<Role>,
 	image_loader: crate::image_loader::ImageLoader,
 }
 
-impl PairingHostRuntime {
+impl<Role> HostRuntime<Role> {
+	fn from_role(services: Arc<RuntimeServices>, role: Arc<Role>) -> Self {
+		let image_loader = crate::image_loader::ImageLoader::new(
+			services.clone(),
+			Arc::new(crate::time::RealTimer),
+		);
+		Self { services, role, image_loader }
+	}
+
+	/// The image `reference` names, checked against its CID and the image policy.
+	///
+	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
+	/// Dropping the future cancels the load.
+	pub async fn load_image(
+		&self,
+		reference: crate::ImageReference,
+	) -> Result<crate::LoadedImage, crate::ImageError> {
+		self.image_loader.load(reference).await
+	}
+
+	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
+	/// for what it changes.
+	///
+	/// Set-once, so the capability cannot be swapped under a running product.
+	/// Returns whether this call installed it. Call it before serving any
+	/// product runtime.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_permission_status_host"))]
+	pub fn set_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
+		self.services.install_permission_status_host(host)
+	}
+
+	/// Install the host's [`PocketPlatform`], which owns the card collection.
+	///
+	/// Set-once, so the collection cannot change hands under a running
+	/// product. Returns whether this call installed it. Call it before serving
+	/// any product runtime.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_pocket_platform"))]
+	pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
+		self.services.install_pocket_platform(platform)
+	}
+
+	/// Install the host's [`FundingPlatform`], the native funding overlay.
+	///
+	/// Set-once. Returns whether this call installed it. Call it before
+	/// serving any product runtime.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_funding_platform"))]
+	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+		self.services.install_funding_platform(platform)
+	}
+
+	/// Open a funding session on the host's own behalf, as the Balance card's
+	/// Add and Withdraw do, and show the overlay. Returns the session id, or
+	/// `None` when the user dismissed the overlay without starting.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.open_funding"))]
+	pub async fn open_funding(
+		&self,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, v01::GenericError> {
+		self.services.open_host_funding(direction, amount).await
+	}
+
+	/// Install the host's [`GamePlatform`], which holds each product's game
+	/// reminder.
+	///
+	/// Set-once, so reminders cannot change hands under a running product.
+	/// Returns whether this call installed it. Call it before serving any
+	/// product runtime.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_game_platform"))]
+	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+		self.services.install_game_platform(platform)
+	}
+
+	/// Install the host's [`TopUpPlatform`], which claims funds into the
+	/// balance. Set-once. Returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_top_up_platform"))]
+	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+		self.services.install_top_up_platform(platform)
+	}
+
+	/// Install the host's [`PaymentPlatform`], which pays from the user's
+	/// balance once the user approves. Set-once; returns whether this call
+	/// installed it.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_payment_platform"))]
+	pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+		self.services.install_payment_platform(platform)
+	}
+
+	/// Install the host's [`BalancePlatform`], which shares the user's
+	/// balance with products. Set-once; returns whether this call installed
+	/// it.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_balance_platform"))]
+	pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+		self.services.install_balance_platform(platform)
+	}
+
+	/// Install the host's [`ScannerPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_scanner_platform"))]
+	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+		self.services.install_scanner_platform(platform)
+	}
+
+	/// Install the host's [`ContactsPlatform`], which owns the contact list and
+	/// draws the picker.
+	///
+	/// Set-once, so the picker cannot change hands under a running product.
+	/// Returns whether this call installed it. Call it before serving any
+	/// product runtime.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_contacts_platform"))]
+	pub fn set_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
+		self.services.install_contacts_platform(platform)
+	}
+
+	/// Tell the core the host's contacts changed, so no handle resolves from
+	/// what it cached before. Call it whenever a contact is removed or blocked;
+	/// the next transaction naming a contact reads the list again.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.notify_contacts_changed"))]
+	pub fn notify_contacts_changed(&self) {
+		self.services.contact_handle_cache.clear();
+	}
+
+	/// Reference counts per product worker, shared by every connection of
+	/// this host.
+	pub fn worker_ledger(&self) -> &WorkerLedger {
+		&self.services.worker_ledger
+	}
+
+	/// Report that the product's worker stopped without being asked to:
+	/// it is started again while something holds it, with a growing wait
+	/// when it keeps crashing.
+	pub fn worker_exited(&self, product_id: &ProductId) {
+		self.services.worker_exited(product_id);
+	}
+}
+
+impl<Role: HostRole> HostRuntime<Role> {
 	/// Keep preimage submissions in the core instead of the Bulletin chain.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.pairing_host
-			.accounts()
-			.resource_controls()
-			.set_submit_preimages_locally(local);
+		self.role.accounts().resource_controls().set_submit_preimages_locally(local);
 	}
 
+	/// Build a product-facing runtime from this host.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.product_runtime"))]
+	pub fn product_runtime(
+		&self,
+		product: ProductContext,
+		sink: Arc<dyn FrameSink>,
+	) -> ProductRuntime {
+		self.connect_product(product, ConnectionAdapters::from_services(&self.services), sink)
+	}
+
+	fn connect_product(
+		&self,
+		product: ProductContext,
+		adapters: ConnectionAdapters,
+		sink: Arc<dyn FrameSink>,
+	) -> ProductRuntime {
+		ProductRuntime::new(
+			self.services.clone(),
+			self.role.accounts().clone(),
+			self.role.host_session(),
+			product,
+			adapters,
+			sink,
+		)
+	}
+
+	/// Build a product-scoped administration handle from this host.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.product_admin"))]
+	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
+		self.admin_for_product(product, ConnectionAdapters::from_services(&self.services))
+	}
+
+	fn admin_for_product(
+		&self,
+		product: ProductContext,
+		adapters: ConnectionAdapters,
+	) -> HostAdmin {
+		HostAdmin::new(
+			self.services.clone(),
+			self.role.accounts().clone(),
+			self.role.host_session(),
+			product,
+			adapters,
+		)
+	}
+
+	/// Disconnect the active account-authority session.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.disconnect_session"))]
+	pub async fn disconnect_session(&self) {
+		self.role.host_session().disconnect().await;
+	}
+
+	/// Registered providers available for an internal well-known-ring feature.
+	pub async fn ring_vrf_providers(
+		&self,
+		ring: &v01::RingLocation,
+	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
+		self.role
+			.accounts()
+			.ring_vrf_providers(ring)
+			.await
+			.map_err(ring_vrf_admin_error)
+	}
+
+	/// Current provider selected for an internal well-known-ring feature.
+	pub async fn selected_ring_vrf_provider(
+		&self,
+		ring: &v01::RingLocation,
+	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
+		self.role
+			.accounts()
+			.selected_ring_vrf_provider(ring)
+			.await
+			.map_err(ring_vrf_admin_error)
+	}
+
+	/// Select a registered provider for an internal well-known-ring feature.
+	pub async fn select_ring_vrf_provider(
+		&self,
+		ring: v01::RingLocation,
+		handle: v01::ProductAccountId,
+	) -> Result<(), v01::GenericError> {
+		self.role
+			.accounts()
+			.select_ring_vrf_provider(ring, handle)
+			.await
+			.map_err(ring_vrf_admin_error)
+	}
+
+	/// Read a stored permission authorization status for a product without prompting.
+	///
+	/// A device capability also resolves the host application's OS gate, so an
+	/// OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_status", product_id = %product_id))]
+	pub async fn permission_authorization_status(
+		&self,
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.permission_authorization_status(request)
+			.await
+	}
+
+	/// Read stored permission authorization statuses for a product without prompting.
+	///
+	/// A device capability also resolves the host application's OS gate, so an
+	/// OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_statuses", product_id = %product_id))]
+	pub async fn permission_authorization_statuses(
+		&self,
+		product_id: &ProductId,
+		requests: Vec<PermissionAuthorizationRequest>,
+	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.permission_authorization_statuses(requests)
+			.await
+	}
+
+	/// Update a stored permission authorization status for a product.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_permission_authorization_status", product_id = %product_id))]
+	pub async fn set_permission_authorization_status(
+		&self,
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.set_permission_authorization_status(request, status)
+			.await
+	}
+}
+
+impl HostRuntime<PairingHost> {
 	/// Build a long-lived pairing-host runtime around a platform implementation.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
 	pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -239,187 +507,17 @@ impl PairingHostRuntime {
 	where
 		P: Platform + 'static,
 	{
-		let platform: Arc<dyn Platform> = platform;
-		let services = RuntimeServices::with_chat_platform(
+		let services = RuntimeServices::with_platforms(
 			platform,
 			config.host.host_info.clone(),
 			config.stack.clone(),
 			spawner.clone(),
 			chat_platform,
+			contacts_platform,
 		);
-		if let Some(contacts_platform) = contacts_platform {
-			services.install_contacts_platform(contacts_platform);
-		}
-		let pairing_host = PairingHostRole::new(services.clone(), config);
+		let pairing_host = PairingHost::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
-		Self {
-			image_loader: crate::image_loader::ImageLoader::new(
-				services.clone(),
-				Arc::new(crate::time::RealTimer),
-			),
-			services,
-			pairing_host,
-		}
-	}
-
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		self.services.public_profiles.resolve(username, force).await
-	}
-
-	/// The image `reference` names, checked against its CID and the image policy.
-	///
-	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
-	/// Dropping the future cancels the load.
-	pub async fn load_image(
-		&self,
-		reference: crate::ImageReference,
-	) -> Result<crate::LoadedImage, crate::ImageError> {
-		self.image_loader.load(reference).await
-	}
-
-	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
-	/// for what it changes.
-	///
-	/// Set-once, so the capability cannot be swapped under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_status_host"))]
-	pub fn set_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
-		self.services.install_permission_status_host(host)
-	}
-
-	/// Install the host's [`PocketPlatform`], which owns the card collection.
-	///
-	/// Set-once, so the collection cannot change hands under a running
-	/// product. Returns whether this call installed it. Call it before serving
-	/// any product runtime.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
-	pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
-		self.services.install_pocket_platform(platform)
-	}
-
-	/// Install the host's [`FundingPlatform`], the native funding overlay.
-	///
-	/// Set-once. Returns whether this call installed it. Call it before
-	/// serving any product runtime.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_funding_platform"))]
-	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
-		self.services.install_funding_platform(platform)
-	}
-
-	/// Open a funding session on the host's own behalf, as the Balance card's
-	/// Add and Withdraw do, and show the overlay. Returns the session id, or
-	/// `None` when the user dismissed the overlay without starting.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.open_funding"))]
-	pub async fn open_funding(
-		&self,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<Option<String>, v01::GenericError> {
-		self.services.open_host_funding(direction, amount).await
-	}
-
-	/// Install the host's [`GamePlatform`], which holds each product's game
-	/// reminder.
-	///
-	/// Set-once, so reminders cannot change hands under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
-	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
-		self.services.install_game_platform(platform)
-	}
-
-	/// Install the host's [`TopUpPlatform`], which claims funds into the
-	/// balance. Set-once. Returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
-	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.services.install_top_up_platform(platform)
-	}
-
-	/// Install the host's [`PaymentPlatform`], which pays from the user's
-	/// balance once the user approves. Set-once; returns whether this call
-	/// installed it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_payment_platform"))]
-	pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.services.install_payment_platform(platform)
-	}
-
-	/// Install the host's [`BalancePlatform`], which shares the user's
-	/// balance with products. Set-once; returns whether this call installed
-	/// it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_balance_platform"))]
-	pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
-		self.services.install_balance_platform(platform)
-	}
-
-	/// Install the host's [`ScannerPlatform`] before serving any product
-	/// runtime. Set-once: returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
-	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
-		self.services.install_scanner_platform(platform)
-	}
-
-	/// Install the host's [`ContactsPlatform`], which owns the contact list and
-	/// draws the picker.
-	///
-	/// Set-once, so the picker cannot change hands under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_contacts_platform"))]
-	pub fn set_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
-		self.services.install_contacts_platform(platform)
-	}
-
-	/// Tell the core the host's contacts changed, so no handle resolves from
-	/// what it cached before. Call it whenever a contact is removed or blocked;
-	/// the next transaction naming a contact reads the list again.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_contacts_changed"))]
-	pub fn notify_contacts_changed(&self) {
-		self.services.contact_handles.clear();
-	}
-
-	/// Build a product-facing runtime from this pairing host.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
-	pub fn product_runtime(
-		&self,
-		product: ProductContext,
-		sink: Arc<dyn FrameSink>,
-	) -> ProductRuntime {
-		ProductRuntime::new(
-			self.services.clone(),
-			self.pairing_host.accounts().clone(),
-			self.pairing_host.session().clone(),
-			product,
-			ConnectionAdapters::from_services(&self.services),
-			sink,
-		)
-	}
-
-	/// Build a product-scoped administration handle from this pairing host.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_admin"))]
-	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
-		HostAdmin::new(
-			self.services.clone(),
-			self.pairing_host.accounts().clone(),
-			self.pairing_host.session().clone(),
-			product,
-			ConnectionAdapters::from_services(&self.services),
-		)
-	}
-
-	/// Disconnect the active account-authority session.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
-	pub async fn disconnect_session(&self) {
-		self.pairing_host.session().disconnect().await;
+		Self::from_role(services, pairing_host)
 	}
 
 	/// Log out and discard the old pairing keypair.
@@ -428,88 +526,51 @@ impl PairingHostRuntime {
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host.logout_and_reset_pairing().await.map_err(Into::into)
+		self.role.logout_and_reset_pairing().await.map_err(Into::into)
 	}
 
-	/// Clear one product's capability state while preserving the active
-	/// session and unrelated products.
+	/// Clear one product's capability state and the values it wrote to
+	/// product storage, while preserving the active session and unrelated
+	/// products.
+	///
+	/// Stop the product's executions first: a value a running execution
+	/// writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(
 		&self,
 		product_id: &ProductId,
 	) -> Result<(), v01::GenericError> {
-		self.pairing_host.clear_product_state(product_id).await.map_err(Into::into)
-	}
-
-	/// Registered providers available for an internal well-known-ring feature.
-	pub async fn ring_vrf_providers(
-		&self,
-		ring: &v01::RingLocation,
-	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host
-			.accounts()
-			.ring_vrf_providers(ring)
+		self.role.clear_product_state(product_id).await?;
+		self.services
+			.platform
+			.clear_product(product_id.clone())
 			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Current provider selected for an internal well-known-ring feature.
-	pub async fn selected_ring_vrf_provider(
-		&self,
-		ring: &v01::RingLocation,
-	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host
-			.accounts()
-			.selected_ring_vrf_provider(ring)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Select a registered provider for an internal well-known-ring feature.
-	pub async fn select_ring_vrf_provider(
-		&self,
-		ring: v01::RingLocation,
-		handle: v01::ProductAccountId,
-	) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.accounts()
-			.select_ring_vrf_provider(ring, handle)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Reference counts per product worker, shared by every connection of
-	/// this host.
-	pub fn worker_ledger(&self) -> &WorkerLedger {
-		&self.services.worker_ledger
-	}
-
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Read the active session's X25519 chat identity private key, for hosts
 	/// running their own P2P chat channel for the paired identity.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
 	pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-		self.pairing_host.session().session_state().current()?.identity_chat_private_key
+		self.role.session().session_state().current()?.identity_chat_private_key
 	}
 
 	/// Read the active session's sr25519 statement-store secret, for hosts
 	/// running their own statement-store traffic against the advertised account.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
 	pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-		Some(self.pairing_host.session().session_state().current()?.sso?.ss_secret)
+		Some(self.role.session().session_state().current()?.sso?.ss_secret)
 	}
 
-	/// Read this device's X25519 encryption secret, for hosts running device
-	/// sync. Generated and persisted on first read.
+	/// Read this device's X25519 encryption secret, the key the phone
+	/// registered at pairing, or `None` before pairing.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
-	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services.device_encryption_secret().await.map_err(Into::into)
+	pub async fn device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
+		self.role
+			.accounts()
+			.device_encryption_secret()
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
@@ -520,7 +581,7 @@ impl PairingHostRuntime {
 		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		self.pairing_host
+		self.role
 			.accounts()
 			.product_subtree_public_key_within(product_id, subtree_timeout(timeout_ms))
 			.await
@@ -531,7 +592,7 @@ impl PairingHostRuntime {
 	/// without sending a peer-disconnect notice.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
-		self.pairing_host.session().reset_session_state().await;
+		self.role.session().reset_session_state().await;
 	}
 
 	/// Start or join the pairing-host login flow for one product.
@@ -541,7 +602,7 @@ impl PairingHostRuntime {
 		product_id: &ProductId,
 	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
 		let product = product_context(product_id);
-		match self.pairing_host.session().request_login(&product).await {
+		match self.role.session().request_login(&product).await {
 			Ok(response) => Ok(response),
 			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
 		}
@@ -551,7 +612,7 @@ impl PairingHostRuntime {
 	/// active.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
 	pub fn cancel_pairing(&self) {
-		self.pairing_host.session().cancel_login();
+		self.role.session().cancel_login();
 	}
 
 	/// Activate a canonical session blob supplied by an external encrypted
@@ -561,11 +622,7 @@ impl PairingHostRuntime {
 	/// connected-session installation have completed.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.session()
-			.activate_external_session(blob)
-			.await
-			.map_err(Into::into)
+		self.role.session().activate_external_session(blob).await.map_err(Into::into)
 	}
 
 	/// Await restoration of the persisted auth-session blob.
@@ -575,59 +632,14 @@ impl PairingHostRuntime {
 	/// immediately use the restored authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host.session().activate_stored_session().await.map_err(Into::into)
+		self.role.session().activate_stored_session().await.map_err(Into::into)
 	}
 
 	/// Notify the pairing runtime that the persisted auth-session blob may
 	/// have changed and should be re-read.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
 	pub fn notify_session_store_changed(&self) {
-		self.pairing_host.session().notify_session_store_changed();
-	}
-
-	/// Read a stored permission authorization status for a product without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_status", product_id = %product_id))]
-	pub async fn permission_authorization_status(
-		&self,
-		product_id: &ProductId,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.permission_authorization_status(request)
-			.await
-	}
-
-	/// Read stored permission authorization statuses for a product without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
-	pub async fn permission_authorization_statuses(
-		&self,
-		product_id: &ProductId,
-		requests: Vec<PermissionAuthorizationRequest>,
-	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.permission_authorization_statuses(requests)
-			.await
-	}
-
-	/// Update a stored permission authorization status for a product.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		product_id: &ProductId,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.set_permission_authorization_status(request, status)
-			.await
+		self.role.session().notify_session_store_changed();
 	}
 }
 
@@ -644,49 +656,23 @@ fn pairing_login_error_reason(
 	}
 }
 
-impl PairingHostAdmin for PairingHostRuntime {
+impl PairingHostAdmin for HostRuntime<PairingHost> {
 	fn cancel_pairing(&self) {
-		PairingHostRuntime::cancel_pairing(self);
+		Self::cancel_pairing(self);
 	}
 
 	fn notify_session_store_changed(&self) {
-		PairingHostRuntime::notify_session_store_changed(self);
+		Self::notify_session_store_changed(self);
 	}
 }
 
-/// A wallet-local signing host: the user's keys are held on this device.
-///
-/// Owns the shared services plus signing-host state. There is no pairing flow,
-/// so pairing cancellation is not present here.
-///
-/// Raw-bytes and extrinsic-payload signing, v4 transaction construction, and
-/// product entropy are implemented; native signing hosts can also serve
-/// ring-VRF aliases and on-chain resource allocation.
-pub struct SigningHostRuntime {
-	services: Arc<RuntimeServices>,
-	signing_host: Arc<SigningHostRole>,
-	sso_responder: Arc<SsoResponderService>,
-	image_loader: crate::image_loader::ImageLoader,
-}
-
-impl SigningHostRuntime {
+impl HostRuntime<SigningHost> {
 	/// Answer resource allocation as granted without performing it.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-		self.signing_host.set_grant_allowances_unchecked(granted);
-	}
-
-	/// Keep preimage submissions in the core instead of the Bulletin chain.
-	///
-	/// For test hosts only, with the `test-host` feature enabled.
-	#[cfg(feature = "test-host")]
-	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.signing_host
-			.accounts()
-			.resource_controls()
-			.set_submit_preimages_locally(local);
+		self.role.set_grant_allowances_unchecked(granted);
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
@@ -698,9 +684,29 @@ impl SigningHostRuntime {
 		&self,
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		self.signing_host
+		self.role
 			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// Read this install's X25519 encryption secret, the key behind
+	/// `SessionUiInfo::device_enc_public_key` on a signing host. Generated and
+	/// persisted on first read unless the host adopted one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
+	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+		self.role.device_encryption_secret().await.map_err(Into::into)
+	}
+
+	/// Make `secret` this device's X25519 encryption secret, for a host that
+	/// announced a key of its own before the core kept one.
+	///
+	/// Refused while a wallet session is active.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.adopt_device_encryption_key"))]
+	pub async fn adopt_device_encryption_key(
+		&self,
+		secret: [u8; 32],
+	) -> Result<(), v01::GenericError> {
+		self.role.adopt_device_encryption_secret(secret).await.map_err(Into::into)
 	}
 
 	/// End funding session `intent` with `stage` as though its funds had
@@ -722,7 +728,7 @@ impl SigningHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_withheld_resources(&self, tags: Vec<String>) {
-		self.signing_host.set_withheld_resources(tags);
+		self.role.set_withheld_resources(tags);
 	}
 
 	/// Build a long-lived signing-host runtime around a platform implementation.
@@ -766,57 +772,19 @@ impl SigningHostRuntime {
 	where
 		P: Platform + 'static,
 	{
-		let platform: Arc<dyn Platform> = platform;
-		let services = RuntimeServices::with_chat_platform(
+		let services = RuntimeServices::with_platforms(
 			platform,
 			config.host.host_info,
 			config.stack,
 			spawner,
 			chat_platform,
+			contacts_platform,
 		);
-		if let Some(contacts_platform) = contacts_platform {
-			services.install_contacts_platform(contacts_platform);
+		if config.materials_enabled {
+			services.enable_materials();
 		}
-		let signing_host = SigningHostRole::new(services.clone());
-		Self {
-			image_loader: crate::image_loader::ImageLoader::new(
-				services.clone(),
-				Arc::new(crate::time::RealTimer),
-			),
-			services,
-			sso_responder: signing_host.sso_responder(),
-			signing_host,
-		}
-	}
-
-	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
-	/// for what it changes.
-	///
-	/// Set-once, so the capability cannot be swapped under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_status_host"))]
-	pub fn set_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
-		self.services.install_permission_status_host(host)
-	}
-
-	/// Install the host's [`PocketPlatform`], which owns the card collection.
-	///
-	/// Set-once, so the collection cannot change hands under a running
-	/// product. Returns whether this call installed it. Call it before serving
-	/// any product runtime.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
-	pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
-		self.services.install_pocket_platform(platform)
-	}
-
-	/// Install the host's [`FundingPlatform`], the native funding overlay.
-	///
-	/// Set-once. Returns whether this call installed it. Call it before
-	/// serving any product runtime.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_platform"))]
-	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
-		self.services.install_funding_platform(platform)
+		let signing_host = SigningHost::new(services.clone());
+		Self::from_role(services, signing_host)
 	}
 
 	/// Install the feed the host draws its funding screens from: sessions,
@@ -921,11 +889,8 @@ impl SigningHostRuntime {
 	/// what the last one listed changes nothing, so the host calls it on
 	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
-	pub fn set_funding_provider_config(
-		&self,
-		published_names: Vec<String>,
-	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names)?)
+	pub fn set_funding_provider_config(&self, published_names: Vec<String>) {
+		self.services.set_funding_provider_config(published_names);
 	}
 
 	/// Record that the host told the user how ended session `intent` went.
@@ -939,9 +904,11 @@ impl SigningHostRuntime {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did: it ended, its provider was asked, a cancel is already with
-	/// the provider, or it is too late because the balance was credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did: it ended, including one
+	/// whose overlay was up and closes, its provider was asked, a cancel is
+	/// already with the provider, it is too late because the balance was
+	/// credited, or there is nothing to cancel.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
 	pub async fn cancel_funding(
 		&self,
@@ -957,10 +924,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_providers(
 		&self,
 		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), v01::GenericError> {
-		self.services
-			.set_funding_providers(providers)
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	) {
+		self.services.set_funding_providers(providers);
 	}
 
 	/// Quotes of `amount` for funding session `intent` on the rail, asset,
@@ -1033,78 +998,6 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Open a funding session on the host's own behalf, as the Balance card's
-	/// Add and Withdraw do, and show the overlay. Returns the session id, or
-	/// `None` when the user dismissed the overlay without starting.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.open_funding"))]
-	pub async fn open_funding(
-		&self,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<Option<String>, v01::GenericError> {
-		self.services.open_host_funding(direction, amount).await
-	}
-
-	/// Install the host's [`GamePlatform`], which holds each product's game
-	/// reminder.
-	///
-	/// Set-once, so reminders cannot change hands under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
-	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
-		self.services.install_game_platform(platform)
-	}
-
-	/// Install the host's [`TopUpPlatform`], which claims funds into the
-	/// balance. Set-once. Returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
-	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.services.install_top_up_platform(platform)
-	}
-
-	/// Install the host's [`PaymentPlatform`], which pays from the user's
-	/// balance once the user approves. Set-once; returns whether this call
-	/// installed it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_payment_platform"))]
-	pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.services.install_payment_platform(platform)
-	}
-
-	/// Install the host's [`BalancePlatform`], which shares the user's
-	/// balance with products. Set-once; returns whether this call installed
-	/// it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_balance_platform"))]
-	pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
-		self.services.install_balance_platform(platform)
-	}
-
-	/// Install the host's [`ScannerPlatform`] before serving any product
-	/// runtime. Set-once: returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
-	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
-		self.services.install_scanner_platform(platform)
-	}
-
-	/// Install the host's [`ContactsPlatform`], which owns the contact list and
-	/// draws the picker.
-	///
-	/// Set-once, so the picker cannot change hands under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_contacts_platform"))]
-	pub fn set_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
-		self.services.install_contacts_platform(platform)
-	}
-
-	/// Tell the core the host's contacts changed, so no handle resolves from
-	/// what it cached before. Call it whenever a contact is removed or blocked;
-	/// the next transaction naming a contact reads the list again.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
-	pub fn notify_contacts_changed(&self) {
-		self.services.contact_handles.clear();
-	}
-
 	/// Install the host's [`DevicePairingObserver`], told whenever a device
 	/// finishes pairing with this signing host.
 	///
@@ -1166,39 +1059,80 @@ impl SigningHostRuntime {
 			return;
 		};
 		start_materials(&self.services, db.clone());
-		let signer = Arc::new(Arc::downgrade(&self.signing_host));
+		let signer = Arc::new(Arc::downgrade(&self.role));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
 		};
 		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and `durable`, with the static receive
-	/// secret NFT purses open cheques with, and starts tracking its holdings,
-	/// when an installation provider and encrypted storage are set.
+	/// Installs the NFT ledger over `db` and `durable`, whose new purses wait
+	/// for backup recovery, and the static receive secret NFT purses open
+	/// cheques with, then starts tracking its holdings. Does nothing without
+	/// an installation provider or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
-		let Some(ledger) = self.nft_ledger(db, durable) else {
+		let recovery = Arc::new(self.nft_recovery(db.clone()));
+		let Some(ledger) = self.nft_ledger(db, durable, recovery) else {
 			return;
 		};
-		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		let static_secret = Arc::new(Arc::downgrade(&self.role));
 		self.services.install_static_receive_secret(static_secret);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
 	}
 
+	/// NFT backup recovery over `db`, started when the stack names the
+	/// installation registry and an installation provider is set. Otherwise
+	/// there is nothing to recover and recovery is off.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_recovery(&self, db: crate::store::Db) -> crate::nft::NftRecovery {
+		let registry = self.services.stack().account_data_store();
+		let installation = self.services.installation_provider();
+		let (Some(contract), Some(installation)) = (registry, installation) else {
+			tracing::info!("the stack names no AccountDataStore, NFT backup recovery is off");
+			return crate::nft::NftRecovery::off();
+		};
+		crate::nft::NftRecovery::start(crate::nft::NftRecoveryDeps {
+			db,
+			chain: Arc::new(self.nft_recovery_chain(contract)),
+			keys: Arc::new(Arc::downgrade(&self.role)),
+			installation,
+			session_state: self.role.session_state(),
+			spawner: self.services.spawner.clone(),
+			scan_config: crate::nft::recovery_scan_config(),
+		})
+	}
+
+	/// Recovery's reads on Asset Hub, with the installation registry at
+	/// `contract` decrypted by the signing host.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_recovery_chain(&self, contract: [u8; 20]) -> crate::nft::AssetHubRecoveryChain {
+		let genesis = self.services.asset_hub_chain_genesis_hash().into();
+		let asset_hub =
+			crate::chain_runtime::ChainAccess::new(self.services.chain.clone(), genesis);
+		let data_store_keys = Arc::downgrade(&self.role);
+		let registry = crate::installation_registry::RegisteredInstallations::new(
+			asset_hub.clone(),
+			contract,
+			data_store_keys,
+		);
+		crate::nft::AssetHubRecoveryChain::new(&asset_hub, registry)
+	}
+
 	/// The NFT ledger over `db` and `durable`, deriving item keys from the
-	/// signing host, or `None`, logged, without an installation provider or
-	/// encrypted storage.
+	/// signing host and creating purses once `recovery` has finished, or
+	/// `None`, logged, without an installation provider or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn nft_ledger(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
+		recovery: Arc<crate::nft::NftRecovery>,
 	) -> Option<crate::nft::NftLedger> {
 		let Some(installation) = self.services.installation_provider() else {
 			tracing::warn!("no installation provider set, NFT purses are off");
@@ -1208,11 +1142,19 @@ impl SigningHostRuntime {
 			tracing::warn!("no encrypted storage set, NFT purses are off");
 			return None;
 		};
-		let signing_host = Arc::downgrade(&self.signing_host);
+		let signing_host = Arc::downgrade(&self.role);
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		let deps = crate::nft::NftLedgerDeps {
+			db,
+			installation,
+			keys,
+			durable,
+			secrets,
+			imported,
+			recovery,
+		};
 		Some(crate::nft::NftLedger::new(deps))
 	}
 
@@ -1226,7 +1168,7 @@ impl SigningHostRuntime {
 		self.services.install_durable_work_observer(observer)
 	}
 
-	/// Runs durable recovery until no transaction is live, building scheduled
+	/// Runs durable recovery until no transaction is live, building deferred
 	/// transactions meanwhile.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
@@ -1245,18 +1187,6 @@ impl SigningHostRuntime {
 		self.services.core_db()?.status().await
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		self.services.public_profiles.resolve(username, force).await
-	}
-
 	/// Resolves public profile metadata with optional cached-first delivery.
 	///
 	/// Options control forced lookups and stale stored values; browsers resolve once.
@@ -1269,29 +1199,41 @@ impl SigningHostRuntime {
 		self.services.public_profiles.clone().observe(username.to_owned(), options)
 	}
 
-	/// The image `reference` names, checked against its CID and the image policy.
-	pub async fn load_image(
-		&self,
-		reference: crate::ImageReference,
-	) -> Result<crate::LoadedImage, crate::ImageError> {
-		self.image_loader.load(reference).await
+	/// Keeps `text` on the device as a material and returns its ID, for
+	/// resolutions started afterwards to draw without Bulletin. Keep before
+	/// anything resolves the material: a resolution that is already waiting on
+	/// Bulletin for it keeps waiting, and does not get the kept text. Refused
+	/// with its reason when the core cannot read it, and as unsupported when the
+	/// host draws no materials or before the core services start over a core
+	/// database.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn keep_material(&self, text: Vec<u8>) -> Result<[u8; 32], crate::KeepMaterialError> {
+		use crate::KeepMaterialError::Refused;
+		let materials = self
+			.services
+			.materials()
+			.filter(|_| self.services.materials_enabled())
+			.ok_or(Refused(truapi::latest::MaterialFailure::Unsupported))?;
+		let id = crate::host_internal::bulletin::preimage_key(&text);
+		materials.keep(id, text).await.map_err(Refused)??;
+		Ok(id)
 	}
 
-	/// Build a product-facing runtime from this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
-	pub fn product_runtime(
+	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
 		&self,
-		product: ProductContext,
-		sink: Arc<dyn FrameSink>,
-	) -> ProductRuntime {
-		ProductRuntime::new(
-			self.services.clone(),
-			self.signing_host.accounts().clone(),
-			self.signing_host.clone(),
-			product,
-			ConnectionAdapters::from_services(&self.services),
-			sink,
-		)
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		self.services
+			.resolve_materials(tree, context, language, float_filterable, failures)
 	}
 
 	/// Build one product connection with adapters scoped to one native
@@ -1303,26 +1245,7 @@ impl SigningHostRuntime {
 		adapters: ConnectionAdapters,
 		sink: Arc<dyn FrameSink>,
 	) -> ProductRuntime {
-		ProductRuntime::new(
-			self.services.clone(),
-			self.signing_host.accounts().clone(),
-			self.signing_host.clone(),
-			product,
-			adapters,
-			sink,
-		)
-	}
-
-	/// Build a product-scoped administration handle from this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_admin"))]
-	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
-		HostAdmin::new(
-			self.services.clone(),
-			self.signing_host.accounts().clone(),
-			self.signing_host.clone(),
-			product,
-			ConnectionAdapters::from_services(&self.services),
-		)
+		self.connect_product(product, adapters, sink)
 	}
 
 	/// Build a product administration handle with adapters scoped to one
@@ -1333,148 +1256,52 @@ impl SigningHostRuntime {
 		product: ProductContext,
 		adapters: ConnectionAdapters,
 	) -> HostAdmin {
-		HostAdmin::new(
-			self.services.clone(),
-			self.signing_host.accounts().clone(),
-			self.signing_host.clone(),
-			product,
-			adapters,
-		)
-	}
-
-	/// Reference counts per product worker, shared by every connection of
-	/// this host.
-	pub fn worker_ledger(&self) -> &WorkerLedger {
-		&self.services.worker_ledger
-	}
-
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
+		self.admin_for_product(product, adapters)
 	}
 
 	/// Return whether this host currently has an authenticated signing session.
 	pub fn has_active_session(&self) -> bool {
-		self.signing_host.session_state().current().is_some()
+		self.role.session_state().current().is_some()
 	}
 
-	/// Disconnect the active account-authority session.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
-	pub async fn disconnect_session(&self) {
-		self.signing_host.disconnect().await;
-	}
-
-	/// Revoke one product's grants from the current local activation while
-	/// preserving unrelated products.
+	/// Revoke one product's grants from the current local activation and
+	/// clear the values it wrote to product storage, while preserving
+	/// unrelated products.
+	///
+	/// Stop the product's executions first: a value a running execution
+	/// writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) {
-		self.signing_host.clear_product_state(product_id);
-	}
-
-	/// Read a stored permission authorization status for a product without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
-	pub async fn permission_authorization_status(
-		&self,
-		product_id: &ProductId,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.permission_authorization_status(request)
+	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
+		self.role.clear_product_state(product_id);
+		self.services
+			.platform
+			.clear_product(product_id.clone())
 			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
-	/// Read stored permission authorization statuses for a product without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
-	pub async fn permission_authorization_statuses(
-		&self,
-		product_id: &ProductId,
-		requests: Vec<PermissionAuthorizationRequest>,
-	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.permission_authorization_statuses(requests)
-			.await
-	}
-
-	/// Update a stored permission authorization status for a product.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		product_id: &ProductId,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.set_permission_authorization_status(request, status)
-			.await
-	}
-
-	/// Registered providers available for an internal well-known-ring feature.
-	pub async fn ring_vrf_providers(
-		&self,
-		ring: &v01::RingLocation,
-	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.signing_host
-			.accounts()
-			.ring_vrf_providers(ring)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Current provider selected for an internal well-known-ring feature.
-	pub async fn selected_ring_vrf_provider(
-		&self,
-		ring: &v01::RingLocation,
-	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-		self.signing_host
-			.accounts()
-			.selected_ring_vrf_provider(ring)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Select a registered provider for an internal well-known-ring feature.
-	pub async fn select_ring_vrf_provider(
-		&self,
-		ring: v01::RingLocation,
-		handle: v01::ProductAccountId,
-	) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.accounts()
-			.select_ring_vrf_provider(ring, handle)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Activate a wallet-local session from host-held secret material (raw
-	/// BIP-39 entropy).
+	/// Activate a wallet-local session from the root entropy the host holds.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
-	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.activate_local_session(secret)
+	pub async fn activate_local_session(
+		&self,
+		entropy: RootEntropy,
+	) -> Result<(), v01::GenericError> {
+		self.role
+			.activate_local_session(entropy)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Activate a wallet-local session from host-held secret material and
+	/// Activate a wallet-local session from the root entropy the host holds and
 	/// attach known identity metadata.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session_with_identity"))]
 	pub async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.activate_local_session_with_identity(secret, lite_username)
+		self.role
+			.activate_local_session_with_identity(entropy, lite_username)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
@@ -1486,7 +1313,7 @@ impl SigningHostRuntime {
 		&self,
 		deeplink: &str,
 	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder.respond_to_pairing(deeplink).await.map_err(Into::into)
+		self.role.sso_responder().respond_to_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that allowance allocation is under way, so it leaves
@@ -1499,7 +1326,8 @@ impl SigningHostRuntime {
 		&self,
 		deeplink: &str,
 	) -> Result<crate::runtime::AnnouncedPairing, v01::GenericError> {
-		self.sso_responder
+		self.role
+			.sso_responder()
 			.notify_pairing_allowance_allocation(deeplink)
 			.await
 			.map_err(Into::into)
@@ -1519,7 +1347,8 @@ impl SigningHostRuntime {
 		announced: &crate::runtime::AnnouncedPairing,
 		reason: String,
 	) -> Result<(), v01::GenericError> {
-		self.sso_responder
+		self.role
+			.sso_responder()
 			.notify_pairing_failed(announced, reason)
 			.await
 			.map_err(Into::into)
@@ -1528,7 +1357,7 @@ impl SigningHostRuntime {
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.establish_pairing"))]
 	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
-		self.sso_responder.establish_pairing(deeplink).await.map_err(Into::into)
+		self.role.sso_responder().establish_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Resume a previously paired host from its persisted public peer keys.
@@ -1543,7 +1372,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, ResumePairingError> {
-		self.sso_responder.resume_pairing(peer).await
+		self.role.sso_responder().resume_pairing(peer).await
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -1552,7 +1381,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<(), v01::GenericError> {
-		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
+		self.role.sso_responder().disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
 	/// Bind an external SSO transport to the wallet matching both of its keys.
@@ -1561,18 +1390,19 @@ impl SigningHostRuntime {
 		own_statement_account_id: [u8; 32],
 		own_encryption_public_key: [u8; 32],
 	) -> Result<SsoAccountHolderService, AuthorityError> {
-		self.sso_responder
+		self.role
+			.sso_responder()
 			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
 
-/// Installs the materials on the device over `db`, and fetches what saved
-/// Pocket faces draw and `db` lacks. Does nothing when materials are already
-/// installed.
+/// Installs the materials on the device over `db` and, when the host draws
+/// them, fetches what saved Pocket faces draw and `db` lacks. Does nothing
+/// when materials are already installed.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
 	let materials = materials(services, db);
-	if services.install_materials(materials.clone()) {
+	if services.install_materials(materials.clone()) && services.materials_enabled() {
 		services.spawner.spawn(materials.fetch_saved());
 	}
 }
@@ -1600,7 +1430,6 @@ fn start_durable_engine(
 		return None;
 	}
 	forward_durable_work(services, &engine);
-	engine.ensure_submissions_started();
 	Some(engine)
 }
 
@@ -1632,7 +1461,7 @@ fn durable_engine(
 	})
 }
 
-/// The domains and policies the durable engine serves: NFT transfers, on the
+/// The domains the durable engine serves: NFT transfers, on the
 /// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
 /// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1688,7 +1517,7 @@ fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl SigningHostRuntime {
+impl HostRuntime<SigningHost> {
 	/// Record statement-store accounts the host must keep renewed across
 	/// allowance periods.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.track_statement_renewal_targets"))]
@@ -1696,10 +1525,7 @@ impl SigningHostRuntime {
 		&self,
 		targets: Vec<crate::runtime::StatementRenewalTarget>,
 	) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.track_statement_renewal_targets(targets)
-			.await
-			.map_err(Into::into)
+		self.role.track_statement_renewal_targets(targets).await.map_err(Into::into)
 	}
 
 	/// Every statement account the renewal ledger currently tracks.
@@ -1710,7 +1536,20 @@ impl SigningHostRuntime {
 	pub async fn statement_renewal_targets(
 		&self,
 	) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-		self.signing_host.statement_renewal_targets().await.map_err(Into::into)
+		self.role.statement_renewal_targets().await.map_err(Into::into)
+	}
+
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails without an active session.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.identity_signer"))]
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, v01::GenericError> {
+		self.role
+			.identity_signer()
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
 	/// Root public key the active identity records its fixed ledger entries
@@ -1721,7 +1560,7 @@ impl SigningHostRuntime {
 	/// from what it will prune.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
 	pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-		self.signing_host.statement_renewal_owner_key().map_err(Into::into)
+		self.role.statement_renewal_owner_key().map_err(Into::into)
 	}
 
 	/// Stop renewing one fixed statement account.
@@ -1730,7 +1569,7 @@ impl SigningHostRuntime {
 		&self,
 		account_id: &[u8; 32],
 	) -> Result<bool, v01::GenericError> {
-		self.signing_host
+		self.role
 			.untrack_statement_renewal_account(account_id)
 			.await
 			.map_err(Into::into)
@@ -1744,7 +1583,7 @@ impl SigningHostRuntime {
 	pub async fn renew_statement_allowances(
 		&self,
 	) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError> {
-		self.signing_host.renew_statement_allowances().await.map_err(Into::into)
+		self.role.renew_statement_allowances().await.map_err(Into::into)
 	}
 
 	/// Start the periodic statement-store renewal loop (hourly, plus a tick
@@ -1752,7 +1591,7 @@ impl SigningHostRuntime {
 	/// runtime is dropped.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_statement_allowance_renewal"))]
 	pub fn start_statement_allowance_renewal(&self) {
-		self.signing_host.start_statement_allowance_renewal();
+		self.role.start_statement_allowance_renewal();
 	}
 
 	/// Delay until the next renewal pass is due, for hosts that schedule
@@ -1771,7 +1610,7 @@ impl SigningHostRuntime {
 	pub fn last_statement_renewal_report(
 		&self,
 	) -> Option<crate::statement_allowance::renewal::StatementRenewalReport> {
-		self.signing_host.last_statement_renewal_report()
+		self.role.last_statement_renewal_report()
 	}
 }
 
@@ -1794,9 +1633,11 @@ pub struct ConnectionAdapters {
 	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
 	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+	pub renderer_failures:
+		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
@@ -1810,6 +1651,7 @@ impl ConnectionAdapters {
 			permission_grants: Arc::default(),
 			chat: Arc::new(ActionChannel::chat()),
 			renderer: Arc::new(ActionChannel::renderer()),
+			renderer_failures: Arc::new(ActionChannel::renderer_failures()),
 			pocket_platform: services.pocket_platform(),
 			expanded_card: None,
 			game_platform: services.game_platform(),
@@ -1955,13 +1797,11 @@ impl CoreAdmin for HostAdmin {
 			.map(|sso| sso.ss_secret.to_vec()))
 	}
 
-	async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+	async fn get_device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.product_runtime
-			.connection()
-			.services()
 			.device_encryption_secret()
 			.await
-			.map_err(Into::into)
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	async fn get_product_subtree_public_key(
@@ -2043,6 +1883,30 @@ impl ProductRuntimeControl {
 		self.connection()?.publish_renderer_action(item.into())
 	}
 
+	/// The resolved materials of `tree`, a body this connection's product
+	/// rendered in `context`, its shaders in `language`, filtering 32-bit float
+	/// images themselves unless `float_filterable`. A node that falls back is
+	/// logged and reported to the product through `Renderer::failure_subscribe`,
+	/// once.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<crate::MaterialsResolution, ProductRuntimeError> {
+		let services = self.connection()?.services();
+		let connection = self.connection.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
+		});
+		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
+	}
+
 	/// Ask this connection's product to draw one body, streaming replacement
 	/// trees until the returned subscription is dropped.
 	///
@@ -2059,6 +1923,12 @@ impl ProductRuntimeControl {
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = self.connection.hold_worker();
+		let back = match &request.context {
+			truapi::latest::RenderContext::PocketCardBack { card_id } => {
+				Some((self.connection.clone(), card_id.clone()))
+			},
+			_ => None,
+		};
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
 			request,
 			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
@@ -2074,16 +1944,22 @@ impl ProductRuntimeControl {
 		// and is not polled past, so it releases there rather than waiting for
 		// the caller to drop the handle.
 		let stream = futures::stream::unfold(
-			(stream, Some(reference)),
-			|(mut stream, reference)| async move {
+			(stream, Some(reference), back),
+			|(mut stream, reference, mut back)| async move {
 				match stream.next().await? {
 					Ok(
-						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
-						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
-					) => Some((Ok(node), (stream, reference))),
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(mut node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(mut node),
+					) => {
+						node.clear_refused_inline_images();
+						if let Some((connection, card_id)) = back.take() {
+							connection.mark_back_drawn(card_id);
+						}
+						Some((Ok(node), (stream, reference, back)))
+					},
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None),
+						(stream, None, None),
 					)),
 				}
 			},
@@ -2190,7 +2066,7 @@ impl ProductRuntime {
 	/// what it cached before. For an embedder that holds only this runtime;
 	/// one holding the host runtime calls it there.
 	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
+		self.admin.product_runtime.connection().services().contact_handle_cache.clear();
 	}
 
 	/// Build a product-facing host core around a platform implementation and
@@ -2255,7 +2131,7 @@ impl ProductRuntime {
 	where
 		P: Platform + 'static,
 	{
-		let pairing = PairingHostRuntime::with_platforms(
+		let pairing = HostRuntime::<PairingHost>::with_platforms(
 			platform,
 			host_config,
 			spawner,

@@ -1,6 +1,7 @@
 import SwiftUI
+import PolkadotUI
 
-final class WalletMainViewController: UIHostingController<WalletView>, RootScreen, NavigationDependable,
+final class WalletMainViewController: SafeAreaFollowingHostingController<WalletView>, RootScreen, NavigationDependable,
     NavigationBarHiding {
     let presenter: WalletMainPresenterProtocol
     weak var navigationControlling: NavigationControlling?
@@ -8,11 +9,12 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     var hidesNavigationBar: Bool { true }
 
     private var assetDetailsScene: AssetDetailsScene
+    private var isCollectiblesPressed = false
 
     init(presenter: WalletMainPresenterProtocol, assetDetailsScene: AssetDetailsScene) {
         self.presenter = presenter
         self.assetDetailsScene = assetDetailsScene
-        super.init(rootView: WalletView())
+        super.init(content: WalletView())
     }
 
     @available(*, unavailable)
@@ -23,11 +25,18 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
-        guard rootView.viewModel.collectiblesPeek != .lifted else { return }
+        guard content.viewModel.collectiblesPeek != .lifted else { return }
 
         withTransaction(Transaction(animation: nil)) {
-            rootView.viewModel.collectiblesPeek = .resting
+            content.viewModel.collectiblesPeek = .resting
         }
+    }
+
+    override var bottomSafeAreaChange: BottomSafeAreaChange {
+        if holdsCollectiblesPeek {
+            return .held
+        }
+        return content.viewModel.openItem == nil ? .animated : .immediate
     }
 
     override func viewDidLoad() {
@@ -42,21 +51,26 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     }
 
     private func setupHandlers() {
-        rootView.viewModel.assetDetailsViewModel = assetDetailsScene.viewModel
+        content.viewModel.assetDetailsViewModel = assetDetailsScene.viewModel
 
-        rootView.viewModel.onBalance = { [weak presenter] in
+        content.viewModel.onBalance = { [weak presenter] in
             presenter?.showBalanceCard()
         }
 
-        rootView.viewModel.onCollectibles = { [weak self] in
+        content.viewModel.onCollectibles = { [weak self] in
             self?.openCollectibles()
         }
 
-        rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
+        content.viewModel.onCollectiblesPress = { [weak self] isPressed in
+            self?.isCollectiblesPressed = isPressed
+            self?.applySafeAreaInsets()
+        }
+
+        content.viewModel.onOpenPocketCard = { [weak presenter] card in
             presenter?.showPocketCard(card)
         }
 
-        rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
+        content.viewModel.onRemovePocketCard = { [weak presenter] card in
             presenter?.removePocketCard(card)
         }
     }
@@ -64,11 +78,11 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 
 extension WalletMainViewController: WalletMainViewProtocol {
     func didReceive(isCollectiblesAvailable: Bool) {
-        rootView.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
+        content.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
     }
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
-        rootView.viewModel.pocketCards = pocketCards
+        content.viewModel.pocketCards = pocketCards
     }
 
     /// Nil once the item is gone or the Wallet is not what closing the item
@@ -79,27 +93,30 @@ extension WalletMainViewController: WalletMainViewProtocol {
             navigationController?.viewControllers.suffix(2).first === self
         else { return nil }
 
+        // A return can ask before the Pocket has laid out on the Clearance it comes back to.
+        view.layoutIfNeeded()
+
         switch item {
         case .balance:
-            let frame = rootView.viewModel.balanceCardFrame
+            let frame = content.viewModel.balanceCardFrame
             return frame.isEmpty ? nil : frame
         case .collectibles:
-            let frame = rootView.viewModel.collectiblesFrame
+            let frame = content.viewModel.collectiblesFrame
             return frame.isEmpty ? nil : frame
         case let .card(key):
-            guard rootView.viewModel.pocketCards.contains(where: { $0.key == key }) else { return nil }
+            guard content.viewModel.pocketCards.contains(where: { $0.key == key }) else { return nil }
 
-            return rootView.viewModel.pocketCardFrames[key]
+            return content.viewModel.pocketCardFrames[key]
         }
     }
 
     var openItem: PocketItem? {
-        rootView.viewModel.openItem
+        content.viewModel.openItem
     }
 
     func setOpenItem(_ item: PocketItem?) {
-        let previous = rootView.viewModel.openItem
-        rootView.viewModel.openItem = item
+        let previous = content.viewModel.openItem
+        content.viewModel.openItem = item
 
         if item == .collectibles {
             liftCollectiblesPeek()
@@ -109,18 +126,20 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 
     func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
-        let viewModel = rootView.viewModel
+        let viewModel = content.viewModel
         withTransaction(Transaction(animation: animated ? PocketFlightTiming.animation : nil)) {
             viewModel.openPocketCardOffset = offset
             viewModel.isPocketCleared = clearingPocket
         }
+
+        applySafeAreaInsets()
     }
 
     private func openCollectibles() {
-        guard rootView.viewModel.collectiblesPeek == .resting else { return }
+        guard content.viewModel.collectiblesPeek == .resting else { return }
 
         withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
-            rootView.viewModel.collectiblesPeek = .colouring
+            content.viewModel.collectiblesPeek = .colouring
         }
 
         Task { [weak self] in
@@ -131,22 +150,32 @@ extension WalletMainViewController: WalletMainViewProtocol {
 }
 
 private extension WalletMainViewController {
+    /// The peek keeps its place from the touch that opens it until its book has lifted out of it, so the Docklet
+    /// tucking under that touch does not move it. The book flies from, and back to, the frame the peek reports.
+    var holdsCollectiblesPeek: Bool {
+        let viewModel = content.viewModel
+        guard !viewModel.isPocketCleared else { return false }
+
+        return isCollectiblesPressed || viewModel.collectiblesPeek != .resting
+    }
+
     func liftCollectiblesPeek() {
         withTransaction(Transaction(animation: nil)) {
-            rootView.viewModel.collectiblesPeek = .lifted
+            content.viewModel.collectiblesPeek = .lifted
         }
     }
 
     func landCollectiblesPeek() {
-        guard rootView.viewModel.collectiblesPeek == .lifted else { return }
+        guard content.viewModel.collectiblesPeek == .lifted else { return }
 
         withTransaction(Transaction(animation: nil)) {
-            rootView.viewModel.collectiblesPeek = .colouring
+            content.viewModel.collectiblesPeek = .colouring
         }
         DispatchQueue.main.async { [weak self] in
             withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
-                self?.rootView.viewModel.collectiblesPeek = .resting
+                self?.content.viewModel.collectiblesPeek = .resting
             }
+            self?.applySafeAreaInsets()
         }
     }
 }

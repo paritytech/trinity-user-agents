@@ -7,19 +7,27 @@ use std::{fs, io::Cursor, path::Path};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
+use futures::TryStreamExt;
 use image::ImageReader;
 use truapi::{
-	ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile, SigningHostRuntime, check_image,
-	preimage_key,
+	HostRuntime, ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile,
+	PublicProfileResolutionOptions, SigningHost, check_image, preimage_key,
 };
 
 use crate::network::Stack;
 
 /// Reads understood profile metadata from dotNS without provisioning an identity.
 ///
-/// Skips the record cache and reports invalid usernames and lookup failures.
-pub async fn read(runtime: &SigningHostRuntime, username: &str) -> Result<String> {
-	let profile = runtime.resolve_public_profile(username, true).await?;
+/// Forces a dotNS lookup and reports invalid usernames and lookup failures.
+pub async fn read(runtime: &HostRuntime<SigningHost>, username: &str) -> Result<String> {
+	let profile = runtime
+		.observe_public_profile(
+			username,
+			PublicProfileResolutionOptions { force_fresh: true, skip_stale: false },
+		)
+		.try_fold(None, |_, profile| async { Ok(Some(profile)) })
+		.await?
+		.context("profile resolution completed without a profile")?;
 	Ok(format_profile(username, &profile))
 }
 
@@ -29,9 +37,8 @@ pub async fn read(runtime: &SigningHostRuntime, username: &str) -> Result<String
 /// upload go through the `peopl.<tld>` product's TrUAPI calls, with their usual
 /// confirmations. Ownership, upload and publication failures return errors.
 pub async fn upload(
-	runtime: &SigningHostRuntime,
+	runtime: &HostRuntime<SigningHost>,
 	network: &Stack,
-	entropy: &[u8],
 	username: &str,
 	path: &Path,
 ) -> Result<String> {
@@ -39,7 +46,7 @@ pub async fn upload(
 	let image = tokio::task::spawn_blocking(move || read_image(&path))
 		.await
 		.context("join profile image reader")??;
-	let mut profile = chain::ChainProfile::connect(runtime, network, entropy, username).await?;
+	let mut profile = chain::ChainProfile::connect(runtime, network, username).await?;
 	let record = publish_avatar(&mut profile.backend(), image).await?;
 	let published = PublicProfile { avatar: record.avatar() };
 	Ok(format!("Profile published\n{}", format_profile(username, &published)))

@@ -587,7 +587,8 @@ pub enum RenderContext {
 	ChatMessage {
 		/// Room the message was posted in.
 		room_id: String,
-		/// Message id, as returned by `Chat::post_message`.
+		/// Message id, as returned by `Chat::post_message`, or the
+		/// `message_id` of a `ChatMessage` with a `Custom` body.
 		message_id: String,
 		/// Product-defined discriminator, as stored in
 		/// `ChatCustomMessage::message_type`.
@@ -668,6 +669,52 @@ pub enum MaterialFailure {
 	/// compile the material, does not draw materials on this surface, or has
 	/// materials switched off.
 	Unsupported,
+}
+
+impl RendererNode {
+	/// Empty the bytes of every inline image a host must not draw, so it
+	/// draws as empty space at its size.
+	///
+	/// An inline image may be drawn only as PNG, JPEG or WebP, recognised by
+	/// its first bytes, and at most 64 KiB. SVG is refused because it can load
+	/// outside addresses.
+	pub fn clear_refused_inline_images(&mut self) {
+		match self {
+			Self::Image { props, .. } => props.source.clear_if_refused(),
+			Self::Materials { props, children } => {
+				for argument in props.layers.iter_mut().flat_map(|layer| &mut layer.args) {
+					if let Parameter::SamplerFloat(ImageRef::Source(source)) |
+					Parameter::SamplerVec2(ImageRef::Source(source)) |
+					Parameter::SamplerVec3(ImageRef::Source(source)) |
+					Parameter::SamplerVec4(ImageRef::Source(source)) = argument
+					{
+						source.clear_if_refused();
+					}
+				}
+				children.iter_mut().for_each(Self::clear_refused_inline_images);
+			},
+			Self::Box { children, .. } |
+			Self::Column { children, .. } |
+			Self::Row { children, .. } |
+			Self::Text { children, .. } |
+			Self::Button { children, .. } => children.iter_mut().for_each(Self::clear_refused_inline_images),
+			Self::Nil | Self::String { .. } | Self::Spacer { .. } | Self::TextField { .. } => {},
+		}
+	}
+}
+
+impl ImageSource {
+	fn clear_if_refused(&mut self) {
+		const MAX_INLINE_IMAGE_BYTES: usize = 64 * 1024;
+		if let Self::Inline(bytes) = self {
+			let png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+			let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
+			let webp = bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP");
+			if bytes.len() > MAX_INLINE_IMAGE_BYTES || !(png || jpeg || webp) {
+				bytes.clear();
+			}
+		}
+	}
 }
 
 #[cfg(test)]

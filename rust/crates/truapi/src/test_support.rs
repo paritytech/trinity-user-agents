@@ -30,7 +30,7 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
 	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
@@ -41,7 +41,7 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey};
 use truapi::{
-	v01,
+	latest, v01,
 	versioned::{
 		account::{HostAccountCreateProofRequest, HostAccountGetAliasRequest},
 		resource_allocation::HostRequestResourceAllocationRequest,
@@ -51,6 +51,7 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod legacy_asset_hub;
 mod scripted_chain;
+mod tests;
 
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
@@ -70,6 +71,17 @@ pub fn wait_until(mut condition: impl FnMut() -> bool, message: &str) {
 	while !condition() {
 		assert!(std::time::Instant::now() < deadline, "{message}");
 		std::thread::sleep(Duration::from_millis(5));
+	}
+}
+
+/// The next item of `stream`, failing the test rather than hanging when none
+/// comes within two seconds.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
+	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
+		futures::future::Either::Left((item, _)) => item,
+		futures::future::Either::Right(_) => panic!("nothing came"),
 	}
 }
 
@@ -173,7 +185,7 @@ pub struct StubPlatform {
 	/// to the topic, with no statement this host can open ever arriving.
 	pub pairing_silent_after_subscribe: bool,
 	pub notification_id: u32,
-	pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
+	pub pushed_notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
 	pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
 	pub sent_rpc: Arc<Mutex<Vec<String>>>,
 	pub rpc_responses: Vec<String>,
@@ -336,6 +348,9 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// Identity of every [`test_stack`].
+pub const TEST_STACK_ID: &str = "test-stack";
+
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -344,8 +359,12 @@ pub fn test_stack(
 	bulletin: [u8; 32],
 	asset_hub: [u8; 32],
 ) -> crate::platform::Stack {
+	let identity = crate::platform::StackIdentity {
+		id: TEST_STACK_ID.to_string(),
+		generation: "test-generation".to_string(),
+	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
+	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
 }
 
@@ -410,6 +429,28 @@ pub fn test_descriptor_chain(
 	chain
 }
 
+/// The People chain the test stack is published on.
+pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
+
+/// The People chain the test stack is published on after a wipe. No test
+/// bundles a stack on it, so a copy that names it always changes the chain.
+pub const TEST_STACK_WIPED_PEOPLE: [u8; 32] = [0xa9; 32];
+
+/// The test stack's descriptor as published at `sequence` in `generation`,
+/// with People on `people`, Bulletin on `[0xbb; 32]` and Asset Hub on
+/// `[0xcc; 32]`. A wipe is a higher `sequence`, another `generation` and
+/// another `people`.
+pub fn published_test_descriptor(
+	sequence: u32,
+	generation: &str,
+	people: [u8; 32],
+) -> serde_json::Value {
+	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = generation.into();
+	descriptor
+}
+
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
 /// verifies it.
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
@@ -466,7 +507,7 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 			0xc1, 0xd7, 0x20, 0x23,
 		]),
 		identity_chat_private_key: None,
-		device_enc_public_key: None,
+		peer_device_enc_public_key: None,
 		lite_username: Some("alice".to_string()),
 		full_username: Some("Alice Smith".to_string()),
 	}
@@ -476,9 +517,12 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 /// side of one SSO session.
 pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	use crate::{
-		host_logic::sso::pairing::{
-			ResponderIdentity, create_pairing_bootstrap, derive_x25519_keypair_from_entropy,
-			establish_responder_session_info, establish_sso_session_info,
+		host_logic::{
+			root_entropy::RootEntropy,
+			sso::pairing::{
+				ResponderIdentity, create_pairing_bootstrap, establish_responder_session_info,
+				establish_sso_session_info,
+			},
 		},
 		platform::{HostInfo, PairingHostConfig, PlatformInfo},
 	};
@@ -500,7 +544,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 		.unwrap()
 		.expand_to_keypair(ExpansionMode::Ed25519);
 	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso");
+		RootEntropy::new([0xAB; 16]).derive_x25519_keypair(b"sso");
 	let responder = ResponderIdentity {
 		statement_secret: statement_keypair.secret.to_bytes(),
 		statement_public_key: statement_keypair.public.to_bytes(),
@@ -1115,6 +1159,27 @@ impl PlatformProductStorage for StubPlatform {
 		self.push_storage_change(&key, None);
 		Ok(())
 	}
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		if let Some(reason) = self.local_storage_error {
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		let keys: Vec<String> = self
+			.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in keys {
+			self.clear(key).await?;
+		}
+		Ok(())
+	}
 
 	fn subscribe_storage(
 		&self,
@@ -1303,13 +1368,13 @@ impl PlatformNavigation for StubPlatform {
 impl PlatformNotifications for StubPlatform {
 	async fn push_notification(
 		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		notification: latest::HostPushNotificationRequest,
+	) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
 		self.pushed_notifications
 			.lock()
 			.expect("notification list mutex poisoned")
 			.push(notification);
-		Ok(v01::HostPushNotificationResponse { id: self.notification_id })
+		Ok(latest::HostPushNotificationResponse { id: self.notification_id })
 	}
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
@@ -1857,76 +1922,6 @@ fn method_keyed_responses(
 			}
 		}
 	}))
-}
-
-#[test]
-#[should_panic(
-	expected = "`state_getStorage` was called 2 times, and the script has 1 response(s) for it"
-)]
-fn method_keyed_responses_do_not_replay_an_exhausted_answer() {
-	use futures::StreamExt;
-
-	let request =
-		|id| format!(r#"{{"jsonrpc":"2.0","id":"{id}","method":"state_getStorage","params":[]}}"#);
-	let sent = Arc::new(Mutex::new(vec![request(1), request(2)]));
-	let mut responses =
-		method_keyed_responses(sent, vec![("state_getStorage", "null".to_string())]);
-
-	futures::executor::block_on(async {
-		responses.next().await.expect("first scripted response");
-		responses.next().await.expect("second scripted response");
-	});
-}
-
-fn assert_rpc_responses_are_connection_local(platform: StubPlatform) {
-	use futures::FutureExt;
-
-	futures::executor::block_on(async {
-		let first = platform.connect([0xaa; 32]).await.unwrap();
-		let second = platform.connect([0xaa; 32]).await.unwrap();
-		let mut first_responses = first.responses();
-		let mut second_responses = second.responses();
-		let mut expected_requests = Vec::new();
-
-		for index in 1..=2 {
-			let request = format!(
-				r#"{{"jsonrpc":"2.0","id":"truapi:{index}","method":"state_getStorage","params":[]}}"#
-			);
-			let response =
-				format!(r#"{{"jsonrpc":"2.0","id":"truapi:{index}","result":"0x0{index}"}}"#);
-			first.send(request.clone());
-			assert_eq!(first_responses.next().await, Some(response.clone()));
-			assert_eq!(second_responses.next().now_or_never(), None);
-
-			second.send(request.clone());
-			assert_eq!(second_responses.next().await, Some(response));
-			expected_requests.extend([request.clone(), request]);
-		}
-
-		assert_eq!(*platform.sent_rpc.lock().unwrap(), expected_requests);
-	});
-}
-
-#[test]
-fn scripted_rpc_responses_wait_for_their_own_connection_request() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_responses: vec![
-			r#"{"jsonrpc":"2.0","id":"truapi:1","result":"0x01"}"#.to_string(),
-			r#"{"jsonrpc":"2.0","id":"truapi:2","result":"0x02"}"#.to_string(),
-		],
-		..Default::default()
-	});
-}
-
-#[test]
-fn method_keyed_rpc_responses_count_requests_per_connection() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_method_responses: vec![
-			("state_getStorage", r#""0x01""#.to_string()),
-			("state_getStorage", r#""0x02""#.to_string()),
-		],
-		..Default::default()
-	});
 }
 
 async fn wait_for_matching_request_id(sent: Arc<Mutex<Vec<String>>>, response: &str) {

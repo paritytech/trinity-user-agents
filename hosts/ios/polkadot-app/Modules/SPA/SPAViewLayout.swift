@@ -51,7 +51,11 @@ final class SPAViewLayout: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func setupRootLayout() {
+    /// The web view covers the whole screen, under the bars and the Docklet. With `pageReadsSafeArea` the scroll
+    /// view takes no insets from the host: the page reads the safe area through `env(safe-area-inset-*)` and insets
+    /// its own content, which needs `viewport-fit=cover` in its viewport. Without it the host insets the page's
+    /// scrolling content by the safe area.
+    func setupWebViewLayout(pageReadsSafeArea: Bool) {
         addSubview(webView)
         webView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -59,19 +63,7 @@ final class SPAViewLayout: UIView {
 
         setupActivityIndicatorLayout()
         setupLoadProgressLayout()
-        webView.scrollView.contentInsetAdjustmentBehavior = .scrollableAxes
-    }
-
-    func setupDefaultLayout() {
-        addSubview(webView)
-        webView.snp.makeConstraints { make in
-            make.top.equalTo(safeAreaLayoutGuide.snp.top)
-            make.leading.trailing.bottom.equalToSuperview()
-        }
-
-        setupActivityIndicatorLayout()
-        setupLoadProgressLayout()
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.contentInsetAdjustmentBehavior = pageReadsSafeArea ? .never : .scrollableAxes
     }
 }
 

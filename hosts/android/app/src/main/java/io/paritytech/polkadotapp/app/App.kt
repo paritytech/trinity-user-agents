@@ -11,7 +11,7 @@ import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import io.paritytech.polkadotapp.app.logging.AppFileDebugTree
 import io.paritytech.polkadotapp.app.logging.CoinageFileTree
-import io.paritytech.polkadotapp.app.logging.SentryLogTree
+import io.paritytech.polkadotapp.app.logging.HostLogSinkTree
 import io.paritytech.polkadotapp.app.root.presentation.debug.DebugShakeObserver
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializerPipeline
@@ -41,6 +41,9 @@ class App : Application(), Configuration.Provider {
     lateinit var coinageFileTree: CoinageFileTree
 
     @Inject
+    lateinit var hostLogSinkTree: Lazy<HostLogSinkTree>
+
+    @Inject
     lateinit var debugShakeObserver: DebugShakeObserver
 
     @Inject
@@ -61,7 +64,7 @@ class App : Application(), Configuration.Provider {
         // Planted before the initializers: the pipeline resumes unfinished top-ups, and Timber drops
         // anything logged before a tree exists.
         Timber.plant(coinageFileTree)
-        if (Sentry.isEnabled()) Timber.plant(SentryLogTree())
+        if (Sentry.isEnabled()) Timber.plant(hostLogSinkTree.get())
 
         if (FeatureOption.DEBUG_MENU.isEnabled) {
             Timber.plant(Timber.DebugTree(), appFileDebugTree.get())
@@ -70,13 +73,13 @@ class App : Application(), Configuration.Provider {
                 .addObserver(debugShakeObserver)
         }
 
+        Coil.setImageLoader(imageLoader)
         remoteConfigService.init()
 
         with(ComputationalScope(ProcessLifecycleOwner.get().lifecycleScope)) {
             appInitializerPipeline.initialize()
         }
 
-        Coil.setImageLoader(imageLoader)
         ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
     }
 }

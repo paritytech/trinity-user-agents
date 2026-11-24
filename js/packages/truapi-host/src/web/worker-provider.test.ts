@@ -177,7 +177,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     void createWebWorkerPairingHostRuntime(
       asWorker(worker),
       makeHostCallbacks({
-        chat: { createChatRoom: async () => ({ status: "New" }) },
+        chat: { createChatRoom: async () => "New" },
       }),
       { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
     );
@@ -579,7 +579,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
-  it("returns the device encryption key as hex and fails once disposed", async () => {
+  it("returns the device encryption key as hex, and undefined when absent", async () => {
     const worker = new FakeWorker();
     const providerPromise = createProviderFromRuntime(
       asWorker(worker),
@@ -605,20 +605,28 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
     expect(await pending).toBe(bytesToHex(keyBytes));
 
+    // A pairing host's key is the one its pairing proposal advertised, so
+    // without an active session there is none, and that is not an error.
+    const missing = provider.getDeviceEncryptionKey();
+    worker.emit({
+      kind: "deviceEncryptionKeyResponse",
+      requestId: lastMessageOfKind(worker, "getDeviceEncryptionKey").requestId,
+      ok: true,
+      key: undefined,
+    });
+    expect(await missing).toBeUndefined();
+
     const failing = provider.getDeviceEncryptionKey();
     worker.emit({
       kind: "deviceEncryptionKeyResponse",
-      requestId: worker.messages.at(-1)!.requestId,
+      requestId: lastMessageOfKind(worker, "getDeviceEncryptionKey").requestId,
       ok: false,
-      error: "no device key",
+      error: "runtime is not ready",
     });
-    await expect(failing).rejects.toThrow("no device key");
+    await expect(failing).rejects.toThrow("runtime is not ready");
 
-    // A key has no safe empty value, so a closed connection rejects.
     provider.dispose();
-    await expect(provider.getDeviceEncryptionKey()).rejects.toThrow(
-      "product connection is closed",
-    );
+    expect(await provider.getDeviceEncryptionKey()).toBeUndefined();
   });
 
   it("forwards session activation calls and resolves their responses", async () => {
@@ -730,6 +738,46 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     provider.dispose();
+  });
+
+  it("answers the worker's host calls before it is ready", async () => {
+    // Building the core reads its stack record from core storage through the
+    // host while the worker is still in init. Left unanswered until `ready`,
+    // every start would wait out the read's timeout and lose the record.
+    const worker = new FakeWorker();
+    const stackRecordKey = CoreStorageKey.enc({
+      tag: "StackRecord",
+      value: { stackId: "0xabc" },
+    });
+    const reads: unknown[] = [];
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        coreStorage: {
+          readCoreStorage: async (key) => {
+            reads.push(key);
+            return undefined;
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 3,
+      name: "readCoreStorage",
+      args: [stackRecordKey],
+    });
+    await settle();
+
+    expect([
+      reads.length,
+      lastMessageOfKind(worker, "callbackResponse"),
+    ]).toEqual([1, expect.objectContaining({ requestId: 3, ok: true })]);
+    worker.emit({ kind: "ready" });
+    (await runtimePromise).dispose();
   });
 
   it("reports unknown callback requests", async () => {

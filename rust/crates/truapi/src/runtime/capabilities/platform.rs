@@ -93,9 +93,14 @@ impl<H: AccountHolder> System for ProductRuntimeHost<H> {
 	) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
 		version(request)
 			.exec(|inner| async move {
-				feature_supported(self.connection.platform.as_ref(), inner)
-					.await
-					.map_err(CallError::Domain)
+				let services = &self.connection.services;
+				feature_supported(
+					self.connection.platform.as_ref(),
+					|version, features| services.draws_materials(version, features),
+					inner,
+				)
+				.await
+				.map_err(CallError::Domain)
 			})
 			.await
 	}
@@ -487,7 +492,7 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 		request: HostPushNotificationRequest,
 	) -> Result<HostPushNotificationResponse, CallError<HostPushNotificationError>> {
 		version(request)
-			.exec(|inner| async move {
+			.exec(|mut notification| async move {
 				let status = self
 					.connection
 					.permissions_service()
@@ -506,7 +511,13 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 						reason: format!("notification {reason}"),
 					}));
 				}
-				self.connection.platform.push_notification(inner).await.map_err(|err| {
+				let trusted = self.connection.product.product_id.has_trusted_remote_permissions();
+				notification.title = notification
+					.title
+					.filter(|_| trusted)
+					.map(|title| title.trim_matches(is_blank_title_char).to_string())
+					.filter(|title| !title.is_empty());
+				self.connection.platform.push_notification(notification).await.map_err(|err| {
 					CallError::Domain(latest::HostPushNotificationError::Unknown {
 						reason: err.reason,
 					})
@@ -531,4 +542,9 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 			})
 			.await
 	}
+}
+
+fn is_blank_title_char(character: char) -> bool {
+	character.is_whitespace() ||
+		matches!(character, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
 }

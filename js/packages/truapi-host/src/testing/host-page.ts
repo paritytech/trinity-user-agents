@@ -39,6 +39,7 @@ import {
   type MockHostConfig,
   type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
+import { stackGenesisHashes } from "./networks.js";
 import {
   checkDerivationIndex,
   resolveAccount,
@@ -257,10 +258,13 @@ export function publishTestHostGlobals(control: TestHostControl): () => void {
 export async function startTestHost(
   options: TestHostPageOptions,
 ): Promise<TestHostPage> {
-  const host = createMockHost(options.mock);
   const { productId: hostProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
+  const host = createMockHost({
+    servedChains: stackGenesisHashes(hostConfig.testStack),
+    ...options.mock,
+  });
 
   // A signing host, not a pairing host: a test host owns its keys. Note the
   // behavioural consequence -- a signing host answers `request_login` with
@@ -316,16 +320,18 @@ export async function startTestHost(
     const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
       default: () => Promise<unknown>;
       setLogLevel?: (level: string) => void;
-      WasmSigningHostRuntime: new (
-        callbacks: unknown,
-        config: unknown,
-      ) => DirectSigningRuntime;
+      WasmSigningHostRuntime: {
+        create(
+          callbacks: unknown,
+          config: unknown,
+        ): Promise<DirectSigningRuntime>;
+      };
     };
     await glue.default();
     if (options.logLevel) glue.setLogLevel?.(options.logLevel);
     const { createWasmRawCallbacks } =
       await import("../generated/host-callbacks-adapter.js");
-    directRuntime = new glue.WasmSigningHostRuntime(
+    directRuntime = await glue.WasmSigningHostRuntime.create(
       {
         // A raw bridge callback rather than a generated host callback, so it
         // is supplied here the way the worker runtime does. The test host runs

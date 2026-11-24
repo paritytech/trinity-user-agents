@@ -78,7 +78,7 @@ A line travels two stages, and which one governs depends on who raised it.
  CORE (rust)                   BOUNDARY          HOST stage 1          HOST stage 2         SENTRY
  ---------------------------   ---------------   ------------------    -----------------    ------
  warn!/info!  --> HostSinkLayer --> on_core_log --> logCoreLine --> Timber / SwiftyBeaver --> logs
-  truapi.* or WARN+, capped,      (2 strings)      the table gives     SentryLogTree /
+  truapi.* or WARN+, capped,      (2 strings)      the table gives     HostLogSinkTree /
   unlisted target refused                          the severity        HostLogSinkDestination
                                                                        tag "truapi." + INFO+
 
@@ -90,9 +90,9 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 ## What this does not touch
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`SentryLogTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`).
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`).
 
-Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log.
+Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log. On Android the three are `HostProcessTelemetry`, `DeviceReadingsInitializer` and `SentryHostLogSink`, and both `HostLogSinkTree` and `CoreEventLogger` reach that last one through `HostLogSink`.
 
 **The web host has no core-log channel at all.** `on_core_log` is declared in `native/callbacks.rs:37`, inside `truapi::native`, which is `#[cfg(not(target_arch = "wasm32"))]` at `lib.rs:898`. There is no `onCoreLog` in any TypeScript source, and `truapi-codegen` walks the `platform` modules, never `native`. So Desktop and dot.li receive no core diagnostics, under any design.
 
@@ -138,14 +138,52 @@ An unregistered target is caught three times over, in this order:
 | Where | What happens |
 |---|---|
 | compile time | every call site names a table constant, so a misspelled marker does not build |
-| `HostSinkLayer` | a target the table does not list is refused, a literal or a runtime-built one alike |
+| `admits_host_marker` | a target the table does not list is refused on either way out of the core, a literal or a runtime-built one alike |
 | host | a target absent from the table it read is treated as `Local` |
 
-The layer is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
+That predicate is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
 
 **What the table decides.** A marker absent from it is local, because lookup is exact. `MarkerClass::Export { severity }` is what carries a core error to Sentry as an error rather than as info. The rule exists once, in the core, whatever the host count.
 
 The two tag filters stay. They are the only gate on host-originated lines such as `truapi.payments`, which the core table says nothing about. Deleting them would ship every host debug line on any tag.
+
+## Core events
+
+A marker can name the fields it carries instead of writing them into a detail line. `CoreEvent` builds one in the core and `HostCallbacks::on_core_event` hands it to a host, which gives its reporter attributes it can group and filter by rather than prose it can only store.
+
+```rust
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoreAttribute {
+    pub key: String,
+    pub value: CoreAttributeValue,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CoreAttributeValue {
+    Text { value: String },
+    Count { value: u64 },
+    Flag { value: bool },
+}
+
+// Any marker the table lists.
+CoreEvent::new(markers::SOME_MARKER)
+    .text("outcome", "sent")
+    .count("age_ms", age)
+    .flag("money_moved", true)
+    .emit();
+```
+
+Keys are `&'static str` on the builder, so a key is written in the core's own source and nothing at a call site can build one from runtime text. A value is a label, a count, or a condition. A label may be a runtime identifier such as a provider, an asset or a dotNS name, which is why the type cannot be `&'static str` too, so the rule for those is the gate rather than the signature: the caller admits a short plain value and collapses anything else to a fallback, the way an unlisted provider is `other` and an untrusted product is `third_party`. Free text a provider, a product or a manifest wrote goes through that gate or it does not go, for the same reason it does not belong in a detail line.
+
+One marker table gates both paths. `admits_host_marker` is the single predicate the tracing layer's filter and `CoreEvent::emit` ask, so a marker nobody declared reaches a host on neither, and the class the table carries decides what a host may do with an event exactly as it does for a line.
+
+`CoreEvent::emit` writes to the core's own console before it consults the sink, under the live level and at the level the marker's class carries, so a marker reads the same on a build that installs no sink. The browser host and the CLI reach a marker only that way. It also holds the reentrancy flag across the sink call and honours it on the way in, so a host whose two callbacks share one lock cannot be re-entered from inside either.
+
+An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `CORE_EVENT_MAX_ATTRIBUTES`. The second bound is about cardinality rather than size: a host indexes these, so an event that grew a key per iteration would cost its marker whatever a host can group by, not just its own line.
+
+`HostBridge` defaults the callback to nothing on both hosts, so a host carries structured traffic once it says it wants it.
+
+Both apps send a marker the table exports to Sentry at the table's severity, as a log whose body is the marker, tagged `truapi.core`, with each attribute beside the tag. A marker the table keeps local or does not list never reaches Sentry. On Android both bridges call one injected `CoreEventLogger`, which writes the event to the device log at debug and hands an exported marker to `HostLogSink`, bound to `SentryHostLogSink`. `HostLogSinkTree` forwards the lines it matches to that same sink, so Sentry logs there leave from one place. On iOS both bridges call `logCoreEvent` on the logger they already hold, typed `CoreEventLoggerProtocol`. It logs the event as a `[truapi.core]` line at the marker's level, or at debug when the marker is not exported, and carries the attributes as SwiftyBeaver context. `HostLogSinkDestination`, the one destination that holds the `HostLogSink`, forwards that line at info and above as the marker with the attributes as fields.
 
 ## Trade-offs
 
@@ -155,10 +193,45 @@ A host has to call the function to hold the table at all, so a host that never c
 
 The benefit is that the number of places the rule is written stays at one as hosts are added, and that a marker is local until someone states otherwise rather than exported until someone notices.
 
+## Funding events
+
+Funding's flow facts leave the core as core events under exported markers. The core emits them; each app's `onCoreEvent` sink hands them to Sentry Logs as the marker with its attributes, so they arrive from builds that are not released, through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
+
+**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. The table gates the event path as it does the log path, so an entry missing or local would reach no host. Each entry's doc comment lists the attributes it carries and the closed set each takes.
+
+| Marker | Logged when |
+|---|---|
+| `overlay_opened` | the overlay opens on a new session |
+| `overlay_closed` | it closes: started, dismissed or failed, and how far the user got |
+| `quotes_settled` | every provider asked for a quote request answered, or a newer request replaced it |
+| `provider_chosen` | the session is handed to a provider on a quote: its rank, fee and time buckets |
+| `provider_took` | the provider's worker takes the session, or first fails to |
+| `step_reached` | a milestone (received, added, sent) is first reached |
+| `status_flag` | taking longer, retrying or retrying a payout first shows |
+| `ended`, `ended_unexpectedly` | the provider is done with the session: outcome and reason class |
+| `cancel_requested` | the user asks to cancel |
+| `cancel_answered` | the provider answers a cancel, or its worker first fails to |
+| `cancel_confirmed` | the user answers a cancel offer |
+| `frame_requested`, `frame_opened`, `frame_closed` | a provider's screen is asked for, opened, and closed, or dropped before the user opened it |
+
+Each is emitted once, on a change a commit stored or on the call that made it, never on loading sessions after a restart.
+
+**The attributes.** A fact is a `CoreEvent` carrying its own attributes, then `funding.ref`, a random per-session label, the session's labels (direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when a compiled-in list of known ids names them, amount bucket) and the session's `age_ms`. Labels are text, conditions such as `money_moved` are flags, and counts and durations are counts, left off when unknown rather than sent as zero. The facts are built in `runtime/funding_telemetry.rs` on `CoreEvent`'s own builder; its one addition, `tag`, takes a label only from a closed enum or fixed bucket, so a string a provider, a product or a manifest wrote cannot become one. The runtime-built labels (provider, product, asset, network) pass the gate described under core events or collapse to `other`, `third_party` or `none`. Asset and network are strings a provider's manifest wrote, so they are tagged only when a small list of known ids beside the builder names them (`usdt`, `usdc`, `dot`, `polkadot`, `polkadot-asset-hub`, `paseo` and the like) and are `other` otherwise; the product-sdk asset catalog replaces that list later.
+
+```
+[truapi] INFO truapi.funding.overlay_opened amount_preset=true funding.ref=V1StGXR8_Z5jdHi6 direction=in opener=host product=none rail=none provider=none asset=none network=none amount_bucket=50-100 age_ms=0
+```
+
+That is the core's own console line; a host receives the same as typed attributes.
+
+**Privacy.** No fact carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. The reference is drawn at random per session and kept in memory only, so it joins a session's facts without leading back to the session; a session resumed after a restart draws a new one. Funding's own warnings leave as `truapi.tracing.warn` and name no session either.
+
+**Production.** The hosts' Sentry logs send nothing from release builds, and there is no consent screen behind it. Funding telemetry from production needs consent and a policy decision first.
+
 ## Open questions
 
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
-2. Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?
+2. Do metrics want the same treatment that events have, or is a count on an event enough? Funding's measures are counts on its core events for now.
 3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
 4. Does Android route an info host event to Sentry Logs the way iOS does, which means `HostEvent` grows a level there?
 

@@ -169,6 +169,10 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 - It does **not** route your chats and calls through company messaging servers — messages travel through the public chain, calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
 
+### Centralised dependencies
+
+- **Runtime configuration (Firebase Remote Config).** The chain list and RPC nodes, the identity-backend URL, DotNS and other contract addresses, the IPFS gateway and the on/off-ramp URLs are fetched from Firebase Remote Config. This repository ships no defaults, and the app waits for a successful fetch on every start, so the owner of the Firebase project can change these values without an app update, and the app cannot start without Firebase. Forks point the same build at their own project ([docs/DEPLOYMENT.md §4.1](./docs/DEPLOYMENT.md#41-remote-config-keys)). This is a known trade-off, tracked in [#306](https://github.com/paritytech/polkadot-android-community/issues/306).
+
 ### Under the hood
 
 A modular **Kotlin** / **Jetpack Compose** codebase: features are split into `api` and `impl` modules wired with Hilt, performance-critical crypto is compiled from **Rust** via the NDK ([`bindings/`](./bindings)), and chain access goes through [substrate-sdk-android](https://github.com/novasamatech/substrate-sdk-android) (JSON-RPC, storage subscriptions, extrinsics).

@@ -13,7 +13,6 @@ pub struct HostChatCreateRoomRequest {
 
 /// Whether the room was newly created or already existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatRoomRegistrationStatus {
 	/// The room was created.
 	New,

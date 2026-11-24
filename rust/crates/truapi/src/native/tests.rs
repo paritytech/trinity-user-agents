@@ -1,14 +1,15 @@
 use super::*;
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, atomic::Ordering},
+	sync::{Arc, Mutex, atomic::Ordering, mpsc},
 };
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest,
+	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -100,8 +101,10 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
+	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
 	pub face_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+	pub back_requests: Mutex<Vec<bool>>,
+	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
 	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
@@ -120,6 +123,7 @@ pub struct EventCallbacks {
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 	pub chain_connects: Mutex<Vec<Vec<u8>>>,
 	pub chain_sends: Mutex<Vec<(u32, String)>>,
+	pub chain_send_rejection: Mutex<Option<String>>,
 	pub chain_closes: Mutex<Vec<u32>>,
 	/// Worker demand transitions, in arrival order.
 	pub worker_demand: Mutex<Vec<(ProductId, WorkerTransition)>>,
@@ -153,7 +157,8 @@ impl EventCallbacks {
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+			events: Mutex::new(Vec::new()),
+			chat_room_status: Mutex::new(truapi::latest::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
 			chat_registered_bots: Mutex::new(Vec::new()),
@@ -174,6 +179,7 @@ impl EventCallbacks {
 			on_chain_connect: Mutex::new(None),
 			chain_connects: Mutex::new(Vec::new()),
 			chain_sends: Mutex::new(Vec::new()),
+			chain_send_rejection: Mutex::new(None),
 			chain_closes: Mutex::new(Vec::new()),
 			worker_demand: Mutex::new(Vec::new()),
 			paired_devices: Mutex::new(Vec::new()),
@@ -187,7 +193,18 @@ impl EventCallbacks {
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
 			face_requests: Mutex::new(Vec::new()),
+			back_requests: Mutex::new(Vec::new()),
 		}
+	}
+
+	/// The face visibilities this execution's card was asked for, in order.
+	pub fn face_requests(&self) -> Vec<bool> {
+		self.face_requests.lock().expect("face requests mutex poisoned").clone()
+	}
+
+	/// The sides this execution's card was asked to turn to, in order.
+	pub fn back_requests(&self) -> Vec<bool> {
+		self.back_requests.lock().expect("back requests mutex poisoned").clone()
 	}
 }
 
@@ -195,6 +212,10 @@ impl EventCallbacks {
 impl HostCallbacks for EventCallbacks {
 	fn on_core_log(&self, marker: String, detail: String) {
 		self.logs.lock().expect("logs mutex poisoned").push((marker, detail));
+	}
+
+	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>) {
+		self.events.lock().expect("events mutex poisoned").push((marker, attributes));
 	}
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
@@ -237,7 +258,7 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn push_notification(
 		&self,
-		_request: v01::HostPushNotificationRequest,
+		_request: truapi::latest::HostPushNotificationRequest,
 	) -> Result<u32, HostRejection> {
 		Ok(0)
 	}
@@ -268,6 +289,13 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
 		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+	}
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
+		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
 		&self,
@@ -311,6 +339,9 @@ impl HostCallbacks for EventCallbacks {
 		Ok(*self.chain_id.lock().expect("chain id mutex poisoned"))
 	}
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection> {
+		if let Some(reason) = self.chain_send_rejection.lock().unwrap().clone() {
+			return Err(HostRejection::Rejected { reason });
+		}
 		self.chain_sends
 			.lock()
 			.expect("chain sends mutex poisoned")
@@ -391,6 +422,12 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
+	async fn clear_product_storage(
+		&self,
+		_product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
 	async fn begin_operation(
 		&self,
 		_product_id: ProductId,
@@ -410,7 +447,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection> {
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
@@ -519,6 +556,32 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
 	);
 }
 
+// A running product follows its keys; once its storage is cleared it must stop
+// seeing the values the host just deleted, while a product whose id extends
+// the cleared one keeps its own.
+#[test]
+fn clearing_a_product_reaches_its_storage_subscriptions_only() {
+	let (_callbacks, _events, platform) = event_platform();
+	let cleared = ProductId::for_test("myapp.dot");
+	let other = ProductId::for_test("myapp.dotapp.dot");
+	let mut own =
+		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
+	let mut others =
+		platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	for subscription in [&mut own, &mut others] {
+		futures::executor::block_on(futures::StreamExt::next(subscription));
+	}
+
+	futures::executor::block_on(ProductStorage::clear_product(&platform, cleared))
+		.expect("clear product");
+
+	assert_eq!(
+		futures::FutureExt::now_or_never(futures::StreamExt::next(&mut own)),
+		Some(Some(Ok(v01::HostLocalStorageChangeItem { value: None })))
+	);
+	assert_eq!(futures::FutureExt::now_or_never(futures::StreamExt::next(&mut others)), None);
+}
+
 pub fn native_host_runtime_config() -> HostRuntimeConfig {
 	HostRuntimeConfig {
 		host_name: "Polkadot Web".to_string(),
@@ -533,8 +596,10 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
 		pinned_pocket_cards: Vec::new(),
+		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
+		device_encryption_key: None,
 	}
 }
 
@@ -813,6 +878,32 @@ fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	assert_eq!(*callbacks.calls.lock().expect("game calls mutex poisoned"), vec![Some(42), None]);
 }
 
+/// A host hands over the device key it announced to contacts before the core
+/// kept one. The core adopts it before the local session activates, so the
+/// first `Connected` already names it and the host reads it back.
+#[test]
+fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let config =
+		HostRuntimeConfig { device_encryption_key: Some([9; 32]), ..native_host_runtime_config() };
+	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+		.expect("host runtime config should be valid");
+
+	let first_connected_key =
+		callbacks.auth_states.lock().expect("auth state mutex poisoned").iter().find_map(
+			|state| match state {
+				AuthState::Connected(info) => Some(info.device_enc_public_key),
+				_ => None,
+			},
+		);
+	let handed_over_public_key =
+		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
+	assert_eq!(
+		(host.device_encryption_key().expect("device key should read"), first_connected_key),
+		([9; 32], Some(Some(handed_over_public_key)))
+	);
+}
+
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 	let mut config = native_host_runtime_config();
@@ -884,9 +975,10 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 			public_key: [7; 32],
 			identity_account_id: None,
 			chat_public_key: None,
-			device_enc_public_key: None,
+			peer_device_enc_public_key: None,
 			peer_statement_account_id: None,
 			device_statement_account_id: None,
+			device_enc_public_key: None,
 			lite_username: Some("alice".to_string()),
 			full_username: None,
 		},
@@ -901,9 +993,10 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 				public_key: [7; 32],
 				identity_account_id: None,
 				chat_public_key: None,
-				device_enc_public_key: None,
+				peer_device_enc_public_key: None,
 				peer_statement_account_id: None,
 				device_statement_account_id: None,
+				device_enc_public_key: None,
 				lite_username: Some("alice".to_string()),
 				full_username: None,
 			})),
@@ -1617,10 +1710,11 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	};
 	let product =
 		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
-	let request = v01::HostChatCreateRoomRequest {
-		room_id: "support".to_string(),
+	let request = truapi::latest::HostChatCreateRoomRequest {
+		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -1628,14 +1722,18 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
+		"support".to_string(),
 		request.clone(),
 	))
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
-		&platform, &product, request,
+		&platform,
+		&product,
+		"support".to_string(),
+		request,
 	))
 	.unwrap();
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1649,10 +1747,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	))
 	.unwrap();
 
-	assert_eq!(created.status, v01::ChatRoomRegistrationStatus::New);
+	assert_eq!(created, truapi::latest::ChatRoomRegistrationStatus::New);
 	assert_eq!(updated_rooms.rooms.len(), 1);
 	assert_eq!(updated_rooms.rooms[0].room_id, "support");
-	assert_eq!(existing.status, v01::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(existing, truapi::latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(posted.message_id, "message-1");
 	assert_eq!(
 		callbacks
@@ -1793,33 +1891,178 @@ fn native_chain_provider_forwards_send_response_and_close() {
 	);
 }
 
+/// A request the host refuses to send is never answered, so the connection
+/// ends its response stream and the client fails what it waits on.
+#[test]
+fn native_chain_provider_closes_when_the_host_refuses_a_send() {
+	let (callbacks, _events, platform) = event_platform();
+	*callbacks.chain_id.lock().unwrap() = Some(42);
+	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let mut responses = connection.responses();
+	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
+
+	connection.send(r#"{"jsonrpc":"2.0","id":1}"#.to_string());
+
+	assert_eq!(futures::FutureExt::now_or_never(responses.next()), Some(None));
+	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
+}
+
 #[test]
 fn runtime_config_reports_the_platform_the_library_was_built_for() {
 	let resolved = NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config())
 		.expect("config is valid");
 
-	assert_eq!(resolved.signing.host.host_info.platform, native_host_platform());
+	assert_eq!(resolved.host.host_info.platform, native_host_platform());
 }
 
+/// A host HTTP client that serves one published descriptor, and passes on
+/// each status the core reports.
+struct PublishedStack {
+	document: Vec<u8>,
+	statuses: mpsc::Sender<StackStatus>,
+}
+
+#[async_trait::async_trait]
+impl NativeStackCallbacks for PublishedStack {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection> {
+		Ok(StackFetchResponse::Document { bytes: self.document.clone(), etag: None })
+	}
+
+	fn stack_changed(&self, status: StackStatus) {
+		let _ = self.statuses.send(status);
+	}
+}
+
+/// A wiped stack has to reach an installed app without a release: the
+/// running core fetches the new descriptor and keeps it in its database, and
+/// the next runtime the host builds starts from it instead of the bundle.
 #[test]
-fn each_descriptor_chain_reaches_its_own_role() {
-	let resolved = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
-		)),
+fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
+	let config = HostRuntimeConfig {
+		local_session_secret: None,
+		local_session_lite_username: None,
 		..native_host_runtime_config()
+	};
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let sequence = |status: &StackStatus| {
+		serde_json::from_str::<serde_json::Value>(&status.descriptor)
+			.expect("the status carries descriptor JSON")["sequence"]
+			.clone()
+	};
+
+	let first = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config.clone(),
+	)
+	.expect("host runtime config should be valid");
+	assert!(
+		first.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let at_start = next_status();
+	let after_fetch = next_status();
+	drop(first);
+	let rebuilt =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+
+	let rebuilt_status = rebuilt.stack_status();
+	assert_eq!(
+		(
+			sequence(&at_start),
+			sequence(&after_fetch),
+			after_fetch.restart_required,
+			sequence(&rebuilt_status),
+			rebuilt_status.generation.as_str(),
+		),
+		(1.into(), 1.into(), true, 2.into(), "second")
+	);
+}
+
+/// A record the database refuses must not send the host into a restart: the
+/// next runtime would read the old copy and be told to restart again. The
+/// status says why the copy waits instead.
+#[test]
+fn a_record_the_database_refuses_asks_for_no_restart() {
+	let config = native_host_runtime_config();
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let runtime = build_runtime(config.clone()).expect("host runtime config should be valid");
+	rusqlite::Connection::open(
+		std::path::Path::new(&config.database_directory).join(crate::store::CORE_DB_FILE),
+	)
+	.and_then(|db| {
+		db.execute_batch(
+			"CREATE TRIGGER disk_full BEFORE INSERT ON stack_record
+			 BEGIN SELECT RAISE(FAIL, 'disk full'); END;",
+		)
 	})
-	.expect("config is valid");
+	.expect("the test can make the database refuse a record");
+
+	assert!(
+		runtime.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let _at_start = next_status();
+	let after_fetch = next_status();
 
 	assert_eq!(
-		resolved.signing.stack.chains(),
-		&crate::platform::StackChains {
-			relay: Some([0x01; 32]),
-			asset_hub: [0xc3; 32],
-			people: [0xa1; 32],
-			bulletin: [0xb2; 32],
-		},
+		(
+			after_fetch.restart_required,
+			matches!(
+				&after_fetch.last_refresh,
+				Some(StackRefreshOutcome::NotStored { reason }) if reason.contains("disk full")
+			),
+		),
+		(false, true),
+		"{:?}",
+		after_fetch.last_refresh
 	);
+}
+
+/// A runtime the app builds from `config`, or why it was refused. No local
+/// session, so building it touches only the stack and the database.
+fn build_runtime(
+	config: HostRuntimeConfig,
+) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
+	NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		HostRuntimeConfig {
+			local_session_secret: None,
+			local_session_lite_username: None,
+			..config
+		},
+	)
 }
 
 #[test]
@@ -1828,17 +2071,13 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 	// only a signed stack may start.
 	let mut stack = native_host_runtime_config().stack;
 	stack.pointer = crate::test_support::test_stack_link(None);
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack,
-		..native_host_runtime_config()
-	})
-	.unwrap_err();
+	let err = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() }).err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: crate::platform::StackError::Unsigned.to_string()
-		}
+		})
 	);
 }
 
@@ -1848,24 +2087,24 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
-	let refused = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack: stack.clone(),
-		..native_host_runtime_config()
-	});
+	let refused =
+		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
 	stack.allows_reserved_values = true;
-	let allowed = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack,
-		..native_host_runtime_config()
-	});
+	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
+	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
+		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
+			.expect("the status carries descriptor JSON")["tld"]
+			.clone()
+	};
 
 	assert_eq!(
-		(refused.err(), allowed.map(|resolved| resolved.signing.stack.tld().to_owned()).ok()),
+		(refused.err(), allowed.map(tld).ok()),
 		(
 			Some(NativeRuntimeConfigError::Invalid {
 				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
 					.to_string(),
 			}),
-			Some("dot".to_string()),
+			Some("dot".into()),
 		),
 	);
 }
@@ -1890,14 +2129,14 @@ fn runtime_config_rejects_relative_host_icon() {
 		host_icon: Some("/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: "host_info.icon must be an absolute HTTPS URL: relative URL without a base"
 				.to_string(),
-		}
+		})
 	);
 }
 
@@ -1907,13 +2146,13 @@ fn runtime_config_rejects_non_https_host_icon() {
 		host_icon: Some("http://localhost:3000/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: r#"host_info.icon must use https scheme, got "http""#.to_string(),
-		}
+		})
 	);
 }
 
@@ -1934,6 +2173,13 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
+
+		fn on_core_event(
+			&self,
+			_marker: String,
+			_attributes: Vec<crate::logging::CoreAttribute>,
+		) {
+		}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -1965,7 +2211,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -1990,6 +2236,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 			_shown: bool,
 		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+		}
+		async fn set_expanded_card_back_shown(
+			&self,
+			_shown: bool,
+		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -2070,6 +2322,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
+		async fn clear_product_storage(
+			&self,
+			_product_id: ProductId,
+		) -> Result<(), v01::HostLocalStorageReadError> {
+			Ok(())
+		}
 		async fn begin_operation(
 			&self,
 			_product_id: ProductId,
@@ -2123,6 +2381,13 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
+
+		fn on_core_event(
+			&self,
+			_marker: String,
+			_attributes: Vec<crate::logging::CoreAttribute>,
+		) {
+		}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2154,7 +2419,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2181,6 +2446,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			_shown: bool,
 		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+		}
+		async fn set_expanded_card_back_shown(
+			&self,
+			_shown: bool,
+		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -2258,6 +2529,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		async fn local_storage_clear(
 			&self,
 			_key: String,
+		) -> Result<(), v01::HostLocalStorageReadError> {
+			Ok(())
+		}
+		async fn clear_product_storage(
+			&self,
+			_product_id: ProductId,
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
@@ -2706,16 +2983,14 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		host_internal::sso_messages::{
 			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
 		},
-		host_logic::{
-			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
-			sso::pairing::derive_x25519_keypair_from_entropy,
-		},
+		host_logic::root_entropy::RootEntropy,
 	};
 	use parity_scale_codec::Encode;
 
 	let entropy = [7; 32];
-	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
-	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	let root_entropy = RootEntropy::new(entropy);
+	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
 			.open_sso_service(statement, encryption)
@@ -2750,14 +3025,11 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			}
 			.encode(),
 		};
-		let public_key = derive_product_subtree_keypair(
-			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
-				.unwrap(),
-			&ProductId::for_test("browse.dot"),
-		)
-		.unwrap()
-		.public
-		.to_bytes();
+		let public_key = root_entropy
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.unwrap()
+			.public
+			.to_bytes();
 		assert_eq!(
 			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
 			response(Ok(public_key))
@@ -3093,17 +3365,56 @@ fn reads_an_inline_image_from_hex() {
 	};
 
 	assert_eq!(
-		parse_renderer_node_json(image("0x89504e47")).expect("hex reads"),
+		parse_renderer_node_json(image("0x89504e470d0a1a0a")).expect("hex reads"),
 		latest::RendererNode::Image {
 			modifiers: Vec::new(),
 			props: latest::ImageProps {
-				source: latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]),
+				source: latest::ImageSource::Inline(b"\x89PNG\r\n\x1a\n".to_vec()),
 				fit: None,
 			},
 		}
 	);
 	assert!(parse_renderer_node_json(image("not hex")).is_err());
 	assert!(parse_renderer_node_json(image("89504e47")).is_err());
+}
+
+/// A face file reaches every host through this reader, so a refused inline
+/// image is emptied here once, and still takes its place as empty space.
+#[test]
+fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
+	let svg = "0x3c7376672f3e";
+	let json = format!(
+		r#"{{"tag":"Image","value":{{"modifiers":[],"props":{{"source":{{"tag":"Inline","value":"{svg}"}}}}}}}}"#
+	);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("the face reads"),
+		latest::RendererNode::Image {
+			modifiers: Vec::new(),
+			props: latest::ImageProps { source: latest::ImageSource::Inline(Vec::new()), fit: None },
+		}
+	);
+}
+
+/// The bridge drops a log whose target is not in the marker table, so an
+/// expanded card call logged under any other name is never seen.
+#[test]
+fn expanded_card_calls_log_registered_markers() {
+	let (callbacks, _events, platform) = event_platform();
+
+	futures::executor::block_on(async {
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
+	});
+
+	let classes: Vec<_> = callbacks
+		.logs
+		.lock()
+		.expect("logs mutex poisoned")
+		.iter()
+		.map(|(target, _)| crate::markers::class_of(target))
+		.collect();
+	assert_eq!(classes, vec![Some(crate::markers::MarkerClass::Local); 2]);
 }
 
 /// `depth` boxes around an empty node, three brackets per box.
@@ -3209,7 +3520,12 @@ fn the_deepest_face_with_materials_reads_back_once_kept() {
 	))
 	.unwrap();
 	assert_eq!(
-		futures::executor::block_on(cards.face(product, "stamps".into())).unwrap(),
+		futures::executor::block_on(cards.face(
+			product,
+			"stamps".into(),
+			crate::pocket_cards::PocketCardSide::Front,
+		))
+		.unwrap(),
 		Some(deepest)
 	);
 	assert!(matches!(
@@ -3412,8 +3728,7 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
-			.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect());
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));

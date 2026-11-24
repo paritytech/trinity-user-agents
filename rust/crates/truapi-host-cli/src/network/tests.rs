@@ -12,6 +12,7 @@ const TEST_NETWORK_HOSTS: &[&str] = &[
 	"paseo-bulletin-next-rpc.polkadot.io",
 	"previewnet.substrate.dev",
 	"identity.dotspark.app",
+	"identity.parity-prod.parity.io",
 	"asset-hub-paseo-rpc.n.dwellir.com",
 	"people-devnet-rpc.api.polkadotcommunity.foundation",
 	"bullet.sik.rocks",

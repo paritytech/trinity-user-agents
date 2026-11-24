@@ -38,7 +38,7 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 			(
 				fs::read(&reloaded.path)?,
 				resolve_cached_signer(directory.path(), &network, None)?
-					.map(|signer| signer.entropy),
+					.map(|signer| signer.account.account_name),
 				serde_json::to_value(reloaded.pending_auto_candidate(network_id))?,
 			),
 			(original_accounts.clone(), None, serde_json::to_value(&pending)?,)
@@ -69,11 +69,17 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 		(
 			reloaded.data.accounts.len(),
 			reloaded.pending_auto_candidate(network_id).is_none(),
-			cached.account_name,
-			cached.entropy,
-			cached.lite_username,
+			cached.account.account_name,
+			cached.entropy.derive_root_keypair()?.public.to_bytes(),
+			cached.account.lite_username,
 		),
-		(1, true, Some("auto-1".to_string()), vec![0; 16], Some("pending.01".to_string()),)
+		(
+			1,
+			true,
+			Some("auto-1".to_string()),
+			RootEntropy::new([0; 16]).derive_root_keypair()?.public.to_bytes(),
+			Some("pending.01".to_string()),
+		)
 	);
 	Ok(())
 }
@@ -81,10 +87,12 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 #[test]
 fn debug_output_redacts_signer_secrets() {
 	let signer = ResolvedSigner {
-		entropy: vec![0xab; 32],
-		account_name: Some("auto-1".to_string()),
-		lite_username: None,
-		auto_managed: true,
+		entropy: RootEntropy::new([0xab; 32]),
+		account: SignerAccount {
+			account_name: Some("auto-1".to_string()),
+			lite_username: None,
+			auto_managed: true,
+		},
 	};
 	let rendered = format!("{signer:?}");
 	assert!(!rendered.contains("171"), "entropy bytes leaked: {rendered}");
@@ -246,7 +254,8 @@ fn cached_signer_resolves_without_network_access() -> Result<()> {
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 		None,
 	)?
-	.expect("cached signer");
+	.expect("cached signer")
+	.account;
 
 	assert_eq!(signer.account_name.as_deref(), Some("auto-1"));
 	assert_eq!(signer.lite_username.as_deref(), Some("auto-1lite.01"));
@@ -280,7 +289,6 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 	let identity = identity_from_mnemonic(MNEMONIC, "paseo")?;
 	let imported = ImportedSigner {
 		mnemonic: MNEMONIC.to_string(),
-		entropy: identity.entropy,
 		username: Some("alice.01".to_string()),
 		session_name: "alice.01".to_string(),
 		public_key: identity.public_key,
@@ -301,7 +309,8 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 		Some(IMPORTED_ACCOUNT_NAME),
 	)?
-	.expect("imported signer is cached");
+	.expect("imported signer is cached")
+	.account;
 	assert_eq!(cached.lite_username.as_deref(), Some("alice.01"));
 	let store = AccountStore::load(dir.path())?;
 	assert!(store.auto_candidate("paseo-next-v2", 7).is_none());
@@ -319,7 +328,6 @@ fn imported_signer_without_dotns_username_is_still_cached() -> Result<()> {
 	let session_name = imported_session_name(None, &identity.public_key);
 	let imported = ImportedSigner {
 		mnemonic: MNEMONIC.to_string(),
-		entropy: identity.entropy,
 		username: None,
 		session_name: session_name.clone(),
 		public_key: identity.public_key,
@@ -338,7 +346,8 @@ fn imported_signer_without_dotns_username_is_still_cached() -> Result<()> {
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 		Some(IMPORTED_ACCOUNT_NAME),
 	)?
-	.expect("username-less imported signer is cached");
+	.expect("username-less imported signer is cached")
+	.account;
 	assert_eq!(cached.lite_username, None);
 	assert!(!cached.auto_managed);
 	Ok(())

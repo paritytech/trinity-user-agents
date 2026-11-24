@@ -14,7 +14,6 @@ import WebKit
 final class StubSPAView: SPAViewProtocol {
     private(set) var navigatedPages: [ProductPage] = []
     let controller = UIViewController()
-    let pageScrollView = UIScrollView()
     lazy var pageWebView = WKWebView()
     var isSetup: Bool { true }
 

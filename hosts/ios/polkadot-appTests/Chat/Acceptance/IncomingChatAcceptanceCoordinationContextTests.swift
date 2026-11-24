@@ -41,14 +41,48 @@ struct IncomingChatAcceptanceCoordinationContextTests {
 
         #expect(result == nil)
     }
+
+    @Test func lateAcceptanceOfCancelledRequestIsIgnored() async throws {
+        let cancelled = Chat.Request(
+            requestId: "cancelled",
+            contactAccountId: fixture.peerAccountId,
+            timestamp: 1,
+            status: .outgoing(.cancelled),
+            message: nil
+        )
+        let store = MockChatRequestStoreService(localRequests: [cancelled.requestId: cancelled])
+
+        let device = Chat.PeerDevice(
+            statementAccountId: Data(repeating: 2, count: 32),
+            encryptionPublicKey: Data(repeating: 3, count: 32)
+        )
+        let result = try await makeContext(requestStoreService: store).handle(IncomingChatAcceptanceInput(
+            peerAccountId: fixture.peerAccountId,
+            requestId: cancelled.requestId,
+            device: device,
+            message: Chat.RemoteMessage(
+                messageId: "acceptance",
+                timestamp: 1,
+                versioned: .v1(.init(content: .multiChatAccepted(.init(
+                    requestId: cancelled.requestId,
+                    device: device
+                ))))
+            )
+        ))
+
+        #expect(result == nil)
+        #expect(store.calls.isEmpty)
+    }
 }
 
 private extension IncomingChatAcceptanceCoordinationContextTests {
-    func makeContext() -> IncomingChatAcceptanceCoordinationContext {
+    func makeContext(
+        requestStoreService: ChatRequestStoreServicing? = nil
+    ) -> IncomingChatAcceptanceCoordinationContext {
         let facade = UserDataStorageTestFacade()
 
         return IncomingChatAcceptanceCoordinationContext(
-            requestStoreService: ChatRequestStoreService(
+            requestStoreService: requestStoreService ?? ChatRequestStoreService(
                 storageFacade: facade,
                 pushIdFactory: ChatPushIdFactory(
                     encryptionManager: ChatEncryptionManager(entropyManager: FixedRootEntropyManager()),
@@ -69,7 +103,7 @@ private extension IncomingChatAcceptanceCoordinationContextTests {
             requestId: "request",
             contactAccountId: fixture.peerAccountId,
             timestamp: 1,
-            status: .outgoing,
+            status: .outgoing(.pending),
             message: nil
         )
         return contact

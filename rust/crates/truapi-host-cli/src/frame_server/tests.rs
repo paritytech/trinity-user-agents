@@ -89,7 +89,7 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 	let executor = tokio::runtime::Builder::new_current_thread().build()?;
 	let spawner = Spawner::new(executor.handle().clone());
 	executor.shutdown_background();
-	Ok(Arc::new(SigningHostRuntime::new(platform, config, spawner)))
+	Ok(Arc::new(HostRuntime::<SigningHost>::new(platform, config, spawner)))
 }
 
 #[test]
@@ -465,7 +465,7 @@ mod cross_product_storage {
 		}
 	}
 
-	fn host() -> Result<(Arc<crate::platform::CliPlatform>, SigningHostRuntime)> {
+	fn host() -> Result<(Arc<crate::platform::CliPlatform>, HostRuntime<SigningHost>)> {
 		// Every chain routes to a closed port, so nothing connects to live Paseo.
 		let network = crate::network::Network::default()
 			.bundled_stack(ChainBackend::Rpc)
@@ -495,7 +495,7 @@ mod cross_product_storage {
 		let executor = tokio::runtime::Builder::new_current_thread().build()?;
 		let spawner = Spawner::new(executor.handle().clone());
 		executor.shutdown_background();
-		Ok((platform.clone(), SigningHostRuntime::new(platform, config, spawner)))
+		Ok((platform.clone(), HostRuntime::<SigningHost>::new(platform, config, spawner)))
 	}
 
 	/// Apply `OWNER`'s local product config, `trusted` being the
@@ -517,7 +517,7 @@ mod cross_product_storage {
 	}
 
 	async fn call(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		product: &str,
 		method: &str,
 		payload: Vec<u8>,
@@ -548,7 +548,7 @@ mod cross_product_storage {
 	}
 
 	/// Store a value in `OWNER`'s own storage, through `OWNER`'s connection.
-	async fn write_owner_value(runtime: &SigningHostRuntime) {
+	async fn write_owner_value(runtime: &HostRuntime<SigningHost>) {
 		let payload = HostLocalStorageWriteRequest::V1(v01::HostLocalStorageWriteRequest {
 			key: KEY.to_string(),
 			value: VALUE.to_vec(),
@@ -559,7 +559,7 @@ mod cross_product_storage {
 
 	/// `CALLER` reads `OWNER`'s storage at `KEY`.
 	async fn read_across(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 	) -> Result<Option<Vec<u8>>, v02::HostLocalStorageReadError> {
 		let payload = HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
 			product: Some(ProductId::for_test(OWNER)),

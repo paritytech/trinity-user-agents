@@ -121,7 +121,8 @@ extension Chat.StrippedContentV1 {
              .leftChat,
              .deviceAdded,
              .deviceRemoved,
-             .compactedMessages:
+             .compactedMessages,
+             .seen:
             return nil
         }
     }

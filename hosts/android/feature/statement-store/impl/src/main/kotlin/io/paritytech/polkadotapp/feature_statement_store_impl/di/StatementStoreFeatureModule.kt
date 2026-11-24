@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementStore
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.CommunicationSessionCreator
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OneShotSessionRequestPublisher
-import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStoreMessageProver
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStorePeer
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NotificationStatementAccountAllocator
@@ -27,7 +26,6 @@ import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.St
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.StatementStoreSlotRepository
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.signer.origins.RealStatementStoreOrigins
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.signer.origins.StatementStoreOrigins
-import io.paritytech.polkadotapp.feature_statement_store_impl.domain.RealOurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.RealStatementStoreMessageProverFactory
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NOTIFICATION_SLOT_DOMAIN_ID
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NOTIFICATION_SLOT_POLICY_ID
@@ -98,10 +96,6 @@ interface StatementStoreFeatureApiModule {
 
     @Binds
     fun bindIncomingTopicsProviderFactory(impl: RealIncomingTopicsProviderFactory): IncomingTopicsProvider.Factory
-
-    @Binds
-    @Singleton
-    fun bindOurDeviceKeypairProvider(impl: RealOurDeviceKeypairProvider): OurDeviceKeypairProvider
 
     @Binds
     fun bindNotificationStatementAccountAllocator(impl: RealNotificationStatementAccountAllocator): NotificationStatementAccountAllocator
