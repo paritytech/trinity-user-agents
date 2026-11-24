@@ -391,14 +391,7 @@ impl Drop for DrainGuard<'_> {
 }
 
 impl RuntimeServices {
-	/// The host reports that `product_id`'s worker stopped without being
-	/// asked to. While something holds it, it is started again once the
-	/// ledger's backoff for its run of crashes has passed.
-	pub fn worker_exited(self: &Arc<Self>, product_id: &ProductId) {
-		self.worker_attempt_exited(product_id, None);
-	}
-
-	/// Apply crash backoff only if the reported attempt still serves this product.
+	/// Retry while demand remains, matching the startup attempt when the host supplies one.
 	pub fn worker_attempt_exited(self: &Arc<Self>, product_id: &ProductId, attempt: Option<u64>) {
 		let Some(wait_ms) =
 			self.worker_ledger.exited(product_id, attempt, crate::current_unix_millis())

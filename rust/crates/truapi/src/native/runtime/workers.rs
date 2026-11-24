@@ -333,7 +333,7 @@ impl Drop for WebView {
 
 struct Controller(Weak<NativeTrUApiHostRuntime>);
 
-/// Deliver any worker demand queued while the managed session was being built.
+/// Deliver worker demand queued during runtime construction.
 pub fn install_controller(runtime: &Arc<NativeTrUApiHostRuntime>) {
 	assert!(
 		runtime
