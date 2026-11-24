@@ -232,14 +232,18 @@ fn an_empty_list_or_map_pins_the_same_as_one_left_out() {
 #[test]
 fn a_field_the_bundled_copy_leaves_out_or_empties_stays_empty() {
 	let filled = descriptor(&reserved_test_descriptor(2));
-	let bundles: [(fn(&mut serde_json::Value), &str); 7] = [
-		(|bundled| remove(bundled, "assets"), "assets"),
-		(|bundled| bundled["assets"] = serde_json::json!([]), "assets"),
-		(|bundled| remove(bundled, "contracts"), "contracts"),
-		(|bundled| bundled["contracts"] = serde_json::json!({}), "contracts"),
-		(|bundled| remove(bundled, "dotns"), "dotns"),
-		(|bundled| bundled["dotns"] = serde_json::json!({}), "dotns"),
-		(|bundled| remove(bundled, "coinage"), "coinage"),
+	/// Each way the bundled copy can leave a field empty.
+	const EMPTIED: [PinnedChange; 7] = [
+		PinnedChange { make: |bundled| remove(bundled, "assets"), field: "assets" },
+		PinnedChange { make: |bundled| bundled["assets"] = serde_json::json!([]), field: "assets" },
+		PinnedChange { make: |bundled| remove(bundled, "contracts"), field: "contracts" },
+		PinnedChange {
+			make: |bundled| bundled["contracts"] = serde_json::json!({}),
+			field: "contracts",
+		},
+		PinnedChange { make: |bundled| remove(bundled, "dotns"), field: "dotns" },
+		PinnedChange { make: |bundled| bundled["dotns"] = serde_json::json!({}), field: "dotns" },
+		PinnedChange { make: |bundled| remove(bundled, "coinage"), field: "coinage" },
 	];
 	let refusal = |empty: fn(&mut serde_json::Value)| {
 		let mut bundled = reserved_test_descriptor(1);
@@ -248,7 +252,7 @@ fn a_field_the_bundled_copy_leaves_out_or_empties_stays_empty() {
 	};
 
 	assert_eq!(
-		bundles.map(|(empty, _)| refusal(empty)),
-		bundles.map(|(_, field)| Err(StackError::PinnedFieldChanged { field }))
+		EMPTIED.map(|emptied| refusal(emptied.make)),
+		EMPTIED.map(|emptied| Err(StackError::PinnedFieldChanged { field: emptied.field }))
 	);
 }
