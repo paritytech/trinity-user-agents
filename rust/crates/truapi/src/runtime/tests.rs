@@ -9202,7 +9202,7 @@ fn a_provider_worker_that_crashes_mid_session_is_started_and_assigned_again() {
 	services.funding().unlink(&ProductId::for_test("ramp.dot"), &crashed);
 	let before_crash = workers.seen().len();
 
-	services.worker_exited(&ProductId::for_test("ramp.dot"));
+	services.worker_attempt_exited(&ProductId::for_test("ramp.dot"), None);
 	let restarted = connect_provider(&services, "ramp.dot").calls(1);
 
 	assert_eq!(
