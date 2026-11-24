@@ -38,6 +38,8 @@ struct NodeShadowModifier: ViewModifier {
 public final class GesturePanPlace {
     /// The host's own drag offset along the axis.
     public var drag: CGFloat = 0
+    /// The host's own drag offset, across and down, for the nodes that follow it with parallax.
+    public var dragOffset: CGPoint = .zero
     /// Where the worker's tree drew the children: the first child's leading margin.
     public var base: CGFloat = 0
     /// How far the drawn children can travel.

@@ -69,11 +69,29 @@ extension Track {
     }
 }
 
-extension [CustomMessageWidgetNode.Track] {
-    /// A node keeps its last track per property.
-    mutating func keepLast(_ track: CustomMessageWidgetNode.Track) {
-        removeAll { $0.property == track.property }
-        append(track)
+/// The modifiers that move a node on the host's clock, gathered in the order the tree lists them: a node keeps its
+/// last enter, emitter and parallax, and its last track per property.
+struct NodeMotionByValue {
+    private(set) var enter: CustomMessageWidgetNode.Enter?
+    private(set) var tracks: [CustomMessageWidgetNode.Track] = []
+    private(set) var emitter: CustomMessageWidgetNode.Emitter?
+    private(set) var parallax: CustomMessageWidgetNode.Parallax?
+
+    mutating func take(_ modifier: Modifier) {
+        switch modifier {
+        case let .enter(value):
+            enter = value.widgetEnter
+        case let .animate(track):
+            let mapped = track.widgetTrack
+            tracks.removeAll { $0.property == mapped.property }
+            tracks.append(mapped)
+        case let .emit(value):
+            emitter = value.widgetEmitter
+        case let .parallax(value):
+            parallax = value.widgetParallax
+        default:
+            break
+        }
     }
 }
 
