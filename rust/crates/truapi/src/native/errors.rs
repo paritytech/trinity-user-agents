@@ -21,87 +21,6 @@ pub enum HostRejection {
 	},
 }
 
-/// Why a native host refused a chat feed update.
-#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
-pub enum NativeChatFeedRejection {
-	/// The update names a message the room does not hold.
-	#[error("the room holds no such message")]
-	UnknownMessage,
-	/// `New` names a message the room holds already.
-	#[error("the room holds this message already")]
-	DuplicateMessage,
-	/// The update edits, replaces or deletes a message that the product did
-	/// not write.
-	#[error("the product did not write this message")]
-	NotOwner,
-	/// Any other refusal. The product receives it as `HostFailure`.
-	#[error("{reason}")]
-	Rejected {
-		/// Human-readable rejection reason.
-		reason: String,
-	},
-}
-
-impl NativeChatFeedRejection {
-	/// What the host did with the update, or, for a refusal that names no
-	/// outcome, the failure of the host.
-	pub(crate) fn into_outcome(
-		self,
-	) -> Result<crate::platform::ChatFeedOutcome, truapi::latest::GenericError> {
-		use crate::platform::ChatFeedOutcome;
-		match self {
-			Self::UnknownMessage => Ok(ChatFeedOutcome::UnknownMessage),
-			Self::DuplicateMessage => Ok(ChatFeedOutcome::DuplicateMessage),
-			Self::NotOwner => Ok(ChatFeedOutcome::NotOwner),
-			Self::Rejected { reason } => Err(truapi::latest::GenericError { reason }),
-		}
-	}
-}
-
-/// Why a native host refused to create a chat room.
-#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
-pub enum NativeChatRoomRejection {
-	/// The host cannot keep the configuration that the product declared. It
-	/// created and changed nothing.
-	#[error("the host cannot keep this room configuration")]
-	UnsupportedConfig,
-	/// Any other refusal.
-	#[error("{reason}")]
-	Rejected {
-		/// Human-readable rejection reason.
-		reason: String,
-	},
-}
-
-impl From<NativeChatRoomRejection> for truapi::latest::HostChatCreateRoomError {
-	fn from(rejection: NativeChatRoomRejection) -> Self {
-		match rejection {
-			NativeChatRoomRejection::UnsupportedConfig => Self::UnsupportedConfig,
-			NativeChatRoomRejection::Rejected { reason } => Self::Unknown { reason },
-		}
-	}
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for NativeChatRoomRejection {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host chat room callback threw an undeclared error; reporting it as a rejection"
-		);
-		NativeChatRoomRejection::Rejected { reason: err.reason }
-	}
-}
-
-impl From<uniffi::UnexpectedUniFFICallbackError> for NativeChatFeedRejection {
-	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
-		tracing::warn!(
-			reason = %err.reason,
-			"host chat feed callback threw an undeclared error; reporting it as a rejection"
-		);
-		NativeChatFeedRejection::Rejected { reason: err.reason }
-	}
-}
-
 impl From<HostRejection> for v01::GenericError {
 	fn from(err: HostRejection) -> Self {
 		let HostRejection::Rejected { reason } = err;
@@ -147,6 +66,7 @@ from_undeclared_host_error! {
 	crate::latest::HostPaymentStatusSubscribeError => Unknown,
 	crate::latest::HostPaymentTopUpStatusSubscribeError => Unknown,
 	crate::latest::HostNavigateToError => Unknown,
+	crate::latest::HostChatCreateRoomError => Unknown,
 }
 
 impl From<v01::GenericError> for HostRejection {

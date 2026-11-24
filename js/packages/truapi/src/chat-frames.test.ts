@@ -105,7 +105,6 @@ const snapshot = new Map(
 const config: T.ChatRoomConfig = {
     productSource: true,
     reactionDetails: true,
-    reportSeen: true,
 };
 
 const message: T.ChatMessage = {

@@ -34,11 +34,9 @@ data class ChatRoomConfigModel(
     val productSource: Boolean,
     /** The product answers who reacted. This host does not show it. */
     val reactionDetails: Boolean,
-    /** The product wants a `Seen` event for the messages that the user saw. */
-    val reportSeen: Boolean,
 ) {
     companion object {
-        val HOST_DEFAULT = ChatRoomConfigModel(productSource = false, reactionDetails = false, reportSeen = false)
+        val HOST_DEFAULT = ChatRoomConfigModel(productSource = false, reactionDetails = false)
     }
 }
 
