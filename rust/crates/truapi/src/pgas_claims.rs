@@ -1,7 +1,7 @@
 //! PGAS claims through the durable engine: each claim mints one slot of PGAS
-//! into an account, a destination has at most one active claim, and only the
-//! identity that registered a claim builds it. [`with_pgas_claims`] serves
-//! the domain, and [`PgasClaims`] registers claims.
+//! into an account, and a destination has at most one active claim.
+//! [`with_pgas_claims`] serves the domain, and [`PgasClaims`] registers
+//! claims.
 
 mod builder;
 mod claim_extrinsic;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use subxt::utils::{AccountId32, H256};
 
-pub use builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder};
+pub use builder::{ClaimBuildError, PgasClaimBuilder};
 pub use claim_extrinsic::{BuiltClaim, ClaimSlot, build_claim_in_free_slot};
 
 use self::{params::ClaimParams, policy::PgasClaimPolicy};
@@ -40,7 +40,7 @@ fn pgas_domain() -> DomainId {
 }
 
 /// `registry` with the PGAS domain on the Asset Hub with `genesis`, whose
-/// claims `builder` builds as the identity that registered each one.
+/// claims `builder` builds.
 ///
 /// No storage proves a claim landed: `Pgas.ClaimedGasAliases` records only
 /// the person's alias for a day and slot, which any claim of that slot
@@ -80,18 +80,16 @@ impl PgasClaims {
 		Self { engine }
 	}
 
-	/// Registers a claim of one slot into `dest`, built later as `identity`,
-	/// and returns its ledger id. Refuses with
-	/// [`PgasClaimError::AlreadyClaiming`] when `dest` already has an active
-	/// claim, checked in the registration write.
+	/// Registers a claim of one slot into `dest`, built later, and returns
+	/// its ledger id. Refuses with [`PgasClaimError::AlreadyClaiming`] when
+	/// `dest` already has an active claim, checked in the registration write.
 	pub async fn claim(
 		&self,
 		dest: AccountId32,
-		identity: ClaimIdentity,
 	) -> Result<DurableTxId, RegistrationError<PgasClaimError>> {
 		let group = destination_group(&dest);
 		let give_up_after = current_unix_secs() + CLAIM_DEADLINE_SECS;
-		let params = ClaimParams { target: dest, identity, give_up_after };
+		let params = ClaimParams { target: dest, give_up_after };
 		let request = DurableRequest::deferred_in(pgas_domain(), Some(group.clone()), move |tx| {
 			refuse_active_claim(tx, &group)?;
 			Ok(vec![DeferredSubmission::independent(params.into())])

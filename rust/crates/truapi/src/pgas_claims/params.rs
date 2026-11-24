@@ -3,7 +3,6 @@
 use parity_scale_codec::{Decode, Encode};
 use subxt::utils::AccountId32;
 
-use super::builder::ClaimIdentity;
 use crate::durable::PolicyParams;
 
 /// Everything a claim is built from, so building it reads no table.
@@ -11,8 +10,6 @@ use crate::durable::PolicyParams;
 pub struct ClaimParams {
 	/// The account the claim mints into.
 	pub target: AccountId32,
-	/// The account that registered the claim, the only one that builds it.
-	pub identity: ClaimIdentity,
 	/// Unix time, in seconds of the host's clock, after which no attempt of
 	/// the claim is built. Fixed at registration, so a restart never extends
 	/// it.

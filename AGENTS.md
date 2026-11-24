@@ -30,7 +30,7 @@ rust/crates/
                          keys with the generic `gap_scan`, which coinage can reuse; its
                          `pgas_claims` module claims PGAS as deferred durable transactions
                          for NFT transfers to depend on, at most one active claim per
-                         destination, each built only by the account that registered it;
+                         destination, each built from the signed-in session;
                          its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them; its `materials` module keeps

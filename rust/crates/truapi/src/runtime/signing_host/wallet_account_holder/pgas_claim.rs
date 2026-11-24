@@ -1,15 +1,18 @@
 //! Building a durable PGAS claim as the signed-in wallet session:
-//! [`WalletAccountHolder::build_pgas_claim_for_identity`].
+//! [`WalletAccountHolder::build_pgas_claim`].
+//!
+//! This code answers in [`AllowanceAllocationError`] because it adapts the
+//! allowance code it reuses, such as `find_including_rings`, whose errors and
+//! interfaces it keeps as they are. The claim policy reads the
+//! [`ClaimBuildError`] that error converts into.
 
 use std::collections::BTreeSet;
 
 use super::{WalletAccountHolder, allowance::AllowanceAllocationError};
 use crate::{
-	pgas_claims::{
-		BuiltClaim, ClaimBuildError, ClaimIdentity, ClaimSlot, build_claim_in_free_slot,
-	},
+	pgas_claims::{BuiltClaim, ClaimBuildError, ClaimSlot, build_claim_in_free_slot},
 	runtime::{
-		authority::{AccountHolder, AuthorityError, AuthoritySession},
+		authority::{AccountHolder, AuthorityError},
 		statement_allowance::{
 			ChainClient, ChainContext, PersonhoodSigner, StatementAllowanceError,
 			collection::PersonhoodCollection,
@@ -34,36 +37,20 @@ struct ClaimChains {
 }
 
 impl WalletAccountHolder {
-	/// Builds a claim of one PGAS slot into `target` as the session of
-	/// `identity`, in a slot `excluded` does not list. Refuses unless that
-	/// identity is signed in now.
-	pub async fn build_pgas_claim_for_identity(
+	/// Builds a claim of one PGAS slot into `target` under the signed-in
+	/// session, proved by the person's strongest ring, in a slot `excluded`
+	/// does not list. Fails with [`AuthorityError::Disconnected`] when nobody
+	/// is signed in, or when the session ends while the claim is built.
+	pub async fn build_pgas_claim(
 		&self,
-		target: [u8; 32],
-		identity: ClaimIdentity,
-		excluded: &BTreeSet<ClaimSlot>,
-	) -> Result<BuiltClaim, ClaimBuildError> {
-		let session = self.current_session().ok_or(ClaimBuildError::NoSession)?;
-		if ClaimIdentity::from_root_public_key(session.public_key) != identity {
-			return Err(ClaimBuildError::OtherIdentity);
-		}
-		self.build_session_pgas_claim(&session, &target, excluded)
-			.await
-			.map_err(claim_build_error)
-	}
-
-	/// Builds a claim of one PGAS slot into `target` under `session`, proved
-	/// by the person's strongest ring, in a slot `excluded` does not list.
-	async fn build_session_pgas_claim(
-		&self,
-		session: &AuthoritySession,
 		target: &[u8; 32],
 		excluded: &BTreeSet<ClaimSlot>,
 	) -> Result<BuiltClaim, AllowanceAllocationError> {
+		let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
 		let chains = self.pgas_claim_chains().await?;
-		let signer = self.personhood_signer(session).await?;
+		let signer = self.personhood_signer(&session).await?;
 		let ring = chains.strongest_ring(&signer).await?;
-		self.require_current_session(session)?;
+		self.require_current_session(&session)?;
 		let claim = PgasClaim {
 			asset_hub_rpc: chains.asset_hub.rpc(),
 			asset_hub_metadata: &chains.asset_hub_context.metadata,
@@ -80,17 +67,9 @@ impl WalletAccountHolder {
 
 	/// Connects to Asset Hub and People and reads what a claim needs of them.
 	async fn pgas_claim_chains(&self) -> Result<ClaimChains, AllowanceAllocationError> {
-		let asset_hub_genesis = self.services.asset_hub_chain_genesis_hash();
-		let asset_hub_rpc =
-			self.services.chain.rpc_client("PGAS claim", &asset_hub_genesis).await.map_err(
-				|source| AllowanceAllocationError::ChainRpcClient {
-					context: "Asset Hub PGAS client",
-					source,
-				},
-			)?;
-		let asset_hub_rpc = RpcClient::new(subxt_rpcs::RpcClient::new(asset_hub_rpc));
-		let asset_hub = ChainClient::new(asset_hub_rpc, asset_hub_genesis);
-		let people = self.services.statement_store.chain_client("PGAS claim ring").await?;
+		let chains = self.services.stack().chains();
+		let asset_hub = self.pgas_chain_client("Asset Hub PGAS client", chains.asset_hub).await?;
+		let people = self.pgas_chain_client("People PGAS ring client", chains.people).await?;
 		Ok(ClaimChains {
 			asset_hub_context: self.services.chain_context.get(&asset_hub).await?,
 			people_context: self.services.chain_context.get(&people).await?,
@@ -98,6 +77,22 @@ impl WalletAccountHolder {
 			asset_hub,
 			people,
 		})
+	}
+
+	/// A client of the chain with `genesis`, scoped to it for the chain
+	/// context cache, named `context` when it cannot connect.
+	async fn pgas_chain_client(
+		&self,
+		context: &'static str,
+		genesis: [u8; 32],
+	) -> Result<ChainClient, AllowanceAllocationError> {
+		let rpc = self
+			.services
+			.chain
+			.rpc_client("PGAS claim", &genesis)
+			.await
+			.map_err(|source| AllowanceAllocationError::ChainRpcClient { context, source })?;
+		Ok(ChainClient::new(RpcClient::new(subxt_rpcs::RpcClient::new(rpc)), genesis))
 	}
 }
 
@@ -119,26 +114,28 @@ impl ClaimChains {
 	}
 }
 
-/// How a claim's policy treats `error`: a lost session waits, a person
+/// How a claim's policy treats an error: a lost session waits, a person
 /// without a ring or a day without a free slot gives up, and anything else
 /// is asked about again.
-fn claim_build_error(error: AllowanceAllocationError) -> ClaimBuildError {
-	use AllowanceAllocationError::{Authority, MissingPersonhoodMembership, StatementAllowance};
+impl From<AllowanceAllocationError> for ClaimBuildError {
+	fn from(error: AllowanceAllocationError) -> Self {
+		use AllowanceAllocationError::{Authority, MissingPersonhoodMembership, StatementAllowance};
 
-	match error {
-		Authority(AuthorityError::Disconnected) |
-		StatementAllowance(StatementAllowanceError::Authority(AuthorityError::Disconnected)) => {
-			ClaimBuildError::NoSession
-		},
-		MissingPersonhoodMembership { .. } |
-		StatementAllowance(StatementAllowanceError::Slot(SlotError::NoCollectionMembership)) => {
-			ClaimBuildError::NoPersonhood
-		},
-		StatementAllowance(StatementAllowanceError::Slot(SlotError::NoFreePgasSlot {
-			day,
-			max,
-		})) => ClaimBuildError::NoFreeSlot { day, max },
-		other => ClaimBuildError::Transient(other.into()),
+		match error {
+			Authority(AuthorityError::Disconnected) |
+			StatementAllowance(StatementAllowanceError::Authority(AuthorityError::Disconnected)) => {
+				ClaimBuildError::NoSession
+			},
+			MissingPersonhoodMembership { .. } |
+			StatementAllowance(StatementAllowanceError::Slot(SlotError::NoCollectionMembership)) => {
+				ClaimBuildError::NoPersonhood
+			},
+			StatementAllowance(StatementAllowanceError::Slot(SlotError::NoFreePgasSlot {
+				day,
+				max,
+			})) => ClaimBuildError::NoFreeSlot { day, max },
+			other => ClaimBuildError::Transient(other.into()),
+		}
 	}
 }
 

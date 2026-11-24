@@ -14,8 +14,8 @@ use futures::{StreamExt, future::ready};
 use subxt::utils::{AccountId32, H256};
 
 use super::{
-	BuiltClaim, ClaimBuildError, ClaimIdentity, ClaimSlot, PgasClaimBuilder, PgasClaims,
-	build_claim_in_free_slot, testing::TEST_IDENTITY, with_pgas_claims,
+	BuiltClaim, ClaimBuildError, ClaimSlot, PgasClaimBuilder, PgasClaims, build_claim_in_free_slot,
+	with_pgas_claims,
 };
 use crate::{
 	chain::{ExtrinsicService, FixedExtensionVersions, live_asset_hub, live_asset_hub_genesis},
@@ -149,7 +149,6 @@ impl PgasClaimBuilder for LivePerson {
 	async fn build_claim(
 		&self,
 		target: AccountId32,
-		_identity: ClaimIdentity,
 		excluded: &BTreeSet<ClaimSlot>,
 	) -> Result<BuiltClaim, ClaimBuildError> {
 		self.build(target, excluded)
@@ -177,7 +176,7 @@ async fn a_durable_claim_lands_on_asset_hub_and_the_engine_sees_it() {
 	let claims = PgasClaims::new(engine.clone());
 	let dest = AccountId32(rand::random());
 
-	let id = claims.claim(dest, TEST_IDENTITY).await.unwrap();
+	let id = claims.claim(dest).await.unwrap();
 	let settled = settled_status(&engine, id).await;
 
 	assert!(

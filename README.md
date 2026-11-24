@@ -377,9 +377,9 @@ Native signing hosts register a PGAS claim domain with the durable engine,
 for NFT transfers to depend on. `PgasClaims::claim` registers a deferred claim
 of one slot into a destination account. A destination has at most one claim
 waiting to be built or to reach a block, and a second claim into it is refused
-with the id of the active one. A claim is built only from a session of the
-account that registered it, and gives up when another account is signed in.
-A refused or expired attempt is built again in a fresh slot, up to five
+with the id of the active one. A claim is built from the signed-in session,
+which a signing host keeps for one account, and waits while nobody is signed
+in. A refused or expired attempt is built again in a fresh slot, up to five
 attempts, and no attempt is built later than ten minutes after registration.
 The engine decides a claim by finding its extrinsic in a block, because
 `Pgas.ClaimedGasAliases` records only the person's alias for a day and slot,

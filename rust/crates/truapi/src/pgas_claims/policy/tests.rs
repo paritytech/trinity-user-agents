@@ -4,16 +4,13 @@ use subxt::utils::{AccountId32, H256};
 use super::*;
 use crate::{
 	durable::{DomainId, DurableTxStatus, SubmissionPlan, Window, extrinsic},
-	pgas_claims::{
-		ClaimIdentity,
-		testing::{BuildCall, FakeClaimBuilder, TEST_DAY, TEST_IDENTITY, destination},
-	},
+	pgas_claims::testing::{BuildCall, FakeClaimBuilder, TEST_DAY, destination},
 };
 
 /// A claim registered just now, waiting for a session for ten minutes.
 fn waiting_claim(id: i64, dest: AccountId32) -> DeferredDurableTx {
 	let give_up_after = current_unix_secs() + 600;
-	deferred(id, 0, ClaimParams { target: dest, identity: TEST_IDENTITY, give_up_after })
+	deferred(id, 0, ClaimParams { target: dest, give_up_after })
 }
 
 fn deferred(id: i64, attempts: u32, params: ClaimParams) -> DeferredDurableTx {
@@ -75,22 +72,8 @@ fn a_slot_built_a_moment_ago_is_not_handed_out_again() {
 
 	prepare_with(&policy, &[waiting_claim(2, destination(8))]);
 
-	let second = BuildCall {
-		target: destination(8),
-		identity: TEST_IDENTITY,
-		excluded: BTreeSet::from([slot(0)]),
-	};
+	let second = BuildCall { target: destination(8), excluded: BTreeSet::from([slot(0)]) };
 	assert_eq!(builder.calls().last(), Some(&second));
-}
-
-/// Nobody's personhood pays for a claim another account registered.
-#[test]
-fn a_claim_under_another_identity_gives_up_at_once() {
-	let answer = answer_when_build_fails(waiting_claim(1, destination(7)), || {
-		ClaimBuildError::OtherIdentity
-	});
-
-	assert_eq!(answer, Some(Preparation::GiveUp));
 }
 
 #[test]
@@ -126,11 +109,8 @@ fn a_claim_without_a_session_waits_until_its_deadline() {
 fn a_claim_past_its_deadline_gives_up_without_building() {
 	let builder = FakeClaimBuilder::building();
 	let policy = PgasClaimPolicy::new(builder.clone());
-	let past_deadline = ClaimParams {
-		target: destination(7),
-		identity: TEST_IDENTITY,
-		give_up_after: current_unix_secs() - 1,
-	};
+	let past_deadline =
+		ClaimParams { target: destination(7), give_up_after: current_unix_secs() - 1 };
 
 	let answer = prepare_with(&policy, &[deferred(1, 1, past_deadline)]).remove(&DurableTxId(1));
 
@@ -204,42 +184,4 @@ fn a_failed_dispatch_is_final() {
 		policy.can_retry(&entry(), &PolicyParams::default(), VerdictFailureKind::DispatchFailed);
 
 	assert!(!retried);
-}
-
-/// Once an attempt landed or can no longer land, its slot is no longer
-/// held back from other claims.
-#[test]
-fn a_slot_built_longer_ago_than_the_memory_is_forgotten() {
-	let mut recent = RecentSlots::default();
-	recent.remember(slot(0), 1_000);
-
-	recent.remember(slot(1), 1_000 + RECENT_SLOT_SECS + 1);
-
-	assert_eq!(recent.held_slots(0), BTreeSet::from([slot(1)]));
-}
-
-#[test]
-fn a_slot_built_within_the_memory_is_still_held_back() {
-	let mut recent = RecentSlots::default();
-	recent.remember(slot(0), 1_000);
-	recent.remember(slot(1), 1_000 + RECENT_SLOT_SECS);
-
-	let held = recent.held_slots(1_000);
-
-	assert_eq!(held, BTreeSet::from([slot(0), slot(1)]));
-}
-
-/// The identity a claim was registered with is the one it is built as.
-#[test]
-fn a_claim_is_built_as_its_registered_identity() {
-	let builder = FakeClaimBuilder::building();
-	let policy = PgasClaimPolicy::new(builder.clone());
-	let other = ClaimIdentity::from_root_public_key([0x2e; 32]);
-	let mut params = ClaimParams::try_from(&waiting_claim(1, destination(7)).plan.params).unwrap();
-	params.identity = other;
-
-	prepare_with(&policy, &[deferred(1, 0, params)]);
-
-	let identities: Vec<_> = builder.calls().into_iter().map(|call| call.identity).collect();
-	assert_eq!(identities, vec![other]);
 }

@@ -2,7 +2,7 @@ use super::*;
 use crate::{
 	durable::DurableTxFailureKind,
 	pgas_claims::testing::{
-		ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination, transient,
+		ClaimsHarness, FakeClaimBuilder, destination, transient,
 	},
 };
 
@@ -30,7 +30,7 @@ fn a_second_claim_into_a_destination_with_an_active_one_is_refused_with_its_id()
 	let active = harness.claim_into(destination(7));
 
 	let refused =
-		futures::executor::block_on(harness.claims().claim(destination(7), TEST_IDENTITY));
+		futures::executor::block_on(harness.claims().claim(destination(7)));
 
 	assert!(
 		matches!(refused, Err(RegistrationError::Hook(PgasClaimError::AlreadyClaiming(id))) if id == active),
@@ -44,7 +44,7 @@ fn an_active_claim_into_another_destination_does_not_refuse_a_claim() {
 	let harness = ClaimsHarness::new(FakeClaimBuilder::failing_with(transient));
 	harness.claim_into(destination(7));
 
-	let other = futures::executor::block_on(harness.claims().claim(destination(8), TEST_IDENTITY));
+	let other = futures::executor::block_on(harness.claims().claim(destination(8)));
 
 	assert!(other.is_ok(), "{other:?}");
 }
@@ -56,7 +56,7 @@ fn a_claim_seen_in_a_best_block_no_longer_refuses_a_new_one() {
 	let harness = ClaimsHarness::new(FakeClaimBuilder::building());
 	let delivered = harness.claim_seen_in_best_block(destination(7));
 
-	let next = futures::executor::block_on(harness.claims().claim(destination(7), TEST_IDENTITY));
+	let next = futures::executor::block_on(harness.claims().claim(destination(7)));
 
 	assert!(next.is_ok_and(|id| id != delivered));
 }
@@ -69,7 +69,7 @@ fn a_failed_claim_no_longer_refuses_a_new_one() {
 	let failed = harness.claim_into(destination(7));
 	harness.wait_for(failed, DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
 
-	let next = futures::executor::block_on(harness.claims().claim(destination(7), TEST_IDENTITY));
+	let next = futures::executor::block_on(harness.claims().claim(destination(7)));
 
 	assert!(next.is_ok_and(|id| id != failed));
 }

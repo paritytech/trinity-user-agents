@@ -10,7 +10,7 @@ use tempfile::TempDir;
 
 use super::{
 	PgasClaims,
-	builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder},
+	builder::{ClaimBuildError, PgasClaimBuilder},
 	claim_extrinsic::{BuiltClaim, ClaimSlot},
 	pgas_domain,
 	policy::PgasClaimPolicy,
@@ -27,9 +27,6 @@ use crate::{
 /// The day every fake claim is built for.
 pub const TEST_DAY: u32 = 20_412;
 
-/// The identity fixtures register claims as.
-pub const TEST_IDENTITY: ClaimIdentity = ClaimIdentity::from_root_public_key([0x1d; 32]);
-
 /// A build failure the policy asks about again later.
 pub fn transient() -> ClaimBuildError {
 	ClaimBuildError::Transient(anyhow::anyhow!("the ring revision has not arrived"))
@@ -45,8 +42,6 @@ pub fn destination(byte: u8) -> AccountId32 {
 pub struct BuildCall {
 	/// The account the claim mints into.
 	pub target: AccountId32,
-	/// The identity it was built as.
-	pub identity: ClaimIdentity,
 	/// The slots it was told to skip.
 	pub excluded: BTreeSet<ClaimSlot>,
 }
@@ -81,13 +76,12 @@ impl PgasClaimBuilder for FakeClaimBuilder {
 	async fn build_claim(
 		&self,
 		target: AccountId32,
-		identity: ClaimIdentity,
 		excluded: &BTreeSet<ClaimSlot>,
 	) -> Result<BuiltClaim, ClaimBuildError> {
 		let excluded = excluded.clone();
 		self.calls
 			.lock()
-			.push(BuildCall { target, identity, excluded: excluded.clone() });
+			.push(BuildCall { target, excluded: excluded.clone() });
 		if let Some(failure) = self.failure {
 			return Err(failure());
 		}
@@ -142,10 +136,9 @@ impl ClaimsHarness {
 		&self.engine
 	}
 
-	/// Registers a claim into `dest` as [`TEST_IDENTITY`], which must be
-	/// accepted.
+	/// Registers a claim into `dest`, which must be accepted.
 	pub fn claim_into(&self, dest: AccountId32) -> DurableTxId {
-		futures::executor::block_on(self.claims.claim(dest, TEST_IDENTITY)).unwrap()
+		futures::executor::block_on(self.claims.claim(dest)).unwrap()
 	}
 
 	/// Where `id` stands.
@@ -158,8 +151,8 @@ impl ClaimsHarness {
 		wait_until(|| self.status(id) == status, "the claim reaches its status");
 	}
 
-	/// Registers a claim into `dest` as [`TEST_IDENTITY`] and takes it to a
-	/// best block. The builder must build.
+	/// Registers a claim into `dest` and takes it to a best block. The
+	/// builder must build.
 	pub fn claim_seen_in_best_block(&self, dest: AccountId32) -> DurableTxId {
 		let events = self.script_watch();
 		let id = self.claim_into(dest);
