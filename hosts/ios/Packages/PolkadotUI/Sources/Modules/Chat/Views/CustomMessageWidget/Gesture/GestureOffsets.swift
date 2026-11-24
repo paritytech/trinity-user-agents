@@ -2,18 +2,22 @@ import QuartzCore
 import UIKit
 import SwiftUI
 
-/// The offsets a worker sets on its keyed gestures between trees (`RendererNode.SetOffset`).
+/// What changes on keyed nodes between trees: gesture offsets (`RendererNode.SetOffset`) and shapes added to masks
+/// (`RendererNode.ExtendMask`), which a worker sends; and the finger's strokes on keyed location pans, which the host
+/// keeps for the masks that follow them.
 ///
-/// An offset update moves one gesture's children straight away: it is not a tree, so nothing is decoded, mapped or
-/// diffed, and only the gesture view reading that key's channel draws again. A new tree drops every offset, because
-/// the tree always wins.
+/// An update changes one node straight away: it is not a tree, so nothing is decoded, mapped or diffed, and only the
+/// view reading that key's channel draws again. A new tree drops every update, because the tree always wins.
 ///
-/// An offset is first handed over from the render stream's thread (`deliver`) and then applied on the main thread,
+/// An update is first handed over from the render stream's thread (`deliver`) and then applied on the main thread,
 /// either by the frame that sent the move, which waits a moment for it (`GestureMovePacer`), or by the stream's own hop
 /// to the main thread (`applyDelivered`), whichever comes first. Each answer is applied once.
 public final class GestureOffsets {
     private var channels: [String: GestureOffsetChannel] = [:]
     private var places: [String: GesturePanPlace] = [:]
+    private var masks: [String: MaskChannel] = [:]
+    private var trails: [String: PanTrail] = [:]
+    private var touches: [String: PanTouch] = [:]
     let answers = GestureAnswerMailbox()
 
     public init() {}
@@ -41,24 +45,78 @@ public final class GestureOffsets {
         channel(for: key).receive(offset)
     }
 
+    @MainActor
+    public func mask(for key: String) -> MaskChannel {
+        if let mask = masks[key] { return mask }
+        let mask = MaskChannel()
+        masks[key] = mask
+        return mask
+    }
+
+    /// The finger's strokes on the location pan keyed `key` since the current tree.
+    @MainActor
+    public func trail(for key: String) -> PanTrail {
+        if let trail = trails[key] { return trail }
+        let trail = PanTrail()
+        trails[key] = trail
+        return trail
+    }
+
+    /// Whether a finger is on the pan keyed `key`, for a mask that checks its cleared share when it lifts.
+    @MainActor
+    public func touch(for key: String) -> PanTouch {
+        if let touch = touches[key] { return touch }
+        let touch = PanTouch()
+        touches[key] = touch
+        return touch
+    }
+
+    /// An `ExtendMask` item for `key`. It is the worker's answer to a paced move, whichever gesture is under way, even
+    /// with no shapes.
+    @MainActor
+    public func extend(key: String, shapes: [CustomMessageWidgetNode.Mask.Shape]) {
+        mask(for: key).extend(shapes)
+        for channel in channels.values {
+            channel.onAnswer?()
+        }
+    }
+
     /// A `SetOffset` item for `key`, from any thread: kept until the main thread applies it.
     public func deliver(key: String, offset: CGPoint) {
         answers.deliver(GestureAnswer(key: key, offset: offset))
     }
 
-    /// Applies the newest offset delivered and not yet applied, if any.
+    /// An `ExtendMask` item for `key`, from any thread: kept, with every other one not yet applied, until the main
+    /// thread applies it.
+    public func deliver(key: String, shapes: [CustomMessageWidgetNode.Mask.Shape]) {
+        answers.deliver(MaskAnswer(key: key, shapes: shapes))
+    }
+
+    /// Applies every update delivered and not yet applied: the newest offset and each mask extension, in the order
+    /// they came.
     @MainActor
     public func applyDelivered() {
+        for answer in answers.takeMaskAnswers() {
+            extend(key: answer.key, shapes: answer.shapes)
+        }
         guard let answer = answers.take() else { return }
         set(key: answer.key, offset: answer.offset)
     }
 
-    /// A new tree arrived: it places every gesture itself.
+    /// A new tree arrived, with `masks` its keyed masks: it places every gesture and sets every mask itself. Each mask
+    /// starts its fade from what it drew before the strokes it followed are dropped.
     @MainActor
-    public func treeArrived() {
+    public func treeArrived(masks next: [String: CustomMessageWidgetNode.Mask] = [:]) {
         _ = answers.take()
+        _ = answers.takeMaskAnswers()
         for channel in channels.values {
             channel.receive(nil)
+        }
+        for (key, mask) in masks {
+            mask.treeArrived(next: next[key])
+        }
+        for trail in trails.values {
+            trail.reset()
         }
     }
 }
@@ -68,11 +126,18 @@ struct GestureAnswer: Equatable {
     var offset: CGPoint
 }
 
-/// Hands a worker's offset answers from the render stream's thread to the main thread. Only the newest one not yet
-/// applied is kept, and a waiting frame wakes as soon as one arrives.
+struct MaskAnswer: Equatable {
+    var key: String
+    var shapes: [CustomMessageWidgetNode.Mask.Shape]
+}
+
+/// Hands a worker's answers from the render stream's thread to the main thread. Of the offsets, only the newest one not
+/// yet applied is kept; mask extensions add up, so every one not yet applied is kept. A waiting frame wakes as soon as
+/// either arrives.
 final class GestureAnswerMailbox: @unchecked Sendable {
     private let condition = NSCondition()
     private var newest: GestureAnswer?
+    private var maskAnswers: [MaskAnswer] = []
     private var count = 0
 
     /// How many answers have been delivered so far.
@@ -90,13 +155,30 @@ final class GestureAnswerMailbox: @unchecked Sendable {
         condition.unlock()
     }
 
-    /// The newest answer not yet applied, which is then applied by the caller alone.
+    func deliver(_ answer: MaskAnswer) {
+        condition.lock()
+        maskAnswers.append(answer)
+        count += 1
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// The newest offset not yet applied, which is then applied by the caller alone.
     func take() -> GestureAnswer? {
         condition.lock()
         defer { condition.unlock() }
         let answer = newest
         newest = nil
         return answer
+    }
+
+    /// Every mask extension not yet applied, oldest first, which are then applied by the caller alone.
+    func takeMaskAnswers() -> [MaskAnswer] {
+        condition.lock()
+        defer { condition.unlock() }
+        let taken = maskAnswers
+        maskAnswers = []
+        return taken
     }
 
     /// Waits until an answer arrives after the first `after` ones, or `deadline` passes; true when one did.
@@ -115,7 +197,7 @@ final class GestureAnswerMailbox: @unchecked Sendable {
 public final class GestureOffsetChannel {
     /// Added to where the current tree places the gesture's children; nil until the worker sets one.
     public private(set) var offset: CGPoint?
-    /// Called whenever the worker answers: an offset for this key, or a new tree.
+    /// Called whenever the worker answers: an offset for this key, a mask extension, or a new tree.
     @ObservationIgnored var onAnswer: (() -> Void)?
     /// When the last release settle began (media time); a pan starting before it is over cuts it short.
     @ObservationIgnored private(set) var settleStarted: TimeInterval?
@@ -357,7 +439,8 @@ final class GestureMovePacer: NSObject {
         pacing.reset()
     }
 
-    /// Sends a move, then gives the worker up to `answerWait` to answer, so its offset is drawn in this frame.
+    /// Sends a move, then gives the worker up to `answerWait` to answer, so its offset or mask shapes are drawn in this
+    /// frame.
     private func deliver(_ payload: Data) {
         sentPlace = pendingPlace ?? sentPlace
         let before = offsets?.answers.delivered ?? 0

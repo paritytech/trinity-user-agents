@@ -46,4 +46,23 @@ struct GestureDragThresholdTests {
         #expect(recognizer.velocity(in: nil) == .zero)
         #expect(recognizer.touchDown == nil)
     }
+
+    @Test("A free pan that reports its place takes the finger where it lands; any other pan waits for the threshold")
+    func locationPanStartsAtTouchDown() {
+        #expect(GestureSurfaceView.claimsAtTouchDown(axis: .free, reportsLocation: true))
+        #expect(!GestureSurfaceView.claimsAtTouchDown(axis: .free, reportsLocation: false))
+        #expect(!GestureSurfaceView.claimsAtTouchDown(axis: .horizontal, reportsLocation: true))
+        #expect(!GestureSurfaceView.claimsAtTouchDown(axis: .vertical, reportsLocation: true))
+        #expect(!GestureSurfaceView.claimsAtTouchDown(axis: nil, reportsLocation: true))
+    }
+
+    @Test("A surface that starts at touch-down tells its recogniser to begin with no movement")
+    @MainActor
+    func surfaceStartsAtTouchDown() {
+        let view = GestureSurfaceView()
+        let recognizer = view.panRecognizer as? ThresholdPanGestureRecognizer
+        #expect(recognizer?.beginsAtTouchDown == false)
+        view.startsAtTouchDown = true
+        #expect(recognizer?.beginsAtTouchDown == true)
+    }
 }
