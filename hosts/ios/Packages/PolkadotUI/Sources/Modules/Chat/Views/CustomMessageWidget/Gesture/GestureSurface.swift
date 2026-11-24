@@ -15,7 +15,8 @@ struct GestureSurface: UIViewRepresentable {
     let props: CustomMessageWidgetNode.GestureProps
     let onPan: (CustomMessageWidgetNode.GesturePhase, PanTranslation) -> Void
     let onTap: () -> Void
-    /// A finger touching down (true) or lifting (false), at its place in the surface, before any pan decides.
+    /// A finger touching down (true) or lifting (false), at its place in the surface, before any pan decides; or, for a
+    /// pan that takes the finger at the touch-down, as that pan starts and after it ends.
     var onPress: ((Bool, CGPoint) -> Void)?
 
     func makeUIView(context _: Context) -> GestureSurfaceView {
@@ -51,6 +52,8 @@ final class GestureSurfaceView: UIView {
     var onTap: (() -> Void)?
     var onPress: ((Bool, CGPoint) -> Void)?
     private var slop = CGPoint.zero
+    /// The running pan reported the press itself when it began, so it reports the lift when it ends.
+    private var pressedByPan = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -176,13 +179,28 @@ private extension GestureSurfaceView {
             sample.recognized.x = -sample.recognized.x
             sample.slop.x = -sample.slop.x
         }
+        // A pan that begins at the touch-down may take the touches before this view sees them, so `touchesBegan` may
+        // never run: such a pan reports the press as it starts and the lift once it has ended.
         switch recognizer.state {
-        case .began: onPan?(.started, sample)
+        case .began:
+            pressedByPan = startsAtTouchDown
+            if pressedByPan { onPress?(true, location) }
+            onPan?(.started, sample)
         case .changed: onPan?(.moved, sample)
-        case .ended: onPan?(.ended, sample)
+        case .ended:
+            onPan?(.ended, sample)
+            liftPressedByPan(at: location)
         case .cancelled,
-             .failed: onPan?(.cancelled, sample)
+             .failed:
+            onPan?(.cancelled, sample)
+            liftPressedByPan(at: location)
         default: break
         }
+    }
+
+    func liftPressedByPan(at location: CGPoint) {
+        guard pressedByPan else { return }
+        pressedByPan = false
+        onPress?(false, location)
     }
 }
