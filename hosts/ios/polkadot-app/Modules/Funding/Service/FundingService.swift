@@ -21,7 +21,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     private let logger: LoggerProtocol
     private let eventSink: AsyncStream<FundingEvent>.Continuation
     private let state = OSAllocatedUnfairLock(initialState: State())
-    private let attachedRuntime = OSAllocatedUnfairLock(initialState: AttachedRuntime())
+    private let runtimeSlot = FundingRuntimeSlot()
     private let calls = DispatchQueue(label: "io.parity.funding.core-calls")
 
     init(logger: LoggerProtocol) {
@@ -34,15 +34,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     /// Hands the service the runtime it was installed on, once it is built,
     /// and shows the sessions it holds to those following the list.
     func attach(runtime: FundingRuntime) {
-        let waiting = attachedRuntime.withLock { attached in
-            attached.runtime = runtime
-            defer { attached.waiting = [:] }
-            return Array(attached.waiting.values)
-        }
-        for continuation in waiting {
-            continuation.yield(runtime)
-            continuation.finish()
-        }
+        runtimeSlot.fill(runtime)
         publishEntries()
     }
 
@@ -71,7 +63,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func open(_ direction: FundingDirection, amount: Balance?) async throws -> String? {
-        try await builtRuntime().openFunding(direction: direction, amount: amount?.units)
+        try await runtimeSlot.built().openFunding(direction: direction, amount: amount?.units)
     }
 
     func select(_ selection: FundingSelection, for entryId: String) {
@@ -83,12 +75,12 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
 
     func quote(amount: Balance?, for entryId: String) {
         guard let amount else {
-            state.withLock { $0.quotes[entryId, default: QuoteAsk()].drop() }
+            state.withLock { $0.quotes[entryId, default: FundingSessionQuotes()].drop() }
             publish(entryId)
             return
         }
 
-        let ask = state.withLock { $0.quotes[entryId, default: QuoteAsk()].ask() }
+        let ask = state.withLock { $0.quotes[entryId, default: FundingSessionQuotes()].ask() }
         publish(entryId)
         calls.async { [weak self] in
             let requestId = self?.runtime?.getFundingQuote(intent: entryId, amount: amount.units)
@@ -102,7 +94,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
 
     func start(_ entryId: String, provider: ProductId?) async throws {
         guard let provider else {
-            state.withLock { $0.quotes[entryId, default: QuoteAsk()].startsWhenQuoted = true }
+            state.withLock { $0.quotes[entryId, default: FundingSessionQuotes()].startsWhenQuoted = true }
             await withCheckedContinuation { continuation in
                 calls.async { [weak self] in
                     self?.startWhenQuoted(entryId)
@@ -115,7 +107,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
             throw FundingStartError.noQuote
         }
 
-        let selected = try await builtRuntime()
+        let selected = try await runtimeSlot.built()
             .selectFundingProvider(intent: entryId, providerId: provider, quoteId: quoteId)
         guard isPresenting(entryId) else { throw FundingStartError.left }
         guard selected else {
@@ -154,20 +146,20 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
             return .ended
         }
 
-        let outcome = try await builtRuntime().cancelFunding(intent: entryId)
+        let outcome = try await runtimeSlot.built().cancelFunding(intent: entryId)
         publish(entryId)
         return outcome
     }
 
     func answerCancelOffer(_ entryId: String, accepting terms: CancelTerms?) async throws -> CancelConfirmation {
-        let answer = try await builtRuntime().confirmFundingCancel(intent: entryId, terms: terms)
+        let answer = try await runtimeSlot.built().confirmFundingCancel(intent: entryId, terms: terms)
         publish(entryId)
         return answer
     }
 
     func acknowledge(_ entryId: String) async {
         do {
-            try await builtRuntime().acknowledgeFundingSession(intent: entryId)
+            try await runtimeSlot.built().acknowledgeFundingSession(intent: entryId)
         } catch {
             logger.error("[funding] \(entryId): acknowledging the ended session failed: \(error)")
         }
@@ -184,7 +176,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func waitingFrames() async -> [FundingFrameRequest] {
-        guard let runtime = try? await builtRuntime() else { return [] }
+        guard let runtime = try? await runtimeSlot.built() else { return [] }
 
         let waiting = runtime.fundingEntries().compactMap { item -> FundingFrameRequest? in
             guard let providerId = item.session.providerId,
@@ -302,79 +294,25 @@ private extension FundingService {
         let answer: CheckedContinuation<FundingPresentOutcome, Never>
     }
 
-    /// The quotes of one session: only the latest ask's list is shown.
-    struct QuoteAsk {
-        var request = FundingQuoteRequest()
-        var shown: FundingQuoteList?
-        var isAwaiting = false
-        /// The session is handed to the latest ask's best quote once every
-        /// provider answered.
-        var startsWhenQuoted = false
-        /// The core's id for the latest ask, once it returned it.
-        var requestId: UInt64?
-        /// The ask the core was last told to start the session on.
-        var startedOn: UInt64?
-
-        mutating func ask() -> (number: Int, shownId: UInt64?) {
-            isAwaiting = true
-            requestId = nil
-            return (request.ask(), shown?.requestId)
-        }
-
-        mutating func drop() {
-            request.drop()
-            shown = nil
-            isAwaiting = false
-            requestId = nil
-        }
-    }
-
-    struct AttachedRuntime {
-        var runtime: FundingRuntime?
-        var waiting: [UUID: AsyncStream<FundingRuntime>.Continuation] = [:]
-    }
-
     struct State {
         var presentations: [String: Presentation] = [:]
         var frames: [FundingFrame.ID: PendingFrame] = [:]
         /// Sessions whose provider asked for a screen the app has not opened.
         var requestedFrames: Set<String> = []
-        var quotes: [String: QuoteAsk] = [:]
+        var quotes: [String: FundingSessionQuotes] = [:]
         var entryFollowers: [String: [UUID: AsyncStream<FundingEntry>.Continuation]] = [:]
         var listFollowers: [UUID: AsyncStream<[FundingEntry]>.Continuation] = [:]
     }
 
     var runtime: FundingRuntime? {
-        attachedRuntime.withLock { $0.runtime }
-    }
-
-    /// The runtime, once it is attached. Throws `CancellationError` when the
-    /// calling task is cancelled first.
-    func builtRuntime() async throws -> FundingRuntime {
-        let (stream, continuation) = AsyncStream<FundingRuntime>.makeStream()
-        let id = UUID()
-        continuation.onTermination = { [weak self] _ in
-            self?.attachedRuntime.withLock { _ = $0.waiting.removeValue(forKey: id) }
-        }
-        let attached = attachedRuntime.withLock { attached -> FundingRuntime? in
-            if attached.runtime == nil { attached.waiting[id] = continuation }
-            return attached.runtime
-        }
-        if let attached {
-            continuation.finish()
-            return attached
-        }
-        for await runtime in stream {
-            return runtime
-        }
-        throw CancellationError()
+        runtimeSlot.runtime
     }
 
     /// The core dropped the screen session `entryId`'s provider asked for, as
     /// its payment moved or it ended: the notice about it goes.
     func withdrawFrameRequest(_ entryId: String) {
         let requested = state.withLock { $0.requestedFrames.contains(entryId) }
-        guard requested, let runtime = self.runtime, !runtime.fundingFrameWaiting(intent: entryId) else { return }
+        guard requested, let runtime, !runtime.fundingFrameWaiting(intent: entryId) else { return }
 
         state.withLock { _ = $0.requestedFrames.remove(entryId) }
         eventSink.yield(.frameClosed(entryId: entryId))
@@ -398,7 +336,7 @@ private extension FundingService {
     /// replaced it, and shows the list that came before the id.
     func take(_ requestId: UInt64?, of ask: (number: Int, shownId: UInt64?), for entryId: String) {
         let startsNow = state.withLock { state -> Bool in
-            var quotes = state.quotes[entryId, default: QuoteAsk()]
+            var quotes = state.quotes[entryId, default: FundingSessionQuotes()]
             defer { state.quotes[entryId] = quotes }
             guard quotes.request.isLatest(ask.number) else { return false }
             guard let requestId else {
@@ -464,7 +402,7 @@ private extension FundingService {
     }
 
     func entry(_ entryId: String) -> FundingEntry {
-        let runtime = self.runtime
+        let runtime = runtime
         let session = runtime?.fundingSession(intent: entryId)
         let (presentation, quotes) = state.withLock { ($0.presentations[entryId], $0.quotes[entryId]) }
         return FundingEntry(
@@ -483,7 +421,7 @@ private extension FundingService {
     /// Every session the core holds, newest first: those it handed over this
     /// run, then the ended ones from its history.
     func entries() -> [FundingEntry] {
-        guard let runtime = self.runtime else { return [] }
+        guard let runtime else { return [] }
 
         let book = runtime.fundingEntries()
         let held = Set(book.map(\.session.intent))
