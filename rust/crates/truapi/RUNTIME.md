@@ -224,8 +224,10 @@ instead of every hour, since the operator publishes the new genesis hashes with
 the restart. Once the core holds a descriptor that changes a chain, it sets
 `restart_required` and fetches hourly again.
 
-A host learns of a mismatch through its stack callbacks, and any host can read
-it from `stack_status`. A browser host that passes `stackChanged` without
+A host learns of a mismatch through its stack callbacks, and can read it from
+`stack_status`. The `/web` worker runtime and a `WasmProductRuntime` built on
+its own have no `stackStatus()`, so a host on them sees a refused chain only as
+failing calls. A browser host that passes `stackChanged` without
 `fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
 Without the callbacks the chain is still refused, and nothing is fetched. A host
 shows a listed chain as out of service and keeps its own features off it.
