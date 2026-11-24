@@ -127,7 +127,12 @@ struct FileStore {
 
 #[async_trait::async_trait]
 impl StorageClient for FileStore {
-	async fn load(&self, genesis_hash: [u8; 32]) -> Result<Option<String>, StorageClientError> {
+	// The example builds its provider without a stack, so `stack` is always `None`.
+	async fn load(
+		&self,
+		genesis_hash: [u8; 32],
+		_stack: Option<String>,
+	) -> Result<Option<String>, StorageClientError> {
 		match std::fs::read_to_string(self.directory.join(hex::encode(genesis_hash))) {
 			Ok(blob) => Ok(Some(blob)),
 			Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -135,7 +140,12 @@ impl StorageClient for FileStore {
 		}
 	}
 
-	async fn save(&self, genesis_hash: [u8; 32], blob: String) -> Result<(), StorageClientError> {
+	async fn save(
+		&self,
+		genesis_hash: [u8; 32],
+		blob: String,
+		_stack: Option<String>,
+	) -> Result<(), StorageClientError> {
 		let failed =
 			|error: std::io::Error| StorageClientError::Failed { reason: error.to_string() };
 		std::fs::create_dir_all(&self.directory).map_err(failed)?;

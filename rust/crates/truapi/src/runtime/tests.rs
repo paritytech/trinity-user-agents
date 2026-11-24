@@ -10,7 +10,7 @@ use crate::{
 	platform::{
 		AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey,
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
-		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
+		PermissionAuthorizationRequest, ProductSubtreeReview, SignPayloadReview, SignRawReview,
 	},
 };
 use parity_scale_codec::{Decode, Encode};
@@ -36,6 +36,9 @@ use truapi::{
 			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
 			RemoteChainTransactionBroadcastResponse,
 		},
+		contacts::{
+			HostContactsUsernamesError, HostContactsUsernamesRequest, HostContactsUsernamesResponse,
+		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::{
 			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
@@ -57,8 +60,8 @@ use truapi::{
 		},
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
-			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+			PreimageSubmitError, RemotePreimageLookupSubscribeItem,
+			RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
 			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
@@ -66,14 +69,14 @@ use truapi::{
 		},
 		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
 		signing::{
-			HostCreateTransactionError, HostCreateTransactionRequest,
-			HostCreateTransactionResponse, HostCreateTransactionWithLegacyAccountError,
-			HostCreateTransactionWithLegacyAccountRequest,
+			HostCreateTransactionError, HostCreateTransactionResponse,
+			HostCreateTransactionWithLegacyAccountError,
 			HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
 			HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
 			HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
 			HostSignRawResponse, HostSignRawWithLegacyAccountError,
 			HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
+			LegacyAccountTxPayload, ProductAccountTxPayload,
 		},
 		statement_store::{
 			RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
@@ -103,6 +106,7 @@ use crate::{
 	},
 	host_logic::{
 		product_account::{derive_product_public_key, index_bytes},
+		root_entropy::RootEntropy,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	test_support::*,
@@ -110,15 +114,11 @@ use crate::{
 };
 
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
-	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
-		.expect("test entropy derives a root");
-	crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test(product_id),
-	)
-	.expect("test product id derives a subtree")
-	.public
-	.to_bytes()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test(product_id))
+		.expect("test product id derives a subtree")
+		.public
+		.to_bytes()
 }
 
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
@@ -134,7 +134,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 pub fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
 	asset_hub_chain_genesis_hash: [u8; 32],
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	let config = crate::platform::SigningHostConfig::new(
 		crate::platform::HostInfo {
 			name: "Polkadot Mobile".to_string(),
@@ -152,21 +152,22 @@ pub fn signing_runtime_on_asset_hub(
 		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone());
+	let signing_host = SigningHost::new(services.clone());
 	(services, signing_host)
 }
 
 /// A signing host whose wallet is active under [`ENTROPY`].
-pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	signing_host
 }
 
 pub fn product_runtime_for(
 	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
+	authority: Arc<SigningHost>,
 	product_id: &str,
 ) -> ProductRuntimeHost<signing_host::WalletAccountHolder> {
 	ProductRuntimeHost::from_services(
@@ -783,16 +784,33 @@ struct StubContactsPlatform {
 	failure: Option<&'static str>,
 	/// Products the picker was opened on behalf of, in order.
 	asked_for: Mutex<Vec<String>>,
+	/// The usernames the host lists, in host order.
+	usernames: Vec<String>,
+	/// How many times the core read the usernames.
+	username_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl StubContactsPlatform {
 	fn new(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Arc<Self> {
-		Arc::new(Self {
+		Arc::new(Self::answering(listed, pick))
+	}
+
+	fn answering(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Self {
+		Self {
 			listed: Mutex::new(listed),
 			lookups: Default::default(),
 			pick,
 			failure: None,
 			asked_for: Mutex::new(Vec::new()),
+			usernames: Vec::new(),
+			username_reads: Default::default(),
+		}
+	}
+
+	fn listing(usernames: &[&str]) -> Arc<Self> {
+		Arc::new(Self {
+			usernames: usernames.iter().map(|username| username.to_string()).collect(),
+			..Self::answering(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
 		})
 	}
 
@@ -814,11 +832,8 @@ impl StubContactsPlatform {
 
 	fn failing(reason: &'static str) -> Arc<Self> {
 		Arc::new(Self {
-			listed: Mutex::new(vec![[10u8; 32]]),
-			lookups: Default::default(),
-			pick: crate::platform::HostContactPick::Dismissed,
 			failure: Some(reason),
-			asked_for: Mutex::new(Vec::new()),
+			..Self::answering(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
 		})
 	}
 }
@@ -861,6 +876,19 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
 			None => Ok(self.pick),
 		}
 	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, truapi::latest::GenericError> {
+		self.username_reads.fetch_add(1, Ordering::SeqCst);
+		match self.failure {
+			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
+			None => Ok(crate::platform::HostContactUsernames::Listed {
+				usernames: self.usernames.clone(),
+			}),
+		}
+	}
 }
 
 /// A picker-capable runtime for `product_id`, with a session unless
@@ -872,12 +900,11 @@ fn contacts_host(
 	connected: bool,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		platform as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(contacts) = contacts {
 		services.install_contacts_platform(contacts);
@@ -904,6 +931,16 @@ fn pick(
 		host,
 		&CallContext::default(),
 		HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
+	))
+}
+
+fn usernames(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) -> Result<HostContactsUsernamesResponse, CallError<HostContactsUsernamesError>> {
+	futures::executor::block_on(Contacts::usernames(
+		host,
+		&CallContext::default(),
+		HostContactsUsernamesRequest::V1(v01::HostContactsUsernamesRequest {}),
 	))
 }
 
@@ -941,25 +978,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	// `pick_contact` is defaulted so a host needs to write one method. The
 	// default is truthful: a product learns the picker will never work here,
 	// rather than a dismissal it would keep retrying.
-	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
-		stub_platform() as Arc<dyn Platform>,
-		host_config.host.host_info.clone(),
-		host_config.stack.clone(),
-		Spawner::for_test(),
-		None,
-	);
-	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-	let host = ProductRuntimeHost::from_services(
-		services,
-		adapters,
-		pairing_host.accounts().clone(),
-		pairing_host.session().clone(),
-		product,
-	);
-	install_pairing_session(&host, session_info());
+	let host = host_with_contacts("voting.dot", Arc::new(LookupOnlyContactsPlatform));
 
 	assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
 }
@@ -1049,19 +1068,20 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
 	let source = session_info()
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
-	let expected = crate::runtime::contacts::contact_handle(
-		&crate::runtime::contacts::handle_key_from_root_source(&source),
-		&account,
-	);
+	let voting = ProductId::for_test("voting.dot");
+	let key_from = |source: &[u8; 32]| {
+		crate::runtime::contacts::product_handle_key(
+			&crate::runtime::contacts::user_handle_key(source),
+			&voting,
+		)
+	};
+	let expected = crate::runtime::contacts::contact_handle(&key_from(&source), &account);
 	assert_eq!(handle, expected, "the handle must key on the session's root entropy source");
 	// And is not what the public alternatives would have produced.
 	for public in [session_info().public_key, [0u8; 32]] {
 		assert_ne!(
 			handle,
-			crate::runtime::contacts::contact_handle(
-				&crate::runtime::contacts::handle_key_from_root_source(&public),
-				&account,
-			),
+			crate::runtime::contacts::contact_handle(&key_from(&public), &account),
 			"the handle must not be derivable from public material"
 		);
 	}
@@ -1142,6 +1162,218 @@ fn contacts_pick_maps_a_platform_failure_to_unknown() {
 		CallError::Domain(HostContactsPickError::V1(v01::HostContactsPickError::Unknown {
 			reason: "overlay unavailable".to_string(),
 		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_returns_the_hosts_list_to_the_game_product() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "bob"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "bob".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_a_product_that_is_not_the_game() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(Err(CallError::Unsupported), 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_a_signed_out_product_that_is_not_the_game() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(Err(CallError::Unsupported), 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_the_other_trusted_products() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let hosts = ["peopl.dot", "stash.dot"]
+		.map(|product_id| contacts_host(product_id, stub_platform(), Some(contacts.clone()), true));
+
+	// When
+	let responses = hosts.each_ref().map(usernames);
+
+	// Then
+	assert_eq!(
+		(responses, contacts.username_reads.load(Ordering::SeqCst)),
+		([Err(CallError::Unsupported), Err(CallError::Unsupported)], 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_without_a_platform_is_unsupported() {
+	// Given
+	let host = contacts_host("dim2.dot", stub_platform(), None, true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn contacts_usernames_signed_out_without_a_platform_is_unsupported() {
+	// Given
+	let host = contacts_host("dim2.dot", stub_platform(), None, false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn a_host_that_does_not_list_usernames_reports_unsupported() {
+	// Given
+	let host = host_with_contacts("dim2.dot", Arc::new(LookupOnlyContactsPlatform));
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn contacts_usernames_with_no_contacts_is_an_empty_list() {
+	// Given
+	let host =
+		contacts_host("dim2.dot", stub_platform(), Some(StubContactsPlatform::listing(&[])), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: Vec::new(),
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_leaves_out_a_contact_without_a_username() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "", "bob.07"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "bob.07".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_leaves_out_a_name_that_is_not_a_bare_dotns_label() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "alice.07", "bob.dot", "Alice Smith"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "alice.07".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_passes_a_platform_failure_through() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::failing("contacts store unavailable")),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+			reason: "contacts store unavailable".to_string(),
+		})))
+	);
+}
+
+#[test]
+fn contacts_usernames_without_a_session_reports_no_active_session() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice"]);
+	let host = contacts_host("dim2.dot", stub_platform(), Some(contacts.clone()), false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(
+			Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+				reason: "No active session".to_string(),
+			}))),
+			0
+		)
 	);
 }
 
@@ -1228,7 +1460,7 @@ fn a_removed_contact_stops_resolving_once_the_host_signals() {
 	};
 
 	contacts.listed.lock().expect("listed mutex poisoned").clear();
-	host.connection.services.contact_handles.clear();
+	host.connection.services.contact_handle_cache.clear();
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1259,19 +1491,20 @@ fn a_handle_no_contact_matches_refuses_the_call() {
 	);
 }
 
-/// A connected runtime whose contacts adapter is `contacts`.
+/// A connected runtime for `product_id` whose contacts adapter is `contacts`.
 fn host_with_contacts(
+	product_id: &str,
 	contacts: Arc<dyn crate::platform::ContactsPlatform>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
-	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let (host_config, product) = runtime_config(product_id);
+	let services = RuntimeServices::with_platforms(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
 		None,
+		Some(contacts),
 	);
-	services.install_contacts_platform(contacts);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
 	let host = ProductRuntimeHost::from_services(
@@ -1290,7 +1523,7 @@ fn host_with_contacts(
 /// made-up handle pay somebody.
 #[test]
 fn an_account_the_host_returns_for_the_wrong_handle_refuses_the_call() {
-	let host = host_with_contacts(Arc::new(MisanswerContactsPlatform));
+	let host = host_with_contacts("voting.dot", Arc::new(MisanswerContactsPlatform));
 	let forged = v01::ContactHandle { bytes: [0x42; 32] };
 
 	assert_eq!(
@@ -1354,7 +1587,10 @@ fn uncached_handles_are_resolved_in_one_lookup() {
 	let source = session_info()
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
-	let key = crate::runtime::contacts::handle_key_from_root_source(&source);
+	let key = crate::runtime::contacts::product_handle_key(
+		&crate::runtime::contacts::user_handle_key(&source),
+		&ProductId::for_test("voting.dot"),
+	);
 	let handles = [alice, bob].map(|account| v01::ContactHandle {
 		bytes: crate::runtime::contacts::contact_handle(&key, &account),
 	});
@@ -1387,9 +1623,8 @@ fn a_call_declaring_no_contacts_needs_no_picker() {
 }
 
 #[test]
-fn two_products_receive_the_same_handle_for_one_contact() {
-	// The deliberate property: the handle is a durable shared id, so a
-	// product can be handed a recipient another product already knows.
+fn two_products_receive_different_handles_for_one_contact() {
+	// Products cannot join their users' contacts on the handle.
 	let platform = stub_platform();
 	let account = [10u8; 32];
 
@@ -1407,7 +1642,81 @@ fn two_products_receive_the_same_handle_for_one_contact() {
 		handle
 	};
 
-	assert_eq!(handle_for("voting.dot"), handle_for("games.dot"));
+	assert_ne!(handle_for("voting.dot"), handle_for("games.dot"));
+}
+
+/// Runtimes for `products` on one host: one set of services, so one contact
+/// handle cache, and one signed-in session.
+fn contacts_hosts_sharing_services(
+	products: [&str; 2],
+	contacts: Arc<StubContactsPlatform>,
+) -> [ProductRuntimeHost<RemoteAccountHolder>; 2] {
+	let (host_config, _) = runtime_config(products[0]);
+	let services = RuntimeServices::new(
+		stub_platform() as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	services.install_contacts_platform(contacts);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	products.map(|product_id| {
+		let (_, product) = runtime_config(product_id);
+		let host = ProductRuntimeHost::from_services(
+			services.clone(),
+			crate::host_core::ConnectionAdapters::from_services(&services),
+			pairing_host.accounts().clone(),
+			pairing_host.session().clone(),
+			product,
+		);
+		install_pairing_session(&host, session_info());
+		host
+	})
+}
+
+#[test]
+fn a_handle_from_another_product_does_not_resolve() {
+	// Even with the contact cached from the other product's pick and held by
+	// the host: the cache answers only the product it minted for, and the
+	// lookup is keyed for the calling product, so the handle names nobody.
+	let [games, voting] = contacts_hosts_sharing_services(
+		["games.dot", "voting.dot"],
+		StubContactsPlatform::picking([10u8; 32]),
+	);
+	let HostContactsPickResponse::V1(response) = pick(&games).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle: foreign } = response.outcome else {
+		panic!("the user picked someone");
+	};
+
+	assert_eq!(
+		futures::executor::block_on(
+			voting.substitute_declared_contacts(foreign.bytes.to_vec(), &[foreign])
+		),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
+}
+
+#[test]
+fn another_products_cached_handle_left_undeclared_does_not_refuse_a_call() {
+	// One product's picks must not decide whether another's call goes through.
+	let [games, voting] = contacts_hosts_sharing_services(
+		["games.dot", "voting.dot"],
+		StubContactsPlatform::picking([10u8; 32]),
+	);
+	let HostContactsPickResponse::V1(response) = pick(&games).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	let call = handle.bytes.to_vec();
+
+	assert_eq!(
+		futures::executor::block_on(voting.substitute_declared_contacts(call.clone(), &[])),
+		Ok(call.clone())
+	);
+	assert_eq!(
+		futures::executor::block_on(games.substitute_declared_contacts(call, &[])),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
 }
 
 /// Records which `ChatPlatform` methods the runtime actually reached.
@@ -1427,16 +1736,12 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: truapi::latest::HostChatCreateRoomRequest,
-	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
+		room_id: String,
+		_request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
 	{
-		self.created_rooms
-			.lock()
-			.expect("created rooms mutex poisoned")
-			.push(request.room_id);
-		Ok(truapi::latest::HostChatCreateRoomResponse {
-			status: v01::ChatRoomRegistrationStatus::New,
-		})
+		self.created_rooms.lock().expect("created rooms mutex poisoned").push(room_id);
+		Ok(truapi::latest::ChatRoomRegistrationStatus::New)
 	}
 
 	async fn register_chat_bot(
@@ -1730,28 +2035,48 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	install_pairing_session(&host, session_info());
 
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "caf\u{e9}".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "cafe".to_string(),
 			name: "Cafe".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 
-	// Decomposed here, precomposed when the room was created: the host must
-	// see the id it stored, or the footer lands on a room that does not exist.
+	// The host stored the room under the id of the answer, so the footer must
+	// reach the host under that id.
 	futures::executor::block_on(Chat::set_room_footer(
 		&host,
 		&CallContext::default(),
 		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
-			room_id: "cafe\u{301}".to_string(),
+			room_id: created.room_id.clone(),
 			footer: v01::ChatRoomFooter::Empty,
 		}),
 	))
-	.expect("set_room_footer accepts a normalizable id");
+	.expect("set_room_footer accepts the id that create_room returned");
+
+	// The source is the product's own name for the room, not its id.
+	let by_source = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "cafe".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	));
+	assert_eq!(
+		by_source,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
 
 	let rejected = futures::executor::block_on(Chat::set_room_footer(
 		&host,
@@ -1802,7 +2127,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("caf\u{e9}".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+		[(created.room_id, truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -1838,22 +2163,26 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 		payload: vec![1],
 	});
 
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "room".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "room".to_string(),
 			name: "Room".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 
 	futures::executor::block_on(Chat::set_room_footer(
 		&host,
 		&CallContext::default(),
 		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
-			room_id: "room".to_string(),
+			room_id: created.room_id.clone(),
 			footer: card.clone(),
 		}),
 	))
@@ -1875,7 +2204,7 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("room".to_string(), card)]
+		[(created.room_id, card)]
 	);
 }
 
@@ -1960,7 +2289,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 }
 
 #[test]
-fn chat_room_ids_agree_across_create_and_post() {
+fn each_spelling_of_a_room_source_names_one_room() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
@@ -1987,28 +2316,38 @@ fn chat_room_ids_agree_across_create_and_post() {
 	);
 	install_pairing_session(&host, session_info());
 
-	// Precomposed on create, decomposed on post: the host must see one id,
-	// or the message lands in a room that does not exist.
-	futures::executor::block_on(Chat::create_room(
-		&host,
-		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "caf\u{e9}".to_string(),
-			name: "Cafe".to_string(),
-			icon: String::new(),
-		}),
-	))
-	.expect("create_room accepts a normalizable id");
+	// Precomposed, then decomposed: both spellings must resolve one room, or
+	// a product that sends the other spelling gets a second room.
+	let room_ids = ["caf\u{e9}", "cafe\u{301}"].map(|room_id_source| {
+		let created = futures::executor::block_on(Chat::create_room(
+			&host,
+			&CallContext::default(),
+			HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+				room_id_source: room_id_source.to_string(),
+				name: "Cafe".to_string(),
+				icon: String::new(),
+				config: Default::default(),
+			}),
+		))
+		.expect("create_room accepts a normalizable source");
+		let HostChatCreateRoomResponse::V2(created) = created else {
+			panic!("a V2 request gets a V2 answer, got {created:?}");
+		};
+		created.room_id
+	});
+	let room_id = ProductId::for_test("chat.dot").chat_room_id("caf\u{e9}");
+	assert_eq!(room_ids, [room_id.clone(), room_id.clone()]);
 
 	futures::executor::block_on(Chat::post_message(
 		&host,
 		&CallContext::default(),
-		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
-			room_id: "cafe\u{301}".to_string(),
+		HostChatPostMessageRequest::V2(v02::HostChatPostMessageRequest {
+			room_id: room_id.clone(),
 			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+			alt: None,
 		}),
 	))
-	.expect("post_message accepts the other spelling of the same id");
+	.expect("post_message accepts the id that create_room returned");
 
 	let created = chat_platform
 		.created_rooms
@@ -2016,7 +2355,8 @@ fn chat_room_ids_agree_across_create_and_post() {
 		.expect("created rooms mutex poisoned")
 		.clone();
 	let posted = chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned").clone();
-	assert_eq!(created, posted);
+	assert_eq!(created, [room_id.clone(), room_id.clone()]);
+	assert_eq!(posted, [room_id]);
 
 	// create_room screens the same fields register_bot does.
 	for (room_id, icon) in [("", ""), ("room\u{202e}", ""), ("room", "javascript:x")] {
@@ -2039,6 +2379,107 @@ fn chat_room_ids_agree_across_create_and_post() {
 			"{room_id:?}/{icon:?} must be a domain error, got {rejected:?}"
 		);
 	}
+}
+
+#[test]
+fn a_room_of_the_earlier_client_keeps_the_id_the_product_gives() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.accounts().clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	// A product built against the earlier client, as Jollity is: its answer
+	// names no room, so its later calls can only name the room by its own id.
+	let created = futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "jollity".to_string(),
+			name: "Jollity".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+	assert_eq!(
+		created,
+		HostChatCreateRoomResponse::V1(v01::HostChatCreateRoomResponse {
+			status: v01::ChatRoomRegistrationStatus::New,
+		})
+	);
+
+	futures::executor::block_on(Chat::post_message(
+		&host,
+		&CallContext::default(),
+		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+			room_id: "jollity".to_string(),
+			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+		}),
+	))
+	.expect("post_message accepts the id the product gave");
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "jollity".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	))
+	.expect("set_room_footer finds the room under the id the product gave");
+
+	// The same name as a source makes another room, under the derived id.
+	let sourced = futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "jollity".to_string(),
+			name: "Jollity".to_string(),
+			icon: String::new(),
+			config: Default::default(),
+		}),
+	))
+	.expect("create_room accepts the source");
+	let derived = ProductId::for_test("chat.dot").chat_room_id("jollity");
+	assert_eq!(
+		sourced,
+		HostChatCreateRoomResponse::V2(v02::HostChatCreateRoomResponse {
+			status: v02::ChatRoomRegistrationStatus::New,
+			room_id: derived.clone(),
+		})
+	);
+
+	assert_eq!(
+		*chat_platform.created_rooms.lock().expect("created rooms mutex poisoned"),
+		["jollity".to_string(), derived]
+	);
+	assert_eq!(
+		*chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned"),
+		["jollity".to_string()]
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("jollity".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+	);
 }
 
 #[test]
@@ -4497,12 +4938,86 @@ fn push_notification_delegates_payload_and_returns_host_id() {
 			.lock()
 			.expect("notification list mutex poisoned")
 			.as_slice(),
-		&[v01::HostPushNotificationRequest {
+		&[latest::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: Some("https://example.invalid/launch".to_string()),
 			scheduled_at: Some(1_776_144_000_000),
 		}]
 	);
+}
+
+/// A title replaces the product id the person sees, so only a trusted product
+/// may set one. Any other product could otherwise pass for the Polkadot app.
+#[test]
+fn push_notification_keeps_a_title_only_from_a_trusted_product() {
+	let delivered_titles = ["dim2.dot", "other.dot"].map(|product| {
+		let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+		let platform = Arc::new(StubPlatform {
+			pushed_notifications: pushed_notifications.clone(),
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new(platform, runtime_config(product), Spawner::for_test());
+		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+			title: Some("Daily Dollar".to_string()),
+			text: "Your scratch card is ready".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		});
+		futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+			.expect("a notification the product may send is scheduled");
+		let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+		pushed.iter().map(|notification| notification.title.clone()).collect::<Vec<_>>()
+	});
+	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None]]);
+}
+
+/// Hosts show the product id only when the title is absent, so a blank title
+/// from a trusted product would otherwise leave the notification unattributed.
+#[test]
+fn push_notification_drops_a_blank_title() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
+	for title in ["", " \t\n", "\u{200B}\u{FEFF} \u{2060}"] {
+		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+			title: Some(title.to_string()),
+			text: "Your scratch card is ready".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		});
+		futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+			.expect("a blank title does not fail the notification");
+	}
+	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+	let titles: Vec<Option<String>> =
+		pushed.iter().map(|notification| notification.title.clone()).collect();
+	assert_eq!(titles, [None, None, None]);
+}
+
+#[test]
+fn push_notification_trims_the_title() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
+	let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+		title: Some("\u{200B} Daily Dollar\n".to_string()),
+		text: "Your scratch card is ready".to_string(),
+		deeplink: None,
+		scheduled_at: None,
+	});
+	futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+		.expect("a notification the product may send is scheduled");
+	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+	let titles: Vec<Option<String>> =
+		pushed.iter().map(|notification| notification.title.clone()).collect();
+	assert_eq!(titles, [Some("Daily Dollar".to_string())]);
 }
 
 /// A notification the product withdrew must not reach the person.
@@ -4552,7 +5067,8 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 		});
 		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 		let cx = CallContext::default();
-		let notification = v01::HostPushNotificationRequest {
+		let notification = latest::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: None,
 			scheduled_at: None,
@@ -4573,10 +5089,10 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 			);
 		}
 		let first = futures::executor::block_on(
-			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+			host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 		);
 		let second = futures::executor::block_on(
-			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+			host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 		);
 
 		assert_eq!(
@@ -4587,8 +5103,8 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 				platform.device_permission_requests.lock().unwrap().clone(),
 			),
 			(
-				Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
-				Err(CallError::Domain(HostPushNotificationError::V1(
+				Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
+				Err(CallError::Domain(HostPushNotificationError::V2(
 					v01::HostPushNotificationError::Unknown {
 						reason: PERMISSION_DENIED_REASON.to_string(),
 					},
@@ -4650,16 +5166,17 @@ fn push_notification_reuses_allow_always() {
 	});
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	let cx = CallContext::default();
-	let notification = v01::HostPushNotificationRequest {
+	let notification = latest::HostPushNotificationRequest {
+		title: None,
 		text: "Hello".to_string(),
 		deeplink: None,
 		scheduled_at: None,
 	};
 	let first = futures::executor::block_on(
-		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 	);
 	let second = futures::executor::block_on(
-		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 	);
 
 	assert_eq!(
@@ -4670,8 +5187,8 @@ fn push_notification_reuses_allow_always() {
 			platform.device_permission_requests.lock().unwrap().clone(),
 		),
 		(
-			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
-			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
 			vec![notification; 2],
 			vec![v01::HostDevicePermissionRequest::Notifications],
 		)
@@ -4987,6 +5504,121 @@ fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
 		.expect("a cached subtree resolves without prompting");
 	let HostAccountGetResponse::V1(inner) = response;
 	assert_eq!(inner.account.public_key, test_product_account_public("myapp.dot", 0).to_vec());
+}
+
+#[test]
+fn concurrent_get_account_calls_share_one_subtree_request() {
+	// A product asking on every keystroke must not stack requests on the phone.
+	// The confirmation is not shared, so each call still raises its own.
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-subtree-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: String::new(),
+					payload: Ok(test_product_subtree("myapp.dot")),
+				})),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session.clone());
+	let contexts: Vec<_> = (0..3).map(|_| CallContext::default()).collect();
+	let calls = contexts.iter().zip(0..).map(|(cx, index)| {
+		host.get_account(
+			cx,
+			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+				product_account_id: account_id("myapp.dot", index),
+			}),
+		)
+	});
+
+	let public_keys: Vec<_> = futures::executor::block_on(futures::future::join_all(calls))
+		.into_iter()
+		.map(|response| {
+			let HostAccountGetResponse::V1(inner) = response.expect("the shared request serves");
+			inner.account.public_key
+		})
+		.collect();
+	let subtree_requests = submitted_remote_messages(&platform, &session)
+		.into_iter()
+		.filter(|message| {
+			matches!(
+				message.data,
+				RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(_))
+			)
+		})
+		.count();
+
+	assert_eq!(
+		(public_keys, platform.product_subtree_reviews.lock().unwrap().clone(), subtree_requests),
+		(
+			(0..3)
+				.map(|index| test_product_account_public("myapp.dot", index).to_vec())
+				.collect(),
+			vec![ProductSubtreeReview { product_id: ProductId::for_test("myapp.dot") }; 3],
+			1,
+		)
+	);
+}
+
+/// A subtree request callers share stays on the phone while any of them still
+/// waits for it, and is withdrawn there once the last of them is withdrawn.
+#[test]
+fn a_shared_subtree_request_is_cancelled_on_the_phone_with_its_last_caller() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		rpc_responses: vec![
+			subscribe_ack_frame("truapi:1", "own-sub-shared-subtree"),
+			subscribe_ack_frame("truapi:2", "peer-sub-shared-subtree"),
+			r#"{"jsonrpc":"2.0","id":"truapi:3","result":{"status":"new"}}"#.to_string(),
+		],
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session.clone());
+	let first_cancel = truapi::CancellationToken::default();
+	let second_cancel = truapi::CancellationToken::default();
+	let calls = std::thread::spawn({
+		let first = CallContext::with_parts("account-first".to_string(), first_cancel.clone());
+		let second = CallContext::with_parts("account-second".to_string(), second_cancel.clone());
+		move || {
+			let request = |index| {
+				HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+					product_account_id: account_id("myapp.dot", index),
+				})
+			};
+			let (first, second) = futures::executor::block_on(futures::future::join(
+				host.get_account(&first, request(0)),
+				host.get_account(&second, request(1)),
+			));
+			(first.is_err(), second.is_err())
+		}
+	});
+	let published = submitted_remote_message(&platform, &session).message_id;
+	wait_until(
+		|| platform.product_subtree_reviews.lock().unwrap().len() == 2,
+		"both calls did not reach the subtree request",
+	);
+
+	first_cancel.cancel();
+	// Long enough for a wrongly spawned `Cancel` to have been submitted.
+	std::thread::sleep(std::time::Duration::from_millis(200));
+	let withdrawn_while_one_waits = withdrawn_requests(&platform, &session);
+	second_cancel.cancel();
+	let both_failed = calls.join().expect("get_account thread panicked");
+
+	let withdrawn = || withdrawn_requests(&platform, &session);
+	wait_until(|| !withdrawn().is_empty(), "no request was withdrawn");
+	assert_eq!(
+		(withdrawn_while_one_waits, both_failed, withdrawn()),
+		(vec![], (true, true), vec![published])
+	);
 }
 
 #[test]
@@ -5518,7 +6150,7 @@ fn preimage_submit_requires_session_first() {
 	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
 
 	match err {
-		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+		CallError::Domain(PreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
 			reason,
 		})) => assert_eq!(reason, "No active session"),
 		other => panic!("expected preimage session error, got {other:?}"),
@@ -5534,7 +6166,7 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 	let request = RemotePreimageSubmitRequest::V1(vec![1, 2, 3]);
 	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
 	match err {
-		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+		CallError::Domain(PreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
 			reason,
 		})) => assert_eq!(reason, PERMISSION_DENIED_REASON),
 		other => panic!("expected preimage permission denial, got {other:?}"),
@@ -5582,7 +6214,7 @@ fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
 				));
 				if matches!(
 					result,
-					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+					Err(CallError::Domain(PreimageSubmitError::V1(
 						v01::PreimageSubmitError::Unknown { reason },
 					))) if reason == allowance_error
 				) {
@@ -6255,7 +6887,7 @@ fn legacy_create_transaction_rejects_raw_key_mismatch() {
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, sso_session_info());
 	let cx = CallContext::default();
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(v01::LegacyAccountTxPayload {
+	let request = LegacyAccountTxPayload::V1(v01::LegacyAccountTxPayload {
 		signer: [0; 32],
 		genesis_hash: [1; 32],
 		call_data: vec![0],
@@ -6306,7 +6938,7 @@ fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request
 		extensions: vec![],
 		tx_ext_version: 0,
 	};
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+	let request = LegacyAccountTxPayload::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -6368,7 +7000,7 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 		extensions: vec![],
 		tx_ext_version: 0,
 	};
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+	let request = LegacyAccountTxPayload::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -6663,13 +7295,10 @@ fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
 }
 
 pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
         // A grant skips confirmation, except for a call naming contacts.
@@ -6686,11 +7315,9 @@ pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Ar
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key: subtree.secret.to_bytes(),
                                     ring_vrf_domain_entropy:
-                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
-                                            &[0xAB; 16],
-                                            &ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -6738,14 +7365,9 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccoun
 
 /// The product account the capability in [`granted_pairing_host`] derives.
 fn granted_keypair() -> schnorrkel::Keypair {
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap()
 }
 
 #[test]
@@ -6803,8 +7425,8 @@ fn transfer_naming(recipient: &[u8; 32]) -> Vec<u8> {
 fn transaction_naming(
 	handle: v01::ContactHandle,
 	declared: Vec<v01::ContactHandle>,
-) -> HostCreateTransactionRequest {
-	HostCreateTransactionRequest::V1(v01::ProductAccountTxPayload {
+) -> ProductAccountTxPayload {
+	ProductAccountTxPayload::V1(v01::ProductAccountTxPayload {
 		signer: account_id("myapp.dot", 0),
 		genesis_hash: [1; 32],
 		call_data: transfer_naming(&handle.bytes),
@@ -6966,8 +7588,8 @@ fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
 			.expect_err("the chain cannot be connected")
 	};
 
-	let v2 = create(HostCreateTransactionRequest::V2(payload.clone()));
-	let v1 = create(HostCreateTransactionRequest::V1(payload));
+	let v2 = create(ProductAccountTxPayload::V2(payload.clone()));
+	let v1 = create(ProductAccountTxPayload::V1(payload));
 
 	let CallError::Domain(HostCreateTransactionError::V2(
 		v02::HostCreateTransactionError::Unknown { reason },
@@ -7171,13 +7793,10 @@ fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
 #[test]
 fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
 	let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -7193,11 +7812,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key,
                                     ring_vrf_domain_entropy:
-                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
-                                            &[0xAB; 16],
-                                            &ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -7242,12 +7859,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 			.is_empty()
 	);
 
-	let keypair = crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap();
+	let keypair = entropy
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let mut transcript = merlin::Transcript::new(b"ctx");
 	transcript.append_message(b"round", &[7]);
 	let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
@@ -7328,13 +7942,9 @@ fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
 #[test]
 fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let platform = Arc::new(StubPlatform::default());
 	let legacy_key =
 		CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("myapp.dot") };
@@ -8136,12 +8746,11 @@ fn scanner_host_for(
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
 	product.execution_kind = kind;
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(scanner) = scanner {
 		services.install_scanner_platform(scanner);
@@ -8324,8 +8933,8 @@ fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
 	assert_eq!(scanner.asked().len(), 2);
 }
 
-/// A contact picker the user never answers, which records when the core stops
-/// waiting on it.
+/// A contacts host that never answers a pick or a usernames read, and records
+/// when the core stops waiting on it.
 struct ParkedContactsPlatform {
 	abandoned: Arc<AtomicBool>,
 }
@@ -8346,6 +8955,14 @@ impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
 		let _abandoned = SetOnDrop(self.abandoned.clone());
 		futures::future::pending().await
 	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, truapi::latest::GenericError> {
+		let _abandoned = SetOnDrop(self.abandoned.clone());
+		futures::future::pending().await
+	}
 }
 
 #[test]
@@ -8353,8 +8970,10 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 	// The host closes its picker when the core drops the wait. Without that, a
 	// withdrawn pick leaves the picker on screen until the user acts.
 	let abandoned = Arc::new(AtomicBool::new(false));
-	let host =
-		host_with_contacts(Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }));
+	let host = host_with_contacts(
+		"voting.dot",
+		Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }),
+	);
 	let cancel = truapi::CancellationToken::default();
 	let cx = CallContext::with_parts("pick-withdrawn".into(), cancel.clone());
 	let mut pick = Box::pin(Contacts::pick(
@@ -8375,6 +8994,38 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 		)))
 	));
 	assert!(abandoned.load(Ordering::SeqCst));
+}
+
+#[test]
+fn cancelling_contacts_usernames_stops_waiting_on_the_host() {
+	// Given
+	let abandoned = Arc::new(AtomicBool::new(false));
+	let host = host_with_contacts(
+		"dim2.dot",
+		Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }),
+	);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("usernames-withdrawn".into(), cancel.clone());
+	let mut read = Box::pin(Contacts::usernames(
+		&host,
+		&cx,
+		HostContactsUsernamesRequest::V1(v01::HostContactsUsernamesRequest {}),
+	));
+	assert!(futures::FutureExt::now_or_never(&mut read).is_none());
+
+	// When
+	cancel.cancel();
+
+	// Then
+	assert_eq!(
+		(futures::FutureExt::now_or_never(&mut read), abandoned.load(Ordering::SeqCst)),
+		(
+			Some(Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+				reason: "Account authority request cancelled for usernames-withdrawn".to_string(),
+			})))),
+			true
+		)
+	);
 }
 
 fn payment_services() -> Arc<RuntimeServices> {
@@ -8420,9 +9071,6 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 }
 
@@ -8987,8 +9635,16 @@ fn a_provider_frame_closes_once_the_payment_moved() {
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	let provider = ProductContext::new(ProductId::for_test("ramp.dot"));
-	let mut frame = services.funding().request_frame(&intent, provider.clone());
-	let mut unknown = services.funding().request_frame("fs_unknown", provider);
+	let mut frame = services.funding().request_frame(
+		&intent,
+		provider.clone(),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
+	let mut unknown = services.funding().request_frame(
+		"fs_unknown",
+		provider,
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 	for (frame, intent) in [(&mut frame, intent.as_str()), (&mut unknown, "fs_unknown")] {
 		assert!(services.funding().open_frame(intent));
 		assert_eq!(futures::executor::block_on(frame.opened()), None);
@@ -9522,9 +10178,6 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -9599,9 +10252,6 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -9651,9 +10301,6 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -9772,9 +10419,6 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 
 	let rows = shown_when(&services, &intent, |rows| {
@@ -9845,9 +10489,6 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -10216,9 +10857,6 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		root_manifest: None,
-		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 	services
 		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
@@ -10282,16 +10920,10 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("ramp.dot"),
 					worker_manifest: Some(germany_only),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("chain.dot"),
 					worker_manifest: Some(crypto_only),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
 			]);
 		let intent = futures::executor::block_on(services.open_funding(
@@ -11633,22 +12265,26 @@ fn a_docked_card_is_screened_like_a_posted_custom_message() {
 		product,
 	);
 	install_pairing_session(&host, session_info());
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "room".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "room".to_string(),
 			name: "Room".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 	let dock = |message_type: &str, payload: Vec<u8>| {
 		futures::executor::block_on(Chat::set_room_footer(
 			&host,
 			&CallContext::default(),
 			HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
-				room_id: "room".to_string(),
+				room_id: created.room_id.clone(),
 				footer: v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
 					message_type: message_type.to_string(),
 					payload,
@@ -11671,7 +12307,7 @@ fn a_docked_card_is_screened_like_a_posted_custom_message() {
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
 		[(
-			"room".to_string(),
+			created.room_id.clone(),
 			v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
 				message_type: "register".to_string(),
 				payload: vec![1],
@@ -12332,9 +12968,6 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(provider),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -12752,9 +13385,6 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
 		);
@@ -12816,4 +13446,297 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 		}],
 	);
 	"q-test".to_string()
+}
+
+/// The facts emitted under `marker`.
+fn events_named<'a>(
+	events: &'a [crate::logging::CoreEvent],
+	marker: &str,
+) -> Vec<&'a crate::logging::CoreEvent> {
+	events.iter().filter(|event| event.marker().target == marker).collect()
+}
+
+/// Assert no emitted fact carries `secrets`.
+fn assert_events_carry_none_of(events: &[crate::logging::CoreEvent], secrets: &[&str]) {
+	for event in events {
+		let line = crate::runtime::funding_telemetry::read::line(event);
+		for secret in secrets {
+			assert!(!line.contains(secret), "a fact carries {secret}: {line}");
+		}
+	}
+}
+
+// A top-up the user starts, hands to a provider, cancels once paid and that
+// ends delivered reports each fact once, when it happens, under one random
+// reference, with its amount bucketed and nothing that names the session.
+#[test]
+fn a_funding_session_reports_each_fact_once_when_it_happens() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(75_000_000),
+	))
+	.expect("opened")
+	.intent;
+	use crate::runtime::funding_telemetry::read::{count, flag, text, value};
+	let opened = services.funding().emitted_facts();
+	assert_eq!(
+		opened.iter().map(|event| event.marker().target).collect::<Vec<_>>(),
+		["truapi.funding.overlay_opened", "truapi.funding.overlay_closed"]
+	);
+	assert_eq!(
+		(
+			value(&opened[0], "amount_preset"),
+			value(&opened[0], "amount_bucket"),
+			value(&opened[0], "opener"),
+			value(&opened[1], "outcome"),
+			value(&opened[1], "furthest"),
+		),
+		(flag(true), text("50-100"), text("host"), text("started"), text("amount"))
+	);
+
+	let quote_id = offer_test_quote(&services, &intent, "ramp.dot");
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&quote_id,
+		))
+		.expect("selected")
+	);
+	let provider =
+		ProductContext::new_with_execution(ProductId::for_test("ramp.dot"), ExecutableKind::Worker);
+	let paid = v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+		finalized: true,
+		mismatch: None,
+	});
+	let report = |update: v01::FundingUpdate| {
+		futures::executor::block_on(services.funding().report(
+			crate::unix_time::current_unix_millis(),
+			&provider,
+			&intent,
+			update,
+		))
+		.expect("stored")
+		.expect("accepted");
+	};
+	report(paid);
+	// A later change that reaches no milestone reports nothing new.
+	report(v01::FundingUpdate::Details {
+		transaction_id: Some("tx-secret".to_string()),
+		reference: Some("ref-secret".to_string()),
+	});
+	let cancelled =
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel stored");
+	assert!(
+		futures::executor::block_on(services.settle_funding_for_test(
+			&intent,
+			crate::host_logic::funding::FundingStage::Delivered {
+				credited: 75_000_000,
+				settled_at_ms: crate::unix_time::current_unix_millis(),
+			},
+		))
+		.expect("settled")
+	);
+
+	let events = services.funding().emitted_facts();
+	assert_eq!(
+		events[2..].iter().map(|event| event.marker().target).collect::<Vec<_>>(),
+		[
+			"truapi.funding.provider_chosen",
+			"truapi.funding.step_reached",
+			"truapi.funding.cancel_requested",
+			"truapi.funding.step_reached",
+			"truapi.funding.ended",
+		]
+	);
+	let chosen = events_named(&events, "truapi.funding.provider_chosen")[0];
+	assert_eq!(
+		(
+			value(chosen, "best"),
+			value(chosen, "provider"),
+			value(chosen, "rail"),
+			value(chosen, "asset"),
+			value(chosen, "rank"),
+			value(chosen, "quote_count"),
+		),
+		(flag(false), text("ramp.dot"), text("card"), text("eur"), count(1), count(1))
+	);
+	let steps: Vec<_> = events_named(&events, "truapi.funding.step_reached")
+		.into_iter()
+		.map(|event| value(event, "step"))
+		.collect();
+	assert_eq!(steps, [text("received"), text("added")]);
+	let cancel = events_named(&events, "truapi.funding.cancel_requested")[0];
+	assert_eq!(
+		(value(cancel, "money_moved"), value(cancel, "result")),
+		(
+			flag(true),
+			text(if cancelled == crate::host_logic::funding::CancelOutcome::Requested {
+				"requested"
+			} else {
+				"too_late"
+			})
+		)
+	);
+	let ended = events_named(&events, "truapi.funding.ended")[0];
+	assert_eq!(
+		(
+			value(ended, "outcome"),
+			value(ended, "reason"),
+			value(ended, "money_moved"),
+			ended.marker(),
+		),
+		(text("topped_up"), text("none"), flag(true), crate::markers::FUNDING_ENDED)
+	);
+	assert!(
+		events
+			.iter()
+			.all(|event| value(event, "funding.ref") == value(&events[0], "funding.ref"))
+	);
+	assert_events_carry_none_of(
+		&events,
+		&[&intent, "q-test", "75000000", "tx-secret", "ref-secret"],
+	);
+}
+
+// A quote request reports once when every provider answered, with the rows
+// counted by how each ended and the country only as its region.
+#[test]
+fn a_settled_quote_request_reports_its_counts_once() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	answered_quotes(&services, &intent, card_ask(Some("DE")), Duration::from_secs(5));
+	wait_until(
+		|| {
+			!events_named(&services.funding().emitted_facts(), "truapi.funding.quotes_settled")
+				.is_empty()
+		},
+		"quotes settled",
+	);
+
+	use crate::runtime::funding_telemetry::read::{count, flag, text, value};
+	let events = services.funding().emitted_facts();
+	let settled = events_named(&events, "truapi.funding.quotes_settled");
+	assert_eq!(settled.len(), 1);
+	assert_eq!(
+		(
+			value(settled[0], "region"),
+			value(settled[0], "superseded"),
+			value(settled[0], "issue"),
+			value(settled[0], "asked"),
+			value(settled[0], "quoted"),
+			value(settled[0], "pending"),
+			value(settled[0], "first_quote_ms").is_some(),
+		),
+		(text("eu"), flag(false), text("none"), count(1), count(1), count(0), true)
+	);
+	assert_events_carry_none_of(&events, &[&intent, "q1", "\"DE\""]);
+}
+
+// A session nobody takes expires as the user's own ending, not a fault.
+#[test]
+fn an_expired_session_reports_an_expected_ending() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::Out,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	let far_future = crate::unix_time::current_unix_millis() + 2 * 24 * 60 * 60 * 1_000;
+	futures::executor::block_on(services.funding().commit(far_future, |_| ((), Vec::new())))
+		.expect("swept");
+
+	use crate::runtime::funding_telemetry::read::{text, value};
+	let events = services.funding().emitted_facts();
+	let ended = events_named(&events, "truapi.funding.ended");
+	assert_eq!(ended.len(), 1);
+	assert_eq!(
+		(
+			value(ended[0], "outcome"),
+			value(ended[0], "direction"),
+			value(ended[0], "amount_bucket"),
+			ended[0].marker(),
+		),
+		(text("expired"), text("out"), text("unset"), crate::markers::FUNDING_ENDED)
+	);
+	assert_events_carry_none_of(&events, &[&intent]);
+}
+
+// A provider's screen is reported asked for, opened and closed, with what
+// it shows but never its URL; one replaced before the host opened it counts
+// as dropped unopened.
+#[test]
+fn provider_frames_report_their_lifecycle() {
+	use crate::runtime::funding_telemetry::{
+		FrameClose, FrameTarget,
+		read::{flag, text, value},
+	};
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let provider =
+		ProductContext::new_with_execution(ProductId::for_test("ramp.dot"), ExecutableKind::Worker);
+	let registry = services.funding();
+	let first = registry.request_frame(&intent, provider.clone(), FrameTarget::Page);
+	let mut second = registry.request_frame(&intent, provider, FrameTarget::App);
+	drop(first);
+	assert!(registry.open_frame(&intent));
+	assert_eq!(futures::executor::block_on(second.opened()), None);
+	second.closed(FrameClose::Returned);
+	drop(second);
+
+	let frames: Vec<_> = services
+		.funding()
+		.emitted_facts()
+		.into_iter()
+		.filter(|event| event.marker().target.starts_with("truapi.funding.frame_"))
+		.map(|event| {
+			(
+				event.marker().target.to_string(),
+				value(&event, "target"),
+				value(&event, "outcome").or(value(&event, "replaced")),
+			)
+		})
+		.collect();
+	let row = |name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
+	assert_eq!(
+		frames,
+		[
+			row("frame_requested", "page", flag(false)),
+			row("frame_requested", "app", flag(true)),
+			row("frame_closed", "page", text("dropped_unopened")),
+			row("frame_opened", "app", None),
+			row("frame_closed", "app", text("returned")),
+		]
+	);
 }

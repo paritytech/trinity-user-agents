@@ -30,38 +30,30 @@ fn paseo_next_v2_registers_four_chains_with_expected_hashes() {
 	let (_, chains) = EmbeddedChainProviderBuilder::new()
 		.add_network("paseo-next-v2")
 		.expect("bundled network registers");
-	assert_eq!(hex::encode(chains.relay), &CATALOG[0].relay.genesis_hex[2..]);
-	assert_eq!(hex::encode(chains.people), &CATALOG[0].people.genesis_hex[2..]);
+	let relay = crate::test_stack::genesis(include_str!("../../networks/paseo.json"));
+	let people =
+		crate::test_stack::genesis(include_str!("../../networks/paseo-next-v2-people.json"));
+	assert_eq!((chains.relay, chains.people), (relay, people));
 }
 
-/// Every catalog entry's genesis hash must be the hash of the genesis block
-/// its own bundled spec describes.
-///
-/// A spec refreshed against a chain that has since been re-genesised keeps
-/// working for the light client (smoldot derives the real hash from the
-/// spec), so the stale entry is invisible until a caller connects by the
-/// chain's true genesis hash and is told it is unknown. This derives the
-/// hash offline and catches that drift at the refresh.
+/// The public Paseo chains do not restart and have no stack descriptor to
+/// check a refreshed spec against, so a refresh that derives any other hash
+/// pulled its spec from a different chain.
 #[test]
-fn every_catalog_genesis_hash_matches_its_bundled_spec() {
-	for network in CATALOG {
-		for (service, chain) in [
-			("relay", &network.relay),
-			("asset-hub", &network.assethub),
-			("bulletin", &network.bulletin),
-			("people", &network.people),
-		] {
-			let derived = crate::test_stack::genesis(chain.spec);
-			assert_eq!(
-				format!("0x{}", hex::encode(derived)),
-				chain.genesis_hex,
-				"the {} {} spec describes a different chain than its catalog entry claims; \
-                     set its genesis_hex to the left-hand hash",
-				network.name,
-				service,
-			);
-		}
-	}
+fn paseo_chains_keep_their_genesis() {
+	let (_, chains) = EmbeddedChainProviderBuilder::new()
+		.add_network("paseo")
+		.expect("bundled network registers");
+	let pinned = [
+		"374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
+		"d6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
+		"e101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
+		"e6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
+	];
+	assert_eq!(
+		[chains.relay, chains.assethub, chains.bulletin, chains.people].map(hex::encode),
+		pinned
+	);
 }
 
 #[test]
@@ -194,7 +186,9 @@ fn a_chain_listed_by_several_networks_has_one_definition() {
 		.collect();
 	for (index, (network, service, chain)) in chains.iter().enumerate() {
 		for (other_network, other_service, other) in &chains[index + 1..] {
-			if chain.genesis_hex == other.genesis_hex {
+			if genesis(chain).expect("invalid bundled spec") ==
+				genesis(other).expect("invalid bundled spec")
+			{
 				assert_eq!(
 					(chain.spec, chain.statement_protocol),
 					(other.spec, other.statement_protocol),

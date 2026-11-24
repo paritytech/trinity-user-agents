@@ -77,8 +77,9 @@ bundled copy.
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.
 
-The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+The test host has no descriptor, so it passes `testStack` instead: an `id` and
+a `generation`, the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it.
 A runtime built from it does not refresh: it calls neither stack callback, and
 `stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
@@ -314,9 +315,12 @@ A running fixture answers the same address through
 `testHost.getProductAccountAddress(productId?, index?)`, which reads the session
 the host actually holds and so returns `undefined` while it is signed out.
 
-`contacts` needs both callbacks, or the group counts as absent. `pickContact`
-draws the picker and returns the chosen account, or `NoContacts` when there is
-nobody to show. `contacts({ handleKey, handles })` resolves the handles a
+`contacts` needs all three callbacks, `contacts`, `pickContact` and
+`contactUsernames`, or the group counts as absent. `pickContact` draws the
+picker and returns the chosen account, or `NoContacts` when there is nobody to
+show. `contactUsernames` returns the dotNS usernames of the unblocked contacts,
+which the core serves only to the game product, or `{ tag: "Unsupported" }`
+when the host cannot list them. `contacts({ handleKey, handles })` resolves the handles a
 transaction names: one entry per handle, in order, the account or `undefined`.
 A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
 account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).

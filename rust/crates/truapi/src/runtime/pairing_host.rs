@@ -6,7 +6,7 @@ mod tests;
 use std::sync::Arc;
 
 use super::{
-	AccountHolder, HostAccounts, HostSession, RemoteAccountHolder,
+	AccountHolder, HostAccounts, HostRole, HostSession, RemoteAccountHolder,
 	host_grants::{GrantBarrier, HostGrantStore},
 	product_consent::ProductConsent,
 	ring_vrf_registry::RingVrfRegistryStore,
@@ -55,11 +55,26 @@ impl PairedSessionOwner for PairedGrants {
 	}
 }
 
-/// Builds a paired host's parts and serves the intents that span them.
+/// A host that reaches the user's wallet over a paired SSO session.
+///
+/// Construct its [`HostRuntime`](crate::HostRuntime) with
+/// `HostRuntime::<PairingHost>::new`.
 pub struct PairingHost {
 	accounts: Arc<HostAccounts<RemoteAccountHolder>>,
 	/// The paired session, selected and served by [`SsoRequestService`].
 	session: Arc<SsoRequestService>,
+}
+
+impl HostRole for PairingHost {
+	type Holder = RemoteAccountHolder;
+
+	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>> {
+		&self.accounts
+	}
+
+	fn host_session(self: &Arc<Self>) -> Arc<dyn HostSession> {
+		self.session.clone()
+	}
 }
 
 impl PairingHost {
@@ -96,11 +111,6 @@ impl PairingHost {
 			Arc::default(),
 		));
 		Arc::new(Self { accounts, session })
-	}
-
-	/// Account calls for products served by this host.
-	pub fn accounts(&self) -> &Arc<HostAccounts<RemoteAccountHolder>> {
-		&self.accounts
 	}
 
 	/// The paired session: login, replacement and disconnection.

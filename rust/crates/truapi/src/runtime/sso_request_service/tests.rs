@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
-	runtime::{ProductRuntimeHost, allowances},
+	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{StubPlatform, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};

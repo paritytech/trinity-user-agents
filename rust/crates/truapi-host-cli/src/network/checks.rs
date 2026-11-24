@@ -45,9 +45,14 @@ pub fn refuse_light_client(stack: &Stack) -> Result<()> {
 			anyhow!("--chain-backend light-client has no chain specs for {namespace}: {error}")
 		})?;
 	let genesis = stack.genesis();
+	let relay_matches = stack
+		.descriptor
+		.chain("Relay")
+		.is_none_or(|relay| relay.genesis() == catalog.relay);
 	ensure!(
-		(catalog.people, catalog.assethub, catalog.bulletin) ==
-			(genesis.people, genesis.asset_hub, genesis.bulletin),
+		relay_matches &&
+			(catalog.people, catalog.assethub, catalog.bulletin) ==
+				(genesis.people, genesis.asset_hub, genesis.bulletin),
 		"this build's light-client chain specs for {namespace} predate the stack's restart from \
 		 genesis; use --chain-backend rpc, or `truapi-host update` once a release ships the new \
 		 specs"

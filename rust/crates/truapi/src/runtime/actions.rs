@@ -11,14 +11,18 @@ use crate::host_core::ProductRuntimeError;
 const ACTION_BUFFER_CAPACITY: usize = 64;
 
 struct State<Item> {
-	subscriber: Option<mpsc::UnboundedSender<Item>>,
+	/// Every open subscription of this connection. A product may subscribe more
+	/// than once (an SDK keeps one stream per surface it draws), and each one
+	/// hears every item published while it is open. Items buffered while none
+	/// was open go only to the next subscription.
+	subscribers: Vec<mpsc::UnboundedSender<Item>>,
 	buffer: VecDeque<Item>,
 	closed: bool,
 }
 
 impl<Item> Default for State<Item> {
 	fn default() -> Self {
-		Self { subscriber: None, buffer: VecDeque::new(), closed: false }
+		Self { subscribers: Vec::new(), buffer: VecDeque::new(), closed: false }
 	}
 }
 
@@ -31,7 +35,7 @@ pub struct ActionChannel<Item> {
 	last_published_secs: AtomicU64,
 }
 
-impl<Item: Send + 'static> ActionChannel<Item> {
+impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 	/// Create an empty channel; `closed_reason` names the stream in the
 	/// interrupt a late subscriber sees after `close`.
 	fn new(closed_reason: &'static str) -> Self {
@@ -58,7 +62,8 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 		Self::new("renderer failures are closed for this product connection")
 	}
 
-	/// Open the product's subscription and drain buffered items first.
+	/// Open one more subscription for the product, draining buffered items into it first.
+	/// Buffered items go to this subscription only, so one opened later never hears them.
 	pub fn subscribe<E: Send + 'static>(&self) -> Subscription<Item, CallError<E>> {
 		let (sender, receiver) = mpsc::unbounded();
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
@@ -70,24 +75,23 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 		for item in state.buffer.drain(..) {
 			let _ = sender.unbounded_send(item);
 		}
-		state.subscriber = Some(sender);
+		state.subscribers.retain(|subscriber| !subscriber.is_closed());
+		state.subscribers.push(sender);
 		Subscription::new(receiver.map(Ok))
 	}
 
-	/// Publish one item, buffering it until the product subscribes.
-	pub fn publish(&self, mut item: Item) -> Result<(), ProductRuntimeError> {
+	/// Publish one item to every open subscription, or buffer it until the product subscribes.
+	pub fn publish(&self, item: Item) -> Result<(), ProductRuntimeError> {
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
 		if state.closed {
 			return Err(ProductRuntimeError::Closed);
 		}
-		if let Some(sender) = state.subscriber.as_ref() {
-			// Stamped first, so a product reacting to the item already finds it.
+		if !state.subscribers.is_empty() {
 			self.note_published_now();
-			match sender.unbounded_send(item) {
-				Ok(()) => return Ok(()),
-				Err(error) => item = error.into_inner(),
+			state.subscribers.retain(|subscriber| subscriber.unbounded_send(item.clone()).is_ok());
+			if !state.subscribers.is_empty() {
+				return Ok(());
 			}
-			state.subscriber = None;
 		}
 		if state.buffer.len() == ACTION_BUFFER_CAPACITY {
 			return Err(ProductRuntimeError::BufferFull);
@@ -115,11 +119,11 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 		self.last_published_secs.store(unix_secs, Ordering::Release);
 	}
 
-	/// End the current subscriber's stream while keeping buffered items for
+	/// End the current subscribers' streams while keeping buffered items for
 	/// the next product connection that subscribes.
 	pub fn detach(&self) {
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
-		state.subscriber = None;
+		state.subscribers.clear();
 	}
 
 	/// Close the channel and discard buffered items.
@@ -127,7 +131,7 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 	pub fn close(&self) {
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
 		state.closed = true;
-		state.subscriber = None;
+		state.subscribers.clear();
 		state.buffer.clear();
 	}
 }

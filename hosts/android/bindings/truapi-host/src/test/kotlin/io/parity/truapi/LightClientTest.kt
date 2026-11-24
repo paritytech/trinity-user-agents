@@ -13,12 +13,12 @@ class LightClientTest {
     private val closed = LinkedBlockingQueue<UInt>()
 
     private val storage = object : StorageClient {
-        override suspend fun load(genesisHash: ByteArray): String? {
+        override suspend fun load(genesisHash: ByteArray, stack: String?): String? {
             loads.add(genesisHash.toHexString())
             return null
         }
 
-        override suspend fun save(genesisHash: ByteArray, blob: String) = Unit
+        override suspend fun save(genesisHash: ByteArray, blob: String, stack: String?) = Unit
     }
 
     private fun provider(urls: List<String>) = CoreChainConnections(

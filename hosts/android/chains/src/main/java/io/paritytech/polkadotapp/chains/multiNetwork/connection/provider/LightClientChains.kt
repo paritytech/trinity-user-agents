@@ -11,7 +11,7 @@ object LightClientChains {
     fun of(environment: TestnetEnvironment): Set<String> = when (environment) {
         TestnetEnvironment.TESTNET -> setOf(
             "48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6",
-            "bac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896",
+            "f7d88e2e343e911c9a5c1a7e6ed53d06ef4cd73276fc3afff87062a1f6f90514",
             "732abb4e3052154ebd9201a375b0aacf2d1fe7015700235c0a8b30d44b401c19",
             "1c0a1c27946ca0e7def02955315633db590bc38b0c537936e423efeb6c554876",
         )

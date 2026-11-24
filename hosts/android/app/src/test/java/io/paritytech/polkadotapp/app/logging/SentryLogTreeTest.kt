@@ -48,6 +48,15 @@ class SentryLogTreeTest {
     }
 
     @Test
+    fun `an assert lands at error, as on iOS`() {
+        Timber.tag("truapi.chain").wtf("chain connection 1 lost")
+
+        verify(exactly = 1) {
+            logger.log(SentryLogLevel.ERROR, any<SentryLogParameters>(), "chain connection 1 lost")
+        }
+    }
+
+    @Test
     fun `other tags and debug lines stay on the device`() {
         Timber.tag("BearerTokenAuthenticator").w("refresh failed")
         Timber.tag("truapi.core").d("detail")

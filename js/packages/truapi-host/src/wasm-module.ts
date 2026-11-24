@@ -65,6 +65,11 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
    * Release one reference. The last one reports `"Stop"` the same way.
    */
   releaseWorker(productId: ProductId): void;
+  /**
+   * Forget one product: its grants, Allow once answers and keys, and the
+   * values it wrote to product storage.
+   */
+  clearProductState(productId: ProductId): Promise<void>;
   free(): void;
 }
 

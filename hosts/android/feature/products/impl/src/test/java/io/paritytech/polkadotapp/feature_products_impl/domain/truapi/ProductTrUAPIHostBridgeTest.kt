@@ -53,6 +53,7 @@ class ProductTrUAPIHostBridgeTest {
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
         lightClient = LightClient(storage = mockk(), chains = emptySet()),
+        coreEventLogger = CoreEventLogger { _, _, _ -> },
         scope = scope,
     )
 

@@ -113,10 +113,6 @@ impl EmbeddedChainProviderBuilder {
 	/// [`save_database`](EmbeddedChainProvider::save_database) have somewhere to read from
 	/// and write to. A blob registered with [`database`](Self::database) still
 	/// wins over a stored one.
-	///
-	/// A provider built with a [`stack`](Self::stack) as well refuses to read
-	/// or write the store, which keys a blob by genesis hash alone: a fork
-	/// shares its source's, and would start from the source's blob.
 	#[cfg(feature = "smoldot")]
 	pub fn storage(mut self, store: std::sync::Arc<dyn crate::storage::StorageClient>) -> Self {
 		self.storage = Some(store);
@@ -175,6 +171,8 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "smoldot")]
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
+			saving_stopped: core::sync::atomic::AtomicBool::new(false),
+			#[cfg(feature = "smoldot")]
 			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
 			#[cfg(feature = "networks")]
 			catalog: self.catalog,
@@ -220,6 +218,9 @@ pub struct EmbeddedChainProvider {
 	/// assuming nothing else writes the same key.
 	#[cfg(feature = "smoldot")]
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
+	/// Set by [`stop_saving`](Self::stop_saving).
+	#[cfg(feature = "smoldot")]
+	saving_stopped: core::sync::atomic::AtomicBool,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
 	#[cfg(feature = "networks")]
@@ -352,6 +353,12 @@ fn relay_source(
 	}
 }
 
+/// The header of the databases `stack`'s provider stores.
+#[cfg(feature = "smoldot")]
+fn database_header(stack: &crate::stack::LightStack) -> crate::storage::Header<'_> {
+	crate::storage::Header { stack: stack.id(), generation: stack.generation() }
+}
+
 /// Max size for a [`snapshot`](EmbeddedChainProvider::snapshot) database blob.
 #[cfg(feature = "smoldot")]
 const SNAPSHOT_MAX_BYTES: usize = 8_000_000;
@@ -378,20 +385,26 @@ const STORAGE_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5
 
 #[cfg(feature = "smoldot")]
 impl EmbeddedChainProvider {
-	/// Whether this provider keeps blobs: built with a store, and without a
-	/// stack, whose provider refuses one.
+	/// Whether this provider was built with somewhere to keep blobs.
 	pub fn has_storage(&self) -> bool {
-		self.storage().is_ok()
+		self.storage.is_some()
+	}
+
+	/// Store nothing from now on, including a snapshot already taken but not
+	/// yet handed to the store. A save the store has already been called with
+	/// still completes.
+	///
+	/// A host that replaces this provider, as when its stack's `generation`
+	/// changes, calls it so a late save cannot replace what the next provider
+	/// stored under the same stack and genesis hash.
+	pub fn stop_saving(&self) {
+		self.saving_stopped.store(true, core::sync::atomic::Ordering::Relaxed);
 	}
 
 	/// The store this provider keeps blobs in, or an error naming what is
 	/// missing. Warm start is never skipped quietly: a host that meant to have
-	/// it and did not configure one is told so, and so is one that built a
-	/// stack's provider with a store.
+	/// it and did not configure one is told so.
 	fn storage(&self) -> Result<std::sync::Arc<dyn crate::storage::StorageClient>, ProviderError> {
-		if self.stack.is_some() && self.storage.is_some() {
-			return Err(ProviderError::StackStorage);
-		}
 		self.storage.clone().ok_or(ProviderError::NoStorage)
 	}
 
@@ -469,6 +482,22 @@ impl EmbeddedChainProvider {
 		self.stack.as_ref().map(|stack| stack.light_specs()).unwrap_or_default()
 	}
 
+	/// Read what this provider stored for `genesis_hash`. What another stack
+	/// or generation stored reads as nothing, and so does what any stack
+	/// stored on a provider without one.
+	async fn load_stored(
+		&self,
+		store: &dyn crate::storage::StorageClient,
+		genesis_hash: [u8; 32],
+	) -> Result<Option<String>, ProviderError> {
+		let Some(stack) = &self.stack else {
+			let stored = store.load(genesis_hash, None).await?;
+			return Ok(stored.filter(|stored| !crate::storage::carries_header(stored)));
+		};
+		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
+		Ok(stored.and_then(|stored| database_header(stack).unseal(stored)))
+	}
+
 	/// Put a seed back after a connect that never reached `add_chain`.
 	///
 	/// The blob is taken out of the map before connecting, so without this a
@@ -516,7 +545,7 @@ impl EmbeddedChainProvider {
 			!self.is_connected(relay) &&
 			!self.has_database(relay) &&
 			let Ok(store) = self.storage() &&
-			let Some(blob) = store.load(relay).await?
+			let Some(blob) = self.load_stored(&*store, relay).await?
 		{
 			lock(&self.seeded_databases).entry(relay).or_insert(blob);
 		}
@@ -534,7 +563,7 @@ impl EmbeddedChainProvider {
 			return Ok(true);
 		}
 		let store = self.storage()?;
-		let Some(blob) = store.load(genesis_hash).await? else {
+		let Some(blob) = self.load_stored(&*store, genesis_hash).await? else {
 			return Ok(false);
 		};
 		lock(&self.seeded_databases).entry(genesis_hash).or_insert(blob);
@@ -647,8 +676,7 @@ impl EmbeddedChainProvider {
 			match known {
 				Some(known) => Some(known),
 				None => Some(
-					store
-						.load(genesis_hash)
+					self.load_stored(&*store, genesis_hash)
 						.await?
 						.is_some_and(|stored| crate::storage::carries_runtime_code(&stored)),
 				),
@@ -661,10 +689,25 @@ impl EmbeddedChainProvider {
 			);
 			return Ok(false);
 		}
+		// Checked last, after every await, so a snapshot taken before the
+		// provider was let go is still not handed to the store.
+		if self.saving_stopped.load(core::sync::atomic::Ordering::Relaxed) {
+			tracing::debug!(
+				genesis = %hex::encode(genesis_hash),
+				"not stored: this provider has stopped saving"
+			);
+			return Ok(false);
+		}
 		// The blob is not kept in `seeded_databases`: a chain only consumes one
 		// on its first add, and this chain is live, so nothing could read it
 		// back before the process ends.
-		store.save(genesis_hash, blob).await?;
+		match &self.stack {
+			Some(stack) => {
+				let sealed = database_header(stack).seal(&blob);
+				store.save(genesis_hash, sealed, Some(stack.id().to_owned())).await?;
+			},
+			None => store.save(genesis_hash, blob, None).await?,
+		}
 		lock(&self.stored_quality).insert(genesis_hash, has_code);
 		Ok(true)
 	}

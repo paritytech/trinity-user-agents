@@ -25,10 +25,9 @@ use std::{
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
 use crate::platform::{
-	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
-	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
-	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
-	ScannerPlatform, Stack, StackRefresh,
+	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, HostInfo, JsonRpcConnection,
+	PairingHostConfig, PlatformInfo, ProductContext, ProductId, ProductIdError, ProviderError,
+	RuntimeConfigValidationError, Stack, StackRefresh,
 };
 use futures::{
 	channel::mpsc,
@@ -45,11 +44,12 @@ use truapi::{
 use wasm_bindgen::{JsCast, prelude::*};
 
 #[cfg(feature = "wasm-signing-host")]
-use crate::SigningHostRuntime;
+use crate::SigningHost;
 use crate::{
-	ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
+	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
-	host_logic::worker::WorkerTransition,
+	host_logic::{root_entropy::RootEntropy, worker::WorkerTransition},
+	runtime::HostRole,
 };
 
 mod generated_bridge;
@@ -128,8 +128,37 @@ struct WasmPlatform {
 }
 
 impl WasmPlatform {
-	fn new(bridge: Arc<JsBridge>) -> Self {
-		Self { bridge: SendWrapper::new(bridge) }
+	fn from_callbacks(callbacks: &JsValue) -> Result<Arc<Self>, JsValue> {
+		let bridge = Arc::new(JsBridge::from_js(callbacks)?);
+		Ok(Arc::new(Self { bridge: SendWrapper::new(bridge) }))
+	}
+
+	fn chat(self: &Arc<Self>) -> Option<Arc<dyn ChatPlatform>> {
+		self.bridge.has_chat().then(|| self.clone() as Arc<dyn ChatPlatform>)
+	}
+
+	fn contacts(self: &Arc<Self>) -> Option<Arc<dyn ContactsPlatform>> {
+		self.bridge.has_contacts().then(|| self.clone() as Arc<dyn ContactsPlatform>)
+	}
+
+	fn install_on<Role>(
+		self: &Arc<Self>,
+		runtime: &HostRuntime<Role>,
+		callbacks: &JsValue,
+	) -> Result<(), JsValue> {
+		if self.bridge.has_permission_status() {
+			runtime.set_permission_status_host(self.clone());
+		}
+		if self.bridge.has_pocket() {
+			runtime.set_pocket_platform(self.clone());
+		}
+		if self.bridge.has_game() {
+			runtime.set_game_platform(self.clone());
+		}
+		if self.bridge.has_scanner() {
+			runtime.set_scanner_platform(self.clone());
+		}
+		install_worker_controller(runtime.worker_ledger(), callbacks)
 	}
 }
 
@@ -805,6 +834,44 @@ fn permission_authorization_status_from_js(
 	}
 }
 
+async fn permission_authorization_status<Role: HostRole>(
+	runtime: &HostRuntime<Role>,
+	product_id: &str,
+	payload: &[u8],
+) -> Result<JsValue, JsValue> {
+	let request = decode_permission_authorization_request(payload)?;
+	let status = runtime
+		.permission_authorization_status(&product_id_from_js(product_id)?, request)
+		.await?;
+	Ok(permission_authorization_status_to_js(status))
+}
+
+async fn permission_authorization_statuses<Role: HostRole>(
+	runtime: &HostRuntime<Role>,
+	product_id: &str,
+	payloads: &Array,
+) -> Result<Array, JsValue> {
+	let requests = decode_permission_authorization_requests(payloads)?;
+	let statuses = runtime
+		.permission_authorization_statuses(&product_id_from_js(product_id)?, requests)
+		.await?;
+	Ok(statuses.into_iter().map(permission_authorization_status_to_js).collect())
+}
+
+async fn set_permission_authorization_status<Role: HostRole>(
+	runtime: &HostRuntime<Role>,
+	product_id: &str,
+	payload: &[u8],
+	status: &str,
+) -> Result<(), JsValue> {
+	let request = decode_permission_authorization_request(payload)?;
+	let status = permission_authorization_status_from_js(status)?;
+	runtime
+		.set_permission_authorization_status(&product_id_from_js(product_id)?, request, status)
+		.await
+		.map_err(Into::into)
+}
+
 impl From<GenericError> for JsValue {
 	fn from(error: GenericError) -> Self {
 		JsValue::from_str(&error.reason)
@@ -830,42 +897,6 @@ struct WasmCoreInner {
 	dispose_fn: SendWrapper<Function>,
 	disposed: Cell<bool>,
 	disposing: Cell<bool>,
-}
-
-struct WasmPlatformAdapters {
-	platform: Arc<WasmPlatform>,
-	chat_platform: Option<Arc<dyn ChatPlatform>>,
-	contacts_platform: Option<Arc<dyn ContactsPlatform>>,
-	status_host: Option<Arc<dyn PermissionStatusHost>>,
-	pocket_platform: Option<Arc<dyn PocketPlatform>>,
-	game_platform: Option<Arc<dyn GamePlatform>>,
-	scanner_platform: Option<Arc<dyn ScannerPlatform>>,
-}
-
-/// Build the platform and the optional capability adapters supplied by the host.
-fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
-	let has_chat = bridge.has_chat();
-	let has_contacts = bridge.has_contacts();
-	let has_permission_status = bridge.has_permission_status();
-	let has_pocket = bridge.has_pocket();
-	let has_game = bridge.has_game();
-	let has_scanner = bridge.has_scanner();
-	let platform = Arc::new(WasmPlatform::new(bridge));
-	let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
-	let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
-	let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
-	let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
-	let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
-	let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
-	WasmPlatformAdapters {
-		platform,
-		chat_platform: chat,
-		contacts_platform: contacts,
-		status_host: status,
-		pocket_platform: pocket,
-		game_platform: game,
-		scanner_platform: scanner,
-	}
 }
 
 /// Forwards every worker transition request to the host's
@@ -918,11 +949,39 @@ fn install_worker_controller(
 	Ok(())
 }
 
+fn acquire_worker<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
+	if let Some(product_id) = worker_reference_id(product_id) {
+		runtime.worker_ledger().acquire(&product_id);
+	}
+}
+
+fn release_worker<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
+	if let Some(product_id) = worker_reference_id(product_id) {
+		runtime.worker_ledger().release(&product_id);
+	}
+}
+
+fn worker_reference_id(product_id: &str) -> Option<ProductId> {
+	product_id
+		.parse()
+		.inspect_err(
+			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
+		)
+		.ok()
+}
+
+fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
+	match product_id.parse::<ProductId>() {
+		Ok(product_id) => runtime.worker_exited(&product_id),
+		Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+	}
+}
+
 /// JS-callable handle to a long-lived pairing-host runtime shared by product
 /// cores.
 #[wasm_bindgen]
 pub struct WasmPairingHostRuntime {
-	runtime: Rc<PairingHostRuntime>,
+	runtime: HostRuntime<PairingHost>,
 	/// The refresh of the stack's descriptor, or `None` for a test stack.
 	stack_refresh: Option<StackRefresh>,
 }
@@ -952,44 +1011,23 @@ impl WasmPairingHostRuntime {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
 		require_host_config(&host_config)?;
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
+		let platform = WasmPlatform::from_callbacks(&callbacks)?;
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
 		let host_config = pairing_host_config_from_js(&host_config, stack)?;
-		let runtime = PairingHostRuntime::with_platforms(
-			platform,
+		let runtime = HostRuntime::<PairingHost>::with_platforms(
+			platform.clone(),
 			host_config,
 			spawner.clone(),
-			chat_platform,
-			contacts_platform,
+			platform.chat(),
+			platform.contacts(),
 		);
-		if let Some(status_host) = status_host {
-			runtime.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			runtime.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			runtime.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			runtime.set_scanner_platform(scanner_platform);
-		}
-		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		platform.install_on(&runtime, &callbacks)?;
 		// Last, so a host is told of a stack only once the runtime exists.
 		if let Some(refresh) = &stack_refresh {
 			start_refresh(refresh, &callbacks, &spawner)?;
 		}
-		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+		Ok(Self { runtime, stack_refresh })
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
@@ -1121,12 +1159,7 @@ impl WasmPairingHostRuntime {
 		raw_product_id: String,
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.runtime
-			.permission_authorization_status(&product_id_from_js(&raw_product_id)?, request)
-			.await?;
-		Ok(permission_authorization_status_to_js(status))
+		permission_authorization_status(&self.runtime, &raw_product_id, &payload).await
 	}
 
 	/// Read permission authorization statuses for a product.
@@ -1140,16 +1173,7 @@ impl WasmPairingHostRuntime {
 		raw_product_id: String,
 		payloads: Array,
 	) -> Result<Array, JsValue> {
-		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&raw_product_id)?, requests)
-			.await?;
-		let values = Array::new();
-		for status in statuses {
-			values.push(&permission_authorization_status_to_js(status));
-		}
-		Ok(values)
+		permission_authorization_statuses(&self.runtime, &raw_product_id, &payloads).await
 	}
 
 	/// Update a stored permission authorization status for a product.
@@ -1160,19 +1184,11 @@ impl WasmPairingHostRuntime {
 		payload: Vec<u8>,
 		status: String,
 	) -> Result<(), JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = permission_authorization_status_from_js(&status)?;
-		self.runtime
-			.set_permission_authorization_status(
-				&product_id_from_js(&raw_product_id)?,
-				request,
-				status,
-			)
-			.await?;
-		Ok(())
+		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
-	/// Clear one product's durable and in-memory capability state.
+	/// Clear one product's durable and in-memory capability state and the
+	/// values it wrote to product storage.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
 		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await?;
@@ -1191,12 +1207,7 @@ impl WasmPairingHostRuntime {
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		acquire_worker(&self.runtime, &raw_product_id);
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1205,10 +1216,7 @@ impl WasmPairingHostRuntime {
 	/// id is logged and dropped.
 	#[wasm_bindgen(js_name = workerExited)]
 	pub fn worker_exited(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_exited(&product_id),
-			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
-		}
+		worker_exited(&self.runtime, &product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
@@ -1216,12 +1224,7 @@ impl WasmPairingHostRuntime {
 	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		release_worker(&self.runtime, &raw_product_id);
 	}
 }
 
@@ -1262,7 +1265,7 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 /// JS-callable handle to a wallet-local signing-host runtime.
 #[wasm_bindgen]
 pub struct WasmSigningHostRuntime {
-	runtime: Rc<SigningHostRuntime>,
+	runtime: HostRuntime<SigningHost>,
 	/// The refresh of the stack's descriptor, or `None` for a test stack.
 	stack_refresh: Option<StackRefresh>,
 }
@@ -1338,44 +1341,23 @@ impl WasmSigningHostRuntime {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
 		require_host_config(&host_config)?;
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
+		let platform = WasmPlatform::from_callbacks(&callbacks)?;
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
 		let host_config = signing_host_config_from_js(&host_config, stack)?;
-		let runtime = SigningHostRuntime::with_platforms(
-			platform,
+		let runtime = HostRuntime::<SigningHost>::with_platforms(
+			platform.clone(),
 			host_config,
 			spawner.clone(),
-			chat_platform,
-			contacts_platform,
+			platform.chat(),
+			platform.contacts(),
 		);
-		if let Some(status_host) = status_host {
-			runtime.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			runtime.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			runtime.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			runtime.set_scanner_platform(scanner_platform);
-		}
-		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		platform.install_on(&runtime, &callbacks)?;
 		// Last, so a host is told of a stack only once the runtime exists.
 		if let Some(refresh) = &stack_refresh {
 			start_refresh(refresh, &callbacks, &spawner)?;
 		}
-		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+		Ok(Self { runtime, stack_refresh })
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
@@ -1420,7 +1402,7 @@ impl WasmSigningHostRuntime {
 	/// Activate a wallet-local session from raw BIP-39 entropy.
 	#[wasm_bindgen(js_name = activateLocalSession)]
 	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
-		self.runtime.activate_local_session(secret).await?;
+		self.runtime.activate_local_session(RootEntropy::new(secret)).await?;
 		Ok(())
 	}
 
@@ -1431,7 +1413,9 @@ impl WasmSigningHostRuntime {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<(), JsValue> {
-		self.runtime.activate_local_session_with_identity(secret, lite_username).await?;
+		self.runtime
+			.activate_local_session_with_identity(RootEntropy::new(secret), lite_username)
+			.await?;
 		Ok(())
 	}
 
@@ -1442,10 +1426,11 @@ impl WasmSigningHostRuntime {
 		self.runtime.notify_contacts_changed();
 	}
 
-	/// Revoke one product's grants from the current local activation.
+	/// Revoke one product's grants from the current local activation and
+	/// clear the values it wrote to product storage.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await;
+		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await?;
 		Ok(())
 	}
 
@@ -1460,12 +1445,7 @@ impl WasmSigningHostRuntime {
 		raw_product_id: String,
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.runtime
-			.permission_authorization_status(&product_id_from_js(&raw_product_id)?, request)
-			.await?;
-		Ok(permission_authorization_status_to_js(status))
+		permission_authorization_status(&self.runtime, &raw_product_id, &payload).await
 	}
 
 	/// Read permission authorization statuses for a product.
@@ -1479,16 +1459,7 @@ impl WasmSigningHostRuntime {
 		raw_product_id: String,
 		payloads: Array,
 	) -> Result<Array, JsValue> {
-		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&raw_product_id)?, requests)
-			.await?;
-		let values = Array::new();
-		for status in statuses {
-			values.push(&permission_authorization_status_to_js(status));
-		}
-		Ok(values)
+		permission_authorization_statuses(&self.runtime, &raw_product_id, &payloads).await
 	}
 
 	/// Update a stored permission authorization status for a product.
@@ -1499,16 +1470,7 @@ impl WasmSigningHostRuntime {
 		payload: Vec<u8>,
 		status: String,
 	) -> Result<(), JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = permission_authorization_status_from_js(&status)?;
-		self.runtime
-			.set_permission_authorization_status(
-				&product_id_from_js(&raw_product_id)?,
-				request,
-				status,
-			)
-			.await
-			.map_err(Into::into)
+		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
@@ -1517,12 +1479,7 @@ impl WasmSigningHostRuntime {
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		acquire_worker(&self.runtime, &raw_product_id);
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1531,10 +1488,7 @@ impl WasmSigningHostRuntime {
 	/// id is logged and dropped.
 	#[wasm_bindgen(js_name = workerExited)]
 	pub fn worker_exited(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_exited(&product_id),
-			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
-		}
+		worker_exited(&self.runtime, &product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
@@ -1542,12 +1496,7 @@ impl WasmSigningHostRuntime {
 	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		release_worker(&self.runtime, &raw_product_id);
 	}
 }
 
@@ -1561,12 +1510,11 @@ pub fn derive_product_subtree_public_key(
 	root_entropy: Vec<u8>,
 	raw_product_id: String,
 ) -> Result<Vec<u8>, JsValue> {
-	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
-		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	let product_id = raw_product_id
 		.parse::<crate::platform::ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
+	RootEntropy::new(root_entropy)
+		.derive_product_subtree_keypair(&product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())
 		.map_err(|err| JsValue::from_str(&err.to_string()))
 }
@@ -1679,42 +1627,21 @@ impl WasmProductRuntime {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
 		require_host_config(&runtime_config)?;
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
+		let platform = WasmPlatform::from_callbacks(&callbacks)?;
 		let channel = CoreChannel::from_js(&callbacks)?;
 		let frame_sink =
 			Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
 		let (stack, _no_refresh) = stack_from_js(&runtime_config, platform.clone()).await?;
 		let (host_config, product) = runtime_config_from_js(&runtime_config, stack)?;
-		// The optional adapters install on the host runtime the product hangs
-		// off, not on the product runtime itself.
-		let pairing =
-			PairingHostRuntime::with_chat_platform(platform, host_config, spawner, chat_platform);
-		if let Some(status_host) = status_host {
-			pairing.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			pairing.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			pairing.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			pairing.set_scanner_platform(scanner_platform);
-		}
-		if let Some(contacts_platform) = contacts_platform {
-			pairing.set_contacts_platform(contacts_platform);
-		}
-		install_worker_controller(pairing.worker_ledger(), &callbacks)?;
+		let pairing = HostRuntime::<PairingHost>::with_platforms(
+			platform.clone(),
+			host_config,
+			spawner,
+			platform.chat(),
+			platform.contacts(),
+		);
+		platform.install_on(&pairing, &callbacks)?;
 		let core = pairing.product_runtime(product, frame_sink);
 		Ok(Self::from_parts(core, channel.dispose))
 	}
