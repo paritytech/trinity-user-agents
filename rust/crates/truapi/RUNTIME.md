@@ -229,7 +229,10 @@ A host learns of a mismatch through its stack callbacks, and any host can read
 it from `stack_status`. A browser host that passes `stackChanged` without
 `fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
 Without the callbacks the chain is still refused, and nothing is fetched. A host
-shows a listed chain as out of service and keeps its own features off it.
+shows a listed chain as out of service and keeps its own features off it. A
+`StackMismatch::NetworkSuffix` entry, described below, names no chain to keep
+off: the core keeps using People, so a host keeps People in service as well and
+shows the entry as a fault in the stack that only its operator can correct.
 
 The check has three limits:
 
