@@ -107,11 +107,14 @@ pub enum StackMismatch {
 	/// The core derives its identities under `peopl.<tld>` and builds proof
 	/// contexts with People's suffix, so an identity derived under one does
 	/// not match the other. The core keeps using People.
-	#[display("People's NetworkSuffix is {answered}, not the stack's tld {named}")]
+	#[display("People's NetworkSuffix is \"{answered}\", not the stack's tld \"{named}\"")]
 	NetworkSuffix {
 		/// The descriptor's `tld`.
 		named: String,
-		/// The suffix People gave, with any bytes that are not UTF-8 replaced.
+		/// The suffix People gave, escaped as [`u8::escape_ascii`] escapes
+		/// it: printable ASCII stays as it is, apart from a backslash or quote,
+		/// which gets a backslash before it, and any other byte is written as
+		/// `\t`, `\r`, `\n` or `\xNN`.
 		answered: String,
 	},
 }
@@ -265,7 +268,7 @@ impl StackSource {
 			self.people_suffix.as_deref().filter(|answered| *answered != tld.as_bytes())?;
 		Some(StackMismatch::NetworkSuffix {
 			named: tld.to_owned(),
-			answered: String::from_utf8_lossy(answered).into_owned(),
+			answered: answered.escape_ascii().to_string(),
 		})
 	}
 

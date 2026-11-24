@@ -610,7 +610,38 @@ fn a_people_suffix_that_is_not_the_tld_is_reported() {
 fn a_suffix_mismatch_reads_as_the_warning_the_core_logs() {
 	assert_eq!(
 		suffix_is("testnet").to_string(),
-		"People's NetworkSuffix is testnet, not the stack's tld paseo"
+		r#"People's NetworkSuffix is "testnet", not the stack's tld "paseo""#
+	);
+}
+
+/// A suffix that is the `tld` with a byte that does not print, such as
+/// `paseo\0`, would read as the `tld` itself, and the host could not tell what
+/// is wrong. Such a byte is escaped in the entry and in the warning.
+#[test]
+fn a_suffix_that_differs_from_the_tld_only_in_a_byte_that_does_not_print_reads_differently() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+
+	let shown = [b"paseo\0".as_slice(), b"paseo\n"].map(|answered| {
+		source.people_suffix_answered(answered);
+		let mismatches = source.status().mismatches;
+		mismatches
+			.into_iter()
+			.map(|wrong| (wrong.to_string(), wrong))
+			.collect::<Vec<_>>()
+	});
+
+	assert_eq!(
+		shown,
+		[
+			vec![(
+				r#"People's NetworkSuffix is "paseo\x00", not the stack's tld "paseo""#.to_string(),
+				suffix_is(r"paseo\x00"),
+			)],
+			vec![(
+				r#"People's NetworkSuffix is "paseo\n", not the stack's tld "paseo""#.to_string(),
+				suffix_is(r"paseo\n"),
+			)],
+		]
 	);
 }
 
@@ -666,6 +697,6 @@ fn the_suffix_is_listed_after_the_chains_and_as_text() {
 
 	assert_eq!(
 		source.status().mismatches,
-		vec![people_gave(TEST_STACK_WIPED_PEOPLE), suffix_is("\u{fffd}x")]
+		vec![people_gave(TEST_STACK_WIPED_PEOPLE), suffix_is(r"\xffx")]
 	);
 }

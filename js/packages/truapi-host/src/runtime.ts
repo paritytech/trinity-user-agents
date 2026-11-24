@@ -128,7 +128,11 @@ export type StackMismatch =
       kind: "networkSuffix";
       /** The descriptor's `tld`. */
       named: string;
-      /** The suffix People gave, with any bytes that are not UTF-8 replaced. */
+      /**
+       * The suffix People gave. Printable ASCII stays as it is, apart from a
+       * backslash or quote, which gets a backslash before it. Any other byte
+       * is written as `\t`, `\r`, `\n` or `\xNN`.
+       */
       answered: string;
     };
 
