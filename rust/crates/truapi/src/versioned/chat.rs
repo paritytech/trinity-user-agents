@@ -159,6 +159,13 @@ impl FromLatest for HostChatCreateRoomError {
 			v02::HostChatCreateRoomError::Unknown { reason } => {
 				v01::HostChatCreateRoomError::Unknown { reason }
 			},
+			// A v0.1 request carries the default configuration, which every
+			// host keeps. v0.1 has no variant for this refusal.
+			v02::HostChatCreateRoomError::UnsupportedConfig => {
+				v01::HostChatCreateRoomError::Unknown {
+					reason: "the host cannot keep this room configuration".to_string(),
+				}
+			},
 		})
 	}
 }

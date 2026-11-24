@@ -68,25 +68,46 @@ impl ChatRateLimiter {
 	/// Take one token for `room_id` of `product_id` at `now`. Returns `false`
 	/// when the room used all of its budget.
 	pub fn try_acquire(&self, product_id: &str, room_id: &str, now: Instant) -> bool {
-		let capacity = u64::from(self.per_second) * 1000;
+		let capacity = self.capacity();
 		let mut buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
 		let bucket = buckets
 			.entry((product_id.to_string(), room_id.to_string()))
 			.or_insert(ChatRateBucket { milli_tokens: capacity, refilled_at: now });
-		let elapsed_ms =
-			u64::try_from(now.saturating_duration_since(bucket.refilled_at).as_millis())
-				.unwrap_or(u64::MAX);
-		bucket.milli_tokens = capacity.min(
-			bucket
-				.milli_tokens
-				.saturating_add(elapsed_ms.saturating_mul(u64::from(self.per_second))),
-		);
+		bucket.milli_tokens = self.tokens_at(bucket, now);
 		bucket.refilled_at = bucket.refilled_at.max(now);
 		if bucket.milli_tokens < 1000 {
 			return false;
 		}
 		bucket.milli_tokens -= 1000;
 		true
+	}
+
+	/// Whether `room_id` of `product_id` has one token left at `now`, without
+	/// taking it. A room with no bucket yet has its whole budget, and the check
+	/// adds no bucket, so a room id that the core later refuses leaves nothing
+	/// behind.
+	pub fn has_budget(&self, product_id: &str, room_id: &str, now: Instant) -> bool {
+		let buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
+		buckets
+			.get(&(product_id.to_string(), room_id.to_string()))
+			.is_none_or(|bucket| self.tokens_at(bucket, now) >= 1000)
+	}
+
+	/// The budget of a room that has spent nothing, in thousandths of a token.
+	fn capacity(&self) -> u64 {
+		u64::from(self.per_second) * 1000
+	}
+
+	/// The tokens of `bucket` at `now`, with the refill since its last refill.
+	fn tokens_at(&self, bucket: &ChatRateBucket, now: Instant) -> u64 {
+		let elapsed_ms =
+			u64::try_from(now.saturating_duration_since(bucket.refilled_at).as_millis())
+				.unwrap_or(u64::MAX);
+		self.capacity().min(
+			bucket
+				.milli_tokens
+				.saturating_add(elapsed_ms.saturating_mul(u64::from(self.per_second))),
+		)
 	}
 
 	/// Remove the budget of a deleted room.
@@ -126,5 +147,28 @@ mod tests {
 		assert!(!previews.try_acquire("chat.dot", "room", start));
 		previews.forget("chat.dot", "room");
 		assert!(previews.try_acquire("chat.dot", "room", start));
+	}
+
+	// The check before the host sees a call takes nothing and adds no bucket.
+	// It answers what the next take answers.
+	#[test]
+	fn a_budget_check_spends_nothing() {
+		let limiter = ChatRateLimiter::new(2);
+		let start = Instant::now();
+
+		assert!(limiter.has_budget("chat.dot", "unknown", start));
+		assert!(limiter.buckets.lock().unwrap().is_empty());
+		for _ in 0..2 {
+			assert!(limiter.has_budget("chat.dot", "room", start));
+			assert!(limiter.try_acquire("chat.dot", "room", start));
+		}
+		assert!(!limiter.has_budget("chat.dot", "room", start));
+		assert!(!limiter.try_acquire("chat.dot", "room", start));
+		// At 2 calls per second, the room gets one token again after 500 ms.
+		let later = start + core::time::Duration::from_millis(500);
+		assert!(limiter.has_budget("chat.dot", "room", later));
+		assert!(limiter.has_budget("chat.dot", "room", later));
+		assert!(limiter.try_acquire("chat.dot", "room", later));
+		assert!(!limiter.has_budget("chat.dot", "room", later));
 	}
 }

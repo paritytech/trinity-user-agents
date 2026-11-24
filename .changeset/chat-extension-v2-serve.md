@@ -1,19 +1,34 @@
 ---
+"@parity/truapi": minor
 "@parity/truapi-host": minor
 ---
 
 The core serves the Chat Extension v2 requests of `chat`: `setRoomMetadata`, `setRoomPreview`, `deleteRoom` and
-`updateFeed`, and keeps the configuration that each `createRoom` declares through the host's `setChatRoomConfig`. It
-screens every field, checks that the product hosts the room, and paces `updateFeed` and `setRoomPreview` for each room.
-A field that fails the screen fails the call with `MalformedFrame`, and a failure of the host with `HostFailure`.
-A room with the default configuration is a room the host stores, and in such a room a product cannot write, replace or
-react as the user. A host that does not keep configurations refuses a `createRoom` that declares any configuration but
-the default.
+`updateFeed`, and the configuration that each `createRoom` declares. It screens every field, checks that the product
+hosts the room, and paces `updateFeed` and `setRoomPreview` for each room. A call over the budget of its room fails
+with `RateLimited` before the host sees it, and only a call that reaches the host spends the budget. A field of these
+requests that fails the screen fails the call with `MalformedFrame`, and a failure of the host with `HostFailure`. A
+reaction in a feed update, in the reaction summaries of a message or in a room preview is one emoji: one extended
+grapheme cluster of at most 64 bytes, as the chat modality RFC limits it.
+
+A room with the default configuration is a room the host stores. In such a room a product cannot write, replace or
+react as the user, quote the user, or say in the reaction summaries of a message that the user reacted. A
+`postMessage` to a room that keeps its messages in the product fails with `Denied`: the product sends those messages
+with `updateFeed`.
+
+`createRoom` is one call to the host. The host keeps the configuration of the request with the room, for a new room
+and for a room that exists, or refuses it with the new `UnsupportedConfig` error of `createRoom` before it creates
+anything. A change of `productSource` discards the stored messages or the cached pages of the room.
 
 Breaking for a web host that serves chat: its `chat` callbacks must now also implement `listChatRooms`,
-`readChatRoomConfig`, `setChatRoomConfig`, `setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and
-`updateChatFeed`. A host that leaves out any chat callback serves no chat at all. A web host's `updateChatFeed` can
-refuse an update only with `HostFailure`: the web bridge turns each error that a web callback throws into
-`HostFailure`. A Rust `ChatPlatform` host and the
-Swift and Kotlin bridges get defaults with one contract: a room reads as the default configuration, a declaration of
-the default configuration or of room metadata is accepted and changes nothing, and every other request is refused.
+`readChatRoomConfig`, `setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and `updateChatFeed`, and its
+`createChatRoom` keeps `request.config` with the room. A typed host that leaves out a callback does not compile, and a
+raw callback set without one serves no chat at all. `updateChatFeed` answers a `ChatFeedOutcome`: `Applied`, or
+`UnknownMessage`, `DuplicateMessage` or `NotOwner` for an update that the host did not apply. A callback that throws
+answers `HostFailure`. `readChatRoomConfig` answers the default configuration for a room that the host does not know.
+
+Breaking for a Rust `ChatPlatform` host: `create_chat_room` keeps `request.config` or answers `UnsupportedConfig`,
+`set_chat_room_config` is gone, and `update_chat_feed` answers a `ChatFeedOutcome`. A host whose room list
+subscription registers a listener implements `list_chat_rooms`. The Rust defaults and the Swift and Kotlin bridges
+have one contract: a room reads as the default configuration, a room with the default configuration and room metadata
+are accepted and the metadata changes nothing, and every other request is refused.
