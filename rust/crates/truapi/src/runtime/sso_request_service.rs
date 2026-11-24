@@ -277,8 +277,11 @@ impl SsoRequestService {
 	/// next start looks again and a stored username is never lost to a
 	/// device that was offline.
 	///
-	/// The service owns the lookup and stops it when it drops, so a runtime
-	/// that is gone writes nothing.
+	/// The service owns the lookup. Dropping the service, which happens once
+	/// every part of the runtime that holds it has dropped, stops a lookup
+	/// still waiting on dotNS, which then writes nothing, and the dotNS read
+	/// stops once no other lookup waits on it. A lookup dotNS has answered
+	/// holds the service until it has stored what it found.
 	fn look_up_usernames_in_background(&self, installed: SessionInfo, stored: Option<Vec<u8>>) {
 		let (ending, ended) = oneshot::channel();
 		let lookup = self.look_up_usernames(installed, stored);

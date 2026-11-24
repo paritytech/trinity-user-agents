@@ -3,12 +3,12 @@ use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{
-		DOTNS_NAMED_ACCOUNT, RpcResponder, StubPlatform, dotns_usernames_frames,
-		dotns_usernames_responder, legacy_asset_hub_frames, paseo_test_stack, sso_session_info,
-		unnamed_sso_session_info,
+		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, dotns_usernames_responder,
+		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, unnamed_sso_session_info,
+		wait_until,
 	},
 };
-use futures::{FutureExt, executor::block_on};
+use futures::{FutureExt, executor::block_on, future::BoxFuture};
 use parity_scale_codec::Encode;
 use std::{collections::BTreeMap, sync::mpsc, time::Duration};
 use truapi::latest::GenericError;
@@ -784,50 +784,55 @@ fn a_lookup_for_a_session_no_longer_selected_stores_nothing() {
 	);
 }
 
-/// A responder that answers a username lookup as [`dotns_usernames_responder`]
-/// does. The first read of the lookup reports on `asked` and is held until
-/// `answer` fires, or two seconds pass.
-fn held_dotns(asked: mpsc::Sender<()>, answer: mpsc::Receiver<()>) -> RpcResponder {
-	let dotns = dotns_usernames_responder();
-	let hold = Mutex::new(Some((asked, answer)));
-	Arc::new(move |request| {
-		let frames = dotns(request);
-		let first_read = (!frames.is_empty()).then(|| hold.lock().unwrap().take()).flatten();
-		if let Some((asked, answer)) = first_read {
-			let _ = asked.send(());
-			let _ = answer.recv_timeout(Duration::from_secs(2));
-		}
-		frames
-	})
+/// Tasks spawned on a [`Spawner`] that runs nothing by itself, in the order
+/// they were spawned, so a test polls each one when it chooses.
+type HandPolled = Arc<Mutex<Vec<BoxFuture<'static, ()>>>>;
+
+/// A spawner that queues its tasks in [`HandPolled`].
+fn polled_by_hand() -> (Spawner, HandPolled) {
+	let tasks = HandPolled::default();
+	let queue = tasks.clone();
+	(Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task)), tasks)
+}
+
+/// `task` polled once, as an executor would: `None` once it has finished,
+/// which drops it, otherwise the task to poll again.
+fn poll_once(mut task: BoxFuture<'static, ()>) -> Option<BoxFuture<'static, ()>> {
+	task.as_mut().now_or_never().is_none().then_some(task)
 }
 
 /// A host can drop its runtime while the username lookup of an activation
-/// waits on dotNS. The lookup must not keep the service alive, and what it
-/// finds afterwards must not land in the slot of a runtime that is gone.
+/// waits on dotNS. The service owns the lookup, so dropping the service ends
+/// it, and the dotNS read it started stops with it, as a read does once its
+/// last waiter has gone. Nothing else stops them: here the read has not even
+/// started. The lookup does not keep the service alive meanwhile.
 #[test]
 fn a_lookup_stops_when_its_service_is_dropped() {
+	let (spawner, tasks) = polled_by_hand();
 	let storage = Arc::new(CleanupStorage::default());
-	let ((asked, lookup_reads), (answer, held)) = (mpsc::channel(), mpsc::channel());
-	let dotns = StubPlatform { rpc_responder: Some(held_dotns(asked, held)), ..Default::default() };
-	let installed = session_to_look_up();
-	let host = host_with_session(&storage, dotns, &installed);
+	let platform = Arc::new(StubPlatform {
+		core_storage_override: Some(storage.clone()),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat_with_pairing(platform, spawner)
+		.1
+		.session()
+		.clone();
+	let installed = SessionInfo { sso: None, ..session_to_look_up() };
+	let blob = encode_persisted_session(&installed);
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
 	block_on(host.activate_stored_session()).expect("the stored session activates");
-	lookup_reads
-		.recv_timeout(Duration::from_secs(2))
-		.expect("the lookup reads dotNS");
+	let lookup = tasks.lock().unwrap().pop().expect("the activation starts a lookup");
+	let lookup = poll_once(lookup).expect("the lookup waits on dotNS");
+	let read = tasks.lock().unwrap().pop().expect("the lookup starts a dotNS read");
 
 	let service = Arc::downgrade(&host);
 	drop(host);
 	let dropped = service.upgrade().is_none();
-	let _ = answer.send(());
-	// A lookup that kept going stores the usernames it found here.
-	std::thread::sleep(Duration::from_millis(200));
+	let lookup = poll_once(lookup);
+	let read = poll_once(read);
 
-	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
-	assert_eq!(
-		(dropped, read(CoreStorageKey::AuthSession), read(CoreStorageKey::SessionUsernamesRun)),
-		(true, Some(encode_persisted_session(&installed)), None)
-	);
+	assert_eq!((dropped, lookup.is_none(), read.is_none()), (true, true, true));
 }
 
 /// The service holds every lookup it started until it learns that one has
@@ -847,7 +852,7 @@ fn a_lookup_that_ended_is_let_go() {
 
 	for _ in 0..3 {
 		block_on(host.activate_stored_session()).expect("the stored session activates");
-		crate::test_support::wait_until(ended, "the lookup of the activation ends");
+		wait_until(ended, "the lookup of the activation ends");
 	}
 
 	assert_eq!(host.username_lookups.lock().unwrap().len(), 1);
