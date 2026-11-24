@@ -91,7 +91,8 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
+	let name = "published test stack descriptor";
+	refresh_stack("test", name, &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
 }
 
 const NOW: i64 = 1_800_000_000;
@@ -277,4 +278,56 @@ fn a_built_in_stack_named_by_its_url_keeps_its_key() {
 	}
 	assert_eq!(built_in_key("https://stack.test.invalid/other.json"), None);
 	assert_eq!(built_in_key("./stack.json"), None);
+}
+
+/// After a wipe the bundled copy names chains that are gone. A host that ran
+/// on the published descriptor since must not go back to them when that
+/// descriptor is unreachable: the core would take the older run for a wipe
+/// and drop what the session read from the chains. The published copy still
+/// wins once it arrives, a kept copy older than the bundled one is not used,
+/// and neither a published copy older than the kept one nor one the CLI
+/// refuses, here for a changed TLD, replaces it.
+#[test]
+fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
+	let bundled = sign_copy(10, "g1");
+	let (after_wipe, republished, outdated) =
+		(sign_copy(11, "g2"), sign_copy(12, "g2"), sign_copy(9, "g0"));
+	let rollback = sign_copy(10, "g1");
+	let other_tld = sign_edited(|descriptor| {
+		descriptor["sequence"] = 12.into();
+		descriptor["generation"] = "g2".into();
+		descriptor["tld"] = "testnet".into();
+	});
+	let run = |published: Option<&[u8]>, last_run: Option<&[u8]>| {
+		let refresh = refresh_from_last_run(
+			"test",
+			&test_pointer(),
+			&bundled,
+			published,
+			last_run,
+			NOW,
+			ChainBackend::Rpc,
+		)
+		.expect("a descriptor is usable");
+		(refresh.stack.descriptor().sequence, refresh.copy)
+	};
+
+	assert_eq!(
+		[
+			run(None, Some(&after_wipe)),
+			run(Some(&republished), Some(&after_wipe)),
+			run(None, Some(&outdated)),
+			run(None, None),
+			run(Some(&rollback), Some(&after_wipe)),
+			run(Some(&other_tld), Some(&after_wipe)),
+		],
+		[
+			(11, BuiltInCopy::Unreachable),
+			(12, BuiltInCopy::Published),
+			(10, BuiltInCopy::Unreachable),
+			(10, BuiltInCopy::Unreachable),
+			(11, BuiltInCopy::Rejected),
+			(11, BuiltInCopy::Rejected),
+		]
+	);
 }

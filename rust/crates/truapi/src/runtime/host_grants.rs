@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
 	host_logic::session::{SessionInfo, SessionState},
-	platform::{CoreStorage, CoreStorageKey, ProductId},
+	platform::{CoreStorage, CoreStorageKey, ProductId, StackRun},
 };
 use futures::lock::OwnedMutexGuard;
 use parity_scale_codec::{Decode, Encode};
@@ -107,6 +107,7 @@ impl GrantState {
 /// advanced it.
 pub struct HostGrantStore {
 	storage: Arc<dyn CoreStorage>,
+	run: StackRun,
 	keeping: GrantKeeping,
 	state: Mutex<GrantState>,
 	persistence: Arc<futures::lock::Mutex<()>>,
@@ -191,11 +192,13 @@ impl HostGrantStore {
 	/// Grants are only kept for the session `session_state` selects.
 	pub fn new(
 		storage: Arc<dyn CoreStorage>,
+		run: StackRun,
 		keeping: GrantKeeping,
 		session_state: Arc<SessionState>,
 	) -> Self {
 		Self {
 			storage,
+			run,
 			keeping,
 			state: Mutex::new(GrantState::default()),
 			persistence: Arc::new(futures::lock::Mutex::new(())),
@@ -393,6 +396,7 @@ impl HostGrantStore {
 		if self.keeping == GrantKeeping::Paired {
 			allowances::write_allowance_key(
 				&*self.storage,
+				&self.run,
 				session,
 				product_id,
 				resource,
@@ -403,9 +407,14 @@ impl HostGrantStore {
 		if let Err(error) = self.remember_allowance(session, grant_revision, product_id, allowance)
 		{
 			if self.keeping == GrantKeeping::Paired {
-				let _ =
-					allowances::remove_allowance_key(&*self.storage, session, product_id, resource)
-						.await;
+				let _ = allowances::remove_allowance_key(
+					&*self.storage,
+					&self.run,
+					session,
+					product_id,
+					resource,
+				)
+				.await;
 			}
 			return Err(error);
 		}
@@ -478,9 +487,14 @@ impl HostGrantStore {
 			return Ok(None);
 		}
 		let allowance = {
-			let Some(secret) =
-				allowances::read_allowance_key(&*self.storage, session, product_id, resource)
-					.await?
+			let Some(secret) = allowances::read_allowance_key(
+				&*self.storage,
+				&self.run,
+				session,
+				product_id,
+				resource,
+			)
+			.await?
 			else {
 				return Ok(None);
 			};
@@ -851,6 +865,7 @@ impl HostGrantPersistence<'_> {
 			self.store.keeping == GrantKeeping::Paired &&
 			let Err(error) = allowances::clear_product_allowance_keys(
 				&*self.store.storage,
+				&self.store.run,
 				session,
 				product_id,
 			)

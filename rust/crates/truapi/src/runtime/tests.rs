@@ -482,7 +482,11 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
+	let entry = CachedManifest {
+		run: crate::test_support::paseo_test_stack().run(),
+		fetched_at_secs,
+		json: Some(json),
+	};
 	futures::executor::block_on(platform.write_core_storage(
 		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 		entry.encode(),
@@ -492,8 +496,20 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
+	let run = crate::test_support::paseo_test_stack().run();
+	cache_manifest_entry_in(platform, run, owner, json, age_secs);
+}
+
+/// [`cache_manifest_entry`] for a host whose stack is in `run`.
+fn cache_manifest_entry_in(
+	platform: &StubPlatform,
+	run: crate::platform::StackRun,
+	owner: &str,
+	json: Option<String>,
+	age_secs: u64,
+) {
 	let entry =
-		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
+		CachedManifest { run, fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
 	futures::executor::block_on(platform.write_core_storage(
 		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 		entry.encode(),
@@ -708,6 +724,112 @@ fn a_cached_grant_stops_being_honoured_once_it_expires() {
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, MANIFEST_TTL_SECS + 1);
 	seed_owner_value(&platform, "wallet.dot");
 	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+/// A product runtime for `unknown.dot` on a stack in this `generation`. The
+/// id and the chains are the same for every generation.
+fn host_in_generation(
+	platform: Arc<StubPlatform>,
+	generation: &str,
+) -> ProductRuntimeHost<RemoteAccountHolder> {
+	let identity = crate::platform::StackIdentity {
+		id: "stack".to_string(),
+		generation: generation.to_string(),
+	};
+	let chains = crate::test_support::paseo_test_stack().chains().clone();
+	let stack = crate::platform::Stack::new(
+		identity,
+		"paseo".to_string(),
+		"paseo".to_string(),
+		chains,
+		true,
+	)
+	.expect("test stack is valid");
+	let (config, _) = crate::test_support::runtime_config("unknown.dot");
+	let config = crate::platform::PairingHostConfig::new(
+		config.host.host_info,
+		config.host.platform_info,
+		stack,
+		config.pairing_deeplink_scheme,
+	)
+	.expect("test host runtime config is valid");
+	let product = ProductContext::new(ProductId::for_test("unknown.dot"));
+	ProductRuntimeHost::new_pairing_for_tests(platform, config, product, Spawner::for_test()).0
+}
+
+/// Stores a manifest cached in the run of `host`'s stack, in which `wallet.dot`
+/// grants storage access, and an allowed identity disclosure.
+fn store_grant_and_permission(host: &ProductRuntimeHost<RemoteAccountHolder>) {
+	let storage = host.connection.services.platform.as_ref();
+	let entry = CachedManifest {
+		run: host.connection.services.stack().run(),
+		fetched_at_secs: current_unix_secs(),
+		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
+	};
+	futures::executor::block_on(async {
+		storage
+			.write_core_storage(
+				CoreStorageKey::product_manifest(&ProductId::for_test("wallet.dot")),
+				entry.encode(),
+			)
+			.await
+			.expect("stub core storage accepts the entry");
+		crate::host_internal::permissions::set_authorization_status(
+			storage,
+			identity_disclosure_key(),
+			PermissionAuthorizationStatus::Authorized,
+		)
+		.await
+		.expect("stub core storage accepts the decision");
+	});
+}
+
+fn identity_disclosure_key() -> CoreStorageKey {
+	CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("unknown.dot"))
+}
+
+fn stored_identity_disclosure(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) -> PermissionAuthorizationStatus {
+	futures::executor::block_on(crate::host_internal::permissions::authorization_status(
+		host.connection.services.platform.as_ref(),
+		identity_disclosure_key(),
+	))
+	.expect("stub core storage reads")
+}
+
+/// After a wipe the stack has a new generation and a new Asset Hub. A grant
+/// cached from the old one must not apply. The stored permission is kept.
+#[test]
+fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
+	let platform = stub_platform();
+	seed_owner_value(&platform, "wallet.dot");
+	let before_wipe = host_in_generation(platform.clone(), "first");
+	store_grant_and_permission(&before_wipe);
+	assert!(granted_value(&before_wipe, "wallet.dot").is_some());
+
+	let after_wipe = host_in_generation(platform, "second");
+	assert_eq!(
+		(
+			read_storage(&after_wipe, Some("wallet.dot"), "k").unwrap_err(),
+			stored_identity_disclosure(&after_wipe),
+		),
+		(access_not_granted(), PermissionAuthorizationStatus::Authorized)
+	);
+}
+
+/// An operator can wipe a stack and leave `generation` as it was. The genesis
+/// hashes still change, so a grant read from the old Asset Hub must not apply.
+#[test]
+fn a_grant_cached_from_another_asset_hub_is_not_honoured() {
+	let platform = stub_platform();
+	let manifest = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	let other_asset_hub = crate::test_support::test_run([0x99; 32]);
+	cache_manifest_entry_in(&platform, other_asset_hub, "wallet.dot", Some(manifest), 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+
 	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
 }
 
@@ -7982,7 +8104,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
-	let session = sso_session_info();
+	let session = external_sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
 	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
@@ -8096,7 +8218,7 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let first = sso_session_info();
+	let first = external_sso_session_info();
 	let mut replacement = first.clone();
 	replacement.public_key = [0x44; 32];
 	replacement.identity_account_id = Some([0x55; 32]);
@@ -8119,10 +8241,13 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 #[test]
 fn stored_session_activation_resolves_after_connected_installation() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -8164,8 +8289,10 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
 	let stored = sso_session_info();
 	let untagged = stored.encode();
-	let platform =
-		Arc::new(StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() });
+	let platform = Arc::new(
+		StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() }
+			.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 

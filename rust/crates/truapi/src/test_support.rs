@@ -274,6 +274,18 @@ pub type StorageChangeSender = futures::channel::mpsc::UnboundedSender<
 >;
 
 impl StubPlatform {
+	/// Records that the usernames in [`Self::session_blob`] were read in the
+	/// run of the [`paseo_test_stack`], as the core does once it stores a
+	/// session, so the session is restored as stored.
+	pub fn with_usernames_read_in_this_run(self) -> Self {
+		let blob = self.session_blob.as_deref().expect("the platform stores a session");
+		self.local_storage.lock().expect("local storage mutex poisoned").insert(
+			core_storage_test_key(CoreStorageKey::SessionUsernamesRun),
+			usernames_record(&paseo_test_stack(), blob),
+		);
+		self
+	}
+
 	/// Fail every open subscription on `key`, as a host whose store broke
 	/// mid-stream would.
 	pub fn fail_storage_subscriptions(&self, key: &str, reason: &str) {
@@ -366,6 +378,29 @@ pub fn test_stack(
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
+}
+
+/// The `SessionUsernamesRun` value the core records once the usernames in the
+/// session `blob` were read in `stack`'s run.
+pub fn usernames_record(stack: &crate::platform::Stack, blob: &[u8]) -> Vec<u8> {
+	stack.run().stamp(&sp_crypto_hashing::blake2_256(blob))
+}
+
+/// Whether `platform` holds no core value but the record of the run the
+/// stored session's usernames were read in.
+///
+/// A session leaves that record behind when it ends. It names no secret, so
+/// a check that nothing of a session is left stored allows it.
+pub fn only_the_usernames_run_is_stored(platform: &StubPlatform) -> bool {
+	let stored = platform.local_storage.lock().expect("local storage mutex poisoned");
+	let run = core_storage_test_key(CoreStorageKey::SessionUsernamesRun);
+	stored.keys().all(|key| *key == run)
+}
+
+/// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
+/// and `asset_hub`: what a cached manifest must name to be read on it.
+pub fn test_run(asset_hub: [u8; 32]) -> crate::platform::StackRun {
+	test_stack("paseo", [0; 32], [0xbb; 32], asset_hub).run()
 }
 
 /// A genesis hash no [`StubPlatform`] serves: `connect` to it always fails.
@@ -468,6 +503,34 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 		.to_link(trinity_stack::DEFAULT_LINK_BASE)
 }
 
+/// Host storage in memory that keeps a value under whatever key it is given.
+#[derive(Default)]
+pub struct MemoryCoreStorage(Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl PlatformCoreStorage for MemoryCoreStorage {
+	async fn read_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
+	}
+
+	async fn write_core_storage(
+		&self,
+		key: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
+		Ok(())
+	}
+
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
+		Ok(())
+	}
+}
+
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 	(
@@ -564,6 +627,17 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	)
 	.unwrap();
 	(host_session, responder_session)
+}
+
+/// [`sso_session_info`] as a host that keeps the session itself holds it:
+/// without usernames, which the core looks up whenever it activates such a
+/// session.
+pub fn external_sso_session_info() -> crate::host_logic::session::SessionInfo {
+	crate::host_logic::session::SessionInfo {
+		lite_username: None,
+		full_username: None,
+		..sso_session_info()
+	}
 }
 
 /// Connected session fixture with deterministic SSO channel material.

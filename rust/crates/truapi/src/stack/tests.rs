@@ -242,6 +242,70 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	);
 }
 
+/// A stack with `relay` and these generation and genesis hashes.
+fn stack_in_run(generation: &str, relay: Option<[u8; 32]>, asset_hub: [u8; 32]) -> Stack {
+	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
+	let chains = StackChains { relay, asset_hub, people: [0xa1; 32], bulletin: [0xb2; 32] };
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, false)
+		.expect("stack is valid")
+}
+
+/// A value stamped in one run is read back in that run only. A new
+/// `generation` or a new Asset Hub is another run. The relay chain, which the
+/// core never reads, is not part of the run, so a host that starts or stops
+/// serving it keeps what the core stored. A stamp of another version is
+/// another run, so a later layout cannot be misread as this one.
+#[test]
+fn a_stamped_value_is_read_back_in_its_own_run_only() {
+	let run = stack_in_run("g1", None, [0xc3; 32]).run();
+	let stamped = run.stamp(b"value");
+	let read_in = |stack: Stack| stack.run().read_stamped(&stamped).map(<[u8]>::to_vec);
+	let mut other_version = stamped.clone();
+	other_version[0] = 2;
+
+	assert_eq!(
+		[
+			read_in(stack_in_run("g1", None, [0xc3; 32])),
+			read_in(stack_in_run("g1", Some([0x01; 32]), [0xc3; 32])),
+			read_in(stack_in_run("g2", None, [0xc3; 32])),
+			read_in(stack_in_run("g1", None, [0xc4; 32])),
+			run.read_stamped(&other_version).map(<[u8]>::to_vec),
+		],
+		[Some(b"value".to_vec()), Some(b"value".to_vec()), None, None, None]
+	);
+}
+
+/// A descriptor refresh the core takes while it runs, such as new RPC
+/// endpoints, keeps the stack and so the run its stored values carry. One that
+/// restarts the chains, by a new generation or a new genesis hash, waits for
+/// the next start and is another run, so that start ignores what the old run
+/// stored.
+#[test]
+fn a_refresh_changes_the_run_exactly_when_it_restarts_the_chains() {
+	let base = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let edited = |edit: fn(&mut serde_json::Value)| {
+		let mut descriptor = base.clone();
+		edit(&mut descriptor);
+		bundled(&descriptor, false).expect("stack is valid")
+	};
+	let running = bundled(&base, false).expect("stack is valid");
+	let refreshed = [
+		edited(|descriptor| {
+			descriptor["chains"][1]["rpc"] = serde_json::json!(["wss://other.test.invalid"]);
+		}),
+		edited(|descriptor| descriptor["generation"] = "next".into()),
+		edited(|descriptor| {
+			descriptor["chains"][2]["genesisHash"] =
+				format!("0x{}", hex::encode([0xa9; 32])).into();
+		}),
+	];
+
+	assert_eq!(
+		refreshed.map(|stack| (stack == running, stack.run() == running.run())),
+		[(true, true), (false, false), (false, false)]
+	);
+}
+
 /// Installation recovery reads the registry at the stack's address, so a stack
 /// that names none, or names the all-zero address, leaves it off rather than
 /// reading the wrong contract.

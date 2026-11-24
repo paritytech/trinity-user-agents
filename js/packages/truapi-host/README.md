@@ -85,6 +85,27 @@ A runtime built from it does not refresh: it calls neither stack callback, and
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
+After a wipe a stack has the same id and new chains. The core sees that by the
+`generation` and the Asset Hub, People and Bulletin genesis hashes, and stops
+using what it read from the old chains: cached manifests and allowance keys are
+ignored until they are read again, the ring-VRF registry loses the rings on
+chains the stack no longer runs, and the session's usernames are looked up
+again. The session and stored permissions are kept. A session is installed at
+once and its usernames are looked up afterwards; a lookup that fails, as on a
+device that is offline, changes nothing.
+
+The core vouches for the usernames in an `AuthSession` blob through the
+`SessionUsernamesRun` slot, which holds the run they were read in and a hash of
+that blob. A host that keeps the `AuthSession` value under a key of its own,
+such as one shared between origins, keeps `SessionUsernamesRun` next to it. A
+blob passed to `activateExternalSession` that the slot does not vouch for has
+its usernames looked up again on every activation; when nothing is recorded,
+its usernames are shown until that lookup answers.
+
+An install updated to this version with no wipe loses only this: a pairing
+host asks for each product's allowance again, because the stored keys carry no
+run, and the stored session's usernames are looked up once in the background.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

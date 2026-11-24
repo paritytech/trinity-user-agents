@@ -86,6 +86,7 @@ impl PairingHost {
 		let consent = Arc::new(ProductConsent::new(platform.clone()));
 		let grants = Arc::new(HostGrantStore::new(
 			platform.clone(),
+			services.stack().run(),
 			RemoteAccountHolder::GRANT_KEEPING,
 			session_state.clone(),
 		));
@@ -95,7 +96,8 @@ impl PairingHost {
 			session_state,
 			Arc::new(PairedGrants { grants: grants.clone(), consent: consent.clone() }),
 		);
-		let ring_vrf_registry = RingVrfRegistryStore::new(platform);
+		let ring_vrf_registry =
+			RingVrfRegistryStore::new(platform, services.stack().chains().clone());
 		let accounts = Arc::new(HostAccounts::new(
 			services.clone(),
 			Arc::new(RemoteAccountHolder::new(

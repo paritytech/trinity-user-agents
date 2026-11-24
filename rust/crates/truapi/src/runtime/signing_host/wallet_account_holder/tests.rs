@@ -30,7 +30,8 @@ pub fn unlocked_wallet(
 		test_stack(network_suffix, [0; 32], [0; 32], [0xcc; 32]),
 		Spawner::for_test(),
 	);
-	let registry = RingVrfRegistryStore::new(services.platform.clone());
+	let registry =
+		RingVrfRegistryStore::new(services.platform.clone(), services.stack().chains().clone());
 	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);

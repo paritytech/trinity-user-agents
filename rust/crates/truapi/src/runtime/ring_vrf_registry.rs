@@ -5,7 +5,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, ProductId};
+use crate::platform::{CoreStorageKey, Platform, ProductId, StackChains};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
@@ -26,9 +26,34 @@ struct RegistrySnapshot {
 	selected_providers: Vec<SelectedProvider>,
 }
 
+impl RegistrySnapshot {
+	/// The snapshot without the rings on chains that `chains` no longer has.
+	///
+	/// A wipe replaces a stack's chains and the rings on them, while a
+	/// registration on a chain the stack still runs stays valid. An entry left
+	/// with no ring is dropped, and an owner that lost a ring is no longer
+	/// listed completely, so its listing is read again.
+	fn on_chains(mut self, chains: &StackChains) -> Self {
+		let kept = |ring: &RingLocation| chains.contains(ring.chain_id);
+		let mut incomplete = Vec::new();
+		for entry in &mut self.entries {
+			let before = entry.rings.len();
+			entry.rings.retain(kept);
+			if entry.rings.len() != before {
+				incomplete.push(entry.handle.dot_ns_identifier.clone());
+			}
+		}
+		self.entries.retain(|entry| !entry.rings.is_empty());
+		self.complete_owners.retain(|owner| !incomplete.contains(owner));
+		self.selected_providers.retain(|provider| kept(&provider.ring));
+		self
+	}
+}
+
 /// Shared durable repository used by both account-authority roles.
 pub struct RingVrfRegistryStore {
 	platform: Arc<dyn Platform>,
+	chains: StackChains,
 	cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
 	storage_guard: futures::lock::Mutex<()>,
 }
@@ -150,9 +175,11 @@ impl RegistryUpdate<'_> {
 }
 
 impl RingVrfRegistryStore {
-	pub fn new(platform: Arc<dyn Platform>) -> Arc<Self> {
+	/// A registry kept in `platform`'s storage for a stack that runs `chains`.
+	pub fn new(platform: Arc<dyn Platform>, chains: StackChains) -> Arc<Self> {
 		Arc::new(Self {
 			platform,
+			chains,
 			cache: Mutex::new(HashMap::new()),
 			storage_guard: futures::lock::Mutex::new(()),
 		})
@@ -324,6 +351,7 @@ impl RingVrfRegistryStore {
 				},
 				None => RegistrySnapshot::default(),
 			};
+		let snapshot = snapshot.on_chains(&self.chains);
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")

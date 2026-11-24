@@ -11,7 +11,9 @@
 
 use core::{future::Future, time::Duration};
 
-use crate::platform::{CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId};
+use crate::platform::{
+	CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId, StackRun,
+};
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
 use truapi::v01;
@@ -32,10 +34,7 @@ use crate::{
 		},
 		worker_manifest::{WorkerManifest, check_app_manifest},
 	},
-	runtime::{
-		dotns_lookup::DotnsLookup,
-		services::RuntimeServices,
-	},
+	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
 	unix_time::current_unix_secs,
 };
 
@@ -66,14 +65,8 @@ async fn fetch_root_manifest(
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
 ) -> Result<Option<String>, DotnsError> {
-	fetch_text_record(
-		chain,
-		asset_hub_chain_genesis_hash,
-		product_id,
-		None,
-		MANIFEST_RECORD_KEY,
-	)
-	.await
+	fetch_text_record(chain, asset_hub_chain_genesis_hash, product_id, None, MANIFEST_RECORD_KEY)
+		.await
 }
 
 /// Reads the JSON `product_id`'s `worker.<product_id>.<tld>` subname publishes
@@ -190,6 +183,10 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 /// reads today, so a later consumer needs no cache migration.
 #[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
+	/// The run of the stack's chains the lookup was made in. The core skips
+	/// an entry from another run, because the chain it was read from no
+	/// longer exists.
+	pub run: StackRun,
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,
 	/// The manifest JSON exactly as published, or `None` where the chain
@@ -206,8 +203,10 @@ pub struct CachedManifest {
 /// grant instead of resolving one.
 ///
 /// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
-/// manifest belongs to. The core reads that entry before it consults the Asset
-/// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
+/// manifest belongs to. `run` is the [`Stack::run`](crate::platform::Stack::run)
+/// of the stack the host runs; the core ignores an entry stamped with any
+/// other. The core reads that entry before it consults the Asset Hub, so a
+/// seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
 /// either product is deployed.
 ///
@@ -222,8 +221,12 @@ pub struct CachedManifest {
 ///
 /// A Worker manifest is cached the same way, under
 /// [`worker_manifest_cache_key`].
-pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> Vec<u8> {
-	CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode()
+pub fn encode_cached_root_manifest(
+	json: Option<&str>,
+	fetched_at_secs: u64,
+	run: &StackRun,
+) -> Vec<u8> {
+	CachedManifest { run: run.clone(), fetched_at_secs, json: json.map(str::to_string) }.encode()
 }
 
 /// Why a grant lookup did not admit the caller.
@@ -669,7 +672,9 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
-	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), CachePolicy::UseCache, || async {
+	let key = CoreStorageKey::product_manifest(target);
+	let run = services.stack().run();
+	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, target) = (services.chain.clone(), target.clone());
 		services
@@ -710,7 +715,9 @@ pub async fn read_worker_manifest(
 	product_id: &ProductId,
 	policy: CachePolicy,
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
-	let (json, read) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
+	let key = worker_manifest_cache_key(product_id);
+	let run = services.stack().run();
+	let (json, read) = cached_dotns_json(platform, &run, key, policy, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
@@ -775,7 +782,9 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
-	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), CachePolicy::UseCache, || async {
+	let key = app_manifest_cache_key(product_id);
+	let run = services.stack().run();
+	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
 		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
 			.await
 			.map_err(|error| error.reason())
@@ -812,7 +821,8 @@ pub enum CachePolicy {
 }
 
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
-/// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
+/// younger than [`MANIFEST_TTL_SECS`] and was read in the run the stack's
+/// chains are in, and where it was read. Whatever `fetch`
 /// answers, including that there is nothing published, is cached for that
 /// lifetime.
 ///
@@ -821,6 +831,7 @@ pub enum CachePolicy {
 /// turn one blip into a day of withdrawn grants or missing providers.
 async fn cached_dotns_json<F, E>(
 	platform: &dyn Platform,
+	run: &StackRun,
 	key: CoreStorageKey,
 	policy: CachePolicy,
 	fetch: impl FnOnce() -> F,
@@ -838,6 +849,7 @@ where
 	if policy == CachePolicy::UseCache &&
 		let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
 		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
+		cached.run == *run &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
 	{
@@ -845,11 +857,7 @@ where
 	}
 
 	let json = fetch().await?;
-	let _ = platform
-		.write_core_storage(
-			key,
-			CachedManifest { fetched_at_secs: now, json: json.clone() }.encode(),
-		)
-		.await;
+	let entry = CachedManifest { run: run.clone(), fetched_at_secs: now, json: json.clone() };
+	let _ = platform.write_core_storage(key, entry.encode()).await;
 	Ok((json, DotnsRead::Fetched))
 }

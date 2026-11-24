@@ -209,8 +209,9 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 	use crate::platform::CoreStorage;
 	let platform = crate::test_support::StubPlatform::default();
 	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let run = crate::test_support::paseo_test_stack().run();
 	let read = |policy: CachePolicy| {
-		cached_dotns_json(&platform, key.clone(), policy, || async {
+		cached_dotns_json(&platform, &run, key.clone(), policy, || async {
 			Ok::<_, String>(Some("republished".to_string()))
 		})
 	};
@@ -219,7 +220,7 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 		platform
 			.write_core_storage(
 				key.clone(),
-				encode_cached_root_manifest(Some("published"), current_unix_secs()),
+				encode_cached_root_manifest(Some("published"), current_unix_secs(), &run),
 			)
 			.await
 			.expect("seeded");
