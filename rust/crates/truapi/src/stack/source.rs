@@ -160,9 +160,11 @@ pub struct StackStatus {
 	pub last_refresh: Option<StackRefreshOutcome>,
 	/// Where a chain's last answer differed from the descriptor the core
 	/// runs: its chains in the descriptor's order, then People's
-	/// `NetworkSuffix`. While a chain is listed, a refresh that was started
-	/// fetches the descriptor every five minutes instead of every hour, until
-	/// a newer copy sets `restart_required`.
+	/// `NetworkSuffix`. The suffix is listed only once this runtime has read
+	/// it, so a suffix that is not listed may not have been read yet. While a
+	/// chain is listed, a refresh that was started fetches the descriptor
+	/// every five minutes instead of every hour, until a newer copy sets
+	/// `restart_required`.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -186,7 +188,8 @@ pub struct StackSource {
 	/// The last answer of each chain that gave a different genesis hash from
 	/// the one the running copy names.
 	wrong_genesis: Vec<GenesisHashes>,
-	/// People's `NetworkSuffix` as last read, or `None` before any read.
+	/// People's `NetworkSuffix` as last read, or `None` before any read. It is
+	/// not stored, so each runtime starts without one.
 	people_suffix: Option<Vec<u8>>,
 }
 

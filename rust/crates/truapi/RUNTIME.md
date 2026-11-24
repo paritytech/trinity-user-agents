@@ -246,16 +246,20 @@ The core also checks People's `NetworkSuffix.NetworkSuffix` against the
 descriptor's `tld`. It makes no request for this. A signing host already reads
 the suffix when it builds allowance proofs, and the core compares that value. If
 it differs, `StackStatus::mismatches` lists it until a later read gives the
-`tld`.
+`tld` or the runtime ends. The core keeps the suffix in memory only, so a
+runtime built again, after a relaunch or after `restart_required`, lists no
+suffix until its own allowance work reads one. A suffix that is not listed may
+not have been read yet.
 
 This is only a report. The core keeps using People and does not fetch the
 descriptor any sooner. It matters because the core derives its identities under
 the `tld` but builds proof contexts with People's suffix. If the two differ, an
 identity derived under one does not match the other.
 
-Nothing is listed if the read fails or the suffix is not one to sixteen bytes
-long. The allowance work fails with that error instead. A pairing host does no
-allowance work, so it never lists a suffix.
+A failed read changes nothing, and neither does a suffix that is not one to
+sixteen bytes long: a suffix listed before stays listed, and the allowance work
+fails with that error. A pairing host does no allowance work, so it never lists
+a suffix.
 
 #### Descriptor refresh
 

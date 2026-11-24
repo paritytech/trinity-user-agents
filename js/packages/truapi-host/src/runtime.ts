@@ -124,6 +124,10 @@ export type StackMismatch =
        * derives its identities under `peopl.<tld>` and builds proof contexts
        * with People's suffix, so an identity derived under one does not match
        * the other. The core keeps using People.
+       *
+       * A signing host reads the suffix during its allowance work and keeps it
+       * in memory only. A runtime built again, after a relaunch or for
+       * `restartRequired`, lists none until it reads the suffix itself.
        */
       kind: "networkSuffix";
       /** The descriptor's `tld`. */
@@ -183,11 +187,13 @@ export interface StackStatus {
   };
   /**
    * Where a chain's last answer differed from the descriptor the core runs:
-   * its chains in the descriptor's order, then People's `NetworkSuffix`.
-   * While a chain is listed, a host with `fetchStackDescriptor` is asked for
-   * the descriptor every five minutes instead of every hour, until a newer
-   * copy sets `restartRequired`. A light client answers from its own chain
-   * spec, so it never lists a chain that restarted.
+   * its chains in the descriptor's order, then People's `NetworkSuffix`. The
+   * suffix is listed only once this runtime has read it, so a suffix that is
+   * not listed may not have been read yet. While a chain is listed, a host
+   * with `fetchStackDescriptor` is asked for the descriptor every five minutes
+   * instead of every hour, until a newer copy sets `restartRequired`. A light
+   * client answers from its own chain spec, so it never lists a chain that
+   * restarted.
    */
   mismatches: StackMismatch[];
 }

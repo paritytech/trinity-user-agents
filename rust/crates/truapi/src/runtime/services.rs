@@ -316,7 +316,8 @@ impl RuntimeServices {
 	///
 	/// The suffix also goes to the stack's checks, which report one that is
 	/// not the stack's `tld`. Fails when the read fails or People holds no
-	/// suffix of one to sixteen bytes, and nothing is reported then.
+	/// suffix of one to sixteen bytes. A failed read changes nothing the
+	/// checks report: a suffix reported before stays reported.
 	pub async fn people_network_suffix(
 		&self,
 		people: &statement_allowance::rpc::RpcClient,

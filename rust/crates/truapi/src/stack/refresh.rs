@@ -86,7 +86,7 @@ struct Shared {
 /// A chain whose genesis hash is not the descriptor's is reported in
 /// [`StackStatus::mismatches`], and the refresh fetches the descriptor sooner.
 /// A People chain whose `NetworkSuffix` is not the descriptor's `tld` is
-/// reported there too.
+/// reported there too, once this runtime has read the suffix.
 #[derive(Clone)]
 pub struct StackChecks {
 	shared: Arc<Shared>,
@@ -101,7 +101,9 @@ impl StackChecks {
 	/// Takes People's `NetworkSuffix.NetworkSuffix` as read from the chain.
 	///
 	/// A suffix that is not the stack's `tld` is reported in
-	/// [`StackStatus::mismatches`] until a later read gives the `tld`.
+	/// [`StackStatus::mismatches`] until a later read gives the `tld` or the
+	/// refresh drops with its runtime. The suffix is kept in memory only, so
+	/// a runtime built again reports none until it reads one.
 	pub fn people_suffix_answered(&self, answered: &[u8]) {
 		let listing = self.shared.source().people_suffix_answered(answered);
 		self.shared.answer_recorded(listing);
