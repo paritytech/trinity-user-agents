@@ -19,6 +19,8 @@ never see it.
   into the runner, with guard pages or explicit bounds checks (T6).
 - `scripts/build-android.sh` and `scripts/run-android.sh`: every runner on
   an Android phone over adb (T8).
+- `android-bench/`: the Android bench app, with a WebView engine
+  (`scripts/build-android-app.sh`, `scripts/run-android-app.py`, T9).
 - `runner-boa/`: the same prelude and bindings on Boa, the JavaScript
   engine written in Rust, for comparison (T6).
 - `benchkit/` and `ios-bench/`: the engines behind a C API, and the SwiftUI
@@ -350,6 +352,10 @@ three runs, medians:
 | Once per process | | | | 2.3 s and 30 MiB to compile | | |
 | 8 MiB cap | | catchable OOM after 6 MiB | catchable OOM after 6 MiB | | catchable OOM after 6 MiB | no heap limit to set |
 
+- The raw native and bounds-check files were rerun after the start-time fix
+  (T9), at thermal status 0: native 0.54 ms and 20 ms, bounds checks 1.10 ms
+  and 35 ms after the first worker. The table keeps the first, throttled run
+  so its columns compare.
 - **Throttled.** The thermal status read moderate (2) after every replay,
   with the battery at 28% and a fast charger cycling; at rest it reads 0. The
   absolute numbers are pessimistic; the ratios between engines are the
@@ -371,6 +377,53 @@ three runs, medians:
 - **Boa needs its enum value representation on Android.** Its default NaN
   boxing panics on start: Android's ARM64 pointers carry a tag in the top
   byte. With `jsvalue-enum` it runs, at 6.5 times native on renders.
+
+## T9: inside an Android app, with the WebView
+
+`android-bench/` is the Android counterpart of the iOS bench app: one
+activity that loads BenchKit as `libqjs_benchkit.so` (JNI entry points in
+`benchkit/src/lib.rs`) and runs the same suite, plus a WebView engine that
+replays the corpus in a real `android.webkit.WebView`, attached to the window
+at 1 px so Chromium does not throttle it. `scripts/build-android-app.sh
+<bounds|guard>` builds the release APK; `scripts/run-android-app.py` installs
+it, follows its `BENCH` lines in logcat into `results/android-app/`, and reads
+the WebView renderer process's memory with `dumpsys meminfo` while the app
+holds ten WebViews.
+
+The guest now declares its maximum memory, 32 MiB (`build-guest.sh`), and the
+bounds-check build reserves exactly that with mmap again, growing in place.
+`QJS_W2C_MMAP=0` keeps the allocator path for comparison.
+
+Galaxy A26 (SM-A266B), Android 16, thermal status 0 throughout, release
+APK, medians of three replays:
+
+| In the app | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | WebView | Boa | wasmi |
+|---|---|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.55 to 0.60 / 0.73 ms | 0.72 / 0.82 ms | 1.29 / 1.35 ms | 0.89 / 1.50 ms | 4.06 / 11.7 ms | 10.4 / 10.5 ms |
+| Boot to idle, p50 | 20 to 24 ms | 24 to 26 ms | 41 ms | 29 to 48 ms (293 ms for the first, starting the renderer) | 218 ms | 275 ms |
+| Memory per worker | 2.0 MiB | 2.4 MiB | 2.45 MiB | about 7.8 MiB (76 MiB renderer for 10, plus 1.6 MiB in the app) | 6.3 MiB | 3.6 MiB |
+| Codec, round trips/s | 1 245 | 966 | 527 | 4 401 (JIT) | 104 | 74 |
+| rxjs, events/s | 87 226 | | 34 798 | 304 878 (JIT) | 7 781 | 4 614 |
+| 8 MiB cap | | catchable OOM | catchable OOM | | | catchable OOM |
+| Out-of-bounds read | | trapped, the app carries on | trapped, the app carries on | | | |
+| 8 GiB reservations that fit | | 59 of 64 | 59 of 64 | | | |
+
+- **Guard pages work inside an Android app.** ART owns the fault signals
+  (libsigchain), and wasm2c's handler still gets the out-of-bounds fault,
+  traps the guest and returns; the app carries on. On 64-bit Android, wasm2c
+  with guard pages is 1.25 times native on renders and starts as fast.
+- **The start-time fix holds.** With the 32 MiB declared maximum the
+  bounds-check build boots in 41 ms in the app (2 times native), against
+  84 to 104 ms with the allocator, and memory drops to 2.45 MiB a worker.
+- **The WebView** renders in 0.9 ms and runs pure JavaScript three to four
+  times faster than QuickJS (its JIT), but costs about 7.8 MiB a worker,
+  most of it in the renderer process, and its first worker waits about 0.3 s
+  for that process to start.
+- The WebView engine does not echo frames, so the ping-pong workloads have
+  no WebView result.
+- One bounds-check instances reading of 0.31 MiB a worker did not repeat
+  (2.45 MiB on the rerun) and is left out.
 
 ## T2: the corpus
 

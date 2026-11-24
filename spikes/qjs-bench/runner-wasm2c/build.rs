@@ -5,6 +5,8 @@
 //!   `wasm32-wasip1` release build).
 //! - `QJS_W2C_MEMCHECK`: `guard` (guard pages and a signal handler, the
 //!   default) or `bounds` (an explicit check on every load and store).
+//! - `QJS_W2C_MMAP`: `0` makes the bounds-check variant take memory from the
+//!   allocator instead of reserving the guest's maximum with mmap.
 //! - `QJS_W2C_OPT`: the C optimisation level (default `2`).
 //! - `WABT_PREFIX`: the WABT install (default: `brew --prefix wabt`).
 
@@ -13,7 +15,7 @@ use std::{env, path::PathBuf, process::Command};
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    for variable in ["QJS_GUEST_WASM", "QJS_W2C_MEMCHECK", "QJS_W2C_OPT", "WABT_PREFIX"] {
+    for variable in ["QJS_GUEST_WASM", "QJS_W2C_MEMCHECK", "QJS_W2C_MMAP", "QJS_W2C_OPT", "WABT_PREFIX"] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
     println!("cargo:rerun-if-changed=c/glue.c");
@@ -54,10 +56,14 @@ fn main() {
         },
         "bounds" => {
             build.define("WASM_RT_MEMCHECK_BOUNDS_CHECK", "1");
-            // Otherwise the runtime still reserves the module's maximum (4 GiB
-            // here) up front, which iOS refuses after the first instance.
-            // Without mmap, memory comes from the allocator and grows by realloc.
-            build.define("WASM_RT_USE_MMAP", "0");
+            // With mmap the runtime reserves the module's declared maximum up
+            // front and grows in place: 32 MiB for a guest built by
+            // build-guest.sh, but 4 GiB for one that declares none, which iOS
+            // refuses after the first instance. QJS_W2C_MMAP=0 takes memory
+            // from the allocator instead, growing by realloc.
+            if env::var("QJS_W2C_MMAP").as_deref() == Ok("0") {
+                build.define("WASM_RT_USE_MMAP", "0");
+            }
             // Without the signal handler, wasm2c counts call depth instead
             // of catching native stack overflow. QuickJS recurses deeply.
             build.define("WASM_RT_MAX_CALL_STACK_DEPTH", "20000");
@@ -65,7 +71,8 @@ fn main() {
         other => panic!("QJS_W2C_MEMCHECK must be guard or bounds, not {other}"),
     }
     build.compile("qjs_w2c");
-    println!("cargo:rustc-env=QJS_W2C_VARIANT=wasm2c-{memcheck}-O{opt}");
+    let allocator = if memcheck == "bounds" && env::var("QJS_W2C_MMAP").as_deref() == Ok("0") { "-malloc" } else { "" };
+    println!("cargo:rustc-env=QJS_W2C_VARIANT=wasm2c-{memcheck}{allocator}-O{opt}");
 }
 
 fn brew_prefix(formula: &str) -> PathBuf {

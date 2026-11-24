@@ -139,6 +139,58 @@ fn measure(engine: &str, mode: &str, resources: &str, count: usize) -> Result<St
     }
 }
 
+/// The JNI face of [`benchkit_run`] and [`benchkit_variant`] for the Android
+/// bench app's `io.parity.qjsbench.BenchKit`.
+#[cfg(target_os = "android")]
+mod android {
+    use std::ffi::{c_char, CStr, CString};
+
+    use jni_sys::{jclass, jint, jstring, JNIEnv};
+
+    unsafe fn read(env: *mut JNIEnv, text: jstring) -> String {
+        let chars = ((**env).v1_1.GetStringUTFChars)(env, text, std::ptr::null_mut());
+        let owned = CStr::from_ptr(chars).to_string_lossy().into_owned();
+        ((**env).v1_1.ReleaseStringUTFChars)(env, text, chars);
+        owned
+    }
+
+    unsafe fn make(env: *mut JNIEnv, text: &str) -> jstring {
+        let text = CString::new(text).expect("no NUL in a result line");
+        ((**env).v1_1.NewStringUTF)(env, text.as_ptr() as *const c_char)
+    }
+
+    /// `BenchKit.run(engine, mode, resources, count)`.
+    ///
+    /// # Safety
+    /// Called by the JVM with a valid environment and string references.
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_io_parity_qjsbench_BenchKit_run(
+        env: *mut JNIEnv,
+        _class: jclass,
+        engine: jstring,
+        mode: jstring,
+        resources: jstring,
+        count: jint,
+    ) -> jstring {
+        let line = super::run_on_thread(
+            read(env, engine),
+            read(env, mode),
+            read(env, resources),
+            count.max(0) as usize,
+        );
+        make(env, &line)
+    }
+
+    /// `BenchKit.variant()`.
+    ///
+    /// # Safety
+    /// Called by the JVM with a valid environment.
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_io_parity_qjsbench_BenchKit_variant(env: *mut JNIEnv, _class: jclass) -> jstring {
+        make(env, qjs_runner_wasm2c::VARIANT)
+    }
+}
+
 fn escape(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }

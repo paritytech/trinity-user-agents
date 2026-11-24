@@ -1,1 +1,1 @@
-RESULT {"run":1,"thermal":"2","engine":"wasm2c-bounds-O2","bootMs":117.6,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":1.409,"renderP95Ms":1.757,"linearMemoryKiB":3520}
+RESULT {"run":1,"thermal":"0","engine":"wasm2c-bounds-O2","bootMs":82.9,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":1.110,"renderP95Ms":1.322,"linearMemoryKiB":3520}

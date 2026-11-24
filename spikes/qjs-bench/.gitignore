@@ -4,3 +4,9 @@
 xcuserdata/
 /results/ios-sim/*.log
 /results/ios-device/*.log
+/android-bench/.gradle/
+/android-bench/build/
+/android-bench/app/build/
+/android-bench/local.properties
+/android-bench/app/src/main/jniLibs/
+/android-bench/app/src/main/assets/

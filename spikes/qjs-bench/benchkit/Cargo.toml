@@ -5,7 +5,8 @@ edition.workspace = true
 publish.workspace = true
 
 [lib]
-crate-type = ["staticlib"]
+# The iOS app links the static library, the Android app loads the shared one.
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 bench-common = { path = "../bench-common" }
@@ -13,3 +14,6 @@ qjs-guest = { path = "../guest" }
 qjs-runner = { path = "../runner" }
 qjs-runner-boa = { path = "../runner-boa" }
 qjs-runner-wasm2c = { path = "../runner-wasm2c" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni-sys = "0.4"

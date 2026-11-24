@@ -1,5 +1,5 @@
-codec wasm2c-bounds: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":3799.636112,"roundTripsPerSecond":526.3661943004504,"bytes":1170000}
-rxjs wasm2c-bounds: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":271.561884,"eventsPerSecond":36824.01908803961,"folded":65922}
-pingpong-64 wasm2c-bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.010692000000005919,"p95Ms":0.011807000000004564}
-pingpong-4k wasm2c-bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.011500000000012278,"p95Ms":0.012692000000001258}
+codec wasm2c-bounds: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":3189.57319,"roundTripsPerSecond":627.043143662742,"bytes":1170000}
+rxjs wasm2c-bounds: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":239.641346,"eventsPerSecond":41729.026175641666,"folded":65922}
+pingpong-64 wasm2c-bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.009000000000000341,"p95Ms":0.010038000000008651}
+pingpong-4k wasm2c-bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.012269000000003416,"p95Ms":0.01322999999999297}
 memcap wasm2c-bounds: [info] caught: InternalError: out of memory after 6 MiB

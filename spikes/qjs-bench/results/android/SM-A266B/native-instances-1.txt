@@ -1,1 +1,1 @@
-RESULT {"engine":"quickjs-native","firstBootMs":23.7,"bootP50Ms":21.8,"firstInstanceMiB":4.37,"perInstanceMiB":2.04,"instances":10}
+RESULT {"engine":"quickjs-native","firstBootMs":25.5,"bootP50Ms":19.9,"firstInstanceMiB":4.37,"perInstanceMiB":2.04,"instances":10}
