@@ -275,6 +275,8 @@ private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed())
             is Modifier.Spin -> add(JsModifier.Spin(modifier.v1.toInt()))
             is Modifier.ExitFade -> add(JsModifier.ExitFade(modifier.v1.toInt()))
             is Modifier.Mask -> add(modifier.v1.toJs(keyed))
+            // The Android enter-and-keyframes layer plays these; until then the node draws as the tree does.
+            is Modifier.Enter, is Modifier.Animate -> Unit
         }
     }
 
