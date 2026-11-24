@@ -18,8 +18,6 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         var retryDelay: Duration = .seconds(1)
         /// The most pages that one jump asks in each direction.
         var jumpPageLimit = 1_000
-        /// The product wants a `Seen` action when the user sees a newer message.
-        var reportsSeen = false
         /// The wait before a `Seen` that the product did not take goes again.
         var seenRetryDelay: Duration = .seconds(3)
         /// The most times that one `Seen` goes to the product.

@@ -90,11 +90,11 @@ struct ProductMessageCacheTests {
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
         await cache.store(entry([message(1)]), productId: fixture.productId, roomId: "lobby")
 
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message(2)), persist: false)
+        #expect(try await bridge.updateFeed(roomId: "lobby", update: .new(message(2)), persist: false) == .applied)
 
         let listener = CachedFeedListener()
         let registration = listeners.register(listener, for: fixture.chatId("lobby"))
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message(3)), persist: false)
+        #expect(try await bridge.updateFeed(roomId: "lobby", update: .new(message(3)), persist: false) == .applied)
         registration.cancel()
 
         let cached = await cache.entry(productId: fixture.productId, roomId: "lobby")

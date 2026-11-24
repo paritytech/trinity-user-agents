@@ -121,7 +121,6 @@ export function makeHostCallbacks(
             readChatRoomConfig: async () => ({
               productSource: false,
               reactionDetails: false,
-              reportSeen: false,
             }),
             setChatRoomMetadata: async () => {},
             setChatRoomPreview: async () => {},

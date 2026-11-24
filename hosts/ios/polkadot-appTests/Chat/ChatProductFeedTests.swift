@@ -15,7 +15,7 @@ struct ChatProductFeedTests {
     @Test func aNewTextIsAProductMessageUnderARoomScopedId() async throws {
         let bridge = try await openRoom()
 
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m1", body: .text(text: "hi"))),
             persist: true
@@ -34,7 +34,11 @@ struct ChatProductFeedTests {
     func eachBodyKindIsStoredAsAContentTheRoomDraws(_ bodyCase: BodyCase) async throws {
         let bridge = try await openRoom()
 
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", body: bodyCase.body)), persist: true)
+        _ = try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m1", body: bodyCase.body)),
+            persist: true
+        )
 
         #expect(try await fixture.messages("lobby").last?.content == bodyCase.content)
     }
@@ -44,17 +48,17 @@ struct ChatProductFeedTests {
         let user = fixture.userMessage(.text("question"), roomId: "lobby")
         try await fixture.save(user)
 
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m1", body: .text(text: "answer"), replyTo: user.messageId)),
             persist: true
         )
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m2", body: .text(text: "again"), replyTo: "m1")),
             persist: true
         )
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m3", body: .text(text: "lost"), replyTo: "nowhere")),
             persist: true
@@ -74,13 +78,11 @@ struct ChatProductFeedTests {
     @Test func aProductCannotPostAsTheUser() async throws {
         let bridge = try await openRoom()
 
-        await #expect(throws: NativeChatFeedRejection.NotOwner) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .new(message("m1", body: .text(text: "hi"), participant: "user")),
-                persist: true
-            )
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m1", body: .text(text: "hi"), participant: "user")),
+            persist: true
+        ) == .notOwner)
         #expect(try await fixture.messages("lobby").isEmpty)
     }
 
@@ -88,22 +90,22 @@ struct ChatProductFeedTests {
         let bridge = try await openRoom()
         let user = fixture.userMessage(.text("hi"), roomId: "lobby")
         try await fixture.save(user)
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", body: .text(text: "a"))), persist: true)
+        _ = try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m1", body: .text(text: "a"))),
+            persist: true
+        )
 
-        await #expect(throws: NativeChatFeedRejection.DuplicateMessage) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .new(message("m1", body: .text(text: "b"))),
-                persist: true
-            )
-        }
-        await #expect(throws: NativeChatFeedRejection.DuplicateMessage) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .new(message(user.messageId, body: .text(text: "c"))),
-                persist: true
-            )
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m1", body: .text(text: "b"))),
+            persist: true
+        ) == .duplicateMessage)
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message(user.messageId, body: .text(text: "c"))),
+            persist: true
+        ) == .duplicateMessage)
     }
 
     /// A product picks the id of a message in one room only, so two rooms can use the same id.
@@ -111,8 +113,16 @@ struct ChatProductFeedTests {
         let bridge = try await openRoom()
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "other", name: "Other", icon: nil)
 
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", body: .text(text: "a"))), persist: true)
-        try await bridge.updateFeed(roomId: "other", update: .new(message("m1", body: .text(text: "b"))), persist: true)
+        _ = try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m1", body: .text(text: "a"))),
+            persist: true
+        )
+        _ = try await bridge.updateFeed(
+            roomId: "other",
+            update: .new(message("m1", body: .text(text: "b"))),
+            persist: true
+        )
 
         #expect(try await fixture.messages("lobby").map(\.content) == [.text("a")])
         #expect(try await fixture.messages("other").map(\.content) == [.text("b")])
@@ -122,14 +132,14 @@ struct ChatProductFeedTests {
 
     @Test func anEditReplacesTheContentAndMarksTheMessageEdited() async throws {
         let bridge = try await openRoom()
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m1", body: .text(text: "draft"))),
             persist: true
         )
 
         for text in ["draft 2", "final"] {
-            try await bridge.updateFeed(
+            _ = try await bridge.updateFeed(
                 roomId: "lobby",
                 update: .edited(messageId: "m1", body: .text(text: text), editedAt: 1_700_000_000_500),
                 persist: true
@@ -150,13 +160,13 @@ struct ChatProductFeedTests {
     /// A message that the product draws again in place shows no "edited" (`Replaced`).
     @Test func aReplacedMessageDrawsAgainWithoutAnEdit() async throws {
         let bridge = try await openRoom()
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m1", body: .text(text: "Waiting for the other player"))),
             persist: true
         )
 
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .replaced(message("m1", body: .text(text: "The game started"))),
             persist: true
@@ -170,26 +180,22 @@ struct ChatProductFeedTests {
         let user = fixture.userMessage(.text("mine"), roomId: "lobby")
         try await fixture.save(user)
 
-        await #expect(throws: NativeChatFeedRejection.NotOwner) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .edited(messageId: user.messageId, body: .text(text: "yours"), editedAt: 1),
-                persist: true
-            )
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .edited(messageId: user.messageId, body: .text(text: "yours"), editedAt: 1),
+            persist: true
+        ) == .notOwner)
         #expect(try await fixture.messages("lobby").map(\.content) == [.text("mine")])
     }
 
     @Test func anEditOfAMessageThatIsNotThereIsUnknown() async throws {
         let bridge = try await openRoom()
 
-        await #expect(throws: NativeChatFeedRejection.UnknownMessage) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .edited(messageId: "m9", body: .text(text: "x"), editedAt: 1),
-                persist: true
-            )
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .edited(messageId: "m9", body: .text(text: "x"), editedAt: 1),
+            persist: true
+        ) == .unknownMessage)
     }
 
     // MARK: - Deleted
@@ -198,15 +204,23 @@ struct ChatProductFeedTests {
     /// message before it.
     @Test func aDeleteRemovesTheMessageAndTheChatListShowsTheMessageBefore() async throws {
         let bridge = try await openRoom()
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", body: .text(text: "a"))), persist: true)
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m2", body: .text(text: "b"))), persist: true)
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m1", body: .text(text: "a"))),
+            persist: true
+        )
+        _ = try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .new(message("m2", body: .text(text: "b"))),
+            persist: true
+        )
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .edited(messageId: "m2", body: .text(text: "b2"), editedAt: 1_700_000_000_500),
             persist: true
         )
 
-        try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m2"), persist: true)
+        _ = try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m2"), persist: true)
 
         #expect(try await fixture.messages("lobby").map(\.content) == [.text("a")])
         let chat = try #require(try await fixture.storedChat("lobby"))
@@ -219,18 +233,22 @@ struct ChatProductFeedTests {
         let user = fixture.userMessage(.text("mine"), roomId: "lobby")
         try await fixture.save(user)
 
-        await #expect(throws: NativeChatFeedRejection.NotOwner) {
-            try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: user.messageId), persist: true)
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .deleted(messageId: user.messageId),
+            persist: true
+        ) == .notOwner)
         #expect(try await fixture.messages("lobby").map(\.content) == [.text("mine")])
     }
 
     @Test func aDeleteOfAMessageThatIsNotThereIsUnknown() async throws {
         let bridge = try await openRoom()
 
-        await #expect(throws: NativeChatFeedRejection.UnknownMessage) {
-            try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m9"), persist: true)
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .deleted(messageId: "m9"),
+            persist: true
+        ) == .unknownMessage)
     }
 
     // MARK: - Reactions
@@ -241,20 +259,20 @@ struct ChatProductFeedTests {
         try await fixture.save(user)
 
         for participant in ["product", "alice", "bob"] {
-            try await bridge.updateFeed(
+            _ = try await bridge.updateFeed(
                 roomId: "lobby",
                 update: .reactionPlaced(messageId: user.messageId, participantId: participant, emoji: "👍"),
                 persist: true
             )
         }
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .reactionPlaced(messageId: user.messageId, participantId: "alice", emoji: "👍"),
             persist: true
         )
         #expect(try await reactions(of: user.messageId) == ["👍", "👍", "👍"])
 
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .reactionRemoved(messageId: user.messageId, participantId: "bob", emoji: "👍"),
             persist: true
@@ -267,26 +285,22 @@ struct ChatProductFeedTests {
 
     @Test func aProductCannotReactAsTheUserOrToAMessageThatIsNotThere() async throws {
         let bridge = try await openRoom()
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m1", body: .text(text: "hi"))),
             persist: true
         )
 
-        await #expect(throws: NativeChatFeedRejection.NotOwner) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .reactionPlaced(messageId: "m1", participantId: "user", emoji: "👍"),
-                persist: true
-            )
-        }
-        await #expect(throws: NativeChatFeedRejection.UnknownMessage) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .reactionPlaced(messageId: "m9", participantId: "alice", emoji: "👍"),
-                persist: true
-            )
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .reactionPlaced(messageId: "m1", participantId: "user", emoji: "👍"),
+            persist: true
+        ) == .notOwner)
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .reactionPlaced(messageId: "m9", participantId: "alice", emoji: "👍"),
+            persist: true
+        ) == .unknownMessage)
         #expect(try await reactions(of: Chat.ProductMessageId.stored("m1", in: fixture.chatId("lobby"))).isEmpty)
     }
 
@@ -304,7 +318,7 @@ struct ChatProductFeedTests {
         let user = fixture.userMessage(.text("hi"), roomId: "lobby")
         try await fixture.save(user)
 
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .statusChanged(messageId: user.messageId, status: status),
             persist: true
@@ -316,26 +330,24 @@ struct ChatProductFeedTests {
     /// The host keeps the read state of a product message, so a status for it changes nothing.
     @Test func aStatusLeavesAProductMessageAlone() async throws {
         let bridge = try await openRoom()
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .new(message("m1", body: .text(text: "hi"))),
             persist: true
         )
 
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .statusChanged(messageId: "m1", status: .read),
             persist: true
         )
 
         #expect(try await fixture.messages("lobby").first?.status == .incoming(.new))
-        await #expect(throws: NativeChatFeedRejection.UnknownMessage) {
-            try await bridge.updateFeed(
-                roomId: "lobby",
-                update: .statusChanged(messageId: "m9", status: .read),
-                persist: true
-            )
-        }
+        #expect(try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .statusChanged(messageId: "m9", status: .read),
+            persist: true
+        ) == .unknownMessage)
     }
 
     // MARK: - Rooms
@@ -343,8 +355,8 @@ struct ChatProductFeedTests {
     @Test func anUpdateForARoomThatDoesNotExistIsRefused() async throws {
         let bridge = await fixture.bridge()
 
-        await #expect(throws: NativeChatFeedRejection.self) {
-            try await bridge.updateFeed(
+        await #expect(throws: HostRejection.self) {
+            _ = try await bridge.updateFeed(
                 roomId: "gone",
                 update: .statusChanged(messageId: "m1", status: .sent),
                 persist: true
@@ -359,14 +371,14 @@ struct ChatProductFeedTests {
         let listener = RecordingFeedListener()
         let update = ChatFeedUpdate.new(message("m1", body: .text(text: "hi")))
 
-        try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
+        #expect(try await bridge.updateFeed(roomId: "lobby", update: update, persist: false) == .applied)
         #expect(await listener.updates.isEmpty)
 
         let registration = listeners.register(listener, for: fixture.chatId("lobby"))
-        try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
-        try await bridge.updateFeed(roomId: "other", update: update, persist: false)
+        #expect(try await bridge.updateFeed(roomId: "lobby", update: update, persist: false) == .applied)
+        _ = try await bridge.updateFeed(roomId: "other", update: update, persist: false)
         registration.cancel()
-        try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
+        _ = try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
 
         #expect(await listener.updates.map(\.roomId) == ["lobby"])
         #expect(await listener.updates.map(\.update) == [update])

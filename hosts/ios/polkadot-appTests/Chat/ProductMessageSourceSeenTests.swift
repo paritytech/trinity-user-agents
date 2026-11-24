@@ -85,7 +85,6 @@ private extension ProductMessageSourceSeenTests {
             cache: ProductMessageCache(),
             settings: .init(
                 retryDelay: .milliseconds(1),
-                reportsSeen: true,
                 seenRetryDelay: .milliseconds(5),
                 seenAttempts: 3
             ),

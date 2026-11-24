@@ -392,11 +392,11 @@ struct ProductMessageSourceTests {
         ])
     }
 
-    /// `Seen` goes to the product only when it asks, and only for a newer message.
+    /// `Seen` goes to the product only for a newer message.
     @Test func seenGoesToTheProductForANewerMessage() async throws {
         let history = ProductRoomHistory(count: 10)
         let querying = ScriptedProductChatQuerying(page: history.answer)
-        let source = makeSource(querying, reportsSeen: true)
+        let source = makeSource(querying)
         await open(source)
 
         _ = try await source.perform(.markSeen(["m4", "m9"]))
@@ -405,17 +405,6 @@ struct ProductMessageSourceTests {
         _ = try await source.perform(.markSeen(["m9"]))
 
         #expect(querying.actionRequests.map(\.action) == [.seen(messageId: "m9")])
-    }
-
-    @Test func seenStaysInTheHostWhenTheProductDoesNotAsk() async throws {
-        let history = ProductRoomHistory(count: 10)
-        let querying = ScriptedProductChatQuerying(page: history.answer)
-        let source = makeSource(querying, reportsSeen: false)
-        await open(source)
-
-        _ = try await source.perform(.markSeen(["m9"]))
-
-        #expect(querying.actionRequests.isEmpty)
     }
 
     /// A message that the product deletes while the room is open leaves the window and the cached page.
@@ -551,7 +540,7 @@ extension ProductMessageSourceTests {
             page: { _ in page },
             action: { _ in .acknowledged }
         )
-        let source = makeSource(querying, reportsSeen: true)
+        let source = makeSource(querying)
         await open(source)
 
         #expect(await source.snapshot.unseenReactionTargets == ["m2"])
@@ -567,8 +556,7 @@ extension ProductMessageSourceTests {
 
 private func makeSource(
     _ querying: ScriptedProductChatQuerying,
-    cache: ProductMessageCache = ProductMessageCache(),
-    reportsSeen: Bool = false
+    cache: ProductMessageCache = ProductMessageCache()
 ) -> ProductMessageSource {
     ProductMessageSource(
         chatId: .chatExtension(productId, roomId: roomId),
@@ -576,7 +564,7 @@ private func makeSource(
         roomId: roomId,
         querying: querying,
         cache: cache,
-        settings: .init(retryDelay: .milliseconds(1), reportsSeen: reportsSeen),
+        settings: .init(retryDelay: .milliseconds(1)),
         now: { 1_000_000 },
         outbox: .inMemory(
             querying: querying,

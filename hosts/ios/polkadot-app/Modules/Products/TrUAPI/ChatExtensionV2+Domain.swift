@@ -6,15 +6,11 @@ import TrUAPIHost
 
 extension Chat.RoomConfig {
     init(_ config: ChatRoomConfig) {
-        self.init(
-            productSource: config.productSource,
-            reactionDetails: config.reactionDetails,
-            reportSeen: config.reportSeen
-        )
+        self.init(productSource: config.productSource, reactionDetails: config.reactionDetails)
     }
 
     var wireValue: ChatRoomConfig {
-        ChatRoomConfig(productSource: productSource, reactionDetails: reactionDetails, reportSeen: reportSeen)
+        ChatRoomConfig(productSource: productSource, reactionDetails: reactionDetails)
     }
 }
 

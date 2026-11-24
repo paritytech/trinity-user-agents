@@ -162,7 +162,7 @@ private extension ChatExtensionRoomMetadataTests {
     }
 
     var config: Chat.RoomConfig {
-        Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
+        Chat.RoomConfig(productSource: false, reactionDetails: true)
     }
 
     func saveDeclarations() async throws {

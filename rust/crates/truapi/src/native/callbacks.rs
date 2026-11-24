@@ -1,6 +1,6 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
-	StackFetchResponse, StackStatus, UserConfirmationReview,
+	AuthState, ChatFeedOutcome, DevicePermissionStatus, PermissionDecision, ProductId,
+	StackFetchRequest, StackFetchResponse, StackStatus, UserConfirmationReview,
 };
 use truapi::latest;
 
@@ -8,10 +8,7 @@ use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
-use super::{
-	config::ProductExecutionConfig,
-	errors::{HostRejection, NativeChatFeedRejection, NativeChatRoomRejection},
-};
+use super::{config::ProductExecutionConfig, errors::HostRejection};
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
 
@@ -325,16 +322,15 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// In the same step the host keeps `config` for the room across restarts,
 	/// for a new room and for a room that exists. A change of `product_source`
 	/// discards the stored messages or the cached pages of the room. A host
-	/// that cannot keep `config` refuses it with
-	/// [`NativeChatRoomRejection::UnsupportedConfig`] before it creates or
-	/// changes anything.
+	/// that cannot keep `config` refuses it with `UnsupportedConfig` before it
+	/// creates or changes anything.
 	async fn create_room(
 		&self,
 		room_id: String,
 		name: String,
 		icon: String,
 		config: truapi::latest::ChatRoomConfig,
-	) -> Result<latest::ChatRoomRegistrationStatus, NativeChatRoomRejection>;
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError>;
 
 	/// Register or resolve a native product Chat bot.
 	async fn register_bot(
@@ -376,7 +372,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Return the configuration of the last `create_room` of a room, or the
 	/// default configuration for a room the host does not know. The core reads
-	/// it before each feed update, preview, posted message and query of the
+	/// it before each feed update, preview, query and posted message of the
 	/// room. For a posted message it reads it for the room the product names,
 	/// before any check that the product created the room.
 	async fn room_config(
@@ -405,13 +401,16 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change; without it the host applies it only to an open room
-	/// screen and the chat list preview.
+	/// screen and the chat list preview. The host answers
+	/// [`ChatFeedOutcome::Applied`], or the outcome that names why it did not
+	/// apply the change. It throws only for a failure of its own, which the
+	/// product receives as `HostFailure`.
 	async fn update_feed(
 		&self,
 		room_id: String,
 		update: truapi::latest::ChatFeedUpdate,
 		persist: bool,
-	) -> Result<(), NativeChatFeedRejection>;
+	) -> Result<ChatFeedOutcome, HostRejection>;
 }
 
 /// Native game-reminder adapter. Hosts that can hold reminders pass an
