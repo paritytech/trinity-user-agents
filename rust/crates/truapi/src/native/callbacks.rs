@@ -314,7 +314,10 @@ pub trait HostCallbacks: Send + Sync {
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeChatCallbacks: Send + Sync {
-	/// Create or resolve a native product Chat room.
+	/// Create or resolve a native product Chat room. `room_id` is the id that
+	/// the core resolved for the room, and every later call names the room with
+	/// it: the id that the core derived, or, for a product built against the
+	/// earlier client, the id that the product gave.
 	async fn create_room(
 		&self,
 		room_id: String,

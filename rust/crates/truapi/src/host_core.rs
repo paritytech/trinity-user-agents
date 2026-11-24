@@ -36,7 +36,7 @@ use truapi::{latest, v01, versioned::FromLatest};
 use crate::{
 	Spawner,
 	frame::ProtocolMessage,
-	host_logic::worker::WorkerLedger,
+	host_logic::{root_entropy::RootEntropy, worker::WorkerLedger},
 	runtime::{
 		AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		DevicePairingObserver, FundingProviderLink, HostAccounts, HostRole, HostSession,
@@ -306,7 +306,7 @@ impl<Role> HostRuntime<Role> {
 	/// the next transaction naming a contact reads the list again.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
-		self.services.contact_handles.clear();
+		self.services.contact_handle_cache.clear();
 	}
 
 	/// Reference counts per product worker, shared by every connection of
@@ -1278,26 +1278,28 @@ impl HostRuntime<SigningHost> {
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
-	/// Activate a wallet-local session from host-held secret material (raw
-	/// BIP-39 entropy).
+	/// Activate a wallet-local session from the root entropy the host holds.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
-	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), v01::GenericError> {
+	pub async fn activate_local_session(
+		&self,
+		entropy: RootEntropy,
+	) -> Result<(), v01::GenericError> {
 		self.role
-			.activate_local_session(secret)
+			.activate_local_session(entropy)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Activate a wallet-local session from host-held secret material and
+	/// Activate a wallet-local session from the root entropy the host holds and
 	/// attach known identity metadata.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session_with_identity"))]
 	pub async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), v01::GenericError> {
 		self.role
-			.activate_local_session_with_identity(secret, lite_username)
+			.activate_local_session_with_identity(entropy, lite_username)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
@@ -1533,6 +1535,19 @@ impl HostRuntime<SigningHost> {
 		&self,
 	) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
 		self.role.statement_renewal_targets().await.map_err(Into::into)
+	}
+
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails without an active session.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.identity_signer"))]
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, v01::GenericError> {
+		self.role
+			.identity_signer()
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
 	/// Root public key the active identity records its fixed ledger entries
@@ -2049,7 +2064,7 @@ impl ProductRuntime {
 	/// what it cached before. For an embedder that holds only this runtime;
 	/// one holding the host runtime calls it there.
 	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
+		self.admin.product_runtime.connection().services().contact_handle_cache.clear();
 	}
 
 	/// Build a product-facing host core around a platform implementation and
