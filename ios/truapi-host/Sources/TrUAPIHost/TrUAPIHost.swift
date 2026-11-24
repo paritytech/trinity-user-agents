@@ -349,9 +349,13 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Apply one change to the messages of a room. With `persist` the host
     /// stores the change. Without it the host applies the change only to an
-    /// open room screen and to the chat list preview. An error that it throws
-    /// reaches the product as `HostFailure`.
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws
+    /// open room screen and to the chat list preview.
+    ///
+    /// Return ``ChatFeedOutcome/applied``, or the outcome that names why the
+    /// host did not apply the change. The product receives each outcome as its
+    /// own error. Throw only for a failure of the host, which the product
+    /// receives as `HostFailure`.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatFeedOutcome
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
@@ -384,7 +388,11 @@ public extension ChatHostBridge {
         throw unservedChatRequest("deleteRoom")
     }
 
-    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {
+    func updateFeed(
+        roomId _: String,
+        update _: ChatFeedUpdate,
+        persist _: Bool
+    ) async throws -> ChatFeedOutcome {
         throw unservedChatRequest("updateFeed")
     }
 }
@@ -757,7 +765,7 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.deleteRoom(roomId: roomId) }
     }
 
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatFeedOutcome {
         try await withHostRejection {
             try await bridge.updateFeed(roomId: roomId, update: update, persist: persist)
         }

@@ -141,7 +141,7 @@ the host stores, with the name and icon of `createRoom` and the text input.
 | `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
-| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
+| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.applied`, or the outcome that names why it did not apply the change |
 | `setRoomFooter` | Shows the text input, or nothing |
 
 The core checks that the product created the room before it calls any of
@@ -195,8 +195,8 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
         store.config(roomId) ?? .hostDefault
     }
 
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws {
-        store.apply(update, to: roomId, persist: persist)
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatFeedOutcome {
+        store.apply(update, to: roomId, persist: persist) ? .applied : .unknownMessage
     }
 }
 

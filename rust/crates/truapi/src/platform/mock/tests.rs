@@ -1027,7 +1027,7 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 			latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
 			true,
 		)),
-		Ok(())
+		Ok(ChatFeedOutcome::Applied)
 	);
 
 	assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));

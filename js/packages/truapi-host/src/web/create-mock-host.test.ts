@@ -791,15 +791,18 @@ describe("createMockHost TestHostAPI parity", () => {
       icon: "",
       config,
     });
+    // A feed update answers what the host did with it, not an error.
     const update = {
       tag: "Deleted",
       value: { messageId: "m1" },
     } as const;
-    await host.callbacks.chat!.updateChatFeed!(
-      product,
-      { roomId: "main", update },
-      false,
-    );
+    expect(
+      await host.callbacks.chat!.updateChatFeed!(
+        product,
+        { roomId: "main", update },
+        false,
+      ),
+    ).toBe("Applied");
 
     expect(host.chatRoomDeclarations("main")).toEqual({
       feed: [[update, false]],

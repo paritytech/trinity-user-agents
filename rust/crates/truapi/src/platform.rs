@@ -2423,16 +2423,36 @@ pub trait ChatPlatform: Send + Sync {
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change, because it keeps the messages of the room. Without
 	/// it the host applies the change only to an open room screen and the chat
-	/// list preview. A failure of the host reaches the product as
-	/// `HostFailure`.
+	/// list preview. The host answers the outcome `Applied`, or the outcome
+	/// that names why it did not apply the change. It answers an error only
+	/// for a failure of its own, which the product receives as `HostFailure`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
-	) -> Result<(), GenericError> {
+	) -> Result<ChatFeedOutcome, GenericError> {
 		Err(chat_method_not_served("updateChatFeed"))
 	}
+}
+
+/// What a host did with one change to the messages of a room.
+///
+/// It is the answer of the host, not an error, so a host returns it as it
+/// returns any other value: the web and native bridges turn each error that a
+/// callback throws into `HostFailure`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ChatFeedOutcome {
+	/// The host applied the change.
+	Applied,
+	/// The change names a message that the room does not hold.
+	UnknownMessage,
+	/// `New` names a message that the room holds already.
+	DuplicateMessage,
+	/// The change edits, replaces or deletes a message that the product did
+	/// not write.
+	NotOwner,
 }
 
 /// The failure of a chat platform method a host does not serve yet.

@@ -125,7 +125,7 @@ export function makeHostCallbacks(
             setChatRoomMetadata: async () => {},
             setChatRoomPreview: async () => {},
             deleteChatRoom: async () => {},
-            updateChatFeed: async () => {},
+            updateChatFeed: async () => "Applied" as const,
             ...overrides.chat,
           },
         }

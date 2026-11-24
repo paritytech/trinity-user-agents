@@ -28,6 +28,8 @@ struct RecordingHost {
 	/// The host keeps only the default configuration, as a host that does
 	/// not serve the configurations yet.
 	default_config_only: Mutex<bool>,
+	/// What the host answers to a feed update; `Applied` when unset.
+	feed_outcome: Mutex<Option<ChatFeedOutcome>>,
 }
 
 impl RecordingHost {
@@ -162,9 +164,9 @@ impl ChatPlatform for RecordingHost {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), latest::GenericError> {
+	) -> Result<ChatFeedOutcome, latest::GenericError> {
 		self.feed.lock().unwrap().push((request, persist));
-		Ok(())
+		Ok(self.feed_outcome.lock().unwrap().unwrap_or(ChatFeedOutcome::Applied))
 	}
 }
 
@@ -481,6 +483,27 @@ fn a_host_that_cannot_keep_a_configuration_creates_no_room() {
 
 	create(latest::ChatRoomConfig::default()).expect("the default configuration");
 	assert_eq!(chat.rooms.lock().unwrap().len(), 1);
+}
+
+// The host answers why it did not apply an update, and the product gets
+// that reason as its own error.
+#[test]
+fn the_host_names_why_it_did_not_apply_an_update() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+	let runtime = chat_runtime(chat.clone());
+	let deleted = || latest::ChatFeedUpdate::Deleted { message_id: "m1".to_string() };
+
+	for (outcome, error) in [
+		(ChatFeedOutcome::UnknownMessage, latest::HostChatUpdateFeedError::UnknownMessage),
+		(ChatFeedOutcome::DuplicateMessage, latest::HostChatUpdateFeedError::DuplicateMessage),
+		(ChatFeedOutcome::NotOwner, latest::HostChatUpdateFeedError::NotOwner),
+	] {
+		*chat.feed_outcome.lock().unwrap() = Some(outcome);
+		assert_eq!(
+			update_feed(&runtime, "stored", deleted()),
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(error)))
+		);
+	}
 }
 
 // The icon of a room keeps its rules: a scheme the host must not fetch is

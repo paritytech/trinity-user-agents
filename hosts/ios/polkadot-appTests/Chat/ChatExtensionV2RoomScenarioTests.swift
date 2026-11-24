@@ -140,8 +140,8 @@ struct ChatExtensionV2RoomScenarioTests {
     @Test func deleteRemovesTheRoomAndEverythingInIt() async throws {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: config, preview: preview)
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", text: "hi")), persist: true)
-        try await bridge.updateFeed(
+        _ = try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", text: "hi")), persist: true)
+        _ = try await bridge.updateFeed(
             roomId: "lobby",
             update: .reactionPlaced(messageId: "m1", participantId: "alice", emoji: "👍"),
             persist: true

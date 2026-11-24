@@ -42,7 +42,7 @@ struct ChatHostBridgeDefaultsTests {
             try await bridge.deleteRoom(roomId: "room")
         }
         await #expect(throws: HostRejection.self) {
-            try await bridge.updateFeed(
+            _ = try await bridge.updateFeed(
                 roomId: "room",
                 update: .statusChanged(messageId: "message", status: .read),
                 persist: true

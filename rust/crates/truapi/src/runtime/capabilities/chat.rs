@@ -33,9 +33,10 @@ use truapi::{
 
 use crate::{
 	platform::{
-		ChatFieldError, ChatPlatform, normalize_chat_identifier, validate_chat_custom_message,
-		validate_chat_feed_update, validate_chat_icon, validate_chat_message_content,
-		validate_chat_name, validate_chat_room_metadata, validate_chat_room_preview,
+		ChatFeedOutcome, ChatFieldError, ChatPlatform, normalize_chat_identifier,
+		validate_chat_custom_message, validate_chat_feed_update, validate_chat_icon,
+		validate_chat_message_content, validate_chat_name, validate_chat_room_metadata,
+		validate_chat_room_preview,
 	},
 	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
@@ -306,13 +307,27 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
 					.map_err(room_host_error)?;
-				platform
+				let outcome = platform
 					.update_chat_feed(&self.connection.product, request, !config.product_source)
 					.await
-					.map_err(room_host_error)
+					.map_err(room_host_error)?;
+				feed_outcome(outcome)
 			})
 			.await
 	}
+}
+
+/// The answer to the product for what the host did with a feed update.
+fn feed_outcome(
+	outcome: ChatFeedOutcome,
+) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
+	let refusal = match outcome {
+		ChatFeedOutcome::Applied => return Ok(()),
+		ChatFeedOutcome::UnknownMessage => latest::HostChatUpdateFeedError::UnknownMessage,
+		ChatFeedOutcome::DuplicateMessage => latest::HostChatUpdateFeedError::DuplicateMessage,
+		ChatFeedOutcome::NotOwner => latest::HostChatUpdateFeedError::NotOwner,
+	};
+	Err(CallError::Domain(refusal))
 }
 
 /// Why the core refuses a room-changing call before the host sees it.

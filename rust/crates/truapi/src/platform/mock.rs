@@ -46,10 +46,10 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, CoreStorage,
+	CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
+	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
 	UserConfirmationReview,
 };
 
@@ -1542,8 +1542,9 @@ impl ChatPlatform for MockPlatform {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))
+	) -> Result<ChatFeedOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))?;
+		Ok(ChatFeedOutcome::Applied)
 	}
 }
 

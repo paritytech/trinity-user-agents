@@ -52,3 +52,14 @@ extension Chat.ProductMessageStatus {
         }
     }
 }
+
+extension Chat.ProductFeedError {
+    /// The outcome that the core gives to the product as its own error.
+    var outcome: ChatFeedOutcome {
+        switch self {
+        case .unknownMessage: .unknownMessage
+        case .duplicateMessage: .duplicateMessage
+        case .notOwner: .notOwner
+        }
+    }
+}
