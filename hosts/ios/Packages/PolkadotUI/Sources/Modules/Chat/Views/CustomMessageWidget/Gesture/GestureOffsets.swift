@@ -17,6 +17,7 @@ public final class GestureOffsets {
     private var places: [String: GesturePanPlace] = [:]
     private var masks: [String: MaskChannel] = [:]
     private var trails: [String: PanTrail] = [:]
+    private var touches: [String: PanTouch] = [:]
     let answers = GestureAnswerMailbox()
 
     public init() {}
@@ -59,6 +60,15 @@ public final class GestureOffsets {
         let trail = PanTrail()
         trails[key] = trail
         return trail
+    }
+
+    /// Whether a finger is on the pan keyed `key`, for a mask that checks its cleared share when it lifts.
+    @MainActor
+    public func touch(for key: String) -> PanTouch {
+        if let touch = touches[key] { return touch }
+        let touch = PanTouch()
+        touches[key] = touch
+        return touch
     }
 
     /// An `ExtendMask` item for `key`. It is the worker's answer to a paced move, whichever gesture is under way, even

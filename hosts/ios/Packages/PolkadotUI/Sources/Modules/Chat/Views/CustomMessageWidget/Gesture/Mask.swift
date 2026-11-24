@@ -38,15 +38,23 @@ public extension CustomMessageWidgetNode {
         public let follow: Follow?
         /// Seconds; zero changes the mask at once when a new tree changes it.
         public let fade: TimeInterval
+        /// The action the host sends once the shapes cover enough of the node.
+        public let clearedShare: ClearedShare?
 
         public init(
-            key: String? = nil, mode: Mode = .hide, shapes: [Shape] = [], follow: Follow? = nil, fade: TimeInterval = 0
+            key: String? = nil,
+            mode: Mode = .hide,
+            shapes: [Shape] = [],
+            follow: Follow? = nil,
+            fade: TimeInterval = 0,
+            clearedShare: ClearedShare? = nil
         ) {
             self.key = key
             self.mode = mode
             self.shapes = shapes
             self.follow = follow
             self.fade = fade
+            self.clearedShare = clearedShare
         }
     }
 }
@@ -176,6 +184,10 @@ public final class MaskChannel {
     /// Shapes added since the current tree, in the node's frame.
     public private(set) var added: [CustomMessageWidgetNode.Mask.Shape] = []
     private(set) var fade: MaskFade?
+    /// How many times shapes were added, and how many trees arrived, since the channel was made: when to check a
+    /// cleared share.
+    private(set) var additions = 0
+    private(set) var trees = 0
 
     /// What the mask's view draws from besides the channel: its tree's mask, the trail it follows, and where the
     /// trail's frame is in its own. Kept without redrawing anything, to know what was drawn when a tree arrives.
@@ -185,6 +197,7 @@ public final class MaskChannel {
     func extend(_ shapes: [CustomMessageWidgetNode.Mask.Shape]) {
         guard !shapes.isEmpty else { return }
         added.append(contentsOf: shapes)
+        additions += 1
     }
 
     /// A new tree arrived whose mask with this key is `next` (nil when it has none): it sets the shapes itself. A
@@ -194,6 +207,7 @@ public final class MaskChannel {
     func treeArrived(next: CustomMessageWidgetNode.Mask?, now: TimeInterval = CACurrentMediaTime()) {
         let before = source.map { $0.picture(added: added) }
         if !added.isEmpty { added = [] }
+        trees += 1
         guard let next else {
             fade = nil
             return
@@ -217,6 +231,15 @@ struct MaskSource {
     /// The pan's top-left corner in the node's frame.
     var place: CGPoint
     var mirroredWidth: CGFloat?
+
+    /// For a mask drawn in `frame` (on screen) that follows `trail`.
+    @MainActor
+    static func of(
+        mask: CustomMessageWidgetNode.Mask, trail: PanTrail?, frame: CGRect, mirrored: Bool
+    ) -> MaskSource {
+        let place = trail.map { CGPoint(x: $0.origin.x - frame.minX, y: $0.origin.y - frame.minY) } ?? .zero
+        return MaskSource(mask: mask, trail: trail, place: place, mirroredWidth: mirrored ? frame.width : nil)
+    }
 
     @MainActor
     func picture(added: [CustomMessageWidgetNode.Mask.Shape]) -> MaskPicture {
@@ -262,13 +285,21 @@ struct NodeMaskModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         if let mask {
-            content.mask {
-                MaskLayer(
-                    mask: mask,
-                    channel: mask.key.flatMap { updates?.mask(for: $0) },
-                    trail: mask.follow.flatMap { updates?.trail(for: $0.pan) }
-                )
-            }
+            let channel = mask.key.flatMap { updates?.mask(for: $0) }
+            let trail = mask.follow.flatMap { updates?.trail(for: $0.pan) }
+            content
+                .mask { MaskLayer(mask: mask, channel: channel, trail: trail) }
+                .background {
+                    if let share = mask.clearedShare {
+                        MaskShareWatcher(
+                            share: share,
+                            mask: mask,
+                            channel: channel,
+                            trail: trail,
+                            touch: mask.follow.flatMap { updates?.touch(for: $0.pan) }
+                        )
+                    }
+                }
         } else {
             content
         }
@@ -315,13 +346,7 @@ private struct MaskLayer: View {
     }
 
     private var source: MaskSource {
-        let place = trail.map { CGPoint(x: $0.origin.x - frame.minX, y: $0.origin.y - frame.minY) } ?? .zero
-        return MaskSource(
-            mask: mask,
-            trail: trail,
-            place: place,
-            mirroredWidth: layoutDirection == .rightToLeft ? frame.width : nil
-        )
+        MaskSource.of(mask: mask, trail: trail, frame: frame, mirrored: layoutDirection == .rightToLeft)
     }
 }
 

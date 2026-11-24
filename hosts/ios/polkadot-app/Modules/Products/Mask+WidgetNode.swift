@@ -10,7 +10,8 @@ extension Mask {
             mode: mode == .show ? .show : .hide,
             shapes: shapes.map(\.widgetShape),
             follow: follow.map { .init(pan: $0.pan, width: CGFloat($0.width) / 100) },
-            fade: TimeInterval(fadeMs ?? 0) / 1_000
+            fade: TimeInterval(fadeMs ?? 0) / 1_000,
+            clearedShare: clearedShare.map { .init(atPermille: $0.atPermille, action: $0.action) }
         )
     }
 }

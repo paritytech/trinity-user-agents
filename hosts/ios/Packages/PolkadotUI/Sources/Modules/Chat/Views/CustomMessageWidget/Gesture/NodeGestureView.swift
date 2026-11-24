@@ -63,6 +63,9 @@ struct NodeGestureView<Content: View>: View {
             if !enabled, dragging { cancel() }
             if enabled { held = false; setOffset(.zero) }
         }
+        .onChange(of: dragging) { _, down in
+            if let key = props.key { gestureOffsets?.touch(for: key).set(down: down) }
+        }
         .onDisappear { pacer.stop() }
     }
 }

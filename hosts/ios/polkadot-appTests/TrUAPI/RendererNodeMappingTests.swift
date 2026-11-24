@@ -360,7 +360,8 @@ struct RendererNodeMappingTests {
                 .stroke(width: 5_200, points: [MaskPoint(x: 0, y: 0), MaskPoint(x: 100, y: 250)]),
             ],
             follow: MaskFollow(pan: "pad", width: 5_200),
-            fadeMs: 350
+            fadeMs: 350,
+            clearedShare: ClearedShare(atPermille: 550, action: "done")
         )
         let node = RendererNode.image(
             modifiers: [.width(290), .mask(mask)],
@@ -376,11 +377,12 @@ struct RendererNodeMappingTests {
         ])
         #expect(mapped.follow == .init(pan: "pad", width: 52))
         #expect(abs(mapped.fade - 0.35) < 0.0001)
+        #expect(mapped.clearedShare == .init(atPermille: 550, action: "done"))
     }
 
     @Test func aShowMaskWithNoKeyMapsAsSent() throws {
         let node = RendererNode.box(
-            modifiers: [.mask(Mask(key: nil, mode: .show, shapes: [], follow: nil, fadeMs: nil))],
+            modifiers: [.mask(Mask(key: nil, mode: .show, shapes: [], follow: nil, fadeMs: nil, clearedShare: nil))],
             props: BoxProps(contentAlignment: nil),
             children: []
         )
