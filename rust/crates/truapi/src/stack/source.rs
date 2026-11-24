@@ -112,9 +112,9 @@ pub enum StackMismatch {
 		/// The descriptor's `tld`.
 		named: String,
 		/// The suffix People gave, escaped as [`u8::escape_ascii`] escapes
-		/// it: printable ASCII stays as it is, apart from a backslash or quote,
-		/// which gets a backslash before it, and any other byte is written as
-		/// `\t`, `\r`, `\n` or `\xNN`.
+		/// it: printable ASCII stays as it is, apart from a backslash, single
+		/// quote or double quote, which gets a backslash before it, and any
+		/// other byte is written as `\t`, `\r`, `\n` or `\xNN`.
 		answered: String,
 	},
 }

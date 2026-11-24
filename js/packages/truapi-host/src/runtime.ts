@@ -134,8 +134,8 @@ export type StackMismatch =
       named: string;
       /**
        * The suffix People gave. Printable ASCII stays as it is, apart from a
-       * backslash or quote, which gets a backslash before it. Any other byte
-       * is written as `\t`, `\r`, `\n` or `\xNN`.
+       * backslash, single quote or double quote, which gets a backslash before
+       * it. Any other byte is written as `\t`, `\r`, `\n` or `\xNN`.
        */
       answered: string;
     };
