@@ -79,6 +79,7 @@ data class JsPanGesture(
 @Serializable
 data class JsPanFeel(
     val pressScale: Float = 1f,
+    val pressScaleY: Float? = null,
     val pressMs: Int = 0,
     val unpressMs: Int = 0,
     val springOmega: Float = 0f,

@@ -179,6 +179,7 @@ sealed interface JsModifier {
         val follow: JsMaskFollow? = null,
         val fadeMs: Long = 0,
         val clearedShare: JsClearedShare? = null,
+        val haptics: JsMaskHaptics? = null,
         @Transient val channel: JsMaskShapes? = null,
         @Transient val trail: JsPanTrail? = null,
     ) : JsModifier

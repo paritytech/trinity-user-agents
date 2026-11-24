@@ -12,6 +12,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskHaptic
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskHaptics
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
@@ -25,6 +27,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -35,6 +38,7 @@ import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
 import uniffi.truapi.Dimensions
+import uniffi.truapi.Haptic
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
 import uniffi.truapi.Mask
@@ -182,9 +186,9 @@ private class JsWidgetMapping(private val keyed: RendererKeyed) {
     }
 }
 
-// The Android mask-progress layer scales each axis apart; until then `pressScaleYPermille` is ignored.
 private fun PanFeel.toJs(): JsPanFeel = JsPanFeel(
     pressScale = pressScalePermille.toFloat() / PERMILLE,
+    pressScaleY = pressScaleYPermille?.toFloat()?.div(PERMILLE),
     pressMs = pressMs.toInt(),
     unpressMs = unpressMs.toInt(),
     springOmega = springOmegaCenti.toFloat() / HUNDREDTHS,
@@ -335,10 +339,15 @@ private fun Mask.toJs(keyed: RendererKeyed): JsModifier.Mask = JsModifier.Mask(
     shapes = shapes.map { it.toJs() },
     follow = follow?.let { JsMaskFollow(it.pan, it.width.toLong(), it.brush?.toJs()) },
     fadeMs = fadeMs?.toLong() ?: 0L,
-    // The Android mask-progress layer checks mid-stroke, rescues a stalled share and plays `haptics`; until then
-    // `whileDown`, `rescue` and `haptics` are ignored.
-    clearedShare = clearedShare?.let { JsClearedShare(it.atPermille.toInt(), it.action) },
-    channel = key?.let(keyed.maskShapes),
+    clearedShare = clearedShare?.let { share ->
+        JsClearedShare(
+            share.atPermille.toInt(), share.action, share.whileDown ?: false,
+            share.rescue?.let { JsShareRescue(it.afterMs.toLong(), it.fromPermille.toInt()) },
+        )
+    },
+    haptics = haptics?.let { JsMaskHaptics(it.everyPermille.toInt(), it.step.toJs(), it.reach?.toJs()) },
+    // Unkeyed progress still needs a fresh tree clock and haptic baseline for each received tree.
+    channel = key?.let(keyed.maskShapes) ?: if (clearedShare?.rescue != null || haptics != null) JsMaskShapes() else null,
     trail = follow?.pan?.let(keyed.panTrail),
 )
 
@@ -348,6 +357,14 @@ fun MaskShape.toJs(): JsMaskShape = when (this) {
     is MaskShape.Circle -> JsMaskShape.Circle(center.toJs(), radius.toLong())
     is MaskShape.Stroke -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
     is MaskShape.Stamped -> JsMaskShape.Stamped(width.toLong(), brush.toJs(), points.map { it.toJs() })
+}
+
+private fun Haptic.toJs(): JsMaskHaptic = when (this) {
+    Haptic.TICK -> JsMaskHaptic.TICK
+    Haptic.LIGHT -> JsMaskHaptic.LIGHT
+    Haptic.MEDIUM -> JsMaskHaptic.MEDIUM
+    Haptic.HEAVY -> JsMaskHaptic.HEAVY
+    Haptic.SUCCESS -> JsMaskHaptic.SUCCESS
 }
 
 private fun MaskBrush.toJs() = JsMaskBrush(

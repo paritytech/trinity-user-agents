@@ -2,9 +2,11 @@ package io.paritytech.polkadotapp.feature_products_api.model
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -70,7 +72,12 @@ data class JsMaskBrush(
  * share cleared for a hide mask, the share shown for a show mask.
  */
 @Serializable
-data class JsClearedShare(val atPermille: Int, val action: String) {
+data class JsClearedShare(
+    val atPermille: Int,
+    val action: String,
+    val whileDown: Boolean = false,
+    val rescue: JsShareRescue? = null,
+) {
     /** Whether [covered] samples of [samples] reach the share, as the core counts it. */
     fun reached(covered: Int, samples: Int): Boolean = covered.toLong() * PERMILLE >= atPermille.toLong() * samples
 
@@ -78,6 +85,15 @@ data class JsClearedShare(val atPermille: Int, val action: String) {
         const val PERMILLE = 1000L
     }
 }
+
+@Serializable
+data class JsShareRescue(val afterMs: Long, val fromPermille: Int)
+
+@Serializable
+enum class JsMaskHaptic { TICK, LIGHT, MEDIUM, HEAVY, SUCCESS }
+
+@Serializable
+data class JsMaskHaptics(val everyPermille: Int, val step: JsMaskHaptic, val reach: JsMaskHaptic?)
 
 /**
  * What one keyed mask gained since its tree (`RendererNode.ExtendMask`), and its fade into the next tree, excluded
@@ -97,6 +113,8 @@ class JsMaskShapes {
     private val fadeState = mutableStateOf<Fade?>(null)
     private val additionsState = mutableIntStateOf(0)
     private val treesState = mutableIntStateOf(0)
+    var treeArrivedAtNanos by mutableLongStateOf(System.nanoTime())
+        private set
 
     /** How many times shapes were added, and how many trees arrived, since this was made: when to check a share. */
     val additions: Int get() = additionsState.intValue
@@ -129,6 +147,7 @@ class JsMaskShapes {
         synchronized(this) {
             if (addedState.value.isNotEmpty()) addedState.value = emptyList()
             treesState.intValue += 1
+            treeArrivedAtNanos = nowNanos
         }
         if (next == null) {
             fadeState.value = null
@@ -156,6 +175,11 @@ class JsMaskShapes {
  * the touch, so a following mask draws a move in that touch's frame. A tree drops them.
  */
 class JsPanTrail {
+    internal var coordinates: LayoutCoordinates? = null
+
+    /** Invalidates followed masks as a pressed gesture changes its children's coordinate transform. */
+    internal var drawnScale by mutableStateOf(Offset(1f, 1f))
+
     private val strokesState = mutableStateOf(emptyList<List<Offset>>())
 
     val strokes: List<List<Offset>> get() = strokesState.value

@@ -7,6 +7,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignmen
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskHaptic
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskHaptics
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
@@ -20,9 +22,11 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,11 +42,13 @@ import uniffi.truapi.Dimensions
 import uniffi.truapi.DropShadow
 import uniffi.truapi.Fill
 import uniffi.truapi.GestureProps
+import uniffi.truapi.Haptic
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.Mask
 import uniffi.truapi.MaskBrush
 import uniffi.truapi.MaskBrushTip
 import uniffi.truapi.MaskFollow
+import uniffi.truapi.MaskHaptics
 import uniffi.truapi.MaskMode
 import uniffi.truapi.MaskPoint
 import uniffi.truapi.MaskShape
@@ -57,6 +63,7 @@ import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
+import uniffi.truapi.ShareRescue
 import uniffi.truapi.TextFont
 import uniffi.truapi.TextProps
 import uniffi.truapi.Translate
@@ -294,6 +301,7 @@ class RendererNodeMappingTest {
                 hapticOnComplete = null,
                 feel = PanFeel(
                     pressScalePermille = 1059u,
+                    pressScaleYPermille = 850u,
                     pressMs = 133u,
                     unpressMs = 150u,
                     springOmegaCenti = 1800u,
@@ -313,6 +321,7 @@ class RendererNodeMappingTest {
         assertEquals(
             JsPanFeel(
                 pressScale = 1.059f,
+                pressScaleY = 0.85f,
                 pressMs = 133,
                 unpressMs = 150,
                 springOmega = 18f,
@@ -340,7 +349,8 @@ class RendererNodeMappingTest {
             ),
             follow = MaskFollow("pan", 5200u, MaskBrush(MaskBrushTip.ELLIPSE, 400u, 3000, 100u)),
             fadeMs = 350u.toUShort(),
-            clearedShare = ClearedShare(atPermille = 550u.toUShort(), action = "cleared"),
+            clearedShare = ClearedShare(atPermille = 550u.toUShort(), action = "cleared", whileDown = true, rescue = ShareRescue(1000u, 400u)),
+            haptics = MaskHaptics(100u, Haptic.TICK, Haptic.SUCCESS),
         )
         val node = RendererNode.Box(
             modifiers = listOf(Modifier.Mask(mask)),
@@ -366,9 +376,22 @@ class RendererNodeMappingTest {
         )
         assertEquals(JsMaskFollow("pan", 5200, JsMaskBrush(JsMaskBrushTip.ELLIPSE, 400, 3000, 100)), mapped.follow)
         assertEquals(350L, mapped.fadeMs)
-        assertEquals(JsClearedShare(550, "cleared"), mapped.clearedShare)
+        assertEquals(JsClearedShare(550, "cleared", true, JsShareRescue(1000, 400)), mapped.clearedShare)
+        assertEquals(JsMaskHaptics(100, JsMaskHaptic.TICK, JsMaskHaptic.SUCCESS), mapped.haptics)
         assertSame(shapes, mapped.channel)
         assertSame(trail, mapped.trail)
+    }
+
+    @Test
+    fun `an unkeyed rescue gets a new clock when another tree arrives`() {
+        val mask = Mask(
+            key = null, mode = MaskMode.HIDE, shapes = emptyList(), follow = null, fadeMs = null,
+            clearedShare = ClearedShare(900u, "reached", rescue = ShareRescue(1000u, 500u)),
+        )
+        val node = RendererNode.Spacer(listOf(Modifier.Mask(mask)))
+        val first = (node.toJsWidget() as JsWidget.Spacer).modifiers.single() as JsModifier.Mask
+        val second = (node.toJsWidget() as JsWidget.Spacer).modifiers.single() as JsModifier.Mask
+        assertNotSame(requireNotNull(first.channel), requireNotNull(second.channel))
     }
 
     @Test

@@ -118,9 +118,10 @@ internal fun JsGesture(
 
     // The feel (JsPanFeel): the children grown while pressed, and a completed host drag's pop with how far past the
     // end it stands.
-    val pressScale = remember { Animatable(1f) }
+    val pressScale = remember { Animatable(Offset(1f, 1f), Offset.VectorConverter) }
     var pressJob by remember { mutableStateOf<Job?>(null) }
     var popped by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var poppedScaleY by remember { mutableStateOf<Float?>(null) }
     var popJob by remember { mutableStateOf<Job?>(null) }
 
     /** Where the worker's tree drew the children: the first child's leading margin, in px. */
@@ -156,14 +157,14 @@ internal fun JsGesture(
 
     fun press(feel: JsPanFeel) {
         pressJob?.cancel()
-        pressJob = scope.launch { pressScale.animateTo(feel.pressScale, tween(feel.pressMs, easing = WidgetStyleRules.EaseOutQuad)) }
+        pressJob = scope.launch { pressScale.animateTo(GestureRules.pressScale(feel), tween(feel.pressMs, easing = WidgetStyleRules.EaseOutQuad)) }
     }
 
     fun unpress() {
         val feel = current.feel ?: return
-        if (pressScale.targetValue == 1f && !pressScale.isRunning && pressScale.value == 1f) return
+        if (pressScale.targetValue == Offset(1f, 1f) && !pressScale.isRunning && pressScale.value == Offset(1f, 1f)) return
         pressJob?.cancel()
-        pressJob = scope.launch { pressScale.animateTo(1f, tween(feel.unpressMs, easing = WidgetStyleRules.EaseOutQuad)) }
+        pressJob = scope.launch { pressScale.animateTo(Offset(1f, 1f), tween(feel.unpressMs, easing = WidgetStyleRules.EaseOutQuad)) }
     }
 
     /** A finger down on the children where they are drawn, or within [PanPress.REACH_DP] of them. */
@@ -188,11 +189,13 @@ internal fun JsGesture(
                 val start = withFrameNanos { it } + delayMs * NANOS_PER_MS
                 while (true) {
                     val now = withFrameNanos { it }
-                    popped = WidgetStyleRules.pop(feel, (now - start) / NANOS_PER_FRAME, from) ?: break
+                    popped = WidgetStyleRules.pop(feel, (now - start) / NANOS_PER_FRAME, from.x) ?: break
+                    poppedScaleY = WidgetStyleRules.pop(feel, (now - start) / NANOS_PER_FRAME, from.y)?.first
                 }
             } finally {
                 popped = null
-                scope.launch { pressScale.snapTo(1f) }
+                poppedScaleY = null
+                scope.launch { pressScale.snapTo(Offset(1f, 1f)) }
             }
         }
     }
@@ -340,7 +343,12 @@ internal fun JsGesture(
                 nodeHeight = it.height
             }
             // Where the pan's strokes sit on screen, for masks that follow them.
-            .onGloballyPositioned { coordinates -> current.trail?.origin = coordinates.positionInRoot() }
+            .onGloballyPositioned { coordinates ->
+                current.trail?.let { trail ->
+                    trail.origin = coordinates.positionInRoot()
+                    trail.coordinates = coordinates
+                }
+            }
             .semantics {
                 label?.let { contentDescription = it }
                 role = Role.Button
@@ -475,6 +483,7 @@ internal fun JsGesture(
                         } finally {
                             moveJob?.cancel()
                             moves.clear()
+                            unpress()
                             // After the last place joined the trail, so a mask checking its share on the lift counts it.
                             node.trail?.touch(isDown = false)
                             if (claimed) {
@@ -662,9 +671,9 @@ internal fun JsGesture(
                 }
                 .graphicsLayer {
                     val pop = popped
-                    val scale = pop?.first ?: pressScale.value
-                    scaleX = scale
-                    scaleY = scale
+                    scaleX = pop?.first ?: pressScale.value.x
+                    scaleY = poppedScaleY ?: pressScale.value.y
+                    current.trail?.drawnScale = Offset(scaleX, scaleY)
                     // About the drawn child's centre, not the margin the worker's tree put before it.
                     val base = basePx()
                     transformOrigin = TransformOrigin(
