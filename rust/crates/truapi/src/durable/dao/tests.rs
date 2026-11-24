@@ -255,7 +255,7 @@ fn defer_in(db: &Db, domain: DomainId, group: Option<GroupId>) -> DurableTxId {
 }
 
 fn pending_rows(db: &Db) -> Vec<DeferredDurableTx> {
-	next(&mut observe_pending_submissions(db))
+	read(db, |conn| released_submissions(conn, &domain()))
 }
 
 fn start_attempt_tagged(db: &Db, id: DurableTxId, tag: u8) -> bool {
@@ -283,6 +283,7 @@ fn a_deferred_row_waits_for_its_policy_with_no_attempt() {
 			group: Some(GroupId::new("payment")),
 			plan: test_plan(vec![1]),
 			attempts: 0,
+			dependencies: vec![],
 		}]
 	);
 	assert_eq!(read(&db, move |conn| status(conn, id)), Some(DurableTxStatus::PendingSubmission));
@@ -427,6 +428,7 @@ fn a_verdict_can_send_a_submitted_row_back_to_its_policy() {
 			group: None,
 			plan: test_plan(vec![3]),
 			attempts: 0,
+			dependencies: vec![],
 		}]
 	);
 }
@@ -446,10 +448,7 @@ fn a_row_keeps_the_plan_it_was_registered_with() {
 	let without = register(&db, None, 2);
 
 	assert_eq!(read(&db, move |conn| plan_of(conn, with_plan)), Some(test_plan(vec![3])));
-	assert_eq!(
-		read(&db, move |conn| plan_of(conn, with_empty_plan)),
-		Some(test_plan(vec![]))
-	);
+	assert_eq!(read(&db, move |conn| plan_of(conn, with_empty_plan)), Some(test_plan(vec![])));
 	assert_eq!(read(&db, move |conn| plan_of(conn, without)), None);
 }
 
@@ -478,7 +477,7 @@ fn a_domain_lists_its_rows_of_every_group_and_no_other_domain() {
 	defer_in(&db, DomainId::new("other"), Some(GroupId::new("g1")));
 	let other_group = defer_in(&db, domain(), Some(GroupId::new("g2")));
 
-	let listed = read(&db, |conn| domain_submissions(conn, &domain()));
+	let listed = read(&db, |conn| released_submissions(conn, &domain()));
 
 	let ids: Vec<_> = listed.iter().map(|deferred| deferred.id).collect();
 	assert_eq!(ids, vec![grouped, ungrouped, other_group]);
@@ -504,7 +503,7 @@ fn a_transaction_given_up_before_it_was_built_leaves_its_domain_readable() {
 #[test]
 fn a_row_handed_back_between_two_reads_is_reported_again() {
 	let (_dir, db) = open_db();
-	let mut waiting = observe_pending_submissions(&db);
+	let mut waiting = observe_released_domains(&db);
 	assert_eq!(next(&mut waiting), vec![]);
 	let id = defer_in(&db, domain(), None);
 	assert_eq!(next(&mut waiting).len(), 1);
