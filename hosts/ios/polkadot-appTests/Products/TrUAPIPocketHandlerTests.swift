@@ -29,14 +29,17 @@ struct TrUAPIPocketHandlerTests {
         _ = await delivered.next()
         workers.publish([gameProductId: execution])
         try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
-        workers.publish([gameProductId: execution])
-        workers.publish([gameProductId: execution])
+        let sameWorker = MockProductExecution()
+        sameWorker.renderNodes = [.string(text: "reopened")]
+        sameWorker.keepsRenderStreamOpen = true
+        workers.publish([gameProductId: sameWorker])
+        workers.publish([gameProductId: sameWorker])
         for _ in 0 ..< 3 {
             _ = await delivered.next()
         }
 
-        let original = try #require(execution.renderObservers.first)
-        original.onUpdate(node: .string(text: "still live"))
+        let original = try #require(execution.renders.first)
+        original.observer.onUpdate(node: .string(text: "still live"))
         #expect(try await withTimeout(.hangGuard) { try await drawing.value })
         #expect(execution.renderRequests.count == 1)
     }
@@ -58,10 +61,15 @@ struct TrUAPIPocketHandlerTests {
         defer { drawing.cancel() }
 
         try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
+        let original = try #require(first.renders.first)
 
         let replacement = MockProductExecution()
         replacement.keepsRenderStreamOpen = true
         workers.publish([:])
+        try await withTimeout(.hangGuard) {
+            var cancellation = original.cancellation.makeAsyncIterator()
+            try #require(await cancellation.next())
+        }
         workers.publish([gameProductId: replacement])
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
