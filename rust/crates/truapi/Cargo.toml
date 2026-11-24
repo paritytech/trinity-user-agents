@@ -106,6 +106,7 @@ hex = { workspace = true }
 parity-scale-codec = { workspace = true, features = ["derive", "serde"] }
 serde = { workspace = true, features = ["derive"] }
 unicode-normalization = { workspace = true }
+unicode-segmentation = { workspace = true }
 sp-crypto-hashing = { workspace = true }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }

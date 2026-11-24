@@ -283,7 +283,21 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// earlier client, the id that the product gave. The core has bounded and
     /// normalized these arguments and screened the icon scheme; escaping them
     /// for the surface that renders them is still the host's job.
+    ///
+    /// The default ``createRoom(roomId:name:icon:config:)`` calls it for a
+    /// room with ``ChatRoomConfig/hostDefault``.
     func createRoom(roomId: String, name: String, icon: String) async throws
+        -> ChatRoomRegistrationStatus
+
+    /// Create or resolve a room as ``createRoom(roomId:name:icon:)`` does, and
+    /// keep `config` for it in the same step, across restarts, for a new room
+    /// and for a room that exists. A change of `productSource` discards the
+    /// stored messages or the cached pages of the room.
+    ///
+    /// Throw ``NativeChatRoomRejection/UnsupportedConfig`` for a configuration
+    /// the host cannot keep, before it creates or changes anything. The
+    /// default keeps only ``ChatRoomConfig/hostDefault``.
+    func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) async throws
         -> ChatRoomRegistrationStatus
 
     /// Register or resolve a native product Chat bot. The core has bounded and
@@ -316,20 +330,17 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
 
-    /// Return the configuration the product last declared for a room, or
-    /// ``ChatRoomConfig/hostDefault`` when it declared none. The core reads it
-    /// before each feed update, preview, posted message and query of the room.
+    /// Return the configuration of the last `createRoom` of a room, or
+    /// ``ChatRoomConfig/hostDefault`` for a room the host does not know. The
+    /// core reads it before each feed update, preview, posted message and query
+    /// of the room. For a posted message it reads it for the room the product
+    /// names, before any check that the product created the room.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
-    /// Replace the configuration of a room whole, and keep it across
-    /// restarts, when the product declares one with `createRoom`. A room
-    /// the product declared none for has ``ChatRoomConfig/hostDefault``. A
-    /// change of `productSource` discards the stored messages or the cached
-    /// pages of the room.
-    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws
-
     /// Replace the name, description, icon and empty-room text of a room. An
-    /// icon of `nil` keeps the icon, and an empty icon removes it.
+    /// icon of `nil` keeps the icon, and an empty icon removes it. The default
+    /// ignores the metadata, and the room keeps the name and icon of
+    /// `createRoom`.
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
 
     /// Replace how a room shows in the chat list.
@@ -352,14 +363,21 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
 /// The product receives a rejection for each request, with two exceptions. The
 /// host ignores metadata and keeps the name and icon of `createRoom`. The host
-/// accepts a configuration that keeps the behaviour that it serves.
+/// creates a room with the configuration that keeps the behaviour that it
+/// serves, and refuses any other before it creates anything.
 public extension ChatHostBridge {
-    func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
-        .hostDefault
+    func createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig
+    ) async throws -> ChatRoomRegistrationStatus {
+        guard config == .hostDefault else { throw NativeChatRoomRejection.UnsupportedConfig }
+        return try await createRoom(roomId: roomId, name: name, icon: icon)
     }
 
-    func setRoomConfig(roomId _: String, config: ChatRoomConfig) async throws {
-        guard config == .hostDefault else { throw unservedChatRequest("setRoomConfig") }
+    func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
+        .hostDefault
     }
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
@@ -695,10 +713,11 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func createRoom(
         roomId: String,
         name: String,
-        icon: String
+        icon: String,
+        config: ChatRoomConfig
     ) async throws -> ChatRoomRegistrationStatus {
-        try await withHostRejection {
-            try await bridge.createRoom(roomId: roomId, name: name, icon: icon)
+        try await withRoomRejection {
+            try await bridge.createRoom(roomId: roomId, name: name, icon: icon, config: config)
         }
     }
 
@@ -732,12 +751,6 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.roomConfig(roomId: roomId) }
     }
 
-    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
-        try await withHostRejection {
-            try await bridge.setRoomConfig(roomId: roomId, config: config)
-        }
-    }
-
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
         try await withHostRejection {
             try await bridge.setRoomMetadata(roomId: roomId, metadata: metadata)
@@ -761,14 +774,32 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     }
 
     /// Pass a ``NativeChatFeedRejection`` to the product as it is, and any
-    /// other error as ``NativeChatFeedRejection/Rejected(reason:)``.
+    /// other error as ``NativeChatFeedRejection/Rejected(reason:)``. A
+    /// ``HostRejection`` keeps the reason that the host wrote.
     private func withFeedRejection(_ operation: () async throws -> Void) async throws {
         do {
             try await operation()
         } catch let rejection as NativeChatFeedRejection {
             throw rejection
+        } catch HostRejection.Rejected(let reason) {
+            throw NativeChatFeedRejection.Rejected(reason: reason)
         } catch {
             throw NativeChatFeedRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+
+    /// Pass a ``NativeChatRoomRejection`` to the product as it is, and any
+    /// other error as ``NativeChatRoomRejection/Rejected(reason:)``. A
+    /// ``HostRejection`` keeps the reason that the host wrote.
+    private func withRoomRejection<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch let rejection as NativeChatRoomRejection {
+            throw rejection
+        } catch HostRejection.Rejected(let reason) {
+            throw NativeChatRoomRejection.Rejected(reason: reason)
+        } catch {
+            throw NativeChatRoomRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 }

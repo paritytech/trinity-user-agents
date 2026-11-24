@@ -988,10 +988,13 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 	let product = mock_product();
 	let room = || "lobby".to_string();
 	let config = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
-	block_on(p.create_chat_room(&product, "lobby".to_string(), mock_room_request("lobby")))
-		.expect("room registration succeeds");
-	block_on(p.set_chat_room_config(&product, room(), config.clone()))
-		.expect("the configuration is recorded");
+	// The configuration arrives with the room, in one call.
+	block_on(p.create_chat_room(
+		&product,
+		"lobby".to_string(),
+		latest::HostChatCreateRoomRequest { config: config.clone(), ..mock_room_request("lobby") },
+	))
+	.expect("room registration succeeds");
 	let metadata = latest::ChatRoomMetadata {
 		name: "Lobby".to_string(),
 		description: Some("Say hello".to_string()),
@@ -1022,12 +1025,14 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: preview.clone() },
 	))
 	.unwrap();
-	block_on(p.update_chat_feed(
-		&product,
-		latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
-		true,
-	))
-	.unwrap();
+	assert_eq!(
+		block_on(p.update_chat_feed(
+			&product,
+			latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
+			true,
+		)),
+		Ok(ChatFeedOutcome::Applied)
+	);
 
 	assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));
 	assert_eq!(
