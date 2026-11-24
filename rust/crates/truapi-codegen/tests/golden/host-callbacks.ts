@@ -153,6 +153,19 @@ export interface ChainExtensionVersion {
 }
 
 /**
+ * What a host did with one change to the messages of a room.
+ *
+ * It is the answer of the host, not an error, so a web host returns it as it
+ * returns any other value: the web bridge turns each error that a web
+ * callback throws into `HostFailure`.
+ */
+export type ChatFeedOutcome =
+  | "Applied"
+  | "UnknownMessage"
+  | "DuplicateMessage"
+  | "NotOwner";
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1083,6 +1096,18 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 );
 
 /**
+ * What a host did with one change to the messages of a room.
+ *
+ * It is the answer of the host, not an error, so a web host returns it as it
+ * returns any other value: the web bridge turns each error that a web
+ * callback throws into `HostFailure`.
+ */
+export const ChatFeedOutcome: S.Codec<ChatFeedOutcome> = S.lazy(
+  (): S.Codec<ChatFeedOutcome> =>
+    S.Status("Applied", "UnknownMessage", "DuplicateMessage", "NotOwner"),
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1766,6 +1791,14 @@ export interface ChatPlatform {
    * for a product built against the earlier client, the id that the product
    * gave. The host stores the room under this id, and every later call names
    * the room with it.
+   *
+   * In the same step the host keeps `request.config` for the room, across
+   * restarts, for a new room and for a room that exists: the configuration
+   * replaces the one the host keeps. A change of `product_source` discards
+   * the stored messages or the cached pages of the room. A host that cannot
+   * keep a configuration other than the default answers `UnsupportedConfig`
+   * for it, before it creates or changes anything. A request from a product
+   * built against the earlier client carries the default configuration.
    */
   createChatRoom(
     product: ProductContext,
@@ -1811,35 +1844,27 @@ export interface ChatPlatform {
 
   /**
    * The current product-scoped room list, read one time. The core uses it to
-   * check that a product hosts a room. A host that cannot read its rooms
-   * returns an error, not an empty list. If a Rust host does not implement
-   * this method, the core uses the first item of the room list subscription.
+   * check that a product hosts a room, before each change to a room. A host
+   * that cannot read its rooms returns an error, not an empty list. If a
+   * Rust host does not implement this method, the core uses the first item
+   * of the room list subscription. A host whose subscription registers a
+   * listener implements it: otherwise each check leaves a listener behind.
    */
   listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
 
   /**
-   * The configuration the product last declared for a room, or the default
-   * configuration when it declared none. The core reads it to decide
-   * whether a room keeps its messages in the host and which queries the
-   * product answers.
+   * The configuration of the last `create_chat_room` of a room, or the
+   * default configuration for a room the host does not know. The core reads
+   * it to decide whether a room keeps its messages in the host and which
+   * queries the product answers. Before `post_chat_message` the core reads it
+   * for the room that the product names, without a check that the product
+   * hosts the room, so an unknown room answers the default configuration and
+   * not an error.
    */
   readChatRoomConfig?(
     product: ProductContext,
     roomId: string,
   ): Promise<ChatRoomConfig>;
-
-  /**
-   * Replace the configuration of a room whole and keep it across restarts.
-   * The core calls it after each `create_chat_room`, for a new room and for
-   * a room that exists. If a Rust host does not implement this method, it
-   * accepts only the default configuration. That configuration changes
-   * nothing that the host shows.
-   */
-  setChatRoomConfig?(
-    product: ProductContext,
-    roomId: string,
-    config: ChatRoomConfig,
-  ): Promise<void>;
 
   /**
    * Replace the name, description, icon and empty-room text of a room. An
@@ -1873,17 +1898,15 @@ export interface ChatPlatform {
    * Apply one change to the messages of a room. With `persist` the host
    * stores the change, because it keeps the messages of the room. Without
    * it the host applies the change only to an open room screen and the chat
-   * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
-   * and, for an edit, a replacement or a deletion of a message the product
-   * did not write, `NotOwner`, and any failure of its own with
-   * `HostFailure`. A web host can answer only `HostFailure`: the web bridge
-   * turns each error that a web callback throws into `HostFailure`.
+   * list preview. The host answers the outcome `Applied`, or the outcome
+   * that names why it did not apply the change. It answers an error only
+   * for a failure of its own, which the product receives as `HostFailure`.
    */
   updateChatFeed?(
     product: ProductContext,
     request: HostChatUpdateFeedRequest,
     persist: boolean,
-  ): Promise<void>;
+  ): Promise<ChatFeedOutcome>;
 }
 
 /**

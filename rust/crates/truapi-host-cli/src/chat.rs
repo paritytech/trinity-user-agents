@@ -23,7 +23,7 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::{
 	latest::{
-		ChatBotRegistrationStatus, ChatRoomRegistrationStatus, GenericError,
+		ChatBotRegistrationStatus, ChatRoomConfig, ChatRoomRegistrationStatus, GenericError,
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatListSubscribeItem,
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
@@ -131,6 +131,12 @@ impl ChatPlatform for CliChatHost {
 		room_id: String,
 		request: HostChatCreateRoomRequest,
 	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
+		// This host stores the messages of every room and serves no part of a
+		// room for the product, so it keeps only the default configuration. It
+		// refuses another one before it creates anything.
+		if request.config != ChatRoomConfig::default() {
+			return Err(HostChatCreateRoomError::UnsupportedConfig);
+		}
 		let mut state = self.lock();
 		let status = if state.rooms.contains_key(&room_id) {
 			ChatRoomRegistrationStatus::Exists
@@ -198,6 +204,16 @@ impl ChatPlatform for CliChatHost {
 		// The snapshot first, then every replacement, so a product that
 		// subscribes before creating a room still sees the room it creates.
 		stream::once(async move { Ok(snapshot) }).chain(receiver.map(Ok)).boxed()
+	}
+
+	/// The core checks the room of each change to a room against this list.
+	/// The default reads the subscription, which would leave one subscriber
+	/// for each check until the next room list goes out.
+	async fn list_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> Result<HostChatListSubscribeItem, GenericError> {
+		Ok(Self::room_list(&self.lock()))
 	}
 }
 
