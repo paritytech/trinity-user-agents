@@ -150,6 +150,31 @@ fn a_new_generation_on_the_same_chains_runs_from_the_next_start() {
 	);
 }
 
+/// The running stack holds the `accountDataStore` contract the core reads, so
+/// a copy that moves it also runs from the next start.
+#[test]
+fn a_moved_account_data_store_runs_from_the_next_start() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut moved = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	moved["contracts"] =
+		serde_json::json!({ "accountDataStore": format!("0x{}", "22".repeat(20)) });
+	let mut source = load(&bundled, None);
+
+	serve(&mut source, &moved, START).expect("the newer copy is stored");
+	source.record_stored();
+
+	assert_eq!(
+		(source.stack().account_data_store(), source.status()),
+		(
+			None,
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			}
+		)
+	);
+}
+
 /// A host told to restart before the record is stored would start from the
 /// old copy, fetch the new one and be told to restart again, for as long as
 /// the store fails.

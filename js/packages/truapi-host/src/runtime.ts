@@ -174,9 +174,9 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core stored a newer copy that changes a chain, the network or the
-   * generation. It runs that copy from its next start, so build the runtime
-   * again to follow it. A copy that changes a field the bundled descriptor
+   * The core stored a newer copy that changes a genesis hash the core uses,
+   * the network, the generation or the `accountDataStore` contract. It runs
+   * that copy from its next start, so build the runtime again to follow it. A copy that changes a field the bundled descriptor
    * pins, such as the TLD, never sets it: the core refuses that copy.
    */
   restartRequired: boolean;
