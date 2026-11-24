@@ -1,0 +1,4 @@
+module BenchKit {
+    header "benchkit.h"
+    export *
+}

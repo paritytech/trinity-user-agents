@@ -146,6 +146,10 @@ void qjs_runtime_init(void) {
   wasm_rt_init();
 }
 
+void qjs_runtime_free_thread(void) {
+  wasm_rt_free_thread();
+}
+
 int qjs_new(void* host, uint64_t max_pages, qjs_instance** out) {
   qjs_instance* instance = calloc(1, sizeof(qjs_instance));
   instance->truapi.host = host;

@@ -13,3 +13,7 @@ rquickjs = { version = "=0.14.0", default-features = false, features = ["array-b
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom = "0.3"
 bench-common = { path = "../bench-common" }
+
+# rquickjs ships no prebuilt bindings for iOS; bindgen finds libclang in Xcode.
+[target.'cfg(target_os = "ios")'.dependencies]
+rquickjs = { version = "=0.14.0", default-features = false, features = ["array-buffer", "bindgen"] }

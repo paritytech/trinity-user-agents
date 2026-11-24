@@ -17,6 +17,8 @@ never see it.
   every outbound frame back to the guest.
 - `runner-wasm2c/`: the same guest translated to C by wasm2c and compiled
   into the runner, with guard pages or explicit bounds checks (T6).
+- `benchkit/` and `ios-bench/`: the engines behind a C API, and the SwiftUI
+  app that runs them on a simulator or an iPhone (T7).
 - `samples/`: scripts for the T1 checks.
 - `workloads/`: the bench worker, the host frames it is driven with, and
   `corpus/corpus.bin`, the recorded conversation every engine replays (T2).
@@ -201,6 +203,70 @@ Mac; Cranelift is from the T5 runs.
   variant needs no reservation, so it is the safe default until a device
   run shows what guard pages allow.
 - Compiling the 13 MB of generated C takes about 10 s per variant here.
+
+## T7: the iOS bench app
+
+`benchkit/` is a static library with a three-function C API
+(`benchkit_run`, `benchkit_free`, `benchkit_variant`) over three engines:
+native QuickJS, the wasm guest on wasmi, and the wasm guest through wasm2c.
+`ios-bench/` is a SwiftUI app that links it as `build/BenchKit.xcframework`,
+bundles the workloads, runs a suite on launch and prints one JSON line per
+measurement (`BENCH {…}`), also appended to `Documents/results.jsonl`. The
+runners are libraries now, so the Mac binaries and the app share the same
+measurement code.
+
+```bash
+scripts/build-ios.sh bounds sim        # or guard; wasm2c's runtime is built for one
+scripts/run-ios-sim.sh bounds quick    # results/ios-sim/bounds.jsonl
+scripts/build-ios.sh bounds device <team-id>
+```
+
+Launch arguments: `--suite quick|full`, `--runs N`, `--exit`. The quick suite
+replays the corpus three times per engine, boots 10 live workers per engine,
+checks the 8 MiB memory cap on both wasm engines, makes the wasm2c guest
+read out of bounds (`oob-trap`), probes how many 8 GiB guard-page
+reservations fit (`guard-capacity`), and runs the codec workload on native
+and wasm2c. `full` adds rxjs, ping-pong and wasmi throughput.
+
+Build notes:
+
+- BenchKit is a `staticlib` only. Built as `staticlib` and `rlib` together
+  with LTO, rustc writes LLVM bitcode that Xcode's older LLVM cannot read.
+- The workspace profile strips symbols, which on a static library removes
+  the C entry points, so the script builds with `CARGO_PROFILE_RELEASE_STRIP=false`.
+- rquickjs uses bindgen on iOS (`guest/Cargo.toml`); Xcode supplies libclang.
+- The wasm2c variants cannot share one binary, since the wasm2c runtime is
+  compiled for guard pages or bounds checks, so each variant is its own build.
+- A thread that ran a wasm2c guest calls `release_thread` before it exits.
+  Rust replaces the thread's alternate signal stack during its own teardown,
+  so a thread-local destructor would free wasm2c's too late.
+
+### Simulator results (iPhone 17 Pro simulator, iOS 26.5, on the Mac)
+
+Every step passed in both variants. Medians of three replays:
+
+| Simulator | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, wasmi |
+|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.15 to 0.16 / 0.26 ms | 0.20 / 0.24 ms | 0.31 / 0.39 ms | 4.4 / 4.5 ms |
+| Boot to idle, 10 workers, p50 | 7.1 to 7.4 ms | 8.0 ms | 10.9 ms | 94 to 97 ms |
+| Memory per worker | 1.9 MiB | 2.5 MiB | 2.5 MiB | 3.6 to 4.0 MiB |
+| Codec, round trips/s | 4 342 to 4 398 | 3 427 | 2 191 | |
+| 8 MiB cap | | catchable OOM after 6 MiB | catchable OOM after 6 MiB | catchable OOM after 6 MiB |
+| Out-of-bounds read | | trapped, fresh guest boots | trapped, fresh guest boots | |
+| 8 GiB reservations that fit | | 64 of 64 | 64 of 64 | |
+
+- The ratios match the Mac's, as they should: the simulator runs on the
+  Mac's CPU. They say nothing about iPhone speed.
+- The guard-page trap goes through wasm2c's signal handler on the
+  alternate signal stack under the iOS runtime and comes back as a clean
+  trap; on Apple platforms wasm2c reports it as "out of bounds, or call stack
+  exhausted".
+- The guard capacity is the Mac kernel's. iOS limits an app's address space,
+  so that row is the first thing the device runs answer, with and without the
+  extended virtual addressing entitlement.
+- The device app (`build-ios.sh … device`, unsigned) compiles; its binary is
+  5.0 MB with all three engines.
 
 ## T2: the corpus
 

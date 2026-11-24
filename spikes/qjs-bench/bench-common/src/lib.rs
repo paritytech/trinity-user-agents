@@ -58,19 +58,48 @@ pub fn percentiles(samples: &mut [f64]) -> (f64, f64) {
     (at(0.5), at(0.95))
 }
 
+/// `rusage_info_v2` from `<sys/resource.h>`. libc declares it, and
+/// `proc_pid_rusage`, for macOS only, though libSystem has both on iOS too.
+#[repr(C)]
+struct RusageInfoV2 {
+    uuid: [u8; 16],
+    counters: [u64; 7],
+    phys_footprint: u64,
+    rest: [u64; 10],
+}
+
+extern "C" {
+    fn proc_pid_rusage(pid: libc::c_int, flavor: libc::c_int, buffer: *mut RusageInfoV2) -> libc::c_int;
+}
+
 /// This process's physical footprint in bytes: the number Xcode's memory
 /// gauge and `footprint` report, and what jetsam limits.
 pub fn footprint_bytes() -> u64 {
-    let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
-    let status = unsafe {
-        libc::proc_pid_rusage(
-            libc::getpid(),
-            libc::RUSAGE_INFO_V2,
-            (&mut info as *mut libc::rusage_info_v2).cast::<libc::rusage_info_t>(),
-        )
-    };
+    let mut info: RusageInfoV2 = unsafe { std::mem::zeroed() };
+    let status = unsafe { proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V2, &mut info) };
     assert_eq!(status, 0, "proc_pid_rusage failed");
-    info.ri_phys_footprint
+    info.phys_footprint
+}
+
+static LOG: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Print one line from a guest and keep it for [`take_logs`], so a library
+/// caller (the iOS bench) can read a workload's `BENCH_RESULT` line.
+pub fn log_line(level: u32, message: &str) {
+    let label = ["debug", "info", "warn", "error"].get(level as usize).copied().unwrap_or("log");
+    let line = format!("[{label}] {message}");
+    println!("{line}");
+    LOG.lock().unwrap().push(line);
+}
+
+/// Every line logged since the last call.
+pub fn take_logs() -> Vec<String> {
+    std::mem::take(&mut *LOG.lock().unwrap())
+}
+
+/// The JSON after `BENCH_RESULT ` in the logs, if a workload printed one.
+pub fn bench_result(logs: &[String]) -> Option<String> {
+    logs.iter().find_map(|line| line.split_once("BENCH_RESULT ").map(|(_, json)| json.to_string()))
 }
 
 pub fn mib(bytes: u64) -> f64 {

@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use rquickjs::{CatchResultExt, Context, Ctx, Function, Object, Runtime, TypedArray};
 
 pub mod host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod probe;
 
 const PRELUDE: &str = include_str!("../js/prelude.js");
 const MEMORY_LIMIT_BYTES: usize = 24 << 20;

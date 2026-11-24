@@ -87,8 +87,7 @@ pub mod native {
     }
 
     pub fn log(level: u32, message: &str) {
-        let label = ["debug", "info", "warn", "error"].get(level as usize).copied().unwrap_or("log");
-        println!("[{label}] {message}");
+        bench_common::log_line(level, message);
     }
 
     pub fn take_outbound() -> Vec<Vec<u8>> {
