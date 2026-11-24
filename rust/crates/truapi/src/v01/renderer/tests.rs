@@ -428,6 +428,7 @@ fn scratch_tree(cleared: Vec<u8>) -> RendererNode {
 				rows: 37,
 				cleared,
 				brush: None,
+				reveal: None,
 			},
 			children: vec![renderer_node()],
 		}],
@@ -461,10 +462,11 @@ fn a_cover_grid_keeps_its_wire_index() {
 			rows: 1,
 			cleared: vec![2],
 			brush: None,
+			reveal: None,
 		},
 		children: vec![RendererNode::Nil],
 	};
-	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 0, 4, 0]);
+	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 0, 0, 4, 0]);
 }
 
 /// A brush is the last of a cover grid's props: present, then the pan's key
@@ -479,11 +481,87 @@ fn a_cover_brush_follows_the_cleared_bits() {
 			rows: 1,
 			cleared: vec![2],
 			brush: Some(CoverBrush { pan: "p".into(), width: Compact(52) }),
+			reveal: None,
 		},
 		children: vec![RendererNode::Nil],
 	};
-	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 1, 4, b'p', 208, 4, 0]);
+	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 1, 4, b'p', 208, 0, 4, 0]);
 	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+}
+
+/// A reveal is the last of a cover grid's props: present, then the pan's key,
+/// the share as two little-endian bytes and the action.
+#[test]
+fn a_cover_reveal_follows_the_brush() {
+	let node = RendererNode::CoverGrid {
+		modifiers: Vec::new(),
+		props: CoverGridProps {
+			key: "f".into(),
+			columns: 2,
+			rows: 1,
+			cleared: vec![2],
+			brush: None,
+			reveal: Some(CoverReveal { pan: "p".into(), at_permille: 550, action: "r".into() }),
+		},
+		children: vec![RendererNode::Nil],
+	};
+	assert_eq!(
+		node.encode(),
+		vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 0, 1, 4, b'p', 38, 2, 4, b'r', 4, 0]
+	);
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+}
+
+#[test]
+fn a_cover_reveal_is_reached_at_its_share_and_not_one_cell_before() {
+	let reveal = |at_permille| CoverReveal { pan: "p".into(), at_permille, action: "r".into() };
+	// 35 x 37 cells, as the Daily Dollar card: 55% is 712.25 cells, so 713.
+	assert!(!reveal(550).reached(712, 1295));
+	assert!(reveal(550).reached(713, 1295));
+	// A share that falls on a whole cell is reached at that cell.
+	assert!(!reveal(500).reached(1, 4));
+	assert!(reveal(500).reached(2, 4));
+	assert!(reveal(1000).reached(4, 4));
+	assert!(!reveal(1000).reached(3, 4));
+	assert!(reveal(0).reached(0, 4), "zero is reached on any lift");
+	assert!(!reveal(1001).reached(4, 4), "more than the whole is never reached");
+	assert!(reveal(1000).reached(16_384, 16_384), "the largest grid does not overflow");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_cover_reveal_round_trips_through_uniffi() {
+	let props = CoverGridProps {
+		key: "foil".into(),
+		columns: 35,
+		rows: 37,
+		cleared: Vec::new(),
+		brush: None,
+		reveal: Some(CoverReveal {
+			pan: "scratch".into(),
+			at_permille: 550,
+			action: "scratch.reveal".into(),
+		}),
+	};
+	let ffi = <CoverGridProps as uniffi::Lower<crate::UniFfiTag>>::lower(props.clone());
+	assert_eq!(<CoverGridProps as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), props);
+}
+
+#[test]
+fn a_cover_reveal_reads_from_json() {
+	let json = r#"{"key":"foil","columns":35,"rows":37,"reveal":{"pan":"scratch","atPermille":550,"action":"scratch.reveal"}}"#;
+	let props: CoverGridProps = serde_json::from_str(json).unwrap();
+	assert_eq!(
+		props.reveal,
+		Some(CoverReveal {
+			pan: "scratch".into(),
+			at_permille: 550,
+			action: "scratch.reveal".into()
+		})
+	);
+	let bare: CoverGridProps =
+		serde_json::from_str(r#"{"key":"foil","columns":1,"rows":1}"#).unwrap();
+	assert_eq!(bare.reveal, None);
 }
 
 /// The brush travels with the tree, never with a move: an answer is the same
@@ -507,6 +585,7 @@ fn cleared_bits_read_row_by_row_lowest_bit_first() {
 		rows: 3,
 		cleared: vec![0b0000_0101, 0b0000_1000],
 		brush: None,
+		reveal: None,
 	};
 	let cleared: Vec<u32> = (0..12).filter(|&cell| props.is_cleared(cell)).collect();
 	assert_eq!(cleared, vec![0, 2, 11]);

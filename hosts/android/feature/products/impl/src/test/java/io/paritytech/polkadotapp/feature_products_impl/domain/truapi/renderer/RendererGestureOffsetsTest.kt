@@ -201,6 +201,7 @@ class RendererGestureOffsetsTest {
                     rows = 4u,
                     cleared = ByteArray(0),
                     brush = CoverBrush(pan = "scratch", width = 52uL),
+                    reveal = null,
                 ),
                 children = emptyList(),
             ),

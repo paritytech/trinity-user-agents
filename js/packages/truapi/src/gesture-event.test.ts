@@ -81,7 +81,18 @@ describe("gesture wire contract", () => {
             tag: "CoverGrid",
             value: { modifiers: [], props: { key: "f", columns: 2, rows: 1, cleared: coverBits([1], 2, 1) }, children: [{ tag: "Nil" }] },
         };
-        expect(Array.from(RendererNode.enc(node))).toEqual([15, 0, 4, 102, 2, 0, 1, 0, 4, 2, 0, 4, 0]);
+        expect(Array.from(RendererNode.enc(node))).toEqual([15, 0, 4, 102, 2, 0, 1, 0, 4, 2, 0, 0, 4, 0]);
+    });
+
+    it("asks for a cover's reveal with the Rust bytes", () => {
+        const reveal = { pan: "p", atPermille: 550, action: "r" };
+        const node: RendererNode = {
+            tag: "CoverGrid",
+            value: { modifiers: [], props: { key: "f", columns: 2, rows: 1, cleared: coverBits([1], 2, 1), reveal }, children: [{ tag: "Nil" }] },
+        };
+        const bytes = [15, 0, 4, 102, 2, 0, 1, 0, 4, 2, 0, 1, 4, 112, 38, 2, 4, 114, 4, 0];
+        expect(Array.from(RendererNode.enc(node))).toEqual(bytes);
+        expect(RendererNode.dec(Uint8Array.from(bytes))).toEqual(node);
     });
 
     it("packs cleared cells lowest bit first and ignores cells outside the grid", () => {

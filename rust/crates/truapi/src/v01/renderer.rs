@@ -782,7 +782,8 @@ pub struct GestureEvent {
 /// showing square blocks. What is behind the node shows through the holes.
 ///
 /// With a [`CoverBrush`], the cells cleared since the tree are drawn with the
-/// brush instead: see there.
+/// brush instead: see there. With a [`CoverReveal`], the host tells the worker
+/// when enough of the cover is cleared: see there.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -802,6 +803,10 @@ pub struct CoverGridProps {
 	/// follows a pan's finger; absent draws them as round holes.
 	#[serde(default)]
 	pub brush: Option<CoverBrush>,
+	/// Sends one action when enough of the cover is cleared and the finger
+	/// is up; absent sends none.
+	#[serde(default)]
+	pub reveal: Option<CoverReveal>,
 }
 
 /// The brush a cover grid draws its newly cleared cells with, as the existing
@@ -826,6 +831,40 @@ pub struct CoverBrush {
 	pub pan: String,
 	/// The line's width, in logical pixels.
 	pub width: Size,
+}
+
+/// When a cover grid counts as cleared, decided by the host so every worker
+/// and both hosts agree on it: the action is sent once the cleared cells reach
+/// `at_permille` thousandths of the grid and the finger is up.
+///
+/// The cleared cells are the tree's `cleared` plus the cells cleared since by
+/// [`RendererNode::ClearCells`]. The host checks when the finger lifts from the
+/// pan keyed `pan`, and again whenever cells are cleared before it touches
+/// down again, so the cells a worker clears in answer to the pan's end count.
+/// It sends `action`, with no payload, at most once per lift: a new touch
+/// starts over, and nothing is sent while the finger is down. Cells reached
+/// with no touch on that pan since the tree send nothing.
+///
+/// With `cleared` cells of `cells` in all, the share is reached when
+/// `cleared * 1000 >= at_permille * cells` ([`CoverReveal::reached`]). Zero is
+/// reached on any lift; more than 1000 never.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoverReveal {
+	/// The `key` of the `Gesture` whose pan clears the cover.
+	pub pan: String,
+	/// The share of the grid's cells to clear, in thousandths.
+	pub at_permille: u16,
+	/// The action sent when the share is reached.
+	pub action: String,
+}
+
+impl CoverReveal {
+	/// Whether `cleared` cells of `cells` reach the share.
+	pub fn reached(&self, cleared: u32, cells: u32) -> bool {
+		u64::from(cleared) * 1000 >= u64::from(self.at_permille) * u64::from(cells)
+	}
 }
 
 impl CoverGridProps {

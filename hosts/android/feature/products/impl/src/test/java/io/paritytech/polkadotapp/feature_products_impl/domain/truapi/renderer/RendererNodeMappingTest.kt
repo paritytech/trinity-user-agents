@@ -363,6 +363,7 @@ class RendererNodeMappingTest {
                 rows = 37u,
                 cleared = byteArrayOf(0b1001, 0, 0x80.toByte()),
                 brush = null,
+                reveal = null,
             ),
             children = listOf(RendererNode.Box(modifiers = emptyList(), props = BoxProps(contentAlignment = null), children = emptyList())),
         )
@@ -388,6 +389,7 @@ class RendererNodeMappingTest {
                 rows = 47u,
                 cleared = ByteArray(0),
                 brush = CoverBrush(pan = "pan", width = 52uL),
+                reveal = null,
             ),
             children = emptyList(),
         )

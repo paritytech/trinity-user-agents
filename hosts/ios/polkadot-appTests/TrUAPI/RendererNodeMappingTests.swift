@@ -353,7 +353,7 @@ struct RendererNodeMappingTests {
     @Test func coverGridCarriesItsGridAndClearedCells() throws {
         let node = RendererNode.coverGrid(
             modifiers: [.fillWidth(true)],
-            props: CoverGridProps(key: "foil", columns: 35, rows: 37, cleared: Data([0b1001]), brush: nil),
+            props: CoverGridProps(key: "foil", columns: 35, rows: 37, cleared: Data([0b1001]), brush: nil, reveal: nil),
             children: [.spacer(modifiers: [])]
         )
         let widget = try #require(node.toWidgetNode(resolver: resolver))
@@ -371,7 +371,8 @@ struct RendererNodeMappingTests {
         let node = RendererNode.coverGrid(
             modifiers: [],
             props: CoverGridProps(
-                key: "foil", columns: 36, rows: 47, cleared: Data(), brush: CoverBrush(pan: "pan", width: 52)
+                key: "foil", columns: 36, rows: 47, cleared: Data(),
+                brush: CoverBrush(pan: "pan", width: 52), reveal: nil
             ),
             children: []
         )

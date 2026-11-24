@@ -585,6 +585,18 @@ while the host holds no stroke (after a redraw, say), are drawn as round holes.
 A worker clearing every cell within `width / 2` of each segment it hears has
 every point of the stroke covered.
 
+When a scratch card counts as scratched is decided once, by the host, so every
+worker and both hosts agree on it. A cover names `reveal: { pan, atPermille,
+action }`: the key of the pan that clears it, the share of its cells to clear
+in thousandths, and the action to send. When the finger lifts from that pan,
+and again whenever cells are cleared before it touches down again, the host
+counts the tree's `cleared` cells and those cleared since; once
+`cleared * 1000 >= atPermille * columns * rows`, it sends the action, with no
+payload, once for that lift. So the cells a worker clears in answer to the
+pan's end count, nothing is sent while the finger is down, and a new touch
+starts over. The worker answers by sending the revealed tree; it keeps no
+threshold of its own.
+
 To hear where the finger is rather than how far it moved, a pan sets
 `location: true`: each event's `x` and `y` are then the finger's place inside
 the gesture, from its top-start corner and clamped to its frame (hundredths of
