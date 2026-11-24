@@ -360,8 +360,8 @@ private struct NodeButtonView: View {
             )
         case .secondary:
             MainButtonStyle(
-                backgroundColor: Color(.fill6),
-                foregroundColor: Color(.textAndIconsPrimaryDark),
+                backgroundColor: .bgActionTertiary,
+                foregroundColor: .fgPrimary,
                 height: 44
             )
         case .text:
