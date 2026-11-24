@@ -56,13 +56,16 @@ fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
 	profile
 }
 
+/// State from before `v2`, kept under the directory name this run uses, is
+/// neither read nor moved.
 #[test]
 fn versioned_state_starts_fresh_and_preserves_previous_state() {
 	for source in ["argument", "environment", "default"] {
 		let temporary = tempfile::tempdir().expect("create temporary state root");
 		let base_path = temporary.path().join("truapi-host");
-		let previous_profile = base_path.join("paseo-next-v2/previous_signing_host");
-		let previous_role = base_path.join("paseo-next-v2/signing-host");
+		let previous_network = base_path.join(state::offline_state_directory());
+		let previous_profile = previous_network.join("previous_signing_host");
+		let previous_role = previous_network.join("signing-host");
 		std::fs::create_dir_all(&previous_profile).expect("create previous profile");
 		std::fs::create_dir_all(&previous_role).expect("create previous role");
 		let previous_files = [
