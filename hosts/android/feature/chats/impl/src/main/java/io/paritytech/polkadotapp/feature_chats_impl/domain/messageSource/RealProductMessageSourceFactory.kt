@@ -24,7 +24,7 @@ class RealProductMessageSourceFactory @Inject constructor(
             chatId = chatId,
             querying = querying ?: MissingProductChatQuerying,
             cache = cache,
-            settings = ProductMessageSource.Settings.Default.copy(reportsSeen = policy.reportsSeen),
+            settings = ProductMessageSource.Settings.Default,
             now = System::currentTimeMillis,
             dispatcher = dispatchers.computation,
         )

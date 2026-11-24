@@ -966,10 +966,7 @@ fn a_hop_file_is_media_with_a_wss_node() {
 			"media",
 			hop("wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
 		),
-		Err(ChatFieldError::TooLong {
-			field: "media",
-			limit: CHAT_HOP_FILE_MAX_BYTES as usize
-		})
+		Err(ChatFieldError::TooLong { field: "media", limit: CHAT_HOP_FILE_MAX_BYTES as usize })
 	);
 	// A file with zero bytes is empty, not too long.
 	assert_eq!(
@@ -1101,9 +1098,9 @@ fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
 	);
 }
 
-// The chat modality RFC limits a reaction to one extended grapheme cluster of
-// at most 64 bytes, and a reader drops a longer one. The core refuses it
-// first, in each place a v2 reaction reaches a host.
+// A host draws a reaction as one emoji: one extended grapheme cluster of at
+// most 64 bytes. The core refuses anything else in each place a v2 reaction
+// reaches a host.
 #[test]
 fn a_reaction_is_one_emoji_of_at_most_64_bytes() {
 	let placed = |emoji: &str| {
@@ -1195,10 +1192,7 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 	assert!(validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES)).is_ok());
 	assert_eq!(
 		validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES + 1)),
-		Err(ChatFieldError::TooLong {
-			field: "description",
-			limit: CHAT_DESCRIPTION_MAX_BYTES
-		})
+		Err(ChatFieldError::TooLong { field: "description", limit: CHAT_DESCRIPTION_MAX_BYTES })
 	);
 	assert_eq!(
 		validate_chat_room_metadata(ChatRoomMetadata {
@@ -1220,18 +1214,13 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 	);
 
 	// The core bounds the empty-room text as it bounds a description.
-	let placeholder =
-		|text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
+	let placeholder = |text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
 	assert!(
-		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES)))
-			.is_ok()
+		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES))).is_ok()
 	);
 	assert_eq!(
 		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES + 1))),
-		Err(ChatFieldError::TooLong {
-			field: "placeholder",
-			limit: CHAT_DESCRIPTION_MAX_BYTES
-		})
+		Err(ChatFieldError::TooLong { field: "placeholder", limit: CHAT_DESCRIPTION_MAX_BYTES })
 	);
 
 	// An image badge has the rules of an icon and needs an image. An

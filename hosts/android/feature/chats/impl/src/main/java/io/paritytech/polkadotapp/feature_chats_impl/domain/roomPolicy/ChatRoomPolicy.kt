@@ -21,13 +21,16 @@ data class ChatRoomPolicy(
     val pinned: Boolean,
     /** The line that the row shows in place of its preview line. */
     val listActivity: ChatRoomActivityModel?,
-    val reportsSeen: Boolean,
     val description: String?,
     /** The text that the room screen shows while the room has no messages. */
     val placeholder: String?,
     /** Changes at each configuration that the product sets. */
     val configGeneration: Long,
 ) {
+    /** A room whose product keeps the messages tells the product which messages the user saw. */
+    val reportsSeen: Boolean
+        get() = messageStore == MessageStore.PRODUCT
+
     enum class MessageStore {
         /** The host database keeps the messages. */
         HOST,
@@ -61,7 +64,6 @@ data class ChatRoomPolicy(
             listTimestamp = null,
             pinned = false,
             listActivity = null,
-            reportsSeen = false,
             description = null,
             placeholder = null,
             configGeneration = 0,
@@ -80,7 +82,6 @@ data class ChatRoomPolicy(
                 listTimestamp = preview?.timestamp?.takeIf { it > 0 },
                 pinned = preview?.pinned == true,
                 listActivity = preview?.activity,
-                reportsSeen = config.reportSeen,
                 description = declarations.metadata.description,
                 placeholder = declarations.metadata.placeholder,
                 configGeneration = declarations.configGeneration,

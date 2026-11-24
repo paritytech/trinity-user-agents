@@ -52,18 +52,22 @@ pub struct HostChatCreateRoomResponse {
 }
 
 /// Chat room registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From, derive_more::Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostChatCreateRoomError {
 	/// Not allowed.
+	#[display("not allowed")]
 	PermissionDenied,
 	/// Catch-all.
 	#[from]
+	#[display("{reason}")]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
 	},
 	/// The host cannot keep the configuration of the request. It created and
 	/// changed nothing.
+	#[display("the host cannot keep this room configuration")]
 	UnsupportedConfig,
 }
 
@@ -270,16 +274,14 @@ pub struct ChatRoomActivity {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatRoomConfig {
 	/// `true`: the product keeps the messages and answers `messages_query` and
-	/// `user_action`, and the host keeps only a page cache.
+	/// `user_action`, and the host keeps only a page cache. The host sends a
+	/// `Seen` user action when the user sees the newest message.
 	/// `false`: the host stores the messages.
 	/// A `create_room` that changes it discards the stored messages or the
 	/// cached pages of the room.
 	pub product_source: bool,
 	/// `true`: the host shows who reacted, and asks `reactions_query`.
 	pub reaction_details: bool,
-	/// `true`: the host sends a `Seen` user action when the user sees the
-	/// newest message.
-	pub report_seen: bool,
 }
 
 /// Request to replace the name, description, icon and empty-room text of a
@@ -330,8 +332,6 @@ pub enum HostChatSetRoomPreviewError {
 	/// In a room the host stores: the preview shows a message or a reaction of
 	/// the user.
 	NotOwner,
-	/// The product replaced the preview of this room too often.
-	RateLimited,
 }
 
 /// Failure to delete a room. A delete of a room that does not exist succeeds.
@@ -606,8 +606,6 @@ pub enum HostChatUpdateFeedError {
 	/// reaction summaries say that the user reacted, or `Edited`, `Replaced`
 	/// or `Deleted` of a message the product did not write.
 	NotOwner,
-	/// The product pushed updates to this room too often.
-	RateLimited,
 }
 
 /// Where a page of messages starts.
