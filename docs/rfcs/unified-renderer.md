@@ -449,9 +449,6 @@ back opens a fresh stream with the same request. Each item replaces the whole tr
 the last tree on screen. After an error the host shows the product's identity and no body. A product that cannot draw
 the body ends the stream with an error.
 
-An open `render` stream is one worker reference in [Worker Lifecycle](worker-lifecycle.md) terms, whichever surface
-opened it.
-
 ### Chat
 
 `Chat` has no `custom_message_render`. A `Custom` message is rendered through `Renderer::render` with a `ChatMessage`

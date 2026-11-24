@@ -33,8 +33,6 @@ export const CALLBACK_NAMES = [
   "devicePermission",
   "remotePermission",
   "removePocketCard",
-  "beginOperation",
-  "endOperation",
   "read",
   "write",
   "clear",
@@ -85,8 +83,6 @@ function rawCallbacks(
     | "cancelNotification"
     | "devicePermission"
     | "remotePermission"
-    | "beginOperation"
-    | "endOperation"
     | "read"
     | "write"
     | "clear"
@@ -140,14 +136,6 @@ function rawCallbacks(
         product,
         request,
       ]) as ReturnType<Required<RawCallbacks>["remotePermission"]>,
-    beginOperation: (product, label) =>
-      bridge.callbackRequest("beginOperation", [product, label]) as ReturnType<
-        Required<RawCallbacks>["beginOperation"]
-      >,
-    endOperation: (product, id) =>
-      bridge.callbackRequest("endOperation", [product, id]) as ReturnType<
-        Required<RawCallbacks>["endOperation"]
-      >,
     read: (key) =>
       bridge.callbackRequest("read", [key]) as ReturnType<
         Required<RawCallbacks>["read"]

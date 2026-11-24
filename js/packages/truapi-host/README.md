@@ -262,9 +262,8 @@ render cannot take the surrounding surface with it. Exactly one terminal fires
 per render: `onComplete` means the last tree delivered stands, `onError` means
 it is partial and must not be shown as final. A product that declines the
 render, a tree that fails to decode, a closed connection, and a throwing
-renderer all arrive as `onError`. An open render holds one worker reference for
-the provider's product, released when the stream ends or the disposer runs, so
-the product's worker stays up for as long as something is being drawn.
+renderer all arrive as `onError`. A surface that needs the worker takes a claim and releases it when the surface leaves.
+It can end or replace a render without changing worker demand.
 
 `publishChatAction` is the path for posted messages, commands and host-drawn
 `Actions` buttons. Each action entry point sits behind its own service's access
@@ -510,8 +509,7 @@ leaves. The host runs and stops the worker executable itself; the runtime only t
 
 | Runtime method                    | Use it to                                                        |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `acquireWorker(productId)`        | Take one reference while a holder is on screen or in flight.     |
-| `releaseWorker(productId)`        | Release one reference; with none held it is a no-op.             |
+| `claimWorker(productId)`          | Hold one reference until the returned handle's `release()` runs.  |
 | `subscribeWorkerDemand(listener)` | Learn which workers to run: current set first, then each change. |
 
 ```ts
@@ -520,8 +518,9 @@ const stop = runtime.subscribeWorkerDemand(({ productId, wanted }) => {
   else stopProductWorker(productId);
 });
 
-runtime.acquireWorker("chat-bot.dot"); // a room it serves came on screen
-runtime.releaseWorker("chat-bot.dot"); // the room left the screen
+const productId = await runtime.parseProductId("chat-bot.dot");
+const room = runtime.claimWorker(productId); // the room came on screen
+room.release(); // the room left the screen
 ```
 
 Two holders of one product hold one worker: the listener hears `wanted: true` once, on the first, and `wanted: false`
