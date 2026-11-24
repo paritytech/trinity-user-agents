@@ -13,14 +13,19 @@ use crate::{
 };
 
 impl Stack {
-	/// The stack `descriptor` describes, connected to over `chain_access`.
-	/// Fails when People, Asset Hub or Bulletin is missing, when the TLD is not
-	/// one the core serves, when the namespace is not a lowercase label or is
-	/// the `polkadot` one, when the stack has no `dub` service or no
+	/// The stack `descriptor` describes, read from the pointer whose identity
+	/// is `stack_id`, connected to over `chain_access`. Fails when People,
+	/// Asset Hub or Bulletin is missing, when the TLD is not one the core
+	/// serves, when the namespace is not a lowercase label or is the
+	/// `polkadot` one, when the stack has no `dub` service or no
 	/// `dotns.popController`, and on the light client as
 	/// [`StackLightClient::new`] does. No two of its chains share a genesis
 	/// hash, which the descriptor's own rules refuse.
-	pub fn new(descriptor: Descriptor, chain_access: &ChainAccess) -> Result<Self> {
+	pub fn new(
+		stack_id: String,
+		descriptor: Descriptor,
+		chain_access: &ChainAccess,
+	) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
 			id != POLKADOT_NAMESPACE,
@@ -58,7 +63,7 @@ impl Stack {
 				Some(Arc::new(StackLightClient::new(&descriptor, &chains, spec_directory.clone())?))
 			},
 		};
-		Ok(Self { light_client, descriptor, chains, identity_backend, pop_controller })
+		Ok(Self { stack_id, light_client, descriptor, chains, identity_backend, pop_controller })
 	}
 }
 

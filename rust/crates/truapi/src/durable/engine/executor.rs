@@ -25,10 +25,7 @@ use tracing::{error, warn};
 
 use super::DurableTxEngine;
 use crate::{
-	durable::{
-		dao,
-		model::{DeferredDurableTx, DomainId},
-	},
+	durable::{dao, model::DomainId},
 	store::DbError,
 };
 use domain_run::DomainRun;
@@ -59,7 +56,7 @@ impl DurableTxEngine {
 	/// are deferred or handed back, until the engine is dropped. Called once,
 	/// by the constructor.
 	pub fn start_builder(self: &Arc<Self>, registration: AbortRegistration) {
-		let waiting = dao::observe_pending_submissions(&self.db);
+		let waiting = dao::observe_released_domains(&self.db);
 		let task = Builder::new(Arc::downgrade(self)).run(waiting);
 		self.spawn_abortable(task, registration);
 	}
@@ -87,8 +84,9 @@ impl Drop for Worker {
 
 /// What the builder reacts to, one at a time.
 enum BuilderEvent {
-	/// The waiting rows changed.
-	Waiting(Result<Vec<DeferredDurableTx>, DbError>),
+	/// The rows waiting to be built that no dependency blocks changed: the
+	/// domain of each.
+	Waiting(Result<Vec<DomainId>, DbError>),
 	/// The worker of this domain found no waiting row and returned.
 	Finished(DomainId),
 }
@@ -98,7 +96,7 @@ enum BuilderEvent {
 struct Builder {
 	engine: Weak<DurableTxEngine>,
 	workers: HashMap<DomainId, Worker>,
-	/// The domains of the latest waiting rows.
+	/// The domains of the latest rows to build.
 	waiting: HashSet<DomainId>,
 	finished_tx: UnboundedSender<DomainId>,
 	finished_rx: UnboundedReceiver<DomainId>,
@@ -113,7 +111,7 @@ impl Builder {
 	/// Handles every change of `waiting` and every finished worker until the
 	/// engine is dropped. The waiting rows stay observable while the
 	/// database is open, which is as long as the engine lives.
-	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<DeferredDurableTx>, DbError>>) {
+	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<DomainId>, DbError>>) {
 		let mut waiting = waiting.fuse();
 		loop {
 			let event = futures::select! {
@@ -133,14 +131,14 @@ impl Builder {
 		}
 	}
 
-	/// Starts a worker for every domain with waiting rows that has none,
+	/// Starts a worker for every domain with rows to build that has none,
 	/// unless the domain is not registered. A finished worker's domain is
 	/// started again when the latest rows still wait in it: those rows may
 	/// have been deferred after the worker's last read.
 	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {
 		match event {
-			BuilderEvent::Waiting(Ok(rows)) => {
-				self.waiting = rows.iter().map(|row| row.domain.clone()).collect();
+			BuilderEvent::Waiting(Ok(domains)) => {
+				self.waiting = domains.into_iter().collect();
 				for domain in self.waiting.clone() {
 					self.start_if_idle(engine, domain);
 				}
