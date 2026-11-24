@@ -12,6 +12,8 @@ extension Mask {
             // The iPhone stamped-brush layer stamps a followed brush; until then the strokes draw round.
             follow: follow.map { .init(pan: $0.pan, width: CGFloat($0.width) / 100) },
             fade: TimeInterval(fadeMs ?? 0) / 1_000,
+            // The iPhone mask-progress layer checks mid-stroke, rescues a stalled share and plays `haptics`; until
+            // then `whileDown`, `rescue` and `haptics` are ignored.
             clearedShare: clearedShare.map { .init(atPermille: $0.atPermille, action: $0.action) }
         )
     }

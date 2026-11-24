@@ -3891,7 +3891,12 @@ fn mask_extend_mask_and_location_pan_read_from_json() {
 	assert_eq!(mask.fade_ms, Some(350));
 	assert_eq!(
 		mask.cleared_share,
-		Some(latest::ClearedShare { at_permille: 550, action: "cleared".into() })
+		Some(latest::ClearedShare {
+			at_permille: 550,
+			action: "cleared".into(),
+			while_down: parity_scale_codec::OptionBool(None),
+			rescue: None,
+		})
 	);
 	let bare: latest::Modifier =
 		serde_json::from_str(r#"{"tag":"Mask","value":{"mode":"Show","shapes":[]}}"#).unwrap();
@@ -3904,6 +3909,7 @@ fn mask_extend_mask_and_location_pan_read_from_json() {
 			follow: None,
 			fade_ms: None,
 			cleared_share: None,
+			haptics: None,
 		})
 	);
 	let gesture: latest::RendererNode = serde_json::from_str(

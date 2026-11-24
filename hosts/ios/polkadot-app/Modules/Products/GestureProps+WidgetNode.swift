@@ -36,6 +36,7 @@ extension GestureProps {
 extension PanFeel {
     var nodeFeel: CustomMessageWidgetNode.PanFeel {
         var value = CustomMessageWidgetNode.PanFeel()
+        // The iPhone mask-progress layer scales each axis apart; until then `pressScaleYPermille` is ignored.
         value.pressScale = CGFloat(pressScalePermille) / 1_000
         value.pressDuration = TimeInterval(pressMs) / 1_000
         value.unpressDuration = TimeInterval(unpressMs) / 1_000

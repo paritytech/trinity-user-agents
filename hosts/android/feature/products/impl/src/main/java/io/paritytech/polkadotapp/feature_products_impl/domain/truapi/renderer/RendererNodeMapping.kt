@@ -178,6 +178,7 @@ private class JsWidgetMapping(private val keyed: RendererKeyed) {
     }
 }
 
+// The Android mask-progress layer scales each axis apart; until then `pressScaleYPermille` is ignored.
 private fun PanFeel.toJs(): JsPanFeel = JsPanFeel(
     pressScale = pressScalePermille.toFloat() / PERMILLE,
     pressMs = pressMs.toInt(),
@@ -325,6 +326,8 @@ private fun Mask.toJs(keyed: RendererKeyed): JsModifier.Mask = JsModifier.Mask(
     // The Android stamped-brush layer stamps a followed brush; until then the strokes draw round.
     follow = follow?.let { JsMaskFollow(it.pan, it.width.toLong()) },
     fadeMs = fadeMs?.toLong() ?: 0L,
+    // The Android mask-progress layer checks mid-stroke, rescues a stalled share and plays `haptics`; until then
+    // `whileDown`, `rescue` and `haptics` are ignored.
     clearedShare = clearedShare?.let { JsClearedShare(it.atPermille.toInt(), it.action) },
     channel = key?.let(keyed.maskShapes),
     trail = follow?.pan?.let(keyed.panTrail),
