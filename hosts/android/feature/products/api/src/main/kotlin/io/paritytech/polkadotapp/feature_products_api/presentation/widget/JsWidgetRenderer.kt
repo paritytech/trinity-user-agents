@@ -89,6 +89,7 @@ private fun JsWidgetContent(
         is JsWidget.Spacer -> JsSpacerRenderer(widget, modifier)
         is JsWidget.Text -> JsTextRenderer(widget, modifier)
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
+        is JsWidget.Gesture -> JsGestureRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
         is JsWidget.Materials -> LocalJsMaterialsRenderer.current.Node(modifier, widget.node) {
@@ -303,6 +304,7 @@ private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.Spacer -> modifiers
     is JsWidget.Text -> modifiers
     is JsWidget.Button -> modifiers
+    is JsWidget.Gesture -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
     is JsWidget.Materials -> emptyList()
@@ -400,6 +402,21 @@ private fun JsButtonRenderer(
                 buttonContent()
             }
         }
+    }
+}
+
+@Composable
+private fun JsGestureRenderer(
+    widget: JsWidget.Gesture,
+    modifier: Modifier = Modifier,
+) {
+    val eventDispatcher = LocalJsEventHandler.current
+    JsGesture(
+        widget = widget,
+        onAction = { actionId, event -> eventDispatcher(actionId, event) },
+        modifier = modifier.then(widget.modifiers.toComposeModifier()),
+    ) {
+        widget.children.forEach { child -> JsWidgetContent(widget = child) }
     }
 }
 

@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOp
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
+import io.paritytech.polkadotapp.feature_products_api.model.toGesturePayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImages
@@ -347,6 +348,7 @@ class PocketViewModel @Inject constructor(
         val payload = when (type) {
             JsUiEvent.Type.ButtonClick -> ByteArray(0)
             is JsUiEvent.Type.InputFieldValueChange -> type.newValue.toByteArray()
+            is JsUiEvent.Type.Gesture -> type.toGesturePayload()
         }
         interactor.sendFaceAction(card.key, actionId, payload)
     }

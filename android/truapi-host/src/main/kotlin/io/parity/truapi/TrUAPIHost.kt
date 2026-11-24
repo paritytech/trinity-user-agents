@@ -29,6 +29,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -37,7 +38,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
 import uniffi.truapi.NativeMaterialsObserver
@@ -1463,17 +1463,20 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
 /**
  * A core stream that the observer [subscribe] installs feeds, cancelled when
- * collection ends. Each emission replaces the last, so only the latest is kept
- * when the collector falls behind.
+ * collection ends. Replacement streams conflate; renderer items retain their order
+ * because a position update depends on the preceding tree.
  */
-private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscription): Flow<T> =
+private fun <T> observedFlow(
+    capacity: Int = Channel.CONFLATED,
+    subscribe: ProducerScope<T>.() -> NativeSubscription,
+): Flow<T> =
     callbackFlow {
         val subscription = subscribe()
         awaitClose {
             subscription.cancel()
             subscription.close()
         }
-    }.conflate()
+    }.buffer(capacity)
 
 /**
  * The resolved materials of one tree, now and after each change, and the
@@ -1571,11 +1574,11 @@ class TrUAPIProductExecution internal constructor(
      * subscribes on collection, so a closed or non-Worker execution fails the
      * collector with [ProductRuntimeException] rather than this call. It
      * cancels the renderer when collection ends;
-     * each emission is a complete replacement tree, so only the latest is kept
-     * when the collector falls behind.
+     * items are delivered in order, including position-only [RendererNode.SetOffset]
+     * updates that must be applied to the preceding tree before tree conflation.
      */
     fun render(request: ProductRendererRenderRequest): Flow<RendererNode> =
-        observedFlow {
+        observedFlow(capacity = Channel.UNLIMITED) {
             inner.render(
                 request,
                 object : NativeRendererObserver {

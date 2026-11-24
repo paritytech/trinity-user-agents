@@ -4,21 +4,34 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.Background
 import uniffi.truapi.BorderStyle
+import uniffi.truapi.BoxProps
 import uniffi.truapi.ButtonProps
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
 import uniffi.truapi.Dimensions
+import uniffi.truapi.GestureProps
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.MaterialsProps
 import uniffi.truapi.Modifier
+import uniffi.truapi.PanAxis
+import uniffi.truapi.PanDrag
+import uniffi.truapi.PanGesture
+import uniffi.truapi.PanRelease
+import uniffi.truapi.PanTravel
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.TextProps
@@ -95,6 +108,78 @@ class RendererNodeMappingTest {
         assertTrue("padding stayed drawable", listOfNotNull(padding.top, padding.end, padding.bottom, padding.start).all { it >= 0 })
         assertTrue("width stayed drawable", modifiers.filterIsInstance<JsModifier.Size>().single().width!! >= 0)
         assertTrue("border stayed drawable", modifiers.filterIsInstance<JsModifier.Border>().single().width >= 0)
+    }
+
+    @Test
+    fun `a gesture with a host drag carries its children, travel and release`() {
+        val node = RendererNode.Gesture(
+            modifiers = listOf(Modifier.FillWidth(true)),
+            props = GestureProps(
+                key = null,
+                tapAction = null,
+                pan = PanGesture(
+                    axis = PanAxis.HORIZONTAL,
+                    drag = PanDrag(travel = PanTravel.ParentWidth, release = PanRelease.Complete(90u), holdAtEnd = null),
+                    startAction = "start",
+                    moveAction = null,
+                    moveIntervalMs = null,
+                    endAction = "end",
+                ),
+                accessibilityLabel = "Register",
+                enabled = null,
+                hapticOnComplete = true,
+            ),
+            children = listOf(RendererNode.Box(modifiers = emptyList(), props = BoxProps(contentAlignment = null), children = emptyList())),
+        )
+
+        val widget = node.toJsWidget() as JsWidget.Gesture
+
+        assertEquals(
+            JsWidget.Gesture(
+                pan = JsPanGesture(
+                    axis = JsPanAxis.HORIZONTAL,
+                    drag = JsPanDrag(travel = JsPanTravel.ParentWidth, release = JsPanRelease.Complete(90), holdAtEnd = true),
+                    startAction = "start",
+                    endAction = "end",
+                ),
+                accessibilityLabel = "Register",
+                enabled = true,
+                hapticOnComplete = true,
+                modifiers = listOf(JsModifier.FillMaxWidth()),
+                children = listOf(JsWidget.Box()),
+            ),
+            widget,
+        )
+    }
+
+    @Test
+    fun `a gesture without a drag reports its moves at the interval it asked for`() {
+        val node = RendererNode.Gesture(
+            modifiers = emptyList(),
+            props = GestureProps(
+                key = null,
+                tapAction = "tap",
+                pan = PanGesture(
+                    axis = PanAxis.FREE,
+                    drag = null,
+                    startAction = null,
+                    moveAction = "move",
+                    moveIntervalMs = 16u,
+                    endAction = null,
+                ),
+                accessibilityLabel = null,
+                enabled = false,
+                hapticOnComplete = null,
+            ),
+            children = emptyList(),
+        )
+
+        val widget = node.toJsWidget() as JsWidget.Gesture
+
+        assertEquals(JsPanGesture(axis = JsPanAxis.FREE, moveAction = "move", moveIntervalMs = 16), widget.pan)
+        assertEquals("tap", widget.tapAction)
+        assertFalse(widget.enabled)
+        assertFalse(widget.hapticOnComplete)
     }
 
     @Test
