@@ -45,13 +45,16 @@ as a `BundledStack`:
   served. The core verifies it under the pointer's key.
 - `reservedValues` is the build's `ReservedValuesPolicy`. Its
   [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
-  which policies it refuses.
+  which policies it refuses. Each `extraGenesisHashes` entry must be 32 bytes.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
 one the wallet's reserved identities derive under. An invalid stack makes the
 `TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
-Include this configuration update in the embedding app's package upgrade.
+An `extraGenesisHashes` entry of another length fails earlier, where the
+bindings convert the config, and the constructor throws `InternalException`
+instead. Include this configuration update in the embedding app's package
+upgrade.
 
 ### Compatibility
 
