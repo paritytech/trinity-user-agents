@@ -72,7 +72,7 @@ pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
-	NativeWebViewWorkerHost, NativeWorkerAttempt, NativeWorkerClaim, NativeWorkerExecution,
+	NativeHostWebViewWorker, NativeWorkerAttempt, NativeWorkerClaim, NativeWorkerExecution,
 	NativeWorkerExecutionObserver, NativeWorkerExecutionState,
 };
 pub use sso::SsoRequestOutcome;

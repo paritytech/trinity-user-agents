@@ -117,7 +117,7 @@ pub fn claimed_worker(
 	(host, claim, worker)
 }
 
-impl NativeWebViewWorkerHost for mpsc::Sender<Arc<NativeWorkerAttempt>> {
+impl NativeHostWebViewWorker for mpsc::Sender<Arc<NativeWorkerAttempt>> {
 	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
 		let _ = self.send(attempt);
 	}
