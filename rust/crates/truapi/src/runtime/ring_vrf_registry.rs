@@ -5,7 +5,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, ProductId, Stack, StackChains, StackRun};
+use crate::platform::{CoreStorageKey, Platform, ProductId, Stack, StackRun};
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
@@ -33,18 +33,19 @@ impl RegistrySnapshot {
 	/// An entry left with no ring is dropped, and an owner that lost a ring is
 	/// no longer listed completely, so its listing is read again.
 	fn without_rings_on(mut self, gone: impl Fn([u8; 32]) -> bool) -> Self {
-		let kept = |ring: &RingLocation| !gone(ring.chain_id);
-		let mut incomplete = Vec::new();
+		let gone = |ring: &RingLocation| gone(ring.chain_id);
+		let incomplete: Vec<_> = self
+			.entries
+			.iter()
+			.filter(|entry| entry.rings.iter().any(&gone))
+			.map(|entry| entry.handle.dot_ns_identifier.clone())
+			.collect();
 		for entry in &mut self.entries {
-			let before = entry.rings.len();
-			entry.rings.retain(kept);
-			if entry.rings.len() != before {
-				incomplete.push(entry.handle.dot_ns_identifier.clone());
-			}
+			entry.rings.retain(|ring| !gone(ring));
 		}
 		self.entries.retain(|entry| !entry.rings.is_empty());
 		self.complete_owners.retain(|owner| !incomplete.contains(owner));
-		self.selected_providers.retain(|provider| kept(&provider.ring));
+		self.selected_providers.retain(|provider| !gone(&provider.ring));
 		self
 	}
 }
@@ -53,7 +54,6 @@ impl RegistrySnapshot {
 pub struct RingVrfRegistryStore {
 	platform: Arc<dyn Platform>,
 	run: StackRun,
-	chains: StackChains,
 	cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
 	storage_guard: futures::lock::Mutex<()>,
 }
@@ -178,15 +178,15 @@ impl RingVrfRegistryStore {
 	/// A registry kept in `platform`'s storage for the host that runs `stack`.
 	///
 	/// A wipe replaces a stack's chains and the rings on them, so a registry
-	/// is stored with the run it was written in. One read later loses the
-	/// rings on the chains of that run which the stack no longer has, and
-	/// keeps every other ring. One stored before runs were recorded keeps only
-	/// the rings on the stack's chains, and is stored again with the run.
+	/// is stored with the run it was written in. One read in another run
+	/// loses the rings on the chains that run lost, as
+	/// [`StackRun::lost_since`] tells, and keeps every other ring. One stored
+	/// without a run keeps only the rings on the chains of this run, and is
+	/// stored again with it.
 	pub fn new(platform: Arc<dyn Platform>, stack: &Stack) -> Arc<Self> {
 		Arc::new(Self {
 			platform,
 			run: stack.run(),
-			chains: stack.chains().clone(),
 			cache: Mutex::new(HashMap::new()),
 			storage_guard: futures::lock::Mutex::new(()),
 		})
@@ -350,12 +350,10 @@ impl RingVrfRegistryStore {
 		let snapshot =
 			match self.platform.read_core_storage(key.clone()).await.map_err(storage_error)? {
 				Some(blob) => match decode_stored(&blob) {
-					Ok((snapshot, Some(stored_in))) => snapshot.without_rings_on(|chain| {
-						stored_in.has_chain(chain) && !self.chains.contains(chain)
-					}),
+					Ok((snapshot, Some(stored_in))) => snapshot
+						.without_rings_on(|chain| self.run.lost_since(&stored_in, chain)),
 					Ok((snapshot, None)) => {
-						let snapshot =
-							snapshot.without_rings_on(|chain| !self.chains.contains(chain));
+						let snapshot = snapshot.without_rings_on(|chain| !self.run.has_chain(chain));
 						let stamped = self.run.stamp(&snapshot.encode());
 						if let Err(error) = self.platform.write_core_storage(key, stamped).await {
 							warn!(reason = %error.reason, "storing the ring-VRF registry's run failed");
@@ -407,14 +405,19 @@ impl RingVrfRegistryStore {
 }
 
 /// A stored registry and the run it was stored in, or no run for one stored
-/// before runs were recorded.
+/// without it.
+///
+/// A blob that reads as stamped and holds no valid registry is tried as one
+/// stored without a run, whose first bytes can look like a stamp. When that
+/// fails too, the error is the stamped reading's.
 fn decode_stored(blob: &[u8]) -> Result<(RegistrySnapshot, Option<StackRun>), RingVrfError> {
-	if let Some((run, value)) = StackRun::split_stamped(blob) &&
-		let Ok(snapshot) = decode_snapshot(value)
-	{
-		return Ok((snapshot, Some(run)));
+	let Some((run, value)) = StackRun::split_stamped(blob) else {
+		return Ok((decode_snapshot(blob)?, None));
+	};
+	match decode_snapshot(value) {
+		Ok(snapshot) => Ok((snapshot, Some(run))),
+		Err(error) => decode_snapshot(blob).map(|snapshot| (snapshot, None)).map_err(|_| error),
 	}
-	Ok((decode_snapshot(blob)?, None))
 }
 
 fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {

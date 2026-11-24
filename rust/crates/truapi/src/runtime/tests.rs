@@ -95,7 +95,7 @@ use truapi::{
 };
 
 use super::{
-	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	product_manifest::{MANIFEST_TTL_SECS, encode_cached_root_manifest},
 	sso_request_service::SsoRequestService,
 	*,
 };
@@ -485,34 +485,33 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = CachedManifest { run: paseo_test_stack().run(), fetched_at_secs, json: Some(json) };
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	let entry = encode_cached_root_manifest(&paseo_test_stack().run(), Some(&json), fetched_at_secs);
+	futures::executor::block_on(
+		platform
+			.write_core_storage(CoreStorageKey::product_manifest(&ProductId::for_test(owner)), entry),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
-	let run = paseo_test_stack().run();
-	cache_manifest_entry_in(platform, run, owner, json, age_secs);
+	cache_manifest_entry_in(platform, &paseo_test_stack().run(), owner, json, age_secs);
 }
 
 /// [`cache_manifest_entry`] for a host whose stack is in `run`.
 fn cache_manifest_entry_in(
 	platform: &StubPlatform,
-	run: StackRun,
+	run: &StackRun,
 	owner: &str,
 	json: Option<String>,
 	age_secs: u64,
 ) {
-	let entry =
-		CachedManifest { run, fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	let fetched_at_secs = current_unix_secs().saturating_sub(age_secs);
+	let entry = encode_cached_root_manifest(run, json.as_deref(), fetched_at_secs);
+	futures::executor::block_on(
+		platform
+			.write_core_storage(CoreStorageKey::product_manifest(&ProductId::for_test(owner)), entry),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
@@ -748,31 +747,22 @@ fn host_in_generation(
 	ProductRuntimeHost::new_pairing_for_tests(platform, config, product, Spawner::for_test()).0
 }
 
-/// Stores a manifest cached in the run of `host`'s stack, in which `wallet.dot`
-/// grants storage access, and an allowed identity disclosure.
-fn store_grant_and_permission(host: &ProductRuntimeHost<RemoteAccountHolder>) {
-	let storage = host.connection.services.platform.as_ref();
-	let entry = CachedManifest {
-		run: host.connection.services.stack().run(),
-		fetched_at_secs: current_unix_secs(),
-		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
-	};
-	futures::executor::block_on(async {
-		storage
-			.write_core_storage(
-				CoreStorageKey::product_manifest(&ProductId::for_test("wallet.dot")),
-				entry.encode(),
-			)
-			.await
-			.expect("stub core storage accepts the entry");
-		set_authorization_status(
-			storage,
-			identity_disclosure_key(),
-			PermissionAuthorizationStatus::Authorized,
-		)
-		.await
-		.expect("stub core storage accepts the decision");
-	});
+/// Stores, on `platform`, a manifest cached in the run of `host`'s stack in
+/// which `wallet.dot` grants storage access, and an allowed identity
+/// disclosure.
+fn store_grant_and_permission(
+	platform: &StubPlatform,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) {
+	let run = host.connection.services.stack().run();
+	let grant = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	cache_manifest_entry_in(platform, &run, "wallet.dot", Some(grant), 0);
+	futures::executor::block_on(set_authorization_status(
+		platform,
+		identity_disclosure_key(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("stub core storage accepts the decision");
 }
 
 fn identity_disclosure_key() -> CoreStorageKey {
@@ -796,7 +786,7 @@ fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
 	let platform = stub_platform();
 	seed_owner_value(&platform, "wallet.dot");
 	let before_wipe = host_in_generation(platform.clone(), "first");
-	store_grant_and_permission(&before_wipe);
+	store_grant_and_permission(&platform, &before_wipe);
 	assert!(granted_value(&before_wipe, "wallet.dot").is_some());
 
 	let after_wipe = host_in_generation(platform, "second");
@@ -816,7 +806,7 @@ fn a_grant_cached_from_another_asset_hub_is_not_honoured() {
 	let platform = stub_platform();
 	let manifest = test_manifest_json(r#"{"unknown":["storage"]}"#);
 	let other_asset_hub = test_run([0x99; 32]);
-	cache_manifest_entry_in(&platform, other_asset_hub, "wallet.dot", Some(manifest), 0);
+	cache_manifest_entry_in(&platform, &other_asset_hub, "wallet.dot", Some(manifest), 0);
 	seed_owner_value(&platform, "wallet.dot");
 	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
 

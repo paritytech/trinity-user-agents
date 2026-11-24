@@ -220,7 +220,7 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 		platform
 			.write_core_storage(
 				key.clone(),
-				encode_cached_root_manifest(Some("published"), current_unix_secs(), &run),
+				encode_cached_root_manifest(&run, Some("published"), current_unix_secs()),
 			)
 			.await
 			.expect("seeded");

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-	platform::CoreStorage,
-	test_support::{StubPlatform, paseo_test_stack, test_stack},
+	platform::{CoreStorage, StackChains, StackIdentity},
+	test_support::{StubPlatform, paseo_test_stack},
 };
 
 fn handle(owner: &str, index: u32) -> ProductAccountId {
@@ -37,30 +37,36 @@ fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	assert_eq!(futures::executor::block_on(reloaded.entry(first_root, &key)).unwrap(), Some(entry));
 }
 
-/// One key registered in a ring on each of `chains`, each ring selected, with
-/// the owner's listing complete.
-fn registered_on(chains: [[u8; 32]; 3]) -> (RegistrySnapshot, [ProductAccountId; 3]) {
-	let handles = [1, 2, 3].map(|index| handle("owner.dot", index));
-	let rings = chains.map(|chain_id| RingLocation { chain_id, ..ring(1) });
-	let snapshot = RegistrySnapshot {
-		entries: (handles.iter().zip(&rings))
+/// One key of `owner.dot` registered in a ring on each of `chains`, each ring
+/// selected, with the owner's listing complete.
+fn registered_on(chains: &[[u8; 32]]) -> RegistrySnapshot {
+	let registrations = chains.iter().zip(1..).map(|(&chain_id, index)| {
+		(handle("owner.dot", index), RingLocation { chain_id, ..ring(1) })
+	});
+	RegistrySnapshot {
+		entries: registrations
+			.clone()
 			.map(|(handle, ring)| RegisteredRingVrfKey {
-				handle: handle.clone(),
-				rings: vec![ring.clone()],
+				handle,
+				rings: vec![ring],
 				public_key: Some([9; 32]),
 			})
 			.collect(),
 		complete_owners: vec![ProductId::for_test("owner.dot")],
-		selected_providers: (handles.iter().zip(rings))
-			.map(|(handle, ring)| SelectedProvider { ring, handle: handle.clone() })
+		selected_providers: registrations
+			.map(|(handle, ring)| SelectedProvider { ring, handle })
 			.collect(),
-	};
-	(snapshot, handles)
+	}
 }
 
-/// Which of `handles` a registry on `stack` still lists after it read `stored`,
-/// and whether it still takes the owner's listing for complete.
-fn listed(stored: Vec<u8>, stack: &Stack, handles: &[ProductAccountId; 3]) -> ([bool; 3], bool) {
+/// What a registry on `stack` lists once it read `stored`: for each
+/// registration of `registry`, whether its entry and the selection of its ring
+/// are still there, and whether the owner's listing still counts as complete.
+fn listed(
+	stored: Vec<u8>,
+	stack: &Stack,
+	registry: &RegistrySnapshot,
+) -> (Vec<(bool, bool)>, bool) {
 	let platform = Arc::new(StubPlatform::default());
 	let (root, owner) = ([1; 32], ProductId::for_test("owner.dot"));
 	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
@@ -68,55 +74,83 @@ fn listed(stored: Vec<u8>, stack: &Stack, handles: &[ProductAccountId; 3]) -> ([
 		.expect("stub core storage writes");
 	let store = RingVrfRegistryStore::new(platform, stack);
 	futures::executor::block_on(async {
-		let mut entries = [false; 3];
-		for (entry, handle) in entries.iter_mut().zip(handles) {
-			*entry = store.entry(root, handle).await.unwrap().is_some();
+		let mut registrations = Vec::new();
+		for selection in &registry.selected_providers {
+			registrations.push((
+				store.entry(root, &selection.handle).await.unwrap().is_some(),
+				store.selected_provider(root, &selection.ring).await.unwrap().is_some(),
+			));
 		}
-		(entries, store.complete_owner_entries(root, &owner).await.unwrap().is_some())
+		(registrations, store.complete_owner_entries(root, &owner).await.unwrap().is_some())
 	})
 }
 
+/// A stack with this `generation` over People `people` and the Bulletin and
+/// Asset Hub of the [`paseo_test_stack`].
+fn stack_in(generation: &str, people: [u8; 32]) -> Stack {
+	let paseo = paseo_test_stack();
+	let identity = StackIdentity { id: paseo.id().to_string(), generation: generation.to_string() };
+	let chains = StackChains { people, ..paseo.chains().clone() };
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, true)
+		.expect("test stack is valid")
+}
+
 /// The registry is the wallet's own record of its registrations, so a start
-/// on the same chains loses none of it. A wipe replaces the People chain and
-/// the rings on it: the entry there is dropped and the owner's listing is
-/// read again. An entry on a chain the stack still runs is kept, and so is
-/// one on a chain the stack never listed, which no wipe of the stack touched.
+/// in the same run loses none of it. A wipe replaces chains and the rings on
+/// them, and those registrations go, with their selections, and the owner's
+/// listing is read again. A wipe that replaced only People leaves the ring on
+/// Bulletin. One that the operator marked with a new `generation` restarted
+/// every chain of the stack, also where a genesis hash stayed. A ring on a
+/// chain the stack never listed is no wipe's to remove.
 #[test]
-fn a_registry_loses_only_the_rings_on_chains_the_stack_no_longer_runs() {
-	let (people, bulletin, elsewhere) = ([0; 32], [0xbb; 32], [0xee; 32]);
-	let (registry, handles) = registered_on([people, bulletin, elsewhere]);
-	let stored = paseo_test_stack().run().stamp(&registry.encode());
-	let wiped = test_stack("paseo", [0x77; 32], bulletin, [0xcc; 32]);
+fn a_registry_loses_only_the_rings_on_chains_a_wipe_replaced() {
+	let paseo = paseo_test_stack();
+	let (people, bulletin, elsewhere) = (paseo.chains().people, paseo.chains().bulletin, [0xee; 32]);
+	let registry = registered_on(&[people, bulletin, elsewhere]);
+	let stored = paseo.run().stamp(&registry.encode());
+	let listed_on = |stack: &Stack| listed(stored.clone(), stack, &registry);
+	let (kept, gone) = ((true, true), (false, false));
 
 	assert_eq!(
-		[listed(stored.clone(), &paseo_test_stack(), &handles), listed(stored, &wiped, &handles)],
-		[([true, true, true], true), ([false, true, true], false)]
+		[
+			listed_on(&paseo),
+			listed_on(&stack_in(paseo.generation(), [0x77; 32])),
+			listed_on(&stack_in("next", people)),
+		],
+		[
+			(vec![kept, kept, kept], true),
+			(vec![gone, kept, kept], false),
+			(vec![gone, gone, kept], false),
+		]
 	);
 }
 
-/// A registry stored before runs were recorded does not say which chains it
-/// was written on, so only the rings on the stack's chains can be told from
-/// ones a wipe removed, and the rest are dropped. It is stored again with the
-/// run, so this happens once and the next start reads what this one kept.
+/// A registry stored without a run does not say which chains it was written
+/// on, so only the rings on this run's chains can be told from ones a wipe
+/// removed, and the rest are dropped. It is stored again with the run, so
+/// this happens once and the next start reads what this one kept.
 #[test]
-fn a_registry_stored_without_a_run_keeps_the_rings_on_the_stacks_chains_once() {
-	let (people, elsewhere) = ([0; 32], [0xee; 32]);
-	let (registry, handles) = registered_on([people, [0xbb; 32], elsewhere]);
+fn a_registry_stored_without_a_run_keeps_the_rings_on_this_runs_chains_once() {
+	let paseo = paseo_test_stack();
+	let (people, elsewhere) = (paseo.chains().people, [0xee; 32]);
+	let registry = registered_on(&[people, elsewhere]);
 	let platform = Arc::new(StubPlatform::default());
 	let key = CoreStorageKey::RingVrfRegistry { root_public_key: [1; 32] };
 	futures::executor::block_on(platform.write_core_storage(key.clone(), registry.encode()))
 		.expect("stub core storage writes");
 
-	let store = RingVrfRegistryStore::new(platform.clone(), &paseo_test_stack());
-	let first = futures::executor::block_on(store.entry([1; 32], &handles[2])).unwrap();
+	let store = RingVrfRegistryStore::new(platform.clone(), &paseo);
+	let dropped = &registry.selected_providers[1].handle;
+	let first = futures::executor::block_on(store.entry([1; 32], dropped)).unwrap();
 	let stored = futures::executor::block_on(platform.read_core_storage(key))
 		.expect("stub core storage reads")
 		.expect("the registry is stored");
 
-	let kept = registry.without_rings_on(|chain| chain == elsewhere);
+	let mut on_people = registered_on(&[people]);
+	on_people.complete_owners.clear();
 	assert_eq!(
-		(first, stored.clone(), listed(stored, &paseo_test_stack(), &handles)),
-		(None, paseo_test_stack().run().stamp(&kept.encode()), ([true, true, false], false))
+		(first, stored.clone(), listed(stored, &paseo, &registry)),
+		(None, paseo.run().stamp(&on_people.encode()), (vec![(true, true), (false, false)], false))
 	);
 }
 

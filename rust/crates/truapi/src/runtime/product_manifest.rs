@@ -177,16 +177,15 @@ mod tests;
 /// manifest is read again.
 pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 
-/// A cached root manifest lookup, when it was made and in which run.
+/// A cached root manifest lookup and when it was made.
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
-/// reads today, so a later consumer needs no cache migration.
+/// reads today, so a later consumer needs no cache migration. It is stored
+/// stamped with the run of the stack's chains the lookup was made in, as
+/// [`encode_cached_root_manifest`] does. The core skips an entry from another
+/// run, because the chain it was read from no longer exists.
 #[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
-	/// The run of the stack's chains the lookup was made in. The core skips
-	/// an entry from another run, because the chain it was read from no
-	/// longer exists.
-	pub run: StackRun,
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,
 	/// The manifest JSON exactly as published, or `None` where the chain
@@ -222,11 +221,11 @@ pub struct CachedManifest {
 /// A Worker manifest is cached the same way, under
 /// [`worker_manifest_cache_key`].
 pub fn encode_cached_root_manifest(
+	run: &StackRun,
 	json: Option<&str>,
 	fetched_at_secs: u64,
-	run: &StackRun,
 ) -> Vec<u8> {
-	CachedManifest { run: run.clone(), fetched_at_secs, json: json.map(str::to_string) }.encode()
+	run.stamp(&CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode())
 }
 
 /// Why a grant lookup did not admit the caller.
@@ -848,8 +847,8 @@ where
 	// costs one lookup and cannot be worse than that.
 	if policy == CachePolicy::UseCache &&
 		let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
-		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
-		cached.run == *run &&
+		let Some(entry) = run.read_stamped(&bytes) &&
+		let Ok(cached) = CachedManifest::decode(&mut &*entry) &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
 	{
@@ -857,7 +856,7 @@ where
 	}
 
 	let json = fetch().await?;
-	let entry = CachedManifest { run: run.clone(), fetched_at_secs: now, json: json.clone() };
-	let _ = platform.write_core_storage(key, entry.encode()).await;
+	let entry = encode_cached_root_manifest(run, json.as_deref(), now);
+	let _ = platform.write_core_storage(key, entry).await;
 	Ok((json, DotnsRead::Fetched))
 }
