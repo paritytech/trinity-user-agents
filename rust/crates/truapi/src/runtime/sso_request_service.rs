@@ -299,9 +299,14 @@ impl SsoRequestService {
 	/// in its place while `installed` is still selected, and in the
 	/// `AuthSession` slot while that still holds `stored`.
 	///
+	/// The slot is also rewritten when `named` is already selected, as after
+	/// another lookup of the same session named it first: that one may not
+	/// have known the slot.
+	///
 	/// It waits for an activation in progress. An activation reads the slot
-	/// twice and takes a change between the two reads for another writer's
-	/// session, which ends the installed one together with its grants.
+	/// twice and gives up on a change between the two reads, and nothing
+	/// tells the core of a write it made itself, so the activation would
+	/// leave the session it read uninstalled.
 	async fn name_session(
 		&self,
 		installed: &SessionInfo,
@@ -311,13 +316,13 @@ impl SsoRequestService {
 		let _activation = self.session_store_activation.lock().await;
 		let barrier = self.owner.write_barrier().await;
 		self.drain_session_deletions(&barrier).await;
-		if self.session_state.replace_session_if_current(installed, named.clone()) {
-			if named != *installed {
-				self.auth_state.connected(&Self::session_ui_info(&named));
-			}
-			if let Some(stored) = stored {
-				self.store_named_session(&stored, &named).await;
-			}
+		let renamed = self.session_state.replace_session_if_current(installed, named.clone());
+		if renamed && named != *installed {
+			self.auth_state.connected(&Self::session_ui_info(&named));
+		}
+		let selected = renamed || self.session_state.current().as_ref() == Some(&named);
+		if let Some(stored) = stored.filter(|_| selected) {
+			self.store_named_session(&stored, &named).await;
 		}
 		self.drain_session_deletions(&barrier).await;
 	}
@@ -542,6 +547,18 @@ impl SsoRequestService {
 		let latest = self.platform.read_core_storage(CoreStorageKey::AuthSession).await;
 		let error = match latest {
 			Ok(latest) if latest.as_deref() == Some(blob.as_slice()) => None,
+			// A slot that now holds the selected session, as another origin
+			// sharing it stores it after its own lookup, or anything while none
+			// is selected, ends nothing. The change notification for that write
+			// reconciles it.
+			Ok(Some(latest))
+				if self.session_state.current().is_none_or(|selected| {
+					crate::host_logic::session::decode_persisted_session(&latest)
+						.is_ok_and(|latest| latest.is_same_session(&selected))
+				}) =>
+			{
+				return Err(StoredSessionActivationError::Changed);
+			},
 			Ok(_) => Some((false, StoredSessionActivationError::Changed)),
 			Err(error) => {
 				Some((clear_after_read_error, StoredSessionActivationError::Read(error.reason)))
@@ -891,11 +908,14 @@ impl SsoRequestService {
 	}
 
 	/// Resolve missing identity information for the selected session.
+	///
+	/// The usernames found go in through [`Self::name_session`], after an
+	/// activation in progress. They go into the `AuthSession` slot only while
+	/// it holds exactly this session as selected, so an external session is
+	/// never copied there. Any other slot is left to the lookup that started
+	/// when the session was installed, which knows the blob it came from.
 	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-		let (current, epoch) = {
-			let selection = self.selection.lock().expect("session selection mutex poisoned");
-			(self.session_state.current()?, selection.session_epoch)
-		};
+		let current = self.session_state.current()?;
 		if current.has_username() {
 			return Some(authority_session(&current));
 		}
@@ -907,25 +927,10 @@ impl SsoRequestService {
 			current.clone(),
 		)
 		.await;
-		if resolved == current {
-			return self.current_session();
+		if resolved != current {
+			let stored = encode_persisted_session(&current);
+			self.name_session(&current, resolved, Some(stored)).await;
 		}
-
-		let barrier = self.owner.write_barrier().await;
-		self.drain_session_deletions(&barrier).await;
-		{
-			let selection = self.selection.lock().expect("session selection mutex poisoned");
-			if selection.session_epoch != epoch ||
-				!self.session_state.replace_session_if_current(&current, resolved.clone())
-			{
-				return self.current_session();
-			}
-		}
-		self.auth_state.connected(&Self::session_ui_info(&resolved));
-		if let Err(err) = self.store_session(encode_persisted_session(&resolved)).await {
-			warn!(reason = %err.reason, "refreshed session identity persist failed");
-		}
-		self.drain_session_deletions(&barrier).await;
 		self.current_session()
 	}
 }

@@ -110,8 +110,9 @@ under a key of your own, such as one shared between origins, keep
 usernames up on every activation.
 
 Activating the session that is already selected keeps it: its permissions and
-the requests waiting on it stay. It keeps the usernames it has, unless
-`SessionUsernamesRun` covers the new blob, and looks them up again.
+the requests waiting on it stay. It keeps the usernames it has and looks them
+up again, unless `SessionUsernamesRun` covers the new blob, whose usernames it
+then takes.
 
 The first start after the update, with no wipe, does this once: cached
 manifests are read again, so a grant that rests on one is refused until the
@@ -480,7 +481,8 @@ const runtime = await createWebWorkerPairingHostRuntime(
 );
 
 // Resolves once product frames may use the restored session; rejects when
-// there was nothing to restore.
+// there was nothing to restore, or the slot changed while it was read, in which
+// case the change notification restores it.
 await runtime.activateStoredSession().catch(() => {});
 
 const provider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
