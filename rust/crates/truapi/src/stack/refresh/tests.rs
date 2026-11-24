@@ -15,7 +15,7 @@ use crate::{
 	runtime::services::RuntimeServices,
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
-		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet,
+		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, finish, on_testnet,
 		published_test_descriptor, published_test_descriptor_at, refused_for_its_tld,
 		sign_test_descriptor, stack_status, stored_test_record, wait_until, without_bulletin,
 	},
@@ -997,7 +997,7 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 		Spawner::for_test(),
 	);
 
-	let people = futures::executor::block_on(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
+	let people = finish(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
 
 	assert!(people.is_err(), "the restarted chain is not handed out");
 	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));

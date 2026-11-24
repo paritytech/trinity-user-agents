@@ -31,8 +31,8 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
@@ -83,6 +83,18 @@ pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
 	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
 		futures::future::Either::Left((item, _)) => item,
 		futures::future::Either::Right(_) => panic!("nothing came"),
+	}
+}
+
+/// The output of `future`, failing the test rather than hanging when it does
+/// not finish within two seconds.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn finish<F: core::future::Future>(future: F) -> F::Output {
+	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+	let future = core::pin::pin!(future);
+	match futures::executor::block_on(futures::future::select(future, timeout)) {
+		futures::future::Either::Left((output, _)) => output,
+		futures::future::Either::Right(_) => panic!("the future did not finish"),
 	}
 }
 

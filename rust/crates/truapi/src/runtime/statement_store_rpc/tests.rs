@@ -25,7 +25,7 @@ use crate::{
 		StatementWatchError, TopicFilter, hex_topic,
 	},
 	platform::JsonRpcConnection,
-	test_support::{HeardAnswers, StubPlatform, statement_page_frame, subscribe_ack_frame},
+	test_support::{HeardAnswers, StubPlatform, finish, statement_page_frame, subscribe_ack_frame},
 };
 
 const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -433,7 +433,7 @@ fn checked_statement_store(genesis: [u8; 32]) -> CheckedStore {
 fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 	let CheckedStore { statement_store, heard, .. } = checked_statement_store(PEOPLE_GENESIS);
 
-	let client = block_on(statement_store.client("test"));
+	let client = finish(statement_store.client("test"));
 
 	assert!(client.is_ok(), "{:?}", client.err());
 	assert_eq!(
@@ -453,7 +453,7 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 		checked_statement_store(WIPED_PEOPLE);
 
 	let refused =
-		block_on(statement_store.client("test")).expect_err("the wiped People chain is refused");
+		finish(statement_store.client("test")).expect_err("the wiped People chain is refused");
 
 	let kind = match refused {
 		StatementStoreRpcClientError::Chain(failure) => Some(failure.kind()),

@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_support::{
-	HeardAnswers, ScriptedProvider, extract_id, notification_sender, wait_for_sent,
+	HeardAnswers, ScriptedProvider, extract_id, finish, notification_sender, wait_for_sent,
 };
 use core::time::Duration;
 use futures::pin_mut;
@@ -2727,11 +2727,11 @@ fn a_connection_to_a_chain_with_a_different_genesis_hash_is_refused() {
 	let runtime =
 		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
 
-	let refused = futures::executor::block_on(runtime.rpc_client("test", &named))
+	let refused = finish(runtime.rpc_client("test", &named))
 		.err()
 		.expect("a chain with a different genesis hash is refused");
 	let socket_closed = provider.sender.lock().unwrap().is_none();
-	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let again = finish(runtime.rpc_client("test", &named));
 
 	assert!(socket_closed, "a refused connection's socket is closed");
 	assert!(again.is_err(), "the refused connection is not kept");
@@ -2768,8 +2768,8 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 	let runtime =
 		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
 
-	let first = futures::executor::block_on(runtime.rpc_client("test", &named));
-	let second = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let first = finish(runtime.rpc_client("test", &named));
+	let second = finish(runtime.rpc_client("test", &named));
 
 	assert!(first.is_ok() && second.is_ok(), "the chain is usable");
 	assert_eq!(
@@ -2789,12 +2789,12 @@ fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	let provider = node_answering_in_turn(vec![genesis_reply(named), genesis_reply(answered)]);
 	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
-		.expect("the first connection reaches the chain");
+	let earlier =
+		finish(runtime.rpc_client("test", &named)).expect("the first connection reaches the chain");
 
-	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let newer = finish(runtime.for_product(1).rpc_client("test", &named));
 	crate::test_support::wait_until(|| earlier.is_closed(), "the earlier connection is closed");
-	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let again = finish(runtime.rpc_client("test", &named));
 
 	assert!(newer.is_err() && again.is_err(), "the restarted chain is handed out to nobody");
 	assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 3);
@@ -2816,11 +2816,11 @@ fn a_wrong_answer_leaves_the_earlier_connections_that_still_reach_the_chain_open
 	]);
 	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
-		.expect("the first connection reaches the chain");
+	let earlier =
+		finish(runtime.rpc_client("test", &named)).expect("the first connection reaches the chain");
 
-	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
-	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let newer = finish(runtime.for_product(1).rpc_client("test", &named));
+	let again = finish(runtime.rpc_client("test", &named));
 
 	assert_eq!(
 		(
@@ -2843,10 +2843,10 @@ fn a_connection_that_gets_no_answer_leaves_the_earlier_ones_open() {
 	let provider = node_answering_in_turn(vec![genesis_reply(named), no_answer]);
 	let runtime = ChainRuntime::new(provider, Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
-		.expect("the first connection reaches the chain");
+	let earlier =
+		finish(runtime.rpc_client("test", &named)).expect("the first connection reaches the chain");
 
-	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let newer = finish(runtime.for_product(1).rpc_client("test", &named));
 
 	assert_eq!((newer.is_err(), earlier.is_closed()), (true, false));
 }
@@ -2861,13 +2861,13 @@ fn a_wrong_answer_on_a_connection_the_caller_opened_closes_the_pooled_ones() {
 	let redialled = node_answering_in_turn(vec![genesis_reply(named), genesis_reply(answered)]);
 	let runtime = ChainRuntime::new(redialled, Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let pooled = futures::executor::block_on(runtime.rpc_client("test", &named))
+	let pooled = finish(runtime.rpc_client("test", &named))
 		.expect("the pooled connection reaches the chain");
 	let own = futures::executor::block_on(node_of(answered).connect(named.to_vec()))
 		.expect("the scripted node accepts the connection");
 	let own = HostRpcClient::new(own, Spawner::for_test());
 
-	let refused = futures::executor::block_on(runtime.check_genesis(named, &own));
+	let refused = finish(runtime.check_genesis(named, &own));
 
 	assert!(refused.is_err(), "the caller's own connection is refused");
 	crate::test_support::wait_until(|| pooled.is_closed(), "the pooled connection is closed");
@@ -2884,7 +2884,7 @@ fn a_connection_asked_again_is_closed_only_when_it_reaches_another_chain() {
 		let runtime = ChainRuntime::new(node, Spawner::for_test());
 		let connection = futures::executor::block_on(runtime.connection_for("test", &named))
 			.expect("the scripted node accepts the connection");
-		futures::executor::block_on(close_connections_on_another_chain(
+		finish(close_connections_on_another_chain(
 			vec![connection.clone()],
 			named,
 			runtime.timer.clone(),
@@ -2944,7 +2944,7 @@ fn a_products_connection_is_checked_like_the_cores() {
 	let runtime =
 		ChainRuntime::new(node_of(answered), Spawner::for_test()).checking_genesis(heard.clone());
 
-	let product = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let product = finish(runtime.for_product(1).rpc_client("test", &named));
 
 	assert!(product.is_err(), "the product is not given the wiped chain");
 	assert_eq!(heard.heard(), vec![GenesisHashes { named, answered }]);
@@ -2981,6 +2981,7 @@ fn a_node_that_hangs_up_before_naming_its_chain_is_unavailable() {
 
 	wait_for_sent(&provider, |sent| !sent.is_empty());
 	provider.sender.lock().unwrap().take();
+	crate::test_support::wait_until(|| connect.is_finished(), "the connection fails");
 	let failure = connect.join().unwrap().expect("the chain hung up");
 
 	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
@@ -3005,7 +3006,7 @@ fn a_node_that_does_not_name_its_chain_is_not_used() {
 			Spawner::for_test(),
 		)
 		.checking_genesis(heard.clone());
-		let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+		let failure = finish(runtime.rpc_client("test", &[0xa1; 32]))
 			.err()
 			.expect("a chain that gives no genesis hash is not used");
 		(failure.kind(), heard.heard().len())
@@ -3077,6 +3078,7 @@ fn connect_through_halts(
 		crate::test_support::wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
 		timer.advance(pause);
 	}
+	crate::test_support::wait_until(|| connect.is_finished(), "the check ends after the pauses");
 	connect.join().unwrap()
 }
 
