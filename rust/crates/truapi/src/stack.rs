@@ -78,12 +78,14 @@ const RESERVED_TLD: &str = "dot";
 /// [`DOTNS_TLDS`](crate::platform::DOTNS_TLDS). It refuses the policy before
 /// it reads the stack.
 ///
-/// A stack that is allowed reserved values is pinned to its bundled copy. A
-/// copy the core stored or fetched is refused when it gives a chain role
-/// another genesis hash, adds or drops a chain role, or changes `assets`,
-/// `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
-/// `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
-/// build changes what the descriptor names for those.
+/// A stack that [`StackRefresh::load`] resolves and that is allowed reserved
+/// values is pinned to its bundled copy. A copy the core stored or fetched is
+/// refused when it gives a chain role another genesis hash, adds or drops a
+/// chain role, or changes `assets`, `contracts`, `dotns`, `coinage` or the
+/// `sha256` of the relay's `lightSpec`, the file that carries the relay's sync
+/// checkpoint. Only a new build changes what the descriptor names for those.
+/// A stack from [`Stack::new`], such as the CLI's or a test host's, has no
+/// bundled copy and pins nothing.
 ///
 /// The pins cover the descriptor, not the chains. The core does not check a
 /// genesis hash against the chain a host reads, so what a host reads over
@@ -94,7 +96,8 @@ const RESERVED_TLD: &str = "dot";
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
 	/// Whether the stack may name reserved values. A build that sets it
-	/// reserves no extra values, and its stack is pinned to its bundled copy.
+	/// reserves no extra values, and a stack [`StackRefresh::load`] resolves
+	/// for it is pinned to its bundled copy.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]

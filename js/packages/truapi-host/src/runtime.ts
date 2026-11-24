@@ -70,12 +70,13 @@ export type LogLevel = string;
  * such a policy before it reads the key from the pointer's link and verifies
  * the descriptor under it.
  *
- * A stack that is allowed reserved values is pinned to its bundled
+ * A `stack` that is allowed reserved values is pinned to its bundled
  * descriptor. A copy the core stored or fetched is refused when it gives a
  * chain role another genesis hash, adds or drops a chain role, or changes
  * `assets`, `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
  * `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
- * build changes what the descriptor names for those.
+ * build changes what the descriptor names for those. A `testStack` has no
+ * descriptor and pins nothing.
  *
  * The pins cover the descriptor, not the chains. The core does not check a
  * genesis hash against the chain a host reads, so what a host reads over the
@@ -86,7 +87,7 @@ export type LogLevel = string;
 export interface ReservedValuesPolicy {
   /**
    * Whether the stack may name reserved values. A build that sets it reserves
-   * no extra values, and its stack is pinned to its bundled descriptor.
+   * no extra values, and its `stack` is pinned to its bundled descriptor.
    * Defaults to `false`.
    */
   allowed?: boolean;
