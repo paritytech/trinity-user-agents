@@ -19,16 +19,22 @@ public extension CustomMessageWidgetNode {
             case circle(center: CGPoint, radius: CGFloat)
             /// A line through `points`, `width` wide, with round caps and joins; one point is a dot.
             case stroke(width: CGFloat, points: [CGPoint])
+            /// A line through `points` drawn with copies of `brush`'s tip, `width` long, stamped along it; one point
+            /// is one stamp.
+            case stamped(width: CGFloat, brush: Brush, points: [CGPoint])
         }
 
-        /// The location pan whose strokes the host draws into the mask itself, and their width.
+        /// The location pan whose strokes the host draws into the mask itself, their width, and the tip they are
+        /// drawn with (nil: round).
         public struct Follow: Equatable {
             public let pan: String
             public let width: CGFloat
+            public let brush: Brush?
 
-            public init(pan: String, width: CGFloat) {
+            public init(pan: String, width: CGFloat, brush: Brush? = nil) {
                 self.pan = pan
                 self.width = width
+                self.brush = brush
             }
         }
 
@@ -80,10 +86,15 @@ struct MaskPicture: Equatable {
         shapes = mask.shapes + added
         guard let follow = mask.follow else { return }
         for stroke in strokes where !stroke.isEmpty {
-            shapes.append(.stroke(width: follow.width, points: stroke.map { point in
+            let points = stroke.map { point in
                 let moved = (point.x + place.x) / scale.width
                 return CGPoint(x: mirroredWidth.map { $0 - moved } ?? moved, y: (point.y + place.y) / scale.height)
-            }))
+            }
+            if let brush = follow.brush {
+                shapes.append(.stamped(width: follow.width, brush: brush, points: points))
+            } else {
+                shapes.append(.stroke(width: follow.width, points: points))
+            }
         }
     }
 
@@ -93,14 +104,15 @@ struct MaskPicture: Equatable {
     }
 }
 
-/// How a mask is drawn: one path for its filled shapes, one per stroke width, all in left-to-right points.
+/// How a mask is drawn: one path for its filled shapes and stamps, one per stroke width, all in left-to-right points.
 enum MaskDrawing {
     /// A shape's place from the top-start corner, as drawn: right-to-left layouts count from the right edge.
     static func place(_ point: CGPoint, width: CGFloat, mirrored: Bool) -> CGPoint {
         mirrored ? CGPoint(x: width - point.x, y: point.y) : point
     }
 
-    /// The filled shapes (whole node, circles, and one-point strokes as dots) as one path.
+    /// The filled shapes (whole node, circles, one-point strokes as dots, and every stamp of a stamped line) as one
+    /// path.
     static func fills(_ shapes: [CustomMessageWidgetNode.Mask.Shape], in size: CGSize, mirrored: Bool) -> Path {
         var path = Path()
         for shape in shapes {
@@ -111,6 +123,11 @@ enum MaskDrawing {
                 path.addEllipse(in: circle(place(center, width: size.width, mirrored: mirrored), radius))
             case let .stroke(width, points) where points.count == 1 && width > 0:
                 path.addEllipse(in: circle(place(points[0], width: size.width, mirrored: mirrored), width / 2))
+            case let .stamped(width, brush, points) where width > 0:
+                for centre in brush.stamps(width: width, along: points) {
+                    let at = place(centre, width: size.width, mirrored: mirrored)
+                    path.addPath(brush.outline(width: width, at: at, mirrored: mirrored))
+                }
             default:
                 break
             }

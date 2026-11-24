@@ -9,8 +9,7 @@ extension Mask {
             key: key,
             mode: mode == .show ? .show : .hide,
             shapes: shapes.map(\.widgetShape),
-            // The iPhone stamped-brush layer stamps a followed brush; until then the strokes draw round.
-            follow: follow.map { .init(pan: $0.pan, width: CGFloat($0.width) / 100) },
+            follow: follow.map { .init(pan: $0.pan, width: CGFloat($0.width) / 100, brush: $0.brush?.widgetBrush) },
             fade: TimeInterval(fadeMs ?? 0) / 1_000,
             // The iPhone mask-progress layer checks mid-stroke, rescues a stalled share and plays `haptics`; until
             // then `whileDown`, `rescue` and `haptics` are ignored.
@@ -28,10 +27,20 @@ extension MaskShape {
             .circle(center: center.points, radius: CGFloat(radius) / 100)
         case let .stroke(width, points):
             .stroke(width: CGFloat(width) / 100, points: points.map(\.points))
-        case let .stamped(width, _, points):
-            // The iPhone stamped-brush layer stamps the tip; until then the line draws round at its width.
-            .stroke(width: CGFloat(width) / 100, points: points.map(\.points))
+        case let .stamped(width, brush, points):
+            .stamped(width: CGFloat(width) / 100, brush: brush.widgetBrush, points: points.map(\.points))
         }
+    }
+}
+
+extension MaskBrush {
+    var widgetBrush: CustomMessageWidgetNode.Mask.Brush {
+        CustomMessageWidgetNode.Mask.Brush(
+            tip: tip == .capsule ? .capsule : .ellipse,
+            aspect: CGFloat(aspectPermille) / 1_000,
+            angle: CGFloat(angleCentideg) / 100 * .pi / 180,
+            spacing: CGFloat(spacingPermille) / 1_000
+        )
     }
 }
 

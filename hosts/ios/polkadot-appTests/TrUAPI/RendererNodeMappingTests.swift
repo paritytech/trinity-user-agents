@@ -351,6 +351,8 @@ struct RendererNodeMappingTests {
     }
 
     @Test func aMaskModifierCarriesItsShapesInPoints() throws {
+        let nib = MaskBrush(tip: .capsule, aspectPermille: 350, angleCentideg: -3_000, spacingPermille: 250)
+        let tip = CustomMessageWidgetNode.Mask.Brush(tip: .capsule, aspect: 0.35, angle: -30 * .pi / 180, spacing: 0.25)
         let mask = Mask(
             key: "veil",
             mode: .hide,
@@ -358,8 +360,9 @@ struct RendererNodeMappingTests {
                 .all,
                 .circle(center: MaskPoint(x: 1_050, y: -200), radius: 2_600),
                 .stroke(width: 5_200, points: [MaskPoint(x: 0, y: 0), MaskPoint(x: 100, y: 250)]),
+                .stamped(width: 4_000, brush: nib, points: [MaskPoint(x: 200, y: 300)]),
             ],
-            follow: MaskFollow(pan: "pad", width: 5_200),
+            follow: MaskFollow(pan: "pad", width: 5_200, brush: nib),
             fadeMs: 350,
             clearedShare: ClearedShare(atPermille: 550, action: "done")
         )
@@ -374,8 +377,9 @@ struct RendererNodeMappingTests {
             .all,
             .circle(center: CGPoint(x: 10.5, y: -2), radius: 26),
             .stroke(width: 52, points: [.zero, CGPoint(x: 1, y: 2.5)]),
+            .stamped(width: 40, brush: tip, points: [CGPoint(x: 2, y: 3)]),
         ])
-        #expect(mapped.follow == .init(pan: "pad", width: 52))
+        #expect(mapped.follow == .init(pan: "pad", width: 52, brush: tip))
         #expect(abs(mapped.fade - 0.35) < 0.0001)
         #expect(mapped.clearedShare == .init(atPermille: 550, action: "done"))
     }
