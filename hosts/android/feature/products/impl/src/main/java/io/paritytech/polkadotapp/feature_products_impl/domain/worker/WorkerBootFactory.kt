@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIChatWorker
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import kotlinx.coroutines.CoroutineScope
 import uniffi.truapi.ProductId
 import javax.inject.Inject
@@ -33,7 +32,6 @@ class RealWorkerBootFactory @Inject constructor(
     private val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory,
     private val runtimeSettings: ProductRuntimeSettings,
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
-    private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
 ) : WorkerBootFactory {
     override suspend fun boot(
         productId: ProductId,
@@ -54,7 +52,6 @@ class RealWorkerBootFactory @Inject constructor(
     ): ProductWorker = TrUAPIChatWorker(
         productId = productId,
         runtime = runtimeProvider.get().runtime().getOrThrow(),
-        workers = workerSupervisor.get(),
         chatMessaging = botApi,
         scope = scope,
     )

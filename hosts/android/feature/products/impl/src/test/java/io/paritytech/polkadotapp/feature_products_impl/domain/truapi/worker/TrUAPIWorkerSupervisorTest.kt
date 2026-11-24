@@ -1,39 +1,43 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import android.net.Uri
+import android.webkit.ValueCallback
+import android.webkit.WebView
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
+import io.mockk.slot
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
+import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.webView.WebViewJsBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
+    private val attempt = mockk<NativeWorkerAttempt>(relaxUnitFun = true) { every { id() } returns 1uL }
     private val rendererGoneListeners = mutableMapOf<ChatWebViewProvider, MutableList<() -> Unit>>()
     private val providers = mutableListOf<ChatWebViewProvider>()
     private val executions = mutableListOf<TrUAPIProductExecution>()
@@ -44,6 +48,8 @@ class TrUAPIWorkerSupervisorTest {
     private val workerScopes = mutableListOf<CoroutineScope>()
     private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
+
+    private var onModuleLoad: ((String) -> Unit) -> Unit = { complete -> complete("") }
 
     @Before
     fun parseScriptUrls() {
@@ -59,20 +65,47 @@ class TrUAPIWorkerSupervisorTest {
     @After
     fun restoreUri() = unmockkStatic(Uri::class)
 
-    // A dead renderer takes the worker's running script with it, and the core still wants the worker,
-    // so nothing else would ever bring it back: its card would sit on a dead execution.
     @Test
-    fun `a running worker whose renderer died boots again`() = runTest {
+    fun `a renderer loss reports the acknowledged attempt to the core`() = runTest {
         val supervisor = supervisor()
-        val seen = mutableListOf<TrUAPIProductExecution?>()
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { supervisor.execution(PRODUCT).toList(seen) }
-
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        supervisor.start(PRODUCT, attempt)
         advanceUntilIdle()
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
 
-        assertEquals(listOf(null, executions[0], null, executions[1]), seen)
+        verify(exactly = 1) { executions.single().reportWorkerReady(attempt) }
+        verify(exactly = 1) { attempt.failed("WebView renderer exited") }
+        assertEquals(1, providers.size)
+    }
+
+    @Test
+    fun `a delayed stop disposes only its own WebView`() = runTest {
+        val replacement = mockk<NativeWorkerAttempt> { every { id() } returns 2uL }
+        val supervisor = supervisor()
+        supervisor.start(PRODUCT, attempt)
+        supervisor.start(PRODUCT, replacement)
+        advanceUntilIdle()
+        supervisor.stop(PRODUCT, attempt.id())
+        advanceUntilIdle()
+
+        assertEquals(listOf(false, true), workerScopes.map { it.isActive })
+        verify(exactly = 1) { executions[1].reportWorkerReady(replacement) }
+    }
+
+    @Test
+    fun `an open bridge stays pending until the worker module has loaded`() = runTest {
+        lateinit var finish: (String) -> Unit
+        onModuleLoad = { finish = it }
+        supervisor().start(PRODUCT, attempt)
+        runCurrent()
+
+        val execution = executions.single()
+        verify(exactly = 0) { execution.reportWorkerReady(any()) }
+        finish("worker import rejected")
+        runCurrent()
+
+        verify(exactly = 1) { attempt.failed("worker import rejected") }
+        verify(exactly = 0) { execution.reportWorkerReady(any()) }
     }
 
     @Test
@@ -80,7 +113,7 @@ class TrUAPIWorkerSupervisorTest {
         includesChat = false
         val supervisor = supervisor()
 
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        supervisor.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         assertEquals(listOf<ChatHostBridge?>(null), chatBridges)
@@ -90,7 +123,7 @@ class TrUAPIWorkerSupervisorTest {
     fun `a chat product gets a chat bridge`() = runTest {
         val supervisor = supervisor()
 
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        supervisor.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         assertEquals(1, chatBridges.filterNotNull().size)
@@ -100,7 +133,7 @@ class TrUAPIWorkerSupervisorTest {
     fun `a worker bootstrap does not install host WebView telemetry`() = runTest {
         val supervisor = supervisor()
 
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        supervisor.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         verify(exactly = 1) { bootstrapInstaller.installerFor(setOf("https://worker.paseo"), null) }
@@ -113,16 +146,13 @@ class TrUAPIWorkerSupervisorTest {
     fun `a worker navigates through the chat worker navigation`() = runTest {
         val supervisor = supervisor()
 
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        supervisor.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
-        runtimeProvider = {
-            mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
-        },
         hostBridgeFactory = object : ProductTrUAPIHostBridge.Factory {
             override fun create(scope: CoroutineScope) = bridge()
         },
@@ -145,10 +175,10 @@ class TrUAPIWorkerSupervisorTest {
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
-        val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+        val execution = mockk<TrUAPIProductExecution> { every { reportWorkerReady(any()) } returns true }.also { executions += it }
+        coEvery { attachWorker(any(), any(), any(), any(), any(), any()) } answers {
             policies += arg<NavigationPolicy>(3)
-            chatBridges += arg<ChatHostBridge?>(5)
+            chatBridges += arg<ChatHostBridge?>(4)
             Result.success(execution)
         }
     }
@@ -162,7 +192,18 @@ class TrUAPIWorkerSupervisorTest {
             rendererGoneListeners.getOrPut(provider) { mutableListOf() } += firstArg<() -> Unit>()
         }
         coEvery { provider.loadInitialContent() } answers { pageFinished.forEach { it() } }
-        coEvery { provider.accessWebView<Any?>(any()) } returns Unit
+        val bridge = slot<WebViewJsBridge>()
+        val view = mockk<WebView>(relaxed = true)
+        every { provider.getWebViewOrNull() } returns null
+        every { view.addJavascriptInterface(capture(bridge), "Android") } returns Unit
+        every { view.evaluateJavascript(any(), any()) } answers {
+            val script = firstArg<String>()
+            val callback = requireNotNull(Regex("worker-module-[a-f0-9-]+").find(script)).value
+            onModuleLoad { error -> bridge.captured.call(callback, error) }
+            secondArg<ValueCallback<String>>().onReceiveValue("null")
+        }
+        coEvery { provider.addWebViewSetup(any()) } answers { firstArg<(WebView) -> Unit>()(view) }
+        coEvery { provider.accessWebView<Any?>(any()) } coAnswers { firstArg<suspend (WebView) -> Any?>()(view) }
         providers += provider
     }
 

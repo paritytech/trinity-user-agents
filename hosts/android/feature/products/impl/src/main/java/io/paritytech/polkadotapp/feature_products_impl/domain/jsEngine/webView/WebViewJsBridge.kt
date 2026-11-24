@@ -25,6 +25,10 @@ class WebViewJsBridge {
         handlers[name] = handler
     }
 
+    fun unregisterFunction(name: String) {
+        handlers.remove(name)
+    }
+
     /**
      * Called from JS: Android.call("functionName", "argsJson")
      */

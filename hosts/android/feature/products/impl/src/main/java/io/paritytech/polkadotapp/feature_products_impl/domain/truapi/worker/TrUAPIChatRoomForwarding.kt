@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
-import io.parity.truapi.TrUAPIProductExecution
+import io.parity.truapi.TrUAPIWorkerExecution
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCoreChatRoom
@@ -16,7 +16,7 @@ import uniffi.truapi.ProductId
 
 class TrUAPIChatRoomForwarding(
     private val productId: ProductId,
-    private val execution: TrUAPIProductExecution,
+    private val execution: TrUAPIWorkerExecution,
     private val chatMessaging: ProductChatMessaging,
 ) {
     fun start(scope: CoroutineScope): Job = chatMessaging.subscribeChatRooms()

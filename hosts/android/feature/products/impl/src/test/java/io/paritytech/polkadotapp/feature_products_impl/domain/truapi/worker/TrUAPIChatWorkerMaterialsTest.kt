@@ -5,7 +5,8 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.verifyOrder
 import io.parity.truapi.MaterialsResolution
-import io.parity.truapi.TrUAPIProductExecution
+import io.parity.truapi.TrUAPIWorkerExecution
+import io.parity.truapi.WorkerExecutionState
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -42,17 +43,15 @@ class TrUAPIChatWorkerMaterialsTest {
         )
     }
 
-    private fun executionDrawing(tree: RendererNode) = mockk<TrUAPIProductExecution>(relaxed = true) {
+    private fun executionDrawing(tree: RendererNode) = mockk<TrUAPIWorkerExecution>(relaxed = true) {
         every { render(any()) } returns flowOf(tree)
         every { resolveMaterials(any(), any(), any()) } returns resolution
     }
 
-    private fun TestScope.worker(execution: TrUAPIProductExecution) = TrUAPIChatWorker(
+    private fun TestScope.worker(execution: TrUAPIWorkerExecution) = TrUAPIChatWorker(
         productId = productId,
-        runtime = mockk(relaxed = true),
-        workers = mockk {
-            every { executionState(productId) } returns flowOf(WorkerExecutionState.Running(execution))
-            every { currentExecution(productId) } returns execution
+        runtime = mockk(relaxed = true) {
+            every { workerExecutionState(productId) } returns flowOf(WorkerExecutionState.Running(execution))
         },
         chatMessaging = FakeChatMessaging(),
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),

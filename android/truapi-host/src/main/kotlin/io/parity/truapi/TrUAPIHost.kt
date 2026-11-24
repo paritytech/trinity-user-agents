@@ -92,7 +92,11 @@ import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeWebViewWorkerHost
+import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.NativeWorkerClaim
+import uniffi.truapi.NativeWorkerExecutionState
+import uniffi.truapi.NativeWorkerExecutionObserver
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
@@ -1006,16 +1010,22 @@ object LocalhostBridgeBootstrap {
 /**
  * Process-owned Rust host runtime. Product executables open independent
  * connections from this object and share its authentication and core services.
+ * Supply [workers] to let Rust manage shared WebView workers and report their readiness.
  */
-class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor(
+class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
     runtimeConfig: HostRuntimeConfig,
+    workers: NativeWebViewWorkerHost? = null,
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
-    private val inner: NativeTrUApiHostRuntime =
+    private var managesWorkers = workers != null
+    private val inner: NativeTrUApiHostRuntime = if (workers != null) {
+        NativeTrUApiHostRuntime.withManagedProductWorkers(callbackRetainer, runtimeConfig).also { it.enableProductWorkers(workers) }
+    } else {
         NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
+    }
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -1120,18 +1130,25 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
         game: GameHostBridge? = null,
-    ): TrUAPIProductExecution {
-        val adapter = HostCallbackAdapter(bridge)
-        val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
-        val gameAdapter = game?.let { GameCallbackAdapter(it) }
-        val execution =
-            inner.openProductExecution(
-                adapter,
-                chatAdapter,
-                gameAdapter,
-                configuration,
-            )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
+    ): TrUAPIProductExecution = openExecutionWithBridges(bridge, chat, game) { host, chatAdapter, gameAdapter ->
+        inner.openProductExecution(host, chatAdapter, gameAdapter, configuration)
+    }
+
+    /** Look up the ready execution without acquiring demand or control of its bridge. */
+    fun currentWorkerExecution(productId: ProductId): TrUAPIWorkerExecution? =
+        inner.currentWorkerExecution(productId)?.let(::TrUAPIWorkerExecution)
+
+    /** Report the latest startup state and subsequent replacements while collected. */
+    fun workerExecutionState(productId: ProductId): Flow<WorkerExecutionState> = observedFlow {
+        inner.observeWorkerExecution(productId, object : NativeWorkerExecutionObserver {
+            override fun changed(state: NativeWorkerExecutionState) {
+                runCatching { trySend(state.toWorkerExecutionState()) }
+            }
+
+            override fun finished() {
+                runCatching { close() }
+            }
+        })
     }
 
     /** The first claim requests a worker start. Releasing the last claim requests a stop. */
@@ -1416,7 +1433,12 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun nextStatementRenewalDelay(): java.time.Duration = inner.nextStatementRenewalDelay()
 
+    @Synchronized
     override fun close() {
+        if (managesWorkers) {
+            managesWorkers = false
+            inner.shutdownProductWorkers()
+        }
         inner.close()
     }
 }
@@ -1483,6 +1505,35 @@ class RendererStreamException(
     val reason: String,
 ) : Exception(reason)
 
+internal fun openExecutionWithBridges(
+    bridge: HostBridge,
+    chat: ChatHostBridge?,
+    game: GameHostBridge?,
+    open: (HostCallbacks, NativeChatCallbacks?, NativeGameCallbacks?) -> NativeProductExecution,
+): TrUAPIProductExecution {
+    val hostAdapter = HostCallbackAdapter(bridge)
+    val chatAdapter = chat?.let(::ChatCallbackAdapter)
+    val gameAdapter = game?.let(::GameCallbackAdapter)
+    return TrUAPIProductExecution(open(hostAdapter, chatAdapter, gameAdapter), hostAdapter, chatAdapter, gameAdapter)
+}
+
+internal fun renderFlow(subscribe: (NativeRendererObserver) -> NativeSubscription): Flow<RendererNode> =
+    observedFlow {
+        subscribe(object : NativeRendererObserver {
+            override fun onUpdate(node: RendererNode) {
+                runCatching { trySend(node) }
+            }
+
+            override fun onComplete() {
+                runCatching { close() }
+            }
+
+            override fun onError(reason: String) {
+                runCatching { close(RendererStreamException(reason)) }
+            }
+        })
+    }
+
 /**
  * One SPA or Chat executable connected to a shared [TrUAPIHostRuntime]. Closing
  * it shuts the connection down permanently; the runtime stays usable.
@@ -1494,6 +1545,9 @@ class TrUAPIProductExecution internal constructor(
     private val gameRetainer: NativeGameCallbacks?,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
+
+    /** Acknowledge that this startup attempt has loaded its entry module. */
+    fun reportWorkerReady(attempt: NativeWorkerAttempt): Boolean = attempt.ready(inner)
 
     /**
      * Register this execution against the host runtime's shared localhost
@@ -1535,29 +1589,7 @@ class TrUAPIProductExecution internal constructor(
      * when the collector falls behind.
      */
     fun render(request: ProductRendererRenderRequest): Flow<RendererNode> =
-        observedFlow {
-            inner.render(
-                request,
-                object : NativeRendererObserver {
-                    // The core declares all three infallible, so uniffi has no
-                    // error type to convert a throw into and panics -- which
-                    // aborts under `panic = "abort"`.
-                    override fun onUpdate(node: RendererNode) {
-                        runCatching { trySend(node) }
-                    }
-
-                    override fun onComplete() {
-                        runCatching { close() }
-                    }
-
-                    // The last tree sent is partial, so closing with a cause
-                    // keeps this distinct from a clean end for the collector.
-                    override fun onError(reason: String) {
-                        runCatching { close(RendererStreamException(reason)) }
-                    }
-                },
-            )
-        }
+        renderFlow { observer -> inner.render(request, observer) }
 
     /**
      * Publish one native renderer action, buffering it until the product
