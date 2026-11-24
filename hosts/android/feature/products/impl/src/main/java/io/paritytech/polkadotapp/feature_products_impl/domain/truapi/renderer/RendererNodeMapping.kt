@@ -279,6 +279,8 @@ private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed())
             is Modifier.Enter, is Modifier.Animate -> Unit
             // The Android particle layer draws emitters; until then the node draws with no particles.
             is Modifier.Emit -> Unit
+            // The Android parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
+            is Modifier.Parallax -> Unit
         }
     }
 

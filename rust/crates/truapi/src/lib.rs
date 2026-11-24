@@ -96,14 +96,15 @@ pub mod latest {
 		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, PanAxis, PanDrag, PanGesture,
-		PanRelease, PanTravel, Parameter, ParticleLook, PaymentTopUpSource, PocketCard, Pose,
-		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
-		RemotePermission, RendererNode, ResourceAllocationError, RingLocation,
-		RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-		ScanOutcome, Shape, ShareRescue, SignedStatement, Size, Spring, Statement, StatementProof,
-		StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-		TextProps, ThemeName, ThemeVariant, Track, TrackPlay, TxPayloadExtension, TypographyStyle,
-		ValueRange, VerticalAlignment, VrfSignature, X25519PublicKey,
+		PanRelease, PanTravel, Parallax, Parameter, ParticleLook, PaymentTopUpSource, PocketCard,
+		Pose, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, ShareRescue, SignedStatement, Size, Spring,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TiltParallax, Track,
+		TrackPlay, TxPayloadExtension, TypographyStyle, ValueRange, VerticalAlignment,
+		VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{

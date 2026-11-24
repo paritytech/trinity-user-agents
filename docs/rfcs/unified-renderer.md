@@ -755,3 +755,28 @@ rule both hosts follow.
 Live particles keep moving across trees that keep the emitter; a tree without
 it lets them finish. The host sends none where the person asked for less
 motion, and a host that cannot draw them draws the node alone.
+
+### Parallax
+
+Layers that move apart as the device tilts or as a finger drags read as depth.
+`Parallax { depthPermille, tilt, pan }` (modifier index 24) moves a node by
+the device's tilt, by the offset at which a keyed pan's children are drawn, or
+by both, scaled by its depth. It is drawn after layout, as `Translate` moves a
+node, and composes with it and with tracks.
+
+| Field | What the host does | Units and range | Default |
+| --- | --- | --- | --- |
+| `depthPermille` | scales the sum of the tilt's move and the pan's offset: 1000 moves with them, 0 not at all, negative the other way | thousandths | |
+| `tilt.travel` | the move at the clamp | hundredths of a logical pixel | |
+| `tilt.maxTiltCentideg` | the tilt, either way per axis, that moves the node all the way; beyond it the move holds | hundredths of a degree; 0 never moves | |
+| `tilt.settleMs` | the time constant with which the rest attitude follows the device's, so the node drifts home when the device is held still another way | milliseconds; 0 keeps the attitude at appearance | |
+| `tilt` | | | absent: no tilt |
+| `pan` | the `key` of the `Gesture` whose children's offset is followed, whoever moves them: the finger, `SetOffset` or the host's settle | | absent: no pan |
+
+Tilt is measured from the rest attitude, the device's when the node appeared:
+lowering the device's end edge (its right, in a left-to-right layout) moves the
+node towards the end, and lowering its top edge moves it down. `Parallax::offset`
+in the core crate is the rule both hosts follow. A key that names no gesture
+adds nothing. Where the person asked for less motion, or on a host with no tilt
+to read, the tilt adds nothing and the pan's part still follows the finger; a
+host that cannot move the node draws it where the tree puts it.
