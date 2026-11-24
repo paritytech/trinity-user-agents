@@ -2781,7 +2781,8 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 /// A host may redial underneath a connection it leased earlier, as dotli
 /// does, so a connection that passed the check can end up on a chain that
 /// restarted. A newer connection that finds the chain wrong is the only sign
-/// of it, so the earlier ones are closed.
+/// of it, so the earlier ones are asked again, and closed when they now give
+/// the wrong hash too.
 #[test]
 fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
@@ -2792,11 +2793,44 @@ fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 		.expect("the first connection reaches the chain");
 
 	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
-	let earlier_closed = earlier.is_closed();
+	crate::test_support::wait_until(|| earlier.is_closed(), "the earlier connection is closed");
 	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
 
 	assert!(newer.is_err() && again.is_err(), "the restarted chain is handed out to nobody");
-	assert_eq!((earlier_closed, provider.connect_calls.load(Ordering::SeqCst)), (true, 3));
+	assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 3);
+}
+
+/// An endpoint can front several nodes, and one of them may still serve the
+/// chain that restarted while the rest serve the right one. A newer connection
+/// that lands on that node says nothing about the nodes behind the earlier
+/// connections, so the newer one fails without closing them, and they keep
+/// serving. What each earlier one answers when asked again decides whether it
+/// is closed, which `a_connection_asked_again_*` pins.
+#[test]
+fn a_wrong_answer_leaves_the_earlier_connections_that_still_reach_the_chain_open() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let provider = node_answering_in_turn(vec![
+		genesis_reply(named),
+		genesis_reply(answered),
+		genesis_reply(named),
+	]);
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.expect("the first connection reaches the chain");
+
+	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert_eq!(
+		(
+			newer.is_err(),
+			earlier.is_closed(),
+			again.is_ok(),
+			provider.connect_calls.load(Ordering::SeqCst),
+		),
+		(true, false, true, 2)
+	);
 }
 
 /// A node that gives no genesis hash says nothing about which chain its
@@ -2820,11 +2854,12 @@ fn a_connection_that_gets_no_answer_leaves_the_earlier_ones_open() {
 /// The statement store opens People connections of its own and has them
 /// checked through `check_genesis`. One of them finding the chain restarted
 /// says as much about the pooled connections as a pooled one would, so they
-/// are closed too.
+/// are asked again and closed when they now give the wrong hash too.
 #[test]
 fn a_wrong_answer_on_a_connection_the_caller_opened_closes_the_pooled_ones() {
 	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
-	let runtime = ChainRuntime::new(node_of(named), Spawner::for_test())
+	let redialled = node_answering_in_turn(vec![genesis_reply(named), genesis_reply(answered)]);
+	let runtime = ChainRuntime::new(redialled, Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
 	let pooled = futures::executor::block_on(runtime.rpc_client("test", &named))
 		.expect("the pooled connection reaches the chain");
@@ -2834,7 +2869,70 @@ fn a_wrong_answer_on_a_connection_the_caller_opened_closes_the_pooled_ones() {
 
 	let refused = futures::executor::block_on(runtime.check_genesis(named, &own));
 
-	assert_eq!((refused.is_err(), pooled.is_closed()), (true, true));
+	assert!(refused.is_err(), "the caller's own connection is refused");
+	crate::test_support::wait_until(|| pooled.is_closed(), "the pooled connection is closed");
+}
+
+/// What a connection asked again answers decides whether it is closed.
+/// Another hash, or a halt as dotli answers while it redials the connection,
+/// means it no longer reaches the chain it was opened for. The hash it was
+/// opened for, or another error, leaves it serving.
+#[test]
+fn a_connection_asked_again_is_closed_only_when_it_reaches_another_chain() {
+	let (named, other) = ([0xa1; 32], [0xa9; 32]);
+	let closed_after_asking = |node: Arc<ScriptedProvider>| {
+		let runtime = ChainRuntime::new(node, Spawner::for_test());
+		let connection = futures::executor::block_on(runtime.connection_for("test", &named))
+			.expect("the scripted node accepts the connection");
+		futures::executor::block_on(close_connections_on_another_chain(
+			vec![connection.clone()],
+			named,
+			runtime.timer.clone(),
+		));
+		connection.is_closed()
+	};
+	let method_not_found = r#""error":{"code":-32601,"message":"Method not found"}"#.to_string();
+
+	assert_eq!(
+		[
+			node_of(named),
+			node_of(other),
+			node_halted_for(1, named),
+			node_answering_its_genesis_with(method_not_found),
+		]
+		.map(closed_after_asking),
+		[false, true, true, false]
+	);
+}
+
+/// A connection asked again may never answer, as when its host drops requests
+/// while notifications keep arriving, so the silence deadline never fires. The
+/// question gives up after its own wait and leaves the connection open, so the
+/// task ends and lets go of every connection it held.
+#[test]
+fn a_connection_asked_again_that_never_answers_is_let_go() {
+	let named = [0xa1; 32];
+	let silent = Arc::new(ScriptedProvider::new(|_: &str| None));
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let runtime = ChainRuntime::new(silent, Spawner::for_test()).with_timer(timer.clone());
+	let connection = futures::executor::block_on(runtime.connection_for("test", &named))
+		.expect("the scripted node accepts the connection");
+	let asking = std::thread::spawn({
+		let (connection, timer) = (connection.clone(), timer.clone());
+		move || {
+			futures::executor::block_on(close_connections_on_another_chain(
+				vec![connection],
+				named,
+				timer,
+			))
+		}
+	});
+
+	crate::test_support::wait_until(|| timer.sleeps() == 1, "the question waits on the timer");
+	timer.advance(GENESIS_RECHECK_WAIT);
+	crate::test_support::wait_until(|| asking.is_finished(), "the question gives up");
+
+	assert!(!connection.is_closed(), "a connection that says nothing stays open");
 }
 
 /// A product's runtime opens its own connections, apart from the core's. A
