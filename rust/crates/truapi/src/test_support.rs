@@ -352,7 +352,8 @@ pub fn test_stack(
 		generation: "test-generation".to_string(),
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
+	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
+	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, &allowed)
 		.expect("test stack is valid")
 }
 

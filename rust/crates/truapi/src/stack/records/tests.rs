@@ -4,7 +4,7 @@ use parity_scale_codec::Encode;
 
 use super::*;
 use crate::{
-	stack::signed_pointer,
+	stack::{ReservedValuesPolicy, signed_pointer},
 	test_support::{
 		on_testnet, published_test_descriptor_at, sign_test_descriptor, stored_test_record,
 		without_bulletin,
@@ -48,7 +48,8 @@ fn record_at(sequence: u32) -> Vec<u8> {
 fn bundled_rules() -> CopyRules {
 	let (link, bundled) = sign_test_descriptor(&published_test_descriptor_at(1));
 	let pointer = signed_pointer(&link).expect("test link carries a key");
-	CopyRules::new(pointer, &bundled, false).expect("bundled copy is valid")
+	CopyRules::new(pointer, &bundled, ReservedValuesPolicy::default())
+		.expect("bundled copy is valid")
 }
 
 /// Two runtimes can refresh at once while a host rebuilds its runtime. The

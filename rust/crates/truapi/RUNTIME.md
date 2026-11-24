@@ -179,8 +179,9 @@ Both host configs carry a `Stack`, the core's only chain configuration. Its
 doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell puts three things in its runtime config: the stack's
-pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. The core resolves the `Stack` from them with
+pointer, the signed descriptor its build bundles, and the build's
+[`ReservedValuesPolicy`](src/stack.rs), whose doc says what the core reserves
+and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
 A Rust host that resolves its chains itself, such as the CLI, uses
@@ -197,7 +198,10 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start,
+whichever has the higher `sequence`. The bundled descriptor has to be one the
+core can run under the build's policy even when the stored one is newer, so a
+build that refuses its own bundle fails on every device, not only on fresh
+installs. It never waits on the network to start,
 and waits a few seconds at most for the stored copy before it starts from the
 bundled one.
 

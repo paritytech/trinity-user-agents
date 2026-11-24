@@ -1003,8 +1003,15 @@ pub fn mock_stack(
 	let identity =
 		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
-		.expect("a mock stack names no reserved value")
+	let reserved_values = crate::platform::ReservedValuesPolicy::default();
+	crate::platform::Stack::new(
+		identity,
+		"mock".to_string(),
+		"paseo".to_string(),
+		chains,
+		&reserved_values,
+	)
+	.expect("a mock stack names no reserved value")
 }
 
 /// Placeholder genesis hashes for the chains a mock host serves.
