@@ -67,12 +67,6 @@ enum ResourceUri {
     cid: CID,
     ticket: Option<[u8; 32]>,
   },
-  // A file that the Product serves over its own transport, for example
-  // a peer-to-peer connection. Only a Product that knows `kind` reads it.
-  Product {
-    kind: String,
-    data: Vec<u8>,
-  },
 }
 
 struct CreateChatRoomRequest {
@@ -792,7 +786,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 2. **Transport patterns**: All `handle_*` functions follow the subscription pattern (`_start`, `_stop`, `_interrupt`, `_receive`). All `on_*` functions and `chat_room_create`/`chat_room_delete` follow the request pattern (`_request`, `_response`).
 3. **Product script lifecycle**: Products are JS scripts executed from scratch on each app start. The Host MUST delay rendering until initialization completes.
 4. **Room ID scoping**: Room IDs are computed by the Host via `blake2b("product" ++ productId ++ room_id_source)` to guarantee cross-Product uniqueness.
-5. **Resource URIs**: Binary resources are referenced inline, by Preimage CID or by a Product source. No direct URL references.
+5. **Resource URIs**: Binary resources are referenced via inline Base64 or Preimage CID — no direct URL references.
 
 #### Limits
 
