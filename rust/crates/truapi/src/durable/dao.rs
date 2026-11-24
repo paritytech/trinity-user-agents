@@ -1,9 +1,9 @@
 //! Queries over the `durable_tx` ledger, one SQL constant and one function
 //! each.
 
-#[macro_use]
 mod dependency;
 
+use const_format::concatcp;
 use futures::stream::BoxStream;
 use rusqlite::{
 	Connection, Row, Transaction, named_params,
@@ -11,7 +11,7 @@ use rusqlite::{
 };
 use subxt::utils::H256;
 
-use dependency::released_dependencies;
+use dependency::{BLOCKED_BY_DEPENDENCY, released_dependencies};
 pub use dependency::{
 	CascadingFailure, abandon_cascading, cascading_failures, has_unsettled_dependency,
 	insert_dependency, observe_released_domains, registered_domain, released_submissions,
@@ -80,14 +80,14 @@ pub fn defer(
 	Ok(id)
 }
 
-const START_ATTEMPT: &str = concat!(
+const START_ATTEMPT: &str = concatcp!(
 	"UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
     period = :period, success_number = NULL, success_hash = NULL,
     scanned_number = NULL, attempts = attempts + 1,
     policy_params = COALESCE(:policy_params, policy_params)
     WHERE id = :id AND status = 'PENDING_SUBMISSION' AND NOT ",
-	blocked_by_dependency!()
+	BLOCKED_BY_DEPENDENCY
 );
 
 /// Gives a waiting row the attempt `extrinsic` makes, and `params` in place of

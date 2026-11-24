@@ -9,6 +9,8 @@ sealed interface ChatMenuType {
     data class MainMenu(val actions: ImmutableList<ChatMenuAction>) : ChatMenuType
     data class LeaveConfirmation(val username: String) : ChatMenuType
     data class BlockConfirmation(val username: String) : ChatMenuType
+    data class DeclineRequestConfirmation(val username: String) : ChatMenuType
+    data class CancelRequestConfirmation(val username: String) : ChatMenuType
     data class MessageHistory(val current: MessageRevisionUiModel, val history: ImmutableList<MessageRevisionUiModel>) : ChatMenuType
     data class Custom(val renderer: CustomChatMenuRenderer) : ChatMenuType
     data object PrivacyDisclaimer : ChatMenuType

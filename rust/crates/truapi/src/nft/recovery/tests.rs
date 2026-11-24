@@ -9,14 +9,13 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::{
+	host_logic::root_entropy::RootEntropy,
 	nft::{
 		ItemSlot, NftLedger, NftLedgerDeps, PurseId, PurseRecord, PurseTag,
-		item_key_range_from_root, item_keys_from_entropy,
 		keys::ItemIndex,
 		test_ledger,
 		testing::{FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, test_ledger_deps},
 	},
-	host_logic::product_account::derive_root_keypair_from_entropy,
 	runtime::AuthorityError,
 	store::open_temporary_core_db,
 	test_support::session_info,
@@ -31,7 +30,7 @@ const EARLIER_STILL: InstallationId = InstallationId([0xe0; 32]);
 /// The key at `index` of `purse` under `installation`, from the test seed.
 fn item_key(purse: u32, installation: InstallationId, index: u32) -> ItemKey {
 	let slot = ItemSlot { purse: PurseId(purse), installation, index: ItemIndex(index) };
-	item_keys_from_entropy(&TEST_ENTROPY, &[slot]).expect("test entropy derives")[0]
+	RootEntropy::new(TEST_ENTROPY).item_keys(&[slot]).expect("test entropy derives")[0]
 }
 
 /// Derives from the test seed, records each installation it derives a range
@@ -46,7 +45,7 @@ struct TestSeed {
 
 impl ItemKeyDeriver for TestSeed {
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
-		Ok(item_keys_from_entropy(&TEST_ENTROPY, slots).unwrap())
+		Ok(RootEntropy::new(TEST_ENTROPY).item_keys(slots).unwrap())
 	}
 
 	fn derive_item_key_range(
@@ -60,8 +59,9 @@ impl ItemKeyDeriver for TestSeed {
 			return Err(AuthorityError::Unavailable { reason: "session locked".to_string() });
 		}
 		self.installations_scanned.lock().unwrap().insert(installation);
-		let root = derive_root_keypair_from_entropy(&TEST_ENTROPY).unwrap();
-		Ok(item_key_range_from_root(root, purse, installation, indices).unwrap())
+		Ok(RootEntropy::new(TEST_ENTROPY)
+			.item_key_range(purse, installation, indices)
+			.unwrap())
 	}
 }
 

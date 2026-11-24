@@ -41,6 +41,14 @@ impl TransactionDependency {
 }
 
 /// What a dependency's failure for good does to its dependent.
+///
+/// `Ignore` is always safe, so it is the default. It can be slow on an
+/// unhealthy chain: when the dependency took effect in a block that was then
+/// retracted, a dependent already submitted fails only once its own mortality
+/// runs out. `Cascade` fails the dependent at once, but it is correct only
+/// when the dependent cannot take effect without the dependency. Used
+/// otherwise, it fails a dependent that was already submitted or seen
+/// succeeding in a best block.
 pub enum OnDependencyFailure {
 	/// The dependent is released to its policy, which decides from the chain
 	/// whether it can still be built.

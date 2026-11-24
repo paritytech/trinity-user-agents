@@ -1,7 +1,10 @@
 /// <reference path="../runner.ts" />
 
-const PEOPLE_COLLECTION_ID =
-  "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
+import { ringCollectionId } from "../../../../../js/packages/truapi/src/index.ts";
+
+const PEOPLE_COLLECTION_ID = ringCollectionId(
+  "pop:polkadot.network/people-lite",
+);
 const peopleInfo = await truapi.chain.getChainInfo({ chain: "People" });
 if (!peopleInfo.isOk()) {
   throw new Error(`getChainInfo failed: ${JSON.stringify(peopleInfo.error)}`);
@@ -18,7 +21,7 @@ const ringLocation = {
   junctions: [
     {
       tag: "CollectionId" as const,
-      value: PEOPLE_COLLECTION_ID as `0x${string}`,
+      value: PEOPLE_COLLECTION_ID,
     },
   ],
 };

@@ -276,9 +276,7 @@ against the descriptor's `sha256` and the chain's genesis hash, wires each
 parachain to the relay and runs the statement-store protocol where the
 descriptor sets `statementStore`. A chain is unknown until the host adds its
 spec, and a parachain also until the relay's is added; the chains that have
-what they need run meanwhile. A stack's provider refuses a warm-start store,
-which keys a chain's state by genesis hash, and a fork shares those with its
-source. The crate also bundles
+what they need run meanwhile. The crate also bundles
 a chain-spec catalog for `paseo-next-v2` and `previewnet`, which a stack's
 provider never consults. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
@@ -314,7 +312,13 @@ every artifact resumes from stored finalized state instead, including the relay 
 parachain syncs through. The provider owns when a blob is read and written; the
 host owns where the bytes live. The crate stores nothing itself: a host implements
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
-control of quota and of whether the bytes are backed up or encrypted.
+control of quota and of whether the bytes are backed up or encrypted. A blob is
+stored per stack and genesis hash, because a fork shares its source's genesis
+hashes, so a store shared by two stacks must key on the stack as well. A
+stack's provider starts each blob with a line naming the stack and its
+`generation` and reads back only its own, so a stack that restarted its chains
+starts fresh. The provider never deletes a blob: the host deletes those of a
+stack or chain it no longer runs.
 
 ### Building extrinsics
 
@@ -696,6 +700,13 @@ host failures. Android and iOS hosts with Sentry enabled report the reminder
 lifecycle through `host.reminder.*` Sentry events without changing reminder
 delivery or cleanup.
 
+iOS hosts with Sentry enabled report each product notification through
+`host.product_notification.*` events, tagged with
+`product_notification.product_id`. An event of a booking that has an id
+carries it as the extra `product_notification.id`. A booking that fails on
+the store or the system also reports a `CriticalIssue` under flow
+`product-notification`. One refused at the slot limit does not.
+
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
 it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
@@ -917,6 +928,13 @@ auth, Firebase auth, push and backup, so a preview built from it cannot sign in.
 A pull request opened from a fork cannot reach the configuration and signing key
 this needs, and is told so rather than handed a build that misleads. Push the
 branch to this repository to get one.
+
+Every Gradle build in the repository, the vendored Android app included,
+resolves Maven Central through Google's mirror of it in place of Central.
+Maven Central rate limits by IP and hosted runners share theirs, so direct
+requests are refused with a 429 often enough to fail builds. The mirror is
+declared in each `settings.gradle.kts`, so local and CI builds resolve the same
+way.
 
 ### The iOS nightly
 

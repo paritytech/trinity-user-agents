@@ -1,0 +1,36 @@
+import Foundation
+import UIKitExt
+
+@MainActor
+protocol FundingDepositViewProtocol: ControllerBackedProtocol {
+    func didReceive(viewModel: FundingDepositViewModel)
+}
+
+@MainActor
+protocol FundingDepositPresenterProtocol: AnyObject {
+    func setup()
+    func back()
+    func showProgress()
+    func confirmCancel()
+    /// The user copied one of the deposit details.
+    func didCopy()
+    func close()
+}
+
+@MainActor
+protocol FundingDepositInteractorInputProtocol: AnyObject {
+    func setup()
+    /// The user left before the session started: the core no longer starts
+    /// it on its best quote.
+    func stopStarting()
+}
+
+@MainActor
+protocol FundingDepositWireframeProtocol: FundingToastPresentable {
+    func show(_ screen: FundingFlowScreen)
+    func showProgress()
+    func back()
+    func close(then completion: (() -> Void)?)
+}
+
+extension FundingFlowWireframe: FundingDepositWireframeProtocol {}
