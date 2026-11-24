@@ -14,7 +14,7 @@ use crate::{
 
 /// `Scarcity::MaximumMoves`: a fee-less move is valid only while the NFT
 /// used fewer moves than this since its last paid move.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct MoveBudget {
 	maximum_moves: u16,
 }
@@ -43,7 +43,7 @@ impl MoveBudget {
 }
 
 /// What the destination of a move needs from the NFT that arrives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub enum DestinationKind {
 	/// Its holder pays for later moves itself.
 	Holder,
@@ -86,13 +86,13 @@ impl MoveBudgetSource for ScarcityMoveBudget {
 	async fn current_budget(&self) -> Result<MoveBudget, StorageWatchError> {
 		let heads = self.heads.heads(self.genesis).await?;
 		let client = self.storage.client_at(self.genesis, heads.best).await?;
-		let maximum_moves = maximum_moves_in(&client.metadata())?;
+		let maximum_moves = declared_maximum_moves(&client.metadata())?;
 		Ok(MoveBudget::new(maximum_moves))
 	}
 }
 
 /// `Scarcity::MaximumMoves` as `metadata` declares it.
-fn maximum_moves_in(metadata: &Metadata) -> Result<u16, StorageWatchError> {
+fn declared_maximum_moves(metadata: &Metadata) -> Result<u16, StorageWatchError> {
 	let constant = metadata
 		.pallet_by_name("Scarcity")
 		.and_then(|pallet| pallet.constant_by_name("MaximumMoves"))

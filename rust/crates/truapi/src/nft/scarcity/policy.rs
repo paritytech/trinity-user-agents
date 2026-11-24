@@ -57,8 +57,8 @@ pub struct TransferParams {
 	/// still waits is given up. Fixed at registration, so a restart never
 	/// extends it.
 	pub give_up_after: u64,
-	/// How the NFT moves, decided at registration. The last field, so stored
-	/// params gained it by appending one byte.
+	/// How the NFT moves, decided at registration. It must stay the last
+	/// field: schema version 20 appended it to the params already stored.
 	pub mode: TransferMode,
 }
 
@@ -137,7 +137,8 @@ struct PlannedTransfer {
 impl PlannedTransfer {
 	/// Whether a transaction it waited for, its PGAS claim, failed for good.
 	fn has_failed_dependency(&self) -> bool {
-		let failed = |record: &DependencyStatusRecord| record.status == DependencyStatus::IgnoredFailure;
+		let failed =
+			|record: &DependencyStatusRecord| record.status == DependencyStatus::IgnoredFailure;
 		self.dependencies.iter().any(failed)
 	}
 }
@@ -209,8 +210,14 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 	/// Every proven failure is built again, except a paid attempt that failed
 	/// at dispatch, which already cost a fee. The next build reads the chain
 	/// afresh and gives up once the transfer can never land.
-	fn can_retry(&self, _: &DurableTxEntry, params: &PolicyParams, kind: VerdictFailureKind) -> bool {
-		let paid = TransferParams::try_from(params).is_ok_and(|params| params.mode == TransferMode::Paid);
+	fn can_retry(
+		&self,
+		_: &DurableTxEntry,
+		params: &PolicyParams,
+		kind: VerdictFailureKind,
+	) -> bool {
+		let paid =
+			TransferParams::try_from(params).is_ok_and(|params| params.mode == TransferMode::Paid);
 		!(paid && kind == VerdictFailureKind::DispatchFailed)
 	}
 
@@ -291,8 +298,12 @@ impl ScarcityTransferPolicy {
 		};
 		let genesis = self.deps.genesis;
 		let signed = match transfer.params.mode {
-			TransferMode::FeeLess => build.extrinsics.sign_nft_transfer(genesis, &signer, nft_transfer).await,
-			TransferMode::Paid => build.extrinsics.sign_paid_nft_transfer(genesis, &signer, nft_transfer).await,
+			TransferMode::FeeLess => {
+				build.extrinsics.sign_nft_transfer(genesis, &signer, nft_transfer).await
+			},
+			TransferMode::Paid => {
+				build.extrinsics.sign_paid_nft_transfer(genesis, &signer, nft_transfer).await
+			},
 		};
 		signed
 			.map(|extrinsic| ready_preparation(transfer, nft_transfer, extrinsic))
@@ -357,12 +368,14 @@ fn planned_transfers(batch: &[DeferredDurableTx]) -> Vec<PlannedTransfer> {
 
 /// `deferred` as a transfer, or `None` when its params do not decode.
 fn planned_transfer(deferred: &DeferredDurableTx) -> Option<PlannedTransfer> {
-	TransferParams::try_from(&deferred.plan.params).ok().map(|params| PlannedTransfer {
-		id: deferred.id,
-		attempts: deferred.attempts,
-		params,
-		dependencies: deferred.dependencies.clone(),
-	})
+	TransferParams::try_from(&deferred.plan.params)
+		.ok()
+		.map(|params| PlannedTransfer {
+			id: deferred.id,
+			attempts: deferred.attempts,
+			params,
+			dependencies: deferred.dependencies.clone(),
+		})
 }
 
 /// One view per transfer from the three reads, which answer in the same order.

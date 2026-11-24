@@ -24,9 +24,8 @@ fn purses_holding(count: u32) -> (TempDir, NftPurses, Vec<ItemKey>) {
 	block_on(purses.create_purse(&creator("tickets.dot"), "Tickets".to_owned())).unwrap();
 	let count = NonZeroU32::new(count).unwrap();
 	let keys = block_on(purses.ledger.allocate_items(FROM, count)).unwrap();
-	let holding = |(index, key): (usize, &ItemKey)| {
-		(*key, Some(unmoved_holding(100 + index as u64)))
-	};
+	let holding =
+		|(index, key): (usize, &ItemKey)| (*key, Some(unmoved_holding(100 + index as u64)));
 	block_on(purses.ledger.record_holdings(keys.iter().enumerate().map(holding).collect()))
 		.unwrap();
 	(dir, purses, keys)

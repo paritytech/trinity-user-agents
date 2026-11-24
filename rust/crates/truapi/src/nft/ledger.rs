@@ -169,7 +169,8 @@ impl NftLedger {
 		if items.is_empty() {
 			return Err(RegistrationError::Hook(StartOperationError::NoItems));
 		}
-		let payments = self.pay_for_transfers(&request).await.map_err(RegistrationError::Hook)?;
+		let payments =
+			self.plan_transfer_payments(&request).await.map_err(RegistrationError::Hook)?;
 		let installation = self.current_installation().await?;
 		let planned = self.planned_transfers(request, installation, payments);
 		self.durable
@@ -214,18 +215,31 @@ impl NftLedger {
 
 	/// How each item of `request` pays for its move, with the PGAS claims of
 	/// the paid ones registered.
-	async fn pay_for_transfers(
+	async fn plan_transfer_payments(
 		&self,
 		request: &TransferRequest,
 	) -> Result<MovePayments, StartOperationError> {
 		let read_request = request.clone();
-		let sources = self.db.read(move |conn| Ok(read_source_moves(conn, &read_request))).await??;
-		self.pay_for_moves(sources, DestinationKind::Holder).await
+		let sources =
+			self.db.read(move |conn| Ok(read_source_moves(conn, &read_request))).await??;
+		self.plan_move_payments(sources, DestinationKind::Holder).await
+	}
+
+	/// How each item a return of `request` moves pays for its move back to
+	/// its cheque key, with the PGAS claims of the paid ones registered.
+	async fn plan_return_payments(
+		&self,
+		request: &ReturnRequest,
+	) -> Result<MovePayments, StartOperationError> {
+		let read_request = request.clone();
+		let sources =
+			self.db.read(move |conn| Ok(read_returned_moves(conn, &read_request))).await??;
+		self.plan_move_payments(sources, DestinationKind::ChequeKey).await
 	}
 
 	/// How each of `sources` pays for its move to a `destination`, with the
 	/// PGAS claims of the paid ones registered, each in its own write.
-	async fn pay_for_moves(
+	async fn plan_move_payments(
 		&self,
 		sources: Vec<(ItemKey, Option<u16>)>,
 		destination: DestinationKind,
@@ -311,13 +325,8 @@ impl NftLedger {
 		&self,
 		request: ReturnRequest,
 	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
-		let read_request = request.clone();
-		let sources = self.db.read(move |conn| Ok(read_returned_moves(conn, &read_request))).await;
-		let sources = sources?.map_err(RegistrationError::Hook)?;
-		let payments = self
-			.pay_for_moves(sources, DestinationKind::ChequeKey)
-			.await
-			.map_err(RegistrationError::Hook)?;
+		let payments =
+			self.plan_return_payments(&request).await.map_err(RegistrationError::Hook)?;
 		let group = request.operation.group().clone();
 		let import = request.import.clone();
 		let planned = DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
@@ -397,7 +406,7 @@ impl NftLedger {
 			return Err(HandoffError::NoItems);
 		}
 		let budget = self.budget.current_budget().await.map_err(HandoffError::Budget)?;
-		let slots = self.check_handoff(&request, budget).await?;
+		let slots = self.validate_handoff_under_budget(&request, budget).await?;
 		let secrets = self.secrets.derive_item_secrets(&slots).map_err(HandoffError::Secrets)?;
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
@@ -418,18 +427,20 @@ impl NftLedger {
 		request: &HandoffRequest,
 	) -> Result<Vec<ItemSlot>, HandoffError<E>> {
 		let budget = self.budget.current_budget().await.map_err(HandoffError::Budget)?;
-		self.check_handoff(request, budget).await
+		self.validate_handoff_under_budget(request, budget).await
 	}
 
 	/// Checks, in a read, that `request` can be handed off under `budget`, and
 	/// returns the slot of each of its keys.
-	async fn check_handoff<E: Send + 'static>(
+	async fn validate_handoff_under_budget<E: Send + 'static>(
 		&self,
 		request: &HandoffRequest,
 		budget: MoveBudget,
 	) -> Result<Vec<ItemSlot>, HandoffError<E>> {
 		let read_request = request.clone();
-		self.db.read(move |conn| Ok(validate_handoff(conn, &read_request, &budget))).await?
+		self.db
+			.read(move |conn| Ok(validate_handoff(conn, &read_request, &budget)))
+			.await?
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.

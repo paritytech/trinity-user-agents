@@ -52,11 +52,11 @@ pub enum HandoffError<E> {
 	#[error(transparent)]
 	Db(#[from] DbError),
 	/// These items have no fee-less move left for the recipient's import.
-	#[error("{} items have no fee-less move left", .0.len())]
+	#[error("items {} have no fee-less move left, expected one for the import", hex_keys(.0))]
 	ItemsMovesExhausted(Vec<ItemKey>),
 	/// The fee-less move budget could not be read.
 	#[error("the fee-less move budget could not be read: {0}")]
-	Budget(StorageWatchError),
+	Budget(#[source] StorageWatchError),
 }
 
 /// Checks that the tag of `request` is unused, every key is idle in its
@@ -71,22 +71,37 @@ pub fn validate_handoff<E>(
 		return Err(HandoffError::TagInUse(request.tag.clone()));
 	}
 	let items = idle_items::<HandoffError<E>>(conn, request.from, &request.keys)?;
+	refuse_untracked_items(&items)?;
 	refuse_exhausted_items(&items, budget)?;
 	Ok(items.into_iter().map(|item| item.slot).collect())
 }
 
-/// Refuses `items` when one has no recorded moves yet, as unavailable, or
-/// when some have no fee-less move left under `budget`, naming all of them.
-fn refuse_exhausted_items<E>(items: &[IdleItem], budget: &MoveBudget) -> Result<(), HandoffError<E>> {
-	if let Some(untracked) = items.iter().find(|item| item.moves.is_none()) {
-		return Err(ItemRefusal::Unavailable(untracked.key).into());
-	}
-	let is_exhausted = |item: &&IdleItem| item.moves.is_some_and(|moves| budget.is_exhausted(moves));
+/// Refuses the first of `items` whose moves the tracker has not recorded yet,
+/// as unavailable for now.
+fn refuse_untracked_items(items: &[IdleItem]) -> Result<(), ItemRefusal> {
+	let untracked = items.iter().find(|item| item.moves.is_none());
+	untracked.map_or(Ok(()), |item| Err(ItemRefusal::Unavailable(item.key)))
+}
+
+/// Refuses `items` when some have no fee-less move left under `budget`,
+/// naming every such item.
+fn refuse_exhausted_items<E>(
+	items: &[IdleItem],
+	budget: &MoveBudget,
+) -> Result<(), HandoffError<E>> {
+	let is_exhausted =
+		|item: &&IdleItem| item.moves.is_some_and(|moves| budget.is_exhausted(moves));
 	let exhausted: Vec<ItemKey> = items.iter().filter(is_exhausted).map(|item| item.key).collect();
 	if exhausted.is_empty() {
 		return Ok(());
 	}
 	Err(HandoffError::ItemsMovesExhausted(exhausted))
+}
+
+/// `keys` hex-encoded and separated by commas, for an error message.
+fn hex_keys(keys: &[ItemKey]) -> String {
+	let encoded: Vec<String> = keys.iter().map(|key| hex::encode(key.0)).collect();
+	encoded.join(", ")
 }
 
 /// Records every key of `request` as handed off, after checking again that the

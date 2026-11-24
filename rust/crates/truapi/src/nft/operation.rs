@@ -15,7 +15,7 @@ use super::{
 	keys::{ItemKey, ItemKeyDeriver},
 	paid_moves::{MovePayments, PaidMoveError, UnplannedSource},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
@@ -170,30 +170,10 @@ pub fn plan_transfers(
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
 	let submission = |(source, destination): (IdleItem, ItemKey)| {
-		transfer_submission(&source, destination, give_up_after, payments)
+		payments.derived_move(source.key, source.slot, destination, give_up_after)
 	};
 	let submissions = sources.into_iter().zip(destinations).map(submission);
 	Ok(submissions.collect::<Result<_, UnplannedSource>>()?)
-}
-
-/// The transfer of `source` to `destination`, given up at `give_up_after`,
-/// paid as `payments` says for its key.
-fn transfer_submission(
-	source: &IdleItem,
-	destination: ItemKey,
-	give_up_after: u64,
-	payments: &MovePayments,
-) -> Result<DeferredSubmission, UnplannedSource> {
-	let payment = payments.payment_of(&source.key)?;
-	let params = TransferParams {
-		source: source.key,
-		signer: TransferSigner::Derived(source.slot),
-		destination,
-		submitted_attempt: None,
-		give_up_after,
-		mode: payment.transfer_mode(),
-	};
-	Ok(payment.submission(params))
 }
 
 /// Each item of `request` with the fee-less moves its NFT used, read before
@@ -202,7 +182,9 @@ pub fn read_source_moves(
 	conn: &Connection,
 	request: &TransferRequest,
 ) -> Result<Vec<(ItemKey, Option<u16>)>, StartOperationError> {
-	let sources = idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs())?;
+	validate_operation_unused(conn, &request.operation)?;
+	let sources =
+		idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs())?;
 	Ok(sources.into_iter().map(|source| (source.key, source.moves)).collect())
 }
 

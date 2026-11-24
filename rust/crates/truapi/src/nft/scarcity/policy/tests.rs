@@ -572,3 +572,27 @@ fn only_a_paid_attempt_that_failed_at_dispatch_is_not_rebuilt() {
 	assert!(retries(&paid, VerdictFailureKind::Expired));
 	assert!(retries(&fee_less, VerdictFailureKind::DispatchFailed));
 }
+
+/// A transfer registered before the move budget existed keeps building after
+/// the update: schema version 20 appends the fee-less mode its params lack.
+#[test]
+fn a_transfer_stored_before_its_mode_decodes_as_fee_less() {
+	let fee_less = TransferParams::try_from(&registered_transfer(0).deferred.plan.params).unwrap();
+	let encoded = PolicyParams::from(fee_less.clone()).0;
+	let stored_before = &encoded[..encoded.len() - 1];
+	let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+	crate::store::core_migrations().to_version(&mut connection, 19).unwrap();
+	connection
+		.execute(
+			"INSERT INTO durable_tx (domain, status, policy_params) VALUES ('nft', 'PENDING_SUBMISSION', ?1)",
+			[stored_before],
+		)
+		.unwrap();
+
+	crate::store::core_migrations().to_latest(&mut connection).unwrap();
+	let migrated: Vec<u8> = connection
+		.query_row("SELECT policy_params FROM durable_tx", [], |row| row.get(0))
+		.unwrap();
+
+	assert_eq!(TransferParams::try_from(&PolicyParams(migrated)).unwrap(), fee_less);
+}

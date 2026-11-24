@@ -1146,9 +1146,7 @@ impl HostRuntime<SigningHost> {
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
-		let chain = Arc::new(self.services.chain.clone());
-		let genesis = self.services.asset_hub_chain_genesis_hash().into();
-		let budget = Arc::new(crate::nft::ScarcityMoveBudget::new(chain.clone(), chain, genesis));
+		let budget = scarcity_move_budget(&self.services);
 		let claims = crate::pgas_claims::PgasClaims::new(durable.clone());
 		let deps = crate::nft::NftLedgerDeps {
 			db,
@@ -1277,7 +1275,10 @@ impl HostRuntime<SigningHost> {
 	/// Stop the product's executions first: a value a running execution
 	/// writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id);
 		self.services
 			.platform
@@ -1481,7 +1482,7 @@ fn durable_registry(
 	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> crate::durable::DurableRegistry {
 	use crate::{
-		nft::{ImportedSecretStore, ScarcityMoveBudget, ScarcityTransfersDeps, with_scarcity_transfers},
+		nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers},
 		pgas_claims::with_pgas_claims,
 	};
 
@@ -1494,14 +1495,22 @@ fn durable_registry(
 	let chain = Arc::new(services.chain.clone());
 	let deps = ScarcityTransfersDeps {
 		storage: chain.clone(),
-		heads: chain.clone(),
+		heads: chain,
 		genesis,
 		signer,
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
-		budget: Arc::new(ScarcityMoveBudget::new(chain.clone(), chain, genesis)),
+		budget: scarcity_move_budget(services),
 	};
 	with_scarcity_transfers(registry, deps)
+}
+
+/// Reads the fee-less move budget of the Scarcity pallet on Asset Hub.
+#[cfg(not(target_arch = "wasm32"))]
+fn scarcity_move_budget(services: &RuntimeServices) -> Arc<crate::nft::ScarcityMoveBudget> {
+	let chain = Arc::new(services.chain.clone());
+	let genesis = services.asset_hub_chain_genesis_hash().into();
+	Arc::new(crate::nft::ScarcityMoveBudget::new(chain.clone(), chain, genesis))
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the

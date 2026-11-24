@@ -8,7 +8,9 @@ use crate::{
 	durable::DurableTxId,
 	nft::{
 		NftLedger, NftLedgerDeps, OperationKey, PurseId, PurseTag, TransferRequest, TransferType,
-		testing::{TEST_MAXIMUM_MOVES, holding_after_moves, stored_transfer_params, test_ledger_deps},
+		testing::{
+			TEST_MAXIMUM_MOVES, holding_after_moves, stored_transfer_params, test_ledger_deps,
+		},
 	},
 	store::{Db, open_temporary_core_db},
 };
@@ -27,7 +29,7 @@ struct Purses {
 	held: Vec<ItemKey>,
 }
 
-fn purses_holding_after(moves: &[u16]) -> Purses {
+fn purses_with_used_moves(moves: &[u16]) -> Purses {
 	let (dir, db) = open_temporary_core_db();
 	let deps: NftLedgerDeps = test_ledger_deps(db.clone());
 	let claims = deps.claims.clone();
@@ -41,16 +43,26 @@ fn purses_holding_after(moves: &[u16]) -> Purses {
 		.iter()
 		.zip(moves)
 		.enumerate()
-		.map(|(instance, (key, moves))| (*key, Some(holding_after_moves(instance as u64, *moves))))
+		.map(|(instance, (key, moves))| {
+			let instance = u64::try_from(instance).expect("a test position fits u64");
+			(*key, Some(holding_after_moves(instance, *moves)))
+		})
 		.collect();
 	block_on(ledger.record_holdings(holdings)).unwrap();
 	Purses { _dir: dir, db, ledger, claims, held }
 }
 
-fn rebalance(purses: &Purses, items: &[ItemKey]) -> Result<(), RegistrationError<StartOperationError>> {
+fn rebalance(
+	purses: &Purses,
+	items: &[ItemKey],
+) -> Result<(), RegistrationError<StartOperationError>> {
 	let inputs = items.iter().copied().collect();
 	let operation = OperationKey::new(b"product", [1; 32]);
-	let request = TransferRequest { operation, from: FROM, transfer: TransferType::Local { inputs, into: TO } };
+	let request = TransferRequest {
+		operation,
+		from: FROM,
+		transfer: TransferType::Local { inputs, into: TO },
+	};
 	block_on(purses.ledger.start_transfers(request))
 }
 
@@ -90,7 +102,8 @@ fn registered_moves(db: &Db) -> Vec<RegisteredMove> {
 /// The ids of every registered PGAS claim, in registration order.
 fn registered_claims(db: &Db) -> Vec<DurableTxId> {
 	let read = |conn: &rusqlite::Connection| {
-		let mut statement = conn.prepare("SELECT id FROM durable_tx WHERE domain = 'pgas' ORDER BY id")?;
+		let mut statement =
+			conn.prepare("SELECT id FROM durable_tx WHERE domain = 'pgas' ORDER BY id")?;
 		let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
 		Ok(rows.collect::<Result<Vec<_>, _>>()?)
 	};
@@ -102,14 +115,18 @@ fn registered_claims(db: &Db) -> Vec<DurableTxId> {
 /// neither.
 #[test]
 fn an_exhausted_item_moves_paid_after_a_claim_into_its_key() {
-	let purses = purses_holding_after(&[0, TEST_MAXIMUM_MOVES]);
+	let purses = purses_with_used_moves(&[0, TEST_MAXIMUM_MOVES]);
 
 	rebalance(&purses, &purses.held).unwrap();
 
 	let claims = registered_claims(&purses.db);
 	let mut expected = vec![
 		RegisteredMove { source: purses.held[0], mode: TransferMode::FeeLess, waits_for: vec![] },
-		RegisteredMove { source: purses.held[1], mode: TransferMode::Paid, waits_for: claims.clone() },
+		RegisteredMove {
+			source: purses.held[1],
+			mode: TransferMode::Paid,
+			waits_for: claims.clone(),
+		},
 	];
 	expected.sort_by_key(|registered| registered.source);
 	assert_eq!(claims.len(), 1);
@@ -120,7 +137,7 @@ fn an_exhausted_item_moves_paid_after_a_claim_into_its_key() {
 /// claimed into waits for that claim instead of spending another slot.
 #[test]
 fn a_paid_move_waits_for_the_claim_already_active_in_its_key() {
-	let purses = purses_holding_after(&[TEST_MAXIMUM_MOVES]);
+	let purses = purses_with_used_moves(&[TEST_MAXIMUM_MOVES]);
 	let active = block_on(purses.claims.claim(AccountId32(purses.held[0].0))).unwrap();
 
 	rebalance(&purses, &purses.held).unwrap();
@@ -133,7 +150,7 @@ fn a_paid_move_waits_for_the_claim_already_active_in_its_key() {
 /// guessing fee-less could fail a move that had to be paid.
 #[test]
 fn an_item_whose_moves_are_not_recorded_yet_is_refused_as_unavailable() {
-	let purses = purses_holding_after(&[0]);
+	let purses = purses_with_used_moves(&[0]);
 	let forget = |tx: &rusqlite::Transaction<'_>| {
 		tx.execute("UPDATE nft_holding SET moves = NULL", [])?;
 		Ok(())

@@ -92,7 +92,9 @@ impl BuiltTransfer {
 	/// transfer leaves it: one revision on.
 	fn left_as(&self, held: Option<ScarcityNft>) -> bool {
 		let next_revision = self.signed_state_nonce.checked_add(1);
-		held.is_some_and(|nft| nft.instance == self.instance && Some(nft.state_nonce) == next_revision)
+		held.is_some_and(|nft| {
+			nft.instance == self.instance && Some(nft.state_nonce) == next_revision
+		})
 	}
 }
 

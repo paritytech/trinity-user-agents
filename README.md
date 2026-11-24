@@ -417,7 +417,10 @@ move is paid once its NFT has no fee-less move left, and a refund's move once
 the NFT would reach the cheque key with none left, so the sender can still
 reclaim it. A paid move first registers a PGAS claim into its item key and
 waits for it as a dependency; the runtime takes the fee from that PGAS, and
-the move gives up when the claim fails. What
+the move gives up when the claim fails. A paid move is not held back by a
+lock a failed fee-less move left on its key, since it clears the lock, and an
+attempt that failed at dispatch, which already paid its fee, is not rebuilt.
+What
 each transfer spends is recorded in `nft_consumption`, whether the key is one
 of ours or a cheque key, and a key a live transfer spends cannot be spent by
 another. A failed transfer frees its item again. Transferring items out of Root's or another product's

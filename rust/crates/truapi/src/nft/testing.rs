@@ -28,7 +28,9 @@ use crate::{
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::root_entropy::RootEntropy,
 	installation::{InstallationId, InstallationIdProvider},
-	pgas_claims::{BuiltClaim, ClaimBuildError, ClaimSlot, PgasClaimBuilder, PgasClaims, with_pgas_claims},
+	pgas_claims::{
+		BuiltClaim, ClaimBuildError, ClaimSlot, PgasClaimBuilder, PgasClaims, with_pgas_claims,
+	},
 	runtime::AuthorityError,
 	store::Db,
 };
@@ -76,14 +78,14 @@ pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
 		Arc::new(Unobservable),
 		Arc::new(NeverBuilds),
 	);
-	engine_on(db, with_pgas_claims(registry, genesis, Arc::new(SignedOut)))
+	engine_on(db, with_pgas_claims(registry, genesis, Arc::new(NoSessionClaimBuilder)))
 }
 
 /// Builds no PGAS claim, since no session is ever signed in, so claims wait.
-struct SignedOut;
+struct NoSessionClaimBuilder;
 
 #[async_trait::async_trait]
-impl PgasClaimBuilder for SignedOut {
+impl PgasClaimBuilder for NoSessionClaimBuilder {
 	async fn build_claim(
 		&self,
 		_: subxt::utils::AccountId32,
@@ -187,9 +189,7 @@ pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Ve
 	let holdings = keys
 		.iter()
 		.enumerate()
-		.map(|(index, key)| {
-			(*key, Some(unmoved_holding(100 + index as u64)))
-		})
+		.map(|(index, key)| (*key, Some(unmoved_holding(100 + index as u64))))
 		.collect();
 	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
 	keys
@@ -198,7 +198,8 @@ pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Ve
 /// The params of every registered transfer, in registration order.
 pub fn stored_transfer_params(db: &Db) -> Vec<TransferParams> {
 	let stored = |conn: &rusqlite::Connection| {
-		let mut statement = conn.prepare("SELECT policy_params FROM durable_tx WHERE domain = 'nft' ORDER BY id")?;
+		let mut statement =
+			conn.prepare("SELECT policy_params FROM durable_tx WHERE domain = 'nft' ORDER BY id")?;
 		let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
 		Ok(rows.collect::<Result<Vec<_>, _>>()?)
 	};

@@ -100,7 +100,9 @@ pub fn plan_returns(
 ) -> Result<Vec<DeferredSubmission>, StartOperationError> {
 	let items = validated_return_items(tx, request)?;
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	let submission = |item: &ReturnableItem| return_submission(item, give_up_after, payments);
+	let submission = |item: &ReturnableItem| {
+		payments.derived_move(item.key, item.slot, item.origin, give_up_after)
+	};
 	Ok(items.available.iter().map(submission).collect::<Result<_, UnplannedSource>>()?)
 }
 
@@ -205,25 +207,6 @@ fn consumed_landed_keys(landed: &[TransferProgress], available: &[ReturnableItem
 		.map(|transfer| transfer.minted)
 		.filter(|minted| !available.contains(minted))
 		.collect()
-}
-
-/// The move of whatever the key of `item` holds back to the key it came
-/// from, given up at `give_up_after`, paid as `payments` says for its key.
-fn return_submission(
-	item: &ReturnableItem,
-	give_up_after: u64,
-	payments: &MovePayments,
-) -> Result<DeferredSubmission, UnplannedSource> {
-	let payment = payments.payment_of(&item.key)?;
-	let params = TransferParams {
-		source: item.key,
-		signer: TransferSigner::Derived(item.slot),
-		destination: item.origin,
-		submitted_attempt: None,
-		give_up_after,
-		mode: payment.transfer_mode(),
-	};
-	Ok(payment.submission(params))
 }
 
 #[cfg(test)]

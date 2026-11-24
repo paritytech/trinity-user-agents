@@ -51,10 +51,8 @@ fn holder() -> [u8; 32] {
 const HOLDER_NFT: &[u8] =
 	include_bytes!("../../../../tests/fixtures/paseo-next-asset-hub-nfts-by-owner.scale");
 
-const HOLDER_ITEM: TrackedHolding = TrackedHolding {
-	item: HeldItem { collection: 27, item: 13, instance: 330 },
-	moves: 0,
-};
+const HOLDER_ITEM: TrackedHolding =
+	TrackedHolding { item: HeldItem { collection: 27, item: 13, instance: 330 }, moves: 0 };
 
 /// How long a test waits for the tracker to write what it was told.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -187,8 +185,9 @@ impl TrackerFixture {
 	/// Every holding row, by key.
 	fn holdings(&self) -> Vec<([u8; 32], TrackedHolding)> {
 		let read = self.db.read(|conn| {
-			let mut statement = conn
-				.prepare("SELECT key, collection, item, instance, moves FROM nft_holding ORDER BY key")?;
+			let mut statement = conn.prepare(
+				"SELECT key, collection, item, instance, moves FROM nft_holding ORDER BY key",
+			)?;
 			let rows = statement.query_map([], holding_row)?;
 			Ok(rows.collect::<Result<Vec<_>, _>>()?)
 		});

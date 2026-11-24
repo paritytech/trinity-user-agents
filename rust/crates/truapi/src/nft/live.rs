@@ -52,10 +52,10 @@ use crate::{
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::root_entropy::RootEntropy,
 	nft::HoldingTracker,
-	pgas_claims::{LivePerson, PgasClaims, with_pgas_claims},
 	nft_purse::{
 		FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize, ScriptedStatements,
 	},
+	pgas_claims::{LivePerson, PgasClaims, with_pgas_claims},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
 };
@@ -317,16 +317,7 @@ async fn every_purse_call_moves_items_on_the_live_chain() {
 	let foreign = ItemKey(rand::random());
 
 	let run = LiveRun { owner: &owner, purses: &purses, collection };
-	let ran =
-		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(run.every_call(foreign)))
-			.await;
-
-	let mut every_key = every_item_key(&live.ledger).await;
-	every_key.push(foreign);
-	owner.clean_up(collection, &every_key).await;
-	if let Err(panic) = ran {
-		std::panic::resume_unwind(panic);
-	}
+	run_then_clean_up(&run, &live, vec![foreign], run.every_call(foreign)).await;
 }
 
 /// A rebalance of an item with no fee-less move left claims PGAS into its
@@ -338,7 +329,8 @@ async fn a_rebalance_without_fee_less_moves_claims_pgas_and_moves_paid() {
 		eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
 		return;
 	};
-	let entropy = RootEntropy::new(bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy());
+	let phrase = bip39::Mnemonic::parse(mnemonic.trim()).expect("a BIP-39 phrase");
+	let entropy = RootEntropy::new(phrase.to_entropy());
 	let genesis = live_asset_hub_genesis();
 	let chain = live_asset_hub(genesis);
 	let owner = CollectionOwner::from_env(chain.clone(), genesis);
@@ -350,11 +342,23 @@ async fn a_rebalance_without_fee_less_moves_claims_pgas_and_moves_paid() {
 	let collection = owner.create_collection().await;
 
 	let run = LiveRun { owner: &owner, purses: &purses, collection };
-	let ran =
-		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(run.rebalance_one_paid(&live.db)))
-			.await;
+	run_then_clean_up(&run, &live, vec![], run.rebalance_one_paid(&live.db)).await;
+}
 
-	owner.clean_up(collection, &every_item_key(&live.ledger).await).await;
+/// Awaits `calls`, then burns whatever every key of the ledger and
+/// `outside_keys` hold and deletes the run's collection, whether or not the
+/// calls panicked, and only then passes a panic on.
+async fn run_then_clean_up(
+	run: &LiveRun<'_>,
+	live: &LivePurses,
+	outside_keys: Vec<ItemKey>,
+	calls: impl core::future::Future<Output = ()>,
+) {
+	let guarded = core::panic::AssertUnwindSafe(calls);
+	let ran = futures::FutureExt::catch_unwind(guarded).await;
+	let mut every_key = every_item_key(&live.ledger).await;
+	every_key.extend(outside_keys);
+	run.owner.clean_up(run.collection, &every_key).await;
 	if let Err(panic) = ran {
 		std::panic::resume_unwind(panic);
 	}
@@ -364,9 +368,10 @@ async fn a_rebalance_without_fee_less_moves_claims_pgas_and_moves_paid() {
 /// holds something.
 async fn tracked_moves(db: &Db, key: ItemKey) -> Option<u16> {
 	let read = move |conn: &rusqlite::Connection| {
-		let moves = conn.query_row("SELECT moves FROM nft_holding WHERE key = ?1", [key.0], |row| {
-			row.get::<_, Option<u16>>(0)
-		});
+		let moves =
+			conn.query_row("SELECT moves FROM nft_holding WHERE key = ?1", [key.0], |row| {
+				row.get::<_, Option<u16>>(0)
+			});
 		Ok(rusqlite::OptionalExtension::optional(moves)?.flatten())
 	};
 	db.read(read).await.expect("the holding reads")

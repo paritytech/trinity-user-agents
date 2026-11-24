@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use subxt::utils::AccountId32;
 
 use super::{
-	keys::ItemKey,
+	keys::{ItemKey, ItemSlot},
 	operation::StartOperationError,
-	scarcity::{DestinationKind, MoveBudget, TransferMode, TransferParams},
+	scarcity::{DestinationKind, MoveBudget, TransferMode, TransferParams, TransferSigner},
 };
 use crate::{
 	chain::StorageWatchError,
@@ -27,6 +27,28 @@ impl MovePayments {
 	/// which a concurrent spend can cause when the write picks its sources.
 	pub fn payment_of(&self, source: &ItemKey) -> Result<&MovePayment, UnplannedSource> {
 		self.by_source.get(source).ok_or(UnplannedSource(*source))
+	}
+
+	/// The move of whatever `source`, a key we derive at `slot`, holds to
+	/// `destination`, given up at `give_up_after`, and paid as planned for
+	/// `source`.
+	pub fn derived_move(
+		&self,
+		source: ItemKey,
+		slot: ItemSlot,
+		destination: ItemKey,
+		give_up_after: u64,
+	) -> Result<DeferredSubmission, UnplannedSource> {
+		let payment = self.payment_of(&source)?;
+		let params = TransferParams {
+			source,
+			signer: TransferSigner::Derived(slot),
+			destination,
+			submitted_attempt: None,
+			give_up_after,
+			mode: payment.transfer_mode(),
+		};
+		Ok(payment.submission(params))
 	}
 }
 
@@ -103,7 +125,10 @@ pub async fn claim_paid_sources(
 	for (source, mode) in modes {
 		let payment = match mode {
 			TransferMode::FeeLess => MovePayment::FeeLess,
-			TransferMode::Paid => MovePayment::PaidByClaim { claim: new_or_active_claim(claims, source).await? },
+			TransferMode::Paid => {
+				let claim = new_or_active_claim(claims, source).await?;
+				MovePayment::PaidByClaim { claim }
+			},
 		};
 		by_source.insert(source, payment);
 	}
@@ -111,9 +136,14 @@ pub async fn claim_paid_sources(
 }
 
 /// The claim into `source`: a new one, or the one already active.
-async fn new_or_active_claim(claims: &PgasClaims, source: ItemKey) -> Result<DurableTxId, PaidMoveError> {
+async fn new_or_active_claim(
+	claims: &PgasClaims,
+	source: ItemKey,
+) -> Result<DurableTxId, PaidMoveError> {
 	match claims.claim(AccountId32(source.0)).await {
-		Ok(claim) | Err(RegistrationError::Hook(PgasClaimError::AlreadyClaiming(claim))) => Ok(claim),
+		Ok(claim) | Err(RegistrationError::Hook(PgasClaimError::AlreadyClaiming(claim))) => {
+			Ok(claim)
+		},
 		Err(error) => Err(PaidMoveError::Claim(error)),
 	}
 }

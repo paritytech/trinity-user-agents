@@ -34,9 +34,8 @@ fn purses_holding(count: u32) -> Purses {
 	}
 	let count = NonZeroU32::new(count).unwrap();
 	let held = block_on(ledger.allocate_items(FROM, count)).unwrap();
-	let holding = |(index, key): (usize, &ItemKey)| {
-		(*key, Some(unmoved_holding(100 + index as u64)))
-	};
+	let holding =
+		|(index, key): (usize, &ItemKey)| (*key, Some(unmoved_holding(100 + index as u64)));
 	block_on(ledger.record_holdings(held.iter().enumerate().map(holding).collect())).unwrap();
 	Purses { _dir: dir, db, ledger, held }
 }

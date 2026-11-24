@@ -5,13 +5,13 @@ use super::*;
 use crate::{
 	durable::{DurableTxId, RegistrationError},
 	nft::{
-		HandoffRequest, HandoffTag, ImportRequest, NftLedger, PurseId, PurseTag,
-		TransferRequest, TransferType,
+		HandoffRequest, HandoffTag, ImportRequest, NftLedger, PurseId, PurseTag, TransferRequest,
+		TransferType,
 		keys::ItemIndex,
 		scarcity::TransferMode,
 		testing::{
-			TEST_INSTALLATION, fail_transfer, finalize_transfer, imported_test_key,
-			TEST_MAXIMUM_MOVES, holding_after_moves, stored_transfer_params, test_ledger,
+			TEST_INSTALLATION, TEST_MAXIMUM_MOVES, fail_transfer, finalize_transfer,
+			holding_after_moves, imported_test_key, stored_transfer_params, test_ledger,
 			unmoved_holding,
 		},
 	},

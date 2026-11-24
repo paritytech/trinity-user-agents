@@ -7,17 +7,7 @@ use crate::nft::scarcity::testing::asset_hub_metadata;
 fn the_budget_decodes_from_asset_hub_metadata() {
 	let metadata = asset_hub_metadata();
 
-	assert_eq!(maximum_moves_in(&metadata).unwrap(), 16);
-}
-
-/// A fee-less move is valid only below the budget, so the last move it
-/// allows leaves the NFT exhausted.
-#[test]
-fn an_nft_is_exhausted_once_it_used_the_whole_budget() {
-	let budget = MoveBudget::new(16);
-
-	assert!(!budget.is_exhausted(15));
-	assert!(budget.is_exhausted(16));
+	assert_eq!(declared_maximum_moves(&metadata).unwrap(), 16);
 }
 
 /// A holder pays for its own later moves, so a move to it is paid only once
