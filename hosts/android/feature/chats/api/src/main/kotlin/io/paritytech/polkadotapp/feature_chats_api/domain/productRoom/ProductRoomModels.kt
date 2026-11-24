@@ -70,7 +70,7 @@ sealed interface ProductFeedUpdateModel {
     data class Deleted(val messageId: String) : ProductFeedUpdateModel
 }
 
-/** Why the host refuses a feed update for a room that it stores (`NativeChatFeedRejection`). */
+/** Why the host refuses a feed update for a room that it stores (`ChatFeedOutcome`). */
 sealed class ProductFeedRejection(message: String) : Exception(message) {
     class UnknownRoom : ProductFeedRejection("the room does not exist")
 

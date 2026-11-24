@@ -1466,7 +1466,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           chatDeclarations.get(roomId)?.config ?? {
             productSource: false,
             reactionDetails: false,
-            reportSeen: false,
           }
         );
       },

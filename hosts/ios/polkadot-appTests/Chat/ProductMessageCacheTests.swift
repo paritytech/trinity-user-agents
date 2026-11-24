@@ -88,7 +88,7 @@ struct ProductMessageCacheTests {
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
         await cache.store(entry([message(1)]), productId: fixture.productId, roomId: "lobby")
 
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message(2)), persist: false)
+        #expect(try await bridge.updateFeed(roomId: "lobby", update: .new(message(2)), persist: false) == .applied)
 
         let cached = await cache.entry(productId: fixture.productId, roomId: "lobby")
         #expect(cached?.messages.map(\.messageId) == ["m1", "m2"])

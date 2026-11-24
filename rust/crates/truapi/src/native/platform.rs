@@ -837,10 +837,10 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		request: truapi::latest::HostChatUpdateFeedRequest,
 		persist: bool,
 	) -> Result<crate::platform::ChatFeedOutcome, truapi::latest::GenericError> {
-		match self.chat.update_feed(request.room_id, request.update, persist).await {
-			Ok(()) => Ok(crate::platform::ChatFeedOutcome::Applied),
-			Err(rejection) => rejection.into_outcome(),
-		}
+		self.chat
+			.update_feed(request.room_id, request.update, persist)
+			.await
+			.map_err(truapi::latest::GenericError::from)
 	}
 }
 

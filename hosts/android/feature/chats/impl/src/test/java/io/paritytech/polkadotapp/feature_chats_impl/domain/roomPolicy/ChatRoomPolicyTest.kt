@@ -44,8 +44,8 @@ class ChatRoomPolicyTest {
     }
 
     @Test
-    fun `the product source and the seen reports come from the configuration`() {
-        val config = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true, reportSeen = true)
+    fun `a product source room reports the messages that the user saw`() {
+        val config = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true)
 
         val policy = ChatRoomPolicy.from(declarations(config = config))
 

@@ -41,7 +41,7 @@ private extension ChatsComparatorTests {
         pinned: Bool = false
     ) -> Chat.LocalModel {
         let chatId = Chat.Id.chatExtension("game.dot", roomId: roomId)
-        let config = Chat.RoomConfig(productSource: productSource, reactionDetails: false, reportSeen: false)
+        let config = Chat.RoomConfig(productSource: productSource, reactionDetails: false)
         let preview = Chat.RoomPreview(
             timestamp: nil,
             badge: .hostDefault,

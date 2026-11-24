@@ -10,7 +10,8 @@ import kotlinx.serialization.Serializable
 
 /**
  * The configuration keeps its first stored layout, so the rooms keep their configuration. Chat Extension v2 does not
- * have [participants], [messageActions], [allowedReactions] and [placeholder]: they are written empty and not read.
+ * have [participants], [messageActions], [allowedReactions], [placeholder] and [reportSeen]: they are written empty and
+ * not read.
  */
 @Serializable
 class ChatRoomConfigLocal(
