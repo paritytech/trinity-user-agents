@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.Re
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.hasMaterials
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.coroutineScope
@@ -29,7 +30,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -50,6 +53,8 @@ class TrUAPIChatWorker(
     private val workers: TrUAPIWorkerSupervisor,
     private val chatMessaging: ProductChatMessaging,
     private val scope: CoroutineScope,
+    /** Where a render stream is read: off the main thread, so a frame waiting for a gesture's answer can get it. */
+    private val renderDispatcher: CoroutineDispatcher,
 ) : ProductWorker {
     init {
         val workerJob = scope.coroutineContext.job
@@ -181,12 +186,13 @@ class TrUAPIChatWorker(
             try {
                 render(ProductRendererRenderRequest(context, payload))
                     .retryWhileConnecting()
-                    .collect { node ->
-                        offsets.receive(node)?.let { widget ->
-                            drew = true
-                            emit(Result.success(widget))
-                            if (node.hasMaterials()) scope.launch { reportMaterialsUnsupported(node, context, label) }
-                        }
+                    // Offsets go straight to their gesture here, off the main thread; trees go on as before.
+                    .mapNotNull { node -> offsets.receive(node)?.let { widget -> node to widget } }
+                    .onInOrder(renderDispatcher)
+                    .collect { (node, widget) ->
+                        drew = true
+                        emit(Result.success(widget))
+                        if (node.hasMaterials()) scope.launch { reportMaterialsUnsupported(node, context, label) }
                     }
             } finally {
                 offsets.close()
@@ -206,6 +212,26 @@ class TrUAPIChatWorker(
                 withTimeoutOrNull(MATERIALS_REPORT_TIMEOUT) { resolution.resolved.first { it != null } }
             }
         }.logFailure("TrUAPI chat materials report for $label")
+    }
+
+    /**
+     * Runs the upstream on [dispatcher] and hands its failure over as a value, rethrown after everything emitted
+     * before it: a plain flowOn cancels the reader on failure, so the tree drawn just before it could be lost.
+     */
+    private fun <T : Any> Flow<T>.onInOrder(dispatcher: CoroutineDispatcher): Flow<T> =
+        map<T, Step<T>> { Step.Item(it) }
+            .catch { cause -> emit(Step.Failed(cause)) }
+            .flowOn(dispatcher)
+            .map { step ->
+                when (step) {
+                    is Step.Item -> step.value
+                    is Step.Failed -> throw step.cause
+                }
+            }
+
+    private sealed interface Step<out T> {
+        class Item<T>(val value: T) : Step<T>
+        class Failed(val cause: Throwable) : Step<Nothing>
     }
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")

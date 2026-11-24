@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
+import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -100,5 +102,18 @@ class GestureRulesTest {
         assertTrue(GestureRules.accepts(enabled = true, heldAtEnd = false))
         assertFalse(GestureRules.accepts(enabled = false, heldAtEnd = false))
         assertFalse(GestureRules.accepts(enabled = true, heldAtEnd = true))
+    }
+
+    @Test
+    fun `the answer with the higher count is laid out`() {
+        val streamed = JsGesturePosition.Value(x = 10, y = 0, answer = 4, attached = true)
+        val waited = JsGesturePosition.Value(x = 20, y = 0, answer = 5, attached = true)
+
+        assertEquals(waited, GestureRules.newest(streamed, waited))
+        assertEquals(waited.copy(x = 30), GestureRules.newest(waited.copy(x = 30), waited))
+        assertEquals(streamed, GestureRules.newest(streamed, waited.copy(answer = 3)))
+        assertEquals(streamed, GestureRules.newest(streamed, null))
+        assertEquals(waited, GestureRules.newest(null, waited))
+        assertNull(GestureRules.newest(null, null))
     }
 }

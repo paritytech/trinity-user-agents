@@ -56,6 +56,7 @@ class TrUAPIChatWorkerMaterialsTest {
         },
         chatMessaging = FakeChatMessaging(),
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        renderDispatcher = StandardTestDispatcher(testScheduler),
     )
 
     @Test

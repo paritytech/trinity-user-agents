@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
+import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
@@ -68,6 +69,14 @@ internal object GestureRules {
             } else {
                 GestureSettle.SNAP_BACK
             }
+    }
+
+    /** The later of two worker answers to lay out: the one with the higher answer count. */
+    fun newest(streamed: JsGesturePosition.Value?, answeredInFrame: JsGesturePosition.Value?): JsGesturePosition.Value? = when {
+        streamed == null -> answeredInFrame
+        answeredInFrame == null -> streamed
+        answeredInFrame.answer > streamed.answer -> answeredInFrame
+        else -> streamed
     }
 
     /** A move goes out once [intervalMs] has passed since the last one sent; zero sends every move. */
