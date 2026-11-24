@@ -1066,7 +1066,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     public convenience init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
-        workerHost: NativeWebViewWorkerHost? = nil
+        workerHost: NativeHostWebViewWorker? = nil
     ) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default, workerHost: workerHost)
     }
@@ -1075,7 +1075,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
         notificationCenter: NotificationCenter,
-        workerHost: NativeWebViewWorkerHost? = nil
+        workerHost: NativeHostWebViewWorker? = nil
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter

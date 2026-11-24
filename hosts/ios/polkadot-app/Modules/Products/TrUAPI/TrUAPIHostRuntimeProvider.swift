@@ -55,7 +55,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the WebView host is in place by then.
-    private var webViewHost: (any NativeWebViewWorkerHost)?
+    private var webViewHost: (any NativeHostWebViewWorker)?
 
     /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
     /// it is built, or right away if it already is.
@@ -99,7 +99,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.productsRouter.presentationView
     }
 
-    func attach(webViewHost: any NativeWebViewWorkerHost) {
+    func attach(webViewHost: any NativeHostWebViewWorker) {
         lock.lock()
         defer { lock.unlock() }
 

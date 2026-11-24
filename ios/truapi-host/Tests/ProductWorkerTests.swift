@@ -56,7 +56,7 @@ struct ProductWorkerTests {
     }
 }
 
-private final class RecordingWebViews: NativeWebViewWorkerHost, Sendable {
+private final class RecordingWebViews: NativeHostWebViewWorker, Sendable {
     let starts = AsyncStream<NativeWorkerAttempt>.makeStream()
     let stops = AsyncStream<UInt64>.makeStream()
 

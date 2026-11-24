@@ -1,6 +1,6 @@
 use super::*;
 use crate::native::{
-	NativeWebViewWorkerHost, NativeWorkerAttempt, NativeWorkerExecutionObserver,
+	NativeHostWebViewWorker, NativeWorkerAttempt, NativeWorkerExecutionObserver,
 	NativeWorkerExecutionState,
 };
 use std::{sync::mpsc, time::Duration};
@@ -12,7 +12,7 @@ struct WebViews {
 	stops: Mutex<Vec<u64>>,
 }
 
-impl NativeWebViewWorkerHost for WebViews {
+impl NativeHostWebViewWorker for WebViews {
 	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
 		if self.fail_next_start.swap(false, Ordering::Relaxed) {
 			attempt.failed("initial boot error".into());
