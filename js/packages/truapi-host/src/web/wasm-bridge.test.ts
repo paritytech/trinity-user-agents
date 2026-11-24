@@ -304,6 +304,10 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     initSync({ module: readFileSync(wasmUrl) });
     const { productId, ...hostConfig } = bundledRuntimeConfig();
     const statuses: StackStatus[] = [];
+    let mismatchReported = () => {};
+    const mismatchReport = new Promise<void>(
+      (resolve) => (mismatchReported = resolve),
+    );
     const mock = createMockHost();
     const restarted = `0x${"ab".repeat(32)}`;
     mock.callbacks.chain.connect = async () => chainWithGenesis(restarted);
@@ -311,7 +315,10 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       {
         ...createWasmRawCallbacks(mock.callbacks),
         requestWorkerTransition: () => {},
-        stackChanged: (status: StackStatus) => statuses.push(status),
+        stackChanged: (status: StackStatus) => {
+          statuses.push(status);
+          if (status.mismatches.length > 0) mismatchReported();
+        },
       },
       hostConfig,
     );
@@ -333,6 +340,9 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       const answer = await client.chain.getSpecGenesisHash({
         genesisHash: people.genesisHash,
       });
+      // A task of the core's own sends the report, in no set order with the
+      // answer.
+      await mismatchReport;
 
       // The call fails as a host failure, and the mismatch names People:
       // together they show it was this chain's connection the core refused.
@@ -356,6 +366,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     } finally {
       provider.dispose();
       core.dispose();
+      runtime.free();
       channel.port1.close();
       channel.port2.close();
     }
