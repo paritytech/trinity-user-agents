@@ -1,30 +1,49 @@
 import SwiftUI
 
 public extension CustomMessageWidgetNode {
-    /// A cover cut into `columns` x `rows` cells (`RendererNode.CoverGrid`), with the cells its tree already clears
-    /// and the brush, if any, that draws the cells cleared since.
+    /// A cover cut into `columns` x `rows` cells (`RendererNode.CoverGrid`), with the cells its tree already clears,
+    /// the brush, if any, that draws the cells cleared since, and the reveal, if any, it sends when cleared enough.
     struct CoverGridProps {
         public let key: String
         public let columns: Int
         public let rows: Int
         public let cleared: CoverCells
         public let brush: CoverBrush?
+        public let reveal: CoverReveal?
 
         public init(
-            key: String, columns: Int, rows: Int, cleared: CoverCells = CoverCells(), brush: CoverBrush? = nil
+            key: String,
+            columns: Int,
+            rows: Int,
+            cleared: CoverCells = CoverCells(),
+            brush: CoverBrush? = nil,
+            reveal: CoverReveal? = nil
         ) {
             self.key = key
             self.columns = min(max(columns, 1), CoverCells.maxSide)
             self.rows = min(max(rows, 1), CoverCells.maxSide)
             self.cleared = cleared
             self.brush = brush
+            self.reveal = reveal
         }
 
         /// From a tree's node: its sides as sent, and its cleared cells as a bitset (`CoverCells(bits:)`).
         public init(
-            key: String, columns: some BinaryInteger, rows: some BinaryInteger, bits: Data, brush: CoverBrush? = nil
+            key: String,
+            columns: some BinaryInteger,
+            rows: some BinaryInteger,
+            bits: Data,
+            brush: CoverBrush? = nil,
+            reveal: CoverReveal? = nil
         ) {
-            self.init(key: key, columns: Int(columns), rows: Int(rows), cleared: CoverCells(bits: bits), brush: brush)
+            self.init(
+                key: key,
+                columns: Int(columns),
+                rows: Int(rows),
+                cleared: CoverCells(bits: bits),
+                brush: brush,
+                reveal: reveal
+            )
         }
     }
 
@@ -83,6 +102,13 @@ public struct CoverCells: Equatable {
         var merged = self
         other.forEach(below: Self.limit) { merged.insert($0) }
         return merged
+    }
+
+    /// How many cleared cells lie below `limit`: those inside a grid of `limit` cells.
+    public func count(below limit: Int) -> Int {
+        var total = 0
+        forEach(below: limit) { _ in total += 1 }
+        return total
     }
 
     /// Calls `body` with every cleared cell below `limit`, in order.
@@ -273,6 +299,16 @@ struct NodeCoverGridView<Content: View>: View {
                     trail: props.brush.flatMap { updates?.trail(for: $0.pan) },
                     origin: origin
                 )
+            }
+            .background {
+                if let reveal = props.reveal {
+                    CoverRevealWatcher(
+                        reveal: reveal,
+                        props: props,
+                        channel: updates?.cover(for: props.key),
+                        touch: updates?.touch(for: reveal.pan)
+                    )
+                }
             }
     }
 }

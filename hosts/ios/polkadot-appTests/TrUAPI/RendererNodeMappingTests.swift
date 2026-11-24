@@ -367,6 +367,23 @@ struct RendererNodeMappingTests {
         #expect(props.brush == nil)
     }
 
+    @Test func aCoverGridsRevealNamesItsPanShareAndAction() throws {
+        let node = RendererNode.coverGrid(
+            modifiers: [],
+            props: CoverGridProps(
+                key: "foil", columns: 35, rows: 37, cleared: Data(), brush: nil,
+                reveal: CoverReveal(pan: "scratch", atPermille: 550, action: "scratch.reveal")
+            ),
+            children: []
+        )
+        let widget = try #require(node.toWidgetNode(resolver: resolver))
+        guard case let .coverGrid(props, _) = widget.content else {
+            Issue.record("a cover grid did not map to one")
+            return
+        }
+        #expect(props.reveal == .init(pan: "scratch", atPermille: 550, action: "scratch.reveal"))
+    }
+
     @Test func aCoverGridsBrushNamesItsPanAndWidth() throws {
         let node = RendererNode.coverGrid(
             modifiers: [],

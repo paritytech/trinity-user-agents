@@ -18,6 +18,7 @@ public final class GestureOffsets {
     private var covers: [String: CoverGridChannel] = [:]
     let answers = GestureAnswerMailbox()
     private var trails: [String: PanTrail] = [:]
+    private var touches: [String: PanTouch] = [:]
 
     public init() {}
 
@@ -59,6 +60,15 @@ public final class GestureOffsets {
         let trail = PanTrail()
         trails[key] = trail
         return trail
+    }
+
+    /// Whether a finger is on the pan keyed `key`, for a cover that reveals when it lifts.
+    @MainActor
+    public func touch(for key: String) -> PanTouch {
+        if let touch = touches[key] { return touch }
+        let touch = PanTouch()
+        touches[key] = touch
+        return touch
     }
 
     /// A `ClearCells` item for `key`. It is the worker's answer to a paced move, whichever gesture is under way.
