@@ -101,7 +101,7 @@ fn test_reads_same_by_field() {
 	let people = |edit: fn(&mut serde_json::Value)| {
 		move |descriptor: &mut serde_json::Value| edit(&mut descriptor["chains"][1])
 	};
-	let differs: [(&str, DescriptorEdit); 8] = [
+	let differs: [(&str, DescriptorEdit); 9] = [
 		("id", Box::new(|descriptor| descriptor["id"] = "other".into())),
 		("tld", Box::new(|descriptor| descriptor["tld"] = "testnet".into())),
 		("generation", Box::new(|descriptor| descriptor["generation"] = "g2".into())),
@@ -115,6 +115,13 @@ fn test_reads_same_by_field() {
 			"popController",
 			Box::new(|descriptor| {
 				descriptor["dotns"]["popController"] = format!("0x{}", "cd".repeat(20)).into();
+			}),
+		),
+		(
+			"contracts",
+			Box::new(|descriptor| {
+				descriptor["contracts"] =
+					serde_json::json!({ "accountDataStore": format!("0x{}", "22".repeat(20)) });
 			}),
 		),
 		(
@@ -145,4 +152,28 @@ fn test_reads_same_by_field() {
 		descriptor["sequence"] = 2.into();
 	});
 	assert!(reads_same(&base, &renamed));
+}
+
+/// A source and its fork can both be local files with one descriptor `id`. If
+/// every local file were one stack, the core would give them one set of keys
+/// and the fork would read the source's session.
+#[tokio::test]
+async fn two_local_files_are_two_stacks_and_one_file_is_one() {
+	let directory = tempfile::tempdir().expect("tempdir");
+	let write = |name: &str| {
+		let path = directory.path().join(name);
+		let bytes = serde_json::to_vec(&stack_descriptor(|_| {})).expect("descriptor is JSON");
+		std::fs::write(&path, bytes).expect("descriptor file is written");
+		path
+	};
+	let (source, fork) = (write("source.json"), write("fork.json"));
+	let respelled = directory.path().join(".").join("source.json");
+	let id = |path: std::path::PathBuf| async move {
+		let path = path.to_str().expect("temporary path is UTF-8").to_owned();
+		load_descriptor(&path, None).await.expect("local descriptor loads").0
+	};
+
+	let (source_id, fork_id, respelled_id) =
+		(id(source).await, id(fork).await, id(respelled).await);
+	assert_eq!((source_id == fork_id, source_id == respelled_id), (false, true));
 }

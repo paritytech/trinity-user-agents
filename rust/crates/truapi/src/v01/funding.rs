@@ -4,7 +4,9 @@ use parity_scale_codec::{Decode, Encode};
 /// and everything outside it.
 ///
 /// Parses from the name a Worker manifest's route `directions` use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
+#[derive(
+	Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString, strum::IntoStaticStr,
+)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingDirection {
 	/// Value moves in, credited to the user's balance.
@@ -20,8 +22,9 @@ pub enum FundingDirection {
 ///
 /// Carries an outcome, never a rule, so a client renders these without holding
 /// any part of the operator's compliance logic.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingFailure {
 	/// Not offered in the user's market.
 	#[codec(index = 0)]

@@ -418,8 +418,10 @@ fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
 		"FooterRequest",
 		&[(1, "V01FooterRequest"), (2, "V02FooterRequest")],
 	));
-	api.types.push(single_field_struct_of("V01FooterRequest", "V01Footer"));
-	api.types.push(single_field_struct_of("V02FooterRequest", "V02Footer"));
+	api.types
+		.push(single_field_struct_of("V01FooterRequest", "footer", "V01Footer"));
+	api.types
+		.push(single_field_struct_of("V02FooterRequest", "footer", "V02Footer"));
 	api.types.push(enum_type("V01Footer", vec![unit("Text"), unit("Empty")]));
 	api.types.push(enum_type(
 		"V02Footer",
@@ -448,7 +450,7 @@ fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
 		),
 		"{types}"
 	);
-	assert!(types.contains("export type V01Footer = \"Text\" | \"Empty\";"), "{types}");
+	assert!(!types.contains("V01Footer"), "{types}");
 }
 
 #[test]
@@ -945,13 +947,13 @@ fn call_error_framework_types() -> Vec<TypeDef> {
 	]
 }
 
-fn single_field_struct_of(name: &str, field_type: &str) -> TypeDef {
+fn single_field_struct_of(name: &str, field_name: &str, field_type: &str) -> TypeDef {
 	TypeDef {
 		name: name.to_string(),
 		module_path: Vec::new(),
 		generic_params: Vec::new(),
 		kind: TypeDefKind::Struct(vec![FieldDef {
-			name: "footer".to_string(),
+			name: field_name.to_string(),
 			type_ref: named_type(field_type),
 			docs: None,
 		}]),
@@ -1577,6 +1579,222 @@ fn generate_client_selects_highest_shared_wrapper_variant() {
 			.contains("payload: T.VersionedExampleRequest.enc({ tag: \"V2\", value: request }),")
 	);
 	assert!(client_source.contains("ResultAsync<T.LatestResponse, T.LatestError>"));
+}
+
+/// An API whose `example_call` request gained the optional `added` field in
+/// V2 while its response and error kept their V1 types, unless `reply_changed`.
+/// The method carries `#[wire(request_fallback)]` when `marked`.
+fn api_with_an_added_optional_request_field(reply_changed: bool, marked: bool) -> ApiDefinition {
+	let text = FieldDef {
+		name: "text".to_string(),
+		type_ref: TypeRef::Primitive("str".to_string()),
+		docs: None,
+	};
+	let added = FieldDef {
+		name: "added_note".to_string(),
+		type_ref: TypeRef::Option(Box::new(TypeRef::Primitive("str".to_string()))),
+		docs: None,
+	};
+	let request = |name: &str, fields: Vec<FieldDef>| TypeDef {
+		name: name.to_string(),
+		module_path: Vec::new(),
+		generic_params: Vec::new(),
+		kind: TypeDefKind::Struct(fields),
+		docs: None,
+	};
+	let newest_response = if reply_changed { "LatestResponse" } else { "LegacyResponse" };
+	let mut method = request_method_with_wrappers(
+		"example_call",
+		Some(2),
+		"ExampleRequest",
+		"ExampleResponse",
+		"ExampleError",
+	);
+	method.wire.request_fallback = marked;
+	method.return_type = ReturnType::Result {
+		ok: named_type("ExampleResponse"),
+		err: TypeRef::Named {
+			name: "CallError".to_string(),
+			args: vec![named_type("ExampleError")],
+		},
+	};
+	ApiDefinition {
+		traits: vec![TraitDef {
+			name: "Example".to_string(),
+			module_path: Vec::new(),
+			wire_trait_id: Some(200),
+			methods: vec![method],
+			docs: None,
+		}],
+		public_trait_order: vec!["Example".to_string()],
+		types: vec![
+			versioned_tuple_wrapper("ExampleRequest", "V01ExampleCall", "V02ExampleCall"),
+			versioned_tuple_wrapper("ExampleResponse", "LegacyResponse", newest_response),
+			versioned_tuple_wrapper("ExampleError", "LegacyError", "LegacyError"),
+			request("V01ExampleCall", vec![text.clone()]),
+			request("V02ExampleCall", vec![text, added]),
+			empty_struct("LegacyError"),
+			empty_struct("LegacyResponse"),
+			empty_struct("LatestResponse"),
+		],
+		framework_types: call_error_framework_types(),
+	}
+}
+
+/// A host that predates V2 refuses a V2 request outright. When the caller
+/// leaves every field V2 added unset, V1 says the same thing, so the client
+/// sends V1 and keeps working against that host.
+#[test]
+fn generate_client_sends_the_older_version_when_the_added_fields_are_absent() {
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		false, // marked
+		true,
+	);
+
+	let client_source = generate_client(&api, 2, 1).expect("generate client");
+	let types = generate_types(&api, 2).expect("generate types");
+
+	assert!(
+		client_source.contains(
+			"payload: request.addedNote === undefined ? T.VersionedExampleRequest.enc({ tag: \"V1\", value: request }) : T.VersionedExampleRequest.enc({ tag: \"V2\", value: request }),"
+		),
+		"{client_source}"
+	);
+	assert!(
+		types.contains("V1: [0, V01ExampleCall] as const, V2: [1, ExampleCall] as const"),
+		"{types}"
+	);
+	assert!(
+		types.contains("V1: [0, LegacyResponse] as const, V2: [1, LegacyResponse] as const"),
+		"{types}"
+	);
+}
+
+/// The caller's error type names every version's tag, so without relabelling a
+/// domain error would carry `V1` or `V2` depending on what the request left out.
+#[test]
+fn generate_client_reports_a_fallback_domain_error_under_the_wire_version() {
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		false, // marked
+		true,
+	);
+
+	let client_source = generate_client(&api, 2, 1).expect("generate client");
+
+	assert!(
+		client_source.contains(
+			"if (!result.success && result.value.tag === \"Domain\" && result.value.value.tag === \"V1\") {\n          return { success: false, value: { tag: \"Domain\", value: { tag: \"V2\", value: result.value.value.value } } };\n        }\n"
+		),
+		"{client_source}"
+	);
+}
+
+/// A reply whose type changed between versions would reach the caller in a
+/// shape its signature does not name, so marking such a method is a mistake
+/// codegen reports rather than a fallback it silently skips.
+#[test]
+fn generate_client_rejects_a_marked_fallback_whose_reply_changed() {
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		true, // marked
+		true,
+	);
+
+	let error = generate_client(&api, 2, 1).expect_err("the mark cannot be honoured");
+
+	assert_eq!(
+		error.to_string(),
+		"`example_call` is marked `request_fallback`, but no older request version says the \
+		 same thing as V2"
+	);
+}
+
+/// Sending an older version keeps its payload types in the public SDK, so a
+/// method falls back only when it asks to, and otherwise sends the newest.
+#[test]
+fn generate_client_sends_only_the_newest_version_unless_marked() {
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		false, // marked
+		false,
+	);
+
+	let client_source = generate_client(&api, 2, 1).expect("generate client");
+	let types = generate_types(&api, 2).expect("generate types");
+
+	assert!(
+		client_source
+			.contains("payload: T.VersionedExampleRequest.enc({ tag: \"V2\", value: request }),"),
+		"{client_source}"
+	);
+	assert!(!types.contains("V01ExampleCall"), "{types}");
+}
+
+#[test]
+fn each_chat_client_only_exports_the_room_payloads_it_uses() {
+	let mut api = api(vec![
+		request_method_with_wrappers(
+			"create_room",
+			Some(0),
+			"CreateRoomRequest",
+			"CreateRoomResponse",
+			"CreateRoomError",
+		),
+		request_method_with_wrappers(
+			"register_bot",
+			Some(1),
+			"RegisterBotRequest",
+			"RegisterBotResponse",
+			"RegisterBotError",
+		),
+	]);
+	api.public_trait_order.push("Example".into());
+	for leg in ["Request", "Response", "Error"] {
+		let room = format!("CreateRoom{leg}");
+		let bot = format!("RegisterBot{leg}");
+		let bot_payload = format!("V01{bot}");
+		api.types.extend([
+			versioned_tuple_wrapper(&room, &format!("V01{room}"), &format!("V02{room}")),
+			versioned_tuple_wrapper_variants(&bot, &[(1, &bot_payload)]),
+			empty_struct(&bot_payload),
+		]);
+	}
+	for (version, id_field) in [("V01", "room_id"), ("V02", "room_id_source")] {
+		let status = format!("{version}RoomRegistrationStatus");
+		api.types.extend([
+			single_field_struct(&format!("{version}CreateRoomRequest"), id_field, "str"),
+			single_field_struct_of(&format!("{version}CreateRoomResponse"), "status", &status),
+			empty_struct(&format!("{version}CreateRoomError")),
+			TypeDef {
+				kind: TypeDefKind::Enum(vec![
+					unit_variant("New", None),
+					unit_variant("Exists", None),
+				]),
+				..empty_struct(&status)
+			},
+		]);
+	}
+
+	for (target, id_field) in [(2, "roomIdSource"), (1, "roomId")] {
+		let types = generate_types(&api, target).unwrap();
+		let client = generate_client(&api, target, 1).unwrap();
+		assert!(!types.contains("V01") && !types.contains("V02"), "{types}");
+		assert!(types.contains(&format!("{id_field}: string;")), "{types}");
+		assert!(types.contains("status: RoomRegistrationStatus;"), "{types}");
+		assert!(types.contains("export const RoomRegistrationStatus:"), "{types}");
+		assert!(
+			types.contains("S.indexedTaggedUnion({V1: [0, RegisterBotRequest] as const})"),
+			"{types}"
+		);
+		assert!(types.contains("export const RegisterBotRequest:"), "{types}");
+		assert!(
+			client.contains(&format!("VersionedCreateRoomRequest.enc({{ tag: \"V{target}\"")),
+			"{client}"
+		);
+		assert!(client.contains("VersionedRegisterBotRequest.enc({ tag: \"V1\""), "{client}");
+	}
 }
 
 #[test]

@@ -5,13 +5,13 @@ use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use subxt::tx::Signer;
 use truapi::{
-	CallContext, HostAdmin, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHostRuntime,
+	CallContext, HostAdmin, HostRuntime, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHost,
 	Sr25519Signer,
 	api::{Preimage, ResourceAllocation},
 	chain::{EvmContractCaller, PreparedEvmTransaction},
 	host_logic::{
 		dotns_gateway::{ContentResolver, DotnsRegistry, account_to_h160, read_view},
-		product_account::{derive_identity_keypair, personhood_product_id},
+		product_account::personhood_product_id,
 	},
 	latest,
 	platform::ProductContext,
@@ -37,12 +37,13 @@ impl ChainProfile {
 	/// Finds the profile record and verifies the identity owns `username` before anything is
 	/// allocated or uploaded.
 	pub async fn connect(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		network: &Stack,
-		entropy: &[u8],
 		username: &str,
 	) -> Result<Self> {
-		let signer = Sr25519Signer::from_keypair(&derive_identity_keypair(entropy, network.tld())?);
+		let signer = runtime
+			.identity_signer()
+			.map_err(|error| anyhow!("no identity to sign as: {}", error.reason))?;
 		let mut reader = AssetHubReader::connect(network).await?;
 		let location = ProfileRecordLocation::resolve(&mut reader, username)
 			.await?

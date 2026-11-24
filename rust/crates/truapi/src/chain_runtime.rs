@@ -77,10 +77,14 @@ use crate::{
 	time::{RealTimer, Timer},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+mod chain_access;
 mod chain_halt;
 mod current_block;
 mod follow_retry;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use chain_access::ChainAccess;
 pub use chain_halt::{retry_while_halted, says_chain_halted};
 pub use current_block::CurrentBlockError;
 use follow_retry::{FollowReport, FollowRetryingRpcClient};
@@ -2311,22 +2315,3 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod occupant_name_tests {
-	use super::ChainConnection;
-
-	/// A product mints its follow id from the request id it chose, which is
-	/// arbitrary text off the wire. The line naming the occupants leaves the
-	/// device, so it names the runtime and not what the product called itself.
-	#[test]
-	fn a_product_follow_is_named_without_the_id_it_chose() {
-		assert_eq!(ChainConnection::occupant_name("c7:p:41"), "c7:product");
-		assert_eq!(
-			ChainConnection::occupant_name("c7:tarik@example.invalid"),
-			"c7:product",
-			"a request id the product chose reached the line",
-		);
-		assert_eq!(ChainConnection::occupant_name("anything"), "product");
-	}
-}

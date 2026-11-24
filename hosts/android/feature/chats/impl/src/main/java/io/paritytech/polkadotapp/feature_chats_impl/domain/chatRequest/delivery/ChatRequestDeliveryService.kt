@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithChatR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.OutgoingChatRequestPayload
+import io.paritytech.polkadotapp.feature_chats_impl.domain.error.OutgoingChatRequestNotPending
 import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.IdentitySigningGate
 import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.awaitRetry
 import kotlinx.coroutines.flow.launchIn
@@ -75,6 +76,7 @@ class ChatRequestDeliveryService @Inject constructor(
             if (outcome.isSuccess) break
 
             val error = outcome.exceptionOrNull()
+            if (error is OutgoingChatRequestNotPending) break
             if (error?.endsDelivery() == true) {
                 Timber.i("chatRequestDelivery: request ${request.id} fails: ${error.message}")
                 publisher.markFailed(request).logFailure("Chat request ${request.id} could not be marked failed")

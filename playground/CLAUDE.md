@@ -42,7 +42,7 @@ an incomplete report, startup failure, and incomplete teardown do fail it.
 
 The Diagnosis screen emits a per-host markdown report via "Copy report". Aggregation into the cross-host matrix happens in the explorer (see [`../explorer/README.md`](../explorer/README.md#host-compatibility-matrix)). The playground itself owns the diagnosis run and the report format only.
 
-`predev` and `prebuild`/`prelint`/`pretypecheck` automatically run `scripts/bundle-rxjs-dts.mjs` (and, for `predev`, `scripts/write-dev-env.mjs`) so the Monaco editor always has up-to-date rxjs type definitions.
+`predev` runs `scripts/write-dev-env.mjs`.
 
 ## Architecture
 
@@ -112,9 +112,8 @@ In iframe mode the playground talks to its parent window via `postMessage` carry
 
 ### Generated Artifacts
 
-The following directories are gitignored and produced by `./scripts/codegen.sh` plus the playground's `prebuild`/`predev`:
+The following directories are gitignored and produced by `./scripts/codegen.sh` plus the playground's `predev`:
 
-- `src/lib/codegen/rxjs-dts.ts` — every `.d.ts` under `node_modules/rxjs/dist/types/`, snapshot for Monaco.
 - `test/generated/examples/` — one file per method, lint-checked via `tsc -p tsconfig.examples.json`.
 - `public/cargo_doc/` — `yarn dev` only: symlinks the local `target/doc/truapi/...` under Next's static `public/` so cargo-doc links stay http-origin (Chrome blocks `file://` from `http://`).
 - `.env.development.local` — also dev-only, sets `NEXT_PUBLIC_CARGO_DOC_BASE=/cargo_doc`.

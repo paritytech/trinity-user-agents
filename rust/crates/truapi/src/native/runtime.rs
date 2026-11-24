@@ -28,13 +28,14 @@ use super::{
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfileResolutionOptions,
-	ResponderExit, SigningHostRuntime, Spawner,
+	HostRuntime, ImageError, ImageReference, LoadedImage, PairedSsoPeer,
+	PublicProfileResolutionOptions, ResponderExit, SigningHost, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
+	host_logic::root_entropy::RootEntropy,
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
@@ -89,7 +90,7 @@ impl crate::logging::HostSink for CallbackSink {
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
@@ -179,7 +180,8 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
+		let runtime =
+			Arc::new(HostRuntime::<SigningHost>::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -212,7 +214,7 @@ impl NativeTrUApiHostRuntime {
 		}
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
-				secret,
+				RootEntropy::new(secret),
 				runtime_config.local_session_lite_username,
 			))
 			.map_err(|err| NativeRuntimeConfigError::LocalSessionActivation {
@@ -376,7 +378,7 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Funding session `intent` as the core holds it in full; see
-	/// [`SigningHostRuntime::funding_session`].
+	/// [`HostRuntime::funding_session`].
 	pub fn funding_session(
 		&self,
 		intent: String,
@@ -447,11 +449,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Offer the funding providers the remote configuration names; see
-	/// [`SigningHostRuntime::set_funding_provider_config`].
-	pub fn set_funding_provider_config(
-		&self,
-		published_names: Vec<String>,
-	) {
+	/// [`HostRuntime::set_funding_provider_config`].
+	pub fn set_funding_provider_config(&self, published_names: Vec<String>) {
 		self.runtime.set_funding_provider_config(published_names);
 	}
 
@@ -743,6 +742,20 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.worker_ledger().release(&product_id);
 	}
 
+	/// Forget one product: revoke its grants and Allow once answers, then
+	/// remove its values from product storage through
+	/// [`HostCallbacks::clear_product_storage`]. The wallet session and
+	/// other products are kept.
+	///
+	/// Stop the product's executions first: a value a running execution
+	/// writes after the clear is kept.
+	pub async fn clear_product_state(&self, product_id: ProductId) -> Result<(), HostRejection> {
+		self.runtime
+			.clear_product_state(&product_id)
+			.await
+			.map_err(|error| HostRejection::Rejected { reason: error.reason })
+	}
+
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
 	/// under way, so it leaves its QR screen while the allocation runs.
 	///
@@ -965,7 +978,8 @@ impl NativeTrUApiHostRuntime {
 		lite_username: Option<String>,
 	) -> Result<(), HostRejection> {
 		futures::executor::block_on(
-			self.runtime.activate_local_session_with_identity(secret, lite_username),
+			self.runtime
+				.activate_local_session_with_identity(RootEntropy::new(secret), lite_username),
 		)
 		.map_err(Into::into)
 	}
@@ -1117,7 +1131,7 @@ impl NativeTrUApiHostRuntime {
 /// One native executable connection opened from a process-owned host runtime.
 #[derive(uniffi::Object)]
 pub struct NativeProductExecution {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	product: ProductContext,
 	platform: Arc<dyn crate::platform::Platform>,
 	chat: Option<Arc<dyn crate::platform::ChatPlatform>>,

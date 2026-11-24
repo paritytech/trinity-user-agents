@@ -57,9 +57,10 @@ describe("worker raw callbacks", () => {
     await (
       callbacks.createChatRoom as (
         product: Uint8Array,
+        roomId: string,
         request: Uint8Array,
       ) => Promise<unknown>
-    )(product, new Uint8Array([2]));
+    )(product, "0x01", new Uint8Array([2]));
     (
       callbacks.subscribeChatRooms as (
         product: Uint8Array,
