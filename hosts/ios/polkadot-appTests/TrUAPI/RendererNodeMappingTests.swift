@@ -543,6 +543,23 @@ struct RendererNodeMappingTests {
         ])
     }
 
+    @Test func parallaxMapsInPointsDegreesAndSeconds() throws {
+        let node = RendererNode.box(
+            modifiers: [
+                .parallax(Parallax(depthPermille: 1_000, tilt: nil, pan: nil)),
+                .parallax(Parallax(
+                    depthPermille: -300,
+                    tilt: TiltParallax(travel: 2_400, maxTiltCentideg: 2_000, settleMs: 3_000),
+                    pan: "card"
+                )),
+            ],
+            props: BoxProps(contentAlignment: nil),
+            children: []
+        )
+        let parallax = try #require(node.toWidgetNode(resolver: resolver)?.modifiers.parallax)
+        #expect(parallax == .init(depth: -0.3, tilt: .init(travel: 24, maxTilt: 20, settle: 3), pan: "card"))
+    }
+
     @Test func aPressFeelScalesTheAxesApart() throws {
         let feel = { (down: UInt16?) in
             PanFeel(

@@ -300,11 +300,13 @@ private extension NodeGestureView {
         release(cancelled: true)
     }
 
-    /// The host's drag offset, and the place the fading nodes read, in one transaction.
+    /// The host's drag offset, and the place the fading and parallax nodes read, in one transaction.
     func setOffset(_ value: CGPoint) {
         offset = value
-        if let key = props
-            .key { gestureOffsets?.place(for: key).drag = props.pan?.axis == .vertical ? value.y : value.x }
+        if let key = props.key, let place = gestureOffsets?.place(for: key) {
+            place.drag = props.pan?.axis == .vertical ? value.y : value.x
+            place.dragOffset = value
+        }
     }
 
     func updatePlace() {

@@ -166,9 +166,7 @@ private extension [Modifier] {
         var blendingMode: BlendMode?
         var style = NodeStyleByValue()
         var mask: CustomMessageWidgetNode.Mask?
-        var enter: CustomMessageWidgetNode.Enter?
-        var tracks: [CustomMessageWidgetNode.Track] = []
-        var emitter: CustomMessageWidgetNode.Emitter?
+        var motion = NodeMotionByValue()
 
         for modifier in self {
             switch modifier {
@@ -219,16 +217,11 @@ private extension [Modifier] {
                 style.take(modifier)
             case let .mask(value):
                 mask = value.widgetMask
-            case let .enter(value):
-                enter = value.widgetEnter
-            case let .animate(track):
-                tracks.keepLast(track.widgetTrack)
-            case let .emit(value):
-                // A node keeps its last emitter.
-                emitter = value.widgetEmitter
-            case .parallax:
-                // The iPhone parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
-                break
+            case .enter,
+                 .animate,
+                 .emit,
+                 .parallax:
+                motion.take(modifier)
             }
         }
 
@@ -253,9 +246,10 @@ private extension [Modifier] {
             spinPeriod: style.spinPeriod,
             exitFade: style.exitFade,
             mask: mask,
-            enter: enter,
-            tracks: tracks,
-            emitter: emitter
+            enter: motion.enter,
+            tracks: motion.tracks,
+            emitter: motion.emitter,
+            parallax: motion.parallax
         )
     }
 }

@@ -32,6 +32,8 @@ extension View {
             .offset(modifiers.translate)
             // 5c. Played in and moved on the host's clock, its layout unchanged
             .modifier(NodeMotionModifier(enter: modifiers.enter, tracks: modifiers.tracks))
+            // 5d. Moved by the device's tilt or a pan, its layout unchanged
+            .modifier(NodeParallaxModifier(parallax: modifiers.parallax))
             // 6. Outer margin
             .padding(modifiers.margin)
             // 7. A dropped node's exit

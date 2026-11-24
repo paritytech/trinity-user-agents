@@ -282,6 +282,8 @@ public extension CustomMessageWidgetNode {
         public let tracks: [Track]
         /// Sends particles over the node.
         public let emitter: Emitter?
+        /// Moves the node by the device's tilt or a keyed pan, scaled by its depth.
+        public let parallax: Parallax?
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -339,7 +341,8 @@ public extension CustomMessageWidgetNode {
             mask: Mask? = nil,
             enter: Enter? = nil,
             tracks: [Track] = [],
-            emitter: Emitter? = nil
+            emitter: Emitter? = nil,
+            parallax: Parallax? = nil
         ) {
             self.padding = padding
             self.margin = margin
@@ -364,6 +367,7 @@ public extension CustomMessageWidgetNode {
             self.enter = enter
             self.tracks = tracks
             self.emitter = emitter
+            self.parallax = parallax
         }
     }
 }
