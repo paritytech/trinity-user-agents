@@ -93,19 +93,18 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 
 | Request | What the host does |
 | --- | --- |
-| `createRoom(roomId, name, icon, config)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomException.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `roomConfig` | Answers the configuration of the last `createRoom` of the room, and `HOST_DEFAULT_CHAT_ROOM_CONFIG` for a room the host does not know. The core reads it before each feed update, preview and posted message |
+| `createRoom(roomId, name, icon, config)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomException.Unknown` for a configuration the host cannot keep, before it creates anything |
+| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
-| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.APPLIED`, or the outcome that names why it did not apply the change |
+| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
 | `setRoomFooter` | Shows the text input, or nothing |
 
-The core checks that the product created the room before it calls any of these, except `createRoom` and `roomConfig`. Before a posted message, the core reads `roomConfig` for the room that the product names, so a room the host does not know answers the default configuration, not an error.
+The core checks that the product created the room before it calls any of these, except `createRoom` and `roomConfig`.
 
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
-import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
@@ -149,8 +148,9 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         store.config(roomId) ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
 
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
-        if (store.apply(roomId, update, persist)) ChatFeedOutcome.APPLIED else ChatFeedOutcome.UNKNOWN_MESSAGE
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
+        store.apply(roomId, update, persist)
+    }
 }
 
 val runtime = TrUAPIHostRuntime(

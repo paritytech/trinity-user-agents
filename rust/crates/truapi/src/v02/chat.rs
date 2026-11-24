@@ -25,8 +25,7 @@ pub struct HostChatCreateRoomRequest {
 	/// exists. The host keeps it across restarts. A change of
 	/// `product_source` discards the messages that the host stores for the
 	/// room, or the pages that it caches. A host that cannot keep this
-	/// configuration refuses the request with `UnsupportedConfig` and creates
-	/// and changes nothing.
+	/// configuration refuses the request and creates and changes nothing.
 	pub config: ChatRoomConfig,
 }
 
@@ -65,20 +64,12 @@ pub enum HostChatCreateRoomError {
 		/// Human-readable reason.
 		reason: String,
 	},
-	/// The host cannot keep the configuration of the request. It created and
-	/// changed nothing.
-	#[display("the host cannot keep this room configuration")]
-	UnsupportedConfig,
 }
 
 /// Request to post a message to a chat room.
 ///
 /// v0.2 adds `alt`, the text a host shows wherever it lists a custom message
 /// without drawing it, such as a chat list preview.
-///
-/// A room that keeps its messages in the product takes no posted message: the
-/// core refuses the request with `Denied`, and the product sends its messages
-/// with `update_feed`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatPostMessageRequest {
 	/// Room to post to.
@@ -601,10 +592,8 @@ pub enum HostChatUpdateFeedError {
 	DuplicateMessage,
 	/// The text is over its limit.
 	MessageTooLarge,
-	/// In a room the host stores: `New`, `Replaced` or a reaction from
-	/// `"user"`, a `New` or `Replaced` message that quotes `"user"` or whose
-	/// reaction summaries say that the user reacted, or `Edited`, `Replaced`
-	/// or `Deleted` of a message the product did not write.
+	/// In a room the host stores: `New` from `"user"`, or `Edited` or `Deleted`
+	/// of a message the product did not write.
 	NotOwner,
 }
 

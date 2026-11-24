@@ -294,7 +294,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// and for a room that exists. A change of `productSource` discards the
     /// stored messages or the cached pages of the room.
     ///
-    /// Throw ``HostChatCreateRoomError/UnsupportedConfig`` for a configuration
+    /// Throw ``HostChatCreateRoomError/Unknown(reason:)`` for a configuration
     /// the host cannot keep, before it creates or changes anything. The
     /// default keeps only ``ChatRoomConfig/hostDefault``.
     func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) async throws
@@ -330,11 +330,8 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
 
-    /// Return the configuration of the last `createRoom` of a room, or
-    /// ``ChatRoomConfig/hostDefault`` for a room the host does not know. The
-    /// core reads it before each feed update, preview and posted message of
-    /// the room. For a posted message it reads it for the room the product
-    /// names, before any check that the product created the room.
+    /// Return the configuration of the last `createRoom` of a room. The core
+    /// reads it before each feed update of the room.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
     /// Replace the name, description, icon and empty-room text of a room. An
@@ -352,13 +349,9 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Apply one change to the messages of a room. With `persist` the host
     /// stores the change. Without it the host applies the change only to an
-    /// open room screen and to the chat list preview.
-    ///
-    /// Return ``ChatFeedOutcome/applied``, or the outcome that names why the
-    /// host did not apply the change. The product receives each outcome as its
-    /// own error. Throw only for a failure of the host, which the product
-    /// receives as `HostFailure`.
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatFeedOutcome
+    /// open room screen and to the chat list preview. An error that it throws
+    /// reaches the product as `HostFailure`.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
@@ -373,7 +366,9 @@ public extension ChatHostBridge {
         icon: String,
         config: ChatRoomConfig
     ) async throws -> ChatRoomRegistrationStatus {
-        guard config == .hostDefault else { throw HostChatCreateRoomError.UnsupportedConfig }
+        guard config == .hostDefault else {
+            throw HostChatCreateRoomError.Unknown(reason: "this host keeps only the default room configuration")
+        }
         return try await createRoom(roomId: roomId, name: name, icon: icon)
     }
 
@@ -391,11 +386,7 @@ public extension ChatHostBridge {
         throw unservedChatRequest("deleteRoom")
     }
 
-    func updateFeed(
-        roomId _: String,
-        update _: ChatFeedUpdate,
-        persist _: Bool
-    ) async throws -> ChatFeedOutcome {
+    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {
         throw unservedChatRequest("updateFeed")
     }
 }
@@ -768,7 +759,7 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.deleteRoom(roomId: roomId) }
     }
 
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatFeedOutcome {
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
         try await withHostRejection {
             try await bridge.updateFeed(roomId: roomId, update: update, persist: persist)
         }

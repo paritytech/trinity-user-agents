@@ -34,7 +34,7 @@ struct ChatHostBridgeDefaultsTests {
         var config = ChatRoomConfig.hostDefault
         config.productSource = true
 
-        await #expect(throws: HostChatCreateRoomError.UnsupportedConfig) {
+        await #expect(throws: HostChatCreateRoomError.self) {
             _ = try await bridge.createRoom(roomId: "room", name: "Room", icon: "", config: config)
         }
         #expect(bridge.createdRooms.isEmpty)
@@ -42,7 +42,7 @@ struct ChatHostBridgeDefaultsTests {
             try await bridge.deleteRoom(roomId: "room")
         }
         await #expect(throws: HostRejection.self) {
-            _ = try await bridge.updateFeed(
+            try await bridge.updateFeed(
                 roomId: "room",
                 update: .statusChanged(messageId: "message", status: .read),
                 persist: true

@@ -38,7 +38,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
-import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
@@ -525,9 +524,9 @@ interface ChatHostBridge {
      * and for a room that exists. A change of `productSource` discards the
      * stored messages or the cached pages of the room.
      *
-     * Throw [HostChatCreateRoomException.UnsupportedConfig] for a
-     * configuration the host cannot keep, before it creates or changes
-     * anything. The default keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     * Throw [HostChatCreateRoomException.Unknown] for a configuration the
+     * host cannot keep, before it creates or changes anything. The default
+     * keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
      */
     @Throws(HostChatCreateRoomException::class)
     suspend fun createRoom(
@@ -536,7 +535,9 @@ interface ChatHostBridge {
         icon: String,
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
-        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw HostChatCreateRoomException.UnsupportedConfig()
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) {
+            throw HostChatCreateRoomException.Unknown("this host keeps only the default room configuration")
+        }
         return createRoom(roomId, name, icon)
     }
 
@@ -587,11 +588,8 @@ interface ChatHostBridge {
     // other before it creates anything.
 
     /**
-     * Return the configuration of the last `createRoom` of a room, or
-     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] for a room the host does not know. The
-     * core reads it before each feed update, preview and posted message of the
-     * room. For a posted message it reads it for the room the product names,
-     * before any check that the product created the room.
+     * Return the configuration of the last `createRoom` of a room. The core
+     * reads it before each feed update of the room.
      */
     @Throws(HostRejection::class)
     suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
@@ -620,15 +618,11 @@ interface ChatHostBridge {
     /**
      * Apply one change to the messages of a room. With [persist] the host
      * stores the change. Without it the host applies the change only to an
-     * open room screen and to the chat list preview.
-     *
-     * Return [ChatFeedOutcome.APPLIED], or the outcome that names why the host
-     * did not apply the change. The product receives each outcome as its own
-     * error. Throw only for a failure of the host, which the product receives
-     * as `HostFailure`.
+     * open room screen and to the chat list preview. An exception that it
+     * throws reaches the product as `HostFailure`.
      */
     @Throws(HostRejection::class)
-    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): Unit =
         throw unservedChatRequest("updateFeed")
 }
 
@@ -908,7 +902,7 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
 
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
         withHostRejection { bridge.updateFeed(roomId, update, persist) }
 
     /**
