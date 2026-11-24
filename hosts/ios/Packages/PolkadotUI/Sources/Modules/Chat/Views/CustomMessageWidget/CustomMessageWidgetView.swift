@@ -96,7 +96,11 @@ private struct WidgetNodeContent: View {
         case let .image(props):
             NodeImageView(props: props, modifiers: node.modifiers)
         case let .gesture(props, children):
-            NodeGestureView(props: props, modifiers: node.modifiers) {
+            NodeGestureView(
+                props: props,
+                modifiers: node.modifiers,
+                childBase: children.first?.modifiers.margin.leading ?? 0
+            ) {
                 ZStack(alignment: .leading) {
                     ForEach(Array(children.enumerated()), id: \.offset) { _, child in
                         WidgetNodeContent(node: child)
@@ -326,10 +330,15 @@ private struct NodeTextView: View {
     let modifiers: CustomMessageWidgetNode.Modifiers
 
     var body: some View {
-        Text(props.text)
-            .textStyle(props.labelStyle)
-            .foregroundStyle(props.color)
-            .applyWidgetNodeModifiers(modifiers)
+        if let font = modifiers.font {
+            ValueFontText(text: props.text, font: font, shimmer: modifiers.shimmer)
+                .applyWidgetNodeModifiers(modifiers, alignment: .leading)
+        } else {
+            Text(props.text)
+                .textStyle(props.labelStyle)
+                .foregroundStyle(props.color)
+                .applyWidgetNodeModifiers(modifiers)
+        }
     }
 }
 

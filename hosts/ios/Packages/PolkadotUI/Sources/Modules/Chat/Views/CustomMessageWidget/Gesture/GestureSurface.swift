@@ -12,6 +12,8 @@ struct GestureSurface: UIViewRepresentable {
     let props: CustomMessageWidgetNode.GestureProps
     let onPan: (CustomMessageWidgetNode.GesturePhase, PanTranslation) -> Void
     let onTap: () -> Void
+    /// A finger touching down (true) or lifting (false), at its place in the surface, before any pan decides.
+    var onPress: ((Bool, CGPoint) -> Void)?
 
     func makeUIView(context _: Context) -> GestureSurfaceView {
         GestureSurfaceView()
@@ -23,6 +25,7 @@ struct GestureSurface: UIViewRepresentable {
         view.acceptsTap = props.tapAction != nil
         view.onPan = onPan
         view.onTap = onTap
+        view.onPress = onPress
     }
 }
 
@@ -35,6 +38,7 @@ final class GestureSurfaceView: UIView {
     var acceptsTap = false
     var onPan: ((CustomMessageWidgetNode.GesturePhase, PanTranslation) -> Void)?
     var onTap: (() -> Void)?
+    var onPress: ((Bool, CGPoint) -> Void)?
     private var slop = CGPoint.zero
 
     override init(frame: CGRect) {
@@ -52,6 +56,24 @@ final class GestureSurfaceView: UIView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if isInteractive, let touch = touches.first { onPress?(true, touch.location(in: self)) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        if let touch = touches.first { onPress?(false, touch.location(in: self)) }
+    }
+
+    /// A pan that takes the touch cancels it here first; the lift is reported after the pan has had its say.
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        guard let touch = touches.first else { return }
+        let place = touch.location(in: self)
+        DispatchQueue.main.async { [weak self] in self?.onPress?(false, place) }
+    }
 
     static func claimsDrag(
         axis: CustomMessageWidgetNode.PanAxis,

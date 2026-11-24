@@ -9,6 +9,8 @@ public extension CustomMessageWidgetNode {
         public var hapticOnComplete = false
         /// Names the gesture for offset updates; a keyed pan's moves are paced per display frame.
         public var key: String?
+        /// How the children move when pressed and released; nil keeps the host's own.
+        public var feel: PanFeel?
         public let encodePayload: (GesturePhase, CGPoint, UInt16) -> Data
 
         public init(encodePayload: @escaping (GesturePhase, CGPoint, UInt16) -> Data) {
@@ -54,5 +56,24 @@ public extension CustomMessageWidgetNode {
         case snapBack
         case stay
         case complete(thresholdPercent: UInt8)
+    }
+}
+
+public extension CustomMessageWidgetNode {
+    /// How a gesture's children move when pressed and released, by value (the renderer's `PanFeel`).
+    struct PanFeel: Equatable {
+        public var pressScale: CGFloat = 1
+        public var pressDuration: TimeInterval = 0
+        public var unpressDuration: TimeInterval = 0
+        /// The return spring, from rest: angular frequency (radians a second) and damping ratio.
+        public var springOmega: CGFloat = 0
+        public var springDamping: CGFloat = 1
+        public var approachDuration: TimeInterval = 0
+        public var approachReference: CGFloat = 1
+        /// Scales after completion, one per 1/60 s.
+        public var pop: [CGFloat] = []
+        public var popOffset: CGFloat = 0
+
+        public init() {}
     }
 }

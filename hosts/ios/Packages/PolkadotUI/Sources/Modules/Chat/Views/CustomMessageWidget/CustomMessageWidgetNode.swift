@@ -168,6 +168,69 @@ public extension CustomMessageWidgetNode {
         }
     }
 
+    /// A drop shadow as CSS `box-shadow` draws it: `blur` is the CSS blur length (twice the Gaussian's deviation).
+    struct Shadow: Equatable {
+        public let color: Color
+        /// The shadow moved from the node: towards the end, and downwards.
+        public let offset: CGSize
+        public let blur: CGFloat
+
+        public init(color: Color, offset: CGSize, blur: CGFloat) {
+            self.color = color
+            self.offset = offset
+            self.blur = blur
+        }
+    }
+
+    /// A text's type given by value: the design system's sans at this size, weight and line height.
+    struct TextFont: Equatable {
+        public let size: CGFloat
+        public let lineHeight: CGFloat
+        public let weight: Int
+        public let color: Color
+        public let letterSpacing: CGFloat
+
+        public init(size: CGFloat, lineHeight: CGFloat, weight: Int, color: Color, letterSpacing: CGFloat) {
+            self.size = size
+            self.lineHeight = lineHeight
+            self.weight = weight
+            self.color = color
+            self.letterSpacing = letterSpacing
+        }
+    }
+
+    /// Opacity following a keyed pan's children along its travel: `1 - rate * progress`, clamped.
+    struct PanFade: Equatable {
+        public let key: String
+        public let rate: CGFloat
+
+        public init(key: String, rate: CGFloat) {
+            self.key = key
+            self.rate = rate
+        }
+    }
+
+    /// A band of light sweeping a text's glyphs (see the renderer's `Shimmer`).
+    struct Shimmer: Equatable {
+        public let color: Color
+        /// Alphas, 0 to 1, spread evenly across the band.
+        public let stops: [CGFloat]
+        public let band: CGFloat
+        public let lead: CGFloat
+        /// Points a second.
+        public let speed: CGFloat
+        public let rest: TimeInterval
+
+        public init(color: Color, stops: [CGFloat], band: CGFloat, lead: CGFloat, speed: CGFloat, rest: TimeInterval) {
+            self.color = color
+            self.stops = stops
+            self.band = band
+            self.lead = lead
+            self.speed = speed
+            self.rest = rest
+        }
+    }
+
     enum Arrangement {
         case start
         case end
@@ -201,6 +264,16 @@ public extension CustomMessageWidgetNode {
         /// `nil` is fully opaque, matching a node that carries no opacity modifier.
         public let opacity: CGFloat?
         public let blendingMode: BlendMode?
+        public let shadow: Shadow?
+        /// Where the node is drawn, moved from its place; the layout is unchanged.
+        public let translate: CGSize
+        public let font: TextFont?
+        public let panFade: PanFade?
+        public let shimmer: Shimmer?
+        /// One turn every this long, while shown.
+        public let spinPeriod: TimeInterval?
+        /// How long the node fades out for once a tree drops it.
+        public let exitFade: TimeInterval?
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -246,7 +319,14 @@ public extension CustomMessageWidgetNode {
             fillWidth: Bool = false,
             fillHeight: Bool = false,
             opacity: CGFloat? = nil,
-            blendingMode: BlendMode? = nil
+            blendingMode: BlendMode? = nil,
+            shadow: Shadow? = nil,
+            translate: CGSize = .zero,
+            font: TextFont? = nil,
+            panFade: PanFade? = nil,
+            shimmer: Shimmer? = nil,
+            spinPeriod: TimeInterval? = nil,
+            exitFade: TimeInterval? = nil
         ) {
             self.padding = padding
             self.margin = margin
@@ -260,6 +340,13 @@ public extension CustomMessageWidgetNode {
             self.fillHeight = fillHeight
             self.opacity = opacity
             self.blendingMode = blendingMode
+            self.shadow = shadow
+            self.translate = translate
+            self.font = font
+            self.panFade = panFade
+            self.shimmer = shimmer
+            self.spinPeriod = spinPeriod
+            self.exitFade = exitFade
         }
     }
 }

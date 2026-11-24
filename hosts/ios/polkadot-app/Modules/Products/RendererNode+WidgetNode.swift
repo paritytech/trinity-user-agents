@@ -162,6 +162,7 @@ private extension [Modifier] {
         var fillHeight = false
         var opacity: CGFloat?
         var blendingMode: BlendMode?
+        var style = NodeStyleByValue()
 
         for modifier in self {
             switch modifier {
@@ -197,16 +198,19 @@ private extension [Modifier] {
                 opacity = CGFloat(value) / 255
             case let .blendingMode(mode):
                 blendingMode = mode.blendMode
-            // The iPhone style layer draws the modifiers given by value; until then they are left out.
-            case .fill,
-                 .shadow,
+            case let .fill(value):
+                background = CustomMessageWidgetNode.Background(
+                    color: Color(rgba: value.color),
+                    shape: value.shape.map { resolver.shape(for: $0.toScale()) }
+                )
+            case .shadow,
                  .translate,
                  .font,
                  .fadeWithPan,
                  .shimmer,
                  .spin,
                  .exitFade:
-                break
+                style.take(modifier)
             }
         }
 
@@ -222,7 +226,14 @@ private extension [Modifier] {
             fillWidth: fillWidth,
             fillHeight: fillHeight,
             opacity: opacity,
-            blendingMode: blendingMode
+            blendingMode: blendingMode,
+            shadow: style.shadow,
+            translate: style.translate,
+            font: style.font,
+            panFade: style.panFade,
+            shimmer: style.shimmer,
+            spinPeriod: style.spinPeriod,
+            exitFade: style.exitFade
         )
     }
 }
@@ -403,37 +414,7 @@ private extension BlendingMode {
     }
 }
 
-private extension GestureProps {
-    var nodeProps: CustomMessageWidgetNode.GestureProps {
-        var value = CustomMessageWidgetNode.GestureProps { phase, position, fraction in
-            let nativePhase: GesturePhase =
-                switch phase {
-                case .tap: .tap
-                case .started: .started
-                case .moved: .moved
-                case .ended: .ended
-                case .cancelled: .cancelled
-                case .completed: .completed
-                }
-            // Positions travel in hundredths of a logical pixel, so a slow drag still reports every frame's move.
-            return Data(encodeGestureEvent(event: GestureEvent(
-                phase: nativePhase,
-                x: Int32(clamping: Int((position.x * 100).rounded())),
-                y: Int32(clamping: Int((position.y * 100).rounded())),
-                fractionPermille: fraction
-            )))
-        }
-        value.tapAction = tapAction
-        value.pan = pan?.nodeProps
-        value.accessibilityLabel = accessibilityLabel
-        value.isEnabled = enabled ?? true
-        value.hapticOnComplete = hapticOnComplete ?? false
-        value.key = key
-        return value
-    }
-}
-
-private extension PanGesture {
+extension PanGesture {
     var nodeProps: CustomMessageWidgetNode.PanGesture {
         var value = CustomMessageWidgetNode.PanGesture()
         switch axis {

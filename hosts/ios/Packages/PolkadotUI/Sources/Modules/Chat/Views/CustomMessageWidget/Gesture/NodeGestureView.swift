@@ -3,6 +3,8 @@ import SwiftUI
 struct NodeGestureView<Content: View>: View {
     let props: CustomMessageWidgetNode.GestureProps
     let modifiers: CustomMessageWidgetNode.Modifiers
+    /// Where the worker's tree drew the children: the first child's leading margin.
+    var childBase: CGFloat = 0
     @ViewBuilder let content: () -> Content
 
     @Environment(\.widgetActionHandler) private var actionHandler
@@ -21,27 +23,46 @@ struct NodeGestureView<Content: View>: View {
     @State private var catchUpStep = 0
     @State private var confirmations = 0
     @State private var pacer = GestureMovePacer()
+    /// Bumped when a pan starts while a release settle still moves the children, dropping that animation at once.
+    @State private var settleGeneration = 0
+    @State private var height: CGFloat = 0
+    /// The feel's press: the children grown while a finger holds them.
+    @State private var pressed = false
+    /// A completed host drag's pop: when it starts and the scale it starts from.
+    @State private var pop: (start: Date, from: CGFloat)?
 
     var body: some View {
-        content()
-            .onGeometryChange(for: CGFloat.self, of: \.size.width) { childWidth = $0 }
-            .offset(x: shown.x * (layoutDirection == .rightToLeft ? -1 : 1), y: shown.y)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
-            .overlay {
-                GestureSurface(props: interactiveProps, onPan: receive, onTap: tap)
-            }
-            .accessibilityElement(children: props.accessibilityLabel == nil ? .contain : .ignore)
-            .accessibilityLabel(props.accessibilityLabel ?? "")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { activate() }
-            .sensoryFeedback(.success, trigger: confirmations)
-            .applyWidgetNodeModifiers(modifiers, alignment: .leading)
-            .onChange(of: props.isEnabled) { _, enabled in
-                if !enabled, dragging { cancel() }
-                if enabled { held = false; offset = .zero }
-            }
-            .onDisappear { pacer.stop() }
+        TimelineView(.animation(paused: pop == nil)) { timeline in
+            let popped = popState(at: timeline.date)
+            content()
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { childWidth = $0 }
+                .scaleEffect(popped?.scale ?? (pressed ? props.feel?.pressScale ?? 1 : 1), anchor: scaleAnchor)
+                .offset(
+                    x: (shown.x + (popped?.past ?? 0)) * (layoutDirection == .rightToLeft ? -1 : 1),
+                    y: shown.y
+                )
+        }
+        .id(settleGeneration)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGSize.self, of: \.size) { width = $0.width; height = $0.height }
+        .onChange(of: width) { updatePlace() }
+        .onChange(of: childWidth) { updatePlace() }
+        .onChange(of: childBase) { updatePlace() }
+        .onAppear { updatePlace() }
+        .overlay {
+            GestureSurface(props: interactiveProps, onPan: receive, onTap: tap, onPress: press)
+        }
+        .accessibilityElement(children: props.accessibilityLabel == nil ? .contain : .ignore)
+        .accessibilityLabel(props.accessibilityLabel ?? "")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { activate() }
+        .sensoryFeedback(.success, trigger: confirmations)
+        .applyWidgetNodeModifiers(modifiers, alignment: .leading)
+        .onChange(of: props.isEnabled) { _, enabled in
+            if !enabled, dragging { cancel() }
+            if enabled { held = false; setOffset(.zero) }
+        }
+        .onDisappear { pacer.stop() }
     }
 }
 
@@ -91,6 +112,7 @@ private extension NodeGestureView {
     func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: PanTranslation) {
         guard props.isEnabled, !held, let pan = props.pan else { return }
         if case .started = phase {
+            cutSettleShort()
             dragging = true
             panTravel = travel
             origin = pan.drag == nil ? .zero : offset
@@ -112,12 +134,12 @@ private extension NodeGestureView {
             axis: pan.axis,
             travel: panTravel
         )
-        if pan.drag != nil { offset = position }
+        if pan.drag != nil { setOffset(position) }
         switch phase {
         case .started,
              .moved:
             if pacesMoves {
-                pacer.offer(payload(.moved))
+                pacer.offer(payload(.moved), place: position)
                 return
             }
             let now = ProcessInfo.processInfo.systemUptime
@@ -134,32 +156,151 @@ private extension NodeGestureView {
     func release(cancelled: Bool) {
         guard let pan = props.pan else { return }
         dragging = false
+        settleKeyedChildren(pan, cancelled: cancelled)
         stopPacing()
         let completed = !cancelled && GestureMotion.completes(
             position, axis: pan.axis, travel: panTravel, release: pan.drag?.release
         )
         emit(pan.endAction, cancelled ? .cancelled : completed ? .completed : .ended)
-        guard let drag = pan.drag else { return }
+        guard let drag = pan.drag else {
+            unpress()
+            return
+        }
+        if completed, props.hapticOnComplete { confirmations += 1 }
+        if let feel = props.feel, !reduceMotion {
+            releaseWithFeel(feel, drag: drag, axis: pan.axis, completed: completed, cancelled: cancelled)
+            return
+        }
         let animation: Animation? = reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.6)
+        pressed = false
         withAnimation(animation) {
             if completed {
                 held = drag.holdAtEnd
-                offset = held ? GestureMotion.end(axis: pan.axis, travel: panTravel) : .zero
+                setOffset(held ? GestureMotion.end(axis: pan.axis, travel: panTravel) : .zero)
             } else if cancelled {
-                offset = origin
+                setOffset(origin)
             } else {
                 switch drag.release {
                 case .stay: break
                 case .snapBack,
-                     .complete: offset = .zero
+                     .complete: setOffset(.zero)
                 }
             }
         }
-        if completed, props.hapticOnComplete { confirmations += 1 }
+    }
+
+    /// Every-move mode: the worker's children settle on the host when the finger lifts (`GestureSettle`), instead of
+    /// jumping when the worker's end tree arrives.
+    func settleKeyedChildren(_ pan: CustomMessageWidgetNode.PanGesture, cancelled: Bool) {
+        guard pacesMoves, pan.drag == nil, let channel, let answer = channel.offset, let answered = pacer.sentPlace
+        else { return }
+        let along = pan.axis == .vertical ? position.y : position.x
+        let kind = GestureSettle.kind(released: along, travel: panTravel, cancelled: cancelled)
+        let target = GestureSettle.target(
+            kind,
+            axis: pan.axis,
+            travel: panTravel,
+            drawnAt: GestureSettle.drawnAt(answeredMove: answered, answer: answer)
+        )
+        channel.settle(
+            to: target,
+            animation: GestureSettle.animation(
+                kind,
+                reduceMotion: reduceMotion,
+                feel: props.feel,
+                remaining: max(panTravel - along, 0)
+            ),
+            now: ProcessInfo.processInfo.systemUptime
+        )
+    }
+
+    /// A pan that starts while the children are still settling takes over at once.
+    func cutSettleShort() {
+        guard let channel else { return }
+        if channel.isSettling(at: ProcessInfo.processInfo.systemUptime) { settleGeneration += 1 }
+        channel.endSettle()
     }
 
     func cancel() {
         release(cancelled: true)
+    }
+
+    /// The host's drag offset, and the place the fading nodes read, in one transaction.
+    func setOffset(_ value: CGPoint) {
+        offset = value
+        if let key = props
+            .key { gestureOffsets?.place(for: key).drag = props.pan?.axis == .vertical ? value.y : value.x }
+    }
+
+    func updatePlace() {
+        guard let key = props.key, let gestureOffsets else { return }
+        let place = gestureOffsets.place(for: key)
+        place.base = childBase
+        place.travel = max(props.pan?.drag?.travelPoints ?? (width - childWidth + childBase), 0)
+    }
+
+    /// Scale about the drawn child's centre, not the margin the worker's tree put before it.
+    var scaleAnchor: UnitPoint {
+        guard childWidth > 0 else { return .center }
+        return UnitPoint(x: (childBase + (childWidth - childBase) / 2) / childWidth, y: 0.5)
+    }
+
+    /// A finger down on the drawn children, or within `GestureMotion.pressReach` of them, grows them; lifting it
+    /// without a pan lets them go.
+    func press(_ down: Bool, at location: CGPoint) {
+        guard let feel = props.feel, props.isEnabled, !held, pop == nil else { return }
+        if !down {
+            if !dragging { unpress() }
+            return
+        }
+        let drawn = CGRect(x: childBase + shown.x, y: shown.y, width: childWidth - childBase, height: height)
+        guard GestureMotion.reaches(location, drawn: drawn) else { return }
+        withAnimation(reduceMotion ? nil : feel.press) { pressed = true }
+    }
+
+    func unpress() {
+        guard pressed else { return }
+        withAnimation(reduceMotion ? nil : props.feel?.unpress) { pressed = false }
+    }
+
+    /// A release with the feel: home on its damped spring, or to the end with its ease-out and pop.
+    func releaseWithFeel(
+        _ feel: CustomMessageWidgetNode.PanFeel,
+        drag: CustomMessageWidgetNode.PanDrag,
+        axis: CustomMessageWidgetNode.PanAxis,
+        completed: Bool,
+        cancelled: Bool
+    ) {
+        if completed {
+            held = drag.holdAtEnd
+            let end = held ? GestureMotion.end(axis: axis, travel: panTravel) : .zero
+            let along = axis == .vertical ? position.y : position.x
+            let approach = feel.approach(distance: panTravel - along)
+            withAnimation(CustomMessageWidgetNode.PanFeel.easeOutQuad(approach)) { setOffset(end) }
+            // The pop peaks as the children arrive; until it starts they keep the scale they were pressed to.
+            let from = pressed ? feel.pressScale : 1
+            pressed = false
+            pop = (Date().addingTimeInterval(approach - feel.approachDuration), from)
+            return
+        }
+        withAnimation(feel.springHome) {
+            if cancelled {
+                setOffset(origin)
+            } else if case .stay = drag.release {
+            } else {
+                setOffset(.zero)
+            }
+        }
+        unpress()
+    }
+
+    /// The pop's scale and the distance past the end at `date`, or nil when none plays.
+    func popState(at date: Date) -> (scale: CGFloat, past: CGFloat)? {
+        guard let pop, let feel = props.feel else { return nil }
+        let frames = date.timeIntervalSince(pop.start) * 60
+        if let state = feel.pop(at: frames, from: pop.from) { return state }
+        Task { @MainActor in self.pop = nil }
+        return nil
     }
 
     func tap() {
@@ -221,5 +362,13 @@ enum GestureMotion {
 
     static func end(axis: CustomMessageWidgetNode.PanAxis, travel: CGFloat) -> CGPoint {
         axis == .vertical ? CGPoint(x: 0, y: travel) : CGPoint(x: travel, y: 0)
+    }
+
+    /// How far around the drawn children a finger still presses them.
+    static let pressReach: CGFloat = 10
+
+    /// Whether a finger at `location` presses children drawn in `drawn`.
+    static func reaches(_ location: CGPoint, drawn: CGRect) -> Bool {
+        drawn.insetBy(dx: -pressReach, dy: -pressReach).contains(location)
     }
 }

@@ -19,12 +19,20 @@ extension View {
             .padding(modifiers.padding)
             // 3. Background color + clip
             .modifier(NodeBackgroundModifier(background: modifiers.background))
+            // 3b. Its drop shadow, outside the clip
+            .modifier(NodeShadowModifier(shadow: modifiers.shadow, background: modifiers.background))
             // 4. Border overlay
             .modifier(NodeBorderModifier(border: modifiers.border))
             // 5. Compositing, over the node and its background but under the margin
+            .modifier(NodeSpinModifier(period: modifiers.spinPeriod))
             .modifier(NodeCompositingModifier(modifiers: modifiers))
+            .modifier(PanFadeModifier(fade: modifiers.panFade))
+            // 5b. Drawn moved, its layout unchanged
+            .offset(modifiers.translate)
             // 6. Outer margin
             .padding(modifiers.margin)
+            // 7. A dropped node's exit
+            .modifier(NodeExitFadeModifier(duration: modifiers.exitFade))
     }
 }
 
