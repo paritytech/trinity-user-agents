@@ -43,6 +43,47 @@ async fn test_local_stack_on_the_light_client() {
 	assert_eq!(stack.chain_backend(), ChainBackend::LightClient);
 }
 
+/// The error for a `--stack` value that cannot be used, from `--stack` itself.
+async fn stack_error(value: &str) -> String {
+	let stack = StackArg { value: value.to_string(), source: "--stack" };
+	let source = NetworkSource::new(ChainAccess::Rpc, None, Some(stack)).unwrap();
+	let Err(error) = source.resolve().await else {
+		panic!("{value} resolved");
+	};
+	error.to_string()
+}
+
+/// A local stack file that cannot be read says so, with the system's reason.
+#[tokio::test]
+async fn a_missing_local_stack_says_why() {
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let path = directory.path().join("missing.json").display().to_string();
+
+	assert_eq!(
+		stack_error(&path).await,
+		format!("--stack: cannot read {path}: No such file or directory (os error 2)")
+	);
+}
+
+/// A readable stack file with no canonical path, such as `<(curl …)` on Linux,
+/// has nothing to name its state by. The error says so, with the system's
+/// reason and what to do instead.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_local_stack_with_no_canonical_path_says_why() {
+	use std::os::fd::AsRawFd as _;
+
+	let (reader, _writer) = std::io::pipe().expect("a pipe");
+	let path = format!("/dev/fd/{}", reader.as_raw_fd());
+
+	let error = stack_error(&path).await;
+
+	let prefix =
+		format!("--stack: cannot resolve the canonical path of {path}, which names the stack (");
+	let remedy = "); save the descriptor to a file and give its path";
+	assert!(error.starts_with(&prefix) && error.ends_with(remedy), "{error}");
+}
+
 /// A bundled copy whose light spec no longer matches what its server returns
 /// is what an operator's republish fixes, so the published descriptor is
 /// fetched once more and the command runs on it.

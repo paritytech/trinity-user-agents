@@ -66,7 +66,7 @@ impl NetworkSource {
 					Stack::new(id, descriptor, &self.chain_access)
 				}
 				.await
-				.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
+				.map_err(|error| anyhow!("{}: {error:#}", stack_arg.source))?;
 				(stack, None)
 			},
 			NetworkChoice::BuiltIn(network) => {

@@ -84,7 +84,13 @@ pub fn stack_id(stack: &str, key: Option<&str>) -> Result<String> {
 }
 
 fn local_file_id(path: &str) -> Result<String> {
-	let canonical = fs::canonicalize(path).with_context(|| format!("cannot read {path}"))?;
+	fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
+	let canonical = fs::canonicalize(path).map_err(|error| {
+		anyhow!(
+			"cannot resolve the canonical path of {path}, which names the stack ({error}); save \
+			 the descriptor to a file and give its path"
+		)
+	})?;
 	canonical_file_id(canonical)
 }
 
