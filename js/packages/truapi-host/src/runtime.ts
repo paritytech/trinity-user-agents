@@ -74,7 +74,10 @@ export interface ReservedValuesPolicy {
    * to `false`.
    */
   allowed?: boolean;
-  /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
+  /**
+   * Genesis hashes reserved on top of the core's, as hex or bytes. The `0x`
+   * prefix is optional.
+   */
   extraGenesisHashes?: (string | Uint8Array)[];
   /**
    * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
