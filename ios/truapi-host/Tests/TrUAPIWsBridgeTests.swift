@@ -1,9 +1,38 @@
 import Foundation
+import os
 import Testing
 @testable import TrUAPIHost
 import UIKit
 
 struct TrUAPIWsBridgeTests {
+    @Test(.timeLimit(.minutes(1)))
+    func anOpenRenderDoesNotHoldAWorkerAfterTheLastConsumerLeaves() async throws {
+        let bridge = StubHostBridge()
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: Self.makeHostRuntimeConfig())
+        let product = try ProductId("shared.dot")
+        let chat = runtime.claimWorker(productId: product)
+        let pocket = runtime.claimWorker(productId: product)
+        let execution = try runtime.openProductExecution(
+            bridge: bridge, configuration: ProductExecutionConfig(productId: product, executionKind: .worker)
+        )
+        defer { execution.close() }
+        let endpoint = try execution.startWsBridge(bindPort: 0)
+        let url = try #require(URL(string: "ws://127.0.0.1:\(endpoint.port)/?t=\(endpoint.token)"))
+        let socket = URLSession.shared.webSocketTask(with: url)
+        socket.resume()
+        defer { socket.cancel(with: .normalClosure, reason: nil) }
+        try await socket.send(.data(Self.featureSupportedRequestFrame()))
+        _ = try await socket.receive()
+
+        let stream = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "front"), payload: Data()))
+        withExtendedLifetime(stream) {
+            pocket.release()
+            #expect(bridge.workerTransitions.withLock { $0 } == [.start])
+            chat.release()
+            #expect(bridge.workerTransitions.withLock { $0 } == [.start, .stop])
+        }
+    }
+
     @Test(.timeLimit(.minutes(5)))
     func anInvalidUsernameTerminatesTheProfileStreamWithTheCoreDomainError() async throws {
         let runtime = try TrUAPIHostRuntime(
@@ -276,6 +305,12 @@ func temporaryDatabaseDirectory() throws -> String {
 }
 
 final class StubHostBridge: HostBridge, @unchecked Sendable {
+    let workerTransitions = OSAllocatedUnfairLock(initialState: [WorkerTransition]())
+
+    func requestWorkerTransition(productId _: ProductId, transition: WorkerTransition) {
+        workerTransitions.withLock { $0.append(transition) }
+    }
+
     let storage: HostStorageBackend = StubStorage()
     let coreStorage: HostCoreStorageBackend = StubCoreStorage()
     private let logLock = NSLock()
@@ -370,9 +405,15 @@ final class StubChatHostBridge: ChatHostBridge {
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
 
-    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {}
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
+        .applied
+    }
 
-    func deleteRoom(roomId _: String) async throws {}
+    func deleteRoom(roomId _: String) async throws -> ChatRoomChangeOutcome { .applied }
 
-    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {}
+    func updateFeed(
+        roomId _: String,
+        update _: ChatFeedUpdate,
+        persist _: Bool
+    ) async throws -> ChatFeedOutcome { .applied }
 }

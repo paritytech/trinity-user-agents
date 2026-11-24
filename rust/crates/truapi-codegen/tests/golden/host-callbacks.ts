@@ -66,7 +66,6 @@ import type {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
-  HostWorkerBeginOperationResponse,
   Result,
 } from "@parity/truapi";
 
@@ -157,13 +156,26 @@ export interface ChainExtensionVersion {
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value: the web and native bridges turn each error that a
- * callback throws into `HostFailure`.
+ * callback throws into `HostFailure`. A host that does not serve feed updates
+ * answers `Unsupported`, and the product receives the `Unsupported` call
+ * error.
  */
 export type ChatFeedOutcome =
   | "Applied"
   | "UnknownMessage"
   | "DuplicateMessage"
-  | "NotOwner";
+  | "NotOwner"
+  | "Unsupported";
+
+/**
+ * What the host did with a change to a room: a preview or a delete.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value. A host that does not serve the request answers
+ * `Unsupported`, and the product receives the `Unsupported` call error. An
+ * error that the host returns reaches the product as `HostFailure`.
+ */
+export type ChatRoomChangeOutcome = "Applied" | "Unsupported";
 
 /**
  * Core-owned host-private storage slots. Products never address these slots;
@@ -1100,11 +1112,31 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value: the web and native bridges turn each error that a
- * callback throws into `HostFailure`.
+ * callback throws into `HostFailure`. A host that does not serve feed updates
+ * answers `Unsupported`, and the product receives the `Unsupported` call
+ * error.
  */
 export const ChatFeedOutcome: S.Codec<ChatFeedOutcome> = S.lazy(
   (): S.Codec<ChatFeedOutcome> =>
-    S.Status("Applied", "UnknownMessage", "DuplicateMessage", "NotOwner"),
+    S.Status(
+      "Applied",
+      "UnknownMessage",
+      "DuplicateMessage",
+      "NotOwner",
+      "Unsupported",
+    ),
+);
+
+/**
+ * What the host did with a change to a room: a preview or a delete.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value. A host that does not serve the request answers
+ * `Unsupported`, and the product receives the `Unsupported` call error. An
+ * error that the host returns reaches the product as `HostFailure`.
+ */
+export const ChatRoomChangeOutcome: S.Codec<ChatRoomChangeOutcome> = S.lazy(
+  (): S.Codec<ChatRoomChangeOutcome> => S.Status("Applied", "Unsupported"),
 );
 
 /**
@@ -1770,7 +1802,12 @@ export interface ChainProvider {
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
- * delivered as the parser resolved it.
+ * delivered as the parser resolved it. The one exception is the node of a HOP
+ * media item: the core checks only that it is a `wss://` URL of at most
+ * `CHAT_HOP_NODE_MAX_CHARS` characters, and passes it on as the product
+ * wrote it. The icon of the room metadata and an image badge take no URL at
+ * all: inline image data or the CID of a Bulletin preimage, as RFC 0002 names
+ * resources.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1843,19 +1880,22 @@ export interface ChatPlatform {
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
 
   /**
-   * The current product-scoped room list, read one time. The core uses it to
-   * check that a product hosts a room, before each change to a room. A host
-   * that cannot read its rooms returns an error, not an empty list. If a
-   * Rust host does not implement this method, the core uses the first item
-   * of the room list subscription. A host whose subscription registers a
-   * listener implements it: otherwise each check leaves a listener behind.
+   * The current product-scoped room list, read one time.
+   *
+   * The core uses it to check that a product hosts a room, before each
+   * change to a room. A host that cannot read its rooms returns an error,
+   * not an empty list. If a Rust host does not implement this method, the
+   * core uses the first item of the room list subscription. A host whose
+   * subscription registers a listener implements it: otherwise each check
+   * leaves a listener behind.
    */
   listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
 
   /**
-   * The configuration of the last `create_chat_room` of a room. The core
-   * reads it before each feed update and preview of the room to decide
-   * whether the host stores the messages of the room.
+   * The configuration of the last `create_chat_room` of a room.
+   *
+   * The core reads it to decide whether the host stores the messages of the
+   * room.
    */
   readChatRoomConfig?(
     product: ProductContext,
@@ -1863,8 +1903,9 @@ export interface ChatPlatform {
   ): Promise<ChatRoomConfig>;
 
   /**
-   * Replace the name, description, icon and empty-room text of a room. An
-   * icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
+   * Replace the name, description, icon and empty-room text of a room.
+   *
+   * An icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
    * host does not implement this method, it ignores the metadata. The room
    * keeps the name and icon of `create_chat_room`.
    */
@@ -1875,28 +1916,38 @@ export interface ChatPlatform {
 
   /**
    * Replace how a room shows in the chat list.
+   *
+   * If a Rust host does not implement this method, it answers
+   * `Unsupported`, and so does the product's request.
    */
   setChatRoomPreview?(
     product: ProductContext,
     request: HostChatSetRoomPreviewRequest,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 
   /**
    * Delete a room with its messages, cache and declarations, and close its
-   * screen. The core calls it only for a room the product hosts.
+   * screen.
+   *
+   * The core calls it for every room except one that the product takes
+   * part in as a bot, so a room that does not exist is not an error. If a
+   * Rust host does not implement this method, it answers `Unsupported`.
    */
   deleteChatRoom?(
     product: ProductContext,
     request: HostChatDeleteRoomRequest,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 
   /**
-   * Apply one change to the messages of a room. With `persist` the host
-   * stores the change, because it keeps the messages of the room. Without
-   * it the host applies the change only to an open room screen and the chat
-   * list preview. The host answers the outcome `Applied`, or the outcome
-   * that names why it did not apply the change. It answers an error only
-   * for a failure of its own, which the product receives as `HostFailure`.
+   * Apply one change to the messages of a room.
+   *
+   * With `persist` the host stores the change, because it keeps the
+   * messages of the room. Without it the host applies the change only to an
+   * open room screen and the chat list preview. The host answers the
+   * outcome `Applied`, or the outcome that names why it did not apply the
+   * change. It answers an error only for a failure of its own, which the
+   * product receives as `HostFailure`. If a Rust host does not implement
+   * this method, it answers `Unsupported`.
    */
   updateChatFeed?(
     product: ProductContext,
@@ -2167,7 +2218,9 @@ export interface Features {
 export interface FundingPlatform {
   /**
    * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
+   * host itself when `product` is ``undefined``. A cancel while the overlay is up
+   * drops this call, and the host takes the overlay down when it is
+   * dropped.
    */
   presentFunding(
     product: ProductContext | undefined,
@@ -2468,34 +2521,6 @@ export interface PreimageHost {
 }
 
 /**
- * Host store for a product's pending operations, which the host uses to keep
- * the product's worker runtime alive. Reached only through the `Worker`
- * protocol trait, so non-worker products never call these.
- */
-export interface ProductOperations {
-  /**
-   * Record a pending operation. `label` is a host log and UI hint, empty
-   * when the product gave none.
-   *
-   * The returned id must be unique among this product's open operations.
-   * The core keys the worker reference an operation holds by that id, so an
-   * id already open for the product records nothing the second time, and
-   * ending it once drops the demand both were holding. Ids may repeat
-   * across products, and may be reused once an operation has ended.
-   */
-  beginOperation(
-    product: ProductContext,
-    label: string,
-  ): Promise<HostWorkerBeginOperationResponse>;
-
-  /**
-   * Remove a pending operation. Idempotent: an unknown or already-ended id
-   * returns `Ok`, so a retry after an ambiguous failure is safe.
-   */
-  endOperation(product: ProductContext, id: number): Promise<void>;
-}
-
-/**
  * Product-scoped key-value storage.
  *
  * The core namespaces product keys before calling this trait, and the key
@@ -2663,7 +2688,6 @@ export interface HostCallbacks {
   theme: ThemeHost;
   locale: LocaleHost;
   preimage: PreimageHost;
-  productOperations: ProductOperations;
   chat?: ChatPlatform;
   contacts?: ContactsPlatform;
   game?: GamePlatform;
@@ -2686,7 +2710,6 @@ export interface RequiredHostCallbacks {
   theme: Required<ThemeHost>;
   locale: Required<LocaleHost>;
   preimage: Required<PreimageHost>;
-  productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
   contacts?: Required<ContactsPlatform>;
   game?: Required<GamePlatform>;

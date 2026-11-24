@@ -2,7 +2,7 @@ import { asProductId, type ProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
-import type { ChatRoom } from "@parity/truapi";
+import type { ChatRoom, ChatRoomConfig } from "@parity/truapi";
 import type {
   CoreStorageKey,
   ProductContext,
@@ -689,6 +689,8 @@ describe("createMockHost TestHostAPI parity", () => {
       ),
     ).toEqual([true, true, true, false]);
     expect(mockRuntimeConfig().testStack).toEqual({
+      id: "mock",
+      generation: "mock",
       network: "mock",
       tld: "paseo",
       people: { genesisHash: MOCK_GENESIS.people },
@@ -749,6 +751,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: roomId,
         name: roomId,
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       });
     }
 
@@ -830,6 +833,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: roomId,
         name: roomId,
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       });
       await host.callbacks.chat!.postChatMessage(product, {
         roomId,
@@ -842,6 +846,83 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
       "other",
     ]);
+  });
+
+  it("drops what a chat room holds when its productSource changes", async () => {
+    // The stored messages would show next to the pages that the product
+    // answers, so the room starts empty on its new side, as on the Rust mock.
+    const host = createMockHost();
+    const chat = host.callbacks.chat!;
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    const create = (roomId: string, config: ChatRoomConfig) =>
+      chat.createChatRoom(product, roomId, {
+        roomIdSource: roomId,
+        name: roomId,
+        icon: "",
+        config,
+      });
+    const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
+    for (const roomId of ["main", "other"]) {
+      await create(roomId, { productSource: false, reactionDetails: false });
+      await chat.postChatMessage(product, {
+        roomId,
+        payload: { tag: "Text", value: { text: "hi" } },
+      });
+      await chat.updateChatFeed!(product, { roomId, update }, true);
+    }
+
+    // Another configuration with the same source keeps what the room holds.
+    expect(
+      await create("main", { productSource: false, reactionDetails: true }),
+    ).toBe("Exists");
+    expect(host.chatRoomDeclarations("main")?.feed).toEqual([[update, true]]);
+
+    const sourced = { productSource: true, reactionDetails: false };
+    expect(await create("main", sourced)).toBe("Exists");
+    expect(host.chatRoomDeclarations("main")).toEqual({
+      feed: [],
+      config: sourced,
+    });
+    expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
+      "other",
+    ]);
+    expect(host.chatRoomDeclarations("other")?.feed).toEqual([[update, true]]);
+  });
+
+  it("hands out a copy of the declarations and keeps none for a deleted room", async () => {
+    // A test that keeps an earlier answer must not see later calls, and a
+    // call that arrives after the delete must not bring the room back.
+    const host = createMockHost();
+    const chat = host.callbacks.chat!;
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    await chat.createChatRoom(product, "main", {
+      roomIdSource: "main",
+      name: "Main",
+      icon: "",
+      config: { productSource: false, reactionDetails: false },
+    });
+    const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
+    const before = host.chatRoomDeclarations("main");
+    await chat.updateChatFeed!(product, { roomId: "main", update }, true);
+    expect(before?.feed).toEqual([]);
+
+    const rooms = chat.subscribeChatRooms();
+    await drain(rooms, 1);
+    // A delete of a room that does not exist publishes no list, so the next
+    // list is the one without `main`.
+    await chat.deleteChatRoom!(product, { roomId: "missing" });
+    await chat.deleteChatRoom!(product, { roomId: "main" });
+    const [after] = await drain(rooms, 1);
+    expect(after).toEqual(ok({ rooms: [] }));
+
+    await chat.updateChatFeed!(product, { roomId: "main", update }, true);
+    expect(host.chatRoomDeclarations("main")).toBeUndefined();
   });
 
   it("simulateDisconnect ends a live response stream, not just the status", async () => {
@@ -939,6 +1020,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: "lobby",
         name: "Lobby",
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       },
     );
 
@@ -946,19 +1028,13 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(seen[1]).toEqual(ok({ rooms: [...host.getChatRooms()] }));
   });
 
-  it("reset returns the policies and the open operations too", async () => {
+  it("reset restores the original permission policy", async () => {
     // `reset` says it returns the mock to its constructed state. A policy that
     // survives it lets one case govern the next, which is the whole point.
     const host = createMockHost({ devicePermissions: "allow-all" });
     host.setPermissionBehavior("deny-all");
-    await host.callbacks.productOperations.beginOperation(
-      { productId: asProductId("p"), executionKind: { tag: "Unknown" } },
-      "sync",
-    );
-
     host.reset();
 
-    expect(host.getOpenOperations()).toEqual([]);
     expect(
       await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
     ).toBe("AllowAlways");
@@ -1084,6 +1160,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: "r",
         name: "R",
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       }),
     ).rejects.toThrow("chat down");
     await expect(

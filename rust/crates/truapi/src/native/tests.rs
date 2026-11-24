@@ -7,9 +7,9 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest,
-	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError,
+	StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -452,16 +452,6 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
-	async fn begin_operation(
-		&self,
-		_product_id: ProductId,
-		_label: String,
-	) -> Result<u32, HostRejection> {
-		Ok(1)
-	}
-	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
-		Ok(())
-	}
 }
 
 #[async_trait::async_trait]
@@ -588,18 +578,21 @@ impl NativeChatCallbacks for EventCallbacks {
 		&self,
 		room_id: String,
 		_preview: truapi::latest::ChatRoomPreview,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("preview", &room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
-	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection> {
+	async fn delete_room(
+		&self,
+		room_id: String,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("delete", &room_id);
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
 			.retain(|(created, _, _)| *created != room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn update_feed(
@@ -927,10 +920,16 @@ fn process_runtime_counts_worker_references_per_product() {
 	.expect("host runtime config should be valid");
 	let product = || ProductId::for_test("shared.dot");
 
-	host.acquire_worker(product());
-	host.acquire_worker(product());
-	host.release_worker(product());
-	host.release_worker(product());
+	let first = host.claim_worker(product());
+	let second = host.claim_worker(product());
+	first.release();
+	first.release();
+	drop(first);
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start)]
+	);
+	drop(second);
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
@@ -2026,7 +2025,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 	assert_eq!(ready_rooms(rooms.as_mut(), "the room list").rooms.len(), 1);
 
 	use crate::platform::ChatPlatform as _;
-	futures::executor::block_on(async {
+	let deleted = futures::executor::block_on(async {
 		platform
 			.set_chat_room_metadata(
 				&product,
@@ -2053,6 +2052,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 			.await
 	})
 	.expect("every declaration reaches the host");
+	assert_eq!(deleted, crate::platform::ChatRoomChangeOutcome::Applied);
 
 	assert_eq!(
 		*callbacks.chat_declared.lock().expect("declared mutex poisoned"),
@@ -2073,31 +2073,35 @@ fn native_chat_adapter_reports_feed_outcomes_by_kind() {
 		},
 	};
 
-	let applied = futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
-		&platform,
-		&product,
-		update(),
-		false,
-	));
-	assert_eq!(applied, Ok(crate::platform::ChatFeedOutcome::Applied));
-	assert_eq!(
-		*callbacks.chat_feed.lock().expect("feed mutex poisoned"),
-		[("support".to_string(), update().update, false)]
-	);
-
-	let answered = |answer| {
-		*callbacks.chat_feed_answer.lock().expect("feed answer mutex poisoned") = answer;
+	let apply = |persist: bool| {
 		futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
 			&platform,
 			&product,
 			update(),
-			true,
+			persist,
 		))
+	};
+	assert_eq!(apply(false), Ok(crate::platform::ChatFeedOutcome::Applied));
+	assert_eq!(apply(true), Ok(crate::platform::ChatFeedOutcome::Applied));
+	// The host stores the update only when the core says so, so the flag
+	// reaches it as the core set it.
+	assert_eq!(
+		*callbacks.chat_feed.lock().expect("feed mutex poisoned"),
+		[
+			("support".to_string(), update().update, false),
+			("support".to_string(), update().update, true)
+		]
+	);
+
+	let answered = |answer| {
+		*callbacks.chat_feed_answer.lock().expect("feed answer mutex poisoned") = answer;
+		apply(true)
 	};
 	for outcome in [
 		crate::platform::ChatFeedOutcome::UnknownMessage,
 		crate::platform::ChatFeedOutcome::DuplicateMessage,
 		crate::platform::ChatFeedOutcome::NotOwner,
+		crate::platform::ChatFeedOutcome::Unsupported,
 	] {
 		assert_eq!(answered(Ok(outcome)), Ok(outcome));
 	}
@@ -2663,20 +2667,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
 	}
 
 	let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
@@ -2871,20 +2861,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			&self,
 			_product_id: ProductId,
 		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}

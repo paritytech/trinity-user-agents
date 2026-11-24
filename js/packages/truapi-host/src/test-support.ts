@@ -14,10 +14,6 @@ type HostCallbackOverrides = {
 export function makeHostCallbacks(
   overrides: HostCallbackOverrides = {},
 ): CompleteHostCallbacks {
-  // An operation id names one operation, so the default hands out a fresh one
-  // per call rather than a constant: the core keys the worker reference it
-  // holds by that id, and a shared id loses all but the first.
-  let nextOperationId = 1;
   const defaults: CompleteHostCallbacks = {
     navigation: { navigateTo: async () => {} },
     notifications: {
@@ -40,10 +36,6 @@ export function makeHostCallbacks(
       clear: async () => {},
       clearProduct: async () => {},
       async *subscribeStorage() {},
-    },
-    productOperations: {
-      beginOperation: async () => ({ id: nextOperationId++ }),
-      endOperation: async () => {},
     },
     coreStorage: {
       readCoreStorage: async () => undefined,
@@ -88,10 +80,6 @@ export function makeHostCallbacks(
       ...defaults.productStorage,
       ...overrides.productStorage,
     },
-    productOperations: {
-      ...defaults.productOperations,
-      ...overrides.productOperations,
-    },
     coreStorage: {
       ...defaults.coreStorage,
       ...overrides.coreStorage,
@@ -123,9 +111,9 @@ export function makeHostCallbacks(
               reactionDetails: false,
             }),
             setChatRoomMetadata: async () => {},
-            setChatRoomPreview: async () => {},
-            deleteChatRoom: async () => {},
-            updateChatFeed: async () => "Applied" as const,
+            setChatRoomPreview: async () => "Applied",
+            deleteChatRoom: async () => "Applied",
+            updateChatFeed: async () => "Applied",
             ...overrides.chat,
           },
         }

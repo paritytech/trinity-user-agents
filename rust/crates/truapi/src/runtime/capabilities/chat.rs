@@ -2,7 +2,8 @@
 //!
 //! The core screens each chat call before a host sees it. It normalizes and
 //! bounds identifiers and texts. A call that changes a room needs a room that
-//! the product hosts.
+//! the product hosts. A delete refuses only a room that the product reaches as
+//! a bot, because the host deletes a room that does not exist without an error.
 
 use std::sync::Arc;
 
@@ -33,10 +34,10 @@ use truapi::{
 
 use crate::{
 	platform::{
-		ChatFeedOutcome, ChatFieldError, ChatPlatform, normalize_chat_identifier,
-		validate_chat_custom_message, validate_chat_feed_update, validate_chat_icon,
-		validate_chat_message_content, validate_chat_name, validate_chat_room_metadata,
-		validate_chat_room_preview,
+		ChatFeedOutcome, ChatFieldError, ChatPlatform, ChatRoomChangeOutcome,
+		normalize_chat_identifier, validate_chat_custom_message, validate_chat_feed_update,
+		validate_chat_icon, validate_chat_message_content, validate_chat_name,
+		validate_chat_room_metadata, validate_chat_room_preview,
 	},
 	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
@@ -46,7 +47,7 @@ const USER_PARTICIPANT_ID: &str = "user";
 
 /// The fields that a product makes valid when it sends less content.
 /// `MessageTooLarge` names no field, so it can describe only these. `payload`
-/// is the payload of a first-version `Custom` message.
+/// is the payload of a `Custom` message or message body.
 const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
 
 #[async_trait::async_trait]
@@ -263,10 +264,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				if !config.product_source && preview_shows_the_user(&request.preview) {
 					return Err(CallError::Domain(latest::HostChatSetRoomPreviewError::NotOwner));
 				}
-				platform
-					.set_chat_room_preview(&self.connection.product, request)
-					.await
-					.map_err(room_host_error)
+				room_change(platform.set_chat_room_preview(&self.connection.product, request).await)
 			})
 			.await
 	}
@@ -280,25 +278,26 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				match self.hosted_room(&platform, &request.room_id).await {
-					// A delete of a room that does not exist succeeds. Thus a
-					// product can send a delete again when it lost the answer.
-					Err(RoomRefusal::UnknownRoom) => Ok(()),
+				request.room_id = match self.hosted_room(&platform, &request.room_id).await {
+					Ok(room_id) => room_id,
+					// The host deletes a room that does not exist without an
+					// error, so a product can send a delete again when it lost
+					// the answer. A room that a stale list leaves out is still
+					// deleted.
+					Err(RoomRefusal::UnknownRoom(room_id)) => room_id,
 					Err(RoomRefusal::NotRoomHost) => {
-						Err(CallError::Domain(latest::HostChatDeleteRoomError::NotRoomHost))
+						return Err(CallError::Domain(
+							latest::HostChatDeleteRoomError::NotRoomHost,
+						));
 					},
 					Err(RoomRefusal::Malformed(reason)) => {
-						Err(CallError::MalformedFrame { reason })
+						return Err(CallError::MalformedFrame { reason });
 					},
-					Err(RoomRefusal::HostFailure(reason)) => Err(CallError::HostFailure { reason }),
-					Ok(room_id) => {
-						request.room_id = room_id;
-						platform
-							.delete_chat_room(&self.connection.product, request)
-							.await
-							.map_err(room_host_error)
+					Err(RoomRefusal::HostFailure(reason)) => {
+						return Err(CallError::HostFailure { reason });
 					},
-				}
+				};
+				room_change(platform.delete_chat_room(&self.connection.product, request).await)
 			})
 			.await
 	}
@@ -336,7 +335,9 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 	}
 }
 
-/// The answer to the product for what the host did with a feed update.
+/// The answer to the product for what the host did with a feed update. A host
+/// that does not serve feed updates answers `Unsupported`, so a product can
+/// tell it from a failure worth a retry.
 fn feed_outcome(
 	outcome: ChatFeedOutcome,
 ) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
@@ -345,15 +346,15 @@ fn feed_outcome(
 		ChatFeedOutcome::UnknownMessage => latest::HostChatUpdateFeedError::UnknownMessage,
 		ChatFeedOutcome::DuplicateMessage => latest::HostChatUpdateFeedError::DuplicateMessage,
 		ChatFeedOutcome::NotOwner => latest::HostChatUpdateFeedError::NotOwner,
+		ChatFeedOutcome::Unsupported => return Err(CallError::Unsupported),
 	};
 	Err(CallError::Domain(refusal))
 }
 
 /// Why the core refuses a room-changing call before the host sees it.
-#[derive(Debug)]
 enum RoomRefusal {
-	/// The product created no room with this id.
-	UnknownRoom,
+	/// The product created no room with this normalized id.
+	UnknownRoom(String),
 	/// The product takes part in the room as a bot.
 	NotRoomHost,
 	/// The room id did not pass the core's checks.
@@ -389,7 +390,7 @@ impl RoomCallError for latest::HostChatUpdateFeedError {
 impl<E: RoomCallError> From<RoomRefusal> for CallError<E> {
 	fn from(refusal: RoomRefusal) -> Self {
 		match refusal {
-			RoomRefusal::UnknownRoom => CallError::Domain(E::UNKNOWN_ROOM),
+			RoomRefusal::UnknownRoom(_) => CallError::Domain(E::UNKNOWN_ROOM),
 			RoomRefusal::NotRoomHost => CallError::Domain(E::NOT_ROOM_HOST),
 			RoomRefusal::Malformed(reason) => CallError::MalformedFrame { reason },
 			RoomRefusal::HostFailure(reason) => CallError::HostFailure { reason },
@@ -401,7 +402,7 @@ impl<E: RoomCallError> From<RoomRefusal> for CallError<E> {
 /// for the footer, a room it did not create.
 fn footer_refusal(refusal: RoomRefusal) -> CallError<latest::HostChatSetRoomFooterError> {
 	CallError::Domain(match refusal {
-		RoomRefusal::UnknownRoom | RoomRefusal::NotRoomHost => {
+		RoomRefusal::UnknownRoom(_) | RoomRefusal::NotRoomHost => {
 			latest::HostChatSetRoomFooterError::UnknownRoom
 		},
 		RoomRefusal::Malformed(reason) | RoomRefusal::HostFailure(reason) => {
@@ -462,6 +463,19 @@ fn room_host_error<E>(error: latest::GenericError) -> CallError<E> {
 	CallError::HostFailure { reason: error.reason }
 }
 
+/// The answer to the product for what the host did with a change to a room. A
+/// host that does not serve the request answers `Unsupported`, so a product
+/// can tell it from a failure worth a retry.
+fn room_change<E>(
+	outcome: Result<ChatRoomChangeOutcome, latest::GenericError>,
+) -> Result<(), CallError<E>> {
+	match outcome {
+		Ok(ChatRoomChangeOutcome::Applied) => Ok(()),
+		Ok(ChatRoomChangeOutcome::Unsupported) => Err(CallError::Unsupported),
+		Err(error) => Err(room_host_error(error)),
+	}
+}
+
 /// Report a rejected feed field, a size rejection of the content as the size
 /// variant the protocol declares for it.
 fn feed_field_error(error: ChatFieldError) -> CallError<latest::HostChatUpdateFeedError> {
@@ -512,7 +526,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.map_err(|error| RoomRefusal::HostFailure(error.reason))?
 			.rooms;
 		match rooms.iter().find(|room| room.room_id == room_id) {
-			None => Err(RoomRefusal::UnknownRoom),
+			None => Err(RoomRefusal::UnknownRoom(room_id)),
 			Some(room) if room.participating_as != latest::ChatRoomParticipation::RoomHost => {
 				Err(RoomRefusal::NotRoomHost)
 			},
