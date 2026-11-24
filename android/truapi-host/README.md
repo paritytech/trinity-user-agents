@@ -149,7 +149,7 @@ val endpoint = execution.startWsBridge()
 val bootstrap = LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token)
 ```
 
-Install `bootstrap` and `ContainerScriptBundle` at document start. Once the WebView has loaded the worker module, call `execution.reportWorkerModuleStarted()`. If startup fails or the WebView process exits, call `attempt.failed(reason)`.
+Install `bootstrap` and `ContainerScriptBundle` at document start. Once the WebView has loaded the worker module, call `attempt.moduleStarted()`. If startup fails or the WebView process exits, call `attempt.failed(reason)`.
 
 The core bounds and screens the product-supplied fields it forwards — ids,
 names, icons, message bodies, URLs, and the action and media counts. Ids and

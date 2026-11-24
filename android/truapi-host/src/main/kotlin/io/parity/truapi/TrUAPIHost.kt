@@ -1517,9 +1517,6 @@ class TrUAPIProductExecution internal constructor(
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
 
-    /** Acknowledge that this startup attempt has loaded its entry module. */
-    fun reportWorkerModuleStarted(): Boolean = inner.reportWorkerModuleStarted()
-
     /**
      * Register this execution against the host runtime's shared localhost
      * bridge, minting an independent authentication token. Every execution

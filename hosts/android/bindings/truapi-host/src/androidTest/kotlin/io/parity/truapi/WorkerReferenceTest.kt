@@ -69,7 +69,7 @@ class WorkerReferenceTest {
                 try {
                     withTimeout(10_000) {
                         received.receive()
-                        assertTrue(execution.reportWorkerModuleStarted())
+                        assertTrue(attempt.moduleStarted())
                         val face = execution.render(ProductRendererRenderRequest(RenderContext.PocketCard("loyalty"), byteArrayOf()))
                         val first = launch { face.collect {} }
                         received.receive()

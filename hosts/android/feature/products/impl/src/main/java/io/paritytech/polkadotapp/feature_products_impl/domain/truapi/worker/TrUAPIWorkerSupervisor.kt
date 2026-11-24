@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
-import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
@@ -54,8 +53,8 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             workers[id] = worker
             worker.scope.launch {
                 try {
-                    val execution = boot(productId, attempt, worker)
-                    if (!execution.reportWorkerModuleStarted()) dispose(id)
+                    boot(productId, attempt, worker)
+                    if (!attempt.moduleStarted()) dispose(id)
                 } catch (cause: Exception) {
                     ensureActive()
                     Timber.w(cause, "TrUAPI worker for %s failed to start", productId.value)
@@ -70,7 +69,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         scope.launch { dispose(attemptId) }
     }
 
-    private suspend fun boot(productId: ProductId, attempt: NativeWorkerAttempt, worker: WebViewWorker): TrUAPIProductExecution {
+    private suspend fun boot(productId: ProductId, attempt: NativeWorkerAttempt, worker: WebViewWorker) {
         val script = scriptResolver.resolveWorker(productId).getOrThrow()
         val workerScript = WorkerScript.of(script.scriptUrl)
         val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
@@ -95,7 +94,6 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             webViewRuntime.waitForReady()
             webViewRuntime.startWorkerModule(workerScript.entrypoint)
         }
-        return execution
     }
 
     private fun dispose(id: ULong) {

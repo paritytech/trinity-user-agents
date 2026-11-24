@@ -37,10 +37,12 @@ import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
-    private val attempt = mockk<NativeWorkerAttempt>(relaxUnitFun = true) { every { id() } returns 1uL }
+    private val attempt = mockk<NativeWorkerAttempt>(relaxUnitFun = true) {
+        every { id() } returns 1uL
+        every { moduleStarted() } returns true
+    }
     private val rendererGoneListeners = mutableMapOf<ChatWebViewProvider, MutableList<() -> Unit>>()
     private val providers = mutableListOf<ChatWebViewProvider>()
-    private val executions = mutableListOf<TrUAPIProductExecution>()
     private val chatBridges = mutableListOf<ChatHostBridge?>()
     private val bootstrapInstaller = mockk<TrUAPIBootstrapInstaller>(relaxed = true)
     private val policies = mutableListOf<NavigationPolicy>()
@@ -73,14 +75,17 @@ class TrUAPIWorkerSupervisorTest {
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
 
-        verify(exactly = 1) { executions.single().reportWorkerModuleStarted() }
+        verify(exactly = 1) { attempt.moduleStarted() }
         verify(exactly = 1) { attempt.failed("WebView renderer exited") }
         assertEquals(1, providers.size)
     }
 
     @Test
     fun `a delayed stop disposes only its own WebView`() = runTest {
-        val replacement = mockk<NativeWorkerAttempt> { every { id() } returns 2uL }
+        val replacement = mockk<NativeWorkerAttempt> {
+            every { id() } returns 2uL
+            every { moduleStarted() } returns true
+        }
         val supervisor = supervisor()
         supervisor.start(PRODUCT, attempt)
         supervisor.start(PRODUCT, replacement)
@@ -89,7 +94,7 @@ class TrUAPIWorkerSupervisorTest {
         advanceUntilIdle()
 
         assertEquals(listOf(false, true), workerScopes.map { it.isActive })
-        verify(exactly = 1) { executions[1].reportWorkerModuleStarted() }
+        verify(exactly = 1) { replacement.moduleStarted() }
     }
 
     @Test
@@ -99,13 +104,12 @@ class TrUAPIWorkerSupervisorTest {
         supervisor().start(PRODUCT, attempt)
         runCurrent()
 
-        val execution = executions.single()
-        verify(exactly = 0) { execution.reportWorkerModuleStarted() }
+        verify(exactly = 0) { attempt.moduleStarted() }
         finish("worker import rejected")
         runCurrent()
 
         verify(exactly = 1) { attempt.failed("worker import rejected") }
-        verify(exactly = 0) { execution.reportWorkerModuleStarted() }
+        verify(exactly = 0) { attempt.moduleStarted() }
     }
 
     @Test
@@ -175,7 +179,7 @@ class TrUAPIWorkerSupervisorTest {
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
-        val execution = mockk<TrUAPIProductExecution> { every { reportWorkerModuleStarted() } returns true }.also { executions += it }
+        val execution = mockk<TrUAPIProductExecution>()
         coEvery { attachWorker(any(), any(), any(), any(), any(), any()) } answers {
             policies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(4)

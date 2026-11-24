@@ -71,7 +71,8 @@ class ContainerHttpAuthorizationTest {
         val workers = if (kind == ExecutableKind.WORKER) InstrumentedWorkerHost() else null
         TrUAPIHostRuntime(bridge, config, workers).use { runtime ->
             val claim = workers?.let { runtime.claimWorker(product) }
-            val opened = workers?.awaitAttempt()?.openExecution(bridge, null, null)
+            val attempt = workers?.awaitAttempt()
+            val opened = attempt?.openExecution(bridge, null, null)
                 ?: runtime.openProductExecution(bridge, ProductExecutionConfig(product, kind))
             opened.use { execution ->
                 val endpoint = execution.startWsBridge()
@@ -135,7 +136,7 @@ class ContainerHttpAuthorizationTest {
 
                         try {
                             assertTrue("product script did not load", reports.ready.await(15, TimeUnit.SECONDS))
-                            if (workers != null) assertTrue(execution.reportWorkerModuleStarted())
+                            if (attempt != null) assertTrue(attempt.moduleStarted())
                             val operations = listOf("script", "image", "fetch", "xhr")
                             for (operation in operations) {
                                 execution.setPermissionAuthorizationStatus(
