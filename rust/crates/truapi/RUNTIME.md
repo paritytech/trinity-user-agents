@@ -364,6 +364,8 @@ immediate. For repeated exits less than a minute apart, the delay starts at 1 s
 and doubles up to 5 min. On the third consecutive crash, the core notifies the
 host through `worker_crashing`. Releasing the last claim cancels a pending
 retry. When the replacement connects, it receives its active funding sessions.
+Observers see the worker as pending while the ledger retries it, and as failed
+only when no attempt can start.
 
 ### Inter-host SSO
 

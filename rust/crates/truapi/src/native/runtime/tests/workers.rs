@@ -173,7 +173,7 @@ fn a_host_without_worker_support_reports_unavailable_until_the_claim_ends() {
 }
 
 #[tokio::test]
-async fn an_observer_sees_failure_then_the_retried_execution() {
+async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	let (runtime, views, product) = setup();
 	let (send, receive) = mpsc::channel();
 	let _subscription = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
@@ -182,18 +182,17 @@ async fn an_observer_sees_failure_then_the_retried_execution() {
 	views.fail_next_start.store(true, Ordering::Relaxed);
 	let _claim = runtime.claim_worker(product.clone());
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	assert!(
-		matches!(next(), NativeWorkerExecutionState::Failed { reason } if reason == "initial boot error")
-	);
-	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
+	assert_eq!(views.starts.lock().unwrap().len(), 2);
 	let retry = views.latest();
 	let owner = open(&retry);
 	let _socket = connect(&owner).await;
 	assert!(retry.module_started());
 	let NativeWorkerExecutionState::Running { execution } = next() else {
-		panic!("the retry must publish its ready execution");
+		panic!("a consumer waiting through the failed start must receive the retry's execution");
 	};
 	assert!(Arc::ptr_eq(&execution, &runtime.current_worker_execution(product).unwrap()));
+	retry.failed("renderer lost".into());
+	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 }
 
 #[tokio::test]
