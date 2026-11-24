@@ -22,7 +22,9 @@ import kotlinx.coroutines.flow.onEach
 /**
  * Renders the card a product docked in the input slot of one room.
  *
- * Holds one render at a time: showing another card stops the render of the one before.
+ * Holds one render at a time: showing another card stops the render of the one before. The tree of the card
+ * before stays shown until the new card's first tree comes, so the slot crossfades from one card to the next
+ * rather than through a spinner.
  */
 @HiltViewModel(assistedFactory = ProductRoomFooterCardViewModel.Factory::class)
 class ProductRoomFooterCardViewModel @AssistedInject constructor(
@@ -34,19 +36,19 @@ class ProductRoomFooterCardViewModel @AssistedInject constructor(
     private var shownCard: ProductRoomFooter.Card? = null
     private var rendering: Job? = null
 
-    private val _state = MutableStateFlow<LoadingState<JsWidget>>(LoadingState.Loading)
-    val state: StateFlow<LoadingState<JsWidget>> = _state.asStateFlow()
+    private val _state = MutableStateFlow<LoadingState<DockedTree>>(LoadingState.Loading)
+    val state: StateFlow<LoadingState<DockedTree>> = _state.asStateFlow()
 
     fun show(card: ProductRoomFooter.Card) {
         if (card == shownCard) return
         shownCard = card
         rendering?.cancel()
-        _state.value = LoadingState.Loading
+        if (_state.value !is LoadingState.Loaded) _state.value = LoadingState.Loading
         rendering = worker.renderRoomFooter(room, card.messageType, card.payload)
             .onEach { result ->
                 result
                     .logFailure("Room footer card render failed in ${room.value}")
-                    .onSuccess { _state.value = LoadingState.Loaded(it) }
+                    .onSuccess { _state.value = LoadingState.Loaded(DockedTree(card, it)) }
                     .onFailure { _state.value = LoadingState.Error(it) }
             }
             .launchIn(this)
@@ -56,6 +58,14 @@ class ProductRoomFooterCardViewModel @AssistedInject constructor(
         val card = shownCard ?: return
         worker.dispatchRoomFooterEvent(room, card.messageType, actionId, eventType)
     }
+
+    /** A press on the tree of [card]; one on a card the product has since replaced goes nowhere. */
+    fun handleUiEvent(card: ProductRoomFooter.Card, actionId: String, eventType: JsUiEvent.Type) {
+        if (card == shownCard) handleUiEvent(actionId, eventType)
+    }
+
+    /** A tree the product drew for [card]. */
+    data class DockedTree(val card: ProductRoomFooter.Card, val tree: JsWidget)
 
     @AssistedFactory
     interface Factory {

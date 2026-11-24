@@ -79,7 +79,7 @@ class ProductRoomFooterCardViewModelTest {
         viewModel.show(confirm)
         advanceUntilIdle()
 
-        assertEquals(listOf(0, LoadingState.Loaded(JsWidget.Spacer())), listOf(registerRender.subscriptionCount.value, viewModel.state.value))
+        assertEquals(listOf(0, loaded(confirm, JsWidget.Spacer())), listOf(registerRender.subscriptionCount.value, viewModel.state.value))
     }
 
     /** The screen shows the same card again on every return to the chat, and that must not draw it again. */
@@ -98,4 +98,78 @@ class ProductRoomFooterCardViewModelTest {
         verify(exactly = 1) { worker.renderRoomFooter(ProductChatIdParameter(ROOM), "register", any()) }
         verify { worker.dispatchRoomFooterEvent(ProductChatIdParameter(ROOM), "register", "join", JsUiEvent.Type.ButtonClick) }
     }
+
+    /**
+     * The product's next trees for the docked card replace it in place, with no spinner between them: the
+     * footer never goes back to loading for the same card.
+     */
+    @Test
+    fun `new trees of the same card replace it in place`() = runTest(testDispatcher) {
+        val first = JsWidget.Column(children = listOf(JsWidget.Text("Join")))
+        val second = JsWidget.Column(children = listOf(JsWidget.Text("Joined")))
+        val trees = MutableSharedFlow<Result<JsWidget>>()
+        val worker = mockk<ProductWorker>(relaxed = true) {
+            every { renderRoomFooter(any(), any(), any()) } returns trees
+        }
+        val viewModel = ProductRoomFooterCardViewModel(ROOM, worker)
+        val seen = mutableListOf<LoadingState<ProductRoomFooterCardViewModel.DockedTree>>()
+        viewModel.show(register)
+        advanceUntilIdle()
+
+        trees.emit(Result.success(first))
+        advanceUntilIdle()
+        seen += viewModel.state.value
+        trees.emit(Result.success(second))
+        advanceUntilIdle()
+        seen += viewModel.state.value
+
+        assertEquals(listOf(loaded(register, first), loaded(register, second)), seen)
+    }
+
+    /**
+     * A card the product docks in place of another keeps the old card's tree on screen until its own first
+     * tree comes, so the footer can fade from one card to the next instead of flashing a spinner.
+     */
+    @Test
+    fun `a replaced card stays drawn until the new card's first tree`() = runTest(testDispatcher) {
+        val registerTree = JsWidget.Text("Join")
+        val confirmTree = JsWidget.Text("Joined")
+        val confirmRender = MutableSharedFlow<Result<JsWidget>>()
+        val worker = mockk<ProductWorker> {
+            every { renderRoomFooter(any(), "register", any()) } returns flowOf(Result.success(registerTree))
+            every { renderRoomFooter(any(), "confirm", any()) } returns confirmRender
+        }
+        val viewModel = ProductRoomFooterCardViewModel(ROOM, worker)
+        viewModel.show(register)
+        advanceUntilIdle()
+
+        viewModel.show(confirm)
+        advanceUntilIdle()
+        val beforeItsTree = viewModel.state.value
+        confirmRender.emit(Result.success(confirmTree))
+        advanceUntilIdle()
+
+        assertEquals(listOf(loaded(register, registerTree), loaded(confirm, confirmTree)), listOf(beforeItsTree, viewModel.state.value))
+    }
+
+    /** A press on the tree of a card the product has replaced must not reach the product as a press on the new card. */
+    @Test
+    fun `a press on a replaced card's tree goes nowhere`() = runTest(testDispatcher) {
+        val worker = mockk<ProductWorker>(relaxed = true) {
+            every { renderRoomFooter(any(), any(), any()) } returns flowOf(Result.success(JsWidget.Spacer()))
+        }
+        val viewModel = ProductRoomFooterCardViewModel(ROOM, worker)
+        viewModel.show(register)
+        viewModel.show(confirm)
+        advanceUntilIdle()
+
+        viewModel.handleUiEvent(register, "join", JsUiEvent.Type.ButtonClick)
+        viewModel.handleUiEvent(confirm, "done", JsUiEvent.Type.ButtonClick)
+
+        verify(exactly = 0) { worker.dispatchRoomFooterEvent(any(), any(), "join", any()) }
+        verify(exactly = 1) { worker.dispatchRoomFooterEvent(ProductChatIdParameter(ROOM), "confirm", "done", JsUiEvent.Type.ButtonClick) }
+    }
+
+    private fun loaded(card: ProductRoomFooter.Card, tree: JsWidget) =
+        LoadingState.Loaded(ProductRoomFooterCardViewModel.DockedTree(card, tree))
 }
