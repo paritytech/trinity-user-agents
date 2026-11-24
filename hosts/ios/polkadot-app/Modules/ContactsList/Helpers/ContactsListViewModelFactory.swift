@@ -324,8 +324,8 @@ private extension ContactsListViewModelFactory {
                 .active
             case let .finished(duration):
                 .finished(duration: formatCallDuration(duration))
-            case let .cancelled(duration):
-                .cancelled(ringDuration: formatCallDuration(duration))
+            case .cancelled:
+                .cancelled
             case .missed:
                 .missed
             }

@@ -35,6 +35,12 @@ pub fn service(args: TokenStream, item: TokenStream) -> TokenStream {
 /// `#[wire(id = N, internal)]` keeps a method out of the generated product
 /// SDK while retaining host dispatch. It does not authenticate the caller.
 ///
+/// `#[wire(id = N, request_fallback)]` makes the generated client send the
+/// older request version when every field the newer one added is absent, so
+/// hosts that predate it keep serving the call. Codegen rejects the flag on a
+/// method whose newer request is not the older one plus optional fields, or
+/// whose response or error changed type.
+///
 /// Expands to the original method plus hidden doc tags that `truapi-codegen`
 /// extracts from rustdoc JSON to build the wire table and versioned clients.
 #[proc_macro_attribute]
@@ -67,12 +73,18 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Each declaration becomes a SCALE enum with positional codec indices and an
-/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. When the newest
+/// Each declaration becomes a SCALE enum and an `impl Versioned` exposing
+/// `Latest`, `LATEST`, and `version()`. Variant `Vn` has codec index `n - 1`.
+/// The versions are contiguous. A method that a later protocol version adds
+/// starts at that version, so `{ V2 => v02::HostFooRequest }` is valid. When the newest
 /// variant carries a payload, `From<payload>` wraps it in that variant, so callers
 /// write `latest.into()` instead of naming a version. Single-version
 /// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version
 /// envelopes leave those to be written by hand, since the conversion is bespoke.
+///
+/// Beside the enums, the macro emits a `latest` module with one alias per
+/// declaration, so `latest::HostFooRequest` is the newest payload of
+/// `HostFooRequest`. `truapi::latest` re-exports those modules.
 ///
 /// The enum and every variant receive generated doc comments; a variant keeps
 /// its own doc attributes when the declaration provides them.

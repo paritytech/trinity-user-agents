@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -30,11 +31,11 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomRegistrationStatus,
   FundingFrameOutcome,
   FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -254,7 +255,13 @@ export type CoreStorageKey =
    * A product's App executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "AppManifest"; value: { productLabel: string } };
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -327,24 +334,23 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ExecutableKind = "App" | "Widget" | "Worker";
-
-/**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export type ExpandedCardFaceOutcome =
   | "Applied"
   | "NotPresented"
   | "UserMoving"
   | "Unsupported";
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export type ExpandedCardTurnOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported"
+  | "NoBack";
 
 /**
  * The chains a host builds as V5 general transactions. A chain not listed is
@@ -506,13 +512,14 @@ export type FundingQuoteUnavailable =
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export interface HostContactLookup {
   /**
-   * The key every handle here was minted under. Per session, and never
-   * given to a product.
+   * The key every handle here was minted under. Per session and product,
+   * and never given to a product.
    */
   handleKey: Bytes32;
 
@@ -559,6 +566,21 @@ export type HostContactPick =
    * This host resolves contacts but cannot present a picker. The core
    * answers the product `Unsupported`, so it can tell "try again later"
    * apart from "this host will never pick".
+   */
+  | { tag: "Unsupported"; value?: undefined };
+
+/**
+ * The usernames a host lists for the game product.
+ */
+export type HostContactUsernames =
+  /**
+   * The dotNS usernames of the unblocked contacts the picker would offer,
+   * in host order, each the bare label with no top-level domain.
+   */
+  | { tag: "Listed"; value: { usernames: Array<string> } }
+  /**
+   * This host resolves contacts but does not list their usernames. The core
+   * answers the product `Unsupported`.
    */
   | { tag: "Unsupported"; value?: undefined };
 
@@ -788,14 +810,15 @@ export interface SessionUiInfo {
   /**
    * X25519 public key of the wallet device that answered pairing. Hosts
    * running their own encrypted device-sync channel key it against this.
+   * ``undefined`` on a signing host, which has no paired wallet device.
    */
-  deviceEncPublicKey?: Bytes32;
+  peerDeviceEncPublicKey?: Bytes32;
 
   /**
    * Statement-store account id the paired wallet signs every session-channel
    * statement with. Whether it is scoped to the wallet device or to the
    * wallet identity is the wallet's choice, so hosts must not treat it as a
-   * device discriminator; use `Self::device_enc_public_key` for that.
+   * device discriminator; use `Self::peer_device_enc_public_key` for that.
    */
   peerStatementAccountId?: Bytes32;
 
@@ -806,6 +829,16 @@ export interface SessionUiInfo {
    * login. Secret at `CoreAdmin::get_device_statement_key`.
    */
   deviceStatementAccountId?: Bytes32;
+
+  /**
+   * X25519 public key of this device, which the user's other devices and
+   * contacts encrypt to. A signing host's is its install-wide key; a pairing
+   * host's is the key it advertised next to
+   * `Self::device_statement_account_id`, which the wallet registered and
+   * announces, rotated per login. Secret at
+   * `CoreAdmin::get_device_encryption_key`.
+   */
+  deviceEncPublicKey?: Bytes32;
 
   /**
    * Short username from the dotNS identity record on Asset Hub.
@@ -1113,6 +1146,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
     }),
 );
 
@@ -1178,24 +1215,19 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
-);
-
-/**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
     S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export const ExpandedCardTurnOutcome: S.Codec<ExpandedCardTurnOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardTurnOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported", "NoBack"),
 );
 
 /**
@@ -1303,8 +1335,9 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export const HostContactLookup: S.Codec<HostContactLookup> = S.lazy(
   (): S.Codec<HostContactLookup> =>
@@ -1335,6 +1368,19 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
       Picked: S.Struct({ account: Bytes32 }) as S.Codec<{ account: Bytes32 }>,
       Dismissed: S._void,
       NoContacts: S._void,
+      Unsupported: S._void,
+    }),
+);
+
+/**
+ * The usernames a host lists for the game product.
+ */
+export const HostContactUsernames: S.Codec<HostContactUsernames> = S.lazy(
+  (): S.Codec<HostContactUsernames> =>
+    S.TaggedUnion({
+      Listed: S.Struct({ usernames: S.Vector(S.str) }) as S.Codec<{
+        usernames: Array<string>;
+      }>,
       Unsupported: S._void,
     }),
 );
@@ -1501,9 +1547,10 @@ export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
       publicKey: Bytes32,
       identityAccountId: S.Option(Bytes32),
       chatPublicKey: S.Option(Bytes32),
-      deviceEncPublicKey: S.Option(Bytes32),
+      peerDeviceEncPublicKey: S.Option(Bytes32),
       peerStatementAccountId: S.Option(Bytes32),
       deviceStatementAccountId: S.Option(Bytes32),
+      deviceEncPublicKey: S.Option(Bytes32),
       liteUsername: S.Option(S.str),
       fullUsername: S.Option(S.str),
     }) as S.Codec<SessionUiInfo>,
@@ -1709,12 +1756,17 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. `room_id` is the id
+   * that the core derived from the product and `request.room_id_source`, or,
+   * for a product built against the earlier client, the id that the product
+   * gave. The host stores the room under this id, and every later call names
+   * the room with it.
    */
   createChatRoom(
     product: ProductContext,
+    roomId: string,
     request: HostChatCreateRoomRequest,
-  ): Promise<HostChatCreateRoomResponse>;
+  ): Promise<ChatRoomRegistrationStatus>;
 
   /**
    * Register or resolve a product-scoped native chat bot. Host-owned in the
@@ -1760,9 +1812,11 @@ export interface ChatPlatform {
  * Optional, and listed on `OptionalPlatform` as `ChatPlatform` is.
  *
  * The host owns the UI and the list. It draws the names, so nothing it renders
- * reaches the product, and the list never crosses to the core either: the core
- * asks only about the handles a transaction names. A host omits contacts the
- * user has blocked, from the picker and from lookups alike.
+ * reaches the product, and the accounts on the list never cross to the core:
+ * the core asks only about the handles a transaction names. Usernames cross
+ * only through `Self::contact_usernames`, for the game product. A
+ * host omits contacts the user has blocked, from the picker, from lookups and
+ * from usernames alike.
  */
 export interface ContactsPlatform {
   /**
@@ -1797,6 +1851,19 @@ export interface ContactsPlatform {
    * `HostContactPick::NoContacts` instead of drawing an empty overlay.
    */
   pickContact?(product: ProductContext): Promise<HostContactPick>;
+
+  /**
+   * List the dotNS usernames of the unblocked contacts the picker would
+   * offer.
+   *
+   * The core calls this only for the game product, so a host does not
+   * check `product` itself: it says who is asking and is not a filter.
+   * Answer from the contacts the host already holds, without a prompt.
+   * Defaults to `HostContactUsernames::Unsupported`, so a host that lists
+   * nothing gives its products a truthful answer. A JS host passes it with
+   * the other two contacts callbacks, or the whole group counts as absent.
+   */
+  contactUsernames?(product: ProductContext): Promise<HostContactUsernames>;
 }
 
 /**
@@ -1875,13 +1942,20 @@ export interface CoreAdmin {
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
 
   /**
-   * Read this device's X25519 encryption secret, for hosts that run device
-   * sync against the peer's `SessionUiInfo::device_enc_public_key`.
+   * Read this device's X25519 encryption secret, for hosts that encrypt
+   * their own chat and device-sync traffic.
    *
-   * Generated and persisted on first read, so the returned key is stable for
-   * the install and matches the public key peers were told to address.
+   * The key behind `SessionUiInfo::device_enc_public_key`: decrypting with
+   * anything else misses what contacts send. The account holder decides
+   * which key that is. A signing host serves its install-wide key,
+   * generated and persisted on first read. A pairing host serves the key
+   * the wallet registered for it at pairing, ``undefined`` before pairing and
+   * rotated per login like `Self::get_device_statement_key`.
+   *
+   * Deliberately not on `SessionUiInfo`, for the reason given on
+   * `Self::get_session_chat_identity_key`.
    */
-  getDeviceEncryptionKey(): Promise<Bytes32>;
+  getDeviceEncryptionKey(): Promise<Bytes32 | undefined>;
 
   /**
    * Read `product_id`'s hard-subtree public key, so a host can name the
@@ -1941,7 +2015,7 @@ export interface CoreStorage {
 }
 
 /**
- * Host control of the card face drawn above an opened card's Widget.
+ * Host control of the card face drawn under an opened card's Widget.
  *
  * Carried per connection on `ConnectionAdapters`, because the host owns one
  * drawer per product execution. A connection without one tells products
@@ -1949,9 +2023,15 @@ export interface CoreStorage {
  */
 export interface ExpandedCardHost {
   /**
-   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   * Uncover (`true`) or cover (`false`) the face under the calling Widget.
    */
   setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+
+  /**
+   * Turn the card above the calling Widget so its back (`true`) or its
+   * front (`false`) is up.
+   */
+  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardTurnOutcome>;
 }
 
 /**
@@ -2349,6 +2429,18 @@ export interface ProductStorage {
    * Clear a value at a key.
    */
   clear(key: string): Promise<void>;
+
+  /**
+   * Remove every value `product_id` owns. Idempotent.
+   *
+   * The core calls this when it clears the product's state. A host that
+   * keeps one shared store removes every key starting with
+   * `ProductStorageKey::owner_prefix`; a host that separates storage by
+   * product drops that product's store. Values another product wrote stay.
+   * Every subscription to a removed key then sees it empty, as after
+   * `Self::clear`.
+   */
+  clearProduct(productId: ProductId): Promise<void>;
 
   /**
    * Emit `key`'s current value, then each later change from any of the

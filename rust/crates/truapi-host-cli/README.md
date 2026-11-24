@@ -29,6 +29,7 @@ One binary, `truapi-host`:
 | `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
+| `materials` | `resolve` a card face's materials as a phone would: each node loading, ready with its shaders, or drawn plain and why. Checks a material end to end without a phone. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -180,10 +181,10 @@ itself:
 
 That script installs the SDK bridge and the shared `js/container` sandbox
 synchronously. Keep it before application scripts, without `async` or `defer`.
-Updated SDKs use the injected `__HOST_API_CLIENT__` across reconnects. Older SDKs
-can still start through the `__HOST_API_PORT__` adapter but require a page reload
-after a disconnect. SDK calls and sandbox permission checks share one host
-WebSocket and its temporary permissions.
+Updated SDKs build their own client over the injected `__HOST_API_TRANSPORT__`
+and keep it across reconnects. Older SDKs use the `__HOST_API_PORT__` adapter,
+which survives a reconnect too. SDK calls and sandbox permission checks share
+one host WebSocket and its temporary permissions.
 `/script` uses the same fetch and WebSocket permission checks in Bun, and the
 XHR wrapper when that API is available. Dev keeps automatic approvals, and the
 app server handles assets and hot reload. `--app-port` names the development
@@ -813,8 +814,13 @@ Scripts under `js/scripts/` include:
   only execution Pocket is served to. It seeds the in-memory Pocket host from
   `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), so one card is
   removable and one privileged, and records every removal the host is asked for
-  in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
-  host and the product agree rather than resting on the product's word.
+  in `TRUAPI_POCKET_LOG`. As the product connects, the host opens a render
+  stream for each card, as a phone does when a card comes on screen, and closes
+  it when the card is removed. It resolves the materials of every face the
+  product draws, reports each fallback through
+  `Renderer::failure_subscribe`, and records each result in the same transcript.
+  The cases read that transcript, so a pass means the host and the product agree
+  rather than resting on the product's word.
 
   The funding phase builds the host with `--features test-host` and installs
   a scripted funding overlay: each request the product makes is answered with
@@ -832,8 +838,10 @@ Scripts under `js/scripts/` include:
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
-  list so `contacts.pick` has someone to return. An empty spec is an empty list,
-  which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
+  list so `contacts.pick` has someone to return. Each name is also the username
+  `contacts.usernames` serves to the game product, so it is a bare dotNS label
+  such as `alice` or `alice.07`, and the core drops any other name. An empty
+  spec is an empty list, which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
   the picker offers; the approval surface asks about it like any other action,
   so a headless run approves it and an interactive one does not.
 
@@ -979,6 +987,22 @@ Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
 
+## Materials
+
+`truapi-host materials resolve` checks a material the way a phone uses it: fetched
+from Bulletin (or kept from a file), checked, limited and built into shaders by
+the same core:
+
+```sh
+truapi-host materials resolve face.json --out shaders            # fetches from Bulletin
+truapi-host materials resolve face.json --materials ./materials  # keeps local files first
+truapi-host materials resolve face.json --metal --out shaders    # iOS shaders instead of Android's
+```
+
+`face.json` is a card face as the generated client writes a renderer tree, with
+`Materials` nodes naming material IDs. Each line of the output is a node:
+`ready`, `loading`, or `plain` with its reason. See [SPEC.md](SPEC.md#68-top-level-materials).
+
 ## Trinity stacks
 
 `truapi-host stack` publishes and checks the descriptor that tells hosts and
@@ -1013,8 +1037,8 @@ copy was signed with another key (every derived account, or the namespace every
 session is stored under, would change; remove the copy to bundle it on purpose),
 and a built-in network's copy the CLI cannot run on.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
-copy that differs from the one at `--out` only in fields truapi-host does not read
-leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
+copy that differs from the one at `--out` only in fields neither truapi-host nor
+the core reads leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
 has every option.
 
 ## Statement-store allowance

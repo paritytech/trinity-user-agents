@@ -2,6 +2,7 @@
 //! the pallet's storage layout stays in here.
 
 mod chain;
+mod holdings;
 mod oracle;
 mod policy;
 #[cfg(test)]
@@ -13,7 +14,8 @@ use std::sync::Arc;
 
 use subxt::utils::H256;
 
-pub use policy::{TRANSFER_POLICY, TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner};
+pub use holdings::ScarcityHoldings;
+pub use policy::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner};
 #[cfg(test)]
 pub use testing::ASSET_HUB_PIPELINE;
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
@@ -45,16 +47,16 @@ pub struct ScarcityTransfersDeps {
 	pub extrinsics: Arc<ExtrinsicService>,
 }
 
-/// `registry` with the NFT domain, whose transfers the Scarcity oracle decides
-/// and the transfer policy builds.
+/// `registry` with the NFT domain on Asset Hub, whose transfers the Scarcity
+/// oracle decides and the transfer policy builds.
 pub fn with_scarcity_transfers(
 	registry: DurableRegistry,
 	deps: ScarcityTransfersDeps,
 ) -> DurableRegistry {
 	let ScarcityTransfersDeps { storage, heads, genesis, signer, imported, extrinsics } = deps;
 	let chain = Arc::new(ScarcityStorage::new(storage, heads, genesis));
-	let oracle = Arc::new(ScarcityTransferOracle::new(chain.clone(), genesis));
+	let oracle = Arc::new(ScarcityTransferOracle::new(chain.clone()));
 	let policy_deps = ScarcityTransferPolicyDeps { chain, signer, imported, extrinsics, genesis };
 	let policy = ScarcityTransferPolicy::new(policy_deps);
-	registry.with_domain(nft_domain(), oracle).with_policy(Arc::new(policy))
+	registry.with_domain(nft_domain(), genesis, oracle, Arc::new(policy))
 }

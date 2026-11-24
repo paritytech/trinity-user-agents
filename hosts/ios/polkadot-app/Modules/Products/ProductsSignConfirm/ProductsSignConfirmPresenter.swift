@@ -33,7 +33,12 @@ extension ProductsSignConfirmPresenter: PolkadotSigningPresenterProtocol {
         guard model != nil else {
             return
         }
-        wireframe.hide(view: view, decision: true)
+        wireframe.authorize(animated: true, retriable: false) { [weak self] isAuthorized in
+            guard isAuthorized, let self else {
+                return
+            }
+            wireframe.hide(view: view, decision: true)
+        }
     }
 
     func cancel() {

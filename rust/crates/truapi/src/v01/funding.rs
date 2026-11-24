@@ -4,8 +4,10 @@ use parity_scale_codec::{Decode, Encode};
 /// and everything outside it.
 ///
 /// Parses from the name a Worker manifest's route `directions` use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[derive(
+	Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString, strum::IntoStaticStr,
+)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingDirection {
 	/// Value moves in, credited to the user's balance.
 	#[codec(index = 0)]
@@ -20,8 +22,9 @@ pub enum FundingDirection {
 ///
 /// Carries an outcome, never a rule, so a client renders these without holding
 /// any part of the operator's compliance logic.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingFailure {
 	/// Not offered in the user's market.
 	#[codec(index = 0)]
@@ -122,7 +125,7 @@ pub struct HostFundingStatusSubscribeRequest {
 /// they left it under the user's authorization, and says nothing about the
 /// off-chain leg: no host can verify that cash reached a bank.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostFundingStatusSubscribeItem {
 	/// In flight. The host draws its steps; a product only waits for the end.
 	#[codec(index = 0)]

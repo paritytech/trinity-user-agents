@@ -41,5 +41,6 @@ class ChatDisplayGenerator @Inject constructor(
     private fun ChatAvatar.letter(): ChatAvatar.Account? = when (this) {
         is ChatAvatar.Account -> this
         is ChatAvatar.Url -> placeholder
+        is ChatAvatar.PublicProfile -> placeholder
     }
 }

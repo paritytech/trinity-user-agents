@@ -50,6 +50,7 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
         super.viewDidLoad()
         addHandlers()
         setupOpeningIndicator()
+        setContentScrollView(rootView.collectionView, for: .top)
 
         presenter.setup()
     }

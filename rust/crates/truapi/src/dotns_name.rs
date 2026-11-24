@@ -1,6 +1,5 @@
 //! The names dotNS can register: its top-level domains and its label syntax.
 
-#[cfg(feature = "runtime")]
 use unicode_normalization::UnicodeNormalization;
 
 /// Top-level domains dotNS registers names under, one per network a host can
@@ -31,7 +30,6 @@ pub fn is_dns_label(value: &str) -> bool {
 /// `url` already applies IDNA to parsed hosts), with a trailing root dot
 /// dropped so the absolute form `example.dot.` keys identically to
 /// `example.dot`.
-#[cfg(feature = "runtime")]
 pub fn normalize_host(host: &str) -> String {
 	let normalized: String = host.nfc().collect::<String>().to_lowercase();
 	normalized.strip_suffix('.').unwrap_or(&normalized).to_string()

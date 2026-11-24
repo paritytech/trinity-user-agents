@@ -350,24 +350,21 @@ struct RendererNodeMappingTests {
         #expect(radius == 0)
     }
 
-    /// The effect is a shader drawn over whatever is inside it, so the node has
-    /// to survive the mapping with its children under it: no node leaves the
-    /// shader unapplied, no children leave it nothing to draw over.
-    @Test func anEffectKeepsItsChildrenAndItsOwnNode() throws {
-        let effect = RendererNode.effect(
-            props: EffectProps(effect: .rainbow),
+    @Test func materialsDrawTheirChildrenPlain() throws {
+        let materials = RendererNode.materials(
+            props: MaterialsProps(layers: []),
             children: [
                 .text(modifiers: [], props: TextProps(style: nil, color: nil), children: [.string(text: "kept")])
             ]
         )
 
-        guard case let .effect(props, children) = try #require(effect.toWidgetNode(resolver: resolver)).content,
+        guard case let .box(props, children) = try #require(materials.toWidgetNode(resolver: resolver)).content,
               case let .text(textProps) = children.first?.content
         else {
-            Issue.record("an effect should keep both its own node and its children")
+            Issue.record("a materials node should draw as a box around its children")
             return
         }
-        #expect(props.effect == .rainbow)
+        #expect(props.alignment == .topLeading)
         #expect(textProps.text == "kept")
     }
 }

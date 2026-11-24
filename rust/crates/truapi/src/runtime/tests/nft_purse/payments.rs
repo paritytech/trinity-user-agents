@@ -25,7 +25,10 @@ type OneTimePayments = Subscription<
 	CallError<HostNftPurseListenOneTimePaymentError>,
 >;
 
-fn listen_one_time(host: &ProductRuntimeHost, key: v01::NftPurseReceiveKey) -> OneTimePayments {
+fn listen_one_time(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+	key: v01::NftPurseReceiveKey,
+) -> OneTimePayments {
 	let request = v01::HostNftPurseListenOneTimePaymentRequest { key };
 	let request = HostNftPurseListenOneTimePaymentRequest::V1(request);
 	block_on(host.listen_one_time_payment(&CallContext::default(), request))
@@ -150,7 +153,7 @@ type InboxPayments = Subscription<
 
 const INBOX_DOMAIN: [u8; 32] = [3; 32];
 
-fn listen_inbox(host: &ProductRuntimeHost) -> InboxPayments {
+fn listen_inbox(host: &ProductRuntimeHost<RemoteAccountHolder>) -> InboxPayments {
 	let request = v01::HostNftPurseListenPaymentInboxRequest { inbox_domain: INBOX_DOMAIN };
 	let request = HostNftPurseListenPaymentInboxRequest::V1(request);
 	block_on(host.listen_payment_inbox(&CallContext::default(), request))

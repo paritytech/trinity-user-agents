@@ -12,16 +12,15 @@ public extension ChatCallMessageConfiguration {
             callType: callType,
             direction: .incoming,
             state: state,
+            statusConfiguration: statusConfiguration,
             onTap: onTap
         )
         return ChatMessageContainerConfiguration(
             innerContent: configuration,
             side: .leading,
             bubbleColor: .bgSurfaceContainer,
-            statusConfiguration: statusConfiguration,
             canReply: false,
             contentInsets: .zero,
-            statusViewInsets: .init(bottom: DSSpacings.extraSmall, right: DSSpacings.small),
             identifier: ChatCallMessageConfiguration.defaultReuseIdentifier
         )
     }
@@ -36,16 +35,15 @@ public extension ChatCallMessageConfiguration {
             callType: callType,
             direction: .outgoing,
             state: state,
+            statusConfiguration: statusConfiguration,
             onTap: onTap
         )
         return ChatMessageContainerConfiguration(
             innerContent: configuration,
             side: .trailing,
             bubbleColor: .bgSurfaceContainerInverted,
-            statusConfiguration: statusConfiguration,
             canReply: false,
             contentInsets: .zero,
-            statusViewInsets: .init(bottom: DSSpacings.extraSmall, right: DSSpacings.small),
             identifier: ChatCallMessageConfiguration.defaultReuseIdentifier
         )
     }

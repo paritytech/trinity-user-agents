@@ -10,9 +10,12 @@
 
 pluginManagement {
     repositories {
-        gradlePluginPortal()
         google()
-        mavenCentral()
+        // Google's mirror of Maven Central. Central rate limits by IP, which CI
+        // runners share.
+        maven("https://maven-central.storage-download.googleapis.com/maven2/")
+        // Last, since it redirects what it does not host to Maven Central.
+        gradlePluginPortal()
     }
 }
 
@@ -20,7 +23,9 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
-        mavenCentral()
+        // Google's mirror of Maven Central. Central rate limits by IP, which CI
+        // runners share.
+        maven("https://maven-central.storage-download.googleapis.com/maven2/")
     }
 }
 

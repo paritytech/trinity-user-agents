@@ -194,7 +194,7 @@ sealed interface ChatMessageUiModel {
         val chatId: ChatId,
     ) : ChatMessageUiModel
 
-    enum class Status { PENDING, SENT, READ, FAILED }
+    enum class Status { PENDING, SENT, DELIVERED, SEEN, FAILED }
     enum class Direction { INCOMING, OUTGOING }
 
     data class Reaction(val count: Int, val emoji: String, val reactedByUser: Boolean)
@@ -249,7 +249,7 @@ sealed class MessagePopUpUiState {
 }
 
 fun ChatMessageUiModel.isUnread(): Boolean {
-    return direction == ChatMessageUiModel.Direction.INCOMING && status != ChatMessageUiModel.Status.READ
+    return direction == ChatMessageUiModel.Direction.INCOMING && status != ChatMessageUiModel.Status.SEEN
 }
 
 fun ChatMessageUiModel.isOutgoing(): Boolean {

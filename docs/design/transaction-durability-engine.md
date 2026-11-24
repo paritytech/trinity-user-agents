@@ -13,18 +13,18 @@ The transaction durability engine is a general-purpose component that takes over
 1. **Low-latency, best-effort submission**: the engine submits a received transaction with `submit_and_watch` and tracks its status through the subscription whenever possible. In the best case, this is enough to follow the transaction all the way to finalization.
 2. **Guaranteed recovery**: if something goes wrong in (1), the engine hands tracking over to a recovery layer. This layer combines transaction-specific knowledge, mortality and block search to determine the transaction's status with certainty.
 
-On top of that, the engine offers higher-level features such as transaction grouping, retries and scheduled transactions. The sections below cover the main concepts of the design, the individual features, and how they can be useful.
+On top of that, the engine offers higher-level features such as transaction grouping, retries and deferred transactions. The sections below cover the main concepts of the design, the individual features, and how they can be useful.
 
 ### Transactions
 
-The engine does not construct or sign transactions itself. It accepts either a presigned transaction or a scheduled one, which a consumer-provided submission policy builds later:
+The engine does not construct or sign transactions itself. It accepts either a presigned transaction or a deferred one, which a consumer-provided submission policy builds later:
 
 ```rust
 enum RequestedTransactions {
     /// Signed already: recorded as pending and broadcast once committed.
     Presigned(Vec<DurableSubmission>),
-    /// Built later, each through its plan.
-    Scheduled(Vec<SubmissionPlan>),
+    /// Built later, each from its params once its dependencies released it.
+    Deferred(Vec<DeferredSubmission>),
 }
 
 pub struct DurableSubmission {
@@ -35,14 +35,12 @@ pub struct DurableSubmission {
 }
 
 pub struct SubmissionPlan {
-    /// The registered policy that builds it.
-    pub policy: PolicyId,
-    /// Opaque bytes, interpreted by the policy.
+    /// Opaque bytes, interpreted by the domain's policy.
     pub params: PolicyParams,
 }
 ```
 
-Use `Presigned` when the consumer can build the transaction before registering it with the engine. Use `Scheduled` when building it is costly and has to happen asynchronously, through a `SubmissionPolicy`. The same policy handles both scheduled submission and retries; see [Submission policies](#submission-policies).
+Use `Presigned` when the consumer can build the transaction before registering it with the engine. Use `Deferred` when building it is costly and has to happen asynchronously, through a `SubmissionPolicy`. The same policy handles both deferred submission and retries; see [Submission policies](#submission-policies).
 
 The engine accepts only **mortal** transactions. Mortality is what lets it declare a transaction failed: if its inclusion cannot be observed on chain within the mortality window, it never can be.
 
@@ -71,7 +69,8 @@ pub enum DurableTxFailureKind {
     DispatchFailed,
     /// The node refused it before it reached the pool.
     Rejected,
-    /// It waited to be built and its policy will never build it.
+    /// It will never take effect: its policy gave up building it, or a
+    /// dependency it cascades from failed.
     Abandoned,
 }
 ```
@@ -81,16 +80,17 @@ The diagram below shows the main transitions:
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> PendingSubmission: scheduled
+    [*] --> PendingSubmission: deferred
     [*] --> Pending: presigned
     PendingSubmission --> Pending: policy built an attempt
-    PendingSubmission --> Failure: policy gave up
+    PendingSubmission --> Failure: policy gave up, or a cascading dependency failed
     Pending --> PendingSuccess: took effect at a best block
     PendingSuccess --> Pending: reorg removed that block
     PendingSuccess --> FinalizedSuccess: block finalized
     Pending --> FinalizedSuccess: found in a finalized block
-    Pending --> PendingSubmission: failed, policy retries
-    Pending --> Failure: expired, dispatch failed or rejected
+    Pending --> PendingSubmission: failed, a dependency has not taken effect or policy retries
+    Pending --> Failure: expired, dispatch failed or rejected, or a cascading dependency failed
+    PendingSuccess --> Failure: a cascading dependency failed
     FinalizedSuccess --> [*]
     Failure --> [*]
 ```
@@ -102,11 +102,11 @@ The engine is built on ACID storage. Any such database would work; we use SQLite
 More importantly, consumers can run their own logic as part of the engine's registration transaction:
 
 ```rust
-pub async fn execute_with<T, F>(
+pub async fn execute_with<T, E, F>(
     self: &Arc<Self>,
-    request: DurableRequest,
+    request: DurableRequest<E>,
     on_register: F, // Consumers can run additional logic here
-) -> Result<(Vec<DurableTxId>, T), RegistrationError>
+) -> Result<(Vec<DurableTxId>, T), RegistrationError<E>>
 ```
 
 This makes the engine highly composable. For example, a coinage service built on top of the engine can record its own state (inputs and outputs) in the same registration transaction, check its UTXO invariants, and roll the whole registration back if one is violated.
@@ -147,13 +147,10 @@ Transaction mortality and block inclusion alone can drive a transaction to a ter
 ```rust
 #[async_trait::async_trait]
 pub trait CompletionOracle: Send + Sync {
-    fn chain(&self) -> H256;
-
     // Prefetch all the data this oracle needs for the given batch of `transactions`
     async fn open_pass(
         &self,
         transactions: &[DurableTxEntry],
-        ledger: &LedgerView,
         heads: &Heads,
     ) -> Result<Box<dyn PassScope>, RuntimeFailure>;
 }
@@ -170,18 +167,16 @@ pub trait PassScope: Send + Sync {
 }
 ```
 
-The oracle works on batches of transactions so that consumers can read efficiently in bulk, for example when the side effects are storage entries.
+The oracle works on batches of transactions so that consumers can read efficiently in bulk, for example when the side effects are storage entries. A recovery pass calls `open_pass` once per domain, with the domain's undecided transactions that no watch follows. An oracle whose answers depend on other transactions of its domain resolves those dependencies among the transactions it is given; one decided only later in the pass is taken into account on the next pass.
 
 `proven_completed` and `proven_not_completed` are separate methods because the oracle's answer has three possible values: completed, not completed, or unknown.
 
 ### Submission policies
 
-A submission policy is the mechanism for both scheduled submission and retries: it tells the engine exactly how to build a transaction whenever the engine needs to build or rebuild one:
+A submission policy is the mechanism for both deferred submission and retries: it tells the engine exactly how to build a transaction whenever the engine needs to build or rebuild one:
 
 ```rust
 pub trait SubmissionPolicy: Send + Sync {
-    fn id(&self) -> PolicyId;
-
     fn can_retry(
         &self,
         entry: &DurableTxEntry,
@@ -191,7 +186,7 @@ pub trait SubmissionPolicy: Send + Sync {
 
     async fn prepare(
         &self,
-        batch: &[ScheduledDurableTx],
+        batch: &[DeferredDurableTx],
     ) -> Result<HashMap<DurableTxId, Preparation>, PolicyError>;
 }
 
@@ -201,11 +196,42 @@ pub enum Preparation {
 }
 ```
 
-`can_retry` and `prepare` are separate because `can_retry` runs on the verdict path, before the engine writes a `Failure`. A transaction that can be retried therefore moves straight to `PendingSubmission`, without briefly showing `Failure`. It is a plain function so that it decides from what it is given and never waits on the chain. It is only asked about a submitted attempt's failure (`VerdictFailureKind`: expired, dispatch failed or rejected), never about an abandoned transaction.
+`can_retry` and `prepare` are separate because `can_retry` runs on the verdict path, before the engine writes a `Failure`. A transaction that can be retried therefore moves straight to `PendingSubmission`, without briefly showing `Failure`. It is a plain function so that it decides from what it is given and never waits on the chain. It is only asked about a submitted attempt's failure (`VerdictFailureKind`: expired, dispatch failed or rejected), never about an abandoned transaction, and not while one of the transaction's dependencies has not taken effect (see [Dependencies](#dependencies)).
 
 `prepare`, on the other hand, may take as long as it needs to build a transaction and wait until it is actually valid. For example, a policy that builds a ring-VRF proof might wait in `prepare` until the account is included in the ring.
 
 `prepare` can also return `GiveUp`, which abandons the transaction and marks it as `Failure(Abandoned)`.
+
+### Dependencies
+
+A deferred transaction can wait for other transactions. Each `DeferredSubmission` names its dependencies, and each dependency says what its failure does to the dependent:
+
+```rust
+pub struct DeferredSubmission {
+    pub params: PolicyParams,
+    pub depends_on: Vec<TransactionDependency>,
+}
+
+pub struct TransactionDependency {
+    pub id: DurableTxId,
+    pub on_failure: OnDependencyFailure,
+}
+
+pub enum OnDependencyFailure {
+    /// The default. The dependent is left to its policy.
+    Ignore,
+    /// The dependent fails as `Abandoned`, unless it is already final.
+    Cascade,
+}
+```
+
+A dependency names a transaction already registered, on the same chain, in a domain the engine serves; registration refuses anything else. Composing transactions of two domains therefore takes two registrations: the dependency first, then the dependent with the ids it returned. Only deferred transactions take dependencies, because a presigned one is broadcast at once. The ledger keeps them in `durable_tx_dependency`, where a dependency is always older than its dependent, so no cycle can be stored.
+
+A dependent waits in `PendingSubmission` and is not handed to its policy while a dependency is `PendingSubmission` or `Pending`. It is released once every dependency is `PendingSuccess` or `FinalizedSuccess`, or failed with `Ignore`. A success at the best block is enough because the node checks a transaction against the best block, where the dependency already holds. On one chain, a block that includes the dependent also includes the dependency among its ancestors, so a reorg that drops the dependency drops the dependent too. Each row `prepare` is handed lists its dependencies as `Success` or `IgnoredFailure`, so a policy can give up at once when the one it needed failed.
+
+`Cascade` says the consumer is sure the dependent cannot take effect without its dependency. When such a dependency fails, the end of the next recovery pass fails the dependent as `Abandoned`, together with everything that cascades from it. This holds whether the dependent still waits to be built, was submitted, or took effect at a block that is not finalized: a block that includes it without its dependency will be reorged out, or the dependency was marked wrongly. Only a dependent that is already final keeps its status. Use `Ignore` whenever the dependent might still take effect without the dependency.
+
+A reorg can drop a dependency after its dependent was built. The dependent then goes back to `Pending`, and its attempt eventually expires. A failure written while a dependency is `PendingSubmission` or `Pending` sends the dependent back to `PendingSubmission` without asking `can_retry`, since the missing dependency caused it. It is built again, counting as an attempt, once the dependency takes effect again.
 
 ### Scoping and grouping
 
@@ -214,6 +240,8 @@ The engine offers consumers two ways to organize transactions.
 #### Domains
 
 A domain, identified by a `DomainId`, separates features from each other, so one generic engine can serve transactions from completely unrelated features. For example, Coinage has its own domain and NFTs have another.
+
+The engine is created from a `DurableRegistry` with one entry per domain: its name, the genesis hash of the chain it lives on, its completion oracle and its one submission policy. Every plan of a domain is built by that policy, so a row stores only its params. A domain that needs several kinds of transaction branches on a field of its params, or uses separate groups or domains. A domain that never defers or retries registers a policy that never builds.
 
 #### Groups
 

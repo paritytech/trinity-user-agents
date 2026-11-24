@@ -10,6 +10,7 @@ import { createClient, createTransport } from "@parity/truapi";
 import { createMockHost, mockRuntimeConfig } from "./web/create-mock-host.js";
 import { createWebWorkerPairingHostRuntime } from "./web/index.js";
 import { DEV_ACCOUNTS } from "./testing/dev-accounts.js";
+import { bundledTestStack } from "./test-support.js";
 import { wasmIsBuilt } from "./testing/require-wasm.js";
 
 const wasmUrl = new URL(
@@ -54,20 +55,40 @@ suite("worker serving a signing host", () => {
       );
     await import("./worker-runtime.js");
 
-    const { productId, ...hostConfig } = mockRuntimeConfig();
+    // A bundled stack rather than `testStack`, so building the runtime reads
+    // the stack record through the main thread before the worker is ready.
+    const { productId, testStack: _testStack, ...config } = mockRuntimeConfig();
+    const hostConfig = { ...config, stack: bundledTestStack() };
     const host = createMockHost();
+    const coreStorageReads: string[] = [];
+    const { coreStorage } = host.callbacks;
     const runtime = await createWebWorkerPairingHostRuntime(
       worker as unknown as Worker,
       {
         ...host.callbacks,
+        coreStorage: {
+          ...coreStorage,
+          readCoreStorage: (key) => {
+            coreStorageReads.push(key.tag);
+            return coreStorage.readCoreStorage(key);
+          },
+        },
         // The browser has blocked every device capability for this origin.
         permissionStatus: { devicePermissionStatus: async () => "Denied" },
       },
       { hostConfig: hostConfig as never, role: "signing" },
     );
+    const readsBeforeReady = [...coreStorageReads];
     await runtime.activateLocalSession(DEV_ACCOUNTS.alice);
-    return { runtime, host, productId };
+    return { runtime, host, productId, readsBeforeReady };
   }
+
+  it("answers the stack record read before the worker is ready", async () => {
+    // The core reads its stored stack while it is built, so the main thread
+    // has to serve host calls before `ready`, or `init` waits out its timeout.
+    const { readsBeforeReady } = await signingHost();
+    expect(readsBeforeReady).toContain("StackRecord");
+  });
 
   it("reads stored permissions through the browser's device gate", async () => {
     // A host mounting a product reads these first to build the iframe `allow`
@@ -102,13 +123,21 @@ suite("worker serving a signing host", () => {
     try {
       const client = createClient(createTransport(provider));
       const created = await client.chat.createRoom({
-        roomId: "lobby",
+        roomIdSource: "lobby",
         name: "Lobby",
         icon: "",
+        config: {
+          productSource: false,
+          reactionDetails: false,
+          reportSeen: false,
+        },
       });
-      expect(created._unsafeUnwrap()).toEqual({ status: "New" });
+      const { status, roomId } = created._unsafeUnwrap();
+      expect(status).toBe("New");
+      // The core makes the id, and the host stores the room under it.
+      expect(roomId).toMatch(/^0x[0-9a-f]{64}$/);
       expect(host.getChatRooms()).toEqual([
-        { roomId: "lobby", participatingAs: "RoomHost" },
+        { roomId, participatingAs: "RoomHost" },
       ]);
     } finally {
       provider.dispose();

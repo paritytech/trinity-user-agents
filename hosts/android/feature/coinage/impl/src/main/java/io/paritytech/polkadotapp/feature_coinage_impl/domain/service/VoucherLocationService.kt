@@ -5,9 +5,11 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.common.data.cache.CacheableDataConsistency
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
+import io.paritytech.polkadotapp.common.utils.exponentialRetryDelay
 import io.paritytech.polkadotapp.common.utils.getOrEmpty
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapToSet
+import io.paritytech.polkadotapp.common.utils.resubscribingOnFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstanceId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher
@@ -40,11 +42,15 @@ import kotlinx.coroutines.flow.onEach
 import javax.inject.Inject
 import kotlin.collections.component1
 import kotlin.collections.component2
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 private typealias VoucherKey = Pair<RingCollectionId, BandersnatchPublicKey>
 private typealias VoucherPositions = Map<VoucherKey, RingPosition?>
 private typealias RingStatuses = Map<RingCollectionIdWithIndex, RingStatus?>
 private typealias UnloadedCounts = Map<RecyclerKey, Int>
+
+internal val READ_RESUBSCRIBE_DELAY = exponentialRetryDelay(initialDelay = 1.seconds, maxDelay = 1.minutes)
 
 class VoucherLocationService @Inject constructor(
     @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
@@ -96,14 +102,16 @@ class VoucherLocationService @Inject constructor(
             .filterNotNull()
     }
 
+    /** Null on a failed read: an empty map is the real answer "no ring holds any of these vouchers". */
     private fun subscribeRingStatusesFor(
         chainId: ChainId,
         positions: VoucherPositions,
-    ): Flow<RingStatuses> {
+    ): Flow<RingStatuses?> {
         val ringKeys = positions.distinctRingStatusKeys()
 
         return membersRepository.subscribeRingStatuses(chainId, ringKeys)
-            .map { it.logFailure("Can't fetch ring statuses for voucher locations").getOrEmpty() }
+            .resubscribingOnFailure(READ_RESUBSCRIBE_DELAY)
+            .map { it.logFailure("Can't fetch ring statuses for voucher locations").getOrNull() }
     }
 
     /**
@@ -120,8 +128,8 @@ class VoucherLocationService @Inject constructor(
     ): Flow<UnloadedCounts?> {
         // Deduplicated per ring: the positions are per voucher, and many vouchers share one recycler.
         val recyclerKeys = located.positions.distinctRingStatusKeys().map { it.toRecyclerKey() }
-
         return voucherRepository.subscribeUnloadedCounts(chainId, located.instanceId, recyclerKeys)
+            .resubscribingOnFailure(READ_RESUBSCRIBE_DELAY)
             .map { it.logFailure("Can't fetch unloaded counts for recyclers").getOrNull() }
     }
 
@@ -145,7 +153,7 @@ class VoucherLocationService @Inject constructor(
             .getOrNull()
             ?: return emptyMap()
 
-        val vouchers = resolveVouchersInRecycler(keysPerPage)
+        val vouchers = ringStatuses?.let { resolveVouchersInRecycler(it, keysPerPage) }.orEmpty()
         if (vouchers.isEmpty()) return emptyMap()
 
         val capacities = ringCapacityProvider.capacitiesFor(vouchers.mapToSet { it.recyclerKey.exponent })
@@ -154,27 +162,32 @@ class VoucherLocationService @Inject constructor(
 
         return vouchers.associate { voucher ->
             val capacity = capacities[voucher.recyclerKey.exponent]
-            val unloaded = unloadedCounts?.get(voucher.recyclerKey) ?: 0
+            val unloaded = voucher.location.recyclerUnloaded
             val included = voucher.location.recyclerMembers
 
-            // Both inputs or neither: a fungibility computed from a guessed capacity or a guessed unloaded
-            // count would be a number the user reads as privacy they do not have. Null leaves whatever is
-            // stored standing, and the next tick with both reads in hand replaces it.
-            val readable = capacity != null && unloadedCounts != null
+            // A fungibility computed from a guessed input would read to the user as privacy they do not have.
+            val readable = capacity != null && unloaded != null
 
             voucher.publicKey to VoucherRecyclerUpdate(
                 location = voucher.location,
-                recyclerFungibility = capacity.takeIf { readable }?.let {
-                    RecyclerFungibilityCalculator.fungibility(it, included, unloaded)
+                recyclerFungibility = if (readable) {
+                    RecyclerFungibilityCalculator.fungibility(capacity, included, unloaded)
+                } else {
+                    null
                 },
-                maxRecyclerFungibility = capacity.takeIf { readable }?.let {
-                    RecyclerFungibilityCalculator.maxFungibility(it, included, unloaded)
+                maxRecyclerFungibility = if (readable) {
+                    RecyclerFungibilityCalculator.maxFungibility(capacity, included, unloaded)
+                } else {
+                    null
                 },
             )
         }
     }
 
-    private fun RingReadings.resolveVouchersInRecycler(keysPerPage: Int): List<VoucherInRecycler> {
+    private fun RingReadings.resolveVouchersInRecycler(
+        ringStatuses: RingStatuses,
+        keysPerPage: Int,
+    ): List<VoucherInRecycler> {
         return located.positions.mapNotNull { (voucherKey, voucherPosition) ->
             val position = voucherPosition?.includedOrNull() ?: return@mapNotNull null
             val ringStatusKey = voucherKey.first to position.ringIndex
@@ -182,15 +195,17 @@ class VoucherLocationService @Inject constructor(
 
             if (!ringStatus.includesKey(position, keysPerPage)) return@mapNotNull null
 
+            val recyclerKey = ringStatusKey.toRecyclerKey()
             VoucherInRecycler(
                 publicKey = voucherKey.second,
-                recyclerKey = ringStatusKey.toRecyclerKey(),
+                recyclerKey = recyclerKey,
                 // included, not total: a proof only verifies against the keys baked into the ring root, so
                 // that is the set this voucher actually hides in.
                 location = RecyclerVoucher.Location.InRecycler(
                     recyclerIndex = position.ringIndex,
                     recyclerMembers = ringStatus.included,
-                    enteredAt = timeProvider.now()
+                    enteredAt = timeProvider.now(),
+                    recyclerUnloaded = unloadedCounts?.let { it[recyclerKey] ?: 0 },
                 ),
             )
         }
@@ -204,7 +219,8 @@ class VoucherLocationService @Inject constructor(
 
     private class RingReadings(
         val located: LocatedVouchers,
-        val ringStatuses: RingStatuses,
+        /** Null when the ring-status read failed — see [subscribeRingStatusesFor]. */
+        val ringStatuses: RingStatuses?,
         /** Null when the unloaded-count read failed — see [subscribeUnloadedCountsFor]. */
         val unloadedCounts: UnloadedCounts?,
     )

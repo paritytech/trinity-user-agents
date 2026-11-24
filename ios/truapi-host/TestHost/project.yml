@@ -35,7 +35,10 @@ targets:
   NetworkPermissionTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [../Tests]
+    sources:
+      - ../Tests
+      - path: ../../../js/container/dist/truapi-test-sdk.js
+        buildPhase: resources
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: io.parity.truapi.network-permission-tests
     dependencies:

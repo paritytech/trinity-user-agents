@@ -7,6 +7,7 @@
 use crate::{
 	dotns_name::normalize_host,
 	platform::{ProductId, has_dotns_tld, normalize_chat_identifier},
+	product_id::PRODUCT_SHARE_SUFFIX,
 };
 use url::{Url, form_urlencoded};
 
@@ -16,9 +17,6 @@ pub const APP_SCHEME: &str = "polkadotapp";
 
 /// The internal URL scheme under which hosts serve product content.
 pub const PRODUCT_SCHEME: &str = "polkadot";
-
-/// Public share hosts append this suffix to a complete dotNS identity.
-pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
 const HTTP_SCHEME: &str = "http";
 const HTTPS_SCHEME: &str = "https";
