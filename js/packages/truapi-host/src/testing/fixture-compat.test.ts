@@ -1,4 +1,5 @@
 import { asProductId } from "@parity/truapi";
+import { hexToBytes } from "@parity/truapi/scale";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,11 @@ import {
 import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 import { PASEO_ASSET_HUB, LIVE_CHAINS } from "./dev-accounts.js";
-import { MOCK_GENESIS, mockTestStack } from "../web/create-mock-host.js";
+import {
+  MOCK_GENESIS,
+  mockTestStack,
+  withChainsGeneration,
+} from "../web/create-mock-host.js";
 import { stackGenesisHashes } from "./networks.js";
 
 const SAMPLE_CHAIN = {
@@ -110,6 +115,35 @@ describe("host-api-test-sdk option compatibility", () => {
       generationOf([]),
       generationOf([mockPeople]),
     ]).toEqual([live, live, "mock", "mock"]);
+  });
+
+  it("names a stack's generation after its chains, however a hash is written", () => {
+    // A genesis hash may be hex with or without `0x`, or bytes. None of them
+    // may make the same chains another run, or take a stack on the mock
+    // chains off the mock stack's generation.
+    const writings = [
+      (hash: string) => hash,
+      (hash: string) => hash.slice(2),
+      (hash: string) => hexToBytes(hash),
+    ];
+    const generationOf = (people: string) =>
+      writings.map(
+        (write) =>
+          withChainsGeneration({
+            ...mockTestStack(),
+            people: { genesisHash: write(people) },
+            bulletin: { genesisHash: write(MOCK_GENESIS.bulletin) },
+            assetHub: { genesisHash: write(MOCK_GENESIS.assetHub) },
+          }).generation,
+      );
+    const replaced = `0x${"44".repeat(32)}`;
+    const live = `none:${MOCK_GENESIS.assetHub}:${replaced}:${MOCK_GENESIS.bulletin}`;
+    expect([generationOf(MOCK_GENESIS.people), generationOf(replaced)]).toEqual(
+      [
+        ["mock", "mock", "mock"],
+        [live, live, live],
+      ],
+    );
   });
 
   it("rejects a pinned product account, and says why", () => {
