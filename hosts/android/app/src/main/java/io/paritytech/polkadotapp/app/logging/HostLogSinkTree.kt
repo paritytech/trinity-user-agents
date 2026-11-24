@@ -7,8 +7,10 @@ import javax.inject.Inject
 
 /**
  * Forwards `truapi.*` lines at info and above to the [HostLogSink], at most [LINES_PER_WINDOW] per tag
- * in each [WINDOW_MS] window. The first line after a window that dropped lines is preceded by one line
- * that counts them, so a product or connection stuck in a loop costs a bounded number of lines.
+ * in each [WINDOW_MS] window. A `truapi.core` line counts against its marker rather than the whole tag,
+ * so one noisy marker cannot hide the others. The first line after a window that dropped lines is
+ * preceded by one line that counts them, so a product or connection stuck in a loop sends at most that
+ * many lines a minute.
  */
 class HostLogSinkTree internal constructor(
     private val sink: HostLogSink,
@@ -29,9 +31,10 @@ class HostLogSinkTree internal constructor(
 
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
         val name = tag.orEmpty()
+        val key = windowKey(name, message)
         val dropped = synchronized(windows) {
             val now = nowMs()
-            val window = windows.getOrPut(name) { Window(now) }
+            val window = windows.getOrPut(key) { Window(now) }
             var closedWithDrops = 0
             if (now - window.startMs >= WINDOW_MS) {
                 closedWithDrops = window.dropped
@@ -50,15 +53,23 @@ class HostLogSinkTree internal constructor(
             sink.log(
                 Log.WARN,
                 name,
-                "$dropped $name lines dropped over the limit of $LINES_PER_WINDOW a minute",
+                "$dropped $key lines dropped over the limit of $LINES_PER_WINDOW a minute",
                 mapOf(DROPPED_ATTRIBUTE to dropped),
             )
         }
         sink.log(priority, name, message, emptyMap())
     }
 
+    private fun windowKey(tag: String, message: String): String {
+        if (tag != CORE_TAG) return tag
+        val markerEnd = message.indexOf(MARKER_SEPARATOR)
+        return if (markerEnd > 0) "$tag ${message.substring(0, markerEnd)}" else tag
+    }
+
     internal companion object {
         const val TAG_PREFIX = "truapi."
+        const val CORE_TAG = "truapi.core"
+        const val MARKER_SEPARATOR = ": "
         const val LINES_PER_WINDOW = 60
         const val WINDOW_MS = 60_000L
         const val DROPPED_ATTRIBUTE = "dropped"

@@ -80,6 +80,33 @@ class HostLogSinkTreeTest {
     }
 
     @Test
+    fun `each core marker has its own window`() {
+        var now = 0L
+        Timber.uprootAll()
+        Timber.plant(HostLogSinkTree(sink) { now })
+        val limit = HostLogSinkTree.LINES_PER_WINDOW
+
+        repeat(limit + 10) { Timber.tag("truapi.core").w("truapi.tracing.warn: chain call failed %d", it) }
+        Timber.tag("truapi.core").w("truapi.chain.follow_budget_reached: c1:product open 4s")
+
+        verify(exactly = 1) {
+            sink.log(Log.WARN, "truapi.core", "truapi.chain.follow_budget_reached: c1:product open 4s", emptyMap())
+        }
+
+        now += HostLogSinkTree.WINDOW_MS
+        Timber.tag("truapi.core").w("truapi.tracing.warn: chain call failed again")
+
+        verify(exactly = 1) {
+            sink.log(
+                Log.WARN,
+                "truapi.core",
+                "10 truapi.core truapi.tracing.warn lines dropped over the limit of $limit a minute",
+                mapOf(HostLogSinkTree.DROPPED_ATTRIBUTE to 10),
+            )
+        }
+    }
+
+    @Test
     fun `a window that dropped nothing sends no count`() {
         var now = 0L
         Timber.uprootAll()
