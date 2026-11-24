@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
@@ -72,7 +73,8 @@ fun JsWidgetRenderer(
     modifier: Modifier = Modifier,
     jsEventHandler: JsUiEventHandler,
 ) {
-    CompositionLocalProvider(LocalJsEventHandler provides jsEventHandler) {
+    val places = remember { GesturePanPlaces() }
+    CompositionLocalProvider(LocalJsEventHandler provides jsEventHandler, LocalGesturePanPlaces provides places) {
         JsWidgetContent(widget, modifier)
     }
 }
@@ -232,9 +234,7 @@ private fun JsBoxRenderer(
         modifier = modifier.then(widget.modifiers.toComposeModifier()),
         contentAlignment = widget.contentAlignment?.toComposeAlignment() ?: Alignment.TopStart,
     ) {
-        widget.children.forEach { child ->
-            JsWidgetContent(widget = child)
-        }
+        ExitFadeChildren(widget) { child -> JsWidgetContent(widget = child) }
     }
 }
 
@@ -332,6 +332,20 @@ private fun JsTextRenderer(
     }
 
     val textColor = widget.color?.toComposeColor() ?: PolkadotTheme.colors.fg.primary
+    val font = widget.modifiers.filterIsInstance<JsModifier.Font>().firstOrNull()
+
+    if (font != null) {
+        // Type by value: one line, as the CSS it copies sets it, cut with an ellipsis when too long.
+        Text(
+            text = widget.text,
+            style = font.toTextStyle(),
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = modifier.then(widget.modifiers.toComposeModifier()),
+        )
+        return
+    }
 
     Text(
         text = widget.text,
@@ -416,7 +430,7 @@ private fun JsGestureRenderer(
         onAction = { actionId, event -> eventDispatcher(actionId, event) },
         modifier = modifier.then(widget.modifiers.toComposeModifier()),
     ) {
-        widget.children.forEach { child -> JsWidgetContent(widget = child) }
+        ExitFadeChildren(widget) { child -> JsWidgetContent(widget = child) }
     }
 }
 

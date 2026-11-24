@@ -2,14 +2,19 @@ package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -18,9 +23,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -40,12 +48,15 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePhase
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
+import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -82,14 +93,105 @@ internal fun JsGesture(
     val placeX = remember { Animatable(0f) }
     val placeY = remember { Animatable(0f) }
     var nodeWidth by remember { mutableIntStateOf(0) }
+    var nodeHeight by remember { mutableIntStateOf(0) }
     var childrenWidth by remember { mutableIntStateOf(0) }
     var heldAtEnd by remember { mutableStateOf(false) }
+    // An every-move pan's settle after the finger lifts (PanReleaseSettle), drawn instead of the worker's place.
+    val settle = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var settling by remember { mutableStateOf(false) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
+    // A release home on a feel's spring may dip below home, as the spring does (PanReleaseSettle.onLane):
+    // the every-move settle's, and the host drag's spring home (the newest moveTo that asked for it, by its number).
+    var settleDips by remember { mutableStateOf(false) }
+    var moveNumber by remember { mutableIntStateOf(0) }
+    var dippingMove by remember { mutableIntStateOf(-1) }
 
     // The worker's answer waited for in the frame that sent its move, laid out in that frame (GesturePacingSettings).
     var answeredInFrame by remember { mutableStateOf<Pair<JsGesturePosition, JsGesturePosition.Value>?>(null) }
     val minimumGapNanos = remember(view) { GesturePacingSettings.minimumGapNanos(view.display?.refreshRate) }
 
     fun travelNow(): Float = GestureRules.travelPx(current.pan?.drag?.travel, nodeWidth, childrenWidth, density)
+
+    // The feel (JsPanFeel): the children grown while pressed, and a completed host drag's pop with how far past the
+    // end it stands.
+    val pressScale = remember { Animatable(1f) }
+    var pressJob by remember { mutableStateOf<Job?>(null) }
+    var popped by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var popJob by remember { mutableStateOf<Job?>(null) }
+
+    /** Where the worker's tree drew the children: the first child's leading margin, in px. */
+    fun basePx(): Float = (current.children.firstOrNull()?.modifiers().orEmpty().filterIsInstance<JsModifier.Margin>().firstOrNull()
+        ?.let { it.start ?: it.horizontal ?: it.all } ?: 0) * density
+
+    /** Where the worker's place draws the children now, in px, as the offset below lays them out. */
+    fun drawnWorkerPx(travel: Float): Offset {
+        if (settling) return PanReleaseSettle.onLane(settle.value, travel, settleDips)
+        val position = GestureRules.newest(
+            workerPosition?.value,
+            answeredInFrame?.takeIf { it.first === current.position }?.second,
+        ) ?: return Offset.Zero
+        return Offset(position.x / 100f * density, position.y / 100f * density)
+    }
+
+    /** The children's place along their whole lane, 0 to 1, for the nodes that fade with this gesture's pan. */
+    fun panProgress(): Float {
+        val base = basePx()
+        val drag = current.pan?.drag
+        val lane = if (drag != null) travelNow() else (nodeWidth - childrenWidth).toFloat() + base
+        if (lane <= 0f) return 0f
+        val vertical = current.pan?.axis == JsPanAxis.VERTICAL
+        val worker = drawnWorkerPx(travelNow())
+        val host = if (vertical) placeY.value else placeX.value
+        return (base + host.coerceIn(0f, travelNow()) + if (vertical) worker.y else worker.x) / lane
+    }
+
+    widget.key?.let { key ->
+        val place = LocalGesturePanPlaces.current.place(key)
+        SideEffect { place.progress = ::panProgress }
+    }
+
+    fun press(feel: JsPanFeel) {
+        pressJob?.cancel()
+        pressJob = scope.launch { pressScale.animateTo(feel.pressScale, tween(feel.pressMs, easing = WidgetStyleRules.EaseOutQuad)) }
+    }
+
+    fun unpress() {
+        val feel = current.feel ?: return
+        if (pressScale.targetValue == 1f && !pressScale.isRunning && pressScale.value == 1f) return
+        pressJob?.cancel()
+        pressJob = scope.launch { pressScale.animateTo(1f, tween(feel.unpressMs, easing = WidgetStyleRules.EaseOutQuad)) }
+    }
+
+    /** A finger down on the children where they are drawn, or within [PanPress.REACH_DP] of them. */
+    fun hitsChild(at: Offset): Boolean {
+        val base = basePx()
+        val width = childrenWidth - base
+        if (width <= 0f) return false
+        val worker = drawnWorkerPx(travelNow())
+        val fromStart = base + placeX.value.coerceIn(0f, travelNow()) + worker.x
+        val top = placeY.value.coerceIn(0f, travelNow()) + worker.y
+        val start = if (rtl) nodeWidth - fromStart - width else fromStart
+        return PanPress.reaches(at, start, top, width, nodeHeight.toFloat(), PanPress.REACH_DP * density)
+    }
+
+    /** The pop after a completed drag: it peaks as the children arrive, from the scale they were pressed to. */
+    fun startPop(feel: JsPanFeel, delayMs: Int) {
+        pressJob?.cancel()
+        popJob?.cancel()
+        val from = pressScale.value
+        popJob = scope.launch {
+            try {
+                val start = withFrameNanos { it } + delayMs * NANOS_PER_MS
+                while (true) {
+                    val now = withFrameNanos { it }
+                    popped = WidgetStyleRules.pop(feel, (now - start) / NANOS_PER_FRAME, from) ?: break
+                }
+            } finally {
+                popped = null
+                scope.launch { pressScale.snapTo(1f) }
+            }
+        }
+    }
 
     fun send(actionId: String?, phase: JsGesturePhase, x: Float, y: Float, travel: Float) {
         actionId ?: return
@@ -122,12 +224,67 @@ internal fun JsGesture(
         }
     }
 
-    fun moveTo(x: Float, y: Float, animated: Boolean) {
+    /** Where the worker's place draws the children now, in px from the travel's start. */
+    fun workerPlacePx(): Offset {
+        if (settling) return settle.value
+        val shown = GestureRules.newest(
+            current.position?.value?.value,
+            answeredInFrame?.takeIf { it.first === current.position }?.second,
+        ) ?: return Offset.Zero
+        return Offset(shown.x / 100f * density, shown.y / 100f * density)
+    }
+
+    /** Released every-move children settle from where they are drawn instead of jumping to the worker's next place. */
+    fun settleWorkerChildren(axis: JsPanAxis, releasedPermille: Int, cancelled: Boolean, travel: Float) {
+        if (!PanReleaseSettle.currentIsOn) return
+        val from = workerPlacePx()
+        val kind = PanReleaseSettle.kind(axis, releasedPermille, cancelled)
+        val to = PanReleaseSettle.target(kind, axis, travel)
+        if (!PanReleaseSettle.animates(ValueAnimator.areAnimatorsEnabled(), from, to)) return
+        settleJob?.cancel()
+        settling = true
+        settleDips = kind == PanReleaseSettle.Kind.HOME && current.feel != null
+        settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                settle.snapTo(from)
+                val spec = settleSpec(kind, current.feel, (to - from).getDistance() / density)
+                // With the feel's motion, timed from the lift (FromLift).
+                settle.animateTo(to, if (current.feel != null) spec.fromLift() else spec)
+            } finally {
+                settling = false
+            }
+        }
+    }
+
+    /** A new drag takes the children over at once. */
+    fun cutSettleShort() {
+        settleJob?.cancel()
+        settleJob = null
+        settling = false
+    }
+
+    /** [dips]: a release home on a feel's spring, drawn dipping below home as the spring does. */
+    fun moveTo(
+        x: Float,
+        y: Float,
+        animated: Boolean,
+        spec: AnimationSpec<Float> = current.feel?.springHome() ?: SpringBack,
+        dips: Boolean = false,
+    ) {
+        val number = ++moveNumber
+        dippingMove = if (dips) number else -1
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             if (animated && ValueAnimator.areAnimatorsEnabled()) {
-                launch { placeX.animateTo(x, SpringBack) }
-                placeY.animateTo(y, SpringBack)
+                try {
+                    coroutineScope {
+                        launch { placeX.animateTo(x, spec) }
+                        placeY.animateTo(y, spec)
+                    }
+                } finally {
+                    if (dippingMove == number) dippingMove = -1
+                }
             } else {
+                if (dippingMove == number) dippingMove = -1
                 placeX.snapTo(x)
                 placeY.snapTo(y)
             }
@@ -143,6 +300,16 @@ internal fun JsGesture(
         heldAtEnd = drag.holdAtEnd
         if (current.hapticOnComplete) haptics.performHapticFeedback(HapticFeedbackType.Confirm)
         send(pan.endAction, JsGesturePhase.COMPLETED, endX, endY, travel)
+        val feel = current.feel
+        if (feel != null && drag.holdAtEnd && ValueAnimator.areAnimatorsEnabled()) {
+            // The feel's finish: an ease-out to the end, longer over a longer way, and the pop as the children arrive.
+            val along = if (pan.axis == JsPanAxis.VERTICAL) placeY.value else placeX.value
+            val approach = WidgetStyleRules.approachMs(feel, (travel - along) / density)
+            moveTo(endX, endY, animated = true, spec = tween<Float>(approach, easing = WidgetStyleRules.EaseOutQuad).fromLift())
+            startPop(feel, approach - feel.approachMs - LIFT_FRAME_MS)
+            return
+        }
+        unpress()
         if (drag.holdAtEnd) moveTo(endX, endY, animated = true) else moveTo(0f, 0f, animated = true)
     }
 
@@ -161,7 +328,10 @@ internal fun JsGesture(
 
     Box(
         modifier = modifier
-            .onSizeChanged { nodeWidth = it.width }
+            .onSizeChanged {
+                nodeWidth = it.width
+                nodeHeight = it.height
+            }
             .semantics {
                 label?.let { contentDescription = it }
                 role = Role.Button
@@ -191,6 +361,9 @@ internal fun JsGesture(
                     if (!GestureRules.accepts(node.enabled, heldAtEnd)) return@awaitEachGesture
                     val pan = node.pan
                     if (pan == null && node.tapAction == null) return@awaitEachGesture
+                    node.feel?.let { feel ->
+                        if (ValueAnimator.areAnimatorsEnabled() && popJob?.isActive != true && hitsChild(down.position)) press(feel)
+                    }
                     val drag = pan?.drag
                     val travel = travelNow()
                     // Without a drag the product owns the place, so every pan starts from zero, as on iOS.
@@ -275,6 +448,7 @@ internal fun JsGesture(
                             when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
                                 PanDecision.CLAIM -> {
                                     claimed = true
+                                    cutSettleShort()
                                     node.position?.let { position ->
                                         if (pan.moveAction != null) {
                                             moves.clear()
@@ -307,8 +481,14 @@ internal fun JsGesture(
                     } finally {
                         moveJob?.cancel()
                         moves.clear()
+                        // A press the drag did not complete lets go; a completion's pop takes it over.
+                        if (!claimed || drag == null) unpress()
                         when {
                             claimed && pan != null -> {
+                                if (drag == null && node.position != null && pan.moveAction != null) {
+                                    val along = if (pan.axis == JsPanAxis.VERTICAL) y else x
+                                    settleWorkerChildren(pan.axis, GestureRules.permille(along, travel), cancelled = !lifted, travel)
+                                }
                                 val settle = when {
                                     !lifted -> null
                                     drag == null -> GestureSettle.STAY
@@ -319,13 +499,19 @@ internal fun JsGesture(
                                     null -> {
                                         send(pan.endAction, JsGesturePhase.CANCELLED, x, y, travel)
                                         if (drag != null) moveTo(originX, originY, animated = true)
+                                        unpress()
                                     }
                                     GestureSettle.COMPLETE -> complete(travel)
                                     GestureSettle.SNAP_BACK -> {
                                         send(pan.endAction, JsGesturePhase.ENDED, x, y, travel)
-                                        moveTo(0f, 0f, animated = true)
+                                        val feel = current.feel
+                                        moveTo(0f, 0f, animated = true, spec = feel?.springHome()?.fromLift() ?: SpringBack, dips = feel != null)
+                                        unpress()
                                     }
-                                    GestureSettle.STAY -> send(pan.endAction, JsGesturePhase.ENDED, x, y, travel)
+                                    GestureSettle.STAY -> {
+                                        send(pan.endAction, JsGesturePhase.ENDED, x, y, travel)
+                                        unpress()
+                                    }
                                 }
                             }
                             lifted && total.getDistance() <= slop -> send(node.tapAction, JsGesturePhase.TAP, 0f, 0f, travel)
@@ -345,10 +531,27 @@ internal fun JsGesture(
                         workerPosition?.value,
                         answeredInFrame?.takeIf { it.first === current.position }?.second,
                     )
+                    val worker = drawnWorkerPx(travel)
+                    val workerX = worker.x
+                    val workerY = worker.y
+                    val dips = dippingMove == moveNumber
                     IntOffset(
-                        (placeX.value.coerceIn(0f, travel) + (position?.x ?: 0) / 100f * density).roundToInt(),
-                        (placeY.value.coerceIn(0f, travel) + (position?.y ?: 0) / 100f * density).roundToInt(),
+                        (PanReleaseSettle.along(placeX.value, travel, dips) + workerX).roundToInt(),
+                        (PanReleaseSettle.along(placeY.value, travel, dips) + workerY).roundToInt(),
                     )
+                }
+                .graphicsLayer {
+                    val pop = popped
+                    val scale = pop?.first ?: pressScale.value
+                    scaleX = scale
+                    scaleY = scale
+                    // About the drawn child's centre, not the margin the worker's tree put before it.
+                    val base = basePx()
+                    transformOrigin = TransformOrigin(
+                        if (childrenWidth > 0) (base + (childrenWidth - base) / 2f) / childrenWidth else 0.5f,
+                        0.5f,
+                    )
+                    translationX = (pop?.second ?: 0f) * density * if (rtl) -1f else 1f
                 },
         ) {
             content()
@@ -357,5 +560,24 @@ internal fun JsGesture(
 }
 
 private const val NANOS_PER_MS = 1_000_000L
+private const val NANOS_PER_FRAME = 1_000_000_000f / 60f
+
+/** The feel's damped spring home: its natural frequency squared is the stiffness. */
+private fun JsPanFeel.springHome(): AnimationSpec<Float> = spring(dampingRatio = springDamping, stiffness = springStiffness())
+
+/**
+ * How released every-move children settle: with the pan's feel when it has one (its spring home, or its ease-out
+ * approach over [distanceDp] to the end), else the host's return spring and a short ease to the end.
+ */
+internal fun settleSpec(kind: PanReleaseSettle.Kind, feel: JsPanFeel?, distanceDp: Float): AnimationSpec<Offset> = when {
+    feel == null -> if (kind == PanReleaseSettle.Kind.END) SettleToEnd else SpringBackOffset
+    kind == PanReleaseSettle.Kind.END ->
+        tween(WidgetStyleRules.approachMs(feel, distanceDp), easing = WidgetStyleRules.EaseOutQuad)
+    else -> spring(dampingRatio = feel.springDamping, stiffness = feel.springStiffness())
+}
+
+private fun JsPanFeel.springStiffness(): Float = (springOmega * springOmega).coerceAtLeast(Spring.StiffnessVeryLow)
 
 private val SpringBack = spring<Float>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
+private val SpringBackOffset = spring<Offset>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
+private val SettleToEnd = tween<Offset>(durationMillis = PanReleaseSettle.END_MILLIS, easing = LinearOutSlowInEasing)

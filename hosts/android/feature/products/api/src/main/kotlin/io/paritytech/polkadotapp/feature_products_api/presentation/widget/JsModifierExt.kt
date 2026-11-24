@@ -30,10 +30,12 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 
 @Composable
-fun List<JsModifier>.toComposeModifier(): Modifier =
-    orderedForCompose().fold(Modifier as Modifier) { acc, modifier ->
-        acc.then(modifier.toComposeModifier())
+fun List<JsModifier>.toComposeModifier(): Modifier {
+    val shadowShape = if (any { it is JsModifier.Shadow || it is JsModifier.Fill }) shadowShape() else RectangleShape
+    return orderedForCompose().fold(Modifier as Modifier) { acc, modifier ->
+        acc.then(if (modifier is JsModifier.Shadow) modifier.toShadowModifier(shadowShape) else modifier.toComposeModifier())
     }
+}
 
 /**
  * Compose applies modifiers outside-in, and each one covers only what the ones after it draw.
@@ -42,20 +44,31 @@ fun List<JsModifier>.toComposeModifier(): Modifier =
  *
  * The rest follows the frame: margin outside, then the surface, then the content's padding and size.
  * A shaped background also clips the content to its shape, after the border so the border stays whole.
+ *
+ * The styled modifiers follow the CSS they copy: a translate moves the node inside its margin; a pan's fade and a
+ * spin act on all the node draws; a shadow sits under its fill, and a fill, unlike a background, clips nothing; a
+ * shimmer lights what the node draws inside its surface. A font is read by the text, an exit fade by its parent.
  */
 internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (this + backgroundClips()).sortedWith(
     compareBy {
         when (it) {
             is JsModifier.Margin -> 0
-            is JsModifier.Opacity -> 1
-            is JsModifier.BlendingMode -> 2
-            is JsModifier.Background -> 3
-            is JsModifier.Border -> 4
-            is JsModifier.Clip -> 5
-            is JsModifier.Padding -> 6
-            is JsModifier.Size -> 7
-            is JsModifier.FillMaxWidth -> 8
-            is JsModifier.FillMaxHeight -> 9
+            is JsModifier.Translate -> 1
+            is JsModifier.Opacity -> 2
+            is JsModifier.FadeWithPan -> 3
+            is JsModifier.BlendingMode -> 4
+            is JsModifier.Spin -> 5
+            is JsModifier.Shadow -> 6
+            is JsModifier.Fill -> 7
+            is JsModifier.Background -> 8
+            is JsModifier.Border -> 9
+            is JsModifier.Clip -> 10
+            is JsModifier.Shimmer -> 11
+            is JsModifier.Padding -> 12
+            is JsModifier.Size -> 13
+            is JsModifier.FillMaxWidth -> 14
+            is JsModifier.FillMaxHeight -> 15
+            is JsModifier.Font, is JsModifier.ExitFade -> 16
         }
     }
 )
@@ -75,6 +88,13 @@ fun JsModifier.toComposeModifier(): Modifier = when (this) {
     is JsModifier.Clip -> Modifier.clip(shape.toComposeShape())
     is JsModifier.Opacity -> Modifier.alpha(alpha / OPAQUE)
     is JsModifier.BlendingMode -> Modifier.blendedWith(mode.toComposeBlendMode())
+    is JsModifier.Fill -> toFillModifier(shape?.toComposeShape() ?: RectangleShape)
+    is JsModifier.Shadow -> toShadowModifier(RectangleShape)
+    is JsModifier.Translate -> toTranslateModifier()
+    is JsModifier.FadeWithPan -> toFadeModifier()
+    is JsModifier.Shimmer -> toShimmerModifier()
+    is JsModifier.Spin -> toSpinModifier()
+    is JsModifier.Font, is JsModifier.ExitFade -> Modifier
 }
 
 private const val OPAQUE = 255f

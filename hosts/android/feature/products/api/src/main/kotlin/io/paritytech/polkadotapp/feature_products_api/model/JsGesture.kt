@@ -68,5 +68,24 @@ data class JsPanGesture(
     val endAction: String? = null,
 )
 
+/**
+ * How the children feel under a finger and when let go, by value: grown to [pressScale] over [pressMs] when pressed,
+ * back over [unpressMs]; home on a spring of [springOmega] rad/s and [springDamping]; to the end over [approachMs]
+ * (longer as the square root of the distance past [approachReference] dp), then the [pop] scales a sixtieth apart,
+ * standing up to [popOffset] dp past the end at the peak.
+ */
+@Serializable
+data class JsPanFeel(
+    val pressScale: Float = 1f,
+    val pressMs: Int = 0,
+    val unpressMs: Int = 0,
+    val springOmega: Float = 0f,
+    val springDamping: Float = 1f,
+    val approachMs: Int = 0,
+    val approachReference: Float = 1f,
+    val pop: List<Float> = emptyList(),
+    val popOffset: Float = 0f,
+)
+
 /** The stage a gesture action reports. */
 enum class JsGesturePhase { TAP, STARTED, MOVED, ENDED, CANCELLED, COMPLETED }
