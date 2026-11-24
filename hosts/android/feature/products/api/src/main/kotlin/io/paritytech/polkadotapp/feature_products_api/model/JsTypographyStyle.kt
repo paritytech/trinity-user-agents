@@ -19,4 +19,16 @@ enum class JsTypographyStyle {
 
     @SerialName("body.small.regular")
     BODY_SMALL_REGULAR,
+
+    @SerialName("headline.medium")
+    HEADLINE_MEDIUM,
+
+    @SerialName("headline.small")
+    HEADLINE_SMALL,
+
+    @SerialName("title.extraLarge")
+    TITLE_EXTRA_LARGE,
+
+    @SerialName("title.large")
+    TITLE_LARGE,
 }
