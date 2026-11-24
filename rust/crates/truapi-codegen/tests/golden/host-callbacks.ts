@@ -2067,7 +2067,9 @@ export interface Features {
 export interface FundingPlatform {
   /**
    * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
+   * host itself when `product` is ``undefined``. A cancel while the overlay is up
+   * drops this call, and the host takes the overlay down when it is
+   * dropped.
    */
   presentFunding(
     product: ProductContext | undefined,
