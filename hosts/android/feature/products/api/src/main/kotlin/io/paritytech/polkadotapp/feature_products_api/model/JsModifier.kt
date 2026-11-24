@@ -183,4 +183,12 @@ sealed interface JsModifier {
         @Transient val channel: JsMaskShapes? = null,
         @Transient val trail: JsPanTrail? = null,
     ) : JsModifier
+
+    @Serializable
+    @SerialName("enter")
+    data class Enter(val enter: JsEnter) : JsModifier
+
+    @Serializable
+    @SerialName("animate")
+    data class Animate(val track: JsTrack) : JsModifier
 }

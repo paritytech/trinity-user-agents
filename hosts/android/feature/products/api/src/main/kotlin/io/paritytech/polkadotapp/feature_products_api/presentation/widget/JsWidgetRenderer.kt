@@ -74,7 +74,12 @@ fun JsWidgetRenderer(
     jsEventHandler: JsUiEventHandler,
 ) {
     val places = remember { GesturePanPlaces() }
-    CompositionLocalProvider(LocalJsEventHandler provides jsEventHandler, LocalGesturePanPlaces provides places) {
+    val motion = rendererMotionEnabled()
+    CompositionLocalProvider(
+        LocalJsEventHandler provides jsEventHandler,
+        LocalGesturePanPlaces provides places,
+        LocalRendererMotionEnabled provides motion,
+    ) {
         JsWidgetContent(widget, modifier)
     }
 }

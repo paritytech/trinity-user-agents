@@ -1108,3 +1108,4 @@ On Android, a node keeps its blend mode when opacity, a pan fade or an exit fade
 A following mask counts the current tree's shapes together with new strokes when checking its cleared share after a lift.
 Android mask strokes and followed pans can use fixed-angle ellipse or capsule stamps, with the same tip geometry used to measure their cleared share.
 Android masks can report their cleared share during a stroke, rescue stalled progress, and play optional progress haptics that respect the device setting. A gesture's press feel can scale its vertical axis independently; following masks stay aligned with moving or stationary touches through that scale.
+Android nodes can enter from a pose and play keyframe or following tracks. Timelines survive unchanged trees, springs retain velocity when retargeted, and Remove animations selects the stationary pose.

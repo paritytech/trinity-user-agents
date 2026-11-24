@@ -1,14 +1,18 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsAlignment
+import io.paritytech.polkadotapp.feature_products_api.model.JsAnimatedProperty
 import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsCurve
+import io.paritytech.polkadotapp.feature_products_api.model.JsEnter
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
+import io.paritytech.polkadotapp.feature_products_api.model.JsKeyframe
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
@@ -19,6 +23,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShapes
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsMotion
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
@@ -26,17 +31,22 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
+import io.paritytech.polkadotapp.feature_products_api.model.JsPose
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
+import io.paritytech.polkadotapp.feature_products_api.model.JsTrack
+import io.paritytech.polkadotapp.feature_products_api.model.JsTrackPlay
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.toJsImageSource
+import uniffi.truapi.AnimatedProperty
 import uniffi.truapi.Arrangement
 import uniffi.truapi.BlendingMode
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
+import uniffi.truapi.Curve
 import uniffi.truapi.Dimensions
 import uniffi.truapi.Haptic
 import uniffi.truapi.HorizontalAlignment
@@ -48,6 +58,7 @@ import uniffi.truapi.MaskMode
 import uniffi.truapi.MaskPoint
 import uniffi.truapi.MaskShape
 import uniffi.truapi.Modifier
+import uniffi.truapi.Motion
 import uniffi.truapi.PanAxis
 import uniffi.truapi.PanDrag
 import uniffi.truapi.PanFeel
@@ -57,6 +68,8 @@ import uniffi.truapi.PanTravel
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.Size
+import uniffi.truapi.Track
+import uniffi.truapi.TrackPlay
 import uniffi.truapi.TypographyStyle
 import uniffi.truapi.VerticalAlignment
 
@@ -283,8 +296,13 @@ private fun List<Modifier>.toJsModifiers(keyed: RendererKeyed = RendererKeyed())
             is Modifier.Spin -> add(JsModifier.Spin(modifier.v1.toInt()))
             is Modifier.ExitFade -> add(JsModifier.ExitFade(modifier.v1.toInt()))
             is Modifier.Mask -> add(modifier.v1.toJs(keyed))
-            // The Android enter-and-keyframes layer plays these; until then the node draws as the tree does.
-            is Modifier.Enter, is Modifier.Animate -> Unit
+            is Modifier.Enter -> with(modifier.v1) {
+                add(JsModifier.Enter(JsEnter(
+                    JsPose(from.opacityPermille.toInt(), from.scalePermille.toInt(), from.x, from.y, from.rotationCentideg),
+                    motion.toJs(), delayMs.toInt(),
+                )))
+            }
+            is Modifier.Animate -> add(JsModifier.Animate(modifier.v1.toJs()))
             // The Android particle layer draws emitters; until then the node draws with no particles.
             is Modifier.Emit -> Unit
             // The Android parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
@@ -358,6 +376,30 @@ fun MaskShape.toJs(): JsMaskShape = when (this) {
     is MaskShape.Stroke -> JsMaskShape.Stroke(width.toLong(), points.map { it.toJs() })
     is MaskShape.Stamped -> JsMaskShape.Stamped(width.toLong(), brush.toJs(), points.map { it.toJs() })
 }
+
+private fun Curve.toJs() = JsCurve(x1.toInt(), y1.toInt(), x2.toInt(), y2.toInt())
+
+private fun Motion.toJs(): JsMotion = when (this) {
+    is Motion.Timed -> JsMotion.Timed(ms.toLong(), curve.toJs())
+    is Motion.Spring -> JsMotion.Spring(v1.omegaCenti.toInt(), v1.dampingCenti.toInt())
+}
+
+private fun Track.toJs() = JsTrack(
+    property = when (property) {
+        AnimatedProperty.OPACITY -> JsAnimatedProperty.OPACITY
+        AnimatedProperty.SCALE -> JsAnimatedProperty.SCALE
+        AnimatedProperty.OFFSET_X -> JsAnimatedProperty.OFFSET_X
+        AnimatedProperty.OFFSET_Y -> JsAnimatedProperty.OFFSET_Y
+        AnimatedProperty.ROTATION -> JsAnimatedProperty.ROTATION
+    },
+    play = when (val value = play) {
+        is TrackPlay.Follow -> JsTrackPlay.Follow(value.target, value.motion.toJs())
+        is TrackPlay.Keyframes -> JsTrackPlay.Keyframes(
+            value.v1.frames.take(32).map { JsKeyframe(it.atMs.toLong(), it.value, it.curve.toJs()) },
+            value.v1.repeat.toInt(), value.v1.alternate ?: false,
+        )
+    },
+)
 
 private fun Haptic.toJs(): JsMaskHaptic = when (this) {
     Haptic.TICK -> JsMaskHaptic.TICK

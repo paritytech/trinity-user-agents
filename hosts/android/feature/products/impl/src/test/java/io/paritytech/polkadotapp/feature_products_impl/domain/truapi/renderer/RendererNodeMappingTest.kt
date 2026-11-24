@@ -1,8 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
+import io.paritytech.polkadotapp.feature_products_api.model.JsAnimatedProperty
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsCurve
+import io.paritytech.polkadotapp.feature_products_api.model.JsEnter
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
@@ -14,6 +17,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShapes
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsMotion
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
@@ -21,8 +25,11 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
+import io.paritytech.polkadotapp.feature_products_api.model.JsPose
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
+import io.paritytech.polkadotapp.feature_products_api.model.JsTrack
+import io.paritytech.polkadotapp.feature_products_api.model.JsTrackPlay
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,6 +37,7 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.AnimatedProperty
 import uniffi.truapi.Background
 import uniffi.truapi.BorderStyle
 import uniffi.truapi.BoxProps
@@ -38,12 +46,16 @@ import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ClearedShare
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
+import uniffi.truapi.Curve
 import uniffi.truapi.Dimensions
 import uniffi.truapi.DropShadow
+import uniffi.truapi.Enter
 import uniffi.truapi.Fill
 import uniffi.truapi.GestureProps
 import uniffi.truapi.Haptic
 import uniffi.truapi.HorizontalAlignment
+import uniffi.truapi.Keyframe
+import uniffi.truapi.Keyframes
 import uniffi.truapi.Mask
 import uniffi.truapi.MaskBrush
 import uniffi.truapi.MaskBrushTip
@@ -54,6 +66,7 @@ import uniffi.truapi.MaskPoint
 import uniffi.truapi.MaskShape
 import uniffi.truapi.MaterialsProps
 import uniffi.truapi.Modifier
+import uniffi.truapi.Motion
 import uniffi.truapi.PanAxis
 import uniffi.truapi.PanDrag
 import uniffi.truapi.PanFade
@@ -61,14 +74,40 @@ import uniffi.truapi.PanFeel
 import uniffi.truapi.PanGesture
 import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
+import uniffi.truapi.Pose
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.ShareRescue
+import uniffi.truapi.Spring
 import uniffi.truapi.TextFont
 import uniffi.truapi.TextProps
+import uniffi.truapi.Track
+import uniffi.truapi.TrackPlay
 import uniffi.truapi.Translate
 
 class RendererNodeMappingTest {
+    @Test
+    fun `enter and tracks keep their wire units and bound the timeline to thirty two frames`() {
+        val curve = Curve(0, -200, 1000, 1200)
+        val node = RendererNode.Spacer(
+            listOf(
+                Modifier.Enter(Enter(Pose(250u, 800u, 1200, -400, 4500), Motion.Timed(600u, curve), 100u)),
+                Modifier.Animate(Track(AnimatedProperty.ROTATION, TrackPlay.Follow(9000, Motion.Spring(Spring(1800u, 80u))))),
+                Modifier.Animate(Track(AnimatedProperty.OPACITY, TrackPlay.Keyframes(Keyframes(
+                    (0..40).map { Keyframe(it.toUInt() * 100u, it * 10, curve) }, 2u, true,
+                )))),
+            ),
+        )
+        val mapped = (node.toJsWidget() as JsWidget.Spacer).modifiers
+        assertEquals(JsModifier.Enter(JsEnter(JsPose(250, 800, 1200, -400, 4500), JsMotion.Timed(600, JsCurve(0, -200, 1000, 1200)), 100)), mapped[0])
+        assertEquals(JsModifier.Animate(JsTrack(JsAnimatedProperty.ROTATION, JsTrackPlay.Follow(9000, JsMotion.Spring(1800, 80)))), mapped[1])
+        val timeline = (mapped[2] as JsModifier.Animate).track.play as JsTrackPlay.Keyframes
+        assertEquals(32, timeline.frames.size)
+        assertEquals(3100L, timeline.frames.last().atMs)
+        assertEquals(2, timeline.repeat)
+        assertTrue(timeline.alternate)
+    }
+
     @Test
     fun `a streamed tree maps like a decoded preview, so both faces draw alike`() {
         val node = RendererNode.Column(

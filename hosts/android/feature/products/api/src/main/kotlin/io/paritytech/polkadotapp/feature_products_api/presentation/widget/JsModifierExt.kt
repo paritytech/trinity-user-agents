@@ -32,9 +32,18 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 @Composable
 fun List<JsModifier>.toComposeModifier(): Modifier {
     val shadowShape = if (any { it is JsModifier.Shadow || it is JsModifier.Fill }) shadowShape() else RectangleShape
-    return orderedForCompose().fold(Modifier as Modifier) { acc, modifier ->
-        acc.then(if (modifier is JsModifier.Shadow) modifier.toShadowModifier(shadowShape) else modifier.toComposeModifier())
+    val motion = nodeMotionModifier(nodeMotionSpec())
+    var placedMotion = false
+    val styled = orderedForCompose().filterNot { it is JsModifier.Enter || it is JsModifier.Animate }.fold(Modifier as Modifier) { acc, modifier ->
+        val before = if (!placedMotion && !modifier.precedesNodeMotion()) {
+            placedMotion = true
+            acc.then(motion)
+        } else {
+            acc
+        }
+        before.then(if (modifier is JsModifier.Shadow) modifier.toShadowModifier(shadowShape) else modifier.toComposeModifier())
     }
+    return if (placedMotion) styled else styled.then(motion)
 }
 
 /**
@@ -60,7 +69,7 @@ internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (lastMaskO
             is JsModifier.Opacity -> 3
             is JsModifier.FadeWithPan -> 4
             is JsModifier.BlendingMode -> 2
-            is JsModifier.Spin -> 5
+            is JsModifier.Spin, is JsModifier.Enter, is JsModifier.Animate -> 5
             is JsModifier.Mask -> 6
             is JsModifier.Shadow -> 7
             is JsModifier.Fill -> 8
@@ -105,6 +114,13 @@ fun JsModifier.toComposeModifier(): Modifier = when (this) {
     is JsModifier.Spin -> toSpinModifier()
     is JsModifier.Font, is JsModifier.ExitFade -> Modifier
     is JsModifier.Mask -> maskModifier()
+    is JsModifier.Enter, is JsModifier.Animate -> nodeMotionModifier(listOf(this).nodeMotionSpec())
+}
+
+private fun JsModifier.precedesNodeMotion(): Boolean = when (this) {
+    is JsModifier.Margin, is JsModifier.Translate, is JsModifier.BlendingMode,
+    is JsModifier.Opacity, is JsModifier.FadeWithPan -> true
+    else -> false
 }
 
 private const val OPAQUE = 255f
