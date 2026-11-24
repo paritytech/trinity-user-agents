@@ -168,6 +168,7 @@ private extension [Modifier] {
         var mask: CustomMessageWidgetNode.Mask?
         var enter: CustomMessageWidgetNode.Enter?
         var tracks: [CustomMessageWidgetNode.Track] = []
+        var emitter: CustomMessageWidgetNode.Emitter?
 
         for modifier in self {
             switch modifier {
@@ -221,13 +222,10 @@ private extension [Modifier] {
             case let .enter(value):
                 enter = value.widgetEnter
             case let .animate(track):
-                // A node keeps its last track per property.
-                let mapped = track.widgetTrack
-                tracks.removeAll { $0.property == mapped.property }
-                tracks.append(mapped)
-            case .emit:
-                // The iPhone particle layer draws emitters; until then the node draws with no particles.
-                break
+                tracks.keepLast(track.widgetTrack)
+            case let .emit(value):
+                // A node keeps its last emitter.
+                emitter = value.widgetEmitter
             case .parallax:
                 // The iPhone parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
                 break
@@ -256,7 +254,8 @@ private extension [Modifier] {
             exitFade: style.exitFade,
             mask: mask,
             enter: enter,
-            tracks: tracks
+            tracks: tracks,
+            emitter: emitter
         )
     }
 }

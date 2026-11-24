@@ -53,6 +53,8 @@ public struct CustomMessageWidgetView: View {
     let node: CustomMessageWidgetNode
     var onAction: WidgetActionHandler?
     var resolveImage: WidgetImageResolver?
+    /// The actions this body has sent, for the emitters that burst on them.
+    @State private var actionEvents = WidgetActionEvents()
 
     public init(
         node: CustomMessageWidgetNode,
@@ -66,7 +68,13 @@ public struct CustomMessageWidgetView: View {
 
     public var body: some View {
         WidgetNodeContent(node: node)
-            .environment(\.widgetActionHandler, onAction)
+            .environment(\.widgetActionHandler, onAction.map { send in
+                { [actionEvents] action, payload in
+                    actionEvents.record(action)
+                    send(action, payload)
+                }
+            })
+            .environment(\.widgetActionEvents, actionEvents)
             .environment(\.widgetImageResolver, resolveImage)
     }
 }
