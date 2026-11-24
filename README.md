@@ -18,6 +18,8 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
 - [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
+- [Funding modality](docs/design/funding-modality.md)
+- [Building a funding provider](docs/guides/funding-provider.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
