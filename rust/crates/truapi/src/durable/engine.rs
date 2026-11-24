@@ -31,7 +31,9 @@ use crate::{
 use executor::SubmissionExecutor;
 
 pub use recovery::RecoveryError;
-pub use registration::{DurableRequest, DurableSubmission, EmptyRequest, RegistrationError};
+pub use registration::{
+	DeferredSubmission, DurableRequest, DurableSubmission, EmptyRequest, RegistrationError,
+};
 pub use reporting::DurableWorkObserver;
 
 /// What the engine runs on.

@@ -94,8 +94,9 @@ Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet and has no
 `stackStatus()`, so a `/web` host sees a refused chain only as failing calls.
 
-The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+The test host has no descriptor, so it passes `testStack` instead: an `id` and
+a `generation`, the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it.
 A runtime built from it does not refresh: it calls neither stack callback, and
 `stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright

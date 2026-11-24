@@ -80,6 +80,7 @@ runtime = [
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
+    "dep:const_format",
     "dep:itertools",
     "dep:binary-merkle-tree",
     "dep:hash-db",
@@ -158,6 +159,8 @@ naga = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["float_roundtrip"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
+# Builds the durable ledger's SQL from shared fragments at compile time.
+const_format = { workspace = true, optional = true }
 itertools = { workspace = true, optional = true }
 # The clearing root of an NFT operation.
 binary-merkle-tree = { workspace = true, optional = true }

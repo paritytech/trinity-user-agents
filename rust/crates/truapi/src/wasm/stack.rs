@@ -17,7 +17,7 @@ use super::{
 #[cfg(feature = "test-host")]
 use super::{get_optional_object, get_required_bytes32_at};
 #[cfg(feature = "test-host")]
-use crate::platform::StackChains;
+use crate::platform::{StackChains, StackIdentity};
 use crate::{
 	Spawner,
 	chain_runtime::encode_hex,
@@ -100,9 +100,9 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 	refresh.map_or(JsValue::UNDEFINED, |refresh| status_to_js(&refresh.status()))
 }
 
-/// `runtimeConfig.testStack`: `network`, `tld`, `assetHub`, `people`,
-/// `bulletin` and the optional `relay`, each `{ genesisHash }`, and
-/// `allowsReservedValues`, which defaults to false.
+/// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
+/// `assetHub`, `people`, `bulletin` and the optional `relay`, each
+/// `{ genesisHash }`, and `allowsReservedValues`, which defaults to false.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	let genesis = |role: &str| {
@@ -124,7 +124,16 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		people: required("people")?,
 		bulletin: required("bulletin")?,
 	};
+	let identity = StackIdentity {
+		id: get_required_string_at(stack, "id", "runtimeConfig.testStack.id")?,
+		generation: get_required_string_at(
+			stack,
+			"generation",
+			"runtimeConfig.testStack.generation",
+		)?,
+	};
 	Stack::new(
+		identity,
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,

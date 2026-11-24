@@ -122,11 +122,40 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 	);
 	// An app killed before it restarts gets no second notice. The status at
 	// its next start still names the new generation, so the host can tell
-	// its cached chain data is for the old chains.
+	// its cached chain data is for the old chains. The stored copy is the
+	// same stack under its own generation.
 	let restarted = load(&bundled, Some(&record));
 	assert_eq!(
-		(restarted.stack().chains().people, restarted.status()),
-		(TEST_STACK_WIPED_PEOPLE, status(&wiped, None))
+		(
+			restarted.stack().chains().people,
+			restarted.stack().id(),
+			restarted.stack().generation(),
+			restarted.status()
+		),
+		(TEST_STACK_WIPED_PEOPLE, source.stack().id(), "second", status(&wiped, None))
+	);
+}
+
+/// A new generation on the same genesis hashes still means the chains
+/// restarted, so the core asks for a restart rather than switching to it.
+#[test]
+fn a_new_generation_on_the_same_chains_runs_from_the_next_start() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+
+	serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_PEOPLE), START)
+		.expect("the newer copy is stored");
+	source.record_stored();
+
+	assert_eq!(
+		(source.stack().generation(), source.status()),
+		(
+			"first",
+			StackStatus {
+				restart_required: true,
+				..status(&bundled, Some(StackRefreshOutcome::Current))
+			}
+		)
 	);
 }
 
@@ -228,8 +257,9 @@ fn a_record_never_replaces_a_newer_one() {
 		serve(&mut source, &published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE), START)
 			.expect("a newer copy is stored")
 	};
-	let record = serve(&mut source, &published_test_descriptor(2, "first", TEST_STACK_PEOPLE), START)
-		.expect("a newer copy is stored");
+	let record =
+		serve(&mut source, &published_test_descriptor(2, "first", TEST_STACK_PEOPLE), START)
+			.expect("a newer copy is stored");
 	let check = source.replace_check(&record);
 
 	assert_eq!(
