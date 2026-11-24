@@ -234,9 +234,9 @@ shows a listed chain as out of service and keeps its own features off it. A
 off: the core keeps using People, so a host keeps People in service as well and
 shows the entry as a fault in the stack. The operator corrects it by setting
 People's suffix to the `tld`. A corrected descriptor on another TLD does not
-help a running build: the core refuses it, `last_refresh` says so, and the
-entry stays listed. Only a new host build that bundles that descriptor runs on
-its TLD.
+help a running build, and the entry stays listed. A host that fetches the
+descriptor sees that copy refused in `last_refresh`. Only a new host build that
+bundles that descriptor runs on its TLD.
 
 The check has three limits:
 
