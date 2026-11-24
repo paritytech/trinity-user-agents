@@ -237,16 +237,17 @@ class FundingSessionsTest {
     }
 
     @Test
-    fun `cancelling a session that never started drops it without the core`() = runTest {
+    fun `cancelling a session that never started goes to the core too`() = runTest {
+        core.cancelOutcome = CancelOutcome.CANCELLED
         val service = service()
-        val outcome = presented(service)
+        presented(service)
         advanceUntilIdle()
 
         val cancelled = service.cancel(INTENT)
 
-        assertEquals(CancelOutcome.ENDED, cancelled.getOrNull())
-        assertEquals(FundingPresentOutcome.DISMISSED, outcome.await())
-        assertFalse("cancel" in core.calls)
+        assertEquals(CancelOutcome.CANCELLED, cancelled.getOrNull())
+        assertTrue("cancel" in core.calls)
+        assertFalse("cancelAutoStart" in core.calls)
     }
 
     @Test

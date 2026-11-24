@@ -80,12 +80,12 @@ interface FundingSessions {
      */
     suspend fun start(intentId: FundingIntentId, provider: ProductId?): Result<Unit>
 
-    /** The user left the session's screens. One that never started is dropped; one in flight runs on. */
+    /** The user left the session's screens, which is not a cancel. One that never started is dropped; one in flight runs on. */
     fun leave(intentId: FundingIntentId)
 
     /**
-     * Cancels a session. One that never started is dropped at once, as when the user leaves it; one in flight goes to
-     * the core, which ends it or asks the provider.
+     * Cancels a session in whatever state it is. One that never started is dropped by the core, which takes its
+     * screens down; one in flight ends or its provider is asked; an ended one is refused.
      */
     suspend fun cancel(intentId: FundingIntentId): Result<CancelOutcome>
 
@@ -191,13 +191,8 @@ class RealFundingSessions @Inject constructor(
         resolve(intentId, FundingPresentOutcome.DISMISSED)
     }
 
-    override suspend fun cancel(intentId: FundingIntentId): Result<CancelOutcome> {
-        if (isPresenting(intentId)) {
-            leave(intentId)
-            return Result.success(CancelOutcome.ENDED)
-        }
-        return core.cancel(intentId).also { changed(intentId) }
-    }
+    override suspend fun cancel(intentId: FundingIntentId): Result<CancelOutcome> =
+        core.cancel(intentId).also { changed(intentId) }
 
     override suspend fun answerCancelOffer(intentId: FundingIntentId, terms: CancelTerms?): Result<CancelConfirmation> =
         core.confirmCancel(intentId, terms).also { changed(intentId) }
