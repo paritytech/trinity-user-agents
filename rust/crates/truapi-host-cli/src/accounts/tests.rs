@@ -272,6 +272,42 @@ fn a_refused_store_lock_names_flags_the_signing_commands_take() -> Result<()> {
 	Ok(())
 }
 
+/// A fork has its source's namespace, and the source may well have an account
+/// with the name the fork asks for. The refusal names the state directory the
+/// account was looked up under too, so it does not read as a refusal for the
+/// source.
+#[tokio::test]
+async fn a_missing_named_account_names_the_directory_it_was_looked_up_under() -> Result<()> {
+	let dir = tempdir()?;
+	let source = crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
+	let mut store = AccountStore::load(dir.path())?;
+	store.upsert(record("auto-1", source.state_directory(), true));
+	store.save()?;
+	let fork_descriptor = source
+		.with_edit(|descriptor| descriptor["id"] = "paseo-next-v2-fork".into())
+		.descriptor()
+		.clone();
+	let fork_id = "https://fork.test.invalid/trinity-stack.json".to_string();
+	let fork = Stack::new(fork_id, fork_descriptor, &crate::chain::ChainAccess::Rpc)?;
+
+	let refusal = resolve_signer(ResolveSignerConfig {
+		base_path: dir.path(),
+		network: &fork,
+		mnemonic: None,
+		account: Some("auto-1".to_string()),
+		lite_username_prefix: None,
+		reserved_username: None,
+	})
+	.await
+	.expect_err("the fork has no account of its own");
+
+	assert_eq!(
+		refusal.to_string(),
+		"account \"auto-1\" not found for paseo-next-v2 (stack-c1ff7d592da6515589a30362b8ab952c)"
+	);
+	Ok(())
+}
+
 #[test]
 fn cached_signer_resolves_without_network_access() -> Result<()> {
 	let dir = tempdir()?;

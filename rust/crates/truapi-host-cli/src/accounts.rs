@@ -363,7 +363,7 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 	if let Some(name) = config.account {
 		let record =
 			store.get(config.network.state_directory(), &name).cloned().with_context(|| {
-				format!("account {name:?} not found for {}", config.network.namespace())
+				format!("account {name:?} not found for {}", config.network.state_label())
 			})?;
 		let record = ensure_record_ready(
 			&mut store,
