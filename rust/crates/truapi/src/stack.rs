@@ -18,11 +18,7 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::{
-	CallError, ProductId,
-	dotns_name::is_dns_label,
-	product_id::{LOCALHOST_PRODUCT_LABEL, PRODUCT_SHARE_SUFFIX},
-};
+use crate::{CallError, ProductId, dotns_name::is_dns_label, product_id::PRODUCT_SHARE_SUFFIX};
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
@@ -64,6 +60,10 @@ const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
+
+/// The TLD RFC 6761 reserves for the local machine: every name under it
+/// resolves there.
+const LOOPBACK_TLD: &str = "localhost";
 
 /// A product under a TLD the stack does not serve.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
@@ -169,12 +169,15 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
-	/// The TLD is one the core reads another way: every share host ends in
-	/// `li`, and a name under `localhost` is a development server.
-	#[display("stack tld {tld:?} names share hosts or development servers")]
+	/// The TLD is a DNS label whose names already mean something else: share
+	/// hosts end in `.li`, and every name under `localhost` resolves to the
+	/// local machine (RFC 6761).
+	#[display("stack tld {tld:?} is reserved: {reason}")]
 	TakenTld {
 		/// The descriptor's TLD.
 		tld: String,
+		/// What names under it already are.
+		reason: &'static str,
 	},
 	/// The stack runs on Polkadot's TLD, which this build does not allow.
 	#[display("stack uses Polkadot's reserved tld {RESERVED_TLD}, which this build does not allow")]
@@ -272,10 +275,8 @@ impl Stack {
 		if !is_dns_label(&tld) {
 			return Err(StackError::InvalidTld { tld });
 		}
-		if PRODUCT_SHARE_SUFFIX.strip_prefix('.') == Some(tld.as_str()) ||
-			tld == LOCALHOST_PRODUCT_LABEL
-		{
-			return Err(StackError::TakenTld { tld });
+		if let Some(reason) = taken_tld_reason(&tld) {
+			return Err(StackError::TakenTld { tld, reason });
 		}
 		let StackChains { relay, asset_hub, people, bulletin } = chains;
 		if relay == Some([0; 32]) {
@@ -419,6 +420,15 @@ fn refuse_reserved_genesis(
 		Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
 		None => Ok(()),
 	}
+}
+
+/// What names under `tld` already are, when that rules it out as a stack's
+/// TLD.
+fn taken_tld_reason(tld: &str) -> Option<&'static str> {
+	if PRODUCT_SHARE_SUFFIX.strip_prefix('.') == Some(tld) {
+		return Some("share hosts end in .li");
+	}
+	(tld == LOOPBACK_TLD).then_some("every name under localhost resolves to the local machine")
 }
 
 #[cfg(test)]

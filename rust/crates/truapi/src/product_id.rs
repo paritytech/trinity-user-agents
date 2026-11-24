@@ -25,7 +25,7 @@ pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LA
 const GAME_PRODUCT_LABEL: &str = "dim2";
 
 /// The label a development product identifier is served under.
-pub const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
+const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
 
 /// The start of a development product identifier that names a port.
 const LOCALHOST_PORT_PREFIX: &str = "localhost:";

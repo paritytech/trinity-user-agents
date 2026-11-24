@@ -137,30 +137,32 @@ fn a_tld_that_is_not_a_dns_label_is_refused() {
 	);
 }
 
-/// The core reads a host ending in `.li` as a share host and a name under
-/// `localhost` as a development server, so a stack on either TLD would have
-/// its products read both ways.
+/// Share hosts end in `.li`, and every name under `localhost` resolves to the
+/// local machine (RFC 6761), so a product under either TLD would not reach its
+/// dotNS content. The error says which, whether the stack comes from a
+/// descriptor or from parts.
 #[test]
-fn a_tld_the_core_reads_another_way_is_refused() {
+fn a_tld_whose_names_mean_something_else_is_refused() {
 	let chains = StackChains {
 		relay: None,
 		asset_hub: [0xc3; 32],
 		people: [0xa1; 32],
 		bulletin: [0xb2; 32],
 	};
-	let tlds = ["li", "localhost"];
+	let refusal = |tld: &str| {
+		let from_parts = Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true);
+		let bundled = bundled(&test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]), false);
+		[from_parts.err(), bundled.err()].map(|error| error.map(|error| error.to_string()))
+	};
 
+	let li = Some(r#"stack tld "li" is reserved: share hosts end in .li"#.to_string());
+	let localhost = Some(
+		r#"stack tld "localhost" is reserved: every name under localhost resolves to the local machine"#
+			.to_string(),
+	);
 	assert_eq!(
-		tlds.map(|tld| {
-			(
-				Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true).err(),
-				bundled(&test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]), false).err(),
-			)
-		}),
-		tlds.map(|tld| {
-			let taken = || Some(StackError::TakenTld { tld: tld.into() });
-			(taken(), taken())
-		}),
+		[refusal("li"), refusal("localhost")],
+		[[li.clone(), li], [localhost.clone(), localhost]]
 	);
 }
 

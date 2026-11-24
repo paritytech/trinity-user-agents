@@ -47,8 +47,10 @@ the host build runs:
   it the core refuses Polkadot's genesis hashes and the `dot` TLD.
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
-signing host's TLD from the descriptor. It refuses a pointer without a key and a
-descriptor without an Asset Hub, People or Bulletin chain.
+signing host's TLD from the descriptor. It refuses a pointer without a key, a
+descriptor without an Asset Hub, People or Bulletin chain, and the TLDs `li`,
+which share hosts end in, and `localhost`, whose names all resolve to the local
+machine.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
