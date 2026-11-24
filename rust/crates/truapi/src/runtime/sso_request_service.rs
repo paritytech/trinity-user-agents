@@ -19,6 +19,7 @@ use super::{
 };
 use crate::{
 	Spawner,
+	background_task::BackgroundTask,
 	chain_runtime::ChainRuntime,
 	host_logic::{
 		session::{SessionInfo, SessionState, encode_persisted_session, usernames_record},
@@ -104,6 +105,19 @@ pub trait PairedSessionOwner: Send + Sync {
 		previous: Option<&SessionInfo>,
 		next: &SessionInfo,
 	);
+}
+
+/// A username lookup the service started, which stops when this drops.
+struct UsernameLookup {
+	_task: BackgroundTask,
+	/// Reports `Canceled` once the lookup has ended.
+	ended: oneshot::Receiver<()>,
+}
+
+impl UsernameLookup {
+	fn is_running(&mut self) -> bool {
+		matches!(self.ended.try_recv(), Ok(None))
+	}
 }
 
 struct LoginInFlight {
@@ -197,6 +211,9 @@ pub struct SsoRequestService {
 	selection: Mutex<Selection>,
 	owner: Arc<dyn PairedSessionOwner>,
 	session_store_activation: futures::lock::Mutex<()>,
+	/// The username lookups started for installed sessions, which stop when
+	/// the service drops.
+	username_lookups: Mutex<Vec<UsernameLookup>>,
 	#[cfg(test)]
 	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 	#[cfg(test)]
@@ -259,26 +276,44 @@ impl SsoRequestService {
 	/// and their run is recorded. A failed lookup changes nothing, so the
 	/// next start looks again and a stored username is never lost to a
 	/// device that was offline.
+	///
+	/// The service owns the lookup and stops it when it drops, so a runtime
+	/// that is gone writes nothing.
 	fn look_up_usernames_in_background(&self, installed: SessionInfo, stored: Option<Vec<u8>>) {
-		let service = self.weak_self.clone();
-		self.spawner.spawn(async move {
-			if let Some(service) = service.upgrade() {
-				service.look_up_usernames(installed, stored).await;
-			}
+		let (ending, ended) = oneshot::channel();
+		let lookup = self.look_up_usernames(installed, stored);
+		let task = BackgroundTask::spawn(&self.spawner, async move {
+			lookup.await;
+			drop(ending);
 		});
+		let mut lookups = self.username_lookups.lock().expect("username lookups mutex poisoned");
+		lookups.retain_mut(UsernameLookup::is_running);
+		lookups.push(UsernameLookup { _task: task, ended });
 	}
 
-	async fn look_up_usernames(&self, installed: SessionInfo, stored: Option<Vec<u8>>) {
+	/// The lookup [`Self::look_up_usernames_in_background`] runs. Until dotNS
+	/// answers it holds the service only by a weak reference, so it does not
+	/// keep the service alive.
+	fn look_up_usernames(
+		&self,
+		installed: SessionInfo,
+		stored: Option<Vec<u8>>,
+	) -> impl Future<Output = ()> + Send + 'static {
+		let (reads, chain) = (self.dotns_reads.clone(), self.chain.clone());
 		let asset_hub = self.host_config.stack.chains().asset_hub;
-		let outcome =
-			lookup_session_identity(&self.dotns_reads, &self.chain, asset_hub, &installed).await;
-		let (lite_username, full_username) = match outcome {
-			LookupOutcome::Found(identity) => identity.into_usernames(),
-			LookupOutcome::NoRecord => (None, None),
-			LookupOutcome::Failed => return,
-		};
-		let named = SessionInfo { lite_username, full_username, ..installed.clone() };
-		self.name_session(&installed, named, stored).await;
+		let service = self.weak_self.clone();
+		async move {
+			let outcome = lookup_session_identity(&reads, &chain, asset_hub, &installed).await;
+			let (lite_username, full_username) = match outcome {
+				LookupOutcome::Found(identity) => identity.into_usernames(),
+				LookupOutcome::NoRecord => (None, None),
+				LookupOutcome::Failed => return,
+			};
+			let named = SessionInfo { lite_username, full_username, ..installed.clone() };
+			if let Some(service) = service.upgrade() {
+				service.name_session(&installed, named, stored).await;
+			}
+		}
 	}
 
 	/// Puts `named`, which is `installed` with the usernames a lookup found,
@@ -355,6 +390,7 @@ impl SsoRequestService {
 			selection: Mutex::new(Selection::default()),
 			owner,
 			session_store_activation: futures::lock::Mutex::new(()),
+			username_lookups: Mutex::new(Vec::new()),
 			#[cfg(test)]
 			external_session_activation_pause: Mutex::new(None),
 			#[cfg(test)]
