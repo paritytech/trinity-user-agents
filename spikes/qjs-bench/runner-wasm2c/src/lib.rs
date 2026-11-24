@@ -157,6 +157,10 @@ impl Drop for Guest {
 impl Guest {
     fn boot(source: &[u8], echo: bool, limits: &Limits) -> Result<(Self, Duration), String> {
         prepare_thread();
+        // The runtime aborts the process when its reservation fails, so ask first.
+        if VARIANT.contains("guard") && !can_reserve(GUARD_RESERVATION_BYTES) {
+            return Err("cannot reserve the 8 GiB of address space a guard-page instance needs".into());
+        }
         let started = Instant::now();
         let host = Box::into_raw(Box::new(HostState {
             started: Instant::now(),
@@ -343,33 +347,37 @@ pub fn oob_trap(source: &[u8], limits: &Limits) -> Result<String, String> {
     ))
 }
 
+/// Reserve `bytes` of address space, `PROT_NONE` as the wasm2c runtime does.
+fn reserve(bytes: usize) -> Option<*mut c_void> {
+    // SAFETY: an anonymous PROT_NONE mapping touches no existing memory.
+    let address = unsafe {
+        libc::mmap(std::ptr::null_mut(), bytes, libc::PROT_NONE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0)
+    };
+    (address != libc::MAP_FAILED).then_some(address)
+}
+
+fn release(address: *mut c_void, bytes: usize) {
+    // SAFETY: `address` is a mapping of `bytes` made by `reserve`.
+    unsafe { libc::munmap(address, bytes) };
+}
+
+fn can_reserve(bytes: usize) -> bool {
+    reserve(bytes).map(|address| release(address, bytes)).is_some()
+}
+
 /// How many guard-page instances this process could hold: reserve the
-/// address space each one takes, `PROT_NONE` as the wasm2c runtime does,
-/// until a reservation fails or `limit` is reached, then release them all.
-/// Probed directly because the runtime aborts the process when one fails.
+/// address space each one takes until a reservation fails or `limit` is
+/// reached, then release them all. Probed directly because the runtime
+/// aborts the process when one fails.
 pub fn guard_capacity(limit: usize) -> String {
     let mut reservations = Vec::new();
     while reservations.len() < limit {
-        // SAFETY: an anonymous PROT_NONE mapping touches no existing memory.
-        let address = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                GUARD_RESERVATION_BYTES,
-                libc::PROT_NONE,
-                libc::MAP_PRIVATE | libc::MAP_ANON,
-                -1,
-                0,
-            )
-        };
-        if address == libc::MAP_FAILED {
-            break;
-        }
+        let Some(address) = reserve(GUARD_RESERVATION_BYTES) else { break };
         reservations.push(address);
     }
     let count = reservations.len();
     for address in reservations {
-        // SAFETY: each address is a mapping of this size made above.
-        unsafe { libc::munmap(address, GUARD_RESERVATION_BYTES) };
+        release(address, GUARD_RESERVATION_BYTES);
     }
     format!(
         "{{\"engine\":\"{VARIANT}\",\"probe\":\"guardCapacity\",\"reservationGiB\":8,\"instances\":{count},\"limit\":{limit}}}"

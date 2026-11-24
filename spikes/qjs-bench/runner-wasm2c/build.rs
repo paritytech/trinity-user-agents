@@ -54,6 +54,10 @@ fn main() {
         },
         "bounds" => {
             build.define("WASM_RT_MEMCHECK_BOUNDS_CHECK", "1");
+            // Otherwise the runtime still reserves the module's maximum (4 GiB
+            // here) up front, which iOS refuses after the first instance.
+            // Without mmap, memory comes from the allocator and grows by realloc.
+            build.define("WASM_RT_USE_MMAP", "0");
             // Without the signal handler, wasm2c counts call depth instead
             // of catching native stack overflow. QuickJS recurses deeply.
             build.define("WASM_RT_MAX_CALL_STACK_DEPTH", "20000");

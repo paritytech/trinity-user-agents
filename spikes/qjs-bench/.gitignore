@@ -3,3 +3,4 @@
 /ios-bench/QJSBench/Resources/
 xcuserdata/
 /results/ios-sim/*.log
+/results/ios-device/*.log

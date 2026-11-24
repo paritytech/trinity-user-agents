@@ -171,7 +171,8 @@ before the host reads them. Two variants, chosen at build time with
 - `guard`: guard pages and a signal handler catch out-of-bounds accesses.
   Each instance reserves about 8 GiB of address space.
 - `bounds`: an explicit check on every access and a call-depth counter, no
-  address-space reservation.
+  address-space reservation (built with `WASM_RT_USE_MMAP=0`; see the
+  iPhone XS results under T7).
 
 `scripts/compare-wasm2c.sh` runs both beside native QuickJS, wasmi and Boa;
 raw lines are in `results/mac-wasm2c/`. Medians of three runs on the same
@@ -281,6 +282,46 @@ Every step passed in both variants. Medians of three replays:
 - Boa's memory per worker moves more between runs than the other engines'
   (3.1 MiB here, 5.6 MiB on the Mac), likely because its garbage collector
   runs at different points; the device runs will show its spread.
+
+### iPhone XS (A12, iOS 18.7)
+
+`scripts/run-ios-device.sh <udid> <variant> [quick|full] [label]` installs
+the app built by `build-ios.sh <variant> device <team>`, runs it with the
+console attached and keeps the lines in `results/ios-device/`. Two runs of the
+bounds-check build (`run1` quick, `run2` full), medians over six replays.
+Thermal state stayed nominal through the replays and reached fair during the
+long throughput workloads.
+
+| iPhone XS | QuickJS native | wasm2c, bounds checks | Boa | wasm, wasmi |
+|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.37 / 0.46 ms | 0.75 / 0.79 ms | 1.59 / 2.76 ms | 9.1 / 9.4 ms |
+| Boot to idle, 10 workers, p50 | 14.1 ms | 25.7 ms | 117 to 120 ms | 203 ms |
+| Memory per worker | 1.9 MiB | 3.5 MiB | 2.9 to 3.2 MiB | 3.5 MiB |
+| Codec, round trips/s | 1 613 to 1 912 | 839 to 919 | 310 to 344 | 70 |
+| rxjs, events/s | 92 724 | 49 499 | 17 444 | 4 102 |
+| Ping-pong 64 B / 4 KB, p50 | 2.8 / 3.0 µs | 8.7 / 9.1 µs | 8.9 / 11.6 µs | 100 / 103 µs |
+| 8 MiB cap | | catchable OOM after 6 MiB | no heap limit to set | catchable OOM after 6 MiB |
+| Out-of-bounds read | | trapped, fresh guest boots | | |
+
+- wasm2c with bounds checks costs about 2 times native on the A12 as on the
+  Mac: 0.75 ms a render, well inside a 16 ms frame, and 26 ms to boot. Boa is
+  about 4 times native on renders and 8 times on boot; wasmi about 25 times
+  on renders, half the 18 to 22 ms the M0 estimate feared.
+- **Guard pages do not fit.** Not one 8 GiB reservation succeeds on this
+  phone (`guard-capacity`: 0 of 64), so the guard-page build cannot start a
+  single worker; it now reports that as an error instead of letting the
+  runtime abort the app. Whether the extended virtual addressing
+  entitlement changes this is still to measure.
+- **The bounds-check build needed no reservation either.** wasm2c's runtime
+  reserves the module's maximum memory up front even with bounds checks: our
+  guest declares none, so 4 GiB per instance, which iOS granted once and then
+  refused, aborting the app. The bounds variant now builds with
+  `WASM_RT_USE_MMAP=0`, so memory comes from the allocator and grows by
+  `realloc`. That costs about 1 MiB more per worker here (3.5 MiB against
+  2.5 MiB with mmap on the Mac), which a guest that declares its maximum, or
+  a smaller initial heap, would win back.
+- The app binary with all four engines is 11.7 MB, unstripped.
 
 ## T2: the corpus
 
