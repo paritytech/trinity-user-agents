@@ -15,7 +15,7 @@ describe("gesture wire contract", () => {
             tag: "Gesture",
             value: { modifiers: [], props: {}, children: [{ tag: "Nil" }] },
         };
-        expect(Array.from(RendererNode.enc(node))).toEqual([12, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
+        expect(Array.from(RendererNode.enc(node))).toEqual([12, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
         expect(RendererNode.dec(RendererNode.enc(node))).toEqual(node);
     });
 
