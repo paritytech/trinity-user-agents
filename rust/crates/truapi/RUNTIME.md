@@ -261,8 +261,10 @@ the slot or passed to `activate_external_session`. The core looks its
 usernames up afterwards, unless the record vouches for the blob and the blob
 has a username. Until the lookup answers, usernames with no record are kept,
 and usernames whose record names another run or blob, or cannot be read, are
-dropped. A lookup that fails changes nothing. One that finds no username
-clears the stored ones.
+dropped. Installing the session that is already selected is the exception: it
+keeps the usernames it has, unless the record vouches for the new blob, whose
+usernames it then takes. A lookup that fails changes nothing. One that finds
+no username clears the stored ones.
 
 ### Core database
 

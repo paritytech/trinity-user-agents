@@ -106,10 +106,12 @@ The core records in the `SessionUsernamesRun` slot which run it read the
 usernames in, with a hash of the `AuthSession` blob. A session whose record
 names another run or another blob, or cannot be read, comes up without
 usernames until a lookup answers, so a start after a wipe on an offline device
-shows no username. If you keep `AuthSession` under a key of your own, such as
-one shared between origins, keep `SessionUsernamesRun` next to it. For a blob
-passed to `activateExternalSession` that the slot does not cover, the core
-looks the usernames up on every activation.
+shows no username. With no record at all, as for a blob stored before this
+version or a host that does not keep `SessionUsernamesRun`, the session keeps
+the usernames in its blob until then, also after a wipe. If you keep `AuthSession` under a key of your
+own, such as one shared between origins, keep `SessionUsernamesRun` next to
+it. For a blob passed to `activateExternalSession` that the slot does not
+cover, the core looks the usernames up on every activation.
 
 Activating the session that is already selected keeps it: its permissions and
 the requests waiting on it stay. It keeps the usernames it has and looks them
