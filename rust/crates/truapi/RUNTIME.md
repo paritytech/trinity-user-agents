@@ -227,7 +227,7 @@ A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
 again. Any other change applies at once. `StackStatus` documents the rest,
-including the `generation` a host keys cached chain data by.
+including what a host keys the chain data it caches by.
 
 #### After a wipe
 
@@ -236,7 +236,8 @@ the chains from the next by `StackRun`: the descriptor's `generation` and the
 Asset Hub, People and Bulletin genesis hashes. A runtime is built on one run,
 so the core notices a wipe at its next start.
 
-What the core stored about the chains carries the run it was written in:
+These values the core stores about the chains carry the run they were written
+in:
 
 - Cached manifests and allowance keys from another run, or stored without a
   run, are ignored until they are written again.
@@ -250,12 +251,18 @@ What the core stored about the chains carries the run it was written in:
 
 The session and the stored permissions are kept.
 
+The public-profile cache of a native host does not carry the run. It is keyed
+by username and serves a stored record first, so after a wipe a profile read
+from the old chains still shows. A record counts as fresh for an hour and is
+read again only after that, or when the caller sets `force_fresh`.
+
 A session is installed without waiting on dotNS, whether it is restored from
 the slot or passed to `activate_external_session`. The core looks its
 usernames up afterwards, unless the record vouches for the blob and the blob
 has a username. Until the lookup answers, usernames with no record are kept,
-and usernames whose record names another run or blob are dropped. A lookup
-that fails changes nothing. One that finds no username clears the stored ones.
+and usernames whose record names another run or blob, or cannot be read, are
+dropped. A lookup that fails changes nothing. One that finds no username
+clears the stored ones.
 
 ### Core database
 
