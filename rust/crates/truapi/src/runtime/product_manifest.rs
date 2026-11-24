@@ -365,7 +365,7 @@ async fn scope_grant(
 	if !manifest.grants(caller_id, scope) {
 		return Err(Refusal { because: RefusedBecause::NotGranted, source, scopes });
 	}
-	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
+	if scope == Granted::Context && !services.stack().trusts(caller_id) {
 		let because = match stored_account_decision(platform, caller_id, target).await {
 			StoredDecision::Denied => RefusedBecause::UserDenied,
 			StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,

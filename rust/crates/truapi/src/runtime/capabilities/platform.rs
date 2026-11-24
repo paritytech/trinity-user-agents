@@ -466,7 +466,8 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 						reason: format!("notification {reason}"),
 					}));
 				}
-				let trusted = self.connection.product.product_id.has_trusted_remote_permissions();
+				let trusted =
+					self.connection.services.stack().trusts(&self.connection.product.product_id);
 				notification.title = notification
 					.title
 					.filter(|_| trusted)

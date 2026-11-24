@@ -5112,10 +5112,11 @@ fn push_notification_delegates_payload_and_returns_host_id() {
 }
 
 /// A title replaces the product id the person sees, so only a trusted product
-/// may set one. Any other product could otherwise pass for the Polkadot app.
+/// may set one. Any other product could otherwise pass for the Polkadot app,
+/// and so could a trusted label under a TLD the stack does not serve.
 #[test]
 fn push_notification_keeps_a_title_only_from_a_trusted_product() {
-	let delivered_titles = ["dim2.dot", "other.dot"].map(|product| {
+	let delivered_titles = ["dim2.dot", "other.dot", "dim2.testnet"].map(|product| {
 		let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
 		let platform = Arc::new(StubPlatform {
 			pushed_notifications: pushed_notifications.clone(),
@@ -5133,7 +5134,7 @@ fn push_notification_keeps_a_title_only_from_a_trusted_product() {
 		let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
 		pushed.iter().map(|notification| notification.title.clone()).collect::<Vec<_>>()
 	});
-	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None]]);
+	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None], vec![None]]);
 }
 
 /// Hosts show the product id only when the title is absent, so a blank title

@@ -31,7 +31,8 @@ pub fn unlocked_wallet(
 		Spawner::for_test(),
 	);
 	let registry = RingVrfRegistryStore::new(services.platform.clone());
-	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
+	let consent =
+		Arc::new(ProductConsent::new(services.platform.clone(), services.stack().clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
 	wallet.install(wallet.prepare_activation(RootEntropy::new([entropy; 32]), None).unwrap());

@@ -597,6 +597,30 @@ fn a_blessed_product_proves_with_a_context_grant_despite_a_stored_denial() {
 	);
 }
 
+/// Only a product the stack trusts is exempt from a stored refusal. A trusted
+/// label under a TLD the stack does not serve is held to it like any other
+/// product.
+#[test]
+fn a_trusted_label_off_the_stack_is_held_to_a_stored_denial() {
+	use crate::host_internal::product_manifest::Granted;
+	let platform = Arc::new(StubPlatform::default());
+	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+	deny_account_access(&platform, "dim2.testnet", "peopl.dot");
+	let (services, _authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+
+	let granted = |caller: &str| {
+		futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+			&services,
+			platform.as_ref(),
+			&ProductId::for_test(caller),
+			&ProductId::for_test("peopl.dot"),
+			Granted::Context,
+		))
+	};
+	assert_eq!([granted("dim2.dot"), granted("dim2.testnet")], [true, false]);
+}
+
 /// A `context` grant covers the identity read, so the two calls agree.
 ///
 /// The contextual alias and the proof come out of one VRF evaluation, so a
@@ -1155,7 +1179,11 @@ fn a_refusal_covers_every_executable_of_the_refused_target() {
 	});
 	cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 	futures::executor::block_on(
-		crate::runtime::product_consent::ProductConsent::new(platform.clone()).account_access(
+		crate::runtime::product_consent::ProductConsent::new(
+			platform.clone(),
+			crate::test_support::test_stack(TEST_NETWORK_SUFFIX, [0; 32], [0xbb; 32], [0xcc; 32]),
+		)
+		.account_access(
 			&ProductId::for_test("ordinary.dot"),
 			&ProductId::for_test("peopl.dot"),
 			platform.as_ref(),
