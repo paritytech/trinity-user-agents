@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.operation.ProductOperationService
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -12,9 +13,12 @@ import javax.inject.Inject
 // flow can continue where it left off.
 class ProductWorkerInitializer @Inject constructor(
     private val operationService: ProductOperationService,
+    private val runtimeSettings: ProductRuntimeSettings,
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> {
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) return Result.success(Unit)
+
         scope.launch {
             runCancellableCatching { operationService.resumeOpenOperations() }
                 .logFailure("Failed to resume open funding operations")

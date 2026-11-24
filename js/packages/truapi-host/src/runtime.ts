@@ -314,10 +314,6 @@ export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
    * than throwing, so a dead render never takes the host's surrounding surface
    * with it.
    *
-   * An open render holds one worker reference for the provider's product: the
-   * runtime acquires it when the stream starts and releases it when the stream
-   * ends or the disposer runs.
-   *
    * Present only on runtimes that keep a live channel to the core.
    */
   render?(request: ProductRendererRenderRequest, sink: RenderSink): () => void;
