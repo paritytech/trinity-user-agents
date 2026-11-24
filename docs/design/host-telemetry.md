@@ -90,7 +90,9 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 ## What this does not touch
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`).
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:30-31`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:35,47`).
+
+Both `HostLogSinkTree` and `HostLogSinkDestination` also limit each tag to 60 lines a minute, and each `truapi.core` marker to 60 of its own. The first line after a minute that dropped lines is preceded by one more that counts them, with the count as a `dropped` attribute and, on `truapi.core`, the marker as a `marker` attribute. A product's console warnings and errors reach Sentry as `truapi.product`, so a product stuck in a loop sends at most 60 lines a minute per device plus that count, for as long as it loops. A count that no later line follows, because the tag went quiet or the app stopped, is never sent. Core events are not limited here, whether they reach the sink through `CoreEventLogger` on Android or carry a `CoreEventContext` on iOS.
 
 Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log. On Android the three are `HostProcessTelemetry`, `DeviceReadingsInitializer` and `SentryHostLogSink`, and both `HostLogSinkTree` and `CoreEventLogger` reach that last one through `HostLogSink`.
 
