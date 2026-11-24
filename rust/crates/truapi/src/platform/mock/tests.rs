@@ -630,12 +630,8 @@ fn mock_room_request(room_id: &str) -> latest::HostChatCreateRoomRequest {
 }
 
 fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
-	block_on(p.create_chat_room(
-		&mock_product(),
-		room_id.to_string(),
-		mock_room_request(room_id),
-	))
-	.expect("room registration succeeds")
+	block_on(p.create_chat_room(&mock_product(), room_id.to_string(), mock_room_request(room_id)))
+		.expect("room registration succeeds")
 }
 
 fn post_text(
@@ -1045,10 +1041,8 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		})
 	);
 
-	block_on(
-		p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }),
-	)
-	.unwrap();
+	block_on(p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }))
+		.unwrap();
 	assert_eq!(p.chat_room_declarations("lobby"), None);
 	assert!(p.chat_rooms().is_empty());
 }

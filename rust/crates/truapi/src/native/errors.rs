@@ -42,22 +42,6 @@ pub enum NativeChatFeedRejection {
 	},
 }
 
-impl NativeChatFeedRejection {
-	/// What the host did with the update, or, for a refusal that names no
-	/// outcome, the failure of the host.
-	pub(crate) fn into_outcome(
-		self,
-	) -> Result<crate::platform::ChatFeedOutcome, truapi::latest::GenericError> {
-		use crate::platform::ChatFeedOutcome;
-		match self {
-			Self::UnknownMessage => Ok(ChatFeedOutcome::UnknownMessage),
-			Self::DuplicateMessage => Ok(ChatFeedOutcome::DuplicateMessage),
-			Self::NotOwner => Ok(ChatFeedOutcome::NotOwner),
-			Self::Rejected { reason } => Err(truapi::latest::GenericError { reason }),
-		}
-	}
-}
-
 /// Why a native host refused to create a chat room.
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum NativeChatRoomRejection {

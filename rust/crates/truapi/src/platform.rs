@@ -42,23 +42,23 @@ pub use crate::{
 
 use truapi::{
 	latest::{
-		AllocatableResource, ChatAction, ChatActions, ChatCustomBody,
-		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
+		AllocatableResource, ChatAction, ChatActions, ChatCustomBody, ChatCustomMessage,
+		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
+		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
 		ChatPreviewReaction, ChatReaction, ChatReactionSummary, ChatReply, ChatReplyPreview,
 		ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig,
 		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, CodeFormat,
-		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest,
-		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
-		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
-		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
-		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest, HostDevicePermissionRequest,
+		HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostFundingStatusSubscribeItem,
+		HostLocalStorageChangeItem, HostLocaleSubscribeItem, HostNavigateToError,
+		HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem, HostPaymentError,
+		HostPaymentRequest, HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+		HostPaymentTopUpError, HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
 		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
 		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
 		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
@@ -574,13 +574,6 @@ pub const CHAT_DESCRIPTION_MAX_BYTES: usize = 1024;
 
 /// Largest accepted number of reaction summaries on one message.
 pub const CHAT_REACTIONS_MAX: usize = 64;
-
-/// Largest accepted number of `update_feed` calls for one room in one second.
-pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
-
-/// Largest accepted number of `set_room_preview` calls for one room in one
-/// second.
-pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
 
 /// The largest file a [`ChatResource::Hop`] names: the largest the native chat sends.
 pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;

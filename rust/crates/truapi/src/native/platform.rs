@@ -40,7 +40,7 @@ use super::{
 		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	engine_follow::{BalanceFollower, StatusFollower},
-	errors::HostRejection,
+	errors::{HostRejection, NativeChatFeedRejection},
 	events::NativeEventBus,
 	funding_feed::{FundingChangeKind, write_resume_marker},
 };
@@ -837,9 +837,15 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		request: truapi::latest::HostChatUpdateFeedRequest,
 		persist: bool,
 	) -> Result<crate::platform::ChatFeedOutcome, truapi::latest::GenericError> {
+		use crate::platform::ChatFeedOutcome;
 		match self.chat.update_feed(request.room_id, request.update, persist).await {
-			Ok(()) => Ok(crate::platform::ChatFeedOutcome::Applied),
-			Err(rejection) => rejection.into_outcome(),
+			Ok(()) => Ok(ChatFeedOutcome::Applied),
+			Err(NativeChatFeedRejection::UnknownMessage) => Ok(ChatFeedOutcome::UnknownMessage),
+			Err(NativeChatFeedRejection::DuplicateMessage) => Ok(ChatFeedOutcome::DuplicateMessage),
+			Err(NativeChatFeedRejection::NotOwner) => Ok(ChatFeedOutcome::NotOwner),
+			Err(NativeChatFeedRejection::Rejected { reason }) => {
+				Err(truapi::latest::GenericError { reason })
+			},
 		}
 	}
 }
