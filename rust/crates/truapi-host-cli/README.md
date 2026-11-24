@@ -141,7 +141,7 @@ other stack gets `stack-<tag>`, named from the stack's id, so a fork starts
 with none of its source's sessions, accounts, pairings or stored data. A local
 file's id is its canonical path, so a file that is moved or renamed, or the
 same descriptor in another checkout or a temporary file, gets a new directory
-and a new signer, and the CLI prints nothing about it.
+and starts as a stack the CLI has not run before, with no message that says why.
 `truapi-host network-check` prints the name as `state_directory`, and SPEC.md
 §13.1 has the rest.
 

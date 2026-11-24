@@ -1564,7 +1564,7 @@ stack's id and not what its descriptor calls itself, so a fork starts with none
 of its source's sessions, accounts, pairings, or core or product storage, and a
 stack named once by a link with its key and once by its bare URL is two stacks,
 except a built-in network's, whose bare URL is read with its key. A local
-file's id is its path, so a file that moves starts with new state.
+file's id is its canonical path, so a file that moves starts with new state.
 `accounts.json` above the stack directories holds the default session's
 accounts for every stack, each under that name as its network id (§13.7).
 `network-check` prints the name as `state_directory`.
