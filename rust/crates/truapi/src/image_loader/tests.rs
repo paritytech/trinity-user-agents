@@ -38,7 +38,7 @@ fn image_loader(platform: Arc<StubPlatform>, timer: Arc<ManualTimer>) -> ImageLo
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::test_stack("paseo", [1; 32], BULLETIN_GENESIS, Some([3; 32])),
+		crate::test_support::test_stack("paseo", [1; 32], BULLETIN_GENESIS, [3; 32]),
 		Spawner::for_test(),
 	);
 	ImageLoader::new(services, timer)

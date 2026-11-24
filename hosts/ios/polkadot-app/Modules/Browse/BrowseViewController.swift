@@ -50,3 +50,9 @@ extension BrowseViewController: BrowseViewProtocol {
         rootView.activityIndicatorView.stopAnimating()
     }
 }
+
+// MARK: - NavigationBarHiding
+
+extension BrowseViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool { true }
+}

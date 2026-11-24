@@ -43,7 +43,7 @@ pub struct SessionInfo {
 	pub identity_chat_private_key: Option<[u8; 32]>,
 	/// X25519 public key of the wallet device that answered pairing. Distinct
 	/// from [`SsoSessionInfo::peer_enc_pubkey`], which keys the SSO channels.
-	pub device_enc_public_key: Option<[u8; 32]>,
+	pub peer_device_enc_public_key: Option<[u8; 32]>,
 	/// Short username (e.g. `alice`).
 	pub lite_username: Option<String>,
 	/// Fully qualified username (e.g. `Alice Smith`).
@@ -114,7 +114,7 @@ pub struct ExternalPairedSession {
 	pub identity_chat_private_key: Option<[u8; 32]>,
 	/// X25519 public key of the wallet device that answered pairing, when the
 	/// external runtime captured it during its own handshake.
-	pub device_enc_public_key: Option<[u8; 32]>,
+	pub peer_device_enc_public_key: Option<[u8; 32]>,
 }
 
 /// Encode an already-paired external host session as the canonical opaque
@@ -129,7 +129,7 @@ pub fn encode_external_paired_session(info: ExternalPairedSession) -> Vec<u8> {
 		root_entropy_source: Some(info.root_entropy_source),
 		identity_account_id: Some(info.identity_account_id),
 		identity_chat_private_key: info.identity_chat_private_key,
-		device_enc_public_key: info.device_enc_public_key,
+		peer_device_enc_public_key: info.peer_device_enc_public_key,
 		lite_username: None,
 		full_username: None,
 	})
@@ -182,7 +182,7 @@ impl From<EightFieldSessionLayout> for SessionInfo {
 			root_entropy_source: blob.root_entropy_source,
 			identity_account_id: blob.identity_account_id,
 			identity_chat_private_key: blob.identity_chat_private_key,
-			device_enc_public_key: blob.device_enc_public_key,
+			peer_device_enc_public_key: blob.device_enc_public_key,
 			lite_username: blob.lite_username,
 			full_username: blob.full_username,
 		}
@@ -200,7 +200,7 @@ impl From<SixFieldSessionLayout> for SessionInfo {
 			// recompute either value, so chat and device-addressed features are
 			// unavailable for the session until it pairs again.
 			identity_chat_private_key: None,
-			device_enc_public_key: None,
+			peer_device_enc_public_key: None,
 			lite_username: blob.lite_username,
 			full_username: blob.full_username,
 		}

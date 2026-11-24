@@ -41,6 +41,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.CoreAttribute
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
@@ -87,6 +88,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val coreEventLogger: CoreEventLogger,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -139,6 +141,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun onCoreLog(marker: String, detail: String) {
             logCoreLine(marker, detail)
+        }
+
+        override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+            coreEventLogger.log(marker, attributes)
         }
 
         /**
@@ -235,6 +241,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
+                is HostFeatureSupportedRequest.Materials -> false
             }
 
         override fun currentTheme(): HostThemeSubscribeItem = cachedTheme.get()
@@ -435,7 +442,7 @@ internal fun logCoreLine(marker: String, detail: String) {
 // table keeps on the device, or does not list at all, has no priority here and is logged below the
 // level `SentryLogTree` forwards. Read lazily rather than in the file's initializer, so a core that
 // cannot answer costs the log line instead of every top-level helper in this file.
-private val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
+internal val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
     coreMarkers().mapNotNull { (marker, markerClass) ->
         when (markerClass) {
             is MarkerClass.Export ->

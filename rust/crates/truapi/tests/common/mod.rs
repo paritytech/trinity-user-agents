@@ -24,7 +24,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], Some([0xcc; 32])),
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
@@ -49,6 +49,12 @@ impl ProductStorage for WireShapePlatform {
 		Ok(())
 	}
 	async fn clear(&self, _key: String) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
+	async fn clear_product(
+		&self,
+		_product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
 	fn subscribe_storage(
@@ -88,9 +94,9 @@ impl Navigation for WireShapePlatform {
 impl Notifications for WireShapePlatform {
 	async fn push_notification(
 		&self,
-		_notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
-		Ok(v01::HostPushNotificationResponse { id: 0 })
+		_notification: truapi::latest::HostPushNotificationRequest,
+	) -> Result<truapi::latest::HostPushNotificationResponse, truapi::latest::GenericError> {
+		Ok(truapi::latest::HostPushNotificationResponse { id: 0 })
 	}
 
 	async fn cancel_notification(&self, _id: u32) -> Result<(), v01::GenericError> {

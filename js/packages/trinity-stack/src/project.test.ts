@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Fetch, encodeLink } from "./index.js";
+import { type Fetch, encodeLink, knownStacks } from "./index.js";
 import {
   type ProjectOptions,
   add,
@@ -231,5 +231,28 @@ describe("trinity-stack add and update", () => {
     expect(changed).toContain("local.json");
     expect(failures).toHaveLength(1);
     expect(failures[0]).toStartWith("broken: ");
+  });
+
+  test("add with a known stack's name alone records its link", async () => {
+    served = new Uint8Array(
+      await readFile(
+        new URL("../../../../stacks/previewnet.json", import.meta.url),
+      ),
+    );
+    await add("previewnet", undefined, undefined, options());
+    expect(
+      JSON.parse(await readFile(join(dir, "stacks.json"), "utf8")),
+    ).toEqual({ previewnet: knownStacks.previewnet });
+  });
+
+  // A build copy must be signed, so an unsigned known stack is only a link to read from.
+  test("add with an unsigned known stack's name fails before fetching and writes nothing", async () => {
+    const noFetch: Fetch = () => Promise.reject(new Error("no fetch expected"));
+    await expect(
+      add("westend", undefined, undefined, { dir, fetch: noFetch }),
+    ).rejects.toThrow(
+      `westend is unsigned, so it cannot be a build copy; a reader can still load it from its link ${knownStacks.westend}`,
+    );
+    expect(await files()).toEqual([]);
   });
 });

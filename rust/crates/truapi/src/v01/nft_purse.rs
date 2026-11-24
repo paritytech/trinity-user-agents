@@ -32,7 +32,7 @@ pub struct NftPurseReceiveKey(pub [u8; 32]);
 
 /// Who owns an NFT purse.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum NftPurseOwner {
 	/// The product with this id created the purse.
 	#[display("{_0}")]
@@ -412,6 +412,39 @@ pub enum NftPurseRevokeChequeError {
 	/// Some of the cheque's items are already being moved, such as by a
 	/// deposit of the cheque on this device.
 	ItemsInUse,
+	/// Any other failure.
+	Other(GenericError),
+}
+
+/// Request to list the cheques the calling product created.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseListChequesRequest {}
+
+/// A cheque the calling product created, as `create_cheque` returned it, with
+/// what it was created from.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct NftPurseChequeRecord {
+	/// The cheque, byte for byte as `create_cheque` returned it.
+	pub cheque: NftPurseCheque,
+	/// The purse its items left.
+	pub from: NftPurseId,
+	/// The destination `create_cheque` was called with.
+	pub destination: NftPurseChequeDestination,
+	/// The host's wall clock when the cheque was created, in Unix
+	/// milliseconds. Informational only.
+	pub created_at: u64,
+}
+
+/// The cheques the calling product created on this host.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseListChequesResponse {
+	/// The cheques, oldest first, empty when the product created none.
+	pub cheques: Vec<NftPurseChequeRecord>,
+}
+
+/// Why cheques could not be listed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseListChequesError {
 	/// Any other failure.
 	Other(GenericError),
 }

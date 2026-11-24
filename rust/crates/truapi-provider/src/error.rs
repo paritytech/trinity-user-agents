@@ -18,8 +18,12 @@ pub enum ProviderError {
 		/// The queried genesis hash.
 		genesis: [u8; 32],
 	},
-	/// A parachain named a relay that is not a registered light-client chain.
-	#[display("relay 0x{} is not a registered light-client chain", hex::encode(relay))]
+	/// A parachain's relay has no light-client source: it is not registered as
+	/// a light-client chain, and the stack has no spec for it yet.
+	#[display(
+		"relay 0x{} has no light-client source: it is not registered as a light-client chain, and the stack has no spec for it yet",
+		hex::encode(relay)
+	)]
 	UnknownRelay {
 		/// The relay genesis hash the parachain referenced.
 		relay: [u8; 32],
@@ -90,11 +94,39 @@ pub enum ProviderError {
 		/// Comma-separated names of the bundled networks.
 		known: String,
 	},
-	/// A bundled genesis hash does not decode to 32 bytes.
-	#[display("bundled genesis hash {hex} is malformed")]
-	MalformedGenesis {
-		/// The catalog entry as written.
-		hex: String,
+	/// A stack's link or descriptor was refused.
+	#[cfg(feature = "smoldot")]
+	#[display("stack refused: {source}")]
+	Stack {
+		/// The rule the link or the descriptor broke.
+		source: trinity_stack::Error,
+	},
+	/// A light spec is not the one the stack's descriptor names for the chain.
+	#[cfg(feature = "smoldot")]
+	#[display("light spec of {role} (0x{}) refused: {source}", hex::encode(genesis))]
+	LightSpec {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// The chain's genesis hash.
+		genesis: [u8; 32],
+		/// How the spec differs from the descriptor.
+		source: trinity_stack::Error,
+	},
+	/// A light spec was handed to a provider built without a stack.
+	#[display(
+		"this provider was built without a stack, so it has no descriptor to check a light spec against"
+	)]
+	NoStack,
+	/// A bundled chain spec does not yield a genesis hash.
+	#[cfg(feature = "networks")]
+	#[display("bundled {network} {service} chain spec yields no genesis hash: {source}")]
+	MalformedBundledSpec {
+		/// The catalog network listing the spec.
+		network: &'static str,
+		/// The chain's service within the network (`relay`, `asset-hub`, ...).
+		service: &'static str,
+		/// Why the spec does not parse or lacks a genesis state root.
+		source: trinity_stack::Error,
 	},
 }
 
@@ -178,34 +210,4 @@ pub fn frame_for_id(frame: &str, id: &str) -> Option<FrameForId> {
 mod tests;
 
 #[cfg(all(test, feature = "ws"))]
-mod ws_tests {
-	use super::redacted;
-
-	#[test]
-	fn userinfo_is_stripped_from_a_node_url() {
-		let url = url::Url::parse("wss://alice:hunter2@node.example/path").expect("parse");
-
-		let printed = redacted(&url);
-
-		assert!(!printed.contains("alice"), "leaked the username: {printed}");
-		assert!(!printed.contains("hunter2"), "leaked the password: {printed}");
-		assert!(printed.contains("node.example"), "lost the host: {printed}");
-	}
-
-	#[test]
-	fn a_username_without_a_password_is_stripped_too() {
-		let url = url::Url::parse("wss://token@node.example/").expect("parse");
-
-		assert!(!redacted(&url).contains("token"));
-	}
-
-	/// Providers put API keys in the path or under query names of their own, so
-	/// neither survives, while the host and port still name the node.
-	#[test]
-	fn the_path_and_query_are_dropped() {
-		let url =
-			url::Url::parse("wss://node.example:9944/v1/PATHKEY?apikey=SECRET").expect("parse");
-
-		assert_eq!(redacted(&url), "wss://node.example:9944");
-	}
-}
+mod ws_tests;

@@ -1,41 +1,45 @@
 use super::SigningHost;
 use crate::{
-	host_logic::session::SessionInfo,
+	host_logic::{root_entropy::RootEntropy, session::SessionInfo},
 	runtime::{
-		authority::AuthorityError, connected_session_ui_info, identity::lookup_session_identity,
+		AccountHolder, authority::AuthorityError, connected_session_ui_info, device_enc_public_key,
+		identity::lookup_session_identity,
 	},
 };
 
 /// Activate the wallet from entropy supplied by the embedding host.
 #[async_trait::async_trait]
 pub trait LocalActivation: Send + Sync {
-	/// Activate a local session from raw BIP-39 entropy, deriving the root
+	/// Activate a local session from the root entropy, deriving the root
 	/// public key and marking the session connected.
-	async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), AuthorityError>;
+	async fn activate_local_session(&self, entropy: RootEntropy) -> Result<(), AuthorityError>;
 
 	/// Activate a local session under the host's known `lite_username` until
 	/// the dotNS record on Asset Hub answers. A record with a name replaces it.
 	async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError>;
 }
 
 #[async_trait::async_trait]
 impl LocalActivation for SigningHost {
-	async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), AuthorityError> {
-		self.activate_local_session_with_identity(secret, None).await
+	async fn activate_local_session(&self, entropy: RootEntropy) -> Result<(), AuthorityError> {
+		self.activate_local_session_with_identity(entropy, None).await
 	}
 
 	async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
-		let activation = self.wallet.prepare_activation(secret, lite_username)?;
-		let session = self.change_activation(|| self.wallet.install(activation));
-		self.auth_state.connected(&connected_session_ui_info(&session));
+		let device_enc_public_key =
+			self.wallet.device_encryption_secret().await?.map(device_enc_public_key);
+		let activation = self.wallet.prepare_activation(entropy, lite_username)?;
+		let session = self.accounts.change_activation(|| self.wallet.install(activation));
+		self.auth_state
+			.connected(&connected_session_ui_info(&session, device_enc_public_key));
 
 		let services = self.services.clone();
 		let session_state = self.wallet.session_state();
@@ -54,7 +58,7 @@ impl LocalActivation for SigningHost {
 			let (lite_username, full_username) = identity.into_usernames();
 			let named = SessionInfo { lite_username, full_username, ..session.clone() };
 			if session_state.replace_session_if_current(&session, named.clone()) {
-				auth_state.connected(&connected_session_ui_info(&named));
+				auth_state.connected(&connected_session_ui_info(&named, device_enc_public_key));
 			}
 		});
 		Ok(())

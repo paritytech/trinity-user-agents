@@ -49,11 +49,11 @@ use crate::{
 		dotns::{NavigateDecision, parse_navigate},
 		features::feature_supported,
 	},
-	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost, versioning::version},
+	runtime::{AccountHolder, PERMISSION_DENIED_REASON, ProductRuntimeHost, versioning::version},
 };
 
 #[async_trait::async_trait]
-impl System for ProductRuntimeHost {
+impl<H: AccountHolder> System for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "system.handshake"))]
 	async fn handshake(
 		&self,
@@ -93,9 +93,14 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
 		version(request)
 			.exec(|inner| async move {
-				feature_supported(self.connection.platform.as_ref(), inner)
-					.await
-					.map_err(CallError::Domain)
+				let services = &self.connection.services;
+				feature_supported(
+					self.connection.platform.as_ref(),
+					|version, features| services.draws_materials(version, features),
+					inner,
+				)
+				.await
+				.map_err(CallError::Domain)
 			})
 			.await
 	}
@@ -185,7 +190,7 @@ impl System for ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Permissions for ProductRuntimeHost {
+impl<H: AccountHolder> Permissions for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorize_device_permission"))]
 	async fn authorize_device_permission(
 		&self,
@@ -272,7 +277,7 @@ impl Permissions for ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl LocalStorage for ProductRuntimeHost {
+impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "local_storage.read"))]
 	async fn read(
 		&self,
@@ -390,7 +395,7 @@ impl LocalStorage for ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Worker for ProductRuntimeHost {
+impl<H: AccountHolder> Worker for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "worker.begin_operation"))]
 	async fn begin_operation(
 		&self,
@@ -432,7 +437,7 @@ impl Worker for ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Theme for ProductRuntimeHost {
+impl<H: AccountHolder> Theme for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "theme.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -454,7 +459,7 @@ impl Theme for ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Locale for ProductRuntimeHost {
+impl<H: AccountHolder> Locale for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "locale.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -479,7 +484,7 @@ impl Locale for ProductRuntimeHost {
 // cancellation while the core preserves the typed TrUAPI wire shape.
 
 #[async_trait::async_trait]
-impl Notifications for ProductRuntimeHost {
+impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "notifications.send_push_notification"))]
 	async fn send_push_notification(
 		&self,
@@ -487,7 +492,7 @@ impl Notifications for ProductRuntimeHost {
 		request: HostPushNotificationRequest,
 	) -> Result<HostPushNotificationResponse, CallError<HostPushNotificationError>> {
 		version(request)
-			.exec(|inner| async move {
+			.exec(|mut notification| async move {
 				let status = self
 					.connection
 					.permissions_service()
@@ -506,7 +511,13 @@ impl Notifications for ProductRuntimeHost {
 						reason: format!("notification {reason}"),
 					}));
 				}
-				self.connection.platform.push_notification(inner).await.map_err(|err| {
+				let trusted = self.connection.product.product_id.has_trusted_remote_permissions();
+				notification.title = notification
+					.title
+					.filter(|_| trusted)
+					.map(|title| title.trim_matches(is_blank_title_char).to_string())
+					.filter(|title| !title.is_empty());
+				self.connection.platform.push_notification(notification).await.map_err(|err| {
 					CallError::Domain(latest::HostPushNotificationError::Unknown {
 						reason: err.reason,
 					})
@@ -531,4 +542,9 @@ impl Notifications for ProductRuntimeHost {
 			})
 			.await
 	}
+}
+
+fn is_blank_title_char(character: char) -> bool {
+	character.is_whitespace() ||
+		matches!(character, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
 }

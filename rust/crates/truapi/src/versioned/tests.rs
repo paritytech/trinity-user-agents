@@ -15,6 +15,8 @@ truapi_macros::versioned_type! {
 		V1 => ProbeV1,
 		V2 => ProbeV2,
 	}
+
+	enum LaterMethodProbe { V2 => ProbeV2 }
 }
 
 // Multi-version envelopes assign positional SCALE codec indices (V1 -> 0,
@@ -32,6 +34,28 @@ fn multi_version_codec_indices_are_positional() {
 	assert_eq!(v1.version(), 1);
 	assert_eq!(v2.version(), 2);
 	assert_eq!(MultiVersionProbe::LATEST, 2);
+}
+
+// A method that v0.2 adds starts at `V2`. Its envelope keeps codec index
+// `n - 1`, so a v0.1 frame does not decode as the v0.2 payload.
+#[test]
+fn an_envelope_that_starts_at_v2_keeps_the_codec_index_of_v2() {
+	use super::Versioned;
+
+	let v2 = LaterMethodProbe::V2(ProbeV2 { b: b"hello".to_vec() });
+	assert_eq!(v2.encode()[0], 1, "V2 encodes codec index 1");
+	assert_eq!(v2.version(), 2);
+	assert_eq!(LaterMethodProbe::LATEST, 2);
+	assert!(LaterMethodProbe::decode(&mut [0u8, 0].as_slice()).is_err());
+}
+
+// Callers build a request through its `latest` alias and wrap it with `into()`
+// instead of naming a version, so the alias has to be the newest payload.
+#[test]
+fn latest_alias_names_the_newest_payload() {
+	let payload: latest::MultiVersionProbe = ProbeV2 { b: b"hello".to_vec() };
+
+	assert_eq!(MultiVersionProbe::from(payload.clone()), MultiVersionProbe::V2(payload));
 }
 
 #[test]

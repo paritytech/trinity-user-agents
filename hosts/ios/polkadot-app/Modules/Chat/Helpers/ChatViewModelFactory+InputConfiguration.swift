@@ -4,25 +4,27 @@ import PolkadotUI
 
 extension ChatViewModelFactory {
     func makeInputConfiguration(
-        for metadata: ChatMetadata,
+        for metadata: MessageListMetadata,
         actions: ChatViewModelActions
     ) -> (any ChatInputViewConfigurationProtocol)? {
         switch metadata.peerMetadata.input {
         case let .inputField(inputFieldMetadata):
-            clearRoomFooterCard(of: metadata.chatId)
+            clearRoomFooterCard(of: metadata.chatMetadata.chatId)
             return makeTextInputConfiguration(inputFieldMetadata)
         case .incomingRequest:
             return makeIncomingRequestInputConfiguration(for: metadata.peerMetadata, actions: actions)
         case .outgoingRequest:
-            return makeOutgoingPendingRequestInputConfiguration(for: metadata)
+            return makeOutgoingPendingRequestInputConfiguration(for: metadata.chatMetadata, actions: actions)
+        case .cancelledRequest:
+            return ChatRequestCancelledBannerView.ViewModel(username: metadata.peerName)
         case .blockedUser:
             return makeBlockedUserInputConfiguration(for: metadata.peerMetadata, actions: actions)
         case let .productCard(messageType, payload):
-            guard case let .chatExtension(_, roomId?) = metadata.chatId else { return nil }
+            guard case let .chatExtension(_, roomId?) = metadata.chatMetadata.chatId else { return nil }
             return productMessageDecoder?
                 .makeRoomFooterCard(roomId: roomId, messageType: messageType, payload: payload)
         case .empty:
-            clearRoomFooterCard(of: metadata.chatId)
+            clearRoomFooterCard(of: metadata.chatMetadata.chatId)
             return nil
         }
     }
@@ -69,12 +71,14 @@ private extension ChatViewModelFactory {
     }
 
     func makeOutgoingPendingRequestInputConfiguration(
-        for metadata: ChatMetadata
+        for metadata: ChatMetadata,
+        actions: ChatViewModelActions
     ) -> any ChatInputViewConfigurationProtocol {
         switch metadata.state {
         case .created:
             ChatRequestedBannerView.ViewModel(
-                username: metadata.peerMetadata.name
+                username: metadata.peerMetadata.name,
+                onCancel: actions.cancelChatRequest
             )
         case .pending:
             ChatRequestInProgressBannerView.ViewModel(

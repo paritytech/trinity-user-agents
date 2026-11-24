@@ -42,7 +42,7 @@ pub struct FundingConfig {
 
 /// One payment mode a provider serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingRoute {
 	/// The rail, published as the route's `mode`.
 	pub rail: FundingRail,

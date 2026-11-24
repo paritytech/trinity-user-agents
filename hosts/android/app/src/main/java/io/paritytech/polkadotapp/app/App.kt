@@ -41,6 +41,9 @@ class App : Application(), Configuration.Provider {
     lateinit var coinageFileTree: CoinageFileTree
 
     @Inject
+    lateinit var sentryLogTree: Lazy<SentryLogTree>
+
+    @Inject
     lateinit var debugShakeObserver: DebugShakeObserver
 
     @Inject
@@ -61,7 +64,7 @@ class App : Application(), Configuration.Provider {
         // Planted before the initializers: the pipeline resumes unfinished top-ups, and Timber drops
         // anything logged before a tree exists.
         Timber.plant(coinageFileTree)
-        if (Sentry.isEnabled()) Timber.plant(SentryLogTree())
+        if (Sentry.isEnabled()) Timber.plant(sentryLogTree.get())
 
         if (FeatureOption.DEBUG_MENU.isEnabled) {
             Timber.plant(Timber.DebugTree(), appFileDebugTree.get())
@@ -70,13 +73,13 @@ class App : Application(), Configuration.Provider {
                 .addObserver(debugShakeObserver)
         }
 
+        Coil.setImageLoader(imageLoader)
         remoteConfigService.init()
 
         with(ComputationalScope(ProcessLifecycleOwner.get().lifecycleScope)) {
             appInitializerPipeline.initialize()
         }
 
-        Coil.setImageLoader(imageLoader)
         ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
     }
 }

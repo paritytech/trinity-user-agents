@@ -19,9 +19,12 @@ fn approving_platform() -> Arc<StubPlatform> {
 }
 
 /// A product runtime on a signing host with a local session.
-fn activated(unchecked: bool, withheld: &[&str]) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+fn activated(
+	unchecked: bool,
+	withheld: &[&str],
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	let (services, activation) = signing_runtime_with_platform(approving_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(unchecked);
 	activation.set_withheld_resources(withheld.iter().map(|tag| tag.to_string()).collect());
@@ -29,17 +32,35 @@ fn activated(unchecked: bool, withheld: &[&str]) -> (ProductRuntimeHost, Arc<Sig
 }
 
 fn submit(
-	runtime: &ProductRuntimeHost,
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
 	value: &[u8],
-) -> Result<
-	RemotePreimageSubmitResponse,
-	CallError<truapi::versioned::preimage::RemotePreimageSubmitError>,
-> {
+) -> Result<RemotePreimageSubmitResponse, CallError<truapi::versioned::preimage::PreimageSubmitError>>
+{
 	futures::executor::block_on(Preimage::submit(
 		runtime,
 		&CallContext::default(),
 		RemotePreimageSubmitRequest::V1(value.to_vec()),
 	))
+}
+
+/// The host obtains a product's Bulletin allowance on its own; only the submission is the
+/// user's to confirm.
+#[test]
+fn a_first_submit_obtains_its_allowance_without_an_allocation_prompt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	let runtime = product_runtime(services, activation);
+	let value = b"first preimage".to_vec();
+
+	let response = submit(&runtime, &value);
+
+	assert_eq!(
+		(response, platform.resource_allocation_reviews.lock().unwrap().len()),
+		(Ok(RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec())), 0)
+	);
 }
 
 #[test]
@@ -74,7 +95,7 @@ fn a_withheld_bulletin_allowance_still_refuses_the_submit() {
 	let error = submit(&runtime, b"refused").expect_err("the withheld allowance refuses it");
 	assert_eq!(
 		error,
-		CallError::Domain(truapi::versioned::preimage::RemotePreimageSubmitError::V1(
+		CallError::Domain(truapi::versioned::preimage::PreimageSubmitError::V1(
 			v01::PreimageSubmitError::Unknown {
 				reason: "Bulletin allowance allocation was rejected by the signing host"
 					.to_string(),
@@ -88,9 +109,9 @@ fn a_signing_host_sends_preimages_to_the_chain_unless_told_or_unchecked() {
 	let (_, checked) = activated(false, &[]);
 	let (_, unchecked) = activated(true, &[]);
 	let (_, told) = activated(false, &[]);
-	told.set_submit_preimages_locally(true);
+	told.accounts().resource_controls().set_submit_preimages_locally(true);
 
-	assert!(!ProductAuthority::submits_preimages_locally(&*checked));
-	assert!(ProductAuthority::submits_preimages_locally(&*unchecked));
-	assert!(ProductAuthority::submits_preimages_locally(&*told));
+	assert!(!checked.accounts().resource_controls().submits_preimages_locally());
+	assert!(unchecked.accounts().resource_controls().submits_preimages_locally());
+	assert!(told.accounts().resource_controls().submits_preimages_locally());
 }

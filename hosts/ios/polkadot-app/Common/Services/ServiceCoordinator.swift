@@ -39,6 +39,7 @@ protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var chainStatusProvider: ChainStatusProviding { get }
     var truapiRuntimeProvider: TrUAPIHostRuntimeProviding { get }
     var durabilityRenewal: StatementDurabilityRenewing { get }
+    var chatRequestCancelService: ChatRequestCancelServicing { get }
 }
 
 final class ServiceCoordinator {
@@ -52,6 +53,7 @@ final class ServiceCoordinator {
     let productWorkerFacade: ProductWorkerFacade
     let callCoordinator: CallCoordinating
     let chatRequestCoordinator: ChatRequestCoordinatorServicing
+    let chatRequestCancelService: ChatRequestCancelServicing
     let attachmentUploadService: AttachmentUploadingServicing
     let attachmentDownloadService: AttachmentDownloadingServicing
     let coinageTransferMonitor: CoinageTransferMonitoring
@@ -96,6 +98,7 @@ final class ServiceCoordinator {
         productWorkerFacade: ProductWorkerFacade,
         callCoordinator: CallCoordinating,
         chatRequestCoordinator: ChatRequestCoordinatorServicing,
+        chatRequestCancelService: ChatRequestCancelServicing,
         attachmentUploadService: AttachmentUploadingServicing,
         attachmentDownloadService: AttachmentDownloadingServicing,
         coinageTransferMonitor: CoinageTransferMonitoring,
@@ -127,6 +130,7 @@ final class ServiceCoordinator {
         self.productWorkerFacade = productWorkerFacade
         self.callCoordinator = callCoordinator
         self.chatRequestCoordinator = chatRequestCoordinator
+        self.chatRequestCancelService = chatRequestCancelService
         self.attachmentUploadService = attachmentUploadService
         self.attachmentDownloadService = attachmentDownloadService
         self.coinageTransferMonitor = coinageTransferMonitor
@@ -169,7 +173,7 @@ extension ServiceCoordinator {
             return nil
         }
 
-        let logger: LoggerProtocol = Logger.shared
+        let logger: CoreEventLoggerProtocol = Logger.shared
 
         guard let allowanceManagerFacade = AllowanceManagerFacade.create() else {
             return nil
@@ -231,6 +235,7 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
@@ -309,7 +314,8 @@ extension ServiceCoordinator {
 
         let chatRequestServiceFactory = createChatRequestServiceFactory(
             notificationAllocator: notificationAllocator,
-            signingFallback: identitySigningFallback
+            signingFallback: identitySigningFallback,
+            allowanceCleanupService: allowanceManagerFacade.cleanupService
         )
         let durabilityRenewal = StatementDurabilityRenewalService(
             allowances: allowanceManagerFacade,
@@ -412,6 +418,7 @@ extension ServiceCoordinator {
             productWorkerFacade: productWorkerFacade,
             callCoordinator: callCoordinator,
             chatRequestCoordinator: chatRequestCoordinator,
+            chatRequestCancelService: chatRequestServiceFactory,
             attachmentUploadService: attachmentUploadService,
             attachmentDownloadService: attachmentDownloadService,
             coinageTransferMonitor: coinageServices.transferMonitor,
@@ -479,7 +486,8 @@ private extension ServiceCoordinator {
 private extension ServiceCoordinator {
     static func createChatRequestServiceFactory(
         notificationAllocator: NotificationStatementAccountAllocating,
-        signingFallback: NonPrivateSigningFallbacking
+        signingFallback: NonPrivateSigningFallbacking,
+        allowanceCleanupService: AllowanceCleanupServicing
     ) -> ChatRequestServiceFactory {
         ChatRequestServiceFactory(
             remoteContactResolver: CompoundRemoteContactResolver(
@@ -491,7 +499,8 @@ private extension ServiceCoordinator {
             notificationAllocator: notificationAllocator,
             signingFallback: ForegroundConsentSigningFallback(base: signingFallback, activity: ApplicationActivity()),
             backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry),
-            issueReporter: IssueReportingFacade.shared
+            issueReporter: IssueReportingFacade.shared,
+            allowanceCleanupService: allowanceCleanupService
         )
     }
 

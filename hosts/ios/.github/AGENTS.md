@@ -64,7 +64,10 @@ Application secrets come from GitHub Actions repository secrets and are passed o
 | `base_build_app` | `fastlane/lanes/lane_build.rb` | Core build logic: plist copy, build number bump, signing, gym |
 | `test_build` | `fastlane/lanes/lane_tests.rb` | Core unit test logic using `scan` |
 | `distribute_to_firebase` | `fastlane/lanes/lane_firebase_distribute.rb` | Firebase upload step |
-| `upload_testflight` | `fastlane/lanes/lane_testflight.rb` | TestFlight upload step |
+| `upload_testflight` | `fastlane/lanes/lane_testflight.rb` | TestFlight upload step for builds that are not distributed externally |
+| `upload_testflight_binary` | `fastlane/lanes/lane_testflight.rb` | Upload without waiting for processing; `finish_testflight` distributes it |
+| `finish_testflight` | `fastlane/lanes/lane_testflight.rb` | Wait for processing (30 minute cap), set the changelog and add the external group when one is named; retries App Store Connect errors three times |
+| `testflight_build_uploaded` | `fastlane/lanes/lane_testflight.rb` | Whether `BUILD_NUMBER` under `MARKETING_VERSION` is already in App Store Connect, so a re-run skips the upload; fails on a build Apple marked invalid |
 | `load_asc_api_key` | `fastlane/lanes/lane_testflight.rb` | Load App Store Connect API credentials from env |
 | `get_testflight_build_number` | `fastlane/lanes/lane_testflight.rb` | Query latest build number from TestFlight |
 | `prepare_code_signing` | `fastlane/lanes/lane_signing.rb` | Fetch certs/profiles via Match in readonly mode |
@@ -200,19 +203,23 @@ Signing notes:
 2. nightly_distribution.yml / release_distribution.yml
    └── uses _build_distribute.yml
        (nightly calls it twice — Nightly and Safetynet from the same branch/PR;
-        the configuration is in the job name so each leg's check_build_result
-        resolves its own result)
+        the configuration is in the job name so each leg has its own job and
+        commit status)
        ├── prepare_build_metadata
        │     ├── Verify bot-driven trigger / bot-authored PR
        │     ├── Read release notes + increment_step from PR body
        │     │     └── no PR (direct build) -> generic notes + increment_step input
        │     ├── Setup iOS environment
        │     └── read-build-version: MARKETING_VERSION + shared build_number
-       ├── check_and_build
-       │     ├── distribute-testflight (tests + build + upload)
+       ├── check_and_build -> succeeded output
+       │     ├── on a re-run, look for build_number in App Store Connect
+       │     ├── first attempt or not there: distribute-testflight (tests +
+       │     │     build + upload, then wait, changelog and external group
+       │     │     with retries)
+       │     ├── already there (a re-run): finish_testflight only
        │     ├── comment on PR with build info
-       │     └── set commit status for workflow_dispatch
-       ├── check_build_result -> succeeded output
+       │     ├── set commit status for workflow_dispatch
+       │     └── record succeeded=true as the last step
        └── send_failure_notification (Telegram, on failure)
 
 3. Caller-specific jobs (gated on succeeded)

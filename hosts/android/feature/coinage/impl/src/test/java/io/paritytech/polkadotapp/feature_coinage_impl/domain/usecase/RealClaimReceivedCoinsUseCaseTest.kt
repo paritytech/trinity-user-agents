@@ -8,7 +8,6 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.novasama.substrate_sdk_android.encrypt.keypair.Keypair
 import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
-import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.domain.model.AccountId
@@ -23,6 +22,8 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.Co
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.CoinageInstanceIdProvider
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.ConfiguredInstanceCoins
 import io.paritytech.polkadotapp.feature_coinage_impl.data.model.OnChainCoinInfo
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.harness.RecordingConnectionRefCounter
@@ -76,6 +77,7 @@ class RealClaimReceivedCoinsUseCaseTest {
     private val assetValueUseCase: CoinageAssetValueUseCase = mockk()
     private val submissionUseCase: CoinageTransferSubmissionUseCase = mockk()
     private val timeProvider: TimeProvider = mockk()
+    private val coinageInstanceIdProvider: CoinageInstanceIdProvider = mockk()
     private val connections = RecordingConnectionRefCounter()
 
     private val useCase = RealClaimReceivedCoinsUseCase(
@@ -85,6 +87,7 @@ class RealClaimReceivedCoinsUseCaseTest {
         assetValueUseCase = assetValueUseCase,
         submissionUseCase = submissionUseCase,
         timeProvider = timeProvider,
+        configuredInstanceCoins = ConfiguredInstanceCoins(coinageInstanceIdProvider),
         chainConnectionRefCounter = connections,
     )
 
@@ -94,6 +97,7 @@ class RealClaimReceivedCoinsUseCaseTest {
     fun openTheWindow() {
         every { chainAssetProvider.chainId() } returns "test-chain"
         every { timeProvider.now() } returns WINDOW_OPEN
+        coEvery { coinageInstanceIdProvider.instanceId() } returns Result.success(0u)
         coEvery { submissionUseCase(any(), any(), any(), any()) } returns Result.success(Unit)
         coEvery { assetValueUseCase.valueOf(any()) } answers {
             // One unit per minted output, so what a claim is said to be worth stays visible in assertions.
@@ -624,22 +628,17 @@ class RealClaimReceivedCoinsUseCaseTest {
         assertDoesNotComplete(coin)
     }
 
-    /**
-     * The claimed coins cannot be valued — that needs chain metadata, which may not be to hand.
-     *
-     * The claim still reports where it got to, for nothing. Saying nothing would leave a payment that
-     * actually arrived looking as though it never did.
-     */
     @Test
-    fun `a claim whose coins cannot be valued still reports that they arrived`() = runTest {
+    fun `a claim whose coins cannot be valued ends with a failure`() = runTest {
         val coin = key(1)
-        coEvery { assetValueUseCase.valueOf(any()) } returns Result.failure(IllegalStateException("no metadata"))
+        val noMetadata = IllegalStateException("no metadata")
+        coEvery { assetValueUseCase.valueOf(any()) } returns Result.failure(noMetadata)
         givenChainSees(listOf(coin.accountId))
         givenGroupReports(listOf(entry(FINALIZED_SUCCESS, claiming = coin.accountId)))
 
-        val reported = reportsOfCompleted(coin)
+        val reported = resultsOfCompleted(coin)
 
-        assertEquals(CoinageTransferDetection.Claimed(Balance.ZERO, finalized = true), reported.last())
+        assertEquals(noMetadata, reported.last().exceptionOrNull())
     }
 
     // ---- harness ----
@@ -658,7 +657,7 @@ class RealClaimReceivedCoinsUseCaseTest {
         coVerify(exactly = 1) { submissionUseCase(keys, any(), groupId, RETRY_UNTIL) }
     }
 
-    private fun claimOf(vararg coins: PeerCoin): Flow<CoinageTransferDetection> =
+    private fun claimOf(vararg coins: PeerCoin): Flow<Result<CoinageTransferDetection>> =
         useCase.claim(coins.map { it.privateKey }, groupId, RETRY_UNTIL)
 
     /**
@@ -670,14 +669,17 @@ class RealClaimReceivedCoinsUseCaseTest {
     private suspend fun reportsOf(vararg coins: PeerCoin): List<CoinageTransferDetection> {
         val reported = mutableListOf<CoinageTransferDetection>()
 
-        withTimeoutOrNull(IDLE) { claimOf(*coins).collect { reported += it } }
+        withTimeoutOrNull(IDLE) { claimOf(*coins).collect { reported += it.getOrThrow() } }
 
         return reported
     }
 
+    private suspend fun reportsOfCompleted(vararg coins: PeerCoin): List<CoinageTransferDetection> =
+        resultsOfCompleted(*coins).map { it.getOrThrow() }
+
     /** Drains the claim and insists it actually finished — that nothing more would ever be attempted. */
-    private suspend fun reportsOfCompleted(vararg coins: PeerCoin): List<CoinageTransferDetection> {
-        val reported = mutableListOf<CoinageTransferDetection>()
+    private suspend fun resultsOfCompleted(vararg coins: PeerCoin): List<Result<CoinageTransferDetection>> {
+        val reported = mutableListOf<Result<CoinageTransferDetection>>()
 
         val completed = withTimeoutOrNull(IDLE) {
             claimOf(*coins).collect { reported += it }

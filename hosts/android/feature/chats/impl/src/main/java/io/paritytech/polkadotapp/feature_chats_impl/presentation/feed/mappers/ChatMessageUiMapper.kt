@@ -42,6 +42,7 @@ class ChatMessageUiMapper @Inject constructor(
         originDisplayResolver: MessageOriginDisplayResolver,
         reactions: Map<ChatMessageId, List<ChatMessageReaction>>,
         revisions: Map<ChatMessageId, MessageRevision>,
+        peerSeenOrder: Long,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>> = emptyMap(),
         activeCall: ActiveCallState? = null
     ): ImmutableList<ChatMessageUiModel> {
@@ -72,7 +73,8 @@ class ChatMessageUiMapper @Inject constructor(
                 originDisplayResolver = originDisplayResolver,
                 messageReactions = messageReactions,
                 customMessageRenderers = customMessageRenderers,
-                callContext = callContext
+                callContext = callContext,
+                isSeenByPeer = message.isSeenByPeer(peerSeenOrder)
             )
         }.toImmutableList()
     }
@@ -149,10 +151,11 @@ class ChatMessageUiMapper @Inject constructor(
         originDisplayResolver: MessageOriginDisplayResolver,
         messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>>,
-        callContext: CallResolutionContext
+        callContext: CallResolutionContext,
+        isSeenByPeer: Boolean
     ): ChatMessageUiModel? {
         val direction = direction.toUi()
-        val status = status.toUi()
+        val status = if (isSeenByPeer) ChatMessageUiModel.Status.SEEN else status.toUi()
 
         return when (latestContent) {
             is ChatMessage.Content.Text -> mapText(
@@ -312,13 +315,21 @@ class ChatMessageUiMapper @Inject constructor(
     }
 }
 
+private fun ChatMessage.isSeenByPeer(peerSeenOrder: Long): Boolean {
+    val sortOrder = sortOrder ?: return false
+    val isSentOrDelivered = status == ChatMessage.Status.IS_SENT || status == ChatMessage.Status.IS_DELIVERED
+
+    return origin.isUser() && isSentOrDelivered && sortOrder in 1..peerSeenOrder
+}
+
 private fun ChatMessage.Status.toUi(): ChatMessageUiModel.Status {
     return when (this) {
         ChatMessage.Status.PROCESSING,
         ChatMessage.Status.NEW -> ChatMessageUiModel.Status.PENDING
 
         ChatMessage.Status.IS_SENT -> ChatMessageUiModel.Status.SENT
-        ChatMessage.Status.IS_READ -> ChatMessageUiModel.Status.READ
+        ChatMessage.Status.IS_DELIVERED -> ChatMessageUiModel.Status.DELIVERED
+        ChatMessage.Status.IS_READ -> ChatMessageUiModel.Status.SEEN
         ChatMessage.Status.DELIVERY_FAILED -> ChatMessageUiModel.Status.FAILED
     }
 }
@@ -525,7 +536,7 @@ private fun constructEmojiReactionGroup(
                     authorName = originDisplay.name,
                     timestamp = reaction.timestamp,
                     isUser = reaction.origin.isUser(),
-                    avatarModel = originDisplay.avatar.toUi()
+                    avatarModel = originDisplay.avatar.toUi(forceFresh = false)
                 )
             }
             .toImmutableList()

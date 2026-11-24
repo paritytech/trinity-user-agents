@@ -152,6 +152,10 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     func didDeclineChatRequest() {
         wireframe.dismissChat(from: view)
     }
+
+    func didRemoveChat() {
+        wireframe.dismissChat(from: view)
+    }
 }
 
 private extension ChatPresenter {
@@ -193,7 +197,10 @@ private extension ChatPresenter {
                 self?.interactor.acceptChatRequest()
             },
             declineChatRequest: { [weak self] in
-                self?.interactor.declineChatRequest()
+                self?.handleDeclineChatRequest()
+            },
+            cancelChatRequest: { [weak self] in
+                self?.handleCancelChatRequest()
             },
             showEditHistory: { [weak self] messageId in
                 self?.handleShowEditHistory(for: messageId)
@@ -404,6 +411,37 @@ private extension ChatPresenter {
         }
     }
 
+    func handleCancelChatRequest() {
+        MainActor.assumeIsolated {
+            wireframe.showChatRequestConfirmation(
+                from: view,
+                viewModel: .cancel(username: metadata?.peerName),
+                onConfirm: { [weak self] in
+                    self?.confirmCancelChatRequest()
+                }
+            )
+        }
+    }
+
+    func handleDeclineChatRequest() {
+        MainActor.assumeIsolated {
+            wireframe.showChatRequestConfirmation(
+                from: view,
+                viewModel: .decline(username: metadata?.peerName),
+                onConfirm: { [weak self] in
+                    self?.interactor.declineChatRequest()
+                }
+            )
+        }
+    }
+
+    func confirmCancelChatRequest() {
+        interactor.cancelChatRequest()
+        MainActor.assumeIsolated {
+            wireframe.dismissChat(from: view)
+        }
+    }
+
     func handleStartCall(callType: ChatCallType) {
         guard let metadata else { return }
         MainActor.assumeIsolated {
@@ -452,21 +490,5 @@ private extension ChatPresenter {
                 )
             }
         }
-    }
-}
-
-extension ChatPresenter: ChatMoreActionsDelegate {
-    func didConfirmLeaveChat() {
-        interactor.leaveChat()
-    }
-
-    func didConfirmBlockUser() {
-        interactor.blockUser()
-    }
-}
-
-extension ChatPresenter: ChatAttachmentPreviewDelegate {
-    func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
-        interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
     }
 }

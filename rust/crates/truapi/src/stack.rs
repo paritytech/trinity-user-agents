@@ -1,17 +1,25 @@
-//! The Trinity stack a host runs, read from the signed descriptor its build
-//! bundles.
+//! The Trinity stack a host runs, read from a signed descriptor.
 //!
 //! The core takes all of its chain configuration from the stack.
-//! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
-//! chain's genesis hash, and answers `get_chain_info`.
+//! [`StackRefresh::load`] checks the descriptor a host build bundles against
+//! the key in the stack's link, starts from it or from a newer copy the core
+//! stored, and fetches newer copies while the core runs. It resolves the
+//! [`Stack`] the core runs on.
 
-use trinity_stack::{Chain, Pointer, open};
+mod records;
+mod refresh;
+mod source;
+
+use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
 use crate::dotns_name::DOTNS_TLDS;
+
+pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
+pub use refresh::{StackHost, StackRefresh};
+pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -43,29 +51,53 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 	POLKADOT_BULLETIN_GENESIS,
 ];
 
+/// The `contracts` name of the contract each seed registers its installations in.
+const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
+
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
-/// and the genesis hash of each chain role the core uses.
+/// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
+/// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
+/// and the Asset Hub contracts the core reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
+	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
+	account_data_store: Option<[u8; 20]>,
 }
 
-/// The genesis hash of each chain role a stack names. People and Bulletin are
-/// required: the core runs SSO and its own preimage submission over them.
+/// A stack's id and the generation of its chains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackIdentity {
+	/// An opaque, non-empty string that tells this stack apart from others,
+	/// including a fork with its source's genesis hashes.
+	///
+	/// [`Stack::from_descriptor`], which [`Stack::bundled`] and
+	/// [`StackRefresh::load`] build through, takes
+	/// `trinity_stack::Pointer::stack_id` of the pointer, the key in hex. The CLI takes the same
+	/// for a link or a URL, and `file:` and the canonical path for a local descriptor file. A
+	/// test host passes any string.
+	pub id: String,
+	/// The descriptor's `generation`, which changes whenever the stack
+	/// restarts its chains, as after a wipe. Must not be empty.
+	pub generation: String,
+}
+
+/// The genesis hash of each chain role the host serves. Asset Hub, People and
+/// Bulletin are required: the core reads dotNS and runs SSO and its own
+/// preimage submission over them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackChains {
-	/// The relay chain.
+	/// The relay chain, which the core never reads itself. `None` for a host
+	/// that serves none, such as the CLI.
 	pub relay: Option<[u8; 32]>,
-	/// Asset Hub, where the dotNS contracts are deployed. Without one, product
-	/// manifests and session usernames do not resolve, and a `trustedProducts`
-	/// grant the core has not cached is refused.
-	pub asset_hub: Option<[u8; 32]>,
+	/// Asset Hub, where the dotNS contracts are deployed. Product manifests and
+	/// session usernames resolve from it.
+	pub asset_hub: [u8; 32],
 	/// The People chain.
 	pub people: [u8; 32],
 	/// The Bulletin chain.
@@ -82,9 +114,9 @@ pub enum StackError {
 	/// copy it fetches later verifies against the same key as the bundled one.
 	#[display("stack pointer has no key; a host's stack must be signed")]
 	Unsigned,
-	/// The bundled descriptor breaks a rule or does not verify under the
-	/// pointer's key.
-	#[display("bundled stack descriptor refused ({}): {_0}", _0.code())]
+	/// The descriptor breaks a rule or does not verify under the pointer's
+	/// key.
+	#[display("stack descriptor refused ({}): {_0}", _0.code())]
 	Descriptor(#[error(not(source))] trinity_stack::Error),
 	/// The descriptor has no chain with this role.
 	#[display("stack has no {} chain", <&str>::from(*chain))]
@@ -93,14 +125,17 @@ pub enum StackError {
 		chain: ChainIdentifier,
 	},
 	/// The Relay or Asset Hub genesis hash is all zero, which names no chain.
-	/// A stack without one of them leaves the role out.
-	#[display(
-		"stack {} chain has an all-zero genesis hash; leave the role out instead",
-		<&str>::from(*chain)
-	)]
+	/// A stack without a Relay leaves the role out.
+	#[display("stack {} chain has an all-zero genesis hash", <&str>::from(*chain))]
 	ZeroGenesis {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
+	},
+	/// The stack's id or generation is empty.
+	#[display("stack {field} is empty")]
+	EmptyIdentity {
+		/// `id` or `generation`.
+		field: &'static str,
 	},
 	/// The TLD is not one the core serves dotNS names under.
 	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
@@ -124,24 +159,36 @@ pub enum StackError {
 }
 
 impl Stack {
-	/// The stack a host build bundles: `pointer` is the stack's link
-	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
-	/// build ships, and `allows_reserved_values` whether it may use Polkadot's
-	/// genesis hashes and the `dot` TLD.
+	/// The stack a host build bundles, read from the bundled copy alone:
+	/// `pointer` is the stack's link (`polkadotapp://stack?key=0x…&url=…`) and
+	/// `descriptor` the signed copy the build ships. A host starts through
+	/// [`StackRefresh::load`] instead, which also reads the copy the core
+	/// stored.
 	///
-	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
-	/// and `expiresAt` are not checked, because the bundled copy is the only one
-	/// the host has.
+	/// Fails like [`Self::from_descriptor`], and when the copy does not verify
+	/// under the pointer's key.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
-		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
-		if pointer.key().is_none() {
-			return Err(StackError::Unsigned);
-		}
-		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
+		let pointer = signed_pointer(pointer)?;
+		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
+		Self::from_descriptor(&pointer, &verified.descriptor, allows_reserved_values)
+	}
+
+	/// The stack a verified descriptor read from `pointer` names, when the
+	/// core can run it. Its id is the pointer's and its generation the
+	/// descriptor's. `allows_reserved_values` is whether the build lets it use
+	/// Polkadot's genesis hashes and the `dot` TLD.
+	///
+	/// Fails with a [`StackError`] naming the rule the descriptor breaks.
+	/// `validUntil` and `expiresAt` are not checked.
+	pub fn from_descriptor(
+		pointer: &Pointer,
+		descriptor: &Descriptor,
+		allows_reserved_values: bool,
+	) -> Result<Self, StackError> {
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		}
@@ -150,45 +197,66 @@ impl Stack {
 		let required = |chain| genesis_of(chain).ok_or(StackError::MissingChain { chain });
 		let chains = StackChains {
 			relay: genesis_of(ChainIdentifier::Relay),
-			asset_hub: genesis_of(ChainIdentifier::AssetHub),
+			asset_hub: required(ChainIdentifier::AssetHub)?,
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		let identity =
+			StackIdentity { id: pointer.stack_id(), generation: descriptor.generation.clone() };
+		let stack = Self::new(
+			identity,
+			descriptor.network.clone(),
+			descriptor.tld.clone(),
+			chains,
+			allows_reserved_values,
+		)?;
+		Ok(Self { account_data_store: account_data_store_in(descriptor), ..stack })
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
-	/// bundled descriptor, such as the CLI's.
+	/// bundled descriptor, such as the CLI's. It names no contracts.
 	///
-	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
-	/// refuses an all-zero Relay or Asset Hub genesis hash.
+	/// Applies the same TLD and reserved-value rules as
+	/// [`Self::from_descriptor`], and refuses an empty id or generation and an
+	/// all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
+		let fields = [("id", &identity.id), ("generation", &identity.generation)];
+		if let Some((field, _)) = fields.into_iter().find(|(_, value)| value.is_empty()) {
+			return Err(StackError::EmptyIdentity { field });
+		}
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
 		}
 		let StackChains { relay, asset_hub, people, bulletin } = chains;
-		let optional_roles =
-			[(ChainIdentifier::Relay, relay), (ChainIdentifier::AssetHub, asset_hub)];
-		if let Some((chain, _)) = optional_roles
-			.into_iter()
-			.find(|(_, genesis_hash)| *genesis_hash == Some([0; 32]))
-		{
-			return Err(StackError::ZeroGenesis { chain });
+		if relay == Some([0; 32]) {
+			return Err(StackError::ZeroGenesis { chain: ChainIdentifier::Relay });
+		}
+		if asset_hub == [0; 32] {
+			return Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub });
 		}
 		if !allows_reserved_values {
 			if tld == RESERVED_TLD {
 				return Err(StackError::ReservedTld);
 			}
-			refuse_reserved_genesis(
-				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
-			)?;
+			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { network, tld, chains })
+		Ok(Self { identity, network, tld, chains, account_data_store: None })
+	}
+
+	/// The stack's identity. See [`StackIdentity::id`].
+	pub fn id(&self) -> &str {
+		&self.identity.id
+	}
+
+	/// The run of the stack's chains. See [`StackIdentity::generation`].
+	pub fn generation(&self) -> &str {
+		&self.identity.generation
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
@@ -208,13 +276,20 @@ impl Stack {
 		&self.chains
 	}
 
+	/// The `AccountDataStore` contract on Asset Hub, where each seed registers
+	/// its installations. `None` when the descriptor names none, or names the
+	/// all-zero address.
+	pub fn account_data_store(&self) -> Option<[u8; 20]> {
+		self.account_data_store
+	}
+
 	/// The genesis hash of the chain with this role, or `None` when the stack
 	/// has no such chain.
 	fn genesis_hash(&self, chain: ChainIdentifier) -> Option<[u8; 32]> {
 		let StackChains { relay, asset_hub, people, bulletin } = self.chains;
 		match chain {
 			ChainIdentifier::Relay => relay,
-			ChainIdentifier::AssetHub => asset_hub,
+			ChainIdentifier::AssetHub => Some(asset_hub),
 			ChainIdentifier::People => Some(people),
 			ChainIdentifier::Bulletin => Some(bulletin),
 		}
@@ -234,6 +309,24 @@ impl Stack {
 				genesis_hash,
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
+	}
+}
+
+/// The `AccountDataStore` address `descriptor` names, or `None` when it names
+/// none or the all-zero address, which no contract has.
+fn account_data_store_in(descriptor: &Descriptor) -> Option<[u8; 20]> {
+	descriptor
+		.contract_address(ACCOUNT_DATA_STORE_CONTRACT)
+		.filter(|address| *address != [0; 20])
+}
+
+/// The pointer a stack link carries. A host runs only a signed stack, so a
+/// link without a key is refused.
+fn signed_pointer(link: &str) -> Result<Pointer, StackError> {
+	let pointer = Pointer::from_link(link).map_err(StackError::Pointer)?;
+	match pointer.key() {
+		Some(_) => Ok(pointer),
+		None => Err(StackError::Unsigned),
 	}
 }
 

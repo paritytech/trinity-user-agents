@@ -8,6 +8,7 @@ extension ChatViewModelFactory {
         for payload: Chat.LocalMessage.Content.CallSignalingPayload,
         message: Chat.LocalMessage,
         status: Chat.LocalMessage.Status,
+        isSeenByPeer: Bool,
         deliveryDate: Date?,
         actions: ChatViewModelActions
     ) -> [IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType>] {
@@ -15,10 +16,10 @@ extension ChatViewModelFactory {
         case let .offer(offerContent):
             [
                 callMessageConfiguration(
-                    messageId: message.messageId,
+                    message: message,
                     offer: offerContent,
                     status: status,
-                    callState: message.resolveCallState() ?? .calling,
+                    isSeenByPeer: isSeenByPeer,
                     deliveryDate: deliveryDate,
                     actions: actions
                 )
@@ -34,13 +35,14 @@ extension ChatViewModelFactory {
 private extension ChatViewModelFactory {
     // swiftlint:disable:next cyclomatic_complexity
     func callMessageConfiguration(
-        messageId: String,
+        message: Chat.LocalMessage,
         offer: Chat.RemoteMessageContentV1.MessageContent.DataChannelOfferContent,
         status: Chat.LocalMessage.Status,
-        callState: Chat.CallState,
+        isSeenByPeer: Bool,
         deliveryDate: Date?,
         actions: ChatViewModelActions
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
+        let callState = message.resolveCallState() ?? .calling
         let callType: ChatCallMessageConfiguration.CallType =
             switch offer.purpose {
             case .audio: .audio
@@ -59,8 +61,8 @@ private extension ChatViewModelFactory {
                 .active
             case let .finished(duration):
                 .finished(duration: formatCallDuration(duration))
-            case let .cancelled(duration):
-                .cancelled(ringDuration: formatCallDuration(duration))
+            case .cancelled:
+                .cancelled
             case .missed:
                 .missed
             }
@@ -91,13 +93,13 @@ private extension ChatViewModelFactory {
                     statusConfiguration: .outbox(
                         date: deliveryDate,
                         formatter: timeFormatter,
-                        status: outgoingStatus.configurationStatus()
+                        status: outgoingStatus.configurationStatus(isSeenByPeer: isSeenByPeer)
                     ),
                     onTap: onTap
                 )
             }
 
-        return .init(messageId, configuration)
+        return .init(message.messageId, configuration)
     }
 
     func formatCallDuration(_ milliseconds: UInt64) -> String {

@@ -5,4 +5,5 @@ export type {
   WireProvider,
 } from "@parity/truapi";
 
+export { ExecutableKind } from "@parity/truapi";
 export * from "./runtime.js";
