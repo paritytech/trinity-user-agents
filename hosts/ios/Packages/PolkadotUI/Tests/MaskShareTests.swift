@@ -58,13 +58,35 @@ struct MaskCoverageTests {
         var reached: [Bool] = []
         for y: CGFloat in [190, 230, 270, 310, 350, 390] {
             stroke([local(70, y), local(330, y)])
-            let source = MaskSource.of(mask: mask, trail: trail, frame: frame, mirrored: false)
+            let source = MaskSource.of(
+                mask: mask, trail: trail, geometry: MaskGeometry(frame: frame, size: frame.size), mirrored: false
+            )
             let count = MaskCoverage.count(source.picture(added: []).shapes, in: frame.size)
             permille.append(count.covered * 1_000 / count.total)
             reached.append(share.reached(covered: count.covered, samples: count.total))
         }
         #expect(permille == [374, 445, 496, 534, 583, 685])
         #expect(reached == [false, false, false, false, true, true])
+    }
+
+    @Test("A node drawn at half its size counts its share over its own size, with the finger's places moved into it")
+    @MainActor
+    func shareOfAScaledNode() {
+        let mask = CustomMessageWidgetNode.Mask(key: "k", follow: .init(pan: "p", width: 20))
+        let trail = PanTrail()
+        trail.origin = CGPoint(x: 0, y: 0)
+        trail.begin(at: CGPoint(x: 100, y: 50))
+        let own = CGSize(width: 200, height: 100)
+        let drawn = MaskGeometry(frame: CGRect(x: 50, y: 25, width: 100, height: 50), size: own)
+        let rest = MaskGeometry(frame: CGRect(origin: .zero, size: own), size: own)
+        let count = { (geometry: MaskGeometry) in
+            MaskCoverage.count(
+                MaskSource.of(mask: mask, trail: trail, geometry: geometry, mirrored: false).picture(added: []).shapes,
+                in: geometry.size
+            )
+        }
+        #expect(count(drawn) == count(rest), "the dot at the node's centre covers the same samples, scaled or not")
+        #expect(count(drawn).total == 5_000)
     }
 
     @Test("A share is reached exactly at its line")

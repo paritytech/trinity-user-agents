@@ -65,13 +65,15 @@ struct MaskPicture: Equatable {
     var shapes: [CustomMessageWidgetNode.Mask.Shape]
 
     /// The tree's shapes, the shapes added since, and the followed pan's strokes (left to right, from the pan's
-    /// top-left corner) moved into the node's frame: `place` is where the pan's top-left corner is in the node's, and
-    /// a right-to-left node of width `mirroredWidth` counts them from its right edge, as it does its own shapes.
+    /// top-left corner) moved into the node's frame: `place` is where the pan's top-left corner is from the node's on
+    /// screen, `scale` how much larger than its own size the node is drawn there (an ancestor's press, say), and a
+    /// right-to-left node of width `mirroredWidth` counts them from its right edge, as it does its own shapes.
     init(
         _ mask: CustomMessageWidgetNode.Mask,
         added: [CustomMessageWidgetNode.Mask.Shape] = [],
         strokes: [[CGPoint]] = [],
         place: CGPoint = .zero,
+        scale: CGSize = CGSize(width: 1, height: 1),
         mirroredWidth: CGFloat? = nil
     ) {
         mode = mask.mode
@@ -79,8 +81,8 @@ struct MaskPicture: Equatable {
         guard let follow = mask.follow else { return }
         for stroke in strokes where !stroke.isEmpty {
             shapes.append(.stroke(width: follow.width, points: stroke.map { point in
-                let moved = point.x + place.x
-                return CGPoint(x: mirroredWidth.map { $0 - moved } ?? moved, y: point.y + place.y)
+                let moved = (point.x + place.x) / scale.width
+                return CGPoint(x: mirroredWidth.map { $0 - moved } ?? moved, y: (point.y + place.y) / scale.height)
             }))
         }
     }
@@ -224,26 +226,68 @@ public final class MaskChannel {
     }
 }
 
+/// Where a masked node is drawn on screen, and its own size: they differ while an ancestor scales it, as a pan's press
+/// does to the pan's children.
+struct MaskGeometry: Equatable {
+    var frame: CGRect = .zero
+    var size: CGSize = .zero
+
+    init(frame: CGRect = .zero, size: CGSize = .zero) {
+        self.frame = frame
+        self.size = size
+    }
+
+    init(_ proxy: GeometryProxy) {
+        self.init(frame: proxy.frame(in: .global), size: proxy.size)
+    }
+
+    /// How much larger than its own size the node is drawn, per axis; 1 when either is empty.
+    var scale: CGSize {
+        CGSize(width: Self.ratio(frame.width, size.width), height: Self.ratio(frame.height, size.height))
+    }
+
+    private static func ratio(_ drawn: CGFloat, _ own: CGFloat) -> CGFloat {
+        drawn > 0 && own > 0 ? drawn / own : 1
+    }
+}
+
 /// What a mask's view draws from, besides its channel.
 struct MaskSource {
     var mask: CustomMessageWidgetNode.Mask
     var trail: PanTrail?
-    /// The pan's top-left corner in the node's frame.
+    /// The pan's top-left corner from the node's, on screen.
     var place: CGPoint
+    /// How much larger than its own size the node is drawn on screen.
+    var scale = CGSize(width: 1, height: 1)
     var mirroredWidth: CGFloat?
 
-    /// For a mask drawn in `frame` (on screen) that follows `trail`.
+    /// For a mask drawn at `geometry` that follows `trail`: the finger's places are moved into the node's own frame,
+    /// so its strokes stay under the finger however an ancestor scales the node.
     @MainActor
     static func of(
-        mask: CustomMessageWidgetNode.Mask, trail: PanTrail?, frame: CGRect, mirrored: Bool
+        mask: CustomMessageWidgetNode.Mask, trail: PanTrail?, geometry: MaskGeometry, mirrored: Bool
     ) -> MaskSource {
+        let frame = geometry.frame
         let place = trail.map { CGPoint(x: $0.origin.x - frame.minX, y: $0.origin.y - frame.minY) } ?? .zero
-        return MaskSource(mask: mask, trail: trail, place: place, mirroredWidth: mirrored ? frame.width : nil)
+        return MaskSource(
+            mask: mask,
+            trail: trail,
+            place: place,
+            scale: geometry.scale,
+            mirroredWidth: mirrored ? geometry.size.width : nil
+        )
     }
 
     @MainActor
     func picture(added: [CustomMessageWidgetNode.Mask.Shape]) -> MaskPicture {
-        MaskPicture(mask, added: added, strokes: trail?.strokes ?? [], place: place, mirroredWidth: mirroredWidth)
+        MaskPicture(
+            mask,
+            added: added,
+            strokes: trail?.strokes ?? [],
+            place: place,
+            scale: scale,
+            mirroredWidth: mirroredWidth
+        )
     }
 }
 
@@ -314,7 +358,7 @@ private struct MaskLayer: View {
     let trail: PanTrail?
 
     @Environment(\.layoutDirection) private var layoutDirection
-    @State private var frame: CGRect = .zero
+    @State private var geometry = MaskGeometry()
 
     var body: some View {
         let source = source
@@ -339,14 +383,14 @@ private struct MaskLayer: View {
                 }
             }
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+        .onGeometryChange(for: MaskGeometry.self) { MaskGeometry($0) } action: { geometry = $0 }
         .onAppear { channel?.source = self.source }
-        .onChange(of: frame) { channel?.source = self.source }
+        .onChange(of: geometry) { channel?.source = self.source }
         .onChange(of: mask) { channel?.source = self.source }
     }
 
     private var source: MaskSource {
-        MaskSource.of(mask: mask, trail: trail, frame: frame, mirrored: layoutDirection == .rightToLeft)
+        MaskSource.of(mask: mask, trail: trail, geometry: geometry, mirrored: layoutDirection == .rightToLeft)
     }
 }
 
