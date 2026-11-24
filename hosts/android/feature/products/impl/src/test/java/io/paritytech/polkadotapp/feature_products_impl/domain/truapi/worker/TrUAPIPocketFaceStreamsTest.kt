@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.cardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
@@ -29,7 +30,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -178,12 +178,11 @@ class TrUAPIPocketFaceStreamsTest {
         val chat = mockk<NativeWorkerClaim>(relaxed = true)
         val pocket = mockk<NativeWorkerClaim>(relaxed = true)
         every { runtime.claimWorker(gameProduct) } returnsMany listOf(chat, pocket)
-        every { runtime.workerExecutionState(gameProduct) } returns emptyFlow()
-        val chatJob = Job(coroutineContext.job)
-        TrUAPIChatWorker(gameProduct, runtime, mockk(), this + chatJob)
-
         val execution = mockk<TrUAPIWorkerExecution>()
         val faces = drawnBy(execution)
+        val chatJob = Job(coroutineContext.job)
+        TrUAPIChatWorker(gameProduct, runtime, FakeChatMessaging(), this + chatJob)
+
         val reopened = CompletableDeferred<Unit>()
         every { execution.render(any()) } returnsMany listOf(
             flow { error("render interrupted") },
