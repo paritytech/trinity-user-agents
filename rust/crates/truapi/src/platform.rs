@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub use truapi_provider::{
 	ProviderError,
@@ -40,7 +41,6 @@ pub use crate::{
 };
 
 use truapi::{
-	CallError,
 	latest::{
 		AllocatableResource, ChatAction, ChatActions, ChatCustomBody,
 		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
@@ -53,7 +53,7 @@ use truapi::{
 		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
 		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
 		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
 		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
@@ -459,6 +459,29 @@ fn validate_chat_emoji(field: &'static str, value: &str) -> Result<String, ChatF
 	Ok(normalized)
 }
 
+/// Largest accepted length for one reaction of a Chat Extension v2 message, in
+/// bytes, as the chat modality RFC limits an `Emoji`.
+pub const CHAT_EMOJI_MAX_BYTES: usize = 64;
+
+/// Bound and screen the emoji of a reaction in a feed update, a reaction
+/// summary or a room preview: one extended grapheme cluster, of at most
+/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A reader that follows the
+/// RFC drops a longer reaction, so the core refuses it first.
+fn validate_chat_reaction_emoji(
+	field: &'static str,
+	value: &str,
+) -> Result<String, ChatFieldError> {
+	let emoji = validate_chat_emoji(field, value)?;
+	if emoji.len() > CHAT_EMOJI_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_EMOJI_MAX_BYTES });
+	}
+	match emoji.graphemes(true).count() {
+		0 => Err(ChatFieldError::Empty { field }),
+		1 => Ok(emoji),
+		_ => Err(ChatFieldError::NotOneGrapheme { field }),
+	}
+}
+
 /// Resolve a product-supplied `https` URL to what a host will actually be
 /// handed, or reject it.
 ///
@@ -682,7 +705,7 @@ pub fn validate_chat_room_preview(
 			.last_reaction
 			.map(|reaction| {
 				Ok::<_, ChatFieldError>(ChatPreviewReaction {
-					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+					emoji: validate_chat_reaction_emoji("emoji", &reaction.emoji)?,
 					by_user: reaction.by_user,
 					message: reaction.message.map(validate_chat_preview_message).transpose()?,
 					removed: reaction.removed,
@@ -792,7 +815,7 @@ pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFi
 		.reactions
 		.into_iter()
 		.map(|reaction| {
-			let emoji = validate_chat_emoji("emoji", &reaction.emoji)?;
+			let emoji = validate_chat_reaction_emoji("emoji", &reaction.emoji)?;
 			if !seen.insert(emoji.clone()) {
 				return Err(ChatFieldError::Duplicate { field: "emoji" });
 			}
@@ -872,14 +895,14 @@ pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdat
 			ChatFeedUpdate::ReactionPlaced {
 				message_id: message_id(&id)?,
 				participant_id: participant_id(&by)?,
-				emoji: validate_chat_emoji("emoji", &emoji)?,
+				emoji: validate_chat_reaction_emoji("emoji", &emoji)?,
 			}
 		},
 		ChatFeedUpdate::ReactionRemoved { message_id: id, participant_id: by, emoji } => {
 			ChatFeedUpdate::ReactionRemoved {
 				message_id: message_id(&id)?,
 				participant_id: participant_id(&by)?,
-				emoji: validate_chat_emoji("emoji", &emoji)?,
+				emoji: validate_chat_reaction_emoji("emoji", &emoji)?,
 			}
 		},
 		ChatFeedUpdate::StatusChanged { message_id: id, status } => {
@@ -1108,6 +1131,13 @@ pub enum ChatFieldError {
 		min: u64,
 		/// Largest accepted value.
 		max: u64,
+	},
+	/// The reaction carried more than one character as a reader sees it (one
+	/// extended grapheme cluster).
+	#[display("{field} must be one emoji, one grapheme cluster")]
+	NotOneGrapheme {
+		/// Offending field name.
+		field: &'static str,
 	},
 }
 
@@ -2465,6 +2495,14 @@ pub trait ChatPlatform: Send + Sync {
 	/// for a product built against the earlier client, the id that the product
 	/// gave. The host stores the room under this id, and every later call names
 	/// the room with it.
+	///
+	/// In the same step the host keeps `request.config` for the room, across
+	/// restarts, for a new room and for a room that exists: the configuration
+	/// replaces the one the host keeps. A change of `product_source` discards
+	/// the stored messages or the cached pages of the room. A host that cannot
+	/// keep a configuration other than the default answers `UnsupportedConfig`
+	/// for it, before it creates or changes anything. A request from a product
+	/// built against the earlier client carries the default configuration.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
@@ -2505,9 +2543,11 @@ pub trait ChatPlatform: Send + Sync {
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 
 	/// The current product-scoped room list, read one time. The core uses it to
-	/// check that a product hosts a room. A host that cannot read its rooms
-	/// returns an error, not an empty list. If a Rust host does not implement
-	/// this method, the core uses the first item of the room list subscription.
+	/// check that a product hosts a room, before each change to a room. A host
+	/// that cannot read its rooms returns an error, not an empty list. If a
+	/// Rust host does not implement this method, the core uses the first item
+	/// of the room list subscription. A host whose subscription registers a
+	/// listener implements it: otherwise each check leaves a listener behind.
 	async fn list_chat_rooms(
 		&self,
 		product: &ProductContext,
@@ -2517,33 +2557,19 @@ pub trait ChatPlatform: Send + Sync {
 		})
 	}
 
-	/// The configuration the product last declared for a room, or the default
-	/// configuration when it declared none. The core reads it to decide
-	/// whether a room keeps its messages in the host and which queries the
-	/// product answers.
+	/// The configuration of the last `create_chat_room` of a room, or the
+	/// default configuration for a room the host does not know. The core reads
+	/// it to decide whether a room keeps its messages in the host and which
+	/// queries the product answers. Before `post_chat_message` the core reads it
+	/// for the room that the product names, without a check that the product
+	/// hosts the room, so an unknown room answers the default configuration and
+	/// not an error.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
 		_room_id: String,
 	) -> Result<ChatRoomConfig, GenericError> {
 		Ok(ChatRoomConfig::default())
-	}
-
-	/// Replace the configuration of a room whole and keep it across restarts.
-	/// The core calls it after each `create_chat_room`, for a new room and for
-	/// a room that exists. If a Rust host does not implement this method, it
-	/// accepts only the default configuration. That configuration changes
-	/// nothing that the host shows.
-	async fn set_chat_room_config(
-		&self,
-		_product: &ProductContext,
-		_room_id: String,
-		config: ChatRoomConfig,
-	) -> Result<(), GenericError> {
-		if config != ChatRoomConfig::default() {
-			return Err(chat_method_not_served("setChatRoomConfig"));
-		}
-		Ok(())
 	}
 
 	/// Replace the name, description, icon and empty-room text of a room. An
@@ -2580,19 +2606,35 @@ pub trait ChatPlatform: Send + Sync {
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change, because it keeps the messages of the room. Without
 	/// it the host applies the change only to an open room screen and the chat
-	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
-	/// and, for an edit, a replacement or a deletion of a message the product
-	/// did not write, `NotOwner`, and any failure of its own with
-	/// `HostFailure`. A web host can answer only `HostFailure`: the web bridge
-	/// turns each error that a web callback throws into `HostFailure`.
+	/// list preview. The host answers the outcome `Applied`, or the outcome
+	/// that names why it did not apply the change. It answers an error only
+	/// for a failure of its own, which the product receives as `HostFailure`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
-	) -> Result<(), CallError<HostChatUpdateFeedError>> {
-		Err(CallError::HostFailure { reason: chat_method_not_served("updateChatFeed").reason })
+	) -> Result<ChatFeedOutcome, GenericError> {
+		Err(chat_method_not_served("updateChatFeed"))
 	}
+}
+
+/// What a host did with one change to the messages of a room.
+///
+/// It is the answer of the host, not an error, so a web host returns it as it
+/// returns any other value: the web bridge turns each error that a web
+/// callback throws into `HostFailure`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum ChatFeedOutcome {
+	/// The host applied the change.
+	Applied,
+	/// The change names a message that the room does not hold.
+	UnknownMessage,
+	/// `New` names a message that the room holds already.
+	DuplicateMessage,
+	/// The change edits, replaces or deletes a message that the product did
+	/// not write.
+	NotOwner,
 }
 
 /// The failure of a chat platform method a host does not serve yet.

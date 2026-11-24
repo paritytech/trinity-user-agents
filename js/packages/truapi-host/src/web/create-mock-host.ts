@@ -379,7 +379,10 @@ export interface ChatMessageRecord {
 
 /** What the product declared for one chat room, as the Rust mock keeps it. */
 export interface ChatRoomDeclarations {
-  /** The last configuration, or undefined before the product declared one. */
+  /**
+   * The configuration of the last `createChatRoom`, or undefined for a room
+   * the product did not create through the mock.
+   */
   config?: ChatRoomConfig;
   /** The last metadata from `setChatRoomMetadata`. */
   metadata?: ChatRoomMetadata;
@@ -1413,8 +1416,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     chat: {
-      async createChatRoom(_product, roomId) {
+      async createChatRoom(_product, roomId, request) {
         if (faults.chatError) throw new Error(faults.chatError);
+        // The mock keeps every configuration, in the same call that creates
+        // the room, for a new room and for a room that exists.
+        declareChatRoom(roomId, (room) => {
+          room.config = request.config;
+        });
         if (chatRooms.has(roomId)) return "Exists";
         chatRooms.set(roomId, {
           roomId,
@@ -1462,11 +1470,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           }
         );
       },
-      async setChatRoomConfig(_product, roomId, config) {
-        declareChatRoom(roomId, (room) => {
-          room.config = config;
-        });
-      },
       async setChatRoomMetadata(_product, request) {
         declareChatRoom(request.roomId, (room) => {
           room.metadata = request.metadata;
@@ -1491,6 +1494,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         declareChatRoom(request.roomId, (room) => {
           room.feed.push([request.update, persist]);
         });
+        return "Applied";
       },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
