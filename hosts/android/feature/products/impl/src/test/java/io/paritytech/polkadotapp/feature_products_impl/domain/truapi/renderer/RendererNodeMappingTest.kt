@@ -34,6 +34,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsParticleLook
 import io.paritytech.polkadotapp.feature_products_api.model.JsPose
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsShareRescue
+import io.paritytech.polkadotapp.feature_products_api.model.JsTiltParallax
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrack
 import io.paritytech.polkadotapp.feature_products_api.model.JsTrackPlay
 import io.paritytech.polkadotapp.feature_products_api.model.JsValueRange
@@ -86,6 +87,7 @@ import uniffi.truapi.PanFeel
 import uniffi.truapi.PanGesture
 import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
+import uniffi.truapi.Parallax
 import uniffi.truapi.ParticleLook
 import uniffi.truapi.Pose
 import uniffi.truapi.RendererNode
@@ -94,6 +96,7 @@ import uniffi.truapi.ShareRescue
 import uniffi.truapi.Spring
 import uniffi.truapi.TextFont
 import uniffi.truapi.TextProps
+import uniffi.truapi.TiltParallax
 import uniffi.truapi.Track
 import uniffi.truapi.TrackPlay
 import uniffi.truapi.Translate
@@ -120,6 +123,19 @@ class RendererNodeMappingTest {
         assertEquals(3100L, timeline.frames.last().atMs)
         assertEquals(2, timeline.repeat)
         assertTrue(timeline.alternate)
+    }
+
+    @Test
+    fun `a parallax keeps its depth, its tilt in wire units and its pan key`() {
+        val node = RendererNode.Spacer(
+            listOf(
+                Modifier.Parallax(Parallax(-400, TiltParallax(2400u, 1500u, 800u), "pan")),
+                Modifier.Parallax(Parallax(1000, null, null)),
+            ),
+        )
+        val mapped = (node.toJsWidget() as JsWidget.Spacer).modifiers
+        assertEquals(JsModifier.Parallax(-400, JsTiltParallax(2400, 1500, 800), "pan"), mapped[0])
+        assertEquals(JsModifier.Parallax(1000, null, null), mapped[1])
     }
 
     @Test

@@ -25,6 +25,7 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -110,9 +111,14 @@ object WidgetStyleRules {
 
 // MARK: Places of keyed gestures
 
-/** Where a keyed gesture's children stand along their travel, 0 to 1, for the nodes that fade with it. */
+/**
+ * Where a keyed gesture's children stand along their travel, 0 to 1, for the nodes that fade with it; and the offset at
+ * which they are drawn from where the tree put them, in px along the layout direction and down, for the nodes that
+ * follow it in parallax. A key that names no gesture stays at the start.
+ */
 class GesturePanPlace {
     var progress: () -> Float by mutableStateOf({ 0f })
+    var offset: () -> Offset by mutableStateOf({ Offset.Zero })
 }
 
 class GesturePanPlaces {

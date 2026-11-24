@@ -150,9 +150,21 @@ internal fun JsGesture(
         return (base + host.coerceIn(0f, travelNow()) + if (vertical) worker.y else worker.x) / lane
     }
 
+    /** Where the children are drawn from where the tree put them, in px along the layout direction and down. */
+    fun drawnOffsetPx(): Offset {
+        val travel = travelNow()
+        val worker = drawnWorkerPx(travel)
+        val dips = dippingMove == moveNumber
+        return Offset(PanReleaseSettle.along(placeX.value, travel, dips) + worker.x, PanReleaseSettle.along(placeY.value, travel, dips) + worker.y)
+    }
+
     widget.key?.let { key ->
         val place = LocalGesturePanPlaces.current.place(key)
-        SideEffect { place.progress = ::panProgress }
+        SideEffect {
+            place.progress = ::panProgress
+            // Including a completed drag's pop past the end, as the children are drawn.
+            place.offset = { drawnOffsetPx() + Offset((popped?.second ?: 0f) * density, 0f) }
+        }
     }
 
     fun press(feel: JsPanFeel) {
@@ -655,19 +667,8 @@ internal fun JsGesture(
                 .onSizeChanged { childrenWidth = it.width }
                 .offset {
                     // Clamped here too: a tree that narrows the node mid-hold must not push the children out of it.
-                    val travel = travelNow()
-                    val position = GestureRules.newest(
-                        workerPosition?.value,
-                        answeredInFrame?.takeIf { it.first === current.position }?.second,
-                    )
-                    val worker = drawnWorkerPx(travel)
-                    val workerX = worker.x
-                    val workerY = worker.y
-                    val dips = dippingMove == moveNumber
-                    IntOffset(
-                        (PanReleaseSettle.along(placeX.value, travel, dips) + workerX).roundToInt(),
-                        (PanReleaseSettle.along(placeY.value, travel, dips) + workerY).roundToInt(),
-                    )
+                    val drawn = drawnOffsetPx()
+                    IntOffset(drawn.x.roundToInt(), drawn.y.roundToInt())
                 }
                 .graphicsLayer {
                     val pop = popped

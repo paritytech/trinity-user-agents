@@ -202,4 +202,23 @@ sealed interface JsModifier {
         val emitter: JsEmitter,
         @Transient val trail: JsPanTrail? = null,
     ) : JsModifier
+
+    /**
+     * Moves the node by the device's tilt, the offset at which the children of the gesture keyed [pan] are drawn, or
+     * both, scaled by [depthPermille]; drawn after layout, as [Translate] is.
+     */
+    @Serializable
+    @SerialName("parallax")
+    data class Parallax(
+        val depthPermille: Int,
+        val tilt: JsTiltParallax? = null,
+        val pan: String? = null,
+    ) : JsModifier
 }
+
+/**
+ * How a parallax follows the device's tilt: [travel] (hundredths of a dp) at [maxTiltCentideg] either way per axis, from
+ * a rest attitude that follows the device's own with a time constant of [settleMs] (zero keeps it).
+ */
+@Serializable
+data class JsTiltParallax(val travel: Long, val maxTiltCentideg: Int, val settleMs: Int)
