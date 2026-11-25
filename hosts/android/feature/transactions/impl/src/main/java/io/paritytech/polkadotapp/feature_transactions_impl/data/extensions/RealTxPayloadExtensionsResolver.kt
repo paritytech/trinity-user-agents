@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_transactions.api.data.ExtrinsicService
 import io.paritytech.polkadotapp.feature_transactions.api.data.Mortality
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.DecodedTransactionExtensionValue
@@ -62,10 +63,10 @@ class RealTxPayloadExtensionsResolver @Inject constructor(
         return if (txExtVersion > 0u) {
             Result.success(ExtrinsicVersion.V5(extensionVersion))
         } else {
-            defaultExtrinsicVersionProvider.getDefaultExtrinsicVersion(chainId, isSigned).map { default ->
+            defaultExtrinsicVersionProvider.getDefaultExtrinsicVersion(chainId, isSigned).flatMap { default ->
                 when (default) {
-                    ExtrinsicVersion.V4 -> ExtrinsicVersion.V4
-                    is ExtrinsicVersion.V5 -> ExtrinsicVersion.V5(extensionVersion)
+                    ExtrinsicVersion.V4 -> Result.success(ExtrinsicVersion.V4)
+                    is ExtrinsicVersion.V5 -> defaultExtrinsicVersionProvider.extrinsicVersionFor(chainId, extensionVersion, isSigned)
                 }
             }
         }

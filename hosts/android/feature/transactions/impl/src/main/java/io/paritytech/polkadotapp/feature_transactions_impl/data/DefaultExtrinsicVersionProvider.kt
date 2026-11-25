@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.chains.multiNetwork.getRuntime
+import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_transactions.api.data.TransactionExtensionVersions
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import io.paritytech.polkadotapp.tools_remoteconfig_api.getSyncedJsonObject
@@ -13,6 +15,8 @@ import javax.inject.Inject
 
 interface DefaultExtrinsicVersionProvider {
     suspend fun getDefaultExtrinsicVersion(chainId: ChainId, isSigned: Boolean): Result<ExtrinsicVersion>
+
+    suspend fun extrinsicVersionFor(chainId: ChainId, extensionVersion: Byte, isSigned: Boolean): Result<ExtrinsicVersion>
 }
 
 class RealDefaultExtrinsicVersionProvider @Inject constructor(
@@ -28,8 +32,13 @@ class RealDefaultExtrinsicVersionProvider @Inject constructor(
     override suspend fun getDefaultExtrinsicVersion(chainId: ChainId, isSigned: Boolean): Result<ExtrinsicVersion> {
         if (chainId !in generalTransactionChains()) return Result.success(ExtrinsicVersion.V4)
 
-        return getTransactionExtensionVersions().mapCatching { versions ->
-            val extensionVersion = versions.versionOf(chainId)
+        return getTransactionExtensionVersions().flatMap { versions ->
+            extrinsicVersionFor(chainId, versions.versionOf(chainId), isSigned)
+        }
+    }
+
+    override suspend fun extrinsicVersionFor(chainId: ChainId, extensionVersion: Byte, isSigned: Boolean): Result<ExtrinsicVersion> {
+        return runCancellableCatching {
             if (isSigned && !verifiesGeneralSignatures(chainId, extensionVersion)) {
                 ExtrinsicVersion.V4
             } else {
