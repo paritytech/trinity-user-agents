@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsUiEventHandler
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.CardMaterialsSlot
 import kotlinx.coroutines.flow.StateFlow
 
 /**

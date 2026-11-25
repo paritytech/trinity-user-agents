@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import io.parity.truapi.MaterialsResolution
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -50,6 +53,8 @@ class TrUAPIChatWorker(
     private val chatMessaging: ProductChatMessaging,
     private val scope: CoroutineScope,
 ) : ProductWorker {
+    private val materialsByMessage = MutableStateFlow<Map<RenderContext.ChatMessage, MaterialsResolution>>(emptyMap())
+
     init {
         val workerJob = scope.coroutineContext.job
         val claim = runtime.claimWorker(productId)
@@ -96,6 +101,16 @@ class TrUAPIChatWorker(
             messageData.value,
             "${productId.value}/$messageId",
         )
+    }
+
+    override fun messageMaterials(
+        roomId: ProductChatIdParameter?,
+        messageId: ChatMessageId,
+        messageType: String,
+    ): Flow<MaterialsResolution?> {
+        if (roomId == null) return flowOf(null)
+        val context = RenderContext.ChatMessage(roomId = roomId.value, messageId = messageId, messageType = messageType)
+        return materialsByMessage.map { it[context] }.distinctUntilChanged()
     }
 
     /** Draws the card the product docked in the footer of [roomId]. */
@@ -176,13 +191,27 @@ class TrUAPIChatWorker(
     private fun TrUAPIProductExecution.chatRender(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
         flow {
             var drew = false
-            render(ProductRendererRenderRequest(context, payload))
-                .retryWhileConnecting()
-                .collect { node ->
-                    drew = true
-                    emit(Result.success(node.toJsWidget()))
-                    if (node.hasMaterials()) scope.launch { reportMaterialsUnsupported(node, context, label) }
-                }
+            var shown: MaterialsResolution? = null
+            try {
+                render(ProductRendererRenderRequest(context, payload))
+                    .retryWhileConnecting()
+                    .collect { node ->
+                        drew = true
+                        if (context is RenderContext.ChatMessage) {
+                            // Resolved before the shown ones close, so materials both trees share keep their fetch.
+                            val replaced = shown
+                            shown = if (node.hasMaterials()) resolveMessageMaterials(node, context, label) else null
+                            publishMaterials(context, replaced, shown)
+                            replaced?.close()
+                        } else if (node.hasMaterials()) {
+                            scope.launch { reportMaterialsUnsupported(node, context, label) }
+                        }
+                        emit(Result.success(node.toJsWidget()))
+                    }
+            } finally {
+                if (context is RenderContext.ChatMessage) publishMaterials(context, shown, null)
+                shown?.close()
+            }
             // A stream closed before its first tree would otherwise leave the cell loading for the
             // execution's whole life; a card keeps its last face, a cell has none.
             if (!drew) throw StreamDrewNothing()
@@ -191,7 +220,27 @@ class TrUAPIChatWorker(
             .catch { cause -> if (cause !is CancellationException) throw cause }
             .reopenAfterFailure("TrUAPI chat render for $label")
 
-    // A chat-context resolution settles every node `Unsupported` and reports it before its first value.
+    private fun TrUAPIProductExecution.resolveMessageMaterials(
+        tree: RendererNode,
+        context: RenderContext.ChatMessage,
+        label: String,
+    ): MaterialsResolution? =
+        runCatching { resolveMaterials(tree, context, floatFilterable = false) }
+            .logFailure("TrUAPI chat materials for $label")
+            .getOrNull()
+
+    // Another collector of the same message may have published since, and its entry stays.
+    private fun publishMaterials(context: RenderContext.ChatMessage, replaced: MaterialsResolution?, resolution: MaterialsResolution?) {
+        materialsByMessage.update { current ->
+            when {
+                resolution != null -> current + (context to resolution)
+                current[context] === replaced -> current - context
+                else -> current
+            }
+        }
+    }
+
+    // The footer card draws its `Materials` nodes plain, and a resolution of it reports each before its first value.
     private suspend fun TrUAPIProductExecution.reportMaterialsUnsupported(tree: RendererNode, context: RenderContext, label: String) {
         runCancellableCatching {
             resolveMaterials(tree, context, floatFilterable = false).use { resolution ->

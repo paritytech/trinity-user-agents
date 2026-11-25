@@ -30,6 +30,7 @@ interface ProductWorker : JsEventDispatcher {
     fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> =
         flowOf(Result.failure(UnsupportedOperationException("This runtime cannot draw the $messageType card docked in ${roomId.value}")))
 
+    /** The materials of the tree [renderMessage] last drew for the message, open while it shows, or null when it has none. */
     fun messageMaterials(roomId: ProductChatIdParameter?, messageId: ChatMessageId, messageType: String): Flow<MaterialsResolution?> =
         flowOf(null)
 

@@ -11,7 +11,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -30,14 +29,12 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsMaterialsDrawer
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsFace
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.presentation.ProductsMessageViewModel
-import io.paritytech.polkadotapp.feature_products_impl.presentation.materials.ChatMaterialsDrawer
 import kotlinx.serialization.KSerializer
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -107,11 +104,12 @@ class ProductsMessageRenderer(
         val viewModel: ProductsMessageViewModel = hiltViewModel(
             key = messageId,
             creationCallback = { factory: ProductsMessageViewModel.Factory ->
-                factory.create(content, messageId, product, worker, roomId)
+                factory.create(content, messageId, product, worker, roomId, imageResolver)
             }
         )
 
         val state by viewModel.state.collectAsState()
+        val resolution by viewModel.resolution.collectAsState()
 
         when (val currentState = state) {
             is LoadingState.Loading -> {
@@ -122,19 +120,11 @@ class ProductsMessageRenderer(
                 )
             }
             is LoadingState.Loaded -> {
-                val card = currentState.data
-                val materialsDrawer = remember(card.materials) {
-                    val drawnFrom = card.materials.resolution
-                    ChatMaterialsDrawer(card.materials.resolved, card.materials.reportedNodes) { node, failure ->
-                        if (drawnFrom != null) viewModel.reportMaterial(drawnFrom, node, failure.material, failure.reason)
-                    }
-                }
-                CompositionLocalProvider(
-                    LocalJsImageResolver provides imageResolver,
-                    LocalJsMaterialsDrawer provides materialsDrawer,
-                ) {
-                    JsWidgetRenderer(
-                        widget = card.widget,
+                CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
+                    MaterialsFace(
+                        face = currentState.data,
+                        resolution = resolution,
+                        materials = viewModel.materials,
                         jsEventHandler = viewModel::handleUiEvent,
                     )
                 }

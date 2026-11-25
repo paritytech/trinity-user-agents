@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.AndroidEmbeddedExternalSurface
@@ -30,7 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-internal class PocketMaterials(
+internal class CardMaterialsRenderer(
     private val materials: CardMaterials,
     private val cardPicture: State<ImageBitmap?>,
     private val cardCoordinates: State<LayoutCoordinates?>,
