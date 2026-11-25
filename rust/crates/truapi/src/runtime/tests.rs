@@ -6719,6 +6719,7 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 #[derive(Default)]
 struct DemandRecorder {
 	transitions: Mutex<Vec<(String, crate::host_logic::worker::WorkerTransition)>>,
+	attempts: Mutex<std::collections::HashMap<String, u64>>,
 }
 
 impl DemandRecorder {
@@ -6732,10 +6733,18 @@ impl DemandRecorder {
 	fn seen(&self) -> Vec<(String, crate::host_logic::worker::WorkerTransition)> {
 		self.transitions.lock().expect("demand recorder mutex poisoned").clone()
 	}
+
+	fn attempt(&self, product: &str) -> u64 {
+		self.attempts.lock().expect("demand recorder mutex poisoned")[product]
+	}
 }
 
 impl crate::host_logic::worker::WorkerController for DemandRecorder {
-	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+	fn start_worker(&self, product_id: &ProductId, attempt_id: u64) {
+		self.attempts
+			.lock()
+			.expect("demand recorder mutex poisoned")
+			.insert(product_id.to_string(), attempt_id);
 		self.record(product_id, crate::WorkerTransition::Start);
 	}
 
@@ -9361,7 +9370,7 @@ fn a_provider_worker_that_crashes_mid_session_is_started_and_assigned_again() {
 	services.funding().unlink(&ProductId::for_test("ramp.dot"), &crashed);
 	let before_crash = workers.seen().len();
 
-	services.worker_attempt_exited(&ProductId::for_test("ramp.dot"), None);
+	services.worker_attempt_exited(&ProductId::for_test("ramp.dot"), workers.attempt("ramp.dot"));
 	let restarted = connect_provider(&services, "ramp.dot").calls(1);
 
 	assert_eq!(

@@ -325,18 +325,12 @@ impl<Role> HostRuntime<Role> {
 		crate::WorkerHold::acquire(&self.services, product_id)
 	}
 
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	#[cfg(target_arch = "wasm32")]
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_attempt_exited(product_id, None);
-	}
-
-	/// Restart after a native worker failure only while the failing attempt is current.
-	#[cfg(not(target_arch = "wasm32"))]
+	/// Report that a worker attempt stopped without being asked to.
+	///
+	/// While something holds the worker and `attempt` is still its current one, the worker is
+	/// started again, with a growing wait when it keeps crashing.
 	pub fn worker_attempt_exited(&self, product_id: &ProductId, attempt: u64) {
-		self.services.worker_attempt_exited(product_id, Some(attempt));
+		self.services.worker_attempt_exited(product_id, attempt);
 	}
 }
 

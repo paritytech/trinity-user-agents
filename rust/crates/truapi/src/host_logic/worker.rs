@@ -181,7 +181,8 @@ impl WorkerLedger {
 	/// The host reports at `now_ms` that the product's worker stopped
 	/// running without being asked to: it crashed, failed to boot or the
 	/// system killed it. With no references held nothing needs it, and this
-	/// is a no-op that answers `None`.
+	/// is a no-op that answers `None`. So is a report from an attempt that
+	/// has been replaced.
 	///
 	/// Otherwise the exit joins the product's run of crashes, which starts
 	/// anew after [`CRASH_RUN_WINDOW_MS`] without one. The first crash of a
@@ -191,11 +192,11 @@ impl WorkerLedger {
 	/// crash up to [`RESTART_BACKOFF_LONGEST`]. The run's
 	/// [`CRASH_NOTICE_AFTER`]th crash tells the host through
 	/// [`WorkerController::worker_crashing`].
-	fn exited(&self, product_id: &ProductId, attempt_id: Option<u64>, now_ms: u64) -> Option<u64> {
+	fn exited(&self, product_id: &ProductId, attempt_id: u64, now_ms: u64) -> Option<u64> {
 		let wait_ms = {
 			let mut state = self.state();
 			let demand = state.references.get(product_id)?;
-			if attempt_id.is_some_and(|id| id != demand.attempt_id) {
+			if attempt_id != demand.attempt_id {
 				return None;
 			}
 			let run = state.crashes.entry(product_id.clone()).or_insert(CrashRun {
@@ -233,11 +234,11 @@ impl WorkerLedger {
 	/// Restart a crashed worker once its backoff has passed: requests
 	/// [`WorkerTransition::Start`] unless nothing holds the worker any more
 	/// or it was started meanwhile.
-	fn restart(&self, product_id: &ProductId, attempt_id: Option<u64>) {
+	fn restart(&self, product_id: &ProductId, attempt_id: u64) {
 		{
 			let mut state = self.state();
 			let Some(demand) = state.references.get(product_id) else { return };
-			if attempt_id.is_some_and(|id| id != demand.attempt_id) {
+			if attempt_id != demand.attempt_id {
 				return;
 			}
 			let Some(run) = state.crashes.get_mut(product_id) else {
@@ -393,8 +394,8 @@ impl Drop for DrainGuard<'_> {
 }
 
 impl RuntimeServices {
-	/// Retry while demand remains, matching the startup attempt when the host supplies one.
-	pub fn worker_attempt_exited(self: &Arc<Self>, product_id: &ProductId, attempt: Option<u64>) {
+	/// Retry while demand remains and `attempt` is still the product's current one.
+	pub fn worker_attempt_exited(self: &Arc<Self>, product_id: &ProductId, attempt: u64) {
 		let Some(wait_ms) =
 			self.worker_ledger.exited(product_id, attempt, crate::current_unix_millis())
 		else {
