@@ -18,8 +18,9 @@ fn the_runtime_forwards_core_warnings_to_its_callbacks() {
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
-		.expect("host runtime config should be valid");
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, no_workers())
+			.expect("host runtime config should be valid");
 
 	crate::logging::testing::forward(
 		&host._host_sink,
@@ -70,8 +71,9 @@ fn a_host_pushed_storage_change_reaches_the_products_subscription() {
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
-		.expect("host runtime config should be valid");
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, no_workers())
+			.expect("host runtime config should be valid");
 	let execution = host.open_app_execution(
 		ProductId::for_test("myapp.dot"),
 		ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
@@ -106,7 +108,7 @@ fn the_native_runtime_installs_the_pairing_observer() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 
@@ -230,7 +232,7 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let open_widget = |product_id: &str| {
@@ -276,7 +278,7 @@ fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let execution = host.open_app_execution(
@@ -306,7 +308,7 @@ fn an_execution_close_does_not_invalidate_shared_bus_connects() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let execution = host.open_app_execution(
@@ -338,7 +340,7 @@ fn an_unknown_close_still_invalidates_the_executions_own_connects() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let execution = host.open_app_execution(
@@ -361,7 +363,7 @@ fn native_execution_authorizes_device_permission_from_stored_decision() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.unwrap();
 	let execution = host.open_app_execution(
@@ -398,7 +400,7 @@ fn native_execution_shares_one_use_permissions_across_connections_only() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.unwrap();
 	let open = || {
@@ -473,7 +475,7 @@ fn the_runtime_opens_the_core_database_at_startup() {
 			database_directory: dir.path().to_string_lossy().into_owned(),
 			..native_host_runtime_config()
 		},
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 
@@ -513,7 +515,7 @@ fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
 			database_directory: dir.path().to_string_lossy().into_owned(),
 			..native_host_runtime_config()
 		},
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 
@@ -528,7 +530,7 @@ fn durable_recovery_returns_once_nothing_is_live() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 
@@ -548,7 +550,7 @@ fn a_missing_database_directory_fails_runtime_creation() {
 			database_directory: missing.to_string_lossy().into_owned(),
 			..native_host_runtime_config()
 		},
-		None,
+		no_workers(),
 	);
 
 	assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));

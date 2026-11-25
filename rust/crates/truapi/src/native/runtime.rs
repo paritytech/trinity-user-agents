@@ -136,7 +136,7 @@ impl NativeTrUApiHostRuntime {
 	fn from_resolved(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: NativeResolvedHostRuntimeConfig,
-		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+		worker_host: Arc<dyn NativeHostWebViewWorker>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
 		// Installed before the rest of startup, so the warnings raised on the way
@@ -645,13 +645,11 @@ impl NativeTrUApiHostRuntime {
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
 	/// Construct the shared runtime and deliver worker demand acquired during initialization.
-	///
-	/// Without a worker host, worker claims report a failed execution until released.
 	#[uniffi::constructor]
 	pub fn with_runtime_config(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: HostRuntimeConfig,
-		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+		worker_host: Arc<dyn NativeHostWebViewWorker>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		Self::from_resolved(callbacks, runtime_config.try_into()?, worker_host)
 	}
