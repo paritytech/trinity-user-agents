@@ -59,10 +59,13 @@ struct TrUAPIPocketHandlerTests {
         first.keepsRenderStreamOpen = true
         let streams = makeStreams(workers: workers)
 
+        workers.publish([gameProductId: first])
+        try await streams.start()
+        defer { streams.dispose() }
+
         let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
         defer { drawing.cancel() }
 
-        workers.publish([gameProductId: first])
         try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
 
         let replacement = MockProductExecution()
@@ -71,6 +74,7 @@ struct TrUAPIPocketHandlerTests {
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
         #expect(first.renderRequests.count == 1)
+        #expect(workers.references.log == ["acquire \(gameProductId)"])
     }
 }
 

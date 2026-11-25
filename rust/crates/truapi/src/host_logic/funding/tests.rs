@@ -288,7 +288,7 @@ fn an_unserved_session_is_cancelled_once() {
 	assert_eq!(
 		(open.cancel(NOW + 1), open.wire_item(), ended.cancel(NOW + 1)),
 		(
-			CancelOutcome::Ended,
+			CancelOutcome::Cancelled,
 			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
 			CancelOutcome::Refused
 		)
@@ -994,7 +994,7 @@ fn a_second_cancel_ends_a_session_its_provider_left_unanswered() {
 		(session.cancel(NOW), session.cancel(NOW + 1), session.wire_item()),
 		(
 			CancelOutcome::Requested,
-			CancelOutcome::Ended,
+			CancelOutcome::Cancelled,
 			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
 		)
 	);
@@ -1581,7 +1581,7 @@ fn the_band_follows_the_providers_steps() {
 fn a_payment_after_a_cancel_reopens_the_top_up() {
 	let mut cancelled = chosen(FundingDirection::In, FundingRail::Bank);
 	assert_eq!(cancelled.cancel(NOW + 1), CancelOutcome::Requested);
-	assert_eq!(cancelled.cancel(NOW + 2), CancelOutcome::Ended);
+	assert_eq!(cancelled.cancel(NOW + 2), CancelOutcome::Cancelled);
 	cancelled.acknowledged = true;
 	let too_late = cancelled.clone();
 

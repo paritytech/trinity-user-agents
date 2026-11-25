@@ -438,7 +438,8 @@ private extension RootInteractorSetupTests {
                 coinageInstanceId: 1,
                 accountDataStoreContract: nil,
                 paymentAsset: nil,
-                appSharingUrl: nil
+                appSharingUrl: nil,
+                coinagePrivacyConfig: nil
             )
         },
         clock: any Clock<Duration> = TestClock<Duration>()

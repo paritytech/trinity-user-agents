@@ -19,7 +19,8 @@ final class MockRemoteConfigManager: RemoteConfigManaging {
         coinageInstanceId: nil,
         accountDataStoreContract: nil,
         paymentAsset: nil,
-        appSharingUrl: nil
+        appSharingUrl: nil,
+        coinagePrivacyConfig: nil
     )
 
     func fetchRemoteConfigValues() {

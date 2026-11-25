@@ -19,7 +19,8 @@ struct JWTTokenManagerTests {
                 coinageInstanceId: nil,
                 accountDataStoreContract: nil,
                 paymentAsset: nil,
-                appSharingUrl: nil
+                appSharingUrl: nil,
+                coinagePrivacyConfig: nil
             )
         )
     }

@@ -1,7 +1,7 @@
 import Foundation
 
 // Built from individual Firebase RemoteConfig keys:
-//   identity_backend_url, ipfs_gateway_url, dot_ns_config, coinage_instance_id,
+//   identity_backend_url, ipfs_gateway_url, dot_ns_config, coinage_instance_id, coinage_privacy_config,
 //   account_data_store_config { contractAddress }, payment_asset_config {
 //   symbol, iconSquareUrl, iconWideUrl }, app_sharing_url, funding_config { providers }
 // Each field nil (or empty) if the corresponding key is missing or empty.
@@ -19,6 +19,9 @@ struct RemoteAppConfig {
     /// The payment asset's symbol and logo URLs from the `payment_asset_config` remote object.
     let paymentAsset: PaymentAssetConfig?
     let appSharingUrl: URL?
+    /// Raw `coinage_privacy_config` JSON; parsed app-side so this file stays free of Coinage (it compiles into
+    /// the NSE). Not part of `isValid`.
+    let coinagePrivacyConfig: Data?
     /// The dotNS names of the funding providers from the `funding_config`
     /// remote object, the only published ones the overlay offers. Empty when
     /// none are configured.

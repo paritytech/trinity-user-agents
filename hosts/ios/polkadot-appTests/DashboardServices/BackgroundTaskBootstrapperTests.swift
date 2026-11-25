@@ -58,7 +58,8 @@ private extension BackgroundTaskBootstrapperTests {
         coinageInstanceId: 1,
         accountDataStoreContract: nil,
         paymentAsset: nil,
-        appSharingUrl: nil
+        appSharingUrl: nil,
+        coinagePrivacyConfig: nil
     )
 
     func makeBootstrapper(

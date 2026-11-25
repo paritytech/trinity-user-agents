@@ -143,7 +143,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     func cancel(_ entryId: String) async throws -> CancelOutcome {
         guard !isPresenting(entryId) else {
             leave(entryId)
-            return .ended
+            return .cancelled
         }
 
         let outcome = try await runtimeSlot.built().cancelFunding(intent: entryId)
