@@ -265,7 +265,9 @@ composite action into the Vite configurations:
   `release/build/package.json` used for packaging.
 
 `VITE_ENVIRONMENTS` plus the three Firebase client identifiers are required by
-real CI builds. TURN configuration is also passed by the current workflows.
+real CI builds. Each channel MUST name a `stack` bundled in `.trinity/`, or the
+renderer refuses to start. TURN configuration is also passed by the current
+workflows.
 Release builds require the Sentry inputs; PR installable builds pass them but do
 not make them mandatory. Every packaged macOS CI build requires the Apple
 inputs, regardless of `build_type`.
@@ -391,9 +393,8 @@ Current integrations and inputs include:
 - Sentry: `SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`;
 - build config: `AUTO_UPDATE_URL`, `VITE_FIREBASE_API_KEY`,
   `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`,
-  `VITE_WEBRTC_TURN_HOST`, `VITE_WEBRTC_TURN_SECRET`,
-  `VITE_WEBRTC_TURN_TTL`, `SANDBOX_IPFS_ALLOWLIST`, and
-  `SANDBOX_RELAY_ALLOWLIST`;
+  `VITE_WEBRTC_TURN_HOST`, `VITE_WEBRTC_TURN_SECRET`, and
+  `VITE_WEBRTC_TURN_TTL`;
 - Allure TestOps: `ALLURE_ENDPOINT`, `ALLURE_PROJECT_ID`, `ALLURE_TOKEN`;
 - distribution: `SCW_ACCESS_KEY`, `SCW_SECRET_KEY`;
 - notifications: `TELEGRAM_TOKEN`, `TELEGRAM_TO`;

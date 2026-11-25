@@ -6,7 +6,7 @@
   },
   "desktop": {
     "branch": "main",
-    "ref": "ef856b76054e0905bb11ac5811970cd66967699d",
+    "ref": "c8e93ecd72a0d2696b622014d47c80f84d3e7635",
     "source": "https://github.com/paritytech/polkadot-desktop-community.git"
   },
   "ios": {

@@ -1,5 +1,5 @@
 /**
- * Discovery topic derivation for chat requests — V1 and V2.
+ * Pure helpers of the chat request: discovery topic derivation (V1 and V2) and the identity and cancel proofs.
  *
  * V1 must match iOS byte-for-byte:
  *   - ChatRequest+PaginationTopic.swift → allPeerTopic, paginationTopic
@@ -29,6 +29,8 @@ import { khash } from '@novasamatech/statement-store';
 import { Bytes, Struct, u64 } from 'scale-ts';
 
 import { p2pService } from '../service';
+
+import { CANCEL_PROOF_CONTEXT, CancelProofPayload, IDENTITY_PROOF_CONTEXT, IdentityProofPayload } from './schemas';
 
 // April 2, 2025 00:00:00 UTC — same epoch as iOS
 const EPOCH = 1_763_164_800;
@@ -194,7 +196,49 @@ function computePeerSubscriptionTopicsV2(
   return senderDeviceAccountIds.map(senderDeviceId => computePaginationTopicV2(senderDeviceId, recipientUserAccountId, day));
 }
 
-export const chatRequestTopicService = {
+/**
+ * Identity proof of a v2 request: khash(K(A,B), SCALE(IdentityProofPayload)).
+ */
+function computeIdentityProof(
+  sharedSecret: Uint8Array,
+  identityAccountId: Uint8Array,
+  statementAccountId: Uint8Array,
+): Uint8Array {
+  const payload = IdentityProofPayload.enc({ identityAccountId, statementAccountId, context: IDENTITY_PROOF_CONTEXT });
+
+  return khash(sharedSecret, payload);
+}
+
+function isIdentityProofValid(
+  sharedSecret: Uint8Array,
+  identityProof: { identityAccountId: Uint8Array; proof: Uint8Array },
+  statementAccountId: Uint8Array,
+): boolean {
+  const expected = computeIdentityProof(sharedSecret, identityProof.identityAccountId, statementAccountId);
+
+  return p2pService.bytesEqual(expected, identityProof.proof);
+}
+
+/**
+ * Cancel proof of RFC 0007: khash(K(A,B), SCALE(CancelProofPayload)).
+ */
+function computeCancelProof(sharedSecret: Uint8Array, identityAccountId: Uint8Array, requestId: string): Uint8Array {
+  const payload = CancelProofPayload.enc({ identityAccountId, requestId, context: CANCEL_PROOF_CONTEXT });
+
+  return khash(sharedSecret, payload);
+}
+
+function isCancelProofValid(
+  sharedSecret: Uint8Array,
+  identityProof: { identityAccountId: Uint8Array; proof: Uint8Array },
+  requestId: string,
+): boolean {
+  const expected = computeCancelProof(sharedSecret, identityProof.identityAccountId, requestId);
+
+  return p2pService.bytesEqual(expected, identityProof.proof);
+}
+
+export const chatRequestService = {
   getCurrentDay,
   computeAllPeerTopic,
   computePaginationTopic,
@@ -204,4 +248,8 @@ export const chatRequestTopicService = {
   computePaginationTopicV2,
   computeChannelTopicV2,
   computePeerSubscriptionTopicsV2,
+  computeIdentityProof,
+  isIdentityProofValid,
+  computeCancelProof,
+  isCancelProofValid,
 };

@@ -27,13 +27,13 @@ export function createStubHostCallbacks(): RequiredHostCallbacks {
     },
     features: {
       featureSupported: notImplemented('featureSupported'),
-      supportedChains: notImplemented('supportedChains'),
     },
     extrinsicVersion: { transactionExtensionVersions: notImplemented('transactionExtensionVersions') },
     productStorage: {
       read: notImplemented('productStorage.read'),
       write: notImplemented('productStorage.write'),
       clear: notImplemented('productStorage.clear'),
+      clearProduct: notImplemented('productStorage.clearProduct'),
       subscribeStorage: emptyStream,
     },
     coreStorage: {

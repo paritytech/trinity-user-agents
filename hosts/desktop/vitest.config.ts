@@ -16,8 +16,16 @@ const TEST_ENVIRONMENTS = JSON.stringify({
     digitalDollarAsset: { assetId: 1, symbol: 'tUSD', precision: 6, palletName: 'Assets' },
   },
   channels: {
-    alpha: { name: 'Alpha Testnet', roles: { people: 'alpha-people', bulletin: 'alpha-bulletin', assetHub: 'alpha-asset-hub' } },
-    beta: { name: 'Beta Testnet', roles: { people: 'beta-people', bulletin: 'beta-bulletin', assetHub: 'beta-asset-hub' } },
+    alpha: {
+      name: 'Alpha Testnet',
+      stack: 'paseo-next-v2',
+      roles: { people: 'alpha-people', bulletin: 'alpha-bulletin', assetHub: 'alpha-asset-hub' },
+    },
+    beta: {
+      name: 'Beta Testnet',
+      stack: 'previewnet',
+      roles: { people: 'beta-people', bulletin: 'beta-bulletin', assetHub: 'beta-asset-hub' },
+    },
   },
 });
 
@@ -59,6 +67,9 @@ const config: ViteUserConfigFnPromise = async options => {
       sequence: {
         sequencer: Sequencer,
       },
+      // Loaded by Node outside Vite, a Radix menu and a dialog opened from one of its items loop on focus in
+      // happy-dom; Vite loads them as the app bundle does.
+      server: { deps: { inline: [/@radix-ui/, /@novasamatech\/tr-ui/] } },
       coverage: {
         provider: 'v8',
         exclude: ['**/node_modules/**'],

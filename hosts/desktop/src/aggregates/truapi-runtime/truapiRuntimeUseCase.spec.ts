@@ -15,9 +15,7 @@ const performUserLogoutMock = vi.spyOn(sessionUseCase, 'performUserLogout').mock
 
 const hostConfig: TruapiHostConfig = {
   host: { name: 'Polkadot Desktop', platform: 'Desktop' },
-  people: { genesisHash: '0x01' },
-  bulletin: { genesisHash: '0x02' },
-  assetHub: { genesisHash: '0x03' },
+  stack: { pointer: 'polkadotapp://stack?key=0x01&url=https%3A%2F%2Fexample.test', descriptor: new Uint8Array() },
   pairing: { deeplinkScheme: 'polkadot' },
 };
 
@@ -42,6 +40,7 @@ function fakeRuntime() {
     createProvider: vi.fn(() => Promise.resolve(fakeProvider())),
     disconnectSession: vi.fn(() => Promise.resolve()),
     cancelPairing: vi.fn(),
+    clearProductState: vi.fn(() => Promise.resolve()),
     activateStoredSession: vi.fn(() => Promise.resolve()),
     getPermissionAuthorizationStatus: vi.fn((): Promise<PermissionAuthorizationStatus> => Promise.resolve('NotDetermined')),
     getPermissionAuthorizationStatuses: vi.fn((): Promise<PermissionAuthorizationStatus[]> => Promise.resolve([])),

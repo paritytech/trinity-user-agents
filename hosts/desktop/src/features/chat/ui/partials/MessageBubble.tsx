@@ -1,5 +1,6 @@
+import { type RenderContext } from '@parity/truapi';
 import { Check, CheckCheck, Clock } from 'lucide-react';
-import { type MouseEvent } from 'react';
+import { type MouseEvent, useMemo } from 'react';
 
 import { BlurhashCanvas } from '@/shared/components';
 import { TEST_IDS } from '@/shared/test-ids';
@@ -10,8 +11,8 @@ import { chatService } from '../../service';
 import { getMessagePreview, getPlainText } from '../helpers/message';
 
 import { AttachmentRenderer } from './AttachmentRenderer';
-import { CustomMessage } from './CustomMessage';
 import { MessageText } from './MessageText';
+import { ProductRenderedBody } from './ProductRenderedBody';
 import { ReactionPills } from './ReactionPills';
 
 type MessageBubbleProps = {
@@ -19,6 +20,7 @@ type MessageBubbleProps = {
   roomId: string;
   message: ChatMessage;
   isMe: boolean;
+  isSeen?: boolean;
   isLastInGroup?: boolean;
   quotedMessage?: ChatMessage | null;
   quotedSenderName?: string;
@@ -30,15 +32,24 @@ type MessageBubbleProps = {
   onViewEditHistory?: VoidFunction;
 };
 
-export const StatusIcon = ({ status, className }: { status: ChatMessageStatus; className?: string }) => {
+export const StatusIcon = ({
+  status,
+  isSeen = false,
+  className,
+}: {
+  status: ChatMessageStatus;
+  isSeen?: boolean;
+  className?: string;
+}) => {
   if (status.direction === 'incoming') return null;
+  // Matches the Android client: one check for sent and delivered, a double check only for Seen.
+  if (isSeen) return <CheckCheck className={className} />;
   switch (status.state) {
     case 'new':
       return <Clock className={className} />;
     case 'sent':
-      return <Check className={className} />;
     case 'delivered':
-      return <CheckCheck className={className} />;
+      return <Check className={className} />;
   }
 };
 
@@ -47,6 +58,7 @@ export const MessageBubble = ({
   roomId,
   message,
   isMe,
+  isSeen = false,
   isLastInGroup,
   quotedMessage,
   quotedSenderName,
@@ -66,6 +78,15 @@ export const MessageBubble = ({
       : 'rounded-2xl',
   );
 
+  const customMessageType = message.content.type === 'custom' ? message.content.messageType : null;
+  const renderContext = useMemo<RenderContext | null>(
+    () =>
+      customMessageType === null
+        ? null
+        : { tag: 'ChatMessage', value: { roomId, messageId: message.messageId, messageType: customMessageType } },
+    [roomId, message.messageId, customMessageType],
+  );
+
   const quotedAttachment = quotedMessage?.content.type === 'richText' ? quotedMessage.content.attachments?.[0] : undefined;
   // string → media thumbnail (blurhash, possibly empty); null → no media, no thumbnail box.
   const quotedBlurhash =
@@ -73,16 +94,10 @@ export const MessageBubble = ({
       ? (quotedAttachment.meta.blurhash ?? '')
       : null;
 
-  if (message.content.type === 'custom') {
+  if (message.content.type === 'custom' && renderContext) {
     return (
       <div className="relative" onContextMenu={onContextMenu}>
-        <CustomMessage
-          messageId={message.messageId}
-          productId={productId}
-          roomId={roomId}
-          messageType={message.content.messageType}
-          payload={message.content.payload}
-        />
+        <ProductRenderedBody productId={productId} context={renderContext} payload={message.content.payload} />
         {reactions.length > 0 && (
           <div className="absolute start-3 -bottom-6">
             <ReactionPills
@@ -175,7 +190,7 @@ export const MessageBubble = ({
             </span>
             {isMe && (
               <div className="flex size-3 items-center justify-center">
-                <StatusIcon status={message.status} className="size-3 text-fg-secondary-inverted" />
+                <StatusIcon status={message.status} isSeen={isSeen} className="size-3 text-fg-secondary-inverted" />
               </div>
             )}
           </div>

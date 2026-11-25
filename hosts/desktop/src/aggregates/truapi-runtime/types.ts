@@ -1,6 +1,7 @@
 import { type ProductId } from '@parity/truapi';
 import {
   type AuthState,
+  type BundledStack,
   type ExecutableKind,
   type PermissionAuthorizationRequest,
   type PermissionAuthorizationStatus,
@@ -35,6 +36,9 @@ export type TruapiHostRuntime = {
   // authorizes it once. `undefined` until that happens. The host derives a product
   // account's public key (and address) from this without ever seeing the private half.
   getProductSubtreePublicKey(productId: ProductId, timeoutMs?: number): Promise<Uint8Array | undefined>;
+  // Forget one product: its grants, Allow once answers, keys and, through the host's
+  // `productStorage.clearProduct`, the values it stored. Other products are kept.
+  clearProductState(productId: ProductId): Promise<void>;
   /**
    * Take one reference on a product's worker. The core counts; the resulting level
    * reaches `subscribeWorkerDemand` listeners. Every call pairs with one release.
@@ -86,10 +90,7 @@ export type TruapiHostConfig = {
    * reports `Web` there and `macOS` here. The key mirrors the core's config shape.
    */
   platform?: { type?: string; version?: string };
-  people: { genesisHash: string | Uint8Array };
-  bulletin: { genesisHash: string | Uint8Array };
-  // Asset Hub carries the dotNS records the core reads session usernames from.
-  assetHub: { genesisHash: string | Uint8Array };
+  stack: BundledStack;
   pairing: { deeplinkScheme: string };
 };
 

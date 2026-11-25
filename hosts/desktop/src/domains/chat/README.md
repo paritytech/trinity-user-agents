@@ -10,16 +10,25 @@ The unit of consumption is a **`ChatSession`**: a uniform observable interface t
 
 - **ChatSession** — Observable façade over a single conversation: messages stream, peer metadata, send, mark-as-read. The same shape regardless of whether the conversation is P2P or product-scoped.
 - **ChatMessage** — Immutable record on the session: `messageId`, `peer`, `content`, `status`, `timestamp`.
-- **ChatMessageStatus** — Either an outgoing lifecycle (queued / submitting / delivered / failed) or an incoming state (read / unread).
+- **ChatMessageStatus** — Either an outgoing lifecycle (new / sent / delivered) or an incoming state (new / seen). Seen on an outgoing message is derived, not a stored state (see **Seen**).
 - **MessagePeer** — Who a message is from. One of `UserPeer` (an account, optionally pinned), `P2PPeer` (an SS58 account string in a P2P session), or `ProductPeer` (a product instance).
 - **MessageContent** — Tagged union covering `Text`, `RichText` (text + attachments), `Custom` (typed binary payload plus an optional `alt`: the one line shown where the message is listed without being drawn), `Reaction`, `Reply`, `Edit`, plus lifecycle events (`ContactAdded`, `LeftChat`).
 - **FileAttachment** — `{ identifier, claimTicket, meta }`. The `meta` discriminates `General` / `Image` / `Video`.
+- **Seen receipt** — the transient `seen` message that tells the peer how far the local user has read (RFC 0006). It is never stored, synced or pushed. Use seen receipt, not read receipt or watermark.
+- **Seen** — the derived state of an outgoing message: the peer has seen it, because the message is `sent` or `delivered` and its position is at or before the peer seen position. It is never a stored status. The incoming state `seen` (the local user displayed a message) keeps its name. Seen on an outgoing message always means the peer saw it.
+- **last seen message** — the newest incoming message the local user has displayed, the one a seen receipt names. Only counted content qualifies: text, rich text, reply, transfer and call signals other than ICE; custom payloads, reactions, edits, ICE call signals and protocol events (contact added, left chat, token, device rows) do not.
+- **message position** — `{ timestamp, messageId }`, the place of a message in the chat. Positions compare by `timestamp`, then by `messageId` in UTF-16 code-unit order.
 - **blurhash** — the decoded preview string carried by `Image` / `Video` meta. It rides inline in the statement (not over HOP), so rendering it claims nothing. Use **`blurhash`** for the decoded domain string; the raw wire field is **`thumbnail`** (`Option(Bytes)`, the UTF-8 bytes of the blurhash) — say `thumbnail` only when talking about the on-wire bytes, `blurhash` everywhere else.
 
 ### P2P-specific
 
 - **P2PRoom** — An end-to-end-encrypted session between two peers, identified by `sessionId` and the peer's SS58 account, carrying the peer's username and (optionally) push-notification routing.
-- **P2PChatRequest** — The handshake that creates a room: direction (incoming/outgoing), status, optional welcome message, and a `channelTopic` derived from an ephemeral ECDH exchange.
+- **P2PChatRequest** — The handshake that creates a room: direction (incoming/outgoing), status, optional welcome message, and a `channelTopic` derived from an ephemeral ECDH exchange. Two statuses are tombstones: `removed` (the user left the chat) and `cancelled` (a cancel was sent or applied), both kept so that a later copy of the request cannot bring it back.
+- **peer seen** — the furthest message position the peer has reported seen, kept on the room; it only advances.
+- **last sent seen** — the last message position the local user reported seen to the peer, kept on the room so the same receipt is not sent twice.
+- **Device-local room field** — a `P2PRoom` field written without stamping `lastUpdate` and without `signalLocalChange` stays on this device (`isBlocked`, `peerSeen`, `lastSentSeen`).
+- **Cancel** — the sender withdraws its own pending outgoing request (RFC 0007); the receiver drops it. Only the sender cancels.
+- **Decline** — the receiver refuses an incoming request. Only the receiver declines.
 - **Proof of compute** — a puzzle the identity backend's username-search route may demand from an
   unauthenticated caller: mine a counter whose work digest has enough leading zero bits, and present
   it in a `Proof-Of-Compute` header. **Opportunistic, never required by this host** — deployments
@@ -30,19 +39,19 @@ The unit of consumption is a **`ChatSession`**: a uniform observable interface t
 
 ### Product-specific
 
-- **ProductChatRoom** — A room scoped to a product instance (`sessionId`, `roomId`, `productId`, `userId`, `createdAt`, `userInput`). A product can drive a chat by writing into a room it owns; users see it as a normal session.
-- **User input** — Whether the user writes messages into a product room. `'text'` — the user writes messages into the room; `'none'` — the product drives the room and the user does not write messages into it (reactions unaffected; not enforced on send). Absent reads as `'text'`. The product sets it through TrUAPI's room footer.
+- **ProductChatRoom** — A room scoped to a product instance (`sessionId`, `roomId`, `productId`, `userId`, `createdAt`, `footer`). A product can drive a chat by writing into a room it owns; users see it as a normal session.
+- **Room footer** — What a product room shows below its messages: `text` — the user's text input; `none` — nothing, the product drives the room and the user does not write messages into it (reactions unaffected; not enforced on send); `card` — a card the product draws (`productId`, `messageType`, `payload`). Absent reads as `text`. The product sets it through TrUAPI's room footer.
 
 ### Reactions and rendering
 
 - **ReactionAggregate** — `{ emoji, count, reactedByMe, reactors[] }` summarizing a message's reactions.
-- **Renderer tree** — The plugin system that lets a product define how its custom message types are drawn, using the host UI primitive tree (Box / Column / Row / Text / Button / TextField / Image / …) the TrUAPI core defines (`RendererNode` in `@parity/truapi`). The tree comes from the product that owns the room, over its worker's core connection (`render`, addressed by a `RenderContext::ChatMessage`); a tapped control goes back on the renderer's own action stream (`publishRendererAction`), naming that same context — **not** as an `ActionTriggered` chat action, which is reserved for buttons the _host_ draws for an `Actions` message. A render that fails reports through `onError`, and the host drops the partial tree rather than leaving it on screen as the product's finished output.
+- **Renderer tree** — The plugin system that lets a product define how its custom message types are drawn, using the host UI primitive tree (Box / Column / Row / Text / Button / TextField / Image / …) the TrUAPI core defines (`RendererNode` in `@parity/truapi`). The tree comes from the product that owns the room, over its worker's core connection (`render`, addressed by a `RenderContext::ChatMessage`, or by a `RenderContext::ChatRoomFooter` (`roomId`, `messageType`) for a footer card); a tapped control goes back on the renderer's own action stream (`publishRendererAction`), naming that same context — **not** as an `ActionTriggered` chat action, which is reserved for buttons the _host_ draws for an `Actions` message. A render that fails reports through `onError`, and the host drops the partial tree rather than leaving it on screen as the product's finished output.
 
 ## Scope
 
 This domain owns:
 
-- **Message lifecycle** end-to-end: composition, send, delivery state, read state.
+- **Message lifecycle** end-to-end: composition, send, delivery state, read state. A chat is marked read, and so sends a seen receipt, only while it is displayed in a focused window.
 - **P2P discovery and handshake** — chat-request exchange, peer verification, channel-topic derivation.
 - **End-to-end encryption** — per-peer sessions on top of statement-store sessions, with shared secrets derived via X25519 ECDH.
 - **File transfer** — upload to and download from the HOP relay (`@novasamatech/handoff-service`), encryption, retry on transient connection issues, and surfacing files via `claimTicket`.

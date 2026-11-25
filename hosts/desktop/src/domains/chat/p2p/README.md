@@ -6,8 +6,9 @@ of rooms/messages/requests into Dexie.
 
 ## Sub-modules
 
-- `requests/` — chat-request wire format (`schemas`), topic derivation (`service`), and the
-  send/decrypt/subscribe wire I/O (`gateway`).
+- `requests/` — chat-request wire format (`schemas`), topic derivation and the identity and cancel proofs (`service`),
+  and the send/decrypt/subscribe wire I/O, which checks the inner signature of every request (`gateway`). The manager
+  keeps a v2 request only when its identity proof matches the sender's chain chat key.
 - `session-transport/` — statement-store sign-and-submit + the device-channel one-shot fallback
   (`gateway`), and SDK↔UI content mapping plus identity-channel event interpretation (`service`).
   The `ChatMessage` wire codec is the SDK's (`@novasamatech/host-chat/codec/message`); the
@@ -40,7 +41,7 @@ what they are, by design (see `docs/code/code-placement.md` § Container-root or
   sub-module (resources, gateways, services, repository, subscriptions) into the live manager
   consumed by the `aggregates/p2p-chat` aggregate.
 - `chatSessionV2.ts` — `createChatPeerSessionV2`, the per-peer **device-level** session transport
-  (SDK `createMultiDeviceSession`); carries ordinary chat messages.
+  (SDK `createMultiDeviceSession`); carries ordinary chat messages and also sends the transient seen receipts.
 - `identityChannel.ts` — `createIdentityChannel`, the per-peer **identity-level** session (SDK
   `createSession`); carries the variants that bootstrap device transport and therefore cannot use
   it — `deviceChatAccepted`, `deviceAdded`/`deviceRemoved`. Same class and shape as

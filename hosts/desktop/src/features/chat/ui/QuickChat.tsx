@@ -10,9 +10,9 @@ import MaximizeIcon from '@/shared/assets/images/header/maximize.svg?jsx';
 import { DismissOverlay } from '@/shared/components';
 import { TEST_IDS } from '@/shared/test-ids';
 import { useTranslation } from '@/shared/translation';
-import { type ChatSession, useP2PRequests, useProductSessions } from '@/domains/chat';
+import { type ChatSession, type RoomFooter, useProductSessions } from '@/domains/chat';
 import { browserTabs } from '@/aggregates/browser-tabs';
-import { useP2PSessions } from '@/aggregates/p2p-chat';
+import { useP2PChatRequests, useP2PSessions } from '@/aggregates/p2p-chat';
 import { useTruapiUserId } from '@/aggregates/truapi-runtime';
 import { type ChatListEntry, useSortedChatList } from '../hooks/useSortedChatList';
 import { chatService } from '../service';
@@ -26,6 +26,7 @@ import { MessageInput } from './partials/MessageInput';
 import { NewRequestsItem } from './partials/NewRequestsItem';
 import { NoData } from './partials/NoData';
 import { OutgoingRequestItem } from './partials/OutgoingRequestItem';
+import { RoomFooterCard } from './partials/RoomFooterCard';
 
 type QuickChatProps = PropsWithChildren<{
   open: boolean;
@@ -37,7 +38,7 @@ export const QuickChat = memo(({ open, onOpenChange, children }: QuickChatProps)
   const userId = useTruapiUserId();
   const { data: productSessions } = useProductSessions(userId);
   const { data: p2pSessions } = useP2PSessions();
-  const { data: pendingRequests, outgoing: outgoingRequests } = useP2PRequests();
+  const { data: pendingRequests, outgoing: outgoingRequests } = useP2PChatRequests();
   const [selectedSession, setSelectedSession] = useState<ChatSession | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -48,8 +49,8 @@ export const QuickChat = memo(({ open, onOpenChange, children }: QuickChatProps)
   const chatListEntries = useSortedChatList(sessions, outgoingRequests, pendingRequests);
   const requesterNames = useMemo(() => chatService.formatRequesterNames(pendingRequests), [pendingRequests]);
 
-  const userInputStream = useMemo(() => selectedSession?.userInput ?? of('text'), [selectedSession]);
-  const acceptsText = useObservable(userInputStream, 'text') === 'text';
+  const footerStream = useMemo(() => selectedSession?.footer ?? of<RoomFooter>({ type: 'text' }), [selectedSession]);
+  const footer = useObservable(footerStream, { type: 'text' });
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -149,10 +150,16 @@ export const QuickChat = memo(({ open, onOpenChange, children }: QuickChatProps)
                 <MessageFlow session={selectedSession} />
               </div>
 
-              {selectedSession && acceptsText ? (
+              {selectedSession && footer.type !== 'none' ? (
                 <div className="shrink-0 border-t border-stroke-primary p-1">
-                  {sendError && <p className="px-1 pb-1 text-xs text-fg-error">{sendError}</p>}
-                  <MessageInput ref={inputRef} submitAction={handleSendMessage} />
+                  {footer.type === 'card' ? (
+                    <RoomFooterCard roomId={selectedSession.roomId} footer={footer} />
+                  ) : (
+                    <>
+                      {sendError && <p className="px-1 pb-1 text-xs text-fg-error">{sendError}</p>}
+                      <MessageInput ref={inputRef} submitAction={handleSendMessage} />
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>
