@@ -45,7 +45,7 @@ use truapi::{
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
 		ProductChatUserActionResponse,
 	},
-	platform::{ChatFeedOutcome, ChatPlatform, ProductContext},
+	platform::{ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome, ProductContext},
 };
 
 use crate::transcript::Transcript;
@@ -1108,17 +1108,18 @@ impl ChatPlatform for CliChatHost {
 		&self,
 		_product: &ProductContext,
 		request: HostChatSetRoomPreviewRequest,
-	) -> Result<(), GenericError> {
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
 		self.declare("preview", &request.room_id, &request, |room| {
 			room.preview = Some(request.preview.clone());
-		})
+		})?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		request: HostChatDeleteRoomRequest,
-	) -> Result<(), GenericError> {
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
 		let mut state = self.lock();
 		// Idempotent: a room that is gone is deleted.
 		if state.rooms.remove(&request.room_id).is_some() {
@@ -1130,7 +1131,7 @@ impl ChatPlatform for CliChatHost {
 		}
 		drop(state);
 		self.record_declaration("deleteRoom", &request.room_id, &request);
-		Ok(())
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn update_chat_feed(

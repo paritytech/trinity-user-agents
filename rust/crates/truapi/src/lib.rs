@@ -86,10 +86,10 @@ pub mod latest {
 		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
 		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
 		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
-		HorizontalAlignment, HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit,
-		ImageProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps,
-		Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
+		HorizontalAlignment, HostPlatform, HostSignPayloadData, ImageFit, ImageProps, ImageRef,
+		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
 		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
@@ -119,7 +119,7 @@ pub mod latest {
 		nft_purse::latest::*, notifications::latest::*, payment::latest::*, permissions::latest::*,
 		pocket::latest::*, preimage::latest::*, renderer::latest::*,
 		resource_allocation::latest::*, scanner::latest::*, signing::latest::*,
-		statement_store::latest::*, system::latest::*, theme::latest::*, worker::latest::*,
+		statement_store::latest::*, system::latest::*, theme::latest::*,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -535,7 +535,7 @@ cfg_select! {
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
 			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, SigningHost, StatementRenewalTarget,
+			ResumePairingError, SigningHost, StatementRenewalTarget, WorkerHold,
 			contacts::contact_handle,
 			login_failure::reports_exhausted_period,
 			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},

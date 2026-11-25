@@ -25,21 +25,22 @@ struct TrUAPIProductOutboxWorkers: ProductOutboxWorkers {
         self.logger = logger
     }
 
-    /// Takes a worker reference, and then waits until the execution of the worker runs.
-    func holdWorker(productId: String) async {
+    /// Claims the worker, and then waits until the execution of the worker runs.
+    func holdWorker(productId: String) async -> (any TrUAPIWorkerClaiming)? {
         guard let id = workerProductId(productId) else {
-            return
+            return nil
         }
 
+        let claim: any TrUAPIWorkerClaiming
         do {
-            try references().acquireWorker(productId: id)
+            claim = try references().claim(id)
         } catch {
             logger.warning("[outbox] cannot hold the worker of \(productId): \(error)")
-            return
+            return nil
         }
 
         guard let workers = workers(), workers.currentExecution(of: id) == nil else {
-            return
+            return claim
         }
 
         do {
@@ -51,14 +52,7 @@ struct TrUAPIProductOutboxWorkers: ProductOutboxWorkers {
         } catch {
             logger.warning("[outbox] the worker of \(productId) does not run: \(error)")
         }
-    }
-
-    func releaseWorker(productId: String) {
-        guard let id = workerProductId(productId) else {
-            return
-        }
-
-        try? references().releaseWorker(productId: id)
+        return claim
     }
 
     func workerStarts(productId: String) -> AsyncStream<Void> {
@@ -162,9 +156,9 @@ struct ProductQueryingDelivery: ProductOutboxDelivering {
 
 /// No worker to hold: an outbox in memory sends through the queries of its room.
 struct NoProductOutboxWorkers: ProductOutboxWorkers {
-    func holdWorker(productId _: String) async {}
-
-    func releaseWorker(productId _: String) {}
+    func holdWorker(productId _: String) async -> (any TrUAPIWorkerClaiming)? {
+        nil
+    }
 
     func workerStarts(productId _: String) -> AsyncStream<Void> {
         AsyncStream { $0.finish() }

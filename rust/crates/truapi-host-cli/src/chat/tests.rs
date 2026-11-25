@@ -11,6 +11,10 @@ use truapi::{
 /// The reserved participant id of the product itself.
 const PRODUCT: &str = "product";
 
+/// An inline image, which the core passes on as a metadata icon and an image
+/// badge.
+const ICON: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
 fn product() -> ProductContext {
 	ProductContext::new(ProductId::for_test("chat.dot"))
 }
@@ -315,16 +319,13 @@ fn metadata_replaces_the_name_description_and_icon() {
 		events.try_recv().expect("the room event")
 	};
 
-	let event = declare("Help desk", Some("https://icons.example/desk.png"));
+	let event = declare("Help desk", Some(ICON));
 	assert_eq!(event["name"], "Help desk");
 	assert_eq!(event["placeholder"], "Ask us anything");
 	assert_eq!(event["description"], "We answer");
-	assert_eq!(event["icon"], "https://icons.example/desk.png");
+	assert_eq!(event["icon"], ICON);
 	let event = declare("Front desk", None);
-	assert_eq!(
-		(event["name"].clone(), event["icon"].clone()),
-		(json!("Front desk"), json!("https://icons.example/desk.png"))
-	);
+	assert_eq!((event["name"].clone(), event["icon"].clone()), (json!("Front desk"), json!(ICON)));
 }
 
 // In the host store a product deletes only its own messages, as it edits
@@ -378,11 +379,11 @@ fn the_list_row_takes_the_preview_and_defaults_the_rest() {
 	assert_eq!(list["unseenReactions"], 0);
 
 	let preview = |preview: ChatRoomPreview| {
-		futures::executor::block_on(host.set_chat_room_preview(
+		let outcome = futures::executor::block_on(host.set_chat_room_preview(
 			&product(),
 			HostChatSetRoomPreviewRequest { room_id: "support".to_string(), preview },
-		))
-		.expect("the room exists");
+		));
+		assert_eq!(outcome, Ok(ChatRoomChangeOutcome::Applied));
 		room_view(&host, "support")["list"].clone()
 	};
 	let from_the_product = ChatPreviewMessage {
@@ -435,14 +436,14 @@ fn the_list_row_takes_the_preview_and_defaults_the_rest() {
 	assert_eq!((list["pinned"].clone(), list["activity"].clone()), (json!(false), Value::Null));
 	let list = preview(ChatRoomPreview {
 		timestamp: None,
-		badge: Some(ChatRoomBadge::Image { icon: "https://icons.example/live.png".to_string() }),
+		badge: Some(ChatRoomBadge::Image { icon: ICON.to_string() }),
 		last_message: None,
 		last_reaction: None,
 		unseen_reactions: 0,
 		pinned: false,
 		activity: None,
 	});
-	assert_eq!(list["badge"], json!({ "type": "Image", "icon": "https://icons.example/live.png" }));
+	assert_eq!(list["badge"], json!({ "type": "Image", "icon": ICON }));
 }
 
 #[test]
@@ -459,8 +460,11 @@ fn deleting_a_room_removes_it_and_is_idempotent() {
 		))
 	};
 
-	delete("support").expect("a room is deleted");
-	delete("support").expect("a room that is gone is deleted");
+	assert_eq!(
+		[delete("support"), delete("support")],
+		[Ok(ChatRoomChangeOutcome::Applied), Ok(ChatRoomChangeOutcome::Applied)],
+		"a room that is gone is deleted too"
+	);
 
 	assert_eq!(drain(&mut events), vec![json!({ "kind": "roomDeleted", "roomId": "support" })]);
 	let list = futures::executor::block_on(rooms.next())

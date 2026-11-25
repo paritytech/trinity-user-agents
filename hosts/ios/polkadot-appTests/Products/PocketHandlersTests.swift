@@ -22,6 +22,48 @@ struct PocketHandlersTests {
         #expect(workers.references.acquired == [gameProductId])
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func aRemovedStartingHandlerCannotReleaseChatOrItsReplacement() async throws {
+        let workers = workersRunning(gameProductId)
+        let chat = TrUAPIChatHandler(productId: gameProductId, workers: workers)
+        try await chat.start(messagingSupport: .init(bot: nil, context: nil))
+        var readiness = workers.readinessChecks.makeAsyncIterator()
+        await readiness.next()
+
+        let handlers = makeHandlers(workers: workers)
+        workers.suspendsReadiness = true
+        let starting = Task { await handlers.reconcile([loyalty]) }
+        await readiness.next()
+        _ = await handlers.reconcile([])
+        #expect(workers.references.releaseCounts == [0, 1])
+
+        workers.suspendsReadiness = false
+        _ = await handlers.reconcile([loyalty])
+        let replacement = handlers.handler(of: gameProductId)
+        workers.resumeReadiness()
+        _ = await starting.value
+        #expect(replacement != nil)
+        #expect(handlers.handler(of: gameProductId) === replacement)
+        #expect(workers.references.releaseCounts == [0, 1, 0])
+
+        handlers.stop()
+        #expect(workers.references.releaseCounts == [0, 1, 1])
+        await chat.dispose()
+        #expect(workers.references.releaseCounts == [1, 1, 1])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func anUnavailableWorkerReturnsItsPocketClaim() async {
+        let workers = StubWorkerManager()
+        workers.finishExecutions()
+        let handlers = makeHandlers(workers: workers)
+
+        _ = await handlers.reconcile([loyalty])
+
+        #expect(handlers.handler(of: gameProductId) == nil)
+        #expect(workers.references.releaseCounts == [1])
+    }
+
     /// A product that offers no such card draws nothing, and a handler for it
     /// would boot a worker anyway. The host-placed card every Pocket carries
     /// sits on a product like that.

@@ -1,32 +1,34 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import uniffi.truapi.NativeWorkerClaim
+
 /**
- * The references that a chat holds on the core worker of one product: one for each open room screen. Every [hold]
+ * The claims that a chat holds on the core worker of one product: one for each open room screen. Every [hold]
  * gets one release, and [close] releases what is still held when the chat stops.
  */
 class WorkerHolds(
-    private val acquire: () -> Unit,
-    private val release: () -> Unit,
+    private val claim: () -> NativeWorkerClaim,
+    private val release: (NativeWorkerClaim) -> Unit,
 ) {
     private val lock = Any()
-    private var held = 0
+    private val held = ArrayDeque<NativeWorkerClaim>()
     private var closed = false
     private val openRooms = mutableMapOf<String, Int>()
 
-    /** Throws when the core cannot take the reference, or after [close]; then nothing is held. */
+    /** Throws when the core cannot give a claim, or after [close]; then nothing is held. */
     fun hold() {
         synchronized(lock) { check(!closed) { CLOSED } }
-        acquire()
-        val late = synchronized(lock) { closed.also { if (!it) held++ } }
+        val claimed = claim()
+        val late = synchronized(lock) { closed.also { if (!it) held.addLast(claimed) } }
         if (late) {
-            release()
+            release(claimed)
             error(CLOSED)
         }
     }
 
     fun drop() {
-        val holding = synchronized(lock) { (held > 0).also { if (it) held-- } }
-        if (holding) release()
+        val claimed = synchronized(lock) { held.removeLastOrNull() }
+        if (claimed != null) release(claimed)
     }
 
     fun openRoom(roomId: String) {
@@ -54,11 +56,11 @@ class WorkerHolds(
     }
 
     fun releaseAll() {
-        val count = synchronized(lock) {
+        val claims = synchronized(lock) {
             openRooms.clear()
-            held.also { held = 0 }
+            held.toList().also { held.clear() }
         }
-        repeat(count) { release() }
+        claims.forEach(release)
     }
 
     private companion object {
