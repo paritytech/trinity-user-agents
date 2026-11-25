@@ -1490,12 +1490,17 @@ selected network is rejected and the old in-memory runtime remains active. The
 phrase is not written locally until the replacement runtime activates
 successfully.
 
-`/session --clear <name>` removes the durable name shown by `/session --list`,
-its identity directory, and the matching network account cached in the
-compatibility account store. `/session --clear-all` removes every such session,
-the network's signing-host bootstrap state, and every compatibility account
-record for that network. It does not remove pairing-host state, another
-network's records, externally referenced scripts, or on-chain usernames.
+`/session --clear <name>` resolves `<name>` once, as `--session` does (§12.6):
+a full username, the newest session for a username base, or a promoted
+session's original name. It removes the session that name resolves to, its
+identity directory, and the network's account in the compatibility account
+store whose Lite username is that session's name. The interactive prompt names
+the resolved session; `exec` asks nothing, so `/session --clear workbench`
+there clears the newest `workbench.NN`. `/session --clear-all` removes every
+listed session, the network's signing-host bootstrap state, and every
+compatibility account record for that network. It does not remove pairing-host
+state, another network's records, externally referenced scripts, or on-chain
+usernames.
 
 The interactive UI describes the data loss and uses the existing `[y/N]`
 approval. `exec` executes these explicit one-shot commands without another
