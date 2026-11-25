@@ -175,13 +175,13 @@ after activation. A name the host passes is shown until a record answers.
 
 ### Stack
 
-Both host configs carry a `Stack`, the core's only chain configuration: the
-Relay, Asset Hub, People and Bulletin genesis hashes, the network
-`get_chain_info` reports, and the dotNS TLD.
+Both host configs carry a `Stack`, the core's only chain configuration. Its
+doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell puts three things in its runtime config: the stack's
-pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. The core resolves the `Stack` from them with
+pointer, the signed descriptor its build bundles, and the build's
+[`ReservedValuesPolicy`](src/stack.rs), whose doc says what the core reserves
+and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
 A Rust host that resolves its chains itself, such as the CLI, uses
@@ -198,7 +198,10 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start,
+whichever has the higher `sequence`. The bundled descriptor has to be one the
+core can run under the build's policy even when the stored one is newer, so a
+build that refuses its own bundle fails on every device, not only on fresh
+installs. It never waits on the network to start,
 and waits a few seconds at most for the stored copy before it starts from the
 bundled one.
 
@@ -218,9 +221,13 @@ the request.
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
-without a People chain.
+without a People chain, and one on another TLD than the bundled copy, since
+accounts derive under the TLD. A stored descriptor it would refuse is ignored
+until the next one the core takes replaces it, whatever its `sequence`. After
+a refused or failed fetch, `last_refresh` reports that fetch even if writing
+the record fails.
 
-A newer descriptor that changes a genesis hash, the network, the TLD or the
+A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
 again. Any other change applies at once. `StackStatus` documents the rest,
@@ -647,7 +654,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   who continues before every row answered: once every row of that request
   answered, the core selects `best` as `select_funding_provider` would, at
   once when they already have. A new ask, `select_funding_options`,
-  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  `cancel_funding_auto_start` (the user going back from the quotes),
+  `cancel_funding` or a list with
   no usable quote disarms it. `funding_available` says whether the host
   offers any provider, announced with `Providers` when
   `set_funding_provider_config` changes the list.
@@ -744,18 +752,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session, named or not, or saw the user's payment; from then on only the
   provider ends the session, and it cannot fail it once funds started.
   Before that, an unassigned session expires 24 hours after it opened and an
-  assigned one 7 days after its provider last reported. `cancel_funding`
-  answers what a cancel did: it ends an unassigned session; before money
+  assigned one 7 days after its provider last reported. `cancel_funding` is
+  the host's one cancel, whatever the session went through, and answers
+  what it did: while the overlay is up it drops `present_funding`, which
+  the host answers by taking the overlay down, and drops the session, or,
+  when the user already chose a provider, keeps it as started and asks the
+  provider to stop; it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
   it asks the provider, who answers `Refused` or `Offer`, one offer per
   cancel, and the host answers the offer with
   `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
   showed (`None` declines), which the provider hears through `settleCancel`;
-  terms other than the offer's answer `NoOffer`, and an inbound session whose
-  credit started answers `TooLate`. A provider asked before money moved
-  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  terms other than the offer's answer `NoOffer`, an inbound session whose
+  credit started answers `TooLate`, and an ended or unknown one `Refused`.
+  A provider asked before money moved answers `Stopped`, and the core ends
+  the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
-  money moved.
+  money moved; a cancel after that asks again.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

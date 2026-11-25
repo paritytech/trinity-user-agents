@@ -48,9 +48,9 @@ pub use crate::{
 	},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeStackCallbacks, NativeTopUpCallbacks,
+	ExecutionCallbacks, HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+	NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+	NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,

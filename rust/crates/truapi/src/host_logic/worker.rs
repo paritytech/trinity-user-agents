@@ -37,9 +37,6 @@ pub trait WorkerController: Send + Sync {
 	/// needed, so the host tells the user it is not working. The core keeps
 	/// starting it again, waiting longer each time.
 	fn worker_crashing(&self, _product_id: &ProductId, _crashes: u32) {}
-
-	/// Release the platform adapter after all session stops have been delivered.
-	fn shutdown(&self) {}
 }
 
 /// An exit more than this long after the previous one starts a new run of
@@ -58,7 +55,6 @@ enum LedgerEvent {
 	Start { product_id: ProductId, attempt_id: u64 },
 	Stop { product_id: ProductId },
 	Crashing { product_id: ProductId, consecutive_crashes: u32 },
-	Shutdown,
 }
 
 /// A product's run of crashes.
@@ -69,12 +65,16 @@ struct CrashRun {
 	backoff: Backoff,
 	/// When the last one was reported, in Unix milliseconds.
 	last_exit_ms: u64,
-	/// Whether a restart waits out its backoff.
-	restart_pending: bool,
 }
 
+/// The holds on one product's worker and the attempt started for them.
 struct Demand {
+	/// Live [`crate::WorkerHold`]s. Core operations and host modalities such as
+	/// Chat and Pocket each take their own, so the first one starts the worker
+	/// and dropping the last one stops it.
 	count: usize,
+	/// The latest attempt started for these holds, which tells its reports
+	/// from those of an attempt it replaced.
 	attempt_id: u64,
 }
 
@@ -86,6 +86,8 @@ struct LedgerState {
 	references: HashMap<ProductId, Demand>,
 	/// Shared across products so each worker boot has a distinct ID within the session.
 	last_attempt_id: u64,
+	/// Set once by [`WorkerLedger::shutdown`]. A hold taken afterwards counts
+	/// for nothing, so no worker starts after the session ended.
 	closed: bool,
 	/// Each product's current run of crashes.
 	crashes: HashMap<ProductId, CrashRun>,
@@ -143,11 +145,6 @@ impl WorkerLedger {
 			if demand.count != 1 {
 				return;
 			}
-			// Started now, so a restart still waiting on its backoff has
-			// nothing left to do.
-			if let Some(run) = state.crashes.get_mut(product_id) {
-				run.restart_pending = false;
-			}
 			state.request(product_id, WorkerTransition::Start);
 		}
 		self.drain();
@@ -177,7 +174,8 @@ impl WorkerLedger {
 	/// The host reports at `now_ms` that the product's worker stopped
 	/// running without being asked to: it crashed, failed to boot or the
 	/// system killed it. With no references held nothing needs it, and this
-	/// is a no-op that answers `None`.
+	/// is a no-op that answers `None`. So is a report from an attempt that
+	/// has been replaced.
 	///
 	/// Otherwise the exit joins the product's run of crashes, which starts
 	/// anew after [`CRASH_RUN_WINDOW_MS`] without one. The first crash of a
@@ -187,18 +185,17 @@ impl WorkerLedger {
 	/// crash up to [`RESTART_BACKOFF_LONGEST`]. The run's
 	/// [`CRASH_NOTICE_AFTER`]th crash tells the host through
 	/// [`WorkerController::worker_crashing`].
-	fn exited(&self, product_id: &ProductId, attempt_id: Option<u64>, now_ms: u64) -> Option<u64> {
+	fn exited(&self, product_id: &ProductId, attempt_id: u64, now_ms: u64) -> Option<u64> {
 		let wait_ms = {
 			let mut state = self.state();
 			let demand = state.references.get(product_id)?;
-			if attempt_id.is_some_and(|id| id != demand.attempt_id) {
+			if attempt_id != demand.attempt_id {
 				return None;
 			}
 			let run = state.crashes.entry(product_id.clone()).or_insert(CrashRun {
 				crashes: 0,
 				backoff: Backoff::new(RESTART_BACKOFF_FIRST, RESTART_BACKOFF_LONGEST),
 				last_exit_ms: now_ms,
-				restart_pending: false,
 			});
 			if now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
 				run.crashes = 0;
@@ -210,7 +207,6 @@ impl WorkerLedger {
 			// The first crash of a run restarts at once.
 			let wait_ms =
 				(consecutive_crashes > 1).then(|| run.backoff.next_pause().as_millis() as u64);
-			run.restart_pending = wait_ms.is_some();
 			if consecutive_crashes == CRASH_NOTICE_AFTER {
 				state.pending.push_back(LedgerEvent::Crashing {
 					product_id: product_id.clone(),
@@ -229,17 +225,11 @@ impl WorkerLedger {
 	/// Restart a crashed worker once its backoff has passed: requests
 	/// [`WorkerTransition::Start`] unless nothing holds the worker any more
 	/// or it was started meanwhile.
-	fn restart(&self, product_id: &ProductId, attempt_id: Option<u64>) {
+	fn restart(&self, product_id: &ProductId, attempt_id: u64) {
 		{
 			let mut state = self.state();
 			let Some(demand) = state.references.get(product_id) else { return };
-			if attempt_id.is_some_and(|id| id != demand.attempt_id) {
-				return;
-			}
-			let Some(run) = state.crashes.get_mut(product_id) else {
-				return;
-			};
-			if !core::mem::take(&mut run.restart_pending) {
+			if attempt_id != demand.attempt_id {
 				return;
 			}
 			state.request(product_id, WorkerTransition::Start);
@@ -281,7 +271,6 @@ impl WorkerLedger {
 			for product_id in core::mem::take(&mut state.references).into_keys() {
 				state.request(&product_id, WorkerTransition::Stop);
 			}
-			state.pending.push_back(LedgerEvent::Shutdown);
 		}
 		self.drain();
 	}
@@ -355,7 +344,6 @@ impl WorkerLedger {
 				next
 			};
 			match next {
-				LedgerEvent::Shutdown => controller.shutdown(),
 				LedgerEvent::Start { product_id, attempt_id } => {
 					controller.start_worker(&product_id, attempt_id)
 				},
@@ -391,8 +379,8 @@ impl Drop for DrainGuard<'_> {
 }
 
 impl RuntimeServices {
-	/// Retry while demand remains, matching the startup attempt when the host supplies one.
-	pub fn worker_attempt_exited(self: &Arc<Self>, product_id: &ProductId, attempt: Option<u64>) {
+	/// Retry while demand remains and `attempt` is still the product's current one.
+	pub fn worker_attempt_exited(self: &Arc<Self>, product_id: &ProductId, attempt: u64) {
 		let Some(wait_ms) =
 			self.worker_ledger.exited(product_id, attempt, crate::current_unix_millis())
 		else {

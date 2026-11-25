@@ -5,10 +5,7 @@ use super::*;
 use crate::{
 	PairedSsoPeer,
 	native::tests::*,
-	platform::{
-		ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		PermissionDecision,
-	},
+	platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision},
 };
 use futures::stream::StreamExt;
 use std::sync::{Arc, atomic::Ordering};
@@ -44,14 +41,10 @@ fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
 	let (host, _claim, worker) = claimed_worker(config, "myapp.dot", callbacks.clone(), None);
-	let screen = host
-		.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config("myapp.dot", ExecutableKind::App),
-		)
-		.expect("open app execution");
+	let screen = host.open_app_execution(
+		ProductId::for_test("myapp.dot"),
+		ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
+	);
 
 	let key = "myapp.dot/progress".to_string();
 	let mut subscription = screen.platform.subscribe_storage(key.clone());
@@ -79,14 +72,10 @@ fn a_host_pushed_storage_change_reaches_the_products_subscription() {
 	config.local_session_lite_username = None;
 	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
 		.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config("myapp.dot", ExecutableKind::App),
-		)
-		.expect("open app execution");
+	let execution = host.open_app_execution(
+		ProductId::for_test("myapp.dot"),
+		ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
+	);
 
 	let key = "myapp.dot/progress".to_string();
 	let mut subscription = execution.platform.subscribe_storage(key.clone());
@@ -246,14 +235,10 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 	.expect("host runtime config should be valid");
 	let open_widget = |product_id: &str| {
 		let callbacks = Arc::new(EventCallbacks::new());
-		let execution = host
-			.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				native_execution_config(product_id, ExecutableKind::Widget),
-			)
-			.expect("Widget execution should open");
+		let execution = host.open_widget_execution(
+			ProductId::for_test(product_id),
+			ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
+		);
 		(execution, callbacks)
 	};
 	let (card, card_callbacks) = open_widget("card.dot");
@@ -294,14 +279,10 @@ fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
 		None,
 	)
 	.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("chain.dot", ExecutableKind::App),
-		)
-		.expect("App execution should open");
+	let execution = host.open_app_execution(
+		ProductId::for_test("chain.dot"),
+		ExecutionCallbacks { host: Arc::new(EventCallbacks::new()), chat: None, game: None },
+	);
 	let mut shared_responses = host.events.register_chain(41, 0).unwrap();
 	let mut scoped_responses = execution.events.register_chain(41, 0).unwrap();
 	let response = r#"{"jsonrpc":"2.0","id":"truapi:1","result":true}"#.to_string();
@@ -328,14 +309,10 @@ fn an_execution_close_does_not_invalidate_shared_bus_connects() {
 		None,
 	)
 	.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("chain.dot", ExecutableKind::App),
-		)
-		.expect("App execution should open");
+	let execution = host.open_app_execution(
+		ProductId::for_test("chain.dot"),
+		ExecutionCallbacks { host: Arc::new(EventCallbacks::new()), chat: None, game: None },
+	);
 
 	// A connect on the shared bus reads the generation, then an unrelated
 	// execution connection closes while it is still in flight.
@@ -364,14 +341,10 @@ fn an_unknown_close_still_invalidates_the_executions_own_connects() {
 		None,
 	)
 	.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("chain.dot", ExecutableKind::App),
-		)
-		.expect("App execution should open");
+	let execution = host.open_app_execution(
+		ProductId::for_test("chain.dot"),
+		ExecutionCallbacks { host: Arc::new(EventCallbacks::new()), chat: None, game: None },
+	);
 
 	let generation = execution.events.chain_close_generation();
 	execution.notify_chain_closed(404);
@@ -391,14 +364,10 @@ fn native_execution_authorizes_device_permission_from_stored_decision() {
 		None,
 	)
 	.unwrap();
-	let execution = host
-		.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config("motion.dot", ExecutableKind::App),
-		)
-		.unwrap();
+	let execution = host.open_app_execution(
+		ProductId::for_test("motion.dot"),
+		ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
+	);
 	let motion = truapi::latest::HostDevicePermissionRequest::Motion;
 	let permission = PermissionAuthorizationRequest::Device(motion);
 	let authorize = || futures::executor::block_on(execution.authorize_device_permission(motion));
@@ -433,13 +402,10 @@ fn native_execution_shares_one_use_permissions_across_connections_only() {
 	)
 	.unwrap();
 	let open = || {
-		host.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config("fetch.dot", ExecutableKind::App),
+		host.open_app_execution(
+			ProductId::for_test("fetch.dot"),
+			ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
 		)
-		.unwrap()
 	};
 	let execution = open();
 	let other = open();

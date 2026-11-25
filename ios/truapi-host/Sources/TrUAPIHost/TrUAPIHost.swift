@@ -244,7 +244,7 @@ public protocol HostBridge: AnyObject, Sendable {
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
+/// ``TrUAPIHostRuntime/openAppExecution(bridge:productId:chat:game:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
@@ -294,7 +294,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Native game-reminder surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
+/// ``TrUAPIHostRuntime/openAppExecution(bridge:productId:chat:game:)``
 /// when the host can hold reminders; hosts without one pass nothing. Both
 /// calls are async, so an implementation may hop to the main actor to answer;
 /// implementations must be safe to enter concurrently.
@@ -1348,20 +1348,31 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.notifyBalance(available: available)
     }
 
-    /// Open one executable connection with a host-assigned immutable context.
+    /// Open one App connection for a product.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
     /// modality omit it. Pass `game` to hold game reminders, and omit it
-    /// where the host cannot.
-    public func openProductExecution(
+    /// where the host cannot. A Worker opens through its `NativeWorkerAttempt`.
+    public func openAppExecution(
         bridge: HostBridge,
-        configuration: ProductExecutionConfig,
+        productId: ProductId,
         chat: ChatHostBridge? = nil,
         game: GameHostBridge? = nil
-    ) throws -> TrUAPIProductExecution {
-        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks, chat, game in
-            try inner.openProductExecution(
-                callbacks: callbacks, chatCallbacks: chat, gameCallbacks: game, executionConfig: configuration
-            )
+    ) -> TrUAPIProductExecution {
+        TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            inner.openAppExecution(productId: productId, callbacks: callbacks)
+        }
+    }
+
+    /// Open one Widget connection for a product, with the same adapters as
+    /// ``openAppExecution(bridge:productId:chat:game:)``.
+    public func openWidgetExecution(
+        bridge: HostBridge,
+        productId: ProductId,
+        chat: ChatHostBridge? = nil,
+        game: GameHostBridge? = nil
+    ) -> TrUAPIProductExecution {
+        TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            inner.openWidgetExecution(productId: productId, callbacks: callbacks)
         }
     }
 
@@ -1709,12 +1720,12 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         bridge: HostBridge,
         chat: ChatHostBridge?,
         game: GameHostBridge?,
-        open: (HostCallbacks, NativeChatCallbacks?, NativeGameCallbacks?) throws -> NativeProductExecution
-    ) throws {
+        open: (ExecutionCallbacks) throws -> NativeProductExecution
+    ) rethrows {
         callbackRetainer = HostCallbackAdapter(bridge: bridge)
         chatRetainer = chat.map { ChatCallbackAdapter(bridge: $0) }
         gameRetainer = game.map { GameCallbackAdapter(bridge: $0) }
-        inner = try open(callbackRetainer, chatRetainer, gameRetainer)
+        inner = try open(ExecutionCallbacks(host: callbackRetainer, chat: chatRetainer, game: gameRetainer))
     }
 
     deinit {
@@ -1824,8 +1835,8 @@ extension NativeWorkerAttempt {
         chat: ChatHostBridge? = nil,
         game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
-        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks, chat, game in
-            try openExecution(callbacks: callbacks, chatCallbacks: chat, gameCallbacks: game)
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            try openExecution(callbacks: callbacks)
         }
     }
 }

@@ -51,13 +51,12 @@ use crate::{
 use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
+		ExecutionCallbacks, HostCallbacks, NativeBalanceCallbacks, NativeContactsCallbacks,
+		NativeFundingCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
+		NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
 		BundledStack, HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
-		ProductExecutionConfig,
 	},
 	errors::{HostRejection, NativeCoreDatabaseError},
 	events::NativeEventBus,
@@ -181,11 +180,11 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
-			pointer,
-			descriptor,
-			*allows_reserved_values,
+			&pointer,
+			&descriptor,
+			reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
@@ -260,14 +259,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(host)
 	}
 
-	fn open_product_execution_with_callbacks(
+	fn open_execution(
 		&self,
-		callbacks: Arc<dyn HostCallbacks>,
-		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+		callbacks: ExecutionCallbacks,
 		product: ProductContext,
 		worker_attempt: Option<Arc<NativeWorkerAttempt>>,
 	) -> Arc<NativeProductExecution> {
+		let ExecutionCallbacks { host: callbacks, chat: chat_callbacks, game: game_callbacks } =
+			callbacks;
 		let events = Arc::new(NativeEventBus::default());
 		let callback_platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -485,9 +484,16 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did. `TooLate` asks the host to tell the user the balance was
-	/// already credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did. While its overlay is up
+	/// the core drops `present_funding`, which the host answers by taking the
+	/// overlay down, and the session is gone (`Cancelled`). Once started, it ends
+	/// when no provider serves it; otherwise the provider is asked
+	/// (`Requested`), and before money moved a second cancel ends it. After
+	/// money moved the provider may answer with an offer, read from the
+	/// session's `cancel` and answered with `confirm_funding_cancel`.
+	/// `TooLate` asks the host to tell the user the balance was already
+	/// credited; an ended session answers `Refused`.
 	pub async fn cancel_funding(
 		&self,
 		intent: String,
@@ -599,7 +605,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Disarm `start_funding_when_quoted` for session `intent`, as the user
-	/// leaves its quotes.
+	/// goes back from its quotes and the session stays open.
+	/// `cancel_funding` disarms it too.
 	pub fn cancel_funding_auto_start(&self, intent: String) {
 		self.runtime.cancel_funding_auto_start(&intent);
 	}
@@ -705,32 +712,32 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.notify_contacts_changed();
 	}
 
-	/// Open a connection-scoped execution with immutable trusted context.
-	/// `chat_callbacks` installs the host's Chat adapter; hosts without the
-	/// Chat modality pass `None`. `game_callbacks` does the same for game
-	/// reminders.
+	/// Open a connection-scoped App execution with immutable trusted context.
 	///
-	/// Rejects a Worker context. A worker must open through its [`NativeWorkerAttempt`].
-	pub fn open_product_execution(
+	/// A Worker execution opens through its [`NativeWorkerAttempt`].
+	pub fn open_app_execution(
 		&self,
-		callbacks: Arc<dyn HostCallbacks>,
-		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
-		execution_config: ProductExecutionConfig,
-	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
-		let product: ProductContext = execution_config.into();
-		if product.execution_kind == ExecutableKind::Worker {
-			return Err(NativeRuntimeConfigError::Invalid {
-				reason: "open a worker through its startup attempt".into(),
-			});
-		}
-		Ok(self.open_product_execution_with_callbacks(
+		product_id: ProductId,
+		callbacks: ExecutionCallbacks,
+	) -> Arc<NativeProductExecution> {
+		self.open_execution(
 			callbacks,
-			chat_callbacks,
-			game_callbacks,
-			product,
+			ProductContext::new_with_execution(product_id, ExecutableKind::App),
 			None,
-		))
+		)
+	}
+
+	/// Open a connection-scoped Widget execution with immutable trusted context.
+	pub fn open_widget_execution(
+		&self,
+		product_id: ProductId,
+		callbacks: ExecutionCallbacks,
+	) -> Arc<NativeProductExecution> {
+		self.open_execution(
+			callbacks,
+			ProductContext::new_with_execution(product_id, ExecutableKind::Widget),
+			None,
+		)
 	}
 
 	/// Claim a product's worker while this consumer needs it.

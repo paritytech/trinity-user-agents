@@ -325,18 +325,12 @@ impl<Role> HostRuntime<Role> {
 		crate::WorkerHold::acquire(&self.services, product_id)
 	}
 
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	#[cfg(target_arch = "wasm32")]
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_attempt_exited(product_id, None);
-	}
-
-	/// Restart after a native worker failure only while the failing attempt is current.
-	#[cfg(not(target_arch = "wasm32"))]
+	/// Report that a worker attempt stopped without being asked to.
+	///
+	/// While something holds the worker and `attempt` is still its current one, the worker is
+	/// started again, with a growing wait when it keeps crashing.
 	pub fn worker_attempt_exited(&self, product_id: &ProductId, attempt: u64) {
-		self.services.worker_attempt_exited(product_id, Some(attempt));
+		self.services.worker_attempt_exited(product_id, attempt);
 	}
 }
 
@@ -921,9 +915,11 @@ impl HostRuntime<SigningHost> {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did: it ended, its provider was asked, a cancel is already with
-	/// the provider, or it is too late because the balance was credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did: it ended, including one
+	/// whose overlay was up and closes, its provider was asked, a cancel is
+	/// already with the provider, it is too late because the balance was
+	/// credited, or there is nothing to cancel.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
 	pub async fn cancel_funding(
 		&self,

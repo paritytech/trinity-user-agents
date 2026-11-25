@@ -9,8 +9,8 @@ use futures::{StreamExt, channel::mpsc};
 use parking_lot::{MappedMutexGuard, MutexGuard};
 
 use super::{
-	HostCallbacks, HostRejection, NativeChatCallbacks, NativeGameCallbacks, NativeProductExecution,
-	NativeSubscription, NativeTrUApiHostRuntime, NativeWorkerExecution,
+	ExecutionCallbacks, HostCallbacks, HostRejection, NativeProductExecution, NativeSubscription,
+	NativeTrUApiHostRuntime, NativeWorkerExecution,
 };
 use crate::{
 	background_task::BackgroundTask,
@@ -19,7 +19,11 @@ use crate::{
 	platform::{ExecutableKind, ProductContext, ProductId},
 };
 
-/// How long an attempt may go without running, from its start and from each lost connection.
+/// How long an attempt may take to start running.
+///
+/// An attempt runs once its module has started and its bridge connection is authenticated. The
+/// time counts from the attempt's start, and again each time a running attempt loses its
+/// connection.
 const STARTUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(90);
 
 /// Starts and disposes the WebView of each worker attempt.
@@ -89,6 +93,8 @@ enum Phase {
 	Starting {
 		owner: Option<Arc<NativeProductExecution>>,
 		module_ready: bool,
+		/// Fails the attempt if it is still starting after [`STARTUP_DEADLINE`]. Dropped, and so
+		/// cancelled, with this phase.
 		_timeout: BackgroundTask,
 	},
 	Running(Arc<NativeProductExecution>),
@@ -210,9 +216,7 @@ impl NativeWorkerAttempt {
 	/// Fails if an execution was already opened, the demand ended or a replacement started.
 	pub fn open_execution(
 		self: &Arc<Self>,
-		callbacks: Arc<dyn HostCallbacks>,
-		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+		callbacks: ExecutionCallbacks,
 	) -> Result<Arc<NativeProductExecution>, HostRejection> {
 		let stale =
 			|| HostRejection::Rejected { reason: "worker startup is no longer pending".into() };
@@ -229,10 +233,8 @@ impl NativeWorkerAttempt {
 		{
 			return Err(stale());
 		}
-		let execution = runtime.open_product_execution_with_callbacks(
+		let execution = runtime.open_execution(
 			callbacks,
-			chat_callbacks,
-			game_callbacks,
 			ProductContext::new_with_execution(self.product.clone(), ExecutableKind::Worker),
 			Some(self.clone()),
 		);
@@ -358,6 +360,11 @@ impl Drop for WebView {
 	}
 }
 
+/// The worker ledger's controller for a native runtime.
+///
+/// Turns each start the ledger requests into an attempt on the session's WebView host, or into
+/// a failed state when the session has none, and each stop into the disposal of that attempt.
+/// The runtime owns the ledger that holds this controller, so the reference back is weak.
 struct Controller(Weak<NativeTrUApiHostRuntime>);
 
 /// Deliver worker demand queued during runtime construction.
@@ -430,13 +437,6 @@ impl WorkerController for Controller {
 			callbacks.worker_crashing(product_id.clone(), crashes);
 		}
 	}
-
-	fn shutdown(&self) {
-		if let Some(runtime) = self.0.upgrade() {
-			let session = runtime.workers.lock().take();
-			drop(session);
-		}
-	}
 }
 
 #[uniffi::export]
@@ -488,9 +488,12 @@ impl NativeTrUApiHostRuntime {
 
 	/// Revoke all worker claims and dispose their executions when the host session ends.
 	///
-	/// While another thread is delivering a worker start or stop, the disposal completes on that
-	/// thread after this call returns. An observer's `finished` follows it.
+	/// The workers are disposed when this returns, except one whose
+	/// [`NativeHostWebViewWorker::start`] or stop call is still running, on this thread or
+	/// another, which is disposed when that call returns. Observers receive `finished` afterwards.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();
+		let session = self.workers.lock().take();
+		drop(session);
 	}
 }

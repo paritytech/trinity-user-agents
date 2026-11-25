@@ -116,13 +116,22 @@ private extension RustRuntimeEnvironment {
         let game = gameReminders == nil ? nil : bridges.host
         let execution: TrUAPIProductExecution
         let acknowledge: (@Sendable () -> Bool)?
-        if case let .worker(_, attempt) = purpose {
+        switch purpose {
+        case let .worker(_, attempt):
             execution = try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
             acknowledge = { attempt.moduleStarted() }
-        } else {
-            execution = try runtime.openProductExecution(
+        case .app:
+            execution = runtime.openAppExecution(
                 bridge: bridges.host,
-                configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
+                productId: productId,
+                chat: bridges.chat,
+                game: game
+            )
+            acknowledge = nil
+        case .expandedCard:
+            execution = runtime.openWidgetExecution(
+                bridge: bridges.host,
+                productId: productId,
                 chat: bridges.chat,
                 game: game
             )
@@ -174,16 +183,6 @@ private extension RustRuntimeEnvironment {
             themeManager: themeManager,
             logger: logger
         )
-    }
-}
-
-extension ExecutionPurpose {
-    var executionKind: ExecutableKind {
-        switch self {
-        case .app: .app
-        case .expandedCard: .widget
-        case .worker: .worker
-        }
     }
 }
 
