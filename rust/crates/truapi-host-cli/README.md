@@ -139,9 +139,9 @@ Each stack has its own directory under `v2`. A built-in network's is its name,
 such as `v2/paseo-next-v2`, also when `--stack` gives its link or URL. Any
 other stack gets `stack-<tag>`, named from the stack's id, so a fork starts
 with none of its source's sessions, accounts, pairings or stored data. A local
-file's id is its canonical path, so a file that is moved or renamed, or the
-same descriptor in another checkout or a temporary file, gets a new directory
-and starts as a stack the CLI has not run before, with no message that says why.
+file's id is its canonical path, so the same descriptor at another path gets a
+new directory and starts empty. That covers a file that was moved or renamed,
+and a copy in another checkout or a temporary file. The CLI does not say why.
 Accounts are kept per stack too: the default session's are in
 `v2/<network>/signing-host/accounts.json`, and an `accounts.json` directly
 under `v2`, from earlier releases, is not read.
