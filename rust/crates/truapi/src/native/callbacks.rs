@@ -87,25 +87,24 @@ pub trait HostCallbacks: Send + Sync {
 		request: latest::HostDevicePermissionRequest,
 	) -> Result<DevicePermissionStatus, HostRejection>;
 
-	/// Uncover (`true`) or cover (`false`) the face under this execution's
+	/// Cover (`true`) or uncover (`false`) the card under this execution's
 	/// page.
 	///
 	/// Answer `NotPresented` when the execution is not under its card and
 	/// `UserMoving` while the user moves the card.
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection>;
 
-	/// Turn this execution's expanded card so its back (`true`) or its front
-	/// (`false`) is up.
+	/// Turn this execution's expanded card so `side` is up.
 	///
 	/// Answer `NoBack` when asked for a back the card does not have to show,
-	/// and `NotPresented` and `UserMoving` as for the face. Return without
+	/// and `NotPresented` and `UserMoving` as for covering. Return without
 	/// waiting for the animation to finish.
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: latest::PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection>;
 
 	/// Prompt the user for a remote permission `product` requested.

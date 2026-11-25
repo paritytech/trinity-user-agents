@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "9e0a34441f8b52b6";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "49a8daab1bf0f0b1";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -620,14 +620,14 @@ pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 1,
 };
 
-/// Wire discriminants for `expanded_card_set_face_shown`.
-pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
+/// Wire discriminants for `expanded_card_set_card_covered`.
+pub const EXPANDED_CARD_SET_CARD_COVERED: MethodIds = MethodIds {
     trait_id: 23,
     method_id: 0,
 };
 
-/// Wire discriminants for `expanded_card_set_back_shown`.
-pub const EXPANDED_CARD_SET_BACK_SHOWN: MethodIds = MethodIds {
+/// Wire discriminants for `expanded_card_turn_card`.
+pub const EXPANDED_CARD_TURN_CARD: MethodIds = MethodIds {
     trait_id: 23,
     method_id: 1,
 };
@@ -1165,12 +1165,12 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
     },
     WireEntry {
-        method: "expanded_card_set_face_shown",
-        kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
+        method: "expanded_card_set_card_covered",
+        kind: WireKind::Request(EXPANDED_CARD_SET_CARD_COVERED),
     },
     WireEntry {
-        method: "expanded_card_set_back_shown",
-        kind: WireKind::Request(EXPANDED_CARD_SET_BACK_SHOWN),
+        method: "expanded_card_turn_card",
+        kind: WireKind::Request(EXPANDED_CARD_TURN_CARD),
     },
     WireEntry {
         method: "funding_provider_quote",

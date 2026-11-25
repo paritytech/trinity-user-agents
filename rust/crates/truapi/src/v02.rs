@@ -6,6 +6,7 @@
 //! rather than a copy of the protocol.
 
 mod chat;
+mod expanded_card;
 mod local_storage;
 mod notifications;
 mod payment;
@@ -13,6 +14,7 @@ mod renderer;
 mod transaction;
 
 pub use chat::*;
+pub use expanded_card::*;
 pub use local_storage::*;
 pub use notifications::*;
 pub use payment::*;

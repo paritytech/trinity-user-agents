@@ -109,7 +109,7 @@ pub mod latest {
 		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
 		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
 		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
-		RenderContext,
+		PocketCardSide, RenderContext,
 	};
 
 	pub use crate::versioned::{

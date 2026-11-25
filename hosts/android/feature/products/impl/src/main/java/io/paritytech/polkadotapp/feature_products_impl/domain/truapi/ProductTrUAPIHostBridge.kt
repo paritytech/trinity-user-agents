@@ -32,7 +32,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardCover
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -42,7 +42,8 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.CoreAttribute
-import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ExpandedCardCoverOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -53,7 +54,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -132,7 +132,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
-        card: ExpandedCardFace?,
+        card: ExpandedCardCover?,
     ) = object : HostBridge {
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId)
@@ -256,8 +256,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
 
-        override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-            card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+        override suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+            card?.setCovered(covered) ?: ExpandedCardCoverOutcome.UNSUPPORTED
     }
 
     internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
@@ -284,7 +284,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigationPolicy: NavigationPolicy,
         kind: ExecutableKind,
         chat: ChatHostBridge? = null,
-        card: ExpandedCardFace? = null,
+        card: ExpandedCardCover? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
