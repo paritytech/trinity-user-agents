@@ -37,6 +37,10 @@ const FIRST_LIVENESS_CHECK_MS = 30_000;
 const LIVENESS_INTERVAL_MS = 10_000;
 const MISSED_LIVENESS_CHECKS = 2;
 const POLL_MS = 2_000;
+// applesimutils restarts SpringBoard to apply permissions, and a launch while it
+// comes back fails with "The system shell (SpringBoard) probably crashed".
+const LAUNCH_ATTEMPTS = 5;
+const LAUNCH_RETRY_MS = 5_000;
 
 const { values: args } = parseArgs({
   options: {
@@ -73,6 +77,8 @@ run("xcrun", ["simctl", "bootstatus", device.udid, "-b"]);
 spawnSync("xcrun", ["simctl", "terminate", device.udid, bundle], { stdio: "ignore" });
 spawnSync("xcrun", ["simctl", "uninstall", device.udid, bundle], { stdio: "ignore" });
 run("xcrun", ["simctl", "install", device.udid, app]);
+// Before applesimutils, whose SpringBoard restart would race a launch here.
+const dataContainer = appDataContainer();
 // System permission alerts belong to SpringBoard, which the app cannot answer.
 for (const service of ["location", "microphone"]) {
   spawnSync("xcrun", ["simctl", "privacy", device.udid, "grant", service, bundle], { stdio: "ignore" });
@@ -90,7 +96,6 @@ if (applesimutils.error) {
   console.log(`applesimutils ${applesimutils.status === 0 ? "granted" : "failed"}${output ? `: ${output}` : ""}`);
 }
 
-const dataContainer = appDataContainer();
 const exchange = join(dataContainer, "tmp", "truapi-e2e");
 const seed = join(exchange, "seed");
 
@@ -116,7 +121,7 @@ try {
     { stdio: ["ignore", logFile, "ignore"] },
   );
   try {
-    launch({ terminate: true });
+    await launch({ terminate: true });
     const outcome = await waitForDone(Number(args["timeout-minutes"]) * 60_000);
     exitCode = finish(outcome);
   } finally {
@@ -176,15 +181,24 @@ function appDataContainer() {
   return container;
 }
 
-function launch({ terminate }) {
-  run(
-    "xcrun",
-    ["simctl", "launch", ...(terminate ? ["--terminate-running-process"] : []), device.udid, bundle],
-    {
-      stdio: ["ignore", "ignore", "inherit"],
-      env: { ...process.env, SIMCTL_CHILD_TRUAPI_IOS_E2E_HOST_PLAYGROUND: "1" },
-    },
-  );
+async function launch({ terminate }) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      run(
+        "xcrun",
+        ["simctl", "launch", ...(terminate ? ["--terminate-running-process"] : []), device.udid, bundle],
+        {
+          stdio: ["ignore", "ignore", "inherit"],
+          env: { ...process.env, SIMCTL_CHILD_TRUAPI_IOS_E2E_HOST_PLAYGROUND: "1" },
+        },
+      );
+      return;
+    } catch (error) {
+      if (attempt === LAUNCH_ATTEMPTS) throw error;
+      console.log(`Launch attempt ${attempt} of ${LAUNCH_ATTEMPTS} failed, retrying in ${LAUNCH_RETRY_MS / 1000}s.`);
+      await delay(LAUNCH_RETRY_MS);
+    }
+  }
 }
 
 function readResults() {
@@ -220,7 +234,7 @@ async function waitForDone(timeoutMs) {
     const backgrounded = join(exchange, "backgrounded");
     if (existsSync(backgrounded)) {
       unlinkSync(backgrounded);
-      launch({ terminate: false });
+      await launch({ terminate: false });
     }
 
     const snapshot = readResults();

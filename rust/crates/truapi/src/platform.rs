@@ -33,18 +33,18 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
-		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
-		StackStatus,
+		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
+		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackRecords,
+		StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 };
 
 use truapi::{
 	latest::{
 		AllocatableResource, ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection, FundingQuote,
-		FundingQuoteRefusal, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoomRegistrationStatus, CodeFormat,
+		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
 		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
 		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
@@ -56,8 +56,7 @@ use truapi::{
 		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
 		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
@@ -2027,12 +2026,17 @@ pub trait PreimageHost: Send + Sync {
 /// anything a host derives from product-supplied values remain host-owned.
 #[async_trait::async_trait]
 pub trait ChatPlatform: Send + Sync {
-	/// Create or resolve a product-scoped native chat room.
+	/// Create or resolve a product-scoped native chat room. `room_id` is the id
+	/// that the core derived from the product and `request.room_id_source`, or,
+	/// for a product built against the earlier client, the id that the product
+	/// gave. The host stores the room under this id, and every later call names
+	/// the room with it.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError>;
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError>;
 
 	/// Register or resolve a product-scoped native chat bot. Host-owned in the
 	/// same way rooms are.
@@ -2185,8 +2189,9 @@ pub struct FundingQuoteList {
 }
 
 /// Why an amount cannot go ahead.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingAmountIssue {
 	/// A withdrawal of more than the user can spend.
 	NotEnoughBalance,
@@ -2261,7 +2266,9 @@ pub enum FundingPresentOutcome {
 #[async_trait::async_trait]
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
+	/// host itself when `product` is `None`. A cancel while the overlay is up
+	/// drops this call, and the host takes the overlay down when it is
+	/// dropped.
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,
@@ -2462,46 +2469,19 @@ pub trait ExpandedCardHost: Send + Sync {
 	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
-/// Host store for a product's pending operations, which the host uses to keep
-/// the product's worker runtime alive. Reached only through the `Worker`
-/// protocol trait, so non-worker products never call these.
-#[async_trait::async_trait]
-pub trait ProductOperations: Send + Sync {
-	/// Record a pending operation. `label` is a host log and UI hint, empty
-	/// when the product gave none.
-	///
-	/// The returned id must be unique among this product's open operations.
-	/// The core keys the worker reference an operation holds by that id, so an
-	/// id already open for the product records nothing the second time, and
-	/// ending it once drops the demand both were holding. Ids may repeat
-	/// across products, and may be reused once an operation has ended.
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-	/// Remove a pending operation. Idempotent: an unknown or already-ended id
-	/// returns `Ok`, so a retry after an ambiguous failure is safe.
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), HostWorkerOperationError>;
-}
-
 /// Contact handles the core needs turned back into accounts, and the key they
 /// were minted under.
 ///
 /// A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
 /// being its 32 raw bytes. The host holds the accounts, so it is the one that
-/// can match: hash each contact's account under `handle_key`, or keep that hash
-/// as an indexed column for the session, and look the handles up.
+/// can match: hash each contact's account under `handle_key` and look the
+/// handles up. The key differs per product and per session, so a host that
+/// keeps the hashes keeps them per key.
 #[derive(Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostContactLookup {
-	/// The key every handle here was minted under. Per session, and never
-	/// given to a product.
+	/// The key every handle here was minted under. Per session and product,
+	/// and never given to a product.
 	pub handle_key: Bytes32,
 	/// The handles to resolve, in the order the answer must follow.
 	pub handles: Vec<Bytes32>,
@@ -2682,7 +2662,6 @@ pub trait Platform:
 	+ ThemeHost
 	+ LocaleHost
 	+ PreimageHost
-	+ ProductOperations
 {
 }
 
@@ -2700,7 +2679,6 @@ impl<T> Platform for T where
 		+ ThemeHost
 		+ LocaleHost
 		+ PreimageHost
-		+ ProductOperations
 {
 }
 

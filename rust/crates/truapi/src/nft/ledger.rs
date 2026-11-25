@@ -28,7 +28,10 @@ use super::{
 	},
 };
 use crate::{
-	durable::{DurableRequest, DurableTxEngine, GroupId, PolicyParams, RegistrationError},
+	durable::{
+		DeferredSubmission, DurableRequest, DurableTxEngine, GroupId, PolicyParams,
+		RegistrationError,
+	},
 	installation::{InstallationId, InstallationIdProvider},
 	store::{Db, DbError},
 };
@@ -206,6 +209,7 @@ impl NftLedger {
 		let deriver = self.keys.clone();
 		DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
 			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
+				.map(independent_submissions)
 		})
 	}
 
@@ -265,7 +269,7 @@ impl NftLedger {
 		let group = request.operation.group().clone();
 		let import = request.import.clone();
 		let planned = DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
-			plan_returns(tx, &request)
+			plan_returns(tx, &request).map(independent_submissions)
 		});
 		self.durable
 			.execute_with(planned, move |tx, ids| {
@@ -343,12 +347,12 @@ impl NftLedger {
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
-			.write_unless_refused(move |tx| {
-				let recorded = record_handoff(tx, &request)
-					.and_then(|()| record(tx, &sealed).map_err(HandoffError::Db));
-				Ok(recorded.map(|()| sealed))
+			.write_interactive(move |tx| {
+				record_handoff(tx, &request)?;
+				record(tx, &sealed)?;
+				Ok(sealed)
 			})
-			.await?
+			.await
 	}
 
 	/// Checks, in a read, that `request` can be handed off, and returns the
@@ -373,6 +377,11 @@ impl NftLedger {
 	) -> Result<(), DbError> {
 		self.db.write(move |tx| record_holdings(tx, &holdings)).await
 	}
+}
+
+/// Each move `params` describes, waiting for nothing.
+fn independent_submissions(params: Vec<PolicyParams>) -> Vec<DeferredSubmission> {
+	params.into_iter().map(DeferredSubmission::independent).collect()
 }
 
 #[cfg(test)]

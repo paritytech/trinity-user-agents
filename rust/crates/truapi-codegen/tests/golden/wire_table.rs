@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "7c6a3a324db0decd";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "9e0a34441f8b52b6";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -258,6 +258,48 @@ pub const CHAT_ACTION_SUBSCRIBE: MethodIds = MethodIds {
 pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
     trait_id: 4,
     method_id: 6,
+};
+
+/// Wire discriminants for `chat_set_room_metadata`.
+pub const CHAT_SET_ROOM_METADATA: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 8,
+};
+
+/// Wire discriminants for `chat_set_room_preview`.
+pub const CHAT_SET_ROOM_PREVIEW: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 9,
+};
+
+/// Wire discriminants for `chat_delete_room`.
+pub const CHAT_DELETE_ROOM: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 10,
+};
+
+/// Wire discriminants for `chat_update_feed`.
+pub const CHAT_UPDATE_FEED: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 11,
+};
+
+/// Wire discriminants for `chat_messages_query`.
+pub const CHAT_MESSAGES_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 12,
+};
+
+/// Wire discriminants for `chat_user_action`.
+pub const CHAT_USER_ACTION: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 13,
+};
+
+/// Wire discriminants for `chat_reactions_query`.
+pub const CHAT_REACTIONS_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 14,
 };
 
 /// Wire discriminants for `coin_payment_create_purse`.
@@ -539,18 +581,6 @@ pub const POCKET_LIST_SUBSCRIBE: MethodIds = MethodIds {
 /// Wire discriminants for `pocket_remove_card`.
 pub const POCKET_REMOVE_CARD: MethodIds = MethodIds {
     trait_id: 18,
-    method_id: 1,
-};
-
-/// Wire discriminants for `worker_begin_operation`.
-pub const WORKER_BEGIN_OPERATION: MethodIds = MethodIds {
-    trait_id: 19,
-    method_id: 0,
-};
-
-/// Wire discriminants for `worker_end_operation`.
-pub const WORKER_END_OPERATION: MethodIds = MethodIds {
-    trait_id: 19,
     method_id: 1,
 };
 
@@ -895,6 +925,34 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
     },
     WireEntry {
+        method: "chat_set_room_metadata",
+        kind: WireKind::Request(CHAT_SET_ROOM_METADATA),
+    },
+    WireEntry {
+        method: "chat_set_room_preview",
+        kind: WireKind::Request(CHAT_SET_ROOM_PREVIEW),
+    },
+    WireEntry {
+        method: "chat_delete_room",
+        kind: WireKind::Request(CHAT_DELETE_ROOM),
+    },
+    WireEntry {
+        method: "chat_update_feed",
+        kind: WireKind::Request(CHAT_UPDATE_FEED),
+    },
+    WireEntry {
+        method: "chat_messages_query",
+        kind: WireKind::Subscription(CHAT_MESSAGES_QUERY),
+    },
+    WireEntry {
+        method: "chat_user_action",
+        kind: WireKind::Subscription(CHAT_USER_ACTION),
+    },
+    WireEntry {
+        method: "chat_reactions_query",
+        kind: WireKind::Subscription(CHAT_REACTIONS_QUERY),
+    },
+    WireEntry {
         method: "coin_payment_create_purse",
         kind: WireKind::Request(COIN_PAYMENT_CREATE_PURSE),
     },
@@ -1081,14 +1139,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "pocket_remove_card",
         kind: WireKind::Request(POCKET_REMOVE_CARD),
-    },
-    WireEntry {
-        method: "worker_begin_operation",
-        kind: WireKind::Request(WORKER_BEGIN_OPERATION),
-    },
-    WireEntry {
-        method: "worker_end_operation",
-        kind: WireKind::Request(WORKER_END_OPERATION),
     },
     WireEntry {
         method: "contacts_pick",

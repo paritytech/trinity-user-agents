@@ -156,6 +156,9 @@ pub struct WireAttrs {
 	pub host_initiated: bool,
 	/// Excluded from the public SDK; available to container and host bindings.
 	pub internal: bool,
+	/// The generated client sends an older request version when the fields
+	/// the newer one added are absent, so hosts that predate it keep serving.
+	pub request_fallback: bool,
 	/// Method frame discriminant.
 	pub id: Option<u8>,
 }
@@ -979,6 +982,9 @@ fn extract_wire_attrs(docs: &str) -> WireAttrs {
 		}
 		if line.trim_end() == "@wire_internal" {
 			attrs.internal = true;
+		}
+		if line.trim_end() == "@wire_request_fallback" {
+			attrs.request_fallback = true;
 		}
 		const NEEDLE: &str = "@wire_id=";
 		let Some(start) = line.find(NEEDLE).map(|index| index + NEEDLE.len()) else {
