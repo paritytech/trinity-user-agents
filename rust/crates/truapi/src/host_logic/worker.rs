@@ -69,9 +69,9 @@ struct CrashRun {
 
 /// The holds on one product's worker and the attempt started for them.
 struct Demand {
-	/// Live [`crate::WorkerHold`]s. Core operations and host modalities such as
-	/// Chat and Pocket each take their own, so the first one starts the worker
-	/// and dropping the last one stops it.
+	/// Live [`crate::WorkerHold`]s. Core operations and host modalities each
+	/// take their own, so the first one starts the worker and dropping the
+	/// last one stops it.
 	count: usize,
 	/// The latest attempt started for these holds, which tells its reports
 	/// from those of an attempt it replaced.
