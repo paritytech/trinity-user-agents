@@ -49,7 +49,7 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import type { ProductRuntimeConfig, ReservedValuesPolicy } from "../runtime.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -281,16 +281,6 @@ function liveSubscription<T>(
     return fail(error);
   };
   return stream;
-}
-
-/** One operation a product began and has not ended. */
-export interface OpenOperation {
-  /** Product that began it. */
-  productId: ProductId;
-  /** Id the mock handed back, unique among this product's open operations. */
-  id: number;
-  /** Label the product gave, empty when it gave none. */
-  label: string;
 }
 
 /**
@@ -568,8 +558,6 @@ export interface MockHost {
   dispose(): void;
   /** Permission answers the mock gave, in order. */
   getPermissionLog(): PermissionLogEntry[];
-  /** Operations a product began and has not ended, in the order they began. */
-  getOpenOperations(): OpenOperation[];
   /** Permissions with an explicit grant, in key order. */
   getGrantedPermissions(): string[];
   /** Answer `permission` with a grant, whatever the configured policy says. */
@@ -935,8 +923,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const reviews: UserConfirmationReview[] = [];
   const cancelledNotifications: number[] = [];
   const permissionLog: PermissionLogEntry[] = [];
-  const openOperations: OpenOperation[] = [];
-  let nextOperationId = 0;
   const permissionDecisions = new Map<string, boolean>();
   const chatRooms = new Map<string, ChatRoom>();
   const chatBots = new Map<string, HostChatRegisterBotRequest>();
@@ -1155,23 +1141,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
             };
           },
         );
-      },
-    },
-
-    productOperations: {
-      async beginOperation(product, label) {
-        const id = nextOperationId++;
-        openOperations.push({ productId: product.productId, id, label });
-        return { id };
-      },
-      async endOperation(product, id) {
-        // Idempotent by contract, so an unknown or already-ended id is fine.
-        // Per product too: another product holding the same id must not drop
-        // this one's demand.
-        const at = openOperations.findIndex(
-          (open) => open.id === id && open.productId === product.productId,
-        );
-        if (at !== -1) openOperations.splice(at, 1);
       },
     },
 
@@ -1619,7 +1588,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     simulateReconnect: () => {
       chainStatus = "Idle";
     },
-    getOpenOperations: () => [...openOperations],
     getChatRooms: () => byKey(chatRooms),
     getChatBots: () => byKey(chatBots),
     getChatMessageLog: () => [...chatMessages],
@@ -1707,8 +1675,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       this.clearStorage();
       this.clearChatState();
       this.clearStatements();
-      openOperations.length = 0;
-      nextOperationId = 0;
       // Through the setter, so a subscribed product is told rather than left
       // believing the theme it last saw while `getTheme` reports the default.
       this.setTheme(theme);
@@ -1784,10 +1750,10 @@ export interface TestStack {
   /** The relay chain. */
   relay?: TestStackChain;
   /**
-   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
-   * Defaults to `false`, as on a real host.
+   * The host's policy on reserved values. Defaults to refusing the core's, as on
+   * a real host.
    */
-  allowsReservedValues?: boolean;
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */

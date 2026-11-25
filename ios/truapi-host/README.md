@@ -101,9 +101,9 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
-  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
-  `dot` TLD.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
@@ -247,10 +247,11 @@ product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
 for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
-render stream is one worker reference the core holds on the product's behalf;
-the transition it causes arrives on the runtime bridge's
-`requestWorkerTransition`, never on the execution's. Two rules the core
+chat identity private key, which must not be logged or persisted. A feature calls
+`runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
+on that claim when its work ends. Starting, replacing or ending a render stream
+leaves the reference count unchanged. The first claim and final release reach
+the runtime bridge through `requestWorkerTransition`. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
@@ -700,7 +701,7 @@ let runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer: "polkadotapp://stack?key=0x…&url=…",
         descriptor: try Data(contentsOf: descriptorURL),
-        allowsReservedValues: false
+        reservedValues: ReservedValuesPolicy(allowed: false)
     )
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)

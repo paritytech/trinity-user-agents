@@ -1,5 +1,107 @@
 # @parity/truapi
 
+## 0.33.0
+
+### Major Changes
+
+- 568580c: Add the Chat Extension v2 methods and types to `chat`. A product changes a room with `setRoomMetadata` (name,
+  description, icon and the text of an empty room), `setRoomPreview` (sort time, badge, which can be an image, pinning,
+  the preview line or an activity line such as "Ben is typing"), `deleteRoom` and `updateFeed`, which also deletes a
+  message. The preview line comes from a `ChatPreviewMessage`, a message without reactions that names the message it
+  replies to by id. The host asks a product questions that the product answers through `onMessagesQuery`, `onUserAction`
+  and `onReactionsQuery`. Each handler returns one result, `ok` with the answer or `err` with the failure. A user action
+  can delete a message. A message body can be `Custom`: the product draws it through `Renderer::render`, like a custom
+  message it posts with `postMessage`.
+
+  These methods are new in v0.2, so a v0.1 client cannot call them. Their errors name each failure and have no
+  catch-all: a host failure arrives as `HostFailure`, and a request or an answer that does not pass the core's checks as
+  `MalformedFrame`. A user action in a room that does not keep its messages in the product fails with `NotAvailable`.
+
+  The host makes room ids. `createRoom` version 2 takes `roomIdSource`, the product's own name for the room, and
+  `config`, the parts of the room the product serves (its messages, who reacted and the reports of what the user saw).
+  It answers `roomId`, the blake2b-256 hash of the product and that source. Every later call names the room with that
+  `roomId`, so a product that names a room with its own string must keep the id that `createRoom` returns. A host's
+  `createChatRoom` callback receives the derived `roomId` and answers only the registration status. Each `createRoom`
+  replaces the configuration of the room, also for a room that exists, so a product declares its rooms again each time
+  it starts. A room that `createRoom` version 1 creates keeps the `roomId` that the product gives, because a version 1
+  answer carries no id and the product names the room with that id in its later calls. A host's `createChatRoom`
+  callback then receives that id. `postMessage` and `setRoomFooter` keep their shapes and versions, so a product built
+  against the earlier client calls them the same way through the client a host injects.
+
+- 4ad5f6a: Native hosts run only published and dev-server products. `bundled_products` and `BundleEntry` are gone,
+  `ProductSource` has no `Bundled` case, and `product_source` takes no `bundle`. Archive serving stays, without a
+  callback: `archive_files` returns the `ArchiveFile`s that may answer a request, in order, and the host serves the
+  first it has; `BundleReader` is gone with no replacement. MIME types come from `mime_guess`, so `mjs` is
+  `application/javascript`, `map` `text/plain`, `xml` `text/xml`, `woff` `application/font-woff` and `otf`
+  `application/font-sfnt`. On the Rust runtime, `FundingProviderEntry` carries only `product_id` and `worker_manifest`;
+  `FundingProviderOrigin` and `FundingProviderApp` are gone, and whether a provider has an App is always read from
+  dotNS.
+- fef6583: The generated SDK drops historical payload types and SCALE codecs that none of its methods use. This removes
+  exports such as `V01HostChatPostMessageRequest` and `V01ChatRoomFooter`. If you import one of these for a product
+  call, use the request or result type of the generated method. Methods that still use V1 and subscriptions that receive
+  older host frames keep their codecs.
+
+### Minor Changes
+
+- 3b2e486: Funding sessions emit telemetry facts as core events under exported `truapi.funding.*` markers: the overlay
+  opening and closing, quotes settling, the provider chosen and taking the session, milestones, warning states, the
+  ending, cancels and provider screens. Each carries typed attributes, a random per-session `funding.ref` and closed
+  values only: labels, conditions and counts, amounts and fees as buckets, a country as its region, never an intent, id,
+  address, exact amount, provider text or URL. An ending that is a fault goes out as `truapi.funding.ended_unexpectedly`
+  at error. Funding's warnings no longer name the session's intent or a quote id.
+- 3080698: `cancel_funding` now cancels a funding session in any state, so a host needs no other call to stop one. While
+  the session's overlay is up, the core stops starting it on its best quote, drops its `present_funding` call (the host
+  takes the overlay down) and drops the session, answering `Cancelled`; when the user already chose a provider there,
+  the session runs as started and the provider is asked to stop (`Requested`). Started sessions are cancelled as before,
+  and an ended or unknown session answers `Refused`.
+
+  `CancelOutcome::Ended` is renamed `Cancelled` (`.cancelled` in Swift, `CANCELLED` in Kotlin), and the `result` tag on
+  `truapi.funding.cancel_requested` reads `cancelled` instead of `ended`. Hosts matching on the old case have to rename
+  it.
+
+- 83afd9e: `notifications.sendPushNotification` takes an optional `title`, shown in place of the product id. Only a
+  trusted product may set one. The core trims whitespace and zero width characters from the title, drops one that is
+  then empty and the title any other product sends, and the call still succeeds. The client sends a request without a
+  title as v0.1, so hosts that predate v0.2 keep serving it; a titled request needs a host that serves v0.2. A domain
+  error comes back tagged `V2` whichever version was sent.
+
+  Hosts receive the title as `HostPushNotificationRequest.title`, which is absent unless the core let it through. The
+  app hosts show the product id when it is absent. The mock host records it as `NotificationLogEntry.title`, and the CLI
+  prints it above the notification text.
+
+- 9f83c66: Adds `ringCollectionId(name)`, which encodes a ring collection name such as
+  `"pop:polkadot.network/people-lite"` as the 32-byte `CollectionId` junction of a `RingLocation`, padded with spaces
+  the way the People chain stores it.
+
+### Patch Changes
+
+- cc9c407: truapi-host ships refreshed stack descriptors for polkadot (sequence 1794915853), previewnet (sequence
+  1795128637). truapi-provider and truapi-host ship refreshed light-client chain specs.
+- c9bd7c0: truapi-provider and truapi-host ship refreshed light-client chain specs.
+- 090d276: truapi-provider and truapi-host ship refreshed light-client chain specs.
+- b59c82d: `truapi-host --chain-backend light-client` runs every built-in network, including `pcf-devnet`, and any
+  `--stack`. It takes the light specs the stack's descriptor names and checks them against the descriptor. The binary
+  ships the specs of the built-in networks, so they start without the spec servers; other specs are fetched once and
+  kept under the state directory. A stack whose descriptor names no `lightSpec` for the relay, People, Asset Hub or
+  Bulletin is refused at start, and so is one whose relay spec cannot be fetched.
+  `truapi-host stack bundle --light-specs <file>` writes the light specs a descriptor names, checked against it.
+- db2a45b: `truapi-host --chain-backend light-client` rejects a stack whose relay restarted from genesis after the
+  bundled chain specs, as it already did for People, Asset Hub and Bulletin.
+- 9522d1b: The mock host reports a chain as supported only when it serves it: `onlyServedChains` (Rust
+  `MockConfig::only_served_chains`) defaults to `true`, so `featureSupported` answers from `servedChains`. The test
+  fixture fills `servedChains` from `networks` and `chain`, and otherwise from the chains in `runtimeConfig.testStack`.
+  An explicit `mock.servedChains` replaces that list. A suite that proxies a chain through `mock.chainProxies` without
+  declaring it lists its genesis in `mock.servedChains`, and `onlyServedChains: false` reports every chain as supported.
+- 2d5fa6f: A contact handle from `contacts.pick` is scoped to the calling product: the same contact has a different
+  handle in every product, and the same one on every host of the user. A handle from another product, or one picked
+  before this release, does not resolve. `HostContactLookup.handle_key` is per session and product, so a host that keeps
+  handle hashes keeps them per key.
+- 8f2509f: The `trinity-stack` crate's `Descriptor::contract_address` returns the address of a contract the descriptor
+  names in `contracts`. The core's `Stack` exposes the `AccountDataStore` contract, where each seed registers its
+  installations, as `account_data_store`, or `None` when the stack names none.
+  `truapi-host stack bundle --skip-same-projection` counts `contracts` as read, so a published copy that changes only
+  them is still written.
+
 ## 0.32.0
 
 ### Major Changes
