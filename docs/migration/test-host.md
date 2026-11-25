@@ -181,7 +181,7 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   statement entries also carry `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement` also takes.
 - **Removed methods.** These old methods have no equivalent, so skip or rewrite specs that use them: `clearChat`,
   `clearOperationLog`, `clearProductStorage`, `clearResourceAllocationLog`, `clearUserConfirmationLog`,
-  `getDevicePermissionStatuses`, `getFeatureSupport`, `getLocale`, `getOpenOperations`, `getOperationLog`,
+  `getDevicePermissionStatuses`, `getFeatureSupport`, `getLocale`, `getOperationLog`,
   `getProductStorageEntries`, `getResourceAllocationLog`, `getSupportedChains`, `getUserConfirmationLog`, `seedChatBot`,
   `seedChatRoom`, `setDevicePermissionStatus`, `setFeatureSupport`, `setLocale`, `setNavigationBehavior`,
   `setNotificationBehavior`, `setResourceAllocationBehavior`, `setSupportedChains` and `setUserConfirmationBehavior`.

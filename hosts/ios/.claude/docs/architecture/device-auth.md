@@ -30,6 +30,7 @@ On a confirm tap, the app shows the device authentication prompt before the acti
 | Device pairing approve | `PolkadotSignInPresenter.approve()` |
 | Product statement, VRF, proof and payment prompts | `StatementSignPromptViewFactory`, `SignVrfPromptViewFactory`, `CreateProofPromptViewFactory`, `PaymentRequestViewFactory` |
 | Manual iCloud backup of the recovery phrase | `BackupPresenter.authorizeBackup()` |
+| Reclaim of an unclaimed chat payment | `ChatPresenter.handleReclaimTransfer(for:)` |
 
 The product prompts cover both the host API path and the product-runtime path, because both show the same prompts.
 
