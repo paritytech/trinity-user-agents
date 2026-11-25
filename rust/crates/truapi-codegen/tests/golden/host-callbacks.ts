@@ -1935,6 +1935,12 @@ export interface ChatPlatform {
    * open room screen and the chat list preview. A failure of the host
    * reaches the product as `HostFailure`. If a Rust host does not implement
    * this method, it answers `Unsupported`.
+   *
+   * The core decides `persist` from the room it read just before this call.
+   * A product that changes the `product_source` of a room with
+   * `create_chat_room` while it sends updates to that room can have an
+   * update applied with the configuration the room had before. Only that
+   * product's own room is affected.
    */
   updateChatFeed?(
     product: ProductContext,
