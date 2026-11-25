@@ -599,7 +599,11 @@ that way. A `brush` is `{ tip, aspectPermille, angleCentideg, spacingPermille }`
 
 The first stamp is centred on the first point and each next one a spacing
 further along the line, the distance carried across its corners; a last point
-the spacing leaves bare gets one more. One point is one stamp.
+the spacing leaves bare gets one more. One point is one stamp. Stamps are
+never closer than half a logical pixel (50 hundredths), and a line has at
+most 4096 stamps: a line longer than 4095 spacings has its spacing stretched
+to its length over 4095, and no stamp past the 4096th is placed, so a short
+item cannot make a host place billions of them.
 `MaskBrush::stamps` in the core crate places them, and `cleared_share` counts
 the samples inside any stamp, so both hosts agree on the share. A host that
 cannot stamp draws a stamped line as a round `Stroke` of the same width, and

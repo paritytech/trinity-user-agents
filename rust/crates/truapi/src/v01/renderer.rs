@@ -1313,8 +1313,12 @@ pub enum MaskBrushTip {
 /// the line, the distance carried across its corners, with one more on the
 /// last point when the spacing leaves it bare. The host clamps
 /// `aspect_permille` to 1 through 1000 and `spacing_permille` to 50 through
-/// 4000. A host that cannot stamp draws the line as a round stroke of the same
-/// width, and counts it so.
+/// 4000. Stamps are never closer than [`MASK_STAMP_SPACING_MIN`], and a line
+/// is never stamped more than [`MASK_STAMPS_MAX`] times: a line longer than
+/// that many spacings has its spacing stretched to its length over
+/// `MASK_STAMPS_MAX - 1`, and no stamp past the limit is placed. A host that
+/// cannot stamp draws the line as a round stroke of the same width, and
+/// counts it so.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -1329,28 +1333,42 @@ pub struct MaskBrush {
 	pub spacing_permille: u16,
 }
 
+/// The least distance between two stamps of a [`MaskShape::Stamped`] line,
+/// in hundredths of a logical pixel: half a logical pixel.
+pub const MASK_STAMP_SPACING_MIN: u32 = 50;
+
+/// The most stamps a [`MaskShape::Stamped`] line has.
+pub const MASK_STAMPS_MAX: usize = 4096;
+
 impl MaskBrush {
 	/// The centres of the stamps along `points` for a tip `width` long, in
 	/// hundredths of a logical pixel: the rule both hosts follow.
 	pub fn stamps(&self, width: u32, points: &[MaskPoint]) -> Vec<(f64, f64)> {
 		let at = |point: &MaskPoint| (f64::from(point.x), f64::from(point.y));
 		let (Some(first), Some(last)) = (points.first(), points.last()) else { return Vec::new() };
-		let spacing =
-			(f64::from(width) * f64::from(self.spacing_permille.clamp(50, 4000)) / 1000.0).max(1.0);
+		let length_of = |pair: &[MaskPoint]| {
+			let ((ax, ay), (bx, by)) = (at(&pair[0]), at(&pair[1]));
+			(bx - ax).hypot(by - ay)
+		};
+		let total: f64 = points.windows(2).map(length_of).sum();
+		let spacing = (f64::from(width) * f64::from(self.spacing_permille.clamp(50, 4000)) /
+			1000.0)
+			.max(f64::from(MASK_STAMP_SPACING_MIN))
+			.max(total / (MASK_STAMPS_MAX - 1) as f64);
 		let mut centres = vec![at(first)];
 		let mut since_last = 0.0;
 		for pair in points.windows(2) {
 			let ((ax, ay), (bx, by)) = (at(&pair[0]), at(&pair[1]));
-			let length = (bx - ax).hypot(by - ay);
+			let length = length_of(pair);
 			let mut along = spacing - since_last;
-			while along <= length {
+			while along <= length && centres.len() < MASK_STAMPS_MAX {
 				let t = along / length;
 				centres.push((ax + t * (bx - ax), ay + t * (by - ay)));
 				along += spacing;
 			}
 			since_last = length - (along - spacing);
 		}
-		if since_last > 0.0 {
+		if since_last > 0.0 && centres.len() < MASK_STAMPS_MAX {
 			centres.push(at(last));
 		}
 		centres
