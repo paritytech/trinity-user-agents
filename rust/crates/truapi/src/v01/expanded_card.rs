@@ -1,11 +1,14 @@
 use parity_scale_codec::{Decode, Encode};
 
+use super::PocketCardSide;
+
 /// Request to cover or uncover the card under the calling Widget.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostExpandedCardSetCardCoveredRequest {
-	/// `false` covers the card so touches over it go to the Widget, `true`
+	/// `true` covers the card so touches over it go to the Widget, `false`
 	/// gives them back to the card.
-	pub shown: bool,
+	pub covered: bool,
 }
 
 /// Card cover change failure.
@@ -25,9 +28,10 @@ pub enum HostExpandedCardSetCardCoveredError {
 
 /// Request to turn the card under the calling Widget to one side.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostExpandedCardTurnCardRequest {
-	/// `true` turns the back up, `false` turns the front up.
-	pub shown: bool,
+	/// The side to turn up.
+	pub side: PocketCardSide,
 }
 
 /// Card turn failure.

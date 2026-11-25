@@ -2846,7 +2846,7 @@ fn set_card_covered(
 	futures::executor::block_on(ExpandedCard::set_card_covered(
 		host,
 		&CallContext::default(),
-		HostExpandedCardSetCardCoveredRequest::V2(
+		HostExpandedCardSetCardCoveredRequest::V1(
 			truapi::latest::HostExpandedCardSetCardCoveredRequest { covered },
 		),
 	))
@@ -2859,7 +2859,7 @@ fn turn_card(
 	futures::executor::block_on(ExpandedCard::turn_card(
 		host,
 		&CallContext::default(),
-		HostExpandedCardTurnCardRequest::V2(truapi::latest::HostExpandedCardTurnCardRequest {
+		HostExpandedCardTurnCardRequest::V1(truapi::latest::HostExpandedCardTurnCardRequest {
 			side,
 		}),
 	))
@@ -2876,55 +2876,17 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 	for covered in [true, false, true] {
 		assert!(matches!(
 			set_card_covered(&host, covered),
-			Ok(HostExpandedCardSetCardCoveredResponse::V2)
+			Ok(HostExpandedCardSetCardCoveredResponse::V1)
 		));
 	}
 
 	for side in [PocketCardSide::Back, PocketCardSide::Front] {
-		assert!(matches!(turn_card(&host, side), Ok(HostExpandedCardTurnCardResponse::V2)));
+		assert!(matches!(turn_card(&host, side), Ok(HostExpandedCardTurnCardResponse::V1)));
 	}
 
 	assert_eq!(
 		(card.covered(), card.turned()),
 		(vec![true, false, true], vec![PocketCardSide::Back, PocketCardSide::Front])
-	);
-}
-
-/// A product built against v0.1 still sends `shown` and decodes only v0.1
-/// frames, so the host must get its intent and the product must get its
-/// answers, errors included, in the version it asked in.
-#[test]
-fn expanded_card_v1_requests_reach_the_host_translated_and_are_answered_in_v1() {
-	let card = RecordingExpandedCardHost::answering(
-		Ok(crate::platform::ExpandedCardCoverOutcome::Applied),
-		Ok(crate::platform::ExpandedCardTurnOutcome::NotPresented),
-	);
-	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
-	let context = CallContext::default();
-
-	let cover = futures::executor::block_on(ExpandedCard::set_card_covered(
-		&host,
-		&context,
-		HostExpandedCardSetCardCoveredRequest::V1(v01::HostExpandedCardSetCardCoveredRequest {
-			shown: false,
-		}),
-	));
-	let turn = futures::executor::block_on(ExpandedCard::turn_card(
-		&host,
-		&context,
-		HostExpandedCardTurnCardRequest::V1(v01::HostExpandedCardTurnCardRequest { shown: true }),
-	));
-
-	assert_eq!(
-		(cover, turn, card.covered(), card.turned()),
-		(
-			Ok(HostExpandedCardSetCardCoveredResponse::V1),
-			Err(CallError::Domain(HostExpandedCardTurnCardError::V1(
-				v01::HostExpandedCardTurnCardError::NotPresented
-			))),
-			vec![true],
-			vec![PocketCardSide::Back],
-		)
 	);
 }
 
@@ -2975,17 +2937,17 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 	));
 	assert!(matches!(
 		answer(Ok(ExpandedCardCoverOutcome::NotPresented)),
-		Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V2(
+		Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V1(
 			truapi::latest::HostExpandedCardSetCardCoveredError::NotPresented
 		)))
 	));
 	assert!(matches!(
 		answer(Ok(ExpandedCardCoverOutcome::UserMoving)),
-		Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V2(
+		Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V1(
 			truapi::latest::HostExpandedCardSetCardCoveredError::UserMoving
 		)))
 	));
-	let Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V2(
+	let Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V1(
 		truapi::latest::HostExpandedCardSetCardCoveredError::Unknown { reason },
 	))) = answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() }))
 	else {
@@ -3010,7 +2972,7 @@ fn expanded_card_back_outcomes_map_to_wire_answers() {
 		turn_card(&host, PocketCardSide::Back)
 	};
 	let domain = |outcome| match answer(Ok(outcome)) {
-		Err(CallError::Domain(HostExpandedCardTurnCardError::V2(error))) => Some(error),
+		Err(CallError::Domain(HostExpandedCardTurnCardError::V1(error))) => Some(error),
 		_ => None,
 	};
 
@@ -3028,7 +2990,7 @@ fn expanded_card_back_outcomes_map_to_wire_answers() {
 	));
 	assert!(matches!(
 		answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() })),
-		Err(CallError::Domain(HostExpandedCardTurnCardError::V2(Answer::Unknown { reason })))
+		Err(CallError::Domain(HostExpandedCardTurnCardError::V1(Answer::Unknown { reason })))
 			if reason == "drawer crashed"
 	));
 }

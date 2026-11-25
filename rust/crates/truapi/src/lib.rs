@@ -93,8 +93,8 @@ pub mod latest {
 		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
+		PocketCard, PocketCardSide, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
 		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
@@ -109,7 +109,7 @@ pub mod latest {
 		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
 		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
 		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
-		PocketCardSide, RenderContext,
+		RenderContext,
 	};
 
 	pub use crate::versioned::{

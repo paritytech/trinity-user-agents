@@ -7,6 +7,6 @@ The expanded card calls are named after what they do. `expandedCard.setFaceShown
 
 A Pocket card definition's `faceShown` is `startsCovered`, again inverted, and defaults to `false`. Hosts no longer read `faceShown`, so a manifest that still sets it opens the card uncovered.
 
-Calls from products built against an earlier SDK keep working: their requests arrive as v0.1 and the core converts them. Their card definitions still need `startsCovered`.
+The requests keep their method ids and encoding, so a product built against an earlier SDK is not rejected. Its `setFaceShown` arrives as `setCardCovered` with the opposite meaning, so its cover calls do the reverse of what it asks until it updates. Its `setBackShown` still turns the card as before.
 
 Hosts implement `setExpandedCardCovered(covered)`, which answers an `ExpandedCardCoverOutcome`, and `turnExpandedCard(side)`, which takes a `PocketCardSide`. `PocketCardSide` is now a protocol type, so TypeScript hosts get it from `@parity/truapi`.
