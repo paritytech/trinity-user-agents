@@ -10,10 +10,22 @@ struct RustChatExecutionBridgeRoomTests {
 
     @Test func theConfigurationOfARoomIsTheStoredOneOrTheDefault() async throws {
         let bridge = await makeBridge()
-        #expect(try await bridge.roomConfig(roomId: "r") == .hostDefault)
+        api.roomsToReturn = [roomInfo("r")]
+        #expect(try await bridge.room(roomId: "r") == ChatRoomState(participatingAs: .roomHost, config: .hostDefault))
 
         api.declarations = declarations(config: config)
-        #expect(try await bridge.roomConfig(roomId: "r") == wireConfig)
+        #expect(try await bridge.room(roomId: "r") == ChatRoomState(participatingAs: .roomHost, config: wireConfig))
+    }
+
+    /// The core reads `nil` as a room that the product never created. A room that is not in the store, or that is
+    /// gone by the time its configuration is read, must answer `nil` and not a host failure.
+    @Test func aRoomThatDoesNotExistIsNil() async throws {
+        let bridge = await makeBridge()
+        api.roomsToReturn = [roomInfo("gone")]
+        api.unknownRooms = ["gone"]
+
+        #expect(try await bridge.room(roomId: "r") == nil)
+        #expect(try await bridge.room(roomId: "gone") == nil)
     }
 
     /// The configuration arrives with the room, in one call, so the room never has a configuration that the
@@ -42,11 +54,11 @@ struct RustChatExecutionBridgeRoomTests {
     @Test func metadataKeepsTheNameTheIconAndThePlaceholder() async throws {
         let bridge = await makeBridge()
 
-        try await bridge.setRoomMetadata(
+        #expect(try await bridge.setRoomMetadata(
             roomId: "r",
             metadata: ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil, placeholder: nil)
-        )
-        try await bridge.setRoomMetadata(
+        ) == .applied)
+        #expect(try await bridge.setRoomMetadata(
             roomId: "r",
             metadata: ChatRoomMetadata(
                 name: "Plain",
@@ -54,11 +66,11 @@ struct RustChatExecutionBridgeRoomTests {
                 icon: "data:image/png;base64,iVBO",
                 placeholder: "No games yet"
             )
-        )
-        try await bridge.setRoomMetadata(
+        ) == .applied)
+        #expect(try await bridge.setRoomMetadata(
             roomId: "r",
             metadata: ChatRoomMetadata(name: "Bare", description: nil, icon: "", placeholder: nil)
-        )
+        ) == .applied)
 
         #expect(api.roomMetadata == [
             .init(roomId: "r", name: "Lobby", icon: .keep, placeholder: nil),
@@ -84,9 +96,8 @@ struct RustChatExecutionBridgeRoomTests {
         let bridge = await makeBridge()
         api.unknownRooms = ["gone"]
 
-        await #expect(throws: ChatRoomError.self) { try await bridge.roomConfig(roomId: "gone") }
         await #expect(throws: ChatRoomError.self) {
-            try await bridge.setRoomMetadata(
+            _ = try await bridge.setRoomMetadata(
                 roomId: "gone",
                 metadata: ChatRoomMetadata(name: "x", description: nil, icon: nil, placeholder: nil)
             )
@@ -266,6 +277,10 @@ private extension RustChatExecutionBridgeRoomTests {
             dependencies: MainActor.run { makeChatBridgeDependencies() },
             chatMessaging: api
         )
+    }
+
+    func roomInfo(_ roomId: String) -> RoomInfo {
+        RoomInfo(roomId: roomId, name: nil, icon: nil, participation: .roomHost)
     }
 
     func declarations(config: Chat.RoomConfig?) -> Chat.RoomDeclarations {

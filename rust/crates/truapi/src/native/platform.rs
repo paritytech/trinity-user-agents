@@ -752,27 +752,19 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.boxed()
 	}
 
-	async fn list_chat_rooms(
-		&self,
-		_product: &ProductContext,
-	) -> Result<truapi::latest::HostChatListSubscribeItem, truapi::latest::GenericError> {
-		let rooms = self.chat.list_rooms().await.map_err(truapi::latest::GenericError::from)?;
-		Ok(truapi::latest::HostChatListSubscribeItem { rooms })
-	}
-
-	async fn read_chat_room_config(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-	) -> Result<truapi::latest::ChatRoomConfig, truapi::latest::GenericError> {
-		self.chat.room_config(room_id).await.map_err(truapi::latest::GenericError::from)
+	) -> Result<Option<crate::platform::ChatRoomState>, truapi::latest::GenericError> {
+		self.chat.room(room_id).await.map_err(truapi::latest::GenericError::from)
 	}
 
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
 		self.chat
 			.set_room_metadata(request.room_id, request.metadata)
 			.await

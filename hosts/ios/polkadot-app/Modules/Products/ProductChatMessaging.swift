@@ -19,7 +19,7 @@ protocol ProductChatMessaging: Sendable {
     /// Chat Extension v2 `set_room_metadata`: the name, the icon and the placeholder of the room. The native chat
     /// draws no description.
     func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange, placeholder: String?) async throws
-    /// What the product declared for a room. The core reads the configuration before each feed update.
+    /// What the product declared for a room. The core reads the configuration before each change to a room.
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations
     /// Chat Extension v2 `set_room_config`.
     func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws

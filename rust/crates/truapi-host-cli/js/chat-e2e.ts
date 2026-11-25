@@ -194,7 +194,7 @@ export async function runChatScreeningE2e(
   const created = await client.chat.createRoom({
     roomIdSource: ROOM_ID_SOURCE,
     name: "Support",
-    icon: "https://rooms.invalid/support.png",
+    icon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
     config: HOST_STORED_ROOM,
   });
   rows.push(
