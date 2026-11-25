@@ -543,6 +543,12 @@ impl ChainProvider {
 	/// the host connects again and replays its subscriptions. A remote node
 	/// cannot be connected from a thread that runs tokio tasks, such as the one
 	/// the TrUAPI core calls `chain_connect` on.
+	///
+	/// On a light-client provider with storage, a chain the light client is not
+	/// running first resumes from the stored blob: smoldot stops a chain when its
+	/// last connection closes, so this is every connect after one. The store is
+	/// awaited on the calling thread, which this call blocks, so a store that
+	/// needs that thread stalls the connect for 5 s and the chain starts cold.
 	pub fn connect(
 		&self,
 		genesis_hash: Vec<u8>,
@@ -553,7 +559,11 @@ impl ChainProvider {
 		let connect_error =
 			|error: crate::ProviderError| ChainProviderError::Connect { reason: error.to_string() };
 		let connection = match self.routes {
-			Routes::LightClient => block_on(self.inner.connect(genesis)).map_err(connect_error)?,
+			Routes::LightClient => block_on(async {
+				self.inner.load_database_for_connect(genesis).await?;
+				self.inner.connect(genesis).await
+			})
+			.map_err(connect_error)?,
 			Routes::RpcNodes => {
 				refuse_inside_async_runtime()?;
 				let runtime = rpc_runtime()?;

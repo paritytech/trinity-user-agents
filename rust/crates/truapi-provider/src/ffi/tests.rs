@@ -710,6 +710,13 @@ impl RecordingStore {
 	fn calls(&self) -> std::sync::MutexGuard<'_, Vec<StoreCall>> {
 		self.calls.lock().expect("not poisoned")
 	}
+
+	fn loads(&self) -> usize {
+		self.calls()
+			.iter()
+			.filter(|call| matches!(call, StoreCall::Load { .. }))
+			.count()
+	}
 }
 
 #[async_trait::async_trait]
@@ -949,4 +956,81 @@ fn a_stack_provider_names_its_stack_to_the_store() {
 			.is_some(),
 		"the stack's provider reads back what it saved"
 	);
+}
+
+#[test]
+fn each_connect_to_a_stopped_chain_reads_the_store() {
+	let store = RecordingStore::new(None);
+	let provider = ChainProvider::with_storage(store.clone());
+
+	let mut loads_per_connect = Vec::new();
+	for _ in 0..2 {
+		let (listener, _messages, _closed) = Collector::new();
+		let connection =
+			provider.connect(catalog_relay(), listener).expect("the catalog relay connects");
+		loads_per_connect.push(store.loads());
+		connection.disconnect();
+	}
+
+	assert_eq!(loads_per_connect, vec![1, 2]);
+}
+
+#[test]
+fn a_connect_to_a_running_chain_reads_nothing() {
+	let store = RecordingStore::new(None);
+	let provider = ChainProvider::with_storage(store.clone());
+
+	let (first, _first_messages, _first_closed) = Collector::new();
+	let (second, _second_messages, _second_closed) = Collector::new();
+	let _first = provider.connect(catalog_relay(), first).expect("connects");
+	let _second = provider.connect(catalog_relay(), second).expect("connects");
+
+	assert_eq!(store.loads(), 1);
+}
+
+#[test]
+fn a_failing_store_still_connects() {
+	let provider =
+		ChainProvider::with_storage(RecordingStore::new(Some("disk unavailable".into())));
+	let (listener, _messages, _closed) = Collector::new();
+
+	provider.connect(catalog_relay(), listener).expect("the chain connects cold");
+}
+
+#[test]
+fn a_store_that_never_answers_delays_the_connect_instead_of_blocking_it() {
+	struct SilentStore;
+
+	#[async_trait::async_trait]
+	impl StorageClient for SilentStore {
+		async fn load(
+			&self,
+			_genesis_hash: [u8; 32],
+			_stack: Option<String>,
+		) -> Result<Option<String>, StorageClientError> {
+			futures::future::pending().await
+		}
+
+		async fn save(
+			&self,
+			_genesis_hash: [u8; 32],
+			_blob: String,
+			_stack: Option<String>,
+		) -> Result<(), StorageClientError> {
+			futures::future::pending().await
+		}
+	}
+
+	let provider = ChainProvider::with_storage(Arc::new(SilentStore));
+	let (listener, _messages, _closed) = Collector::new();
+
+	let (done, finished) = channel();
+	std::thread::spawn(move || {
+		let _ = done.send(provider.connect(catalog_relay(), listener).map(|_| ()));
+	});
+
+	finished
+		.recv_timeout(Duration::from_secs(30))
+		.expect("connect returns once the store deadline passes")
+		.expect("the chain connects cold");
 }

@@ -17,12 +17,14 @@
 //! what was not read. The provider never deletes a blob, so one of a stack or
 //! chain the host no longer runs stays until the host deletes it.
 //!
-//! Reads and writes are explicit, through
-//! [`load_database`](crate::EmbeddedChainProvider::load_database) and
-//! [`save_database`](crate::EmbeddedChainProvider::save_database), rather than
-//! hidden inside `connect`. Connecting is a blocking call on the native
-//! bindings. Awaiting a foreign callback underneath it would deadlock a host
-//! whose client runs on the main thread.
+//! Writes are explicit, through
+//! [`save_database`](crate::EmbeddedChainProvider::save_database). Reads happen
+//! through [`load_database`](crate::EmbeddedChainProvider::load_database),
+//! which the bindings' `connect` calls for every chain the light client is not
+//! running, bounded by a deadline: connecting is a blocking call on the native
+//! bindings, so a store that needs the calling thread stalls the connect until
+//! the deadline instead of deadlocking it. The core
+//! [`connect`](crate::platform::ChainProvider::connect) reads nothing itself.
 
 /// Failure reported by a [`StorageClient`] implementation.
 ///
