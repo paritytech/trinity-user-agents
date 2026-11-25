@@ -477,13 +477,18 @@ localhost ids, and names under `dot` or under its own TLD (`Stack::serves`).
 The core checks this wherever it acts for a product: the product a host asks it
 to run (`ProductContext::served_by`), a call that names another product
 (answered `MalformedFrame`), every product a paired host's request names, the
-subtree a host looks up, every key derivation in the signing wallet, the
-manifest readers and worker references. `runtime::served` describes how a
-checked value reaches the account calls. Native hosts run the same checks
-through a `Stack` they open from the bundled copy. Host administration of
-stored state (`permission_authorization_status` and its setter,
-`clear_product_state`) takes any id, so a host can still read, change and clear
-what an unserved product left.
+subtree a host looks up, every key the signing wallet derives for a product
+other than its contact handle key, which only a connection's own product
+reaches, the manifest readers and worker references. `runtime::served`
+describes how a checked value reaches the account calls. Native hosts run the
+same checks through a `Stack` they open from the bundled copy.
+
+`HostRuntime` and the wasm runtimes administer stored state for any id
+(`permission_authorization_status` and its setter, `clear_product_state`), so a
+host on them can still read, change and clear what an unserved product left. A
+native host can clear it with `clear_product_state`, but it reads and sets
+stored statuses only through a `NativeProductExecution`, which opens only for a
+served product.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
 counts only under a TLD the stack serves. These products bypass recorded permissions and

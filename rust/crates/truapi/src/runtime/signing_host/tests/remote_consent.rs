@@ -178,9 +178,11 @@ fn a_relayed_caller_the_stack_does_not_serve_is_refused() {
 }
 
 /// A relayed request is held to the rule a product's own request is: every
-/// product it names must be one the stack serves. An unserved owner or
-/// context is refused before the user is asked, so no Allow Always, which is
-/// filed by bare label, can be won for it.
+/// product it names must be one the stack serves, and it is refused before
+/// the user is asked. For an unserved owner, no Allow Always can be won for
+/// it; one is filed by bare label, so it would also cover the served
+/// namesake. For an unserved context, no alias is minted in a context this
+/// stack does not serve.
 #[test]
 fn a_relayed_request_naming_an_unserved_product_is_refused() {
 	let platform = Arc::new(StubPlatform {
