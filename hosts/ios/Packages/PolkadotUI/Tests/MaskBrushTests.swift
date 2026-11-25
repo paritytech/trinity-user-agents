@@ -29,6 +29,22 @@ struct MaskBrushTests {
         #expect(brush(spacing: 0).stamps(width: 10, along: straight).count == 21, "a spacing of 0 is a twentieth")
     }
 
+    @Test("A stamped line has at most the core's most stamps, never closer than half a point, from end to end")
+    func stampsAreBounded() throws {
+        let thin = brush(spacing: 0.05)
+        let long = thin.stamps(width: 0, along: [.zero, CGPoint(x: 100_000, y: 0)])
+        #expect(long.count == Mask.Brush.mostStamps)
+        let widest = [CGPoint(x: CGFloat(Int32.min) / 100, y: 0), CGPoint(x: CGFloat(Int32.max) / 100, y: 0)]
+        let stamps = thin.stamps(width: 0, along: widest)
+        #expect(stamps.count == Mask.Brush.mostStamps)
+        #expect(stamps.first == widest[0])
+        let end = try #require(stamps.last)
+        #expect(abs(end.x - widest[1].x) < 0.01 && end.y == 0, "the last stamp is on the last point")
+        #expect(thin.stamps(width: 0, along: [.zero, CGPoint(x: 2, y: 0)]).count == 5, "every half a point")
+        let zigzag = (0 ..< 10_000).map { CGPoint(x: $0 % 2 == 0 ? 0 : 1_000, y: CGFloat($0) / 100) }
+        #expect(thin.stamps(width: 0, along: zigzag).count <= Mask.Brush.mostStamps)
+    }
+
     @Test("The aspect and the spacing are clamped as the core clamps them")
     func clamps() {
         #expect(brush(aspect: 0).aspect == 0.001)

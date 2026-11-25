@@ -5,6 +5,11 @@ public extension CustomMessageWidgetNode.Mask {
     /// instead of a round pen. The tip is the stroke's width long along its own axis and `aspect` of that across,
     /// turned `angle` from the horizontal, and keeps that turn whichever way the line goes.
     struct Brush: Equatable {
+        /// The most stamps one line has (`MASK_STAMPS_MAX`).
+        public static let mostStamps = 4_096
+        /// The least distance between two stamps, in points (`MASK_STAMP_SPACING_MIN`, 50 hundredths).
+        public static let leastSpacing: CGFloat = 0.5
+
         public enum Tip: Equatable {
             case ellipse
             /// A rectangle with fully round ends, as long and as thick as the ellipse.
@@ -28,17 +33,20 @@ public extension CustomMessageWidgetNode.Mask {
 
         /// The stamps' centres along `points` for a tip `width` long, as the core places them (`MaskBrush::stamps`):
         /// the first on the first point, each next one a spacing further along the line, the distance carried across
-        /// its corners, and one more on a last point the spacing leaves bare.
+        /// its corners, and one more on a last point the spacing leaves bare. Stamps are never closer than
+        /// `leastSpacing`, and a line has at most `mostStamps`.
         public func stamps(width: CGFloat, along points: [CGPoint]) -> [CGPoint] {
             guard let first = points.first, let last = points.last else { return [] }
-            // The core's floor of one hundredth of a logical pixel.
-            let step = max(width * spacing, 0.01)
+            let segments = zip(points, points.dropFirst())
+            let total = segments.reduce(0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
+            // A line longer than the most stamps allow has its spacing stretched to fit.
+            let step = max(width * spacing, Self.leastSpacing, total / CGFloat(Self.mostStamps - 1))
             var centres = [first]
             var sinceLast: CGFloat = 0
-            for (start, end) in zip(points, points.dropFirst()) {
+            for (start, end) in segments {
                 let length = hypot(end.x - start.x, end.y - start.y)
                 var along = step - sinceLast
-                while along <= length {
+                while along <= length, centres.count < Self.mostStamps {
                     let share = along / length
                     centres.append(CGPoint(
                         x: start.x + share * (end.x - start.x),
@@ -48,7 +56,7 @@ public extension CustomMessageWidgetNode.Mask {
                 }
                 sinceLast = length - (along - step)
             }
-            if sinceLast > 0 { centres.append(last) }
+            if sinceLast > 0, centres.count < Self.mostStamps { centres.append(last) }
             return centres
         }
 

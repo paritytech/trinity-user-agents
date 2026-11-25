@@ -100,6 +100,35 @@ struct ParticleTests {
         #expect(field.isEmpty)
     }
 
+    @Test("A rate however large owes at most the most a host keeps alive, and the rest of its carry is dropped")
+    func owedIsCapped() {
+        let emitter = Emitter(looks: [Self.dot], source: .area, ratePerSecond: Double(UInt32.max), life: 1e12)
+        var field = Self.field()
+        field.tick(emitter, sending: true, at: 0, finger: nil, size: .zero)
+        field.tick(emitter, sending: true, at: 1e10, finger: nil, size: .zero)
+        #expect(field.particles.count == Emitter.mostAlive)
+    }
+
+    @Test("A pan rate however large sends at most the most a host keeps alive along one move")
+    func panOwedIsCapped() {
+        let emitter = Emitter(looks: [Self.dot], source: .pan("pad"), ratePer100Points: Double(UInt32.max), life: 10)
+        var field = Self.field()
+        field.tick(emitter, sending: true, at: 0, finger: .zero, size: .zero)
+        let took = ContinuousClock().measure {
+            field.tick(emitter, sending: true, at: 0.016, finger: CGPoint(x: 300, y: 0), size: .zero)
+        }
+        #expect(field.particles.count == Emitter.mostAlive)
+        #expect(took < .seconds(1), "one frame stops once the field is full")
+    }
+
+    @Test("A burst however large sends at most the most a host keeps alive")
+    func burstIsCapped() {
+        let emitter = Emitter(looks: [Self.dot], source: .area, life: 10)
+        var field = Self.field()
+        field.burst(emitter, count: .max, at: 0, finger: nil, size: .zero)
+        #expect(field.particles.count == Emitter.mostAlive)
+    }
+
     @Test("A particle takes one of the looks, its speed and spin between their ends, and its direction in the spread")
     func picks() {
         let emitter = Emitter(
