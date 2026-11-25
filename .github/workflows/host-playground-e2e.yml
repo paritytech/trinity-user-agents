@@ -165,8 +165,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-boot-timeout: 900
-          # Without a GPU the emulator renders in software, and its Vulkan path takes the emulator down on the native tab switches.
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -feature -Vulkan -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"; status=$?; node e2e/native-ui/run.mjs --platform android --app-id "${APPLICATION_ID:-io.parity.polkadotapp}.nightly" --username "${NATIVE_UI_USERNAME}" --out "${OUT}/native-ui" || status=1; exit $status
 
       - name: Summary
