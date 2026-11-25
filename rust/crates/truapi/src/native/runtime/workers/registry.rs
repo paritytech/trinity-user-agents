@@ -42,7 +42,6 @@ enum Phase {
 enum Entry {
 	Active { phase: Phase, webview: Arc<WebView> },
 	Retrying,
-	Unavailable(String),
 }
 
 impl Entry {
@@ -53,9 +52,6 @@ impl Entry {
 			},
 			Self::Active { phase: Phase::Running(owner), .. } => {
 				NativeWorkerExecutionState::Running { execution: owner.clone() }
-			},
-			Self::Unavailable(reason) => {
-				NativeWorkerExecutionState::Failed { reason: reason.clone() }
 			},
 		}
 	}
@@ -151,13 +147,6 @@ impl Registry {
 	) -> Option<Removed> {
 		let phase = Phase::Starting { owner: None, module_ready: false, _timeout: timeout };
 		self.insert(product, Entry::Active { phase, webview })
-	}
-
-	/// Record why no attempt will start for the product's demand.
-	///
-	/// For a session that enters no attempts, so the entry this replaces has nothing to stop.
-	pub fn unavailable(&mut self, product: &ProductId, reason: String) {
-		let _replaced = self.insert(product, Entry::Unavailable(reason));
 	}
 
 	/// Give the starting attempt the execution `open` builds.

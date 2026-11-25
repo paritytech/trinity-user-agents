@@ -109,7 +109,7 @@ pub fn claimed_worker(
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		config,
-		Some(Arc::new(starts)),
+		Arc::new(starts),
 	)
 	.unwrap();
 	let claim = host.claim_worker(ProductId::for_test(product));
@@ -119,6 +119,11 @@ pub fn claimed_worker(
 		.open_execution(ExecutionCallbacks { host: callbacks, chat, game: None })
 		.unwrap();
 	(host, claim, worker)
+}
+
+/// A worker host for a runtime whose test starts no worker.
+pub fn no_workers() -> Arc<dyn NativeHostWebViewWorker> {
+	Arc::new(mpsc::channel().0)
 }
 
 impl NativeHostWebViewWorker for mpsc::Sender<Arc<NativeWorkerAttempt>> {
@@ -630,8 +635,9 @@ pub fn native_product_execution(
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
-		.expect("host runtime config should be valid");
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, no_workers())
+			.expect("host runtime config should be valid");
 	host.open_app_execution(
 		ProductId::for_test(product_id),
 		ExecutionCallbacks { host: callbacks, chat: None, game: None },
@@ -869,8 +875,9 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let config =
 		HostRuntimeConfig { device_encryption_key: Some([9; 32]), ..native_host_runtime_config() };
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
-		.expect("host runtime config should be valid");
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, no_workers())
+			.expect("host runtime config should be valid");
 
 	let first_connected_key =
 		callbacks.auth_states.lock().expect("auth state mutex poisoned").iter().find_map(
@@ -1951,7 +1958,7 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let first = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		config.clone(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	assert!(
@@ -1961,9 +1968,12 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let at_start = next_status();
 	let after_fetch = next_status();
 	drop(first);
-	let rebuilt =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config, None)
-			.expect("host runtime config should be valid");
+	let rebuilt = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid");
 
 	let rebuilt_status = rebuilt.stack_status();
 	assert_eq!(
@@ -2044,7 +2054,7 @@ fn build_runtime(
 			local_session_lite_username: None,
 			..config
 		},
-		None,
+		no_workers(),
 	)
 }
 
@@ -2697,7 +2707,7 @@ fn starting_a_host_proves_the_core_log_channel_reaches_it() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			callbacks.clone(),
 			native_host_runtime_config(),
-			None,
+			no_workers(),
 		)
 		.expect("create host");
 		let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
@@ -2720,7 +2730,7 @@ fn the_core_log_sink_does_not_retain_a_dropped_host() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("create host");
 
@@ -2744,14 +2754,17 @@ fn a_failed_host_start_leaves_the_running_host_logging() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("create host");
 
 	let mut doomed = native_host_runtime_config();
 	doomed.database_directory = "/truapi-probe-that-cannot-be-opened".to_string();
-	let failed =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), doomed, None);
+	let failed = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		doomed,
+		no_workers(),
+	);
 	assert!(failed.is_err(), "the probe config was supposed to fail");
 
 	assert!(
@@ -2774,7 +2787,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks[0].clone(),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("create host");
 	let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
@@ -2944,8 +2957,12 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config, None)
-		.expect("host runtime config should be valid")
+	NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid")
 }
 
 #[test]
@@ -2971,7 +2988,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 			Arc::new(EventCallbacks::new()),
 			native_host_runtime_config(),
-			None,
+			no_workers(),
 		)
 		.unwrap();
 		assert_eq!(
@@ -3177,7 +3194,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			callbacks.clone(),
 			native_host_runtime_config(),
-			None,
+			no_workers(),
 		)
 		.unwrap();
 		let open = |product_id| {
@@ -3224,7 +3241,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			callbacks.clone(),
 			native_host_runtime_config(),
-			None,
+			no_workers(),
 		)
 		.unwrap();
 		let execution = host.open_app_execution(
@@ -3265,7 +3282,7 @@ fn a_native_status_read_follows_the_os_gate() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let execution = host.open_app_execution(
@@ -3621,9 +3638,12 @@ fn the_host_reads_back_what_the_core_says_changed() {
 	use super::funding_feed::FundingChangeKind;
 	let config = native_host_runtime_config();
 	let database_directory = config.database_directory.clone();
-	let host =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config, None)
-			.expect("host runtime config should be valid");
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(funding.host.set(Arc::downgrade(&host)).is_ok());
 	assert!(host.set_funding_callbacks(funding.clone()));
@@ -3680,7 +3700,7 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		None,
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());

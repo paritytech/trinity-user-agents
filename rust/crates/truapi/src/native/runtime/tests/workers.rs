@@ -37,7 +37,7 @@ fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<WebViews>, ProductId) {
 	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		Some(views.clone()),
+		views.clone(),
 	)
 	.unwrap();
 	(runtime, views, ProductId::for_test("shared.dot"))
@@ -147,27 +147,6 @@ impl NativeWorkerExecutionObserver for Observer {
 	}
 }
 
-#[test]
-fn a_host_without_worker_support_reports_unavailable_until_the_claim_ends() {
-	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
-		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
-		None,
-	)
-	.unwrap();
-	let product = ProductId::for_test("chat.dot");
-	let (send, receive) = mpsc::channel();
-	let _subscription = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
-	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
-	let claim = runtime.claim_worker(product);
-	assert!(
-		matches!(next(), NativeWorkerExecutionState::Failed { reason } if reason == "no worker host configured")
-	);
-	drop(claim);
-	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
-}
-
 #[tokio::test]
 async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	let (runtime, views, product) = setup();
@@ -229,7 +208,7 @@ async fn a_start_that_takes_too_long_is_stopped_and_retried() {
 	*runtime.workers.lock() =
 		Some(crate::native::runtime::workers::Session::new_with_startup_deadline(
 			&callbacks,
-			Some(views.clone()),
+			views.clone(),
 			Duration::from_millis(50),
 		));
 	let _claim = runtime.claim_worker(product);
@@ -348,7 +327,7 @@ async fn ending_a_session_disposes_its_webviews_unlocked_and_never_one_still_sta
 	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		Some(host.clone()),
+		host.clone(),
 	)
 	.unwrap();
 	host.runtime.set(Arc::downgrade(&runtime)).unwrap();

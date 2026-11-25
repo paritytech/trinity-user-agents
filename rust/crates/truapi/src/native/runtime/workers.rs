@@ -60,11 +60,6 @@ pub enum NativeWorkerExecutionState {
 		/// Consumer operations on this execution.
 		execution: Arc<dyn NativeWorkerExecution>,
 	},
-	/// No attempt will start for the current demand.
-	Failed {
-		/// Why this worker is unavailable.
-		reason: String,
-	},
 }
 
 /// Observes one product without claiming its worker.
@@ -82,16 +77,16 @@ pub trait NativeWorkerExecutionObserver: Send + Sync {
 /// The session's worker state and the platform services its controller uses.
 pub struct Session {
 	registry: Registry,
-	worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+	worker_host: Arc<dyn NativeHostWebViewWorker>,
 	callbacks: Arc<dyn HostCallbacks>,
 	startup_deadline: Duration,
 }
 
 impl Session {
-	/// Keep worker state until shutdown, including failed starts on hosts without a launcher.
+	/// Keep worker state until shutdown.
 	pub fn new(
 		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+		worker_host: Arc<dyn NativeHostWebViewWorker>,
 	) -> Self {
 		Self::new_with_startup_deadline(callbacks, worker_host, STARTUP_DEADLINE)
 	}
@@ -99,7 +94,7 @@ impl Session {
 	/// [`Self::new`], with `startup_deadline` in place of [`STARTUP_DEADLINE`].
 	pub fn new_with_startup_deadline(
 		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+		worker_host: Arc<dyn NativeHostWebViewWorker>,
 		startup_deadline: Duration,
 	) -> Self {
 		Self {
@@ -259,8 +254,8 @@ impl Drop for WebView {
 
 /// The worker ledger's controller for a native runtime.
 ///
-/// Turns each start the ledger requests into an attempt on the session's WebView host, or into
-/// a failed state when the session has none, and each stop into the disposal of that attempt.
+/// Turns each start the ledger requests into an attempt on the session's WebView host, and each
+/// stop into the disposal of that attempt.
 /// The runtime owns the ledger that holds this controller, so the reference back is weak.
 struct Controller(Weak<NativeTrUApiHostRuntime>);
 
@@ -282,16 +277,12 @@ impl WorkerController for Controller {
 			if !runtime.runtime.worker_ledger().is_current(product_id, id) {
 				return;
 			}
-			let Some(host) = session.worker_host.clone() else {
-				session.registry.unavailable(product_id, "no worker host configured".into());
-				return;
-			};
 			let attempt = Arc::new(NativeWorkerAttempt {
 				product: product_id.clone(),
 				id,
 				runtime: self.0.clone(),
 			});
-			let webview = Arc::new(WebView { host, attempt });
+			let webview = Arc::new(WebView { host: session.worker_host.clone(), attempt });
 			let timeout = webview.attempt.deadline(&runtime, session.startup_deadline);
 			// A stop racing startup must reach the native host after its start callback returns.
 			let previous = session.registry.begin(product_id, timeout, webview.clone());
