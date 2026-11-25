@@ -68,8 +68,10 @@ impl NetworkSource {
 				let key = built_in_key(&stack_arg.value);
 				let stack = load_descriptor(&stack_arg.value, key.as_deref())
 					.await
-					.and_then(|(stack_id, descriptor)| {
-						Stack::new(stack_id, descriptor, &self.chain_access)
+					.and_then(|loaded| {
+						let stack =
+							Stack::new(loaded.stack_id, loaded.descriptor, &self.chain_access)?;
+						Ok(if loaded.keyed { stack } else { stack.without_key() })
 					})
 					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)

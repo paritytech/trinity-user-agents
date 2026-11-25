@@ -1895,7 +1895,19 @@ key of the link when it has one, and otherwise the URL. The URL of a built-in
 stack with no key is read with that stack's key, so it is verified and is the
 same stack as under its network name. A local file's id is `file:` followed by
 its canonical path: two files are two stacks, and a file that moves becomes
-another stack.
+another stack. The core orders a stack's runs by the descriptor's `sequence`
+only when the id is a key, which signs every copy, so the `sequence` only
+grows. A stack without a key passes the core `sequence` 0, so a copy published
+again with a lower `sequence` does not leave what the earlier copy stored
+locked as a later run's.
+
+A fork and its source share one namespace, and so one core storage, but are
+two stacks with their own ids and generations. Each start of one finds what
+the other stored about the chains and treats it as another run's: cached
+manifests, allowance keys and the record of the session's usernames are
+replaced, and the ring-VRF registry loses the other stack's rings. On the
+signing host, switching between a source and its fork therefore loses the
+ring-VRF registrations each time; products register their keys again.
 
 #### `network-check`
 

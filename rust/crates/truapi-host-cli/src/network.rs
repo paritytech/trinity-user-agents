@@ -107,6 +107,9 @@ pub struct StackArg {
 #[derive(Debug)]
 pub struct Stack {
 	stack_id: String,
+	/// Whether `stack_id` is the stack's key, under which every copy is
+	/// signed, so its descriptors' `sequence` only grows.
+	keyed: bool,
 	descriptor: Descriptor,
 	/// Set exactly when the stack runs on the light client.
 	light_client: Option<Arc<StackLightClient>>,
@@ -202,12 +205,16 @@ impl Stack {
 			people: genesis.people,
 			bulletin: genesis.bulletin,
 		};
+		// The core orders a stack's runs by `sequence`, which only grows for a
+		// stack signed under its key. Another stack passes 0, so none of its
+		// runs counts as later than another.
+		let sequence = if self.keyed { self.descriptor.sequence } else { 0 };
 		truapi::platform::Stack::new(
 			self.identity(),
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
-			self.descriptor.sequence,
+			sequence,
 			true,
 		)
 	}

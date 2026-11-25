@@ -23,5 +23,6 @@ On the first start after the update, with no wipe, nothing the core stored about
 - A pairing host asks for each product's allowance again.
 - The session's usernames are kept and looked up again.
 - The stored ring-VRF registry is not read, and the next update replaces it, so every registration and provider choice
-  in it is lost. On a signing host `ring_vrf_sign` fails with `KeyNotRegistered` until each product registers its keys
-  again.
+  in it is lost. A product that holds an auto-signing key gets `KeyNotRegistered` from `ring_vrf_sign` and the ring-VRF
+  alias calls on either host. On a pairing host listing the product's keys copies the phone's listing back in; on a
+  signing host, whose registry is the only record, the product registers its keys again.

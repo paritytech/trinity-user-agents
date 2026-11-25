@@ -208,10 +208,25 @@ async fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	let respelled = directory.path().join(".").join("source.json");
 	let id = |path: std::path::PathBuf| async move {
 		let path = path.to_str().expect("temporary path is UTF-8").to_owned();
-		load_descriptor(&path, None).await.expect("local descriptor loads").0
+		load_descriptor(&path, None).await.expect("local descriptor loads").stack_id
 	};
 
 	let (source_id, fork_id, respelled_id) =
 		(id(source).await, id(fork).await, id(respelled).await);
 	assert_eq!((source_id == fork_id, source_id == respelled_id), (false, true));
+}
+
+/// A local descriptor file is named by its path, not by a key, so nothing
+/// makes its `sequence` grow from one edit to the next.
+#[tokio::test]
+async fn a_local_descriptor_file_is_not_named_by_a_key() {
+	let directory = tempfile::tempdir().expect("tempdir");
+	let path = directory.path().join("stack.json");
+	let bytes = serde_json::to_vec(&stack_descriptor(|_| {})).expect("descriptor is JSON");
+	std::fs::write(&path, bytes).expect("descriptor file is written");
+	let path = path.to_str().expect("temporary path is UTF-8").to_owned();
+
+	let loaded = load_descriptor(&path, None).await.expect("local descriptor loads");
+
+	assert!(!loaded.keyed, "a local file counted as a keyed stack");
 }

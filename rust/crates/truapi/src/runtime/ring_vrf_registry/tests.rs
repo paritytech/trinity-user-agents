@@ -399,13 +399,12 @@ fn a_registry_stored_in_the_same_run_from_a_later_descriptor_is_read() {
 	futures::executor::block_on(store.register(root, handle("owner.dot", 9), ring(1), [9; 32]))
 		.expect("registers");
 
-	assert_eq!(
-		(
-			listed,
-			stored_registry(&platform, root)
-				.and_then(|stored| paseo.run().read_stamped(&stored).map(<[u8]>::to_vec))
-				.is_some()
-		),
-		(true, true)
-	);
+	let stored = stored_registry(&platform, root).expect("the registry is stored");
+	let stored = paseo.run().read_stamped(&stored).map(decode_snapshot);
+	let has_own = stored.is_some_and(|snapshot| {
+		snapshot.is_ok_and(|snapshot| {
+			snapshot.entries.iter().any(|entry| entry.handle == handle("owner.dot", 9))
+		})
+	});
+	assert_eq!((listed, has_own), (true, true));
 }

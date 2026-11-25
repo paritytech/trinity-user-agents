@@ -343,18 +343,24 @@ fn a_value_another_run_stamped_is_left_only_when_that_run_came_later() {
 /// Stacks that share core storage, such as a fork the CLI runs in its
 /// source's namespace, or the stack a host build ships before and after an
 /// update, number their descriptors apart. One stack's `sequence` says nothing
-/// about another's, so what either stamped in another run is stale to the
-/// other and replaced, in both directions, and neither can keep the other
-/// from storing.
+/// about another's, so what either stamped is stale to the other and
+/// replaced, in both directions, and neither can keep the other from storing.
+/// That holds for a fork that keeps its source's generation and genesis
+/// hashes too: its chains are not the source's.
 #[test]
 fn another_stacks_value_is_stale_whatever_its_sequence() {
 	let chains = stamp_test_chains();
 	let source = stack_with_id("source", "g1", chains.clone(), 10).run();
 	let fork = stack_with_id("source-fork", "f1", chains.clone(), 3).run();
+	let fork_on_source_chains = stack_with_id("source-fork", "g1", chains.clone(), 3).run();
 
 	assert_eq!(
-		[read_as(&fork, &source.stamp(b"value")), read_as(&source, &fork.stamp(b"value"))],
-		["stale", "stale"]
+		[
+			read_as(&fork, &source.stamp(b"value")),
+			read_as(&source, &fork.stamp(b"value")),
+			read_as(&fork_on_source_chains, &source.stamp(b"value")),
+		],
+		["stale", "stale", "stale"]
 	);
 }
 

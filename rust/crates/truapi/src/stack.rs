@@ -102,13 +102,14 @@ pub struct StackIdentity {
 /// is noticed when the operator changed either. The relay chain is left out:
 /// the core never reads it, so adding or removing it is not a wipe.
 ///
-/// Two values are the same run when those match, whatever their `sequence`.
-/// The `sequence` orders the runs of one stack: a signed stack's `sequence`
-/// only grows, so a run it started from a higher one came later. What the core
-/// stored in an earlier run is stale. What a later run of the same stack
-/// stored, which a runtime finds when it started from an older copy of the
-/// descriptor, is left as it is. Another stack's `sequence` says nothing about
-/// this one's, so what another stack stored in another run is stale.
+/// Two values are the same run when they name the same stack and those
+/// match, whatever their `sequence`. The `sequence` orders the runs of one
+/// stack: a signed stack's `sequence` only grows, so a run it started from a
+/// higher one came later. What the core stored in an earlier run is stale.
+/// What a later run of the same stack stored, which a runtime finds when it
+/// started from an older copy of the descriptor, is left as it is. Another
+/// stack's `sequence` says nothing about this one's, so what another stack
+/// stored is from another run, and stale.
 #[derive(Encode, Decode)]
 pub struct StackRun {
 	stack_id: String,
@@ -127,7 +128,7 @@ struct RunChains {
 
 impl PartialEq for StackRun {
 	fn eq(&self, other: &Self) -> bool {
-		self.chains == other.chains
+		self.stack_id == other.stack_id && self.chains == other.chains
 	}
 }
 
@@ -352,8 +353,9 @@ impl Stack {
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's. It names no contracts.
 	/// `sequence` is that of the descriptor the host read the stack from, and
-	/// orders the stack's runs, as [`StackRun`] says. A host with no
-	/// descriptor, such as a test host, passes `0`.
+	/// orders the stack's runs, as [`StackRun`] says. Only a stack whose id is
+	/// its key makes its `sequence` grow, so a host passes `0` for any other
+	/// stack, and for one with no descriptor, such as a test host's.
 	///
 	/// Applies the same TLD and reserved-value rules as
 	/// [`Self::from_descriptor`], and refuses an empty id or generation and an

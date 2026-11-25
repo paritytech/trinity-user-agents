@@ -63,7 +63,21 @@ impl Stack {
 				Some(Arc::new(StackLightClient::new(&descriptor, &chains, spec_directory.clone())?))
 			},
 		};
-		Ok(Self { stack_id, light_client, descriptor, chains, identity_backend, pop_controller })
+		Ok(Self {
+			stack_id,
+			keyed: true,
+			light_client,
+			descriptor,
+			chains,
+			identity_backend,
+			pop_controller,
+		})
+	}
+
+	/// This stack, read from a pointer with no key or from a local file, so
+	/// its id is not its key and nothing makes its `sequence` grow.
+	pub fn without_key(self) -> Self {
+		Self { keyed: false, ..self }
 	}
 }
 

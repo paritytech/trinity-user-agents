@@ -65,6 +65,18 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 	}
 }
 
+/// A `--stack` descriptor and the stack it names.
+pub struct LoadedStack {
+	/// The stack's id, as [`load_descriptor`] says.
+	pub stack_id: String,
+	/// Whether the id is the stack's key. Every copy of such a stack is signed
+	/// under it, so its `sequence` only grows. A stack named by its URL, or a
+	/// local file, can be published again with any `sequence`.
+	pub keyed: bool,
+	/// The verified descriptor.
+	pub descriptor: Descriptor,
+}
+
 /// The descriptor a `--stack` value points to, with the stack's id: a link or a URL, fetched and
 /// checked against the key a link carries or `key`, or a local descriptor file, signed or not.
 /// Fails when it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past
@@ -72,7 +84,7 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 ///
 /// The id is the pointer's. A local file has no pointer of its own, so its id is `file:` followed
 /// by its canonical path: two files are two stacks, and a file that moves becomes another stack.
-pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
+pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<LoadedStack> {
 	let (pointer, bytes, source) = read_stack(stack, key).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
@@ -82,11 +94,11 @@ pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, 
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	let stack_id = match source {
-		StackSource::Fetched => pointer.stack_id(),
-		StackSource::LocalFile => local_file_id(stack)?,
+	let (stack_id, keyed) = match source {
+		StackSource::Fetched => (pointer.stack_id(), pointer.key().is_some()),
+		StackSource::LocalFile => (local_file_id(stack)?, false),
 	};
-	Ok((stack_id, accepted.stack.descriptor))
+	Ok(LoadedStack { stack_id, keyed, descriptor: accepted.stack.descriptor })
 }
 
 fn local_file_id(path: &str) -> Result<String> {

@@ -246,9 +246,13 @@ in:
   chains of its run that restarted: all of them when the `generation` changed,
   otherwise those whose genesis hash the stack no longer has. One stored
   without a run is not read: the registry starts empty and the next update
-  replaces it, so every registration and provider choice in it is lost. On a
-  signing host, which signs from its registry, `ring_vrf_sign` then fails with
-  `KeyNotRegistered` until each product registers its keys again.
+  replaces it, so every registration and provider choice in it is lost. A
+  product that holds an auto-signing key then gets `KeyNotRegistered` from
+  `ring_vrf_sign` and the ring-VRF alias calls, on either host. A pairing host
+  fails instead of asking the phone until the product lists its keys, which
+  copies the phone's listing back in, or registers them again. A signing
+  host, whose registry is the only record, fails until the product registers
+  them again.
 - The `SessionUsernamesRun` slot records the run in which the usernames of the
   `AuthSession` blob were read, with a hash of that blob.
 
@@ -268,12 +272,20 @@ finds stay out of the `AuthSession` slot. Ending the session still clears its
 allowance keys whichever run stored them, so a revoked session keeps no secret
 at rest.
 
-What another stack stored in another run, such as a fork that shares its
-source's storage or the stack a host build ships after an update, is stale and
-replaced whatever its `sequence`, since one stack's `sequence` says nothing
-about another's. So are values of another run of the same stack with the same
+What another stack stored, such as a fork that shares its source's storage
+or the stack a host build ships after an update, is from another run whatever
+its `sequence`, since one stack's `sequence` says nothing about another's. It
+is stale: cached manifests, allowance keys and the usernames record are
+replaced, and the ring-VRF registry reads it like an earlier run's, keeping
+the rings on chains the two runs share under one `generation` and losing the
+rest. So are values of another run of the same stack with the same
 `sequence`, which a signed stack never publishes, and values stored without a
-stamp this core reads.
+stamp this core reads. A host that reads a stack without a key passes
+`sequence` 0, as the CLI does, so its runs are not ordered.
+
+A runtime on an earlier run reads a later run's ring-VRF registry as empty, so
+a product with an auto-signing key gets `KeyNotRegistered` there, as after an
+update, until the host builds the runtime again on the later run.
 
 Finding a later run's values does not set `restart_required`. The fetch that
 brings the later descriptor sets it, as for any newer copy, and when the
