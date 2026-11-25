@@ -93,11 +93,14 @@ sealed interface JsWidget {
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget
 
-    /** Content a host may draw material layers over. [index] counts the `Materials` nodes of the tree depth first. */
+    /**
+     * Shader layers over [children]. [node] is its place among the tree's `Materials` nodes, depth
+     * first, as the core numbers them. A surface without a materials renderer draws the children plain.
+     */
     @Serializable
     @SerialName("materials")
     data class Materials(
-        val index: Int,
+        val node: Int,
         val children: List<JsWidget>,
     ) : JsWidget
 }

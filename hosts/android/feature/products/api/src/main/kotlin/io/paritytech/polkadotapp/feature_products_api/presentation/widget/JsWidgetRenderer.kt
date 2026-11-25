@@ -91,22 +91,8 @@ private fun JsWidgetContent(
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
-        is JsWidget.Materials -> JsMaterialsRenderer(widget, modifier)
-    }
-}
-
-@Composable
-private fun JsMaterialsRenderer(
-    widget: JsWidget.Materials,
-    modifier: Modifier = Modifier,
-) {
-    val drawer = LocalJsMaterialsDrawer.current
-    val children = @Composable { widget.children.forEach { child -> JsWidgetContent(widget = child) } }
-    if (drawer == null) {
-        Box(modifier = modifier) { children() }
-    } else {
-        drawer.Draw(modifier = modifier, index = widget.index) {
-            Box { children() }
+        is JsWidget.Materials -> LocalJsMaterialsRenderer.current.Node(modifier, widget.node) {
+            widget.children.forEach { JsWidgetContent(it) }
         }
     }
 }
@@ -150,6 +136,7 @@ private fun JsImageRenderer(
             JsImagePicture.Unavailable -> JsImageUnavailable()
             is JsImagePicture.Located -> {
                 var drawn by remember(current.model) { mutableStateOf(false) }
+                val imageLoaded = LocalJsImageLoaded.current
                 val density = LocalDensity.current.density
                 val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
                 // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
@@ -182,7 +169,10 @@ private fun JsImageRenderer(
                     },
                     onState = { state ->
                         when (state) {
-                            is AsyncImagePainter.State.Success -> drawn = true
+                            is AsyncImagePainter.State.Success -> {
+                                drawn = true
+                                imageLoaded()
+                            }
                             is AsyncImagePainter.State.Error -> {
                                 Timber.w(state.result.throwable, "Widget image %s failed to load from %s", widget.source, current.model)
                                 picture = JsImagePicture.Unavailable
@@ -307,18 +297,16 @@ private fun List<JsModifier>.hasWidth() = fixedWidth() || any { it is JsModifier
 private fun List<JsModifier>.hasHeight() = fixedHeight() || any { it is JsModifier.FillMaxHeight }
 
 private fun JsWidget.fillsHeight(): Boolean = when (this) {
-    is JsWidget.Box -> modifiers.fillsHeight()
-    is JsWidget.Column -> modifiers.fillsHeight()
-    is JsWidget.Row -> modifiers.fillsHeight()
-    is JsWidget.Spacer -> modifiers.fillsHeight()
-    is JsWidget.Text -> modifiers.fillsHeight()
-    is JsWidget.Button -> modifiers.fillsHeight()
-    is JsWidget.TextField -> modifiers.fillsHeight()
-    is JsWidget.Image -> modifiers.fillsHeight()
-    is JsWidget.Materials -> children.any { it.fillsHeight() }
-}
-
-private fun List<JsModifier>.fillsHeight() = any { it is JsModifier.FillMaxHeight }
+    is JsWidget.Box -> modifiers
+    is JsWidget.Column -> modifiers
+    is JsWidget.Row -> modifiers
+    is JsWidget.Spacer -> modifiers
+    is JsWidget.Text -> modifiers
+    is JsWidget.Button -> modifiers
+    is JsWidget.TextField -> modifiers
+    is JsWidget.Image -> modifiers
+    is JsWidget.Materials -> emptyList()
+}.any { it is JsModifier.FillMaxHeight }
 
 @Composable
 private fun JsSpacerRenderer(
@@ -339,6 +327,10 @@ private fun JsTextRenderer(
         JsTypographyStyle.BODY_LARGE_REGULAR -> PolkadotTheme.typography.body.large
         JsTypographyStyle.BODY_MEDIUM_REGULAR -> PolkadotTheme.typography.body.medium
         JsTypographyStyle.BODY_SMALL_REGULAR -> PolkadotTheme.typography.body.small
+        JsTypographyStyle.HEADLINE_MEDIUM -> PolkadotTheme.typography.headline.medium
+        JsTypographyStyle.HEADLINE_SMALL -> PolkadotTheme.typography.headline.small
+        JsTypographyStyle.TITLE_EXTRA_LARGE -> PolkadotTheme.typography.title.extraLarge
+        JsTypographyStyle.TITLE_LARGE -> PolkadotTheme.typography.title.large
     }
 
     val textColor = widget.color?.toComposeColor() ?: PolkadotTheme.colors.fg.primary

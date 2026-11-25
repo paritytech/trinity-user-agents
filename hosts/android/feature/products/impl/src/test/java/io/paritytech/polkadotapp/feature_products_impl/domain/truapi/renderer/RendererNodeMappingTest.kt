@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -22,67 +23,29 @@ import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.TextProps
+import uniffi.truapi.TypographyStyle
 
 class RendererNodeMappingTest {
     @Test
-    fun `materials nodes are numbered depth first, as the core resolves them`() {
-        val nested = materialsNode(emptyList())
-        val tree = RendererNode.Column(
-            modifiers = emptyList(),
-            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
-            children = listOf(materialsNode(listOf(nested)), materialsNode(emptyList())),
+    fun `text keeps its own size when it names a style between headline large and title medium`() {
+        val expected = mapOf(
+            TypographyStyle.HEADLINE_MEDIUM to JsTypographyStyle.HEADLINE_MEDIUM,
+            TypographyStyle.HEADLINE_SMALL to JsTypographyStyle.HEADLINE_SMALL,
+            TypographyStyle.TITLE_EXTRA_LARGE to JsTypographyStyle.TITLE_EXTRA_LARGE,
+            TypographyStyle.TITLE_LARGE to JsTypographyStyle.TITLE_LARGE,
         )
 
-        val column = tree.toJsWidget() as JsWidget.Column
+        val mapped = expected.keys.associateWith { style ->
+            val node = RendererNode.Text(
+                modifiers = emptyList(),
+                props = TextProps(style = style, color = null),
+                children = listOf(RendererNode.String("Score")),
+            )
+            (node.toJsWidget() as JsWidget.Text).style
+        }
 
-        assertEquals(
-            listOf(
-                JsWidget.Materials(index = 0, children = listOf(JsWidget.Materials(index = 1, children = emptyList()))),
-                JsWidget.Materials(index = 2, children = emptyList()),
-            ),
-            column.children,
-        )
+        assertEquals(expected, mapped)
     }
-
-    @Test
-    fun `materials nodes under a text or a button keep their numbers, though neither draws them`() {
-        val tree = RendererNode.Column(
-            modifiers = emptyList(),
-            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
-            children = listOf(
-                RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(materialsNode(emptyList()))),
-                RendererNode.Button(
-                    modifiers = emptyList(),
-                    props = ButtonProps(text = "Go", variant = null, enabled = null, loading = null, clickAction = null),
-                    children = listOf(materialsNode(emptyList())),
-                ),
-                materialsNode(emptyList()),
-            ),
-        )
-
-        val column = tree.toJsWidget() as JsWidget.Column
-
-        assertEquals(JsWidget.Materials(index = 2, children = emptyList()), column.children.last())
-    }
-
-    @Test
-    fun `materials nested under a text count toward the numbers after it`() {
-        val tree = RendererNode.Column(
-            modifiers = emptyList(),
-            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
-            children = listOf(
-                RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(materialsNode(listOf(materialsNode(emptyList()))))),
-                materialsNode(emptyList()),
-            ),
-        )
-
-        val column = tree.toJsWidget() as JsWidget.Column
-
-        assertEquals(JsWidget.Materials(index = 2, children = emptyList()), column.children.last())
-    }
-
-    private fun materialsNode(children: List<RendererNode>) =
-        RendererNode.Materials(props = MaterialsProps(layers = emptyList()), children = children)
 
     @Test
     fun `a streamed tree maps like a decoded preview, so both faces draw alike`() {
@@ -165,5 +128,33 @@ class RendererNodeMappingTest {
 
         assertEquals(40, size.width)
         assertEquals(10, size.minHeight)
+    }
+
+    // The core settles materials by node number, so a node numbered differently here draws another
+    // node's layers. The core counts depth first, parents before children, including nodes inside a Text.
+    @Test
+    fun `materials nodes take the numbers the core gives them`() {
+        fun materials(vararg children: RendererNode) = RendererNode.Materials(MaterialsProps(emptyList()), children.toList())
+        val tree = RendererNode.Column(
+            modifiers = emptyList(),
+            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
+            children = listOf(
+                materials(materials(RendererNode.Spacer(emptyList()))),
+                RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(RendererNode.String("a"), materials())),
+                materials(RendererNode.Spacer(emptyList())),
+            ),
+        )
+
+        assertEquals(
+            JsWidget.Column(
+                children = listOf(
+                    JsWidget.Materials(0, listOf(JsWidget.Materials(1, listOf(JsWidget.Spacer())))),
+                    JsWidget.Text(text = "a"),
+                    JsWidget.Materials(3, listOf(JsWidget.Spacer())),
+                ),
+            ),
+            tree.toJsWidget(),
+        )
+        assertTrue(tree.hasMaterials())
     }
 }

@@ -83,7 +83,7 @@ class PocketFaceJsonTest {
         ).getOrThrow().toJsWidget()
 
         val materials = face as JsWidget.Materials
-        assertEquals(0, materials.index)
+        assertEquals(0, materials.node)
 
         val stamp = materials.children[0] as JsWidget.Image
         assertEquals(JsImageSource.Archive("images/stamp.png"), stamp.source)

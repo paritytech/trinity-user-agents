@@ -4,8 +4,6 @@ import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
-import io.mockk.verifyOrder
-import io.parity.truapi.MaterialsResolution
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
@@ -52,19 +50,16 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatMessageContent
-import uniffi.truapi.ColumnProps
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
-import uniffi.truapi.MaterialsProps
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
-import uniffi.truapi.TextProps
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
-import io.mockk.verify as verifyMockk
 
 class TrUAPIChatWorkerTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
@@ -74,7 +69,7 @@ class TrUAPIChatWorkerTest {
     private val messageData = DataByteArray.empty()
 
     private fun TestScope.worker(
-        runtime: TrUAPIHostRuntime = mock(),
+        runtime: TrUAPIHostRuntime = mockk(relaxed = true),
         workers: TrUAPIWorkerSupervisor = mock(),
         chatMessaging: ProductChatMessaging = FakeChatMessaging(),
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
@@ -86,122 +81,6 @@ class TrUAPIChatWorkerTest {
         whenever(workers.currentExecution(productId)).thenReturn(execution)
         return workers
     }
-
-    @Test
-    fun `a new tree opens its materials before the last one closes, and the end of the card closes them`() = runTest {
-        val first: MaterialsResolution = mockk(relaxed = true)
-        val second: MaterialsResolution = mockk(relaxed = true)
-        val firstTree = materialsTree(RendererNode.Nil)
-        val secondTree = materialsTree()
-        val trees = MutableSharedFlow<RendererNode>()
-        val execution: TrUAPIProductExecution = mockk()
-        every { execution.render(any()) } returns trees
-        every { execution.resolveMaterials(firstTree, any(), false) } returns first
-        every { execution.resolveMaterials(secondTree, any(), false) } returns second
-        val worker = worker(workers = runningWorkers(execution))
-        val published = mutableListOf<MaterialsResolution?>()
-        val materials = launch { worker.messageMaterials(roomId, messageId, messageType).toList(published) }
-        val render = launch { worker.renderMessage(roomId, messageId, messageType, messageData).collect { } }
-        runCurrent()
-
-        trees.emit(firstTree)
-        runCurrent()
-        trees.emit(secondTree)
-        runCurrent()
-        render.cancel()
-        runCurrent()
-        materials.cancel()
-
-        assertEquals(listOf(null, first, second, null), published)
-        verifyOrder {
-            execution.resolveMaterials(secondTree, any(), false)
-            first.close()
-            second.close()
-        }
-    }
-
-    @Test
-    fun `a tree without materials resolves none`() = runTest {
-        val execution: TrUAPIProductExecution = mockk()
-        every { execution.render(any()) } returns flowOf(RendererNode.Nil)
-        val worker = worker(workers = runningWorkers(execution))
-
-        worker.renderMessage(roomId, messageId, messageType, messageData).toList()
-
-        verifyMockk(exactly = 0) { execution.resolveMaterials(any(), any(), any()) }
-    }
-
-    @Test
-    fun `a materials node under a text still resolves the tree`() = runTest {
-        val tree = RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(materialsTree()))
-        val execution: TrUAPIProductExecution = mockk()
-        every { execution.render(any()) } returns flowOf(tree)
-        every { execution.resolveMaterials(tree, any(), false) } returns mockk(relaxed = true)
-        val worker = worker(workers = runningWorkers(execution))
-
-        worker.renderMessage(roomId, messageId, messageType, messageData).toList()
-
-        verifyMockk(exactly = 1) { execution.resolveMaterials(tree, any(), false) }
-    }
-
-    @Test
-    fun `a footer card resolves no materials, since nothing draws them there`() = runTest {
-        val execution: TrUAPIProductExecution = mockk()
-        every { execution.render(any()) } returns flowOf(materialsTree())
-        val worker = worker(workers = runningWorkers(execution))
-
-        worker.renderRoomFooter(roomId, "register", DataByteArray(byteArrayOf(1))).toList()
-
-        verifyMockk(exactly = 0) { execution.resolveMaterials(any(), any(), any()) }
-    }
-
-    @Test
-    fun `a collector that ends leaves the materials another collector of the message published`() = runTest {
-        val first: MaterialsResolution = mockk(relaxed = true)
-        val second: MaterialsResolution = mockk(relaxed = true)
-        val tree = materialsTree()
-        val execution: TrUAPIProductExecution = mockk()
-        every { execution.render(any()) } returns flow {
-            emit(tree)
-            awaitCancellation()
-        }
-        every { execution.resolveMaterials(tree, any(), false) } returnsMany listOf(first, second)
-        val worker = worker(workers = runningWorkers(execution))
-        val earlier = launch { worker.renderMessage(roomId, messageId, messageType, messageData).collect { } }
-        runCurrent()
-        val later = launch { worker.renderMessage(roomId, messageId, messageType, messageData).collect { } }
-        runCurrent()
-
-        earlier.cancel()
-        runCurrent()
-        val published = worker.messageMaterials(roomId, messageId, messageType).first()
-        later.cancel()
-
-        assertSame(second, published)
-    }
-
-    @Test
-    fun `a tree that drops its materials unpublishes them while the card stays open`() = runTest {
-        val tree = materialsTree()
-        val execution: TrUAPIProductExecution = mockk()
-        every { execution.render(any()) } returns flow {
-            emit(tree)
-            emit(RendererNode.Column(emptyList(), ColumnProps(horizontalAlignment = null, verticalArrangement = null), emptyList()))
-            awaitCancellation()
-        }
-        every { execution.resolveMaterials(tree, any(), false) } returns mockk(relaxed = true)
-        val worker = worker(workers = runningWorkers(execution))
-        val render = launch { worker.renderMessage(roomId, messageId, messageType, messageData).collect { } }
-        runCurrent()
-
-        val published = worker.messageMaterials(roomId, messageId, messageType).first()
-        render.cancel()
-
-        assertNull(published)
-    }
-
-    private fun materialsTree(vararg children: RendererNode) =
-        RendererNode.Materials(props = MaterialsProps(layers = emptyList()), children = children.toList())
 
     @Test
     fun `a stream that draws renders once, against the room and message it was given`() = runTest {
@@ -677,16 +556,18 @@ class TrUAPIChatWorkerTest {
     @Test
     fun `the lease is acquired once and released once when the scope is cancelled`() = runTest {
         val runtime: TrUAPIHostRuntime = mock()
+        val claim: NativeWorkerClaim = mock()
+        whenever(runtime.claimWorker(productId)).thenReturn(claim)
         val workerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         worker(runtime = runtime, scope = workerScope)
 
-        verify(runtime, times(1)).acquireWorker(productId)
-        verify(runtime, never()).releaseWorker(productId)
+        verify(runtime, times(1)).claimWorker(productId)
+        verify(claim, never()).release()
 
         workerScope.cancel()
         advanceUntilIdle()
 
-        verify(runtime, times(1)).releaseWorker(productId)
+        verify(claim, times(1)).release()
     }
 }
