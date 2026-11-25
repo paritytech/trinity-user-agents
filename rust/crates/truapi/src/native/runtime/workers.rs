@@ -317,16 +317,6 @@ impl WorkerController for Controller {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
-	/// Borrow the current ready execution without taking another reference.
-	pub fn current_worker_execution(
-		&self,
-		product_id: ProductId,
-	) -> Option<Arc<dyn NativeWorkerExecution>> {
-		let execution: Arc<dyn NativeWorkerExecution> =
-			self.worker_session()?.registry.running(&product_id)?;
-		Some(execution)
-	}
-
 	/// Follow one worker independently of the consumers that keep it running.
 	///
 	/// The first update describes the current attempt. Cancellation or session shutdown ends

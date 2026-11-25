@@ -86,21 +86,18 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	let pocket = runtime.claim_worker(product.clone());
 	let boot = views.latest();
 	let owner = open(&boot);
-	assert!(runtime.current_worker_execution(product.clone()).is_none());
+	assert!(running(&runtime, &product).is_none());
 	assert!(boot.module_started());
-	assert!(
-		runtime.current_worker_execution(product.clone()).is_none(),
-		"acknowledgement alone cannot serve a render"
-	);
+	assert!(running(&runtime, &product).is_none(), "acknowledgement alone cannot serve a render");
 	let ledger = runtime.runtime.worker_ledger();
 	assert!(!ledger.ran(&product), "a worker that cannot serve yet counts as never having run");
 	let mut socket = connect(&owner).await;
 	crate::test_support::wait_until(
-		|| runtime.current_worker_execution(product.clone()).is_some(),
+		|| running(&runtime, &product).is_some(),
 		"connected worker published",
 	);
 	assert!(ledger.ran(&product), "the ledger must hear of a running worker to end a crash run");
-	let consumer = runtime.current_worker_execution(product.clone()).unwrap();
+	let consumer = running(&runtime, &product).unwrap();
 	chat.release();
 	chat.release();
 	drop(chat);
@@ -124,7 +121,7 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	let request = crate::frame::ProtocolMessage::decode(&mut &start[..]).unwrap();
 	assert_eq!(request.payload.message_type, crate::frame::MESSAGE_TYPE_START);
 	drop(pocket);
-	assert!(runtime.current_worker_execution(product).is_none());
+	assert!(running(&runtime, &product).is_none());
 	assert!(matches!(
 		consumer.publish_chat_action(text_chat_action("closed")),
 		Err(crate::ProductRuntimeError::Closed)
@@ -133,6 +130,19 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 		(views.starts.lock().unwrap().len(), views.stops.lock().unwrap().clone()),
 		(1, vec![boot.id()])
 	);
+}
+
+/// The execution an observer registering now is told of, if the worker runs.
+fn running(
+	runtime: &NativeTrUApiHostRuntime,
+	product: &ProductId,
+) -> Option<Arc<dyn NativeWorkerExecution>> {
+	let (send, receive) = mpsc::channel();
+	let _observing = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
+	match receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap() {
+		NativeWorkerExecutionState::Running { execution } => Some(execution),
+		NativeWorkerExecutionState::Idle | NativeWorkerExecutionState::Pending => None,
+	}
 }
 
 struct Observer(mpsc::Sender<Option<NativeWorkerExecutionState>>);
@@ -165,7 +175,7 @@ async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	let NativeWorkerExecutionState::Running { execution } = next() else {
 		panic!("a consumer waiting through the failed start must receive the retry's execution");
 	};
-	assert!(Arc::ptr_eq(&execution, &runtime.current_worker_execution(product).unwrap()));
+	assert!(Arc::ptr_eq(&execution, &running(&runtime, &product).unwrap()));
 	retry.failed("renderer lost".into());
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 }
@@ -190,11 +200,10 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 	let current_owner = open(&current);
 	let _socket = connect(&current_owner).await;
 	assert!(!old.module_started());
-	assert!(runtime.current_worker_execution(product.clone()).is_none());
+	assert!(running(&runtime, &product).is_none());
 	assert!(current.module_started());
 	old.failed("late renderer loss".into());
-	runtime
-		.current_worker_execution(product)
+	running(&runtime, &product)
 		.unwrap()
 		.publish_chat_action(text_chat_action("new"))
 		.unwrap();
@@ -247,7 +256,7 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	let owner = open(&boot);
 	let _socket = connect(&owner).await;
 	assert!(boot.module_started());
-	let consumer = runtime.current_worker_execution(first).unwrap();
+	let consumer = running(&runtime, &first).unwrap();
 	let _second = runtime.claim_worker(second.clone());
 	let pending = views.latest();
 	let (send, changes) = mpsc::channel();
@@ -357,7 +366,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 	assert!(old.module_started());
 	runtime.reload_worker(product.clone());
 	let update = views.latest();
-	assert!(runtime.current_worker_execution(product.clone()).is_none());
+	assert!(running(&runtime, &product).is_none());
 	assert!(matches!(
 		owner.publish_chat_action(text_chat_action("old")),
 		Err(crate::ProductRuntimeError::Closed)
