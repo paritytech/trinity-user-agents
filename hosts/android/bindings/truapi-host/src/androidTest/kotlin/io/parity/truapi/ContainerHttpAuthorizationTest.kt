@@ -69,7 +69,7 @@ class ContainerHttpAuthorizationTest {
 
         val product = ProductId.parse("http-policy.paseo").getOrThrow()
         val workers = if (kind == ExecutableKind.WORKER) InstrumentedWorkerHost() else null
-        TrUAPIHostRuntime(bridge, config, workers).use { runtime ->
+        TrUAPIHostRuntime(bridge, config, workers ?: NoWorkers).use { runtime ->
             val claim = workers?.let { runtime.claimWorker(product) }
             val attempt = workers?.awaitAttempt()
             val opened = attempt?.openExecution(bridge, null, null)
