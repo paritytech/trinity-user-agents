@@ -166,7 +166,7 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 900
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"; status=$?; free -m; ps -o rss=,comm= -p "$(pgrep -d, -f qemu-system)"; node e2e/native-ui/run.mjs --platform android --app-id "${APPLICATION_ID:-io.parity.polkadotapp}.nightly" --username "${NATIVE_UI_USERNAME}" --out "${OUT}/native-ui" || status=1; free -m; ps -o rss=,comm= -p "$(pgrep -d, -f qemu-system)"; sudo dmesg -T | grep -iE "out of memory|oom|killed process" | tail -20; exit $status
+          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"; status=$?; free -m; ps -o rss=,comm= -p "$(pgrep -d, -f qemu-system)"; node e2e/native-ui/run.mjs --platform android --app-id "${APPLICATION_ID:-io.parity.polkadotapp}.nightly" --username "${NATIVE_UI_USERNAME}" --out "${OUT}/native-ui" || status=1; free -m; ps -o rss=,comm= -p "$(pgrep -d, -f qemu-system)"; sudo dmesg -T | tail -30; mkdir -p "${OUT}/native-ui/emulator-crash"; find /tmp "${HOME}/.android" -path '*emu-crash*' -type f -exec cp {} "${OUT}/native-ui/emulator-crash/" \; 2>/dev/null; ls -la "${OUT}/native-ui/emulator-crash"; exit $status
 
       - name: Summary
         if: always()
