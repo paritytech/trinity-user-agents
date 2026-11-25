@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::channel::mpsc;
 
-use super::{EngineAttempt, NativeProductExecution, NativeWorkerExecutionState};
+use super::{NativeProductExecution, NativeWorkerExecutionState, StartedAttempt};
 use crate::{
 	background_task::BackgroundTask, native::subscribers::Subscribers, platform::ProductId,
 };
@@ -22,7 +22,7 @@ impl NativeProductExecution {
 
 /// One of the two things a starting worker waits for before it runs.
 pub enum Signal {
-	/// The host reported that the product's module started.
+	/// The engine reported that the product's module started.
 	ModuleStarted,
 	/// The execution's bridge authenticated a connection.
 	Connected,
@@ -40,7 +40,7 @@ enum Phase {
 }
 
 enum Entry {
-	Active { phase: Phase, attempt: Arc<EngineAttempt> },
+	Active { phase: Phase, started: Arc<StartedAttempt> },
 	Retrying,
 }
 
@@ -65,14 +65,14 @@ pub struct Removed(Entry);
 impl Removed {
 	/// Shut the attempt's execution down, then stop it on its engine.
 	pub fn stop(self) {
-		if let Entry::Active { phase, attempt } = self.0 {
+		if let Entry::Active { phase, started } = self.0 {
 			match phase {
 				Phase::Starting { owner: Some(owner), .. } | Phase::Running(owner) => {
 					owner.shutdown()
 				},
 				Phase::Starting { owner: None, .. } => {},
 			}
-			drop(attempt);
+			drop(started);
 		}
 	}
 }
@@ -129,12 +129,9 @@ impl Registry {
 		self.observers.register(product, observer);
 	}
 
-	/// The execution of the product's worker while it runs.
-	pub fn running(&self, product: &ProductId) -> Option<Arc<NativeProductExecution>> {
-		match self.entries.get(product) {
-			Some(Entry::Active { phase: Phase::Running(owner), .. }) => Some(owner.clone()),
-			_ => None,
-		}
+	/// Whether the product's worker runs.
+	pub fn is_running(&self, product: &ProductId) -> bool {
+		matches!(self.entries.get(product), Some(Entry::Active { phase: Phase::Running(_), .. }))
 	}
 
 	/// Enter a new attempt as starting, returning the entry it replaces.
@@ -143,10 +140,10 @@ impl Registry {
 		&mut self,
 		product: &ProductId,
 		timeout: BackgroundTask,
-		attempt: Arc<EngineAttempt>,
+		started: Arc<StartedAttempt>,
 	) -> Option<Removed> {
 		let phase = Phase::Starting { owner: None, module_ready: false, _timeout: timeout };
-		self.insert(product, Entry::Active { phase, attempt })
+		self.insert(product, Entry::Active { phase, started })
 	}
 
 	/// Give the starting attempt the execution `open` builds.

@@ -121,7 +121,8 @@ pub fn claimed_worker(
 	(host, claim, worker)
 }
 
-/// A worker host for a runtime whose test starts no worker.
+/// A worker engine that drops every attempt it is asked to start, for a test that needs no
+/// worker.
 pub fn no_workers() -> Arc<dyn NativeWorkerEngine> {
 	Arc::new(mpsc::channel().0)
 }
