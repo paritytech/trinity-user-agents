@@ -251,6 +251,13 @@ export async function runChatScreeningE2e(
     config: HOST_STORED_ROOM,
   });
   const roomsAfter = registrations(chatLogPath);
+  // Any refusal keeps the room from the host, so the row also checks that the
+  // budget is what refused the icon.
+  const namesTheBudget =
+    oversizedIcon.isErr() &&
+    JSON.stringify(oversizedIcon.error).includes(
+      `icon must be at most ${ICON_MAX_BYTES} bytes`,
+    );
   rows.push(
     oversizedIcon.isOk()
       ? row(
@@ -259,7 +266,7 @@ export async function runChatScreeningE2e(
           `accepted: ${JSON.stringify(oversizedIcon.value)}`,
           startedAt,
         )
-      : roomsAfter === roomsBefore
+      : roomsAfter === roomsBefore && namesTheBudget
         ? row(
             "create_room_refuses_an_icon_past_its_budget",
             "pass",
@@ -269,7 +276,9 @@ export async function runChatScreeningE2e(
         : row(
             "create_room_refuses_an_icon_past_its_budget",
             "fail",
-            "rejected the product, but the host registered the room",
+            roomsAfter === roomsBefore
+              ? `refused, but not for the icon budget: ${JSON.stringify(oversizedIcon.error)}`
+              : "rejected the product, but the host registered the room",
             startedAt,
           ),
   );

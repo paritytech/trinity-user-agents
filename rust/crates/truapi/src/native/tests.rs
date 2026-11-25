@@ -122,6 +122,9 @@ pub struct EventCallbacks {
 	pub chat_feed: Mutex<Vec<(String, truapi::latest::ChatFeedUpdate, bool)>>,
 	/// The answer of `update_feed`.
 	pub chat_feed_answer: Mutex<Result<crate::platform::ChatFeedOutcome, HostRejection>>,
+	/// The host serves no metadata change, preview, delete or feed update, as
+	/// a host that keeps the defaults of its bridge.
+	pub chat_unserved: Mutex<bool>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -172,6 +175,11 @@ impl EventCallbacks {
 			.push(format!("{callback} {room_id}"));
 	}
 
+	/// Whether the host serves the room changes, or answers `Unsupported`.
+	fn serves_room_changes(&self) -> bool {
+		!*self.chat_unserved.lock().expect("unserved mutex poisoned")
+	}
+
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
@@ -189,6 +197,7 @@ impl EventCallbacks {
 			chat_room_configs: Mutex::new(HashMap::new()),
 			chat_feed: Mutex::new(Vec::new()),
 			chat_feed_answer: Mutex::new(Ok(crate::platform::ChatFeedOutcome::Applied)),
+			chat_unserved: Mutex::new(false),
 			chat_posted: Mutex::new(Vec::new()),
 			theme: Mutex::new(v01::HostThemeSubscribeItem {
 				name: v01::ThemeName::Default,
@@ -575,6 +584,9 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		_metadata: truapi::latest::ChatRoomMetadata,
 	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
+		if !self.serves_room_changes() {
+			return Ok(crate::platform::ChatRoomChangeOutcome::Unsupported);
+		}
 		self.declare("metadata", &room_id);
 		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
@@ -584,6 +596,9 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		_preview: truapi::latest::ChatRoomPreview,
 	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
+		if !self.serves_room_changes() {
+			return Ok(crate::platform::ChatRoomChangeOutcome::Unsupported);
+		}
 		self.declare("preview", &room_id);
 		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
@@ -592,6 +607,9 @@ impl NativeChatCallbacks for EventCallbacks {
 		&self,
 		room_id: String,
 	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
+		if !self.serves_room_changes() {
+			return Ok(crate::platform::ChatRoomChangeOutcome::Unsupported);
+		}
 		self.declare("delete", &room_id);
 		self.chat_created_rooms
 			.lock()
@@ -606,6 +624,9 @@ impl NativeChatCallbacks for EventCallbacks {
 		update: truapi::latest::ChatFeedUpdate,
 		persist: bool,
 	) -> Result<crate::platform::ChatFeedOutcome, HostRejection> {
+		if !self.serves_room_changes() {
+			return Ok(crate::platform::ChatFeedOutcome::Unsupported);
+		}
 		let answer = self.chat_feed_answer.lock().expect("feed answer mutex poisoned").clone();
 		if matches!(answer, Ok(crate::platform::ChatFeedOutcome::Applied)) {
 			self.chat_feed
@@ -1977,7 +1998,10 @@ fn native_chat_adapter_creates_a_room_with_its_configuration() {
 		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	create(truapi::latest::ChatRoomConfig::default()).unwrap();
 	assert_eq!(read(), hosted(truapi::latest::ChatRoomConfig::default()));
-	assert!(callbacks.chat_declared.lock().expect("declared mutex poisoned").is_empty());
+	assert!(
+		callbacks.chat_declared.lock().expect("declared mutex poisoned").is_empty(),
+		"the configuration reaches the host with `create_room`, in no call of its own"
+	);
 }
 
 // The host's own refusal of a configuration reaches the product by its name,
@@ -2004,7 +2028,8 @@ fn native_chat_adapter_reports_a_refused_configuration_by_name() {
 			.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
-			.is_empty()
+			.is_empty(),
+		"a room left behind would have a behaviour that the product did not ask for"
 	);
 }
 
@@ -2079,7 +2104,85 @@ fn native_chat_adapter_forwards_every_declaration() {
 		["metadata support", "preview support", "delete support"]
 	);
 	// A deletion publishes the room list again, without the room.
-	assert!(ready_rooms(rooms.as_mut(), "the list after the delete").rooms.is_empty());
+	assert!(
+		ready_rooms(rooms.as_mut(), "the list after the delete").rooms.is_empty(),
+		"a subscriber would keep showing the deleted room"
+	);
+}
+
+// A host that does not serve a room change answers `Unsupported`, and the
+// product must receive it to tell it from a failure. A delete that the host
+// did not apply changes no room, so no room list follows it.
+#[test]
+fn native_chat_adapter_passes_an_unsupported_change_on() {
+	let (callbacks, platform, product) = chat_adapter();
+	let room = || "support".to_string();
+	futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
+		&platform,
+		&product,
+		room(),
+		room_request("support"),
+	))
+	.unwrap();
+	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
+	assert_eq!(ready_rooms(rooms.as_mut(), "the room list").rooms.len(), 1);
+	*callbacks.chat_unserved.lock().expect("unserved mutex poisoned") = true;
+
+	use crate::platform::ChatPlatform as _;
+	let outcomes = futures::executor::block_on(async {
+		let metadata = platform
+			.set_chat_room_metadata(
+				&product,
+				truapi::latest::HostChatSetRoomMetadataRequest {
+					room_id: room(),
+					metadata: room_metadata(),
+				},
+			)
+			.await?;
+		let preview = platform
+			.set_chat_room_preview(
+				&product,
+				truapi::latest::HostChatSetRoomPreviewRequest {
+					room_id: room(),
+					preview: room_preview(),
+				},
+			)
+			.await?;
+		let deleted = platform
+			.delete_chat_room(
+				&product,
+				truapi::latest::HostChatDeleteRoomRequest { room_id: room() },
+			)
+			.await?;
+		let fed = platform
+			.update_chat_feed(
+				&product,
+				truapi::latest::HostChatUpdateFeedRequest {
+					room_id: room(),
+					update: truapi::latest::ChatFeedUpdate::Deleted {
+						message_id: "m1".to_string(),
+					},
+				},
+				true,
+			)
+			.await?;
+		Ok::<_, truapi::latest::GenericError>(([metadata, preview, deleted], fed))
+	})
+	.expect("an unsupported change is an answer of the host, not a failure");
+	let unsupported = || crate::platform::ChatRoomChangeOutcome::Unsupported;
+	assert_eq!(
+		outcomes,
+		(
+			[unsupported(), unsupported(), unsupported()],
+			crate::platform::ChatFeedOutcome::Unsupported
+		)
+	);
+
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+	assert!(
+		matches!(rooms.as_mut().poll_next(&mut cx), core::task::Poll::Pending),
+		"the room still exists, so a new list would tell a subscriber of a change that did not happen"
+	);
 }
 
 #[test]
@@ -3962,6 +4065,31 @@ fn a_chat_icon_is_screened_as_create_room_screens_it() {
 	);
 	assert!(screen_chat_icon("data:image/svg+xml,<svg onload=alert(1)>".to_string()).is_err());
 	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
+}
+
+/// A host builds its room icon from what `createRoom` and `setRoomMetadata`
+/// carry. If it refused a form that the core passes on, the product would
+/// lose a room that the core accepted.
+#[test]
+fn a_room_icon_of_a_chat_callback_is_a_resource_or_an_icon_of_the_earlier_client() {
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+	let accepted = [
+		(cid.as_str(), cid.as_str()),
+		("  ", ""),
+		("data:image/png;base64,iVBORw0KGgo=", "data:image/png;base64,iVBORw0KGgo="),
+		("https://example.invalid", "https://example.invalid/"),
+	];
+	for (icon, screened) in accepted {
+		assert_eq!(screen_chat_room_icon(icon.to_string()).unwrap(), screened, "{icon:?}");
+	}
+	assert!(
+		screen_chat_room_icon("javascript:alert(1)".to_string()).is_err(),
+		"neither rule takes a script URL, so a host must not take one from a callback"
+	);
+	assert!(
+		screen_chat_icon(cid).is_err(),
+		"the icon rule of the earlier client must keep refusing a CID"
+	);
 }
 
 /// Both sides NFC-normalize, so a host that compares raw bytes against what
