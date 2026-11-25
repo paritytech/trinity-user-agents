@@ -519,8 +519,8 @@ struct MessageReaction {
 struct AggregatedReaction {
     count: u32,
     reacted_by_me: bool,
-    // The contact reacted with this emoji and the user has not seen that
-    // reaction yet.
+    // Another participant reacted with this emoji and the user has not seen
+    // that reaction yet.
     unseen: bool,
     // The user's own reaction has not left yet.
     pending: bool,

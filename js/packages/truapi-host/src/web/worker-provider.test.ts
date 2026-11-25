@@ -1056,179 +1056,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
-  it("keeps the worker alive until pending operations end", async () => {
-    const worker = new FakeWorker();
-    const provider = await readyProvider(worker, {
-      runtimeConfig: runtimeConfig({ executionKind: "Worker" }),
-    });
-
-    const product = ProductContext.enc({
-      productId: asProductId("dotli.dot"),
-      executionKind: "Worker",
-    });
-
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 1,
-      name: "beginOperation",
-      args: [product, "funding"],
-    });
-    await settle();
-
-    provider.dispose();
-    await settle();
-    expect(worker.terminated).toBe(false);
-
-    // The deferred teardown terminates the worker on a zero-delay timer.
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 2,
-      name: "endOperation",
-      args: [product, 1],
-    });
-    await settle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(worker.terminated).toBe(true);
-  });
-
-  it("stops waiting for an operation that never ends", async () => {
-    const worker = new FakeWorker();
-    const provider = await readyProvider(worker, {
-      runtimeConfig: runtimeConfig({ executionKind: "Worker" }),
-      operationGraceMs: 10,
-    });
-
-    const product = ProductContext.enc({
-      productId: asProductId("dotli.dot"),
-      executionKind: "Worker",
-    });
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 1,
-      name: "beginOperation",
-      args: [product, "funding"],
-    });
-    await settle();
-
-    provider.dispose();
-    await settle();
-    expect(worker.terminated).toBe(false);
-
-    // The operation never ends, so the grace period is what tears the worker
-    // down rather than leaving the core running for a product that is gone.
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(worker.terminated).toBe(true);
-  });
-
-  it("ending an unknown or already-ended operation releases no other hold", async () => {
-    const worker = new FakeWorker();
-    let nextId = 1;
-    const providerPromise = createProviderFromRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        productOperations: { beginOperation: async () => ({ id: nextId++ }) },
-      }),
-      { runtimeConfig: runtimeConfig({ executionKind: "Worker" }) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    const provider = await finishProviderReady(worker, providerPromise);
-
-    const product = ProductContext.enc({
-      productId: asProductId("dotli.dot"),
-      executionKind: "Worker",
-    });
-    const begin = (requestId: number) =>
-      worker.emit({
-        kind: "callbackRequest",
-        requestId,
-        name: "beginOperation",
-        args: [product, ""],
-      });
-    const end = (requestId: number, id: number) =>
-      worker.emit({
-        kind: "callbackRequest",
-        requestId,
-        name: "endOperation",
-        args: [product, id],
-      });
-
-    begin(1);
-    begin(2);
-    await settle();
-    provider.dispose();
-
-    // Operation 1 ends twice and an unknown id ends once. Operation 2 still
-    // holds the worker.
-    end(3, 1);
-    end(4, 1);
-    end(5, 99);
-    await settle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(worker.terminated).toBe(false);
-
-    end(6, 2);
-    await settle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(worker.terminated).toBe(true);
-  });
-
-  it("keeps two products' operation holds apart when their ids collide", async () => {
-    const worker = new FakeWorker();
-    const providerPromise = createProviderFromRuntime(
-      asWorker(worker),
-      // `OperationId` is unique per product, so a host may hand the same id to
-      // every product it serves.
-      makeHostCallbacks({
-        productOperations: { beginOperation: async () => ({ id: 1 }) },
-      }),
-      { runtimeConfig: runtimeConfig({ executionKind: "Worker" }) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    const provider = await finishProviderReady(worker, providerPromise);
-
-    const productFor = (productId: ProductId) =>
-      ProductContext.enc({ productId, executionKind: "Worker" });
-    const first = productFor(asProductId("first.dot"));
-    const second = productFor(asProductId("second.dot"));
-
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 1,
-      name: "beginOperation",
-      args: [first, ""],
-    });
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 2,
-      name: "beginOperation",
-      args: [second, ""],
-    });
-    await settle();
-    provider.dispose();
-
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 3,
-      name: "endOperation",
-      args: [first, 1],
-    });
-    await settle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(worker.terminated).toBe(false);
-
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 4,
-      name: "endOperation",
-      args: [second, 1],
-    });
-    await settle();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(worker.terminated).toBe(true);
-  });
-
   it("routes payload-carrying subscriptions by name", async () => {
     const worker = new FakeWorker();
     const keys: Uint8Array[] = [];
@@ -1560,42 +1387,24 @@ describe("createWebWorkerPairingHostRuntime", () => {
     ).not.toThrow();
   });
 
-  it("leaves the render's worker reference to the core", async () => {
+  it("opening and closing a render sends no worker demand messages", async () => {
     const worker = new FakeWorker();
-    const runtime = await readyRuntime(worker);
-    const provider = await finishProviderReady(
-      worker,
-      runtime.createProvider({ productId: asProductId("dotli.dot") }),
-    );
-    const seen: WorkerDemandChange[] = [];
-    runtime.subscribeWorkerDemand((change) => seen.push(change));
-
+    const provider = await readyProvider(worker);
     const stop = provider.render!(renderRequest(), { onUpdate: () => {} });
-
-    // The core holds the reference, so this thread asks for none of its own.
-    expect(indexOfKind(worker, "acquireWorker")).toBe(-1);
-    // The demand the core's own reference caused still reaches the host.
-    worker.emit({
-      kind: "workerDemandChanged",
-      productId: asProductId("dotli.dot"),
-      wanted: true,
-    });
-    expect(seen).toEqual([
-      { productId: asProductId("dotli.dot"), wanted: true },
-    ]);
-
     stop();
-    expect(indexOfKind(worker, "releaseWorker")).toBe(-1);
-    worker.emit({
-      kind: "workerDemandChanged",
-      productId: asProductId("dotli.dot"),
-      wanted: false,
-    });
-    expect(seen).toEqual([
-      { productId: asProductId("dotli.dot"), wanted: true },
-      { productId: asProductId("dotli.dot"), wanted: false },
-    ]);
-    runtime.dispose();
+    expect(
+      worker.messages
+        .filter(({ kind }) =>
+          [
+            "renderStart",
+            "renderStop",
+            "claimWorker",
+            "releaseWorker",
+          ].includes(kind),
+        )
+        .map(({ kind }) => kind),
+    ).toEqual(["renderStart", "renderStop"]);
+    provider.dispose();
   });
 
   it("binds a method-valued onUpdate to its own receiver", async () => {
@@ -1688,9 +1497,10 @@ describe("worker demand", () => {
     const runtime = await readyRuntime(worker);
     const seen: WorkerDemandChange[] = [];
 
-    runtime.acquireWorker(asProductId("a.dot"));
+    const first = runtime.claimWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
-      kind: "acquireWorker",
+      kind: "claimWorker",
+      claimId: 1,
       productId: asProductId("a.dot"),
     });
     worker.emit({
@@ -1705,17 +1515,17 @@ describe("worker demand", () => {
     );
     expect(seen).toEqual([{ productId: asProductId("a.dot"), wanted: true }]);
 
-    runtime.acquireWorker(asProductId("b.dot"));
+    const second = runtime.claimWorker(asProductId("b.dot"));
     worker.emit({
       kind: "workerDemandChanged",
       productId: asProductId("b.dot"),
       wanted: true,
     });
 
-    runtime.releaseWorker(asProductId("a.dot"));
+    first.release();
     expect(worker.messages.at(-1)).toEqual({
       kind: "releaseWorker",
-      productId: asProductId("a.dot"),
+      claimId: 1,
     });
     worker.emit({
       kind: "workerDemandChanged",
@@ -1728,6 +1538,7 @@ describe("worker demand", () => {
       { productId: asProductId("a.dot"), wanted: false },
     ]);
 
+    second.release();
     unsubscribe();
     worker.emit({
       kind: "workerDemandChanged",
@@ -1757,7 +1568,7 @@ describe("worker demand", () => {
 
     // Nothing is posted to a disposed worker, and a late subscriber sees nothing.
     const before = worker.messages.length;
-    runtime.acquireWorker(asProductId("a.dot"));
+    runtime.claimWorker(asProductId("a.dot")).release();
     expect(worker.messages.length).toBe(before);
     const late: WorkerDemandChange[] = [];
     runtime.subscribeWorkerDemand((change) => late.push(change));

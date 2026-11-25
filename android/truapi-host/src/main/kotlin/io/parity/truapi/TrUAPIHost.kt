@@ -27,7 +27,6 @@ package io.parity.truapi
 
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -51,6 +50,7 @@ import uniffi.truapi.NativeMaterialsResolution
 import uniffi.truapi.ResolvedMaterials
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomChangeOutcome
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
@@ -116,6 +116,7 @@ import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
@@ -192,9 +193,6 @@ interface HostCoreStorage {
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
 }
-
-/** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
-private val defaultOperationIds = AtomicInteger(0)
 
 /**
  * Host-side callback bundle that the Rust core invokes for capabilities the
@@ -397,7 +395,7 @@ interface HostBridge {
      * [TrUAPIHostRuntime] was built with, never on the per-execution bridge
      * passed to [TrUAPIHostRuntime.openProductExecution]. Can arrive on any
      * thread, including synchronously on the calling thread during
-     * `acquireWorker`/`releaseWorker`, often the main thread and
+     * `claimWorker` or a claim's `release`, often the main thread and
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
@@ -410,24 +408,6 @@ interface HostBridge {
      * Can arrive on any thread.
      */
     fun workerCrashing(productId: ProductId, crashes: UInt) {}
-
-    /**
-     * Begin a pending operation. [label] is a log/UI hint, empty when the
-     * product gave none. Leave unimplemented to opt out of worker keep-alive;
-     * override to run background work past the product's surface.
-     *
-     * The default id is still distinct per call, because an operation id names
-     * one operation: a host overriding only [endOperation], and the core's own
-     * demand accounting, both end the wrong ones when every operation shares an
-     * id.
-     */
-    @Throws(HostRejection::class)
-    suspend fun beginOperation(productId: ProductId, label: String): UInt =
-        defaultOperationIds.incrementAndGet().toUInt()
-
-    /** End a pending operation. Idempotent, so a retry after an ambiguous failure is safe. */
-    @Throws(HostRejection::class)
-    suspend fun endOperation(productId: ProductId, id: UInt) {}
 
     /**
      * A device finished pairing with this signing host.
@@ -592,12 +572,17 @@ interface ChatHostBridge {
     @Throws(HostRejection::class)
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
-    /** Return the current product-scoped native Chat rooms. */
+    /**
+     * Return the current product-scoped native Chat rooms. The core checks the
+     * room of each change to a room against this list, so a host that cannot
+     * read its rooms throws: an empty list makes the core answer `UnknownRoom`
+     * for a room that exists.
+     */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
 
     // The members below have defaults for a host that does not serve the Chat
-    // Extension v2 requests yet. The product receives a rejection for each
+    // Extension v2 requests yet. The product receives `Unsupported` for each
     // request, with two exceptions. The host ignores metadata and keeps the
     // name and icon of `createRoom`. The host creates a room with the
     // configuration that keeps the behaviour that it serves, and refuses any
@@ -622,17 +607,23 @@ interface ChatHostBridge {
     @Throws(HostRejection::class)
     suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
 
-    /** Replace how a room shows in the chat list. */
-    @Throws(HostRejection::class)
-    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): Unit =
-        throw unservedChatRequest("setRoomPreview")
-
     /**
-     * Delete a room with its messages, cache and declarations, and close its
-     * screen. A room that does not exist is not an error.
+     * Replace how a room shows in the chat list, and answer
+     * [ChatRoomChangeOutcome.APPLIED]. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
-    suspend fun deleteRoom(roomId: String): Unit = throw unservedChatRequest("deleteRoom")
+    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
+
+    /**
+     * Delete a room with its messages, cache and declarations, close its
+     * screen, and answer [ChatRoomChangeOutcome.APPLIED]. A room that does not
+     * exist is not an error. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     */
+    @Throws(HostRejection::class)
+    suspend fun deleteRoom(roomId: String): ChatRoomChangeOutcome = ChatRoomChangeOutcome.UNSUPPORTED
 
     /**
      * Apply one change to the messages of a room. With [persist] the host
@@ -642,22 +633,20 @@ interface ChatHostBridge {
      * Return [ChatFeedOutcome.APPLIED], or the outcome that names why the host
      * did not apply the change. The product receives each outcome as its own
      * error. Throw only for a failure of the host, which the product receives
-     * as `HostFailure`.
+     * as `HostFailure`. The default answers [ChatFeedOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
     suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
-        throw unservedChatRequest("updateFeed")
+        ChatFeedOutcome.UNSUPPORTED
 }
 
 /**
  * The configuration of a room that declares nothing: the host stores the
- * messages and serves every part of the room itself.
+ * messages and serves every part of the room itself. Each read builds a new
+ * value, because the generated record is mutable.
  */
-val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
-    ChatRoomConfig(productSource = false, reactionDetails = false)
-
-private fun unservedChatRequest(request: String): HostRejection =
-    HostRejection.Rejected("this host does not serve chat $request")
+val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig
+    get() = ChatRoomConfig(productSource = false, reactionDetails = false)
 
 /**
  * Native game-reminder surface. Implement and pass to
@@ -834,11 +823,7 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun clearProductStorage(productId: ProductId) =
         withStorageException { bridge.clearProductStorage(productId) }
 
-    override suspend fun beginOperation(productId: ProductId, label: String): UInt =
-        withHostRejection { bridge.beginOperation(productId, label) }
 
-    override suspend fun endOperation(productId: ProductId, id: UInt) =
-        withHostRejection { bridge.endOperation(productId, id) }
 }
 
 // A host that throws an exception type its callback does not declare crosses
@@ -1302,23 +1287,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
-    /**
-     * Take one reference on the product's worker for a modality holder that is
-     * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.requestWorkerTransition], which is where the host starts the
-     * worker. Pair every call with one [releaseWorker].
-     */
-    fun acquireWorker(productId: ProductId) {
-        inner.acquireWorker(productId)
-    }
-
-    /**
-     * Release one reference. The last one reports a stop transition, after
-     * which the host may stop the worker. Releasing with none held is a no-op.
-     */
-    fun releaseWorker(productId: ProductId) {
-        inner.releaseWorker(productId)
-    }
+    /** The first claim requests a worker start. Releasing the last claim requests a stop. */
+    fun claimWorker(productId: ProductId): NativeWorkerClaim = inner.claimWorker(productId)
 
     /**
      * Forget one product: revoke its grants and Allow once answers, then

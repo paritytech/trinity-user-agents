@@ -20,6 +20,7 @@ import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomChangeOutcome
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
@@ -88,12 +89,14 @@ class ProductChatHostBridge(
         chatMessaging.setRoomMetadata(room, metadata.name, iconChange, metadata.toModel()).orReject()
     }
 
-    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) {
+    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): ChatRoomChangeOutcome {
         chatMessaging.setRoomPreview(requireRoom(roomId), preview.toModel(productId)).orReject()
+        return ChatRoomChangeOutcome.APPLIED
     }
 
-    override suspend fun deleteRoom(roomId: String) {
+    override suspend fun deleteRoom(roomId: String): ChatRoomChangeOutcome {
         chatMessaging.deleteRoom(requireRoom(roomId)).orReject()
+        return ChatRoomChangeOutcome.APPLIED
     }
 
     /**
