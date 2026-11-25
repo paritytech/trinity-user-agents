@@ -277,6 +277,18 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// normalized these arguments and screened the icon scheme; escaping them
     /// for the surface that renders them is still the host's job.
     ///
+    /// A room id is unique only among the rooms of one product, so the host
+    /// keeps each room under the product and the id. A product built against
+    /// the earlier client chooses its room ids freely. The host never changes a
+    /// room that the product does not host: a room of another product with the
+    /// same id, or a room that the product takes part in as a bot.
+    ///
+    /// The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+    /// `data:` URL with an image type. Only a product built against the earlier
+    /// client sends an `https` URL, and the core has not checked the payload of
+    /// its `data:` URL. The `data:` URL of any other product has a Base64
+    /// payload that the core decoded.
+    ///
     /// The default ``createRoom(roomId:name:icon:config:)`` calls it for a
     /// room with ``ChatRoomConfig/hostDefault``, so a host that keeps only the
     /// default configuration implements this one. A host that implements
@@ -288,7 +300,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Create or resolve a room as ``createRoom(roomId:name:icon:)`` does, and
     /// keep `config` for it in the same step, across restarts, for a new room
     /// and for a room that exists. A change of `productSource` discards the
-    /// stored messages or the cached pages of the room.
+    /// stored messages or the cached pages of the room, and its preview.
     ///
     /// Throw ``HostChatCreateRoomError/UnsupportedConfig`` for a configuration
     /// the host cannot keep, before it creates or changes anything. The
@@ -335,9 +347,13 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// last `createRoom`. The core reads it once before each change to a room
     /// and before each query of the room. Before a posted message it reads the
     /// room the product names, before any check that the product created the
-    /// room. Answer `nil` for a room that the product never created, and throw
-    /// when the host cannot read its rooms. The default finds the room in
-    /// ``listRooms()`` and pairs it with ``ChatRoomConfig/hostDefault``.
+    /// room. The host looks the room up among the rooms of the product only.
+    /// Answer `nil` for a room that the product never created, and throw when
+    /// the host cannot read its rooms. The default finds the room in
+    /// ``listRooms()`` and pairs it with ``ChatRoomConfig/hostDefault``. A
+    /// host that serves a Chat Extension v2 request implements `room` with a
+    /// read of one room, because the default reads the whole room list for
+    /// each change to a room.
     func room(roomId: String) async throws -> ChatRoomState?
 
     /// Replace the name, description, icon and empty-room text of a room, and
@@ -353,7 +369,9 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Delete a room with its messages, cache and declarations, close its
     /// screen, and answer ``ChatRoomChangeOutcome/applied``. A room that does
-    /// not exist is not an error. The default answers
+    /// not exist is not an error. The core has not checked that the product
+    /// created the room, so the host deletes only a room that the product
+    /// hosts, and does nothing for any other id. The default answers
     /// ``ChatRoomChangeOutcome/unsupported``.
     func deleteRoom(roomId: String) async throws -> ChatRoomChangeOutcome
 
