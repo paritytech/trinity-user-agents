@@ -40,6 +40,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let workerEngine: any NativeWorkerEngine
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let remoteConfig: RemoteConfigObserving?
@@ -53,10 +54,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private var contactsChangeNotifier: ContactsChangeNotifier?
     private var fundingProvidersObservation: Task<Void, Never>?
 
-    /// Set once at startup, before any product opens. The runtime is built on
-    /// first use, which is long after, so the WebView host is in place by then.
-    private var webViewHost: (any NativeHostWebViewWorker)?
-
     /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
     /// it is built, or right away if it already is.
     private var paymentsBridge: RustPaymentsBridge?
@@ -67,6 +64,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
+        workerEngine: any NativeWorkerEngine,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
@@ -78,6 +76,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
+        self.workerEngine = workerEngine
         self.tldProvider = tldProvider
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
@@ -97,13 +96,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     @MainActor
     var presentationView: ControllerBackedProtocol? {
         confirmationRouterFacade.productsRouter.presentationView
-    }
-
-    func attach(webViewHost: any NativeHostWebViewWorker) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        self.webViewHost = webViewHost
     }
 
     func shutdownProductWorkers() {
@@ -179,7 +171,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerHost: webViewHost)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerEngine: workerEngine)
         if handedOverKey != nil {
             deviceEncryptionKeys.forgetHandedOverKey()
         }

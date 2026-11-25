@@ -155,7 +155,7 @@ struct TrUAPIHostRuntimeProviderConfigTests {
             deviceEncryptionKey: nil
         )
 
-        _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config)
+        _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config, workerEngine: NoWorkers())
     }
 
     /// Tests run in one build only, so the stacks the other builds run are
@@ -169,6 +169,6 @@ struct TrUAPIHostRuntimeProviderConfigTests {
             databaseDirectory: makeDatabaseDirectory()
         )
 
-        _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config)
+        _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config, workerEngine: NoWorkers())
     }
 }

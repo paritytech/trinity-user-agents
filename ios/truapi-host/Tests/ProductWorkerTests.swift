@@ -32,7 +32,8 @@ struct ProductWorkerTests {
         ))
         pocket.release()
         #expect(await stops.next() == attempt.id())
-        #expect(runtime.currentWorkerExecution(productId: product) == nil)
+        var states = runtime.workerExecutionState(productId: product).makeAsyncIterator()
+        if case .running = await states.next() { Issue.record("a worker nobody claims is still published") }
         #expect(!attempt.moduleStarted())
         runtime.shutdownProductWorkers()
     }
@@ -51,12 +52,12 @@ struct ProductWorkerTests {
             runtimeConfig: HostRuntimeConfig(
                 hostName: "worker-test", stack: previewnetStack(), databaseDirectory: temporaryDatabaseDirectory()
             ),
-            workerHost: host
+            workerEngine: host
         )
     }
 }
 
-private final class RecordingWebViews: NativeHostWebViewWorker, Sendable {
+private final class RecordingWebViews: NativeWorkerEngine, Sendable {
     let starts = AsyncStream<NativeWorkerAttempt>.makeStream()
     let stops = AsyncStream<UInt64>.makeStream()
 

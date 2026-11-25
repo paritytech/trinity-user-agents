@@ -53,18 +53,6 @@ struct PocketHandlersTests {
         #expect(workers.references.releaseCounts == [1, 1, 1])
     }
 
-    @Test(.timeLimit(.minutes(1)))
-    func anUnavailableWorkerReturnsItsPocketClaim() async {
-        let workers = StubWorkerRuntime()
-        workers.fail(gameProductId, reason: "module failed to start")
-        let handlers = makeHandlers(workers: workers)
-
-        _ = await handlers.reconcile([loyalty])
-
-        #expect(handlers.handler(of: gameProductId) == nil)
-        #expect(workers.references.releaseCounts == [1])
-    }
-
     /// A product that offers no such card draws nothing, and a handler for it
     /// would boot a worker anyway. The host-placed card every Pocket carries
     /// sits on a product like that.

@@ -284,7 +284,7 @@ private struct NetworkTestProduct {
             let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
                 hostName: "network-tests", stack: previewnetStack(),
                 databaseDirectory: temporaryDatabaseDirectory()
-            ))
+            ), workerEngine: NoWorkers())
             let execution = try runtime.openAppExecution(
                 bridge: bridge,
                 productId: ProductId("network.paseo")

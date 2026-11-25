@@ -1066,21 +1066,23 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     public convenience init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
-        workerHost: NativeHostWebViewWorker? = nil
+        workerEngine: NativeWorkerEngine
     ) throws {
-        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default, workerHost: workerHost)
+        try self.init(
+            bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default, workerEngine: workerEngine
+        )
     }
 
     init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
         notificationCenter: NotificationCenter,
-        workerHost: NativeHostWebViewWorker? = nil
+        workerEngine: NativeWorkerEngine
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
         let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
-            callbacks: adapter, runtimeConfig: runtimeConfig, workerHost: workerHost
+            callbacks: adapter, runtimeConfig: runtimeConfig, workerEngine: workerEngine
         )
         self.inner = inner
         self.notificationCenter = notificationCenter
@@ -1383,11 +1385,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Keep the worker running until this consumer releases its claim.
     public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
         inner.claimWorker(productId: productId)
-    }
-
-    /// Read the ready execution without acquiring demand.
-    public func currentWorkerExecution(productId: ProductId) -> NativeWorkerExecution? {
-        inner.currentWorkerExecution(productId: productId)
     }
 
     /// Observe the current startup and its replacements without holding the worker open.
