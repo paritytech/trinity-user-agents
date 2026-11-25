@@ -1091,9 +1091,9 @@ fn validate_adapter_codec_boundary_type(
 
 /// The codec of a result that is an optional codec payload, `Option<Codec>`.
 ///
-/// The adapter encodes the value a host answers and passes `undefined` on as
-/// it is, so the WASM bridge reads `Uint8Array | undefined` and decodes the
-/// bytes. `None` for any other type.
+/// The adapter encodes the value a host answers, and passes on `undefined`
+/// for a host that answers `undefined` or `null`. So the WASM bridge reads
+/// `Uint8Array | undefined` and decodes the bytes. `None` for any other type.
 fn optional_codec_result<'a>(
 	ty: &'a TypeRef,
 	codec_types: &BTreeSet<String>,
@@ -1167,7 +1167,7 @@ fn adapter_unary_impl(
 	let call = format!("{host_method}({args})");
 	if let Some(ty) = optional_codec_result(ok, codec_types, local_codec_types) {
 		return Ok(format!(
-			"async ({params}) => {{ const value = await {call}; return value === undefined ? undefined : {ty}.enc(value); }}"
+			"async ({params}) => {{ const value = await {call}; return value == null ? undefined : {ty}.enc(value); }}"
 		));
 	}
 	let body = match ok {

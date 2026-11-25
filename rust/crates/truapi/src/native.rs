@@ -362,16 +362,31 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
 }
 
-/// Screen a product-supplied chat icon with the rules `create_room` and
-/// `register_bot` apply.
+/// Screen a product-supplied chat icon with the rules `register_bot` and the
+/// `create_room` of the earlier client apply.
 ///
 /// Hosts call this wherever they take a room icon from a product instead of
 /// screening it themselves: the rules are the core's, and a host that guesses
 /// at them draws icons the core refused. An absent icon screens to the empty
-/// string.
+/// string. The icon that a chat callback carries is screened with
+/// [`screen_chat_room_icon`].
 #[uniffi::export]
 pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
+}
+
+/// Screen the room icon that a chat callback carries.
+///
+/// The core has screened that icon by the rules of the product's client. It is
+/// a resource, which is an inline image or the CID of a Bulletin preimage, or
+/// an icon that [`screen_chat_icon`] accepts. A host that keeps a typed icon
+/// builds it from a callback with this, and so accepts each of them. An absent
+/// icon screens to the empty string.
+#[uniffi::export]
+pub fn screen_chat_room_icon(icon: String) -> Result<String, NativeChatFieldError> {
+	crate::platform::validate_chat_resource("icon", &icon)
+		.or_else(|_| crate::platform::validate_chat_icon("icon", &icon))
+		.map_err(Into::into)
 }
 
 /// Whether `product_id` is a first-party product the host grants every
