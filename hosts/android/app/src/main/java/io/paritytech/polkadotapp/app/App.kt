@@ -60,9 +60,11 @@ class App : Application(), Configuration.Provider {
     }
 
     override fun onCreate() {
-        super.onCreate()
-
+        // Ahead of super.onCreate(), which is where Hilt builds this class's eager fields, so a
+        // provider that throws there is reported. It reads the manifest and needs nothing injected.
         SentryLogGate.install(this)
+
+        super.onCreate()
 
         // Planted before the initializers: the pipeline resumes unfinished top-ups, and Timber drops
         // anything logged before a tree exists.
