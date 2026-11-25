@@ -13,6 +13,7 @@ use super::{
 		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
+	served::Served,
 	sso_remote::{SsoRemoteResponseError, SsoSessionKey},
 	sso_request_service::SsoRequestService,
 };
@@ -370,17 +371,17 @@ impl AccountHolder for RemoteAccountHolder {
 	async fn account_alias(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: latest::HostAccountGetAliasRequest,
+		request: Served<latest::HostAccountGetAliasRequest>,
 	) -> Result<latest::HostAccountGetAliasResponse, RingVrfError> {
-		self.call_product(&invocation, request).await
+		self.call_product(&invocation, request.into_inner()).await
 	}
 
 	async fn create_proof(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: latest::HostAccountCreateProofRequest,
+		request: Served<latest::HostAccountCreateProofRequest>,
 	) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
-		self.call_product(&invocation, request).await
+		self.call_product(&invocation, request.into_inner()).await
 	}
 
 	async fn register_ring_vrf_key(
@@ -406,8 +407,9 @@ impl AccountHolder for RemoteAccountHolder {
 	async fn list_ring_vrf_keys(
 		&self,
 		invocation: AccountInvocation<'_>,
-		mut request: latest::HostAccountListRingVrfKeysRequest,
+		request: Served<latest::HostAccountListRingVrfKeysRequest>,
 	) -> Result<latest::HostAccountListRingVrfKeysResponse, RingVrfError> {
+		let mut request = request.into_inner();
 		let owner = request.owner.clone();
 		let disclosure = request.disclosure;
 		if invocation.caller.product_id() == Some(&owner) {
@@ -430,9 +432,9 @@ impl AccountHolder for RemoteAccountHolder {
 	async fn ring_vrf_sign(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: latest::HostAccountRingVrfSignRequest,
+		request: Served<latest::HostAccountRingVrfSignRequest>,
 	) -> Result<latest::HostAccountRingVrfSignResponse, RingVrfError> {
-		self.call_product(&invocation, request).await
+		self.call_product(&invocation, request.into_inner()).await
 	}
 
 	async fn sign_statement_store_product_payload(

@@ -1107,9 +1107,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 					context,
 				});
 			}
-			self.holder
-				.account_alias(local_invocation(cx, session, product), request.into_inner())
-				.await
+			self.holder.account_alias(local_invocation(cx, session, product), request).await
 		})
 		.await
 	}
@@ -1160,9 +1158,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 					ring_revision: resolved.ring_revision,
 				});
 			}
-			self.holder
-				.create_proof(local_invocation(cx, session, product), request.into_inner())
-				.await
+			self.holder.create_proof(local_invocation(cx, session, product), request).await
 		})
 		.await
 	}
@@ -1223,7 +1219,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 				return Ok(entries);
 			}
 			self.holder
-				.list_ring_vrf_keys(local_invocation(cx, session, product), request.into_inner())
+				.list_ring_vrf_keys(local_invocation(cx, session, product), request)
 				.await
 		})
 		.await
@@ -1251,9 +1247,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 				let _lifecycle = self.hold_grant(session, revision)?;
 				return vrf.sign(&entropy, &request.message);
 			}
-			self.holder
-				.ring_vrf_sign(local_invocation(cx, session, product), request.into_inner())
-				.await
+			self.holder.ring_vrf_sign(local_invocation(cx, session, product), request).await
 		})
 		.await
 	}

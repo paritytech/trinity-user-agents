@@ -3,7 +3,8 @@
 //! [`serve`] checks a value against the stack and wraps it in [`Served`]. A
 //! product's handler serves a request that names another product, and a paired
 //! host's handler serves the caller and the request it relays, before either
-//! acts. `HostAccounts` and the signing requests the core builds take their
+//! acts. `HostAccounts`, the account holder's ring-VRF calls that name a key,
+//! owner or context, and the signing requests the core builds take their
 //! products as `Served`, so no key is resolved for a product the stack does not
 //! serve.
 

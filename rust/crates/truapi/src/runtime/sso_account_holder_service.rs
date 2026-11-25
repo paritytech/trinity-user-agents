@@ -296,7 +296,7 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountGetAliasRequest>,
 	) -> GetAccountAliasResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		let payload = self.wallet.serve(request.payload)?.into_inner();
+		let payload = self.wallet.serve(request.payload)?;
 		self.wallet.account_alias(cx.account_invocation(Some(&caller)), payload).await
 	}
 
@@ -430,7 +430,7 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountCreateProofRequest>,
 	) -> CreateAccountProofResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		let payload = self.wallet.serve(request.payload)?.into_inner();
+		let payload = self.wallet.serve(request.payload)?;
 		self.wallet.create_proof(cx.account_invocation(Some(&caller)), payload).await
 	}
 
@@ -492,7 +492,7 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
 	) -> ListRingVrfKeysResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		let payload = self.wallet.serve(request.payload)?.into_inner();
+		let payload = self.wallet.serve(request.payload)?;
 		self.wallet
 			.list_ring_vrf_keys(cx.account_invocation(Some(&caller)), payload)
 			.await
@@ -505,7 +505,7 @@ impl SsoAccountHolderService {
 		request: ProductRequest<api::HostAccountRingVrfSignRequest>,
 	) -> RingVrfSignResponse {
 		let caller = self.wallet.serve(request.calling_product_id)?;
-		let payload = self.wallet.serve(request.payload)?.into_inner();
+		let payload = self.wallet.serve(request.payload)?;
 		self.wallet.ring_vrf_sign(cx.account_invocation(Some(&caller)), payload).await
 	}
 }

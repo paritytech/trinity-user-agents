@@ -673,7 +673,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 	async fn account_alias(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountGetAliasRequest,
+		request: Served<HostAccountGetAliasRequest>,
 	) -> Result<HostAccountGetAliasResponse, RingVrfError>;
 
 	/// Create a ring-VRF proof bound to a context and message.
@@ -683,7 +683,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 	async fn create_proof(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountCreateProofRequest,
+		request: Served<HostAccountCreateProofRequest>,
 	) -> Result<HostAccountCreateProofResponse, RingVrfError>;
 
 	/// Register a ring-VRF key owned by the calling product and record it in
@@ -708,14 +708,14 @@ pub trait AccountHolder: Send + Sync + 'static {
 	async fn list_ring_vrf_keys(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountListRingVrfKeysRequest,
+		request: Served<HostAccountListRingVrfKeysRequest>,
 	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError>;
 
 	/// Sign bytes directly with a registered ring-VRF key.
 	async fn ring_vrf_sign(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountRingVrfSignRequest,
+		request: Served<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
 	/// Sign exact statement-store proof bytes with a product-derived account.

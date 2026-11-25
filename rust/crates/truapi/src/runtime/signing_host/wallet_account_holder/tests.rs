@@ -91,16 +91,19 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 	))
 	.expect("synthetic registry entry persists");
 
+	let request = wallet
+		.serve(HostAccountRingVrfSignRequest {
+			key_handle: handle,
+			message: b"reject mismatched registry state".to_vec(),
+		})
+		.unwrap();
 	let error = futures::executor::block_on(wallet.ring_vrf_sign(
 		AccountInvocation {
 			call: &CallContext::default(),
 			session: &session,
 			caller: AccountCaller::Local { product: &product },
 		},
-		HostAccountRingVrfSignRequest {
-			key_handle: handle,
-			message: b"reject mismatched registry state".to_vec(),
-		},
+		request,
 	))
 	.unwrap_err();
 

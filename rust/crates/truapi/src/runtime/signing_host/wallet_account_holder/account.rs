@@ -31,6 +31,7 @@ use crate::{
 		},
 		remote_authority_call, remote_authority_context,
 		ring_vrf_registry::apply_ring_vrf_disclosure,
+		served::Served,
 		signing_host::ring_vrf::{MemberCandidate, context_bytes, create_proof},
 		statement_allowance::collection::PersonhoodCollection,
 		until_cancelled,
@@ -552,7 +553,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn account_alias(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountGetAliasRequest,
+		request: Served<HostAccountGetAliasRequest>,
 	) -> Result<api::ContextualAlias, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -608,7 +609,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn create_proof(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountCreateProofRequest,
+		request: Served<HostAccountCreateProofRequest>,
 	) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -675,7 +676,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn list_ring_vrf_keys(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountListRingVrfKeysRequest,
+		request: Served<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -695,7 +696,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn ring_vrf_sign(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountRingVrfSignRequest,
+		request: Served<HostAccountRingVrfSignRequest>,
 	) -> Result<Vec<u8>, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
