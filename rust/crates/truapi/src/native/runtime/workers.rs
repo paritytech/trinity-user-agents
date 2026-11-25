@@ -26,21 +26,21 @@ use registry::{Registry, Removed, Signal};
 /// connection.
 const STARTUP_DEADLINE: Duration = Duration::from_secs(90);
 
-/// Starts and disposes the WebView of each worker attempt.
+/// Runs a runtime's workers: starts each attempt and disposes it.
 ///
 /// Calls arrive on whichever thread changed worker demand or reported a failure, which can be the
 /// thread constructing the runtime or one of the core's own. Return without blocking: the starts
 /// and stops of every product wait behind the call. The core holds no lock meanwhile, so an
 /// implementation may call back into the runtime or the attempt.
 #[uniffi::export(rust, foreign)]
-pub trait NativeHostWebViewWorker: Send + Sync {
+pub trait NativeWorkerEngine: Send + Sync {
 	/// Begin booting the product, reporting module start or failure through this attempt.
 	///
 	/// The core fails an attempt that is not running 90 seconds after its start, or after it
 	/// lost its connection.
 	fn start(&self, product_id: ProductId, attempt: Arc<NativeWorkerAttempt>);
 
-	/// Dispose only the specified attempt's WebView, even when startup is incomplete.
+	/// Dispose only the specified attempt, even when startup is incomplete.
 	///
 	/// Arrives once for each started attempt, after its [`Self::start`] call has returned,
 	/// including after a failure the attempt reported. It can follow the start of the product's
@@ -77,7 +77,7 @@ pub trait NativeWorkerExecutionObserver: Send + Sync {
 /// The session's worker state and the platform services its controller uses.
 pub struct Session {
 	registry: Registry,
-	worker_host: Arc<dyn NativeHostWebViewWorker>,
+	worker_engine: Arc<dyn NativeWorkerEngine>,
 	callbacks: Arc<dyn HostCallbacks>,
 	startup_deadline: Duration,
 }
@@ -86,20 +86,20 @@ impl Session {
 	/// Keep worker state until shutdown.
 	pub fn new(
 		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Arc<dyn NativeHostWebViewWorker>,
+		worker_engine: Arc<dyn NativeWorkerEngine>,
 	) -> Self {
-		Self::new_with_startup_deadline(callbacks, worker_host, STARTUP_DEADLINE)
+		Self::new_with_startup_deadline(callbacks, worker_engine, STARTUP_DEADLINE)
 	}
 
 	/// [`Self::new`], with `startup_deadline` in place of [`STARTUP_DEADLINE`].
 	pub fn new_with_startup_deadline(
 		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Arc<dyn NativeHostWebViewWorker>,
+		worker_engine: Arc<dyn NativeWorkerEngine>,
 		startup_deadline: Duration,
 	) -> Self {
 		Self {
 			registry: Registry::default(),
-			worker_host,
+			worker_engine,
 			callbacks: callbacks.clone(),
 			startup_deadline,
 		}
@@ -122,7 +122,7 @@ pub struct NativeWorkerAttempt {
 
 #[uniffi::export]
 impl NativeWorkerAttempt {
-	/// The ID used by the platform to dispose only this WebView.
+	/// The ID its engine is asked to dispose only this attempt by.
 	pub fn id(&self) -> u64 {
 		self.id
 	}
@@ -221,7 +221,7 @@ impl NativeWorkerAttempt {
 		self.update_readiness(Signal::Connected);
 	}
 
-	/// Withdraw a disconnected worker until its WebView authenticates a new connection.
+	/// Withdraw a disconnected worker until it authenticates a new connection.
 	pub fn disconnected(self: &Arc<Self>) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
 		if let Some(mut session) = self.current(&runtime) {
@@ -241,20 +241,20 @@ impl NativeWorkerAttempt {
 	}
 }
 
-struct WebView {
-	host: Arc<dyn NativeHostWebViewWorker>,
+struct EngineAttempt {
+	engine: Arc<dyn NativeWorkerEngine>,
 	attempt: Arc<NativeWorkerAttempt>,
 }
 
-impl Drop for WebView {
+impl Drop for EngineAttempt {
 	fn drop(&mut self) {
-		self.host.stop(self.attempt.product.clone(), self.attempt.id);
+		self.engine.stop(self.attempt.product.clone(), self.attempt.id);
 	}
 }
 
 /// The worker ledger's controller for a native runtime.
 ///
-/// Turns each start the ledger requests into an attempt on the session's WebView host, and each
+/// Turns each start the ledger requests into an attempt on the session's worker engine, and each
 /// stop into the disposal of that attempt.
 /// The runtime owns the ledger that holds this controller, so the reference back is weak.
 struct Controller(Weak<NativeTrUApiHostRuntime>);
@@ -272,7 +272,7 @@ pub fn install_controller(runtime: &Arc<NativeTrUApiHostRuntime>) {
 impl WorkerController for Controller {
 	fn start_worker(&self, product_id: &ProductId, id: u64) {
 		let Some(runtime) = self.0.upgrade() else { return };
-		let (previous, webview) = {
+		let (previous, started) = {
 			let Some(mut session) = runtime.worker_session() else { return };
 			if !runtime.runtime.worker_ledger().is_current(product_id, id) {
 				return;
@@ -282,16 +282,17 @@ impl WorkerController for Controller {
 				id,
 				runtime: self.0.clone(),
 			});
-			let webview = Arc::new(WebView { host: session.worker_host.clone(), attempt });
-			let timeout = webview.attempt.deadline(&runtime, session.startup_deadline);
-			// A stop racing startup must reach the native host after its start callback returns.
-			let previous = session.registry.begin(product_id, timeout, webview.clone());
-			(previous, webview)
+			let started =
+				Arc::new(EngineAttempt { engine: session.worker_engine.clone(), attempt });
+			let timeout = started.attempt.deadline(&runtime, session.startup_deadline);
+			// A stop racing startup must reach the engine after its start call returns.
+			let previous = session.registry.begin(product_id, timeout, started.clone());
+			(previous, started)
 		};
 		if let Some(previous) = previous {
 			previous.stop();
 		}
-		webview.host.start(product_id.clone(), webview.attempt.clone());
+		started.engine.start(product_id.clone(), started.attempt.clone());
 	}
 
 	fn stop_worker(&self, product_id: &ProductId) {
@@ -350,7 +351,7 @@ impl NativeTrUApiHostRuntime {
 	/// Revoke all worker claims and dispose their executions when the host session ends.
 	///
 	/// The workers are disposed when this returns, except one whose
-	/// [`NativeHostWebViewWorker::start`] or stop call is still running, on this thread or
+	/// [`NativeWorkerEngine::start`] or stop call is still running, on this thread or
 	/// another, which is disposed when that call returns. Observers receive `finished` afterwards.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();

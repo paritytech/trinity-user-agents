@@ -122,11 +122,11 @@ pub fn claimed_worker(
 }
 
 /// A worker host for a runtime whose test starts no worker.
-pub fn no_workers() -> Arc<dyn NativeHostWebViewWorker> {
+pub fn no_workers() -> Arc<dyn NativeWorkerEngine> {
 	Arc::new(mpsc::channel().0)
 }
 
-impl NativeHostWebViewWorker for mpsc::Sender<Arc<NativeWorkerAttempt>> {
+impl NativeWorkerEngine for mpsc::Sender<Arc<NativeWorkerAttempt>> {
 	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
 		let _ = self.send(attempt);
 	}
