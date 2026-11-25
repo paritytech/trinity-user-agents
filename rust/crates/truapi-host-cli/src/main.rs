@@ -2943,14 +2943,15 @@ fn session_clear_confirmation(
 	};
 	let scope = match target {
 		SessionClearTarget::Named(_) => {
-			"This permanently deletes its local signer keys, scripts, storage, and permissions"
+			"This permanently deletes its signer keys, scripts, storage, and permissions"
 		},
 		SessionClearTarget::All => {
-			"This permanently deletes every local session's signer keys, scripts, storage, and permissions"
+			"This permanently deletes every session's signer keys, scripts, storage, and permissions"
 		},
 	};
 	let mut detail = format!(
-		"{scope} for {}. On-chain usernames are not removed.",
+		"{scope} for {}. On-chain usernames are not removed, nor are mnemonics an earlier \
+		 release kept in accounts.json directly under v2.",
 		session.network.state_label()
 	);
 	if active {

@@ -110,6 +110,27 @@ async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
 	Ok(())
 }
 
+/// A clear deletes the session's own files. An earlier release also kept its
+/// mnemonic in `accounts.json` directly under `v2`, which no clear touches, so
+/// the prompt says that copy stays.
+#[tokio::test]
+async fn the_clear_prompt_says_what_it_leaves() -> Result<()> {
+	let temporary = tempfile::tempdir()?;
+	let session = unfinished_session(temporary.path(), "alice").await?;
+
+	let (_, detail) =
+		session_clear_confirmation(&session, &SessionClearTarget::Named("alice".to_string()), true);
+
+	assert_eq!(
+		detail,
+		"This permanently deletes its signer keys, scripts, storage, and permissions for \
+		 paseo-next-v2. On-chain usernames are not removed, nor are mnemonics an earlier release \
+		 kept in accounts.json directly under v2. The active session is included, so the signing \
+		 host will stop."
+	);
+	Ok(())
+}
+
 #[tokio::test]
 async fn session_selection_activates_a_finished_account_without_reprovisioning() -> Result<()> {
 	let temporary = tempfile::tempdir()?;
