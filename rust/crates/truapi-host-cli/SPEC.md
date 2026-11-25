@@ -1517,7 +1517,7 @@ The layout may contain compatibility paths as well as identity-owned paths:
   accounts.json.lock
   log-level
   stacks/
-    <network>.json                    # latest published descriptor the hosts took
+    <network>.json                    # published descriptor a host kept (§14.1)
     <network>.json.lock
 
   <network>/
@@ -1826,12 +1826,16 @@ on over either chain backend.
 A host command (`pairing-host`, `signing-host`, `dev`) keeps the published
 descriptor it takes for a built-in network in
 `<base-path>/<version>/stacks/<network>.json`, before the chain checks below.
-To write it, the host takes `<network>.json.lock` and reads the kept copy again
+To write it, the host takes `<network>.json.lock`, reads the kept copy again
 under it, and leaves a copy that is the same or later, such as one another host
-starting at the same time kept. The read that chooses the stack at start is not
-under the lock. Keeping the copy is best effort: a failed write is a warning,
-and a host that finds the lock held, as by another host stopped in a debugger,
-does not wait and keeps nothing on that run.
+starting at the same time kept. A host that finds the lock held tries again
+for up to a second, which covers another host keeping its copy. The read that
+chooses the stack at start is not under the lock. Keeping the copy is best
+effort: a failed write is a warning, and a host that still finds the lock held
+after that second, as when another host stopped in a debugger holds it, keeps
+nothing on that run. The kept copy can then be older than the copy that host
+ran on, until a later run keeps one, and an offline start in between runs on
+the older copy.
 While the published descriptor cannot be fetched, and when it is refused or
 older than that copy, the host starts from that copy, under the same rules as a
 fetched one. A kept copy older than the bundled one, as after an update of the

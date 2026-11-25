@@ -564,7 +564,7 @@ impl io::Write for Captured {
 	}
 }
 
-/// A kept copy too large to be a descriptor is reported once in a start, not
+/// A kept copy too large to be a descriptor is reported once per resolve, not
 /// again when the host keeps the published copy over it.
 #[test]
 fn an_oversized_kept_copy_is_reported_once() {
@@ -624,26 +624,93 @@ fn a_kept_copy_that_cannot_be_read_stops_the_command() {
 	);
 }
 
-/// Keeping the copy is best effort. A host that finds the lock held, as by
-/// another host stopped in a debugger, starts without keeping its copy
-/// instead of waiting for the lock.
+/// Another host holds the lock on the kept copy, as the test does here, until
+/// `released` fires or the test ends. The lock file is `path` with `.lock`
+/// added.
+fn hold_lock(path: &Path, released: std::sync::mpsc::Receiver<()>) {
+	let lock = fs::File::create(path.with_extension("json.lock")).expect("the lock file");
+	lock.lock_exclusive().expect("another host holds the lock");
+	std::thread::spawn(move || {
+		let _ = released.recv_timeout(std::time::Duration::from_secs(5));
+		drop(lock);
+	});
+}
+
+/// `published` kept at `path` from another thread: whether keeping it ended
+/// within two seconds, and how.
+fn kept_within_deadline(path: &Path, published: Vec<u8>) -> Option<Result<(), String>> {
+	let (kept_it, keeping) = std::sync::mpsc::channel();
+	std::thread::spawn({
+		let path = path.to_path_buf();
+		move || {
+			let kept = replace_older_copy(&path, &test_pointer(), &published, NOW);
+			let _ = kept_it.send(kept.map_err(|error| format!("{error:#}")));
+		}
+	});
+	keeping.recv_timeout(std::time::Duration::from_secs(2)).ok()
+}
+
+/// Keeping the copy is best effort. A host that finds the lock held for
+/// longer than a moment, as by another host stopped in a debugger, starts
+/// without keeping its copy instead of waiting for the lock, and that is no
+/// failure.
 #[test]
 fn a_host_does_not_wait_for_a_held_lock_to_keep_its_copy() {
 	let kept = sign_copy(11, "g2");
 	let (_base, path) = copies_directory(Some(&kept));
-	let lock = fs::File::create(path.with_extension("json.lock")).expect("the lock file");
-	lock.lock_exclusive().expect("another host holds the lock");
-	let (kept_it, keeping) = std::sync::mpsc::channel();
-	std::thread::spawn({
-		let path = path.clone();
-		move || {
-			keep_copy(&path, &test_pointer(), &sign_copy(12, "g2"), NOW);
-			let _ = kept_it.send(());
-		}
-	});
-	let returned = keeping.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+	let (_release, released) = std::sync::mpsc::channel();
+	hold_lock(&path, released);
 
-	assert_eq!((returned, read_back(&path)), (true, Some(kept)));
+	let keeping = kept_within_deadline(&path, sign_copy(12, "g2"));
+
+	assert_eq!((keeping, read_back(&path)), (Some(Ok(())), Some(kept)));
+}
+
+/// Two hosts that start together contend for the lock for as long as one
+/// takes to keep its copy. The other waits for it, so a later copy it ran on
+/// is still kept, and its next offline start does not go back to the earlier
+/// one.
+#[test]
+fn a_host_keeps_its_copy_once_a_brief_lock_is_released() {
+	let (_base, path) = copies_directory(Some(&sign_copy(11, "g2")));
+	let (release, released) = std::sync::mpsc::channel();
+	hold_lock(&path, released);
+	std::thread::spawn(move || {
+		std::thread::sleep(std::time::Duration::from_millis(200));
+		let _ = release.send(());
+	});
+	let later = sign_copy(12, "g2");
+
+	let keeping = kept_within_deadline(&path, later.clone());
+
+	assert_eq!((keeping, read_back(&path)), (Some(Ok(())), Some(later)));
+}
+
+/// A published copy the CLI does not run, here for a changed TLD, leaves the
+/// copy a host kept in use without the bundled copy being looked at, so a
+/// bundled copy past its `expiresAt` does not stop a host that has a later
+/// one.
+#[test]
+fn a_kept_copy_stands_in_for_a_published_copy_the_cli_does_not_run() {
+	let expired_bundle = sign_edited(|descriptor| {
+		descriptor["sequence"] = 10.into();
+		descriptor["generation"] = "g1".into();
+		descriptor["expiresAt"] = (NOW as u32 - 1).into();
+	});
+	let other_tld = sign_edited(|descriptor| {
+		descriptor["sequence"] = 12.into();
+		descriptor["generation"] = "g2".into();
+		descriptor["tld"] = "testnet".into();
+	});
+	let kept = sign_copy(11, "g2");
+	let copies =
+		Copies { bundled: &expired_bundle, published: Some(&other_tld), last_run: Some(&kept) };
+
+	let refresh = refresh_from_last_run("test", &test_pointer(), &copies, NOW, &ChainAccess::Rpc)
+		.map(|refresh| (refresh.stack.descriptor().sequence, refresh.copy))
+		.map_err(|error| error.to_string());
+
+	assert_eq!(refresh, Ok((11, BuiltInCopy::Rejected)));
 }
 
 /// A CLI update can ship a later descriptor than the one the host kept. That

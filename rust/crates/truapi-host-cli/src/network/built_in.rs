@@ -7,13 +7,13 @@ use std::{
 	io::{self, Read},
 	path::Path,
 	sync::LazyLock,
-	time::Duration,
+	time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::ValueEnum;
 use fs2::FileExt;
-use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
+use trinity_stack::{Accepted, Descriptor, Fetched, Pointer, Status, accept};
 
 use super::{Network, Stack};
 use crate::{
@@ -28,6 +28,14 @@ use crate::{
 /// How long a command waits for a built-in stack's published descriptor
 /// before it runs on the copy a host kept, or else the bundled one.
 pub const BUILT_IN_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How long a host waits for another host to finish keeping its copy before
+/// it keeps none on this run. Another host holds the lock for one read and
+/// one write, so one that holds it longer has most likely stopped.
+const KEEP_LOCK_WAIT: Duration = Duration::from_secs(1);
+
+/// How often a host waiting on [`KEEP_LOCK_WAIT`] tries the lock again.
+const KEEP_LOCK_RETRY: Duration = Duration::from_millis(20);
 
 /// A known stack this build ships a signed copy of, so a command starts
 /// without the published descriptor when it is unreachable.
@@ -353,8 +361,9 @@ fn read_capped(path: &Path) -> Result<Option<Vec<u8>>> {
 /// later one that another host starting at the same time kept, stays.
 ///
 /// Keeping is best effort: this run has its descriptor, and a later one keeps
-/// it again. A failure is a warning, and a lock another host holds, as one
-/// stopped in a debugger can, is not waited for.
+/// it again. A failure is a warning, and a lock another host still holds after
+/// [`KEEP_LOCK_WAIT`], as one stopped in a debugger can, leaves the copy as it
+/// is for this run.
 fn keep_copy(path: &Path, pointer: &Pointer, published: &[u8], now_unix_seconds: i64) {
 	if let Err(error) = replace_older_copy(path, pointer, published, now_unix_seconds) {
 		let path = path.display();
@@ -364,7 +373,8 @@ fn keep_copy(path: &Path, pointer: &Pointer, published: &[u8], now_unix_seconds:
 
 /// [`keep_copy`] under a lock on `<path>.lock`, which it holds from its own
 /// read of the kept copy to the write, so no other host writes in between.
-/// Keeps nothing when another host holds the lock.
+/// Keeps nothing, and succeeds, when another host holds the lock past
+/// [`KEEP_LOCK_WAIT`].
 fn replace_older_copy(
 	path: &Path,
 	pointer: &Pointer,
@@ -382,15 +392,14 @@ fn replace_older_copy(
 		.write(true)
 		.open(&lock_path)
 		.with_context(|| format!("could not open {}", lock_path.display()))?;
-	if let Err(error) = lock.try_lock_exclusive() {
-		if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
-			let lock_path = lock_path.display();
-			tracing::info!(
-				"another truapi-host holds {lock_path}; not keeping the stack descriptor this run"
-			);
-			return Ok(());
-		}
-		return Err(error).with_context(|| format!("could not lock {}", lock_path.display()));
+	let locked = lock_within(&lock, KEEP_LOCK_WAIT)
+		.with_context(|| format!("could not lock {}", lock_path.display()))?;
+	if !locked {
+		let lock_path = lock_path.display();
+		tracing::info!(
+			"another truapi-host holds {lock_path}; not keeping the stack descriptor this run"
+		);
+		return Ok(());
 	}
 	let kept = read_capped(path)?;
 	let newer = accept(pointer, kept.as_deref(), Fetched::Document(published), now_unix_seconds)
@@ -399,6 +408,23 @@ fn replace_older_copy(
 		atomic_write(path, published)?;
 	}
 	Ok(())
+}
+
+/// Takes an exclusive lock on `lock`, trying again while another process
+/// holds it, for up to `wait`. `false` when it is still held then. Sleeps the
+/// calling thread meanwhile, which `wait` bounds.
+fn lock_within(lock: &fs::File, wait: Duration) -> io::Result<bool> {
+	let deadline = Instant::now() + wait;
+	loop {
+		match lock.try_lock_exclusive() {
+			Ok(()) => return Ok(true),
+			Err(error) if error.raw_os_error() != fs2::lock_contended_error().raw_os_error() => {
+				return Err(error);
+			},
+			Err(_) if Instant::now() >= deadline => return Ok(false),
+			Err(_) => std::thread::sleep(KEEP_LOCK_RETRY),
+		}
+	}
 }
 
 /// Whether `last_run` is older than `bundled`, as after an update of the CLI
@@ -468,9 +494,9 @@ struct Copies<'a> {
 ///
 /// A `published` copy that [`accept`] does not take over `last_run`, such as
 /// one with a lower `sequence` or one that does not verify, is not used, with
-/// a warning that says why. It and a `published` copy that [`refresh_stack`]
-/// refuses leave `last_run` in use, and are reported as
-/// [`BuiltInCopy::Rejected`].
+/// a warning that says why. It and a `published` copy that [`refresh_fetched`]
+/// does not run leave `last_run` in use, without a look at the bundled copy,
+/// and are reported as [`BuiltInCopy::Rejected`].
 fn refresh_from_last_run(
 	id: &str,
 	pointer: &Pointer,
@@ -505,11 +531,14 @@ fn refresh_from_last_run(
 		return from_last_run(BuiltInCopy::Rejected);
 	}
 	let name = format!("published {id} stack descriptor at {}", pointer.url());
-	let refresh = refresh_from(Some(published), &name)?;
-	if refresh.copy == BuiltInCopy::Published || last_run.is_none() {
-		return Ok(refresh);
+	if last_run.is_none() {
+		return refresh_from(Some(published), &name);
 	}
-	from_last_run(BuiltInCopy::Rejected)
+	let fetched = Fetched::Document(published);
+	match refresh_fetched(id, &name, pointer, bundled, fetched, now_unix_seconds, chain_access)? {
+		Some(refresh) if refresh.copy == BuiltInCopy::Published => Ok(refresh),
+		_ => from_last_run(BuiltInCopy::Rejected),
+	}
 }
 
 /// The stack a built-in network runs on: `fetched` when [`accept`] takes it
@@ -528,8 +557,33 @@ fn refresh_stack(
 	now_unix_seconds: i64,
 	chain_access: &ChainAccess,
 ) -> Result<StackRefresh> {
-	let bundled_copy = accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
-		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))?;
+	match refresh_fetched(
+		id,
+		fetched_name,
+		pointer,
+		bundled,
+		fetched,
+		now_unix_seconds,
+		chain_access,
+	)? {
+		Some(refresh) => Ok(refresh),
+		None => refresh_bundled(id, pointer, bundled, now_unix_seconds, chain_access),
+	}
+}
+
+/// [`refresh_stack`] up to its fall back to `bundled`: `None`, after the
+/// warning, when `fetched` changes the `tld` or the `id` or is not a stack the
+/// CLI can run on, so the caller picks the copy that stands in for it.
+fn refresh_fetched(
+	id: &str,
+	fetched_name: &str,
+	pointer: &Pointer,
+	bundled: &[u8],
+	fetched: Fetched,
+	now_unix_seconds: i64,
+	chain_access: &ChainAccess,
+) -> Result<Option<StackRefresh>> {
+	let bundled_copy = open_bundled(id, pointer, bundled, now_unix_seconds)?;
 	let accepted = accept(pointer, Some(bundled), fetched, now_unix_seconds)
 		.map_err(|error| anyhow!("the {id} stack has no usable descriptor: {error}"))?;
 	let copy = match not_taken(&accepted.status) {
@@ -571,20 +625,46 @@ fn refresh_stack(
 				}
 			},
 		};
-	let (stack, stale, copy, notice) = match published_stack {
-		Ok(stack) => (stack, accepted.stale, copy, notice),
+	let stack = match published_stack {
+		Ok(stack) => stack,
 		Err(reason) => {
 			tracing::warn!("the {fetched_name} {reason}; not using it");
-			ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
-			let bundled =
-				Stack::new(pointer.stack_id(), bundled_copy.stack.descriptor, chain_access)?;
-			(bundled, bundled_copy.stale, BuiltInCopy::Rejected, None)
+			return Ok(None);
 		},
 	};
-	if stale {
+	if accepted.stale {
 		tracing::warn!("the {id} stack descriptor in use is past validUntil");
 	}
-	Ok(StackRefresh { stack, notice, copy })
+	Ok(Some(StackRefresh { stack, notice, copy }))
+}
+
+/// The bundled copy in use in place of a fetched copy the CLI does not run.
+/// Fails when the bundled copy is past `expiresAt` or the CLI cannot run it.
+fn refresh_bundled(
+	id: &str,
+	pointer: &Pointer,
+	bundled: &[u8],
+	now_unix_seconds: i64,
+	chain_access: &ChainAccess,
+) -> Result<StackRefresh> {
+	let bundled_copy = open_bundled(id, pointer, bundled, now_unix_seconds)?;
+	ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
+	let stack = Stack::new(pointer.stack_id(), bundled_copy.stack.descriptor, chain_access)?;
+	if bundled_copy.stale {
+		tracing::warn!("the {id} stack descriptor in use is past validUntil");
+	}
+	Ok(StackRefresh { stack, notice: None, copy: BuiltInCopy::Rejected })
+}
+
+/// The bundled copy, opened under `pointer`.
+fn open_bundled(
+	id: &str,
+	pointer: &Pointer,
+	bundled: &[u8],
+	now_unix_seconds: i64,
+) -> Result<Accepted> {
+	accept(pointer, None, Fetched::Document(bundled), now_unix_seconds)
+		.map_err(|error| anyhow!("the bundled {id} stack does not open: {error}"))
 }
 
 #[cfg(test)]
