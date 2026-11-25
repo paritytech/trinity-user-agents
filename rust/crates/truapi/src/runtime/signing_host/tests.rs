@@ -188,7 +188,7 @@ fn relayed<'a>(cx: &'a CallContext, session: &'a AuthoritySession) -> AccountInv
 /// The service a paired host reaches, bound to `authority`'s wallet from `ENTROPY`.
 fn sso_service(authority: &SigningHost) -> SsoAccountHolderService {
 	let entropy = RootEntropy::new(ENTROPY);
-	let statement = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+	let statement = entropy.derive_identity_keypair(authority.services.stack().tld()).unwrap();
 	let (_, encryption) = entropy.derive_x25519_keypair(b"sso");
 	authority
 		.sso_responder()
@@ -769,6 +769,9 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 ///
 /// `context_grants` of `None` caches the chain's answer that `dim2`
 /// publishes no manifest, so no case reaches for a chain the stub lacks.
+///
+/// The signing host runs on a `paseo` stack, which serves `.dot` and
+/// `.paseo`, so a `.paseo` context reaches the context check at both doors.
 fn third_product_context(
 	door: Door,
 	owner_grants: &str,
@@ -802,8 +805,18 @@ fn third_product_context(
 		.expect("stub core storage accepts the entry"),
 	}
 	seed(&platform);
-	let (_services, authority) =
-		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+	let services = RuntimeServices::new(
+		platform,
+		crate::platform::HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		},
+		crate::test_support::paseo_test_stack(),
+		crate::Spawner::for_test(),
+	);
+	let authority = SigningHost::with_ring_resolver(services, full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
@@ -905,8 +918,10 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 			"a narrower scope does not imply context",
 		),
 		(
-			// `dim2.dot`'s manifest is cached by bare label, so it is the
-			// document a `.paseo` context would read: a namesake's grant.
+			// The paseo stack serves `dim2.paseo`, and `dim2.dot`'s manifest is
+			// cached by bare label, so it is the document a `.paseo` context
+			// would read: a namesake's grant. Only the off-network check refuses
+			// it.
 			OWNER_GRANTS_DIM2NEXT,
 			Some(r#"{"dim2next":["context"]}"#),
 			"dim2.paseo",
@@ -917,18 +932,11 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 		for door in DOORS {
 			let (proof, alias) =
 				third_product_context(door, owner, grants, context_of(context), |_| {});
-			// This `dot` stack refuses a paired host's `.paseo` context as
-			// unserved before the context check. The product door's request is
-			// served as a paseo stack would serve it, so it still reaches that
-			// check.
-			let refused = match (door, context) {
-				(Door::Paired, "dim2.paseo") => RingVrfError::Unknown {
-					reason: "product dim2.paseo is not under a TLD the dot stack serves"
-						.to_string(),
-				},
-				_ => RingVrfError::NotAllowlisted,
-			};
-			assert_eq!(proof.err(), Some(refused), "proof through {door:?}: {why}");
+			assert_eq!(
+				proof.err(),
+				Some(RingVrfError::NotAllowlisted),
+				"proof through {door:?}: {why}"
+			);
 			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
 		}
 	}
@@ -1598,9 +1606,10 @@ enum Door {
 const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 
 /// Wraps `value` as a `paseo` stack would; that stack serves both `.dot` and
-/// `.paseo`. The fixtures run on `dot`, which refuses a `.paseo` context before
-/// the context check. On a stack with two TLDs such a request reaches that
-/// check, which must keep the context on its owner's network.
+/// `.paseo`. [`third_product_context`] runs on one, so a `.paseo` context
+/// there is refused by the off-network check alone. The other fixtures run on
+/// `dot`, where reading a `.paseo` context's manifest refuses it as well, so
+/// their `.paseo` cases do not pin that check on their own.
 fn served_on_paseo<T: NamesProducts>(value: T) -> Served<T> {
 	serve(&crate::test_support::paseo_test_stack(), value)
 		.expect("a paseo stack serves .dot and .paseo products")
