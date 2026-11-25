@@ -31,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -470,7 +471,7 @@ internal fun JsGesture(
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 if (change.changedToUpIgnoreConsumed()) {
-                                    lifted = !change.isCancel()
+                                    lifted = !event.isCancel()
                                     if (claimed && lifted) {
                                         last = at(change.position)
                                         trace(last)
@@ -564,7 +565,7 @@ internal fun JsGesture(
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.changedToUpIgnoreConsumed()) {
-                                lifted = !change.isCancel()
+                                lifted = !event.isCancel()
                                 if (claimed && lifted) {
                                     val rest = Offset(
                                         owed.x - GestureRules.caughtUp(owed.x, catchUpFrame),
@@ -692,15 +693,14 @@ internal fun JsGesture(
 private const val NANOS_PER_MS = 1_000_000L
 private const val NANOS_PER_FRAME = 1_000_000_000f / 60f
 
-/** The feel's damped spring home: its natural frequency squared is the stiffness. */
-
 /**
- * Whether this up is a touch the system took away (palm rejection, a system gesture, a parent taking the touch) rather
- * than a lift. Compose reports such a cancel as an up whose pointer arrives already consumed. A lift a child already
- * consumed reads the same way, so it ends a pan as Cancelled and sends no tap: the child took it.
+ * Whether this event is a touch the system took away (palm rejection, a system gesture, a parent taking the touch)
+ * rather than a lift. Compose reports such a cancel as an up it builds itself, with no MotionEvent behind it; a real
+ * lift always carries one, even when a child pan inside already consumed it.
  */
-private fun PointerInputChange.isCancel(): Boolean = changedToUpIgnoreConsumed() && isConsumed
+private fun PointerEvent.isCancel(): Boolean = motionEvent == null
 
+/** The feel's damped spring home: its natural frequency squared is the stiffness. */
 private fun JsPanFeel.springHome(): AnimationSpec<Float> = spring(dampingRatio = springDamping, stiffness = springStiffness())
 
 /**

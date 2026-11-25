@@ -33,6 +33,7 @@ class JsGestureCancelTest {
     @get:Rule
     val compose = createComposeRule()
     private val ends = mutableListOf<JsGesturePhase>()
+    private val sent = mutableListOf<Pair<String, JsGesturePhase>>()
 
     @Test
     fun aCancelledDragPastTheThresholdIsNotACompletion() {
@@ -88,6 +89,27 @@ class JsGestureCancelTest {
         compose.runOnIdle { assertEquals(listOf(JsGesturePhase.ENDED), ends) }
     }
 
+    @Test
+    fun aLiftAPanInsideTookStillCompletesTheDragAround() {
+        draw(
+            JsWidget.Gesture(
+                modifiers = listOf(JsModifier.Size(width = 300, height = 100)),
+                pan = JsPanGesture(drag = JsPanDrag(release = JsPanRelease.Complete(80)), endAction = END),
+                children = listOf(
+                    JsWidget.Gesture(
+                        modifiers = listOf(JsModifier.Size(width = 50, height = 100)),
+                        pan = JsPanGesture(axis = JsPanAxis.FREE, location = true, endAction = INNER_END),
+                        children = listOf(JsWidget.Box(modifiers = listOf(JsModifier.Size(width = 50, height = 100)))),
+                    ),
+                ),
+            ),
+        )
+        dragAcross { up() }
+        compose.runOnIdle {
+            assertEquals(listOf(INNER_END to JsGesturePhase.ENDED, END to JsGesturePhase.COMPLETED), sent)
+        }
+    }
+
     private fun drawDrag(release: JsPanRelease) = draw(
         JsWidget.Gesture(
             modifiers = listOf(JsModifier.Size(width = 300, height = 100)),
@@ -116,6 +138,7 @@ class JsGestureCancelTest {
                     JsWidgetRenderer(widget = widget, jsEventHandler = { action, event ->
                         val phase = (event as? JsUiEvent.Type.Gesture)?.phase
                         if (action == END && phase != null) ends += phase
+                        if (phase != null) sent += action to phase
                     })
                 }
             }
@@ -126,5 +149,6 @@ class JsGestureCancelTest {
 
     private companion object {
         const val END = "end"
+        const val INNER_END = "innerEnd"
     }
 }
