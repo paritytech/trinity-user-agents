@@ -239,6 +239,23 @@ struct FundingServiceTests {
     }
 
     @Test
+    func closingTheDepositScreenLeavesItsStartToTheCore() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
+        let service = makeService(runtime)
+        let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
+        _ = try await firstEvent(of: service)
+        service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
+        service.quote(amount: 50_000_000, for: intent)
+        try await service.start(intent, provider: nil)
+        try await waitUntil { runtime.autoStarts == [.armed(requestId: 1)] }
+
+        service.leave(intent)
+
+        #expect(await outcome.value == .dismissed)
+        #expect(runtime.autoStarts == [.armed(requestId: 1)])
+    }
+
+    @Test
     func cancellingOnTheDepositScreenLeavesItsStartToTheCore() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
         let service = makeService(runtime)

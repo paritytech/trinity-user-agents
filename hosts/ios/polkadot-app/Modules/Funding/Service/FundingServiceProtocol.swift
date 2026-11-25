@@ -48,7 +48,8 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     func stopStarting(_ entryId: String)
 
     /// The user closed the session's screens, which is not a cancel. One
-    /// that never started is dropped; one in flight runs on.
+    /// that never started is dropped; one in flight runs on. The core also
+    /// stops starting it on its best quote, so this needs no `stopStarting`.
     func leave(_ entryId: String)
 
     /// The user's cancel, in any state: the core decides what it does. One
