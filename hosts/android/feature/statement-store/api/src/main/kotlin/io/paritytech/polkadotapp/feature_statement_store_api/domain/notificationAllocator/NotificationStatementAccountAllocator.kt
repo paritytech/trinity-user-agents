@@ -1,18 +1,13 @@
 package io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator
 
 import io.paritytech.polkadotapp.common.domain.model.AccountId
-import io.paritytech.polkadotapp.common.utils.InformationSize
-import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.kilobytes
 import io.paritytech.polkadotapp.common.utils.flatMap
 import kotlin.time.Duration
 
-/** Allowance one notification binding grants: a single statement of at most this encoded size. */
-val NOTIFICATION_STATEMENT_MAX_SIZE: InformationSize = 10.kilobytes
-
 /**
  * Funds statement accounts from anonymous notification slots: each binding lets its account keep one statement of
- * up to [NOTIFICATION_STATEMENT_MAX_SIZE] until the current period ends plus the runtime's grace window. An account
- * can hold one live binding, so callers pass a fresh account per period.
+ * up to [NotificationStatementMaxSizeProvider.maxSize] until the current period ends plus the runtime's grace window.
+ * An account can hold one live binding, so callers pass a fresh account per period.
  */
 interface NotificationStatementAccountAllocator {
     /** The period slots are claimed in right now; a binding made now lives until this period ends plus grace. */
