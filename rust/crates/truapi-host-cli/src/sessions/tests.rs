@@ -374,24 +374,19 @@ fn a_clear_an_account_store_lock_refuses_leaves_everything_in_place() -> Result<
 /// first, the record whose lite username is the session's name would stay with
 /// no session to clear, and the default session would be promoted into that
 /// name again.
-#[cfg(unix)]
 #[test]
 fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
-	use std::os::unix::fs::PermissionsExt as _;
-
 	let temporary = tempdir()?;
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let alice = catalog.ensure_profile("alice")?;
 	fs::write(alice.path.join("state"), "alice")?;
 	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"testnet","mnemonic":"m","lite_username":"alice","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
 	fs::write(catalog.base_path.join("accounts.json"), stored)?;
-	// The lock file has to exist before its directory stops taking new files.
-	drop(accounts::AccountStoreLock::acquire(&catalog.base_path)?);
-	let writable = fs::metadata(&catalog.base_path)?.permissions();
-	fs::set_permissions(&catalog.base_path, fs::Permissions::from_mode(0o555))?;
+	// The store is saved through this temporary file, so a directory in its
+	// place makes the save fail, for root as well.
+	fs::create_dir(catalog.base_path.join(format!(".accounts.json.{}.tmp", std::process::id())))?;
 
 	let cleared = clear(&catalog, SessionClearTarget::Named("alice".to_string()));
-	fs::set_permissions(&catalog.base_path, writable)?;
 
 	assert_eq!(
 		(
