@@ -52,32 +52,32 @@ struct HostLogSinkDestinationTests {
         for index in 0 ..< limit + 500 {
             send(
                 .warning,
-                "[truapi.product] chainHead follow p:\(index) restarted 1 ms after the stop",
+                "[truapi.chain] chainHead follow p:\(index) restarted 1 ms after the stop",
                 to: destination
             )
         }
-        send(.info, "[truapi.chain] chain connection 2 open", to: destination)
+        send(.info, "[truapi.auth] auth session restored", to: destination)
 
-        #expect(sink.lines.filter { $0.tag == "truapi.product" }.count == limit)
+        #expect(sink.lines.filter { $0.tag == "truapi.chain" }.count == limit)
         #expect(sink.lines.last == RecordingHostLogSink.Line(
             level: .info,
-            tag: "truapi.chain",
-            message: "chain connection 2 open"
+            tag: "truapi.auth",
+            message: "auth session restored"
         ))
 
         clock.now += HostLogSinkDestination.window
-        send(.warning, "[truapi.product] chainHead follow p:9999 restarted 1 ms after the stop", to: destination)
+        send(.warning, "[truapi.chain] chainHead follow p:9999 restarted 1 ms after the stop", to: destination)
 
         #expect(Array(sink.lines.suffix(2)) == [
             RecordingHostLogSink.Line(
                 level: .warning,
-                tag: "truapi.product",
-                message: "500 truapi.product lines dropped over the limit of \(limit) a minute",
+                tag: "truapi.chain",
+                message: "500 truapi.chain lines dropped over the limit of \(limit) a minute",
                 attributes: [HostLogSinkDestination.droppedAttribute: .count(500)]
             ),
             RecordingHostLogSink.Line(
                 level: .warning,
-                tag: "truapi.product",
+                tag: "truapi.chain",
                 message: "chainHead follow p:9999 restarted 1 ms after the stop"
             )
         ])
@@ -88,9 +88,9 @@ struct HostLogSinkDestinationTests {
         let clock = ManualClock()
         let destination = HostLogSinkDestination(sink: sink, now: { clock.now })
 
-        send(.warning, "[truapi.product] first", to: destination)
+        send(.warning, "[truapi.chain] first", to: destination)
         clock.now += HostLogSinkDestination.window
-        send(.warning, "[truapi.product] second", to: destination)
+        send(.warning, "[truapi.chain] second", to: destination)
 
         #expect(sink.lines.map(\.message) == ["first", "second"])
     }
