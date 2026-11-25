@@ -1,9 +1,10 @@
-import Foundation
+import UIKit
 import UIKitExt
 
 @MainActor
 protocol FundingDepositViewProtocol: ControllerBackedProtocol {
-    func didReceive(viewModel: FundingDepositViewModel)
+    /// `qrCode` is the deposit's QR code once drawn.
+    func didReceive(viewModel: FundingDepositViewModel, qrCode: UIImage?)
 }
 
 @MainActor
@@ -23,6 +24,13 @@ protocol FundingDepositInteractorInputProtocol: AnyObject {
     /// The user left before the session started: the core no longer starts
     /// it on its best quote.
     func stopStarting()
+    /// Draws the QR code carrying `payload`.
+    func createQRCode(for payload: String)
+}
+
+@MainActor
+protocol FundingDepositInteractorOutputProtocol: AnyObject {
+    func didReceive(qrCode: UIImage, for payload: String)
 }
 
 @MainActor

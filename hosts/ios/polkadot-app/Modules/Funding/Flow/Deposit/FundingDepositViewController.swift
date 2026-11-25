@@ -15,7 +15,7 @@ final class FundingDepositViewController: FundingScreenController<FundingDeposit
 }
 
 extension FundingDepositViewController: FundingDepositViewProtocol {
-    func didReceive(viewModel: FundingDepositViewModel) {
-        rootView = FundingDepositView(viewModel: viewModel, presenter: presenter)
+    func didReceive(viewModel: FundingDepositViewModel, qrCode: UIImage?) {
+        rootView = FundingDepositView(viewModel: viewModel, qrCode: qrCode, presenter: presenter)
     }
 }
