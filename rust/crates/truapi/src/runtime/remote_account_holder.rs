@@ -51,7 +51,8 @@ pub struct RemoteAccountHolder {
 	registry: Arc<RingVrfRegistryStore>,
 	spawner: Spawner,
 	/// `ProductSubtreeRequest`s in flight, which concurrent callers join.
-	product_subtree_requests: Mutex<HashMap<(SsoSessionKey, ProductId), Arc<InFlightProductSubtree>>>,
+	product_subtree_requests:
+		Mutex<HashMap<(SsoSessionKey, ProductId), Arc<InFlightProductSubtree>>>,
 }
 
 impl RemoteAccountHolder {
@@ -91,7 +92,10 @@ impl RemoteAccountHolder {
 		let request_cx = CallContext::with_parts(cx.request_id().to_string(), cancel.clone());
 		let request = ProductSubtreeRequest { product_id: product_id.clone() };
 		let fetch = async move {
-			service.call(&request_cx, &session, request).await?.map_err(remote_authority_error)
+			service
+				.call(&request_cx, &session, request)
+				.await?
+				.map_err(remote_authority_error)
 		}
 		.boxed();
 		let (in_flight, caller) = InFlightProductSubtree::start(fetch, cancel);
@@ -467,7 +471,9 @@ impl AccountHolder for RemoteAccountHolder {
 		let source = session.root_entropy_source.ok_or_else(|| AuthorityError::Unavailable {
 			reason: "Session secret missing".to_string(),
 		})?;
-		Ok(crate::runtime::contacts::ContactHandleKey::from_root_entropy_source(&source, product_id))
+		Ok(crate::runtime::contacts::ContactHandleKey::from_root_entropy_source(
+			&source, product_id,
+		))
 	}
 
 	async fn allocate_grants<'a>(
