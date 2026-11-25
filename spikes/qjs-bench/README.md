@@ -321,11 +321,41 @@ long throughput workloads.
   reserves the module's maximum memory up front even with bounds checks: our
   guest declares none, so 4 GiB per instance, which iOS granted once and then
   refused, aborting the app. The bounds variant now builds with
-  `WASM_RT_USE_MMAP=0`, so memory comes from the allocator and grows by
-  `realloc`. That costs about 1 MiB more per worker here (3.5 MiB against
-  2.5 MiB with mmap on the Mac), which a guest that declares its maximum, or
-  a smaller initial heap, would win back.
+  `WASM_RT_USE_MMAP=0`, so memory came from the allocator and grew by
+  `realloc`, at about 1 MiB more per worker (3.5 MiB against 2.5 MiB with
+  mmap on the Mac).
+- **Rerun with the declared maximum.** The guest now declares 32 MiB and the
+  bounds build reserves that with mmap. Two quick runs
+  (`iPhone11,2-bounds-mmap32-run{1,2}`) start all ten workers: wasm2c
+  renders in 0.72 / 0.75 ms (p50 / p95), boots in 24 ms and takes 2.5 MiB a
+  worker, against native's 0.37 ms, 14 ms and 1.85 MiB. The out-of-bounds
+  trap and the 8 MiB cap behave as before.
 - The app binary with all four engines is 11.7 MB, unstripped.
+
+### iPhone XS: WKWebView
+
+The bench app also runs the workload in a WKWebView, set up as the iOS host
+runs workers today: a 1 pt view attached to the window, the Mac shim's
+`truapiFrame` handler out and `__truapi_deliver_bytes` in. The app cannot read
+the WebContent processes' memory, so `scripts/measure-ios-webcontent.py`
+launches it with `--suite webview-memory --hold 30`, records Instruments'
+Activity Monitor while the ten views are held, and sums the physical
+footprint of the WebContent processes the app names.
+
+| iPhone XS | QuickJS native | wasm2c, bounds checks | WKWebView |
+|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.36 / 0.39 to 0.56 ms | 0.72 / 0.74 ms | 0.65 to 0.67 / 0.86 to 1.19 ms |
+| Start to idle | 14 ms | 24 ms | 69 to 87 ms; 346 ms for the first |
+| Memory per worker | 1.86 MiB | 2.46 MiB | about 13 MiB (12.1 in its WebContent process, 0.8 in the app) |
+| Codec, round trips/s | 1 873 | 944 | 10 309 (JIT) |
+
+- Every worker gets its own WebContent process: ten views, ten processes.
+- The WebView renders slightly faster than wasm2c here, because WebContent
+  has the JIT, but starts three times slower and costs about five times the
+  memory per worker.
+- `results/ios-device/iPhone11,2-bounds-webview-run1.jsonl` (replays, codec)
+  and `iPhone11,2-webview-memory-run{1,2}.jsonl` (memory).
 
 ## T8: Android
 

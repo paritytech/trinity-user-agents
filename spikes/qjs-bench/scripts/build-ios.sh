@@ -44,7 +44,7 @@ rm -rf "$resources"
 mkdir -p "$resources"
 cp workloads/dist/w-worker.js workloads/dist/w-codec.js workloads/dist/w-rxjs.js \
   workloads/dist/w-pingpong-64.js workloads/dist/w-pingpong-4k.js \
-  workloads/corpus/corpus.bin samples/t1-memory.js "$resources/"
+  workloads/dist/webview-shim.js workloads/corpus/corpus.bin samples/t1-memory.js "$resources/"
 
 symroot=$PWD/build/xcode-$variant
 case "$platform" in

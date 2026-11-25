@@ -31,9 +31,11 @@ final class BenchRunner: ObservableObject {
 
         for (index, step) in steps.enumerated() {
             status = "\(index + 1)/\(steps.count) \(step.engine) \(step.mode)"
-            let line = await Task.detached(priority: .userInitiated) {
-                Self.run(step, resources: resources)
-            }.value
+            let line = step.engine == "webview"
+                ? await WebViewBench.run(mode: step.mode, resources: resources, holdSeconds: Int(argument("--hold") ?? "") ?? 0)
+                : await Task.detached(priority: .userInitiated) {
+                    Self.run(step, resources: resources)
+                }.value
             emit("{\(deviceFields()),\"step\":\(index)," + line.dropFirst())
         }
 
@@ -54,12 +56,17 @@ final class BenchRunner: ObservableObject {
     }
 
     private func makeSuite(named suite: String, runs: Int) -> [BenchStep] {
+        if suite == "webview-memory" {
+            return [BenchStep(engine: "webview", mode: "instances", count: 10)]
+        }
         let engines = ["native", "wasm2c", "boa", "wasmi"]
         var steps = [BenchStep(engine: "wasm2c", mode: "guard-capacity", count: 64)]
         for engine in engines {
             steps += Array(repeating: BenchStep(engine: engine, mode: "replay"), count: runs)
             steps.append(BenchStep(engine: engine, mode: "instances", count: 10))
         }
+        steps += Array(repeating: BenchStep(engine: "webview", mode: "replay"), count: runs)
+        steps.append(BenchStep(engine: "webview", mode: "instances", count: 10))
         steps.append(BenchStep(engine: "wasm2c", mode: "memcap"))
         steps.append(BenchStep(engine: "wasmi", mode: "memcap"))
         steps.append(BenchStep(engine: "wasm2c", mode: "oob-trap"))
@@ -68,6 +75,10 @@ final class BenchRunner: ObservableObject {
         for workload in workloads {
             for engine in throughputEngines {
                 steps.append(BenchStep(engine: engine, mode: workload))
+            }
+            // The ping-pong workloads wait on echoed frames the WebView shim never sends back.
+            if !workload.hasPrefix("pingpong") {
+                steps.append(BenchStep(engine: "webview", mode: workload))
             }
         }
         return steps
