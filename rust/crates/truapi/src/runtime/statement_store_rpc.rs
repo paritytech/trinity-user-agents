@@ -216,8 +216,12 @@ impl StatementStoreRpc {
 
 	/// Dials People through the host, in a task of its own. A caller that gives
 	/// up while the host dials leaves nobody to take the connection, so the
-	/// task closes one that arrives after its caller went. A dial the host
-	/// never answers keeps that task.
+	/// task closes one that arrives after its caller went, and does not dial
+	/// for a caller gone before it starts.
+	///
+	/// A dial the host never answers keeps its task, one per caller that gave
+	/// up on it: a task that stopped waiting could not close what the host
+	/// hands over later.
 	async fn connect(
 		&self,
 		label: &'static str,
@@ -226,6 +230,9 @@ impl StatementStoreRpc {
 		let platform = self.platform.clone();
 		let genesis_hash = self.people_chain_genesis_hash;
 		self.spawner.spawn(async move {
+			if hand_over.is_canceled() {
+				return;
+			}
 			let connected = platform.connect(genesis_hash).await;
 			if let Err(Ok(connection)) = hand_over.send(connected) {
 				connection.close();

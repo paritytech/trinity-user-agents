@@ -6,6 +6,7 @@ use std::sync::{
 use futures::{
 	FutureExt,
 	channel::{mpsc, oneshot},
+	future::BoxFuture,
 	stream::{BoxStream, StreamExt},
 };
 use serde_json::json;
@@ -497,11 +498,38 @@ fn a_subscription_connection_handed_over_after_its_caller_went_is_closed() {
 		Spawner::for_test(),
 	);
 
-	let given_up = statement_store.client("test").now_or_never();
-	wait_until(|| node.chain_connects.lock().unwrap().len() == 1, "the host dials");
+	let mut client = Box::pin(statement_store.client("test"));
+	let dialling = || {
+		let handed_out = client.as_mut().now_or_never();
+		assert!(handed_out.is_none(), "the connection is not handed out before the host hands it");
+		node.chain_connects.lock().unwrap().len() == 1
+	};
+	wait_until(dialling, "the host dials");
+	drop(client);
 	let _ = hand_over.send(());
 	let closed = || node.chain_closes.load(Ordering::SeqCst) == 1;
-	wait_until(closed, "the connection handed over late is closed");
 
-	assert!(given_up.is_none(), "the connection is not handed out before the host hands it over");
+	wait_until(closed, "the connection handed over late is closed");
+}
+
+/// A caller withdrawn before the dial's task starts leaves nothing to dial
+/// for, so the host is not asked for a People socket only to have it closed.
+#[test]
+fn a_dial_whose_caller_went_before_it_started_is_not_made() {
+	let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
+	let queue = queued.clone();
+	let spawner = Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task));
+	let node = Arc::new(StubPlatform::default());
+	let statement_store = StatementStoreRpc::new(
+		node.clone(),
+		ChainRuntime::new(PeopleChain::new(vec![Upstream::Drops]), Spawner::for_test()),
+		PEOPLE_GENESIS,
+		spawner,
+	);
+
+	let given_up = statement_store.client("test").now_or_never();
+	let dial = queued.lock().unwrap().pop().expect("the dial waits for its task");
+	block_on(dial);
+
+	assert_eq!((given_up.is_none(), node.chain_connects.lock().unwrap().len()), (true, 0));
 }
