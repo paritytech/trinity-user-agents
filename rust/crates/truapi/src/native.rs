@@ -99,8 +99,8 @@ impl Stack {
 	/// pointer's key or breaks the build's reserved-value rule.
 	#[uniffi::constructor]
 	pub fn open_bundled(stack: BundledStack) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		let BundledStack { pointer, descriptor, allows_reserved_values } = stack;
-		Ok(Arc::new(Self::bundled(&pointer, &descriptor, allows_reserved_values)?))
+		let BundledStack { pointer, descriptor, reserved_values } = stack;
+		Ok(Arc::new(Self::bundled(&pointer, &descriptor, &reserved_values)?))
 	}
 
 	/// Classify a navigation input exactly like the core's internal navigate

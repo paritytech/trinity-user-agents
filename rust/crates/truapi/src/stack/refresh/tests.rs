@@ -233,7 +233,7 @@ fn start(
 #[test]
 fn a_policy_fault_is_reported_before_the_link() {
 	let policy = ReservedValuesPolicy {
-		extra_tlds: vec!["kusama".to_string()],
+		extra_tlds: vec!["li".to_string()],
 		..ReservedValuesPolicy::default()
 	};
 
@@ -246,10 +246,7 @@ fn a_policy_fault_is_reported_before_the_link() {
 		Box::new(manual_clock()),
 	));
 
-	assert_eq!(
-		refused.err(),
-		Some(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })
-	);
+	assert_eq!(refused.err(), Some(StackError::UnsupportedReservedTld { tld: "li".to_string() }));
 }
 
 /// A host that is offline at launch still runs: the stack comes from the

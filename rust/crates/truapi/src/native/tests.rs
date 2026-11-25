@@ -3842,14 +3842,15 @@ fn share_hosts_require_a_tld_the_stack_serves() {
 /// runtime refuses it.
 #[test]
 fn a_host_reads_links_and_trust_from_the_bundled_stack() {
-	let open = |tld: &str, allows_reserved_values| {
+	let open = |tld: &str| {
 		let descriptor =
 			crate::test_support::test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 		let (pointer, descriptor) = crate::test_support::sign_test_descriptor(&descriptor);
-		Stack::open_bundled(BundledStack { pointer, descriptor, allows_reserved_values })
+		let reserved_values = crate::platform::ReservedValuesPolicy::default();
+		Stack::open_bundled(BundledStack { pointer, descriptor, reserved_values })
 	};
 
-	let fork = open("fork", false).expect("a fork's stack opens");
+	let fork = open("fork").expect("a fork's stack opens");
 	assert_eq!(
 		(
 			fork.product_share_hosts(),
@@ -3858,5 +3859,5 @@ fn a_host_reads_links_and_trust_from_the_bundled_stack() {
 		),
 		(vec!["dot.li".to_owned(), "fork.li".to_owned()], true, false)
 	);
-	assert!(matches!(open("dot", false), Err(NativeRuntimeConfigError::Invalid { .. })));
+	assert!(matches!(open("dot"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }

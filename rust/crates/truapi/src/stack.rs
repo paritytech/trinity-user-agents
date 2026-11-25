@@ -122,7 +122,8 @@ impl ReservedValuesPolicy {
 		if self.allowed && !(self.extra_genesis_hashes.is_empty() && self.extra_tlds.is_empty()) {
 			return Err(StackError::AllowedWithExtras);
 		}
-		let no_stack_can_have = |tld: &&String| !is_dns_label(tld) || taken_tld_reason(tld).is_some();
+		let no_stack_can_have =
+			|tld: &&String| !is_dns_label(tld) || taken_tld_reason(tld).is_some();
 		match self.extra_tlds.iter().find(no_stack_can_have) {
 			Some(tld) => Err(StackError::UnsupportedReservedTld { tld: tld.clone() }),
 			None => Ok(()),

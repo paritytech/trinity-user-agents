@@ -219,8 +219,14 @@ fn a_stack_serves_its_own_tld_and_the_reserved_one() {
 		people: [0xa1; 32],
 		bulletin: [0xb2; 32],
 	};
-	let fork =
-		Stack::new(identity(), "fork".into(), "fork".into(), chains, false).expect("fork starts");
+	let fork = Stack::new(
+		identity(),
+		"fork".into(),
+		"fork".into(),
+		chains,
+		&ReservedValuesPolicy::default(),
+	)
+	.expect("fork starts");
 	let served = |product_id: &str| fork.require_served(&ProductId::for_test(product_id)).is_ok();
 
 	assert_eq!(
@@ -228,8 +234,11 @@ fn a_stack_serves_its_own_tld_and_the_reserved_one() {
 		[true, true, false, false, true]
 	);
 	assert_eq!(
-		bundled(&test_descriptor("fork", [0xa1; 32], [0xb2; 32], [0xc3; 32]), false)
-			.map(|stack| stack.tld().to_owned()),
+		bundled(
+			&test_descriptor("fork", [0xa1; 32], [0xb2; 32], [0xc3; 32]),
+			&ReservedValuesPolicy::default()
+		)
+		.map(|stack| stack.tld().to_owned()),
 		Ok("fork".to_owned())
 	);
 }
@@ -391,12 +400,12 @@ fn allowed_reserved_values_with_extra_ones_are_refused() {
 }
 
 /// A reserved TLD is compared with a stack's as written, and a stack's TLD is
-/// one the core serves, so any other entry would reserve nothing. The build is
-/// told instead.
+/// a DNS label other than `li` and `localhost`, so any other entry would
+/// reserve nothing. The build is told instead.
 #[test]
 fn an_extra_tld_no_stack_can_have_is_refused() {
 	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	let entries = ["kusama", ".testnet", "Testnet", "testnet ", ""];
+	let entries = ["li", "localhost", ".testnet", "Testnet", "testnet ", ""];
 	let reserving = |entry: &str| ReservedValuesPolicy {
 		extra_tlds: vec!["testnet".to_string(), entry.to_string()],
 		..ReservedValuesPolicy::default()
@@ -413,21 +422,21 @@ fn an_extra_tld_no_stack_can_have_is_refused() {
 #[test]
 fn a_policy_fault_is_reported_before_the_stacks() {
 	let policy = ReservedValuesPolicy {
-		extra_tlds: vec!["kusama".to_string()],
+		extra_tlds: vec!["li".to_string()],
 		..ReservedValuesPolicy::default()
 	};
-	let on_kusama = test_descriptor("kusama", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	let (_, bytes) = sign_test_descriptor(&on_kusama);
+	let on_li = test_descriptor("li", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let (_, bytes) = sign_test_descriptor(&on_li);
 	let zero_asset_hub =
 		StackChains { relay: None, asset_hub: [0; 32], people: [0xa1; 32], bulletin: [0xb2; 32] };
 
 	assert_eq!(
 		[
-			bundled(&on_kusama, &policy),
+			bundled(&on_li, &policy),
 			Stack::bundled(&test_stack_link(None), &bytes, &policy),
-			Stack::new(identity(), "paseo".into(), "kusama".into(), zero_asset_hub, &policy),
+			Stack::new(identity(), "paseo".into(), "li".into(), zero_asset_hub, &policy),
 		],
-		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })),
+		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "li".to_string() })),
 	);
 }
 

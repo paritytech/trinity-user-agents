@@ -81,8 +81,8 @@ export interface ReservedValuesPolicy {
   extraGenesisHashes?: (string | Uint8Array)[];
   /**
    * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
-   * is, without the leading dot. The core's refusal of any other entry names
-   * the TLDs a stack can have.
+   * is, without the leading dot. The core refuses an entry no stack can have:
+   * one that is not a DNS label, or is `li` or `localhost`.
    */
   extraTlds?: string[];
 }
