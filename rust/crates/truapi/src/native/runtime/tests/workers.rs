@@ -220,6 +220,24 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 }
 
 #[tokio::test]
+async fn an_attempt_opens_its_execution_once() {
+	let (runtime, views, product) = setup();
+	let _claim = runtime.claim_worker(product);
+	let attempt = views.latest();
+	let _owner = open(&attempt);
+	assert!(
+		attempt
+			.open_execution(ExecutionCallbacks {
+				host: Arc::new(EventCallbacks::new()),
+				chat: None,
+				game: None,
+			})
+			.is_err(),
+		"a second execution would replace the first, which nothing would then shut down"
+	);
+}
+
+#[tokio::test]
 async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	let (runtime, views, first) = setup();
 	let second = ProductId::for_test("second.dot");
