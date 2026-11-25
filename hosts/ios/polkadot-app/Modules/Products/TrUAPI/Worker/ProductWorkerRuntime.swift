@@ -104,15 +104,15 @@ private func reopening(
             logger.warning("[worker] the render of \(request.context) ended, reopening: \(error)")
         }
 
-        try? await Task.sleep(for: renderReopenDelay(after: attempt))
+        try? await Task.sleep(for: reopenDelay(after: attempt))
         attempt += 1
     }
 }
 
-/// How long to wait before opening a render again. Doubling from a second up
-/// to half a minute: a stream that is simply slow is picked up at once, and a
-/// broken one is not asked on a loop.
-func renderReopenDelay(after attempt: Int) -> Duration {
+/// How long to wait before opening a stream from the core again. Doubling from
+/// a second up to half a minute: a stream that is simply slow is picked up at
+/// once, and a broken one is not asked on a loop.
+func reopenDelay(after attempt: Int) -> Duration {
     let doublings = min(attempt, 5)
 
     return min(.seconds(1) * (1 << doublings), .seconds(30))

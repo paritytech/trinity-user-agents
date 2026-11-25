@@ -35,7 +35,7 @@ final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
 }
 
 /// A worker engine for a runtime whose test starts no worker.
-final class NoWorkers: NativeWorkerEngine, Sendable {
+final class NoWorkerEngine: NativeWorkerEngine, Sendable {
     func start(productId _: ProductId, attempt _: NativeWorkerAttempt) {}
     func stop(productId _: ProductId, attemptId _: UInt64) {}
 }

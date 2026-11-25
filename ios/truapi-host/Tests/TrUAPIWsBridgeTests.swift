@@ -129,7 +129,8 @@ struct TrUAPIWsBridgeTests {
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig(),
-            notificationCenter: notifications
+            notificationCenter: notifications,
+            workerEngine: NoWorkers()
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
