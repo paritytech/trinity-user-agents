@@ -85,7 +85,8 @@ pub enum StackCommand {
 		#[arg(long)]
 		out: PathBuf,
 		/// Leave `--out` untouched when the fetched copy differs from it only in
-		/// fields truapi-host does not read.
+		/// fields truapi-host does not read and the core does not pin for a stack
+		/// its build allows reserved values.
 		#[arg(long)]
 		skip_same_projection: bool,
 		/// Also fetch and check the light specs of the relay, People, Asset Hub
@@ -311,7 +312,7 @@ async fn bundle(
 	}
 	if is_current {
 		println!(
-			"{} is current: {} sequence {} changes no field truapi-host reads",
+			"{} is current: {} sequence {} changes no field truapi-host reads or the core pins",
 			out.display(),
 			descriptor.id,
 			descriptor.sequence

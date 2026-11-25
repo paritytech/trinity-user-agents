@@ -251,10 +251,10 @@ fn bundle_refuses_an_unsigned_stack() {
 	assert!(stderr(&output).contains("signed stack"), "{}", stderr(&output));
 }
 
-/// With `--skip-same-projection`, a bundled copy changes only when a field truapi-host reads,
-/// the generation or the validity window does, so a republish that raises only `sequence`
-/// leaves it in place. Without it, other hosts' build steps get every accepted copy, since
-/// they read fields truapi-host does not.
+/// With `--skip-same-projection`, a bundled copy changes only when a field truapi-host reads or
+/// the core pins, the generation or the validity window does, so a republish that raises only
+/// `sequence` leaves it in place. Without it, other hosts' build steps get every accepted copy,
+/// since they read fields truapi-host does not.
 #[test]
 fn test_bundle_skip_same_projection() {
 	let dir = tempfile::tempdir().unwrap();
