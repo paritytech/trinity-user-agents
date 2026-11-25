@@ -11,12 +11,13 @@ starts with new state, as a stack the CLI has not run before, and no message say
 
 A stack passed with `--stack` starts empty after the update, unless it is a built-in network given by its link or URL.
 Devices paired with it have to be paired again. The CLI creates a new signer for it, unless `--mnemonic` or
-`HOST_CLI_SIGNER_MNEMONIC` gives one. To keep the old signer, give its phrase to `/session --mnemonic`.
+`HOST_CLI_SIGNER_MNEMONIC` gives one.
 
 The old data stays where it was, under the name the released `network-check` printed as `network`: the descriptor's
 `id` without a trailing `-fork`, or the whole `id` for `polkadot-fork`. Sessions, pairings and product data are in
-`<base-path>/v2/<network>`, and the default session's accounts, mnemonics included, are in
-`<base-path>/v2/accounts.json` under that name.
+`<base-path>/v2/<network>`. The old signers' mnemonics are in `<base-path>/v2/accounts.json` under that name for the
+default session, and in `<base-path>/v2/<network>/<name>_signing_host/accounts.json` for a named session. To keep an
+old signer, give its phrase to `/session --mnemonic`.
 
 When that name is a built-in network's, as for a fork of a built-in network or a local copy of its
 descriptor with other `rpc` URLs, the built-in network keeps using what the stack stored there: it can sign with an
