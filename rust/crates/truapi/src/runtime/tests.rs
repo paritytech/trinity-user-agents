@@ -102,7 +102,7 @@ use super::{
 use crate::{
 	host_internal::{
 		product_manifest::test_manifest_json,
-		sso_messages::{RemoteMessage, RemoteMessageData, Response, SignRequest, v1},
+		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
 	},
 	host_logic::{
 		product_account::{derive_product_public_key, index_bytes},
@@ -1846,39 +1846,51 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
-/// A product's call that ignores a withdrawal is dropped after a two-second
-/// grace. People's connection can take half a minute to open, while the host
-/// redials or the genesis check waits out a halted chain, so the request's
-/// wait for it watches the withdrawal and the product is answered at once.
-/// The request is sent here without that grace, so only the withdrawal can
-/// end it.
+/// A call that ignores a withdrawal is dropped after a two-second grace.
+/// People's connection can take half a minute to open, while the host redials
+/// or the genesis check waits out a halted chain, so the wait for it watches
+/// the withdrawal and the product is answered at once. The call is polled by
+/// hand, so it has to end in the poll after the withdrawal, before any grace
+/// could pass: the error alone reads the same either way.
 #[test]
 fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
-	let platform = Arc::new(StubPlatform { chain_connect_pending: true, ..Default::default() });
-	let (host, pairing) =
-		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
-	let session = sso_session_info();
-	install_pairing_session(&host, session.clone());
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		chain_connect_pending: true,
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
 	let cancel = truapi::CancellationToken::default();
 	let cx = CallContext::with_parts("sign-raw-connecting".to_string(), cancel.clone());
-	let request = SignRequest::Raw(truapi::latest::HostSignRawRequest {
+	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
 		account: account_id("myapp.dot", 0),
 		payload: raw_payload(),
 	});
-	let sso = pairing.session().clone();
-
-	let call = std::thread::spawn(move || {
-		let answer = futures::executor::block_on(sso.call(&cx, &session, request));
-		matches!(answer, Err(super::sso_remote::SsoRemoteResponseError::Cancelled(_)))
-	});
-	let dialled = || !platform.chain_connects.lock().unwrap().is_empty();
+	let mut call = Box::pin(host.sign_raw(&cx, request));
+	let dialled = || {
+		assert!(call.as_mut().now_or_never().is_none(), "the call waits for People");
+		!platform.chain_connects.lock().unwrap().is_empty()
+	};
 	wait_until(dialled, "People is dialled");
-	cancel.cancel();
-	wait_until(|| call.is_finished(), "the request ends on the withdrawal");
 
+	cancel.cancel();
+	let answer = call.as_mut().now_or_never();
+
+	let Some(Err(CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown {
+		reason,
+	})))) = answer
+	else {
+		panic!("expected the call to end on the withdrawal at once, got {answer:?}");
+	};
 	assert_eq!(
-		(call.join().ok(), platform.pending_connect_dropped.load(Ordering::SeqCst)),
-		(Some(true), true)
+		(
+			reason.contains("cancelled") && reason.contains("sign-raw-connecting"),
+			platform.pending_connect_dropped.load(Ordering::SeqCst),
+		),
+		(true, true),
+		"{reason}"
 	);
 }
 
