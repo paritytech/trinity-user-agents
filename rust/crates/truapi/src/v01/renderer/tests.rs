@@ -814,6 +814,35 @@ fn stamps_fall_every_spacing_along_the_line_and_on_its_ends() {
 	assert_eq!(every(0).stamps(1000, &straight).len(), 21);
 }
 
+/// A stamped line never has more than [`MASK_STAMPS_MAX`] stamps, nor stamps
+/// closer than [`MASK_STAMP_SPACING_MIN`]: a zero-width tip from one end of the
+/// coordinate range to the other gets its spacing stretched to fit, still from
+/// the first point to the last.
+#[test]
+fn a_stamped_line_is_bounded_however_long_and_thin_it_is() {
+	let brush = MaskBrush { spacing_permille: 50, ..slanted_nib() };
+	let long = brush.stamps(0, &[point(0, 0), point(10_000_000, 0)]);
+	assert_eq!(long.len(), MASK_STAMPS_MAX);
+	let widest = [point(i32::MIN, 0), point(i32::MAX, 0)];
+	let stamps = brush.stamps(0, &widest);
+	assert_eq!(stamps.len(), MASK_STAMPS_MAX);
+	assert_eq!(stamps.first(), Some(&(f64::from(i32::MIN), 0.0)));
+	let (end_x, end_y) = stamps[MASK_STAMPS_MAX - 1];
+	assert!(
+		(end_x - f64::from(i32::MAX)).abs() < 1.0 && end_y == 0.0,
+		"the last stamp is on the last point"
+	);
+	// A short zero-width line is stamped every half a logical pixel.
+	assert_eq!(brush.stamps(0, &[point(0, 0), point(200, 0)]).len(), 5);
+	// The bound counts the whole line, its corners included.
+	let zigzag: Vec<MaskPoint> =
+		(0..10_000).map(|i| point(if i % 2 == 0 { 0 } else { 100_000 }, i)).collect();
+	assert!(brush.stamps(0, &zigzag).len() <= MASK_STAMPS_MAX);
+	let covered =
+		cleared_share(&[MaskShape::Stamped { width: 0, brush, points: widest.to_vec() }], 400, 400);
+	assert_eq!(covered, (0, 4));
+}
+
 /// A one-stamp line over a 10 by 2 logical pixel node, one row of samples:
 /// the tip lying flat covers three, turned upright only the one under it.
 #[test]
