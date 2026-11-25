@@ -556,8 +556,7 @@ fn clearing_a_product_reaches_its_storage_subscriptions_only() {
 	let other = ProductId::for_test("myapp.dotapp.dot");
 	let mut own =
 		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
-	let mut others =
-		platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	let mut others = platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
 	for subscription in [&mut own, &mut others] {
 		futures::executor::block_on(futures::StreamExt::next(subscription));
 	}
@@ -889,13 +888,15 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
 		.expect("host runtime config should be valid");
 
-	let first_connected_key =
-		callbacks.auth_states.lock().expect("auth state mutex poisoned").iter().find_map(
-			|state| match state {
-				AuthState::Connected(info) => Some(info.device_enc_public_key),
-				_ => None,
-			},
-		);
+	let first_connected_key = callbacks
+		.auth_states
+		.lock()
+		.expect("auth state mutex poisoned")
+		.iter()
+		.find_map(|state| match state {
+			AuthState::Connected(info) => Some(info.device_enc_public_key),
+			_ => None,
+		});
 	let handed_over_public_key =
 		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
 	assert_eq!(
@@ -1897,7 +1898,8 @@ fn native_chain_provider_forwards_send_response_and_close() {
 fn native_chain_provider_closes_when_the_host_refuses_a_send() {
 	let (callbacks, _events, platform) = event_platform();
 	*callbacks.chain_id.lock().unwrap() = Some(42);
-	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let connection =
+		futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
 	let mut responses = connection.responses();
 	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
 
@@ -2211,12 +2213,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
-		fn on_core_event(
-			&self,
-			_marker: String,
-			_attributes: Vec<crate::logging::CoreAttribute>,
-		) {
-		}
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2405,12 +2402,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
-		fn on_core_event(
-			&self,
-			_marker: String,
-			_attributes: Vec<crate::logging::CoreAttribute>,
-		) {
-		}
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -3400,7 +3392,10 @@ fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
 		parse_renderer_node_json(json).expect("the face reads"),
 		latest::RendererNode::Image {
 			modifiers: Vec::new(),
-			props: latest::ImageProps { source: latest::ImageSource::Inline(Vec::new()), fit: None },
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(Vec::new()),
+				fit: None
+			},
 		}
 	);
 }
@@ -3412,8 +3407,10 @@ fn expanded_card_calls_log_registered_markers() {
 	let (callbacks, _events, platform) = event_platform();
 
 	futures::executor::block_on(async {
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
+		let _ =
+			crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
+		let _ =
+			crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
 	});
 
 	let classes: Vec<_> = callbacks
