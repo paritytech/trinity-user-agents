@@ -198,6 +198,21 @@ class FundingSessionsTest {
     }
 
     @Test
+    fun `leaving a session set to start on its best quote dismisses it without asking the core to disarm`() = runTest {
+        val service = service()
+        val outcome = presented(service)
+        quotes.quote(100.intoBalance(), INTENT)
+        service.start(INTENT, null)
+        advanceUntilIdle()
+
+        service.leave(INTENT)
+        advanceUntilIdle()
+
+        assertEquals(FundingPresentOutcome.DISMISSED, outcome.await())
+        assertFalse("cancelAutoStart" in core.calls)
+    }
+
+    @Test
     fun `leaving a session that never started dismisses it and ends whatever follows it`() = runTest {
         val service = service()
         val outcome = presented(service)

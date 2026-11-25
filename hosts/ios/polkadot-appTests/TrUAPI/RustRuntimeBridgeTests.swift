@@ -66,10 +66,6 @@ private struct StubHostProvider: ProductHostProviding {
     func resolveHost(rawString _: String) async throws -> ProductHost? {
         nil
     }
-
-    func resolvePage(destination: String) async throws -> ProductPage {
-        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
-    }
 }
 
 // MARK: - Bridge factory

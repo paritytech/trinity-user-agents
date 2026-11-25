@@ -12,7 +12,10 @@
 use std::sync::Arc;
 
 use core::{future::Future, time::Duration};
-use futures::stream::{self, BoxStream, Stream, StreamExt};
+use futures::{
+	channel::oneshot,
+	stream::{self, BoxStream, Stream, StreamExt},
+};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -60,9 +63,26 @@ pub enum StatementStoreRpcClientError {
 		/// Chain provider error.
 		error: ProviderError,
 	},
-	/// The pooled People-chain connection could not be opened.
+	/// The pooled People-chain connection could not be opened, or a
+	/// connection did not pass the genesis check. Kind `Unavailable` means
+	/// the People chain could not be reached or stayed halted.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
+}
+
+impl StatementStoreRpcClientError {
+	/// Whether the People chain could not be reached.
+	///
+	/// Opening the client may then be tried again: the node could not be
+	/// dialled, hung up, stayed silent or stayed halted.
+	pub fn is_unreachable(&self) -> bool {
+		match self {
+			Self::Connect { error, .. } => {
+				matches!(error, ProviderError::Handshake { .. } | ProviderError::Transport { .. })
+			},
+			Self::Chain(failure) => failure.kind() == RuntimeFailureKind::Unavailable,
+		}
+	}
 }
 
 /// Why a statement submission failed.
@@ -141,12 +161,17 @@ impl StatementStoreRpc {
 
 	/// Open a statement-store RPC client over its own host-provided
 	/// People-chain connection, for statement subscriptions.
+	///
+	/// The connection passes the pooled connections' genesis check first,
+	/// which waits out a halted chain. Drop the future to stop waiting.
 	pub async fn client(
 		&self,
 		label: &'static str,
 	) -> Result<RpcClient, StatementStoreRpcClientError> {
 		let connection = self.connect(label).await?;
-		Ok(RpcClient::new(HostRpcClient::new(connection, self.spawner.clone())))
+		let rpc_client = HostRpcClient::new(connection, self.spawner.clone());
+		self.chain.check_genesis(self.people_chain_genesis_hash, &rpc_client).await?;
+		Ok(RpcClient::new(rpc_client))
 	}
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
@@ -189,13 +214,34 @@ impl StatementStoreRpc {
 		self.chain.rpc_client(label, &self.people_chain_genesis_hash).await
 	}
 
+	/// Dials People through the host, in a task of its own. A caller that gives
+	/// up while the host dials leaves nobody to take the connection, so the
+	/// task closes one that arrives after its caller went, and does not dial
+	/// for a caller gone before it starts.
+	///
+	/// A dial the host never answers keeps its task, one per caller that gave
+	/// up on it: a task that stopped waiting could not close what the host
+	/// hands over later.
 	async fn connect(
 		&self,
 		label: &'static str,
 	) -> Result<Arc<dyn JsonRpcConnection>, StatementStoreRpcClientError> {
-		self.platform
-			.connect(self.people_chain_genesis_hash)
-			.await
+		let (hand_over, handed_over) = oneshot::channel();
+		let platform = self.platform.clone();
+		let genesis_hash = self.people_chain_genesis_hash;
+		self.spawner.spawn(async move {
+			if hand_over.is_canceled() {
+				return;
+			}
+			let connected = platform.connect(genesis_hash).await;
+			if let Err(Ok(connection)) = hand_over.send(connected) {
+				connection.close();
+			}
+		});
+		let connected = handed_over.await.unwrap_or_else(|_| {
+			Err(ProviderError::Host { reason: "the dial ended without an answer".to_string() })
+		});
+		connected
 			.map(Arc::from)
 			.map_err(|error| StatementStoreRpcClientError::Connect { label, error })
 	}
