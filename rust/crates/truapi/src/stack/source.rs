@@ -102,6 +102,21 @@ pub enum StackMismatch {
 		/// The genesis hash the chain gave.
 		answered: [u8; 32],
 	},
+	/// People's `NetworkSuffix.NetworkSuffix` is not the descriptor's `tld`.
+	///
+	/// The core derives its identities under `peopl.<tld>` and builds proof
+	/// contexts with People's suffix, so an identity derived under one does
+	/// not match the other. The core keeps using People.
+	#[display("People's NetworkSuffix is \"{answered}\", not the stack's tld \"{named}\"")]
+	NetworkSuffix {
+		/// The descriptor's `tld`.
+		named: String,
+		/// The suffix People gave, escaped as [`u8::escape_ascii`] escapes
+		/// it: printable ASCII stays as it is, apart from a backslash, single
+		/// quote or double quote, which gets a backslash before it, and any
+		/// other byte is written as `\t`, `\r`, `\n` or `\xNN`.
+		answered: String,
+	},
 }
 
 /// What an answer from a chain did to [`StackStatus::mismatches`].
@@ -145,10 +160,13 @@ pub struct StackStatus {
 	/// changed the stored record finishes once that record is stored or its
 	/// store fails; the whole status shows it only from then on.
 	pub last_refresh: Option<StackRefreshOutcome>,
-	/// The chains whose last answer differed from the descriptor the core
-	/// runs, in the descriptor's order. While any is listed, a refresh that
-	/// was started fetches the descriptor every five minutes instead of every
-	/// hour, until a newer copy sets `restart_required`.
+	/// Where a chain's last answer differed from the descriptor the core
+	/// runs: its chains in the descriptor's order, then People's
+	/// `NetworkSuffix`. The suffix is listed only once this runtime has read
+	/// it, so a suffix that is not listed may not have been read yet. While a
+	/// chain is listed, a refresh that was started fetches the descriptor
+	/// every five minutes instead of every hour, until a newer copy sets
+	/// `restart_required`.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -172,6 +190,9 @@ pub struct StackSource {
 	/// The last answer of each chain that gave a different genesis hash from
 	/// the one the running copy names.
 	wrong_genesis: Vec<GenesisHashes>,
+	/// People's `NetworkSuffix` as last read, or `None` before any read. It is
+	/// not stored, so each runtime starts without one.
+	people_suffix: Option<Vec<u8>>,
 	/// The status from before the last [`Self::fetched`], shown until the
 	/// record it returned is stored or fails to store, so that the host is
 	/// never told `Current` for a copy whose store may still fail.
@@ -219,6 +240,7 @@ impl StackSource {
 			expired: current.expired,
 			last_refresh: None,
 			wrong_genesis: Vec::new(),
+			people_suffix: None,
 			before_store: None,
 		})
 	}
@@ -238,7 +260,7 @@ impl StackSource {
 	/// While the record a [`Self::fetched`] returned is being stored, this is
 	/// the status from before that fetch, with the chains' answers since.
 	pub fn status(&self) -> StackStatus {
-		let mismatches = self.wrong_chains().collect();
+		let mismatches = self.mismatches();
 		if let Some(before) = &self.before_store {
 			return StackStatus { mismatches, ..before.clone() };
 		}
@@ -254,6 +276,21 @@ impl StackSource {
 		}
 	}
 
+	fn mismatches(&self) -> Vec<StackMismatch> {
+		self.wrong_chains().chain(self.wrong_suffix()).collect()
+	}
+
+	/// People's suffix as last read, when it is not the running copy's `tld`.
+	fn wrong_suffix(&self) -> Option<StackMismatch> {
+		let tld = self.running.stack.tld();
+		let answered =
+			self.people_suffix.as_deref().filter(|answered| *answered != tld.as_bytes())?;
+		Some(StackMismatch::NetworkSuffix {
+			named: tld.to_owned(),
+			answered: answered.escape_ascii().to_string(),
+		})
+	}
+
 	/// The chains of the running copy whose last answer was a different
 	/// genesis hash from the one it names, in the copy's order.
 	fn wrong_chains(&self) -> impl Iterator<Item = StackMismatch> {
@@ -263,6 +300,22 @@ impl StackSource {
 			let answered = wrong.answered;
 			Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
 		})
+	}
+
+	/// Takes People's `NetworkSuffix.NetworkSuffix` as read from the chain.
+	///
+	/// Returns what that did to [`Self::status`], which lists the last suffix
+	/// read when it is not the running copy's `tld`. The core refuses nothing
+	/// over a suffix, so unlike a wrong genesis hash it does not bring the
+	/// next fetch forward.
+	pub fn people_suffix_answered(&mut self, answered: &[u8]) -> Listing {
+		let listed = self.wrong_suffix();
+		self.people_suffix = Some(answered.to_vec());
+		match self.wrong_suffix() {
+			wrong if wrong == listed => Listing::Unchanged,
+			Some(wrong) => Listing::Listed(wrong),
+			None => Listing::Cleared,
+		}
 	}
 
 	/// Records the genesis hash a new connection's chain gave.

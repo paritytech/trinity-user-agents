@@ -59,23 +59,23 @@ class HostLogSinkTreeTest {
         Timber.plant(HostLogSinkTree(sink) { now })
         val limit = HostLogSinkTree.LINES_PER_WINDOW
 
-        repeat(limit + 500) { Timber.tag("truapi.product").w("chainHead follow p:$it restarted 1 ms after the stop") }
-        Timber.tag("truapi.chain").i("chain connection 2 open")
+        repeat(limit + 500) { Timber.tag("truapi.chain").w("chainHead follow p:$it restarted 1 ms after the stop") }
+        Timber.tag("truapi.auth").i("auth session restored")
 
-        verify(exactly = limit) { sink.log(Log.WARN, "truapi.product", any(), emptyMap()) }
-        verify(exactly = 1) { sink.log(Log.INFO, "truapi.chain", "chain connection 2 open", emptyMap()) }
+        verify(exactly = limit) { sink.log(Log.WARN, "truapi.chain", any(), emptyMap()) }
+        verify(exactly = 1) { sink.log(Log.INFO, "truapi.auth", "auth session restored", emptyMap()) }
 
         now += HostLogSinkTree.WINDOW_MS
-        Timber.tag("truapi.product").w("chainHead follow p:9999 restarted 1 ms after the stop")
+        Timber.tag("truapi.chain").w("chainHead follow p:9999 restarted 1 ms after the stop")
 
         verify(exactly = 1) {
             sink.log(
                 Log.WARN,
-                "truapi.product",
-                "500 truapi.product lines dropped over the limit of $limit a minute",
+                "truapi.chain",
+                "500 truapi.chain lines dropped over the limit of $limit a minute",
                 mapOf(HostLogSinkTree.DROPPED_ATTRIBUTE to 500),
             )
-            sink.log(Log.WARN, "truapi.product", "chainHead follow p:9999 restarted 1 ms after the stop", emptyMap())
+            sink.log(Log.WARN, "truapi.chain", "chainHead follow p:9999 restarted 1 ms after the stop", emptyMap())
         }
     }
 
@@ -115,9 +115,9 @@ class HostLogSinkTreeTest {
         Timber.uprootAll()
         Timber.plant(HostLogSinkTree(sink) { now })
 
-        Timber.tag("truapi.product").w("first")
+        Timber.tag("truapi.chain").w("first")
         now += HostLogSinkTree.WINDOW_MS
-        Timber.tag("truapi.product").w("second")
+        Timber.tag("truapi.chain").w("second")
 
         verify(exactly = 2) { sink.log(any(), any(), any(), any()) }
     }
