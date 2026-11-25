@@ -2,9 +2,8 @@ import Testing
 @testable import Products
 
 struct JSEngineLoggerTests {
-    /// Console output stays on the device, so every level keeps its own and no line carries a
-    /// `[truapi.*]` tag.
-    @Test func consoleLinesStayOnTheDeviceAtTheirOwnLevel() {
+    /// Console output keeps its own level and carries no `[truapi.*]` tag, so none of it reaches Sentry.
+    @Test func consoleLinesKeepTheirOwnLevelAndCarryNoTag() {
         let logger = RecordingLogger()
         let jsLogger = JSEngineLogger(logger: logger)
 

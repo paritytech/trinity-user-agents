@@ -26,8 +26,9 @@ extension JSEngineLogger: JSEngineScriptHandling {
               let level = dict["level"] as? String,
               let message = dict["message"] as? String else { return }
 
-        // Console output stays on the device at its own level and carries no `[truapi.*]` tag, so none of
-        // it reaches Sentry. A product reports to its own Sentry project.
+        // Console output keeps its own level and carries no `[truapi.*]` tag, so none of it reaches
+        // Sentry. Only a testnet build keeps it, in the log file, and a release build drops it. A product
+        // reports to its own Sentry project.
         switch level {
         case "error":
             logger.error("JS: \(message)")
