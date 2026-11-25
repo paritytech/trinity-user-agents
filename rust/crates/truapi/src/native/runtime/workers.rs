@@ -93,6 +93,8 @@ enum Phase {
 	Starting {
 		owner: Option<Arc<NativeProductExecution>>,
 		module_ready: bool,
+		/// Fails the attempt if it is still starting after [`STARTUP_DEADLINE`]. Dropped, and so
+		/// cancelled, with this phase.
 		_timeout: BackgroundTask,
 	},
 	Running(Arc<NativeProductExecution>),
