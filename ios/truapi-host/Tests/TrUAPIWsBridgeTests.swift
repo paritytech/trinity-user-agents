@@ -373,8 +373,8 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
     func localStorageClear(key: String) throws { try storage.clear(key: key) }
 }
 
-// Conforms to `ChatHostBridge` so a new requirement there fails this job.
-// This stub writes each member, also the members that have a default.
+// Conforms to `ChatHostBridge`, so a new requirement without a default fails
+// this job. The stub writes each member, also the members that have a default.
 final class StubChatHostBridge: ChatHostBridge {
     func createRoom(
         roomId _: String,

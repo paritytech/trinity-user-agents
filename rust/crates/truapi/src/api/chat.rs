@@ -36,8 +36,8 @@ pub trait Chat: Send + Sync {
 	/// replaces it, also for a room that exists, so a product declares its rooms
 	/// again when it starts.
 	///
-	/// In version 2 the icon is inline image data or the CID of a Bulletin
-	/// preimage: a URL to fetch is refused.
+	/// In version 2 the icon is an inline image as a `data:` URL with a Base64
+	/// payload, or the CID of a Bulletin preimage: a URL to fetch is refused.
 	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
@@ -190,9 +190,10 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Replace the name, description and empty-room text of a room, and its
-	/// icon when the metadata names one. The icon is inline image data or the
-	/// CID of a Bulletin preimage: a URL to fetch is refused. A host that does
-	/// not serve room metadata answers `Unsupported`.
+	/// icon when the metadata names one. The icon is an inline image as a
+	/// `data:` URL with a Base64 payload, or the CID of a Bulletin preimage: a
+	/// URL to fetch is refused. A host that does not serve room metadata
+	/// answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -226,9 +227,9 @@ pub trait Chat: Send + Sync {
 	/// the badge, whether the room is pinned, and the newest message and reaction
 	/// for the preview line, or an activity line that replaces it. In a room the
 	/// host stores, the preview cannot show a message or a reaction of the user.
-	/// An image badge is inline image data or the CID of a Bulletin preimage: a
-	/// URL to fetch is refused. A host that does not serve previews answers
-	/// `Unsupported`.
+	/// An image badge is an inline image as a `data:` URL with a Base64
+	/// payload, or the CID of a Bulletin preimage: a URL to fetch is refused. A
+	/// host that does not serve previews answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
