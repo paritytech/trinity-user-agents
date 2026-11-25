@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_transactions_impl.data.validation
+package io.paritytech.polkadotapp.feature_transactions.api.data.validation
 
 /**
  * Outcome of validating an extrinsic against the transaction pool via `TaggedTransactionQueue`.
