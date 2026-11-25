@@ -55,7 +55,6 @@ import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.NativeWorkerAttempt
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -284,17 +283,17 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         productId: ProductId,
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
-        kind: ExecutableKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> = attach(productId, chains, onReadyToInject) {
-        runtime.openProductExecution(
-            bridge = buildBridge(productId, navigationPolicy, card),
-            configuration = ProductExecutionConfig(productId, kind),
-            chat = chat,
-            game = gameBridge(productId),
-        )
+        val bridge = buildBridge(productId, navigationPolicy, card)
+        val game = gameBridge(productId)
+        if (card != null) {
+            runtime.openWidgetExecution(bridge, productId, chat, game)
+        } else {
+            runtime.openAppExecution(bridge, productId, chat, game)
+        }
     }
 
     suspend fun attachWorker(

@@ -28,7 +28,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
@@ -64,7 +63,6 @@ class ProductTrUAPIHostBridgeTest {
             productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ExecutableKind.APP,
             onReadyToInject = {},
         )
 
@@ -81,7 +79,7 @@ class ProductTrUAPIHostBridgeTest {
             every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
         }
         val runtime = mockk<TrUAPIHostRuntime> {
-            every { openProductExecution(any(), any(), any(), any()) } returns execution
+            every { openAppExecution(any(), any(), any(), any()) } returns execution
         }
         val bridge = bridge(scope, hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() })
 
@@ -90,7 +88,6 @@ class ProductTrUAPIHostBridgeTest {
             productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ExecutableKind.WORKER,
             onReadyToInject = {},
         )
         scope.cancel()
@@ -111,7 +108,6 @@ class ProductTrUAPIHostBridgeTest {
             productId = game,
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ExecutableKind.WIDGET,
             card = card,
             onReadyToInject = {},
         )

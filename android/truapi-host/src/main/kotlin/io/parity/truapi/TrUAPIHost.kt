@@ -87,6 +87,7 @@ import uniffi.truapi.PocketCardRemoval
 import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
+import uniffi.truapi.ExecutionCallbacks
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
@@ -455,7 +456,7 @@ interface HostBridge {
 
 /**
  * Native Chat storage and UI surface. Implement and pass to
- * [TrUAPIHostRuntime.openProductExecution] when the host supports the Chat
+ * [TrUAPIHostRuntime.openAppExecution] when the host supports the Chat
  * modality; hosts without it pass nothing.
  *
  * Threading: these run on the process-wide dispatch pool shared by every
@@ -515,7 +516,7 @@ interface ChatHostBridge {
 
 /**
  * Native game-reminder surface. Implement and pass to
- * [TrUAPIHostRuntime.openProductExecution] when the host can hold reminders;
+ * [TrUAPIHostRuntime.openAppExecution] when the host can hold reminders;
  * hosts without one pass nothing.
  *
  * The host holds one reminder per product: a schedule replaces the reminder
@@ -1091,19 +1092,28 @@ class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::clas
     }
 
     /**
-     * Open an app or widget connection with a host-assigned immutable context.
+     * Open an app connection for [productId].
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
      * modality omit it. Pass [game] to hold game reminders, and omit it where
-     * the host cannot.
+     * the host cannot. A worker opens through its [NativeWorkerAttempt].
      */
-    @Throws(NativeRuntimeConfigException::class)
-    fun openProductExecution(
+    fun openAppExecution(
         bridge: HostBridge,
-        configuration: ProductExecutionConfig,
+        productId: ProductId,
         chat: ChatHostBridge? = null,
         game: GameHostBridge? = null,
-    ): TrUAPIProductExecution = openExecutionWithBridges(bridge, chat, game) { host, chatAdapter, gameAdapter ->
-        inner.openProductExecution(host, chatAdapter, gameAdapter, configuration)
+    ): TrUAPIProductExecution = openExecutionWithBridges(bridge, chat, game) { callbacks ->
+        inner.openAppExecution(productId, callbacks)
+    }
+
+    /** Open a widget connection for [productId], with the same adapters as [openAppExecution]. */
+    fun openWidgetExecution(
+        bridge: HostBridge,
+        productId: ProductId,
+        chat: ChatHostBridge? = null,
+        game: GameHostBridge? = null,
+    ): TrUAPIProductExecution = openExecutionWithBridges(bridge, chat, game) { callbacks ->
+        inner.openWidgetExecution(productId, callbacks)
     }
 
     /** Look up the ready execution without acquiring demand or control of its bridge. */
@@ -1480,12 +1490,13 @@ internal fun openExecutionWithBridges(
     bridge: HostBridge,
     chat: ChatHostBridge?,
     game: GameHostBridge?,
-    open: (HostCallbacks, NativeChatCallbacks?, NativeGameCallbacks?) -> NativeProductExecution,
+    open: (ExecutionCallbacks) -> NativeProductExecution,
 ): TrUAPIProductExecution {
     val hostAdapter = HostCallbackAdapter(bridge)
     val chatAdapter = chat?.let(::ChatCallbackAdapter)
     val gameAdapter = game?.let(::GameCallbackAdapter)
-    return TrUAPIProductExecution(open(hostAdapter, chatAdapter, gameAdapter), hostAdapter, chatAdapter, gameAdapter)
+    val execution = open(ExecutionCallbacks(hostAdapter, chatAdapter, gameAdapter))
+    return TrUAPIProductExecution(execution, hostAdapter, chatAdapter, gameAdapter)
 }
 
 internal fun renderFlow(subscribe: (NativeRendererObserver) -> NativeSubscription): Flow<RendererNode> =

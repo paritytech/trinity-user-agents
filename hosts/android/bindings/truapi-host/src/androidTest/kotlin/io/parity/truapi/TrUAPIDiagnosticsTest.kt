@@ -20,7 +20,6 @@ import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.createTempDirectory
@@ -116,9 +115,9 @@ class TrUAPIDiagnosticsTest {
         )
 
         val runtime = TrUAPIHostRuntime(bridge, config)
-        val execution = runtime.openProductExecution(
+        val execution = runtime.openAppExecution(
             bridge = bridge,
-            configuration = ProductExecutionConfig(ProductId.parse("dotli.dot").getOrThrow(), ExecutableKind.APP),
+            productId = ProductId.parse("dotli.dot").getOrThrow(),
         )
         chainProvider.attach(
             onResponse = execution::notifyChainResponse,

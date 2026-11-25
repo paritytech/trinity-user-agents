@@ -73,7 +73,7 @@ class ContainerHttpAuthorizationTest {
             val claim = workers?.let { runtime.claimWorker(product) }
             val attempt = workers?.awaitAttempt()
             val opened = attempt?.openExecution(bridge, null, null)
-                ?: runtime.openProductExecution(bridge, ProductExecutionConfig(product, kind))
+                ?: runtime.openAppExecution(bridge, product)
             opened.use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
