@@ -1493,14 +1493,13 @@ successfully.
 `/session --clear <name>` resolves `<name>` once, as `--session` does (§12.6):
 a full username, the newest session for a username base, or a promoted
 session's original name. It removes the session that name resolves to, its
-identity directory, and the network's account in the compatibility account
-store whose Lite username is that session's name. The interactive prompt names
-the resolved session; `exec` asks nothing, so `/session --clear workbench`
-there clears the newest `workbench.NN`. `/session --clear-all` removes every
-listed session, the network's signing-host bootstrap state, and every
-compatibility account record for that network. It does not remove pairing-host
-state, another network's records, externally referenced scripts, or on-chain
-usernames.
+identity directory, and the account in the default session's store whose Lite
+username is that session's name. The interactive prompt names the resolved
+session; `exec` asks nothing, so `/session --clear workbench` there clears the
+newest `workbench.NN`. `/session --clear-all` removes every listed session and
+the network's signing-host bootstrap state, the default session's accounts
+included. It does not remove pairing-host state, another network's state,
+externally referenced scripts, or on-chain usernames.
 
 The interactive UI describes the data loss and uses the existing `[y/N]`
 approval. `exec` executes these explicit one-shot commands without another
@@ -1508,14 +1507,12 @@ flag or prompt. Clearing an inactive named session updates completion and keeps
 the current runtime active. Clearing the active session or all sessions first
 ends the command loop, aborts the frame server, drops the runtime, and only then
 deletes the data; the signing host exits afterward. Before it stops anything, a
-clear takes the lock of each cleared session's account store, and that of the
-compatibility store (§13.7): for `--clear-all` whenever the store exists, since a
-host creating the network's first account holds it before it saves a record,
-and for one session only when the store holds that session's record. When
-another process holds one, the clear is refused and nothing is removed: the
-interactive host keeps running, and under `exec` the command fails. The
-compatibility records go before the directories. Session clearing is
-unavailable in explicit-mnemonic mode.
+clear takes the lock of the default session's account store and of each
+cleared session's (§13.7). Every one belongs to this network, so a host on
+another network never refuses the clear. When another process holds one, the
+clear is refused and nothing is removed: the interactive host keeps running,
+and under `exec` the command fails. The default session's records go before
+the directories. Session clearing is unavailable in explicit-mnemonic mode.
 
 ## 13. Persistence
 
@@ -1525,13 +1522,13 @@ The layout may contain compatibility paths as well as identity-owned paths:
 
 ```text
 <base-path>/v2/
-  accounts.json
-  accounts.json.lock
   log-level
 
   <network>/
     signing-host/
       current-session
+      accounts.json                   # default/bootstrap accounts
+      accounts.json.lock
       session.json                    # default/bootstrap metadata, when used
       paired-hosts.json               # default/bootstrap paired hosts, when used
       paired-hosts.json.lock
@@ -1577,9 +1574,11 @@ of its source's sessions, accounts, pairings, or core or product storage, and a
 stack named once by a link with its key and once by its bare URL is two stacks,
 except a built-in network's, whose bare URL is read with its key. A local
 file's id is its canonical path, so a file that moves starts with new state.
-`accounts.json` above the stack directories holds the default session's
-accounts for every stack, each under that name as its network id (§13.7).
-`network-check` prints the name as `state_directory`.
+Every account store and its lock belong to one stack: the default session's is
+`<network>/signing-host/accounts.json` (§13.7). An `accounts.json` directly
+under `v2`, where earlier releases kept every stack's default session accounts,
+is left in place and not read. `network-check` prints the name as
+`state_directory`.
 
 An explicit mnemonic has no account profile, but its signing runtime uses the
 default/bootstrap signing storage path for core and product state. It does not
@@ -1710,6 +1709,10 @@ state, and other role-owned runtime data.
 - creation timestamp;
 - attested state; and
 - exhausted Statement Store periods.
+
+Each session has its own store, in its directory under its stack's (§13.1),
+so only hosts on the same stack contend for a lock. Promoting the default
+session copies its store into the new session.
 
 Account mutations hold an exclusive `accounts.json.lock`. Secret-file writes
 use a temporary file, flush, atomic rename, and `0600` permissions on Unix.

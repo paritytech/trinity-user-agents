@@ -442,12 +442,14 @@ fn default_session_is_not_user_selectable() {
 	);
 }
 
+/// The default session keeps its accounts in the stack's own `signing-host` directory, and a
+/// signer saved there is activated at startup.
 #[test]
 fn existing_local_signer_is_activated_and_cached_at_startup() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
 	let base_path = temporary.path();
-	let state_path = base_path.join("v2");
-	std::fs::create_dir_all(&state_path).expect("create active state root");
+	let state_path = base_path.join(state_directory()).join("signing-host");
+	std::fs::create_dir_all(&state_path).expect("create the default session's state");
 	std::fs::write(
         state_path.join("accounts.json"),
         accounts_json(r#"{

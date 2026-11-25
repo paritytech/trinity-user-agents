@@ -142,6 +142,9 @@ with none of its source's sessions, accounts, pairings or stored data. A local
 file's id is its canonical path, so a file that is moved or renamed, or the
 same descriptor in another checkout or a temporary file, gets a new directory
 and starts as a stack the CLI has not run before, with no message that says why.
+Accounts are kept per stack too: the default session's are in
+`v2/<network>/signing-host/accounts.json`, and an `accounts.json` directly
+under `v2`, from earlier releases, is not read.
 `truapi-host network-check` prints the name as `state_directory`, and SPEC.md
 §13.1 has the rest.
 
@@ -1088,9 +1091,10 @@ replaceable slot across all collections. Allocation on behalf of a connecting
 product may not: it reports the period as exhausted, because every entry in the
 table is one of this wallet's own products and reclaiming space belongs to the
 renewal pass. `alloc-check` prints both collections' member keys, ring indices and
-slot tables. Auto-managed accounts are stored in
-`accounts.json` under `<base-path>/v2`; mnemonics are plaintext local test secrets
-and the file is written with `0600` permissions on Unix. `alloc-check` verifies
+slot tables. Auto-managed accounts are stored in each session's `accounts.json`
+under its stack's directory in `<base-path>/v2`, the default session's in
+`<network>/signing-host`; mnemonics are plaintext local test secrets and the
+file is written with `0600` permissions on Unix. `alloc-check` verifies
 membership and can submit a test registration.
 
 When a managed session has saved pairings, Statement Store exhaustion does not
