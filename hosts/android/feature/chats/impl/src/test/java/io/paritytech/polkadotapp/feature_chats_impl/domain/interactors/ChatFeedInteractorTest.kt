@@ -36,6 +36,7 @@ class ChatFeedInteractorTest {
         hopNodeUrlProvider = mockk(),
         chatSigners = mockk(),
         identitySigningConsent = mockk(),
+        roomSourceContextFactory = mockk(),
         chatSeenRepository = mockk(),
         chatRequestRepository = mockk(),
         outgoingChatRequestCanceller = mockk(),
