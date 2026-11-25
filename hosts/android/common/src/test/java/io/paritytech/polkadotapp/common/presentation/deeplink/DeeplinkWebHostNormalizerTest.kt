@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.BundledStack
+import uniffi.truapi.ReservedValuesPolicy
 import uniffi.truapi.Stack
 import uniffi.truapi.appDeeplinkScheme
 import java.io.File
@@ -16,7 +17,7 @@ private fun bundledStack(name: String, allowsReservedValues: Boolean): Stack {
         BundledStack(
             pointer = File(stacks, "$name.link").readText().trim(),
             descriptor = File(stacks, "$name.json").readBytes(),
-            allowsReservedValues = allowsReservedValues,
+            reservedValues = ReservedValuesPolicy(allowed = allowsReservedValues),
         ),
     )
 }
