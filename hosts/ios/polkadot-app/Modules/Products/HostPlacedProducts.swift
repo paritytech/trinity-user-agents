@@ -8,8 +8,8 @@ import TrUAPIHost
 /// (`docs/rfcs/pocket-modality.md`). The core decides which they are.
 enum HostPlacedProducts {
     /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
-    static func all(tld: String) -> [HostPlacedChat] {
-        (try? hostPlacedChats(networkSuffix: tld)) ?? []
+    static func all(tld: String) throws -> [HostPlacedChat] {
+        try hostPlacedChats(networkSuffix: tld)
     }
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing
@@ -21,7 +21,7 @@ enum HostPlacedProducts {
             return false
         }
 
-        return all(tld: String(tld)).contains { $0.productId == productId }
+        return (try? all(tld: String(tld)))?.contains { $0.productId == productId } ?? false
     }
 }
 
@@ -44,6 +44,6 @@ final class HostPlacedProductsProvider: HostPlacedProductsProviding, @unchecked 
             return []
         }
 
-        return HostPlacedProducts.all(tld: tld).map(\.productId)
+        return (try? HostPlacedProducts.all(tld: tld))?.map(\.productId) ?? []
     }
 }

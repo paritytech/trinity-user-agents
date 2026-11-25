@@ -62,7 +62,7 @@ struct HostPlacedChatPinningTests {
     /// on a fresh install is every chat.
     @Test("A host-placed product's bot is pinned")
     func hostPlacedBotIsPinned() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all(tld: "paseo").first)
+        let hostPlaced = try #require(try HostPlacedProducts.all(tld: "paseo").first)
         let peer = Chat.Peer.chatExtension(hostPlaced.productId.rawValue, roomId: nil)
 
         #expect(peer.isPinnedToTop)

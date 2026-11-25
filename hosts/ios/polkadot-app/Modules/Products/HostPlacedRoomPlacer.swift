@@ -38,8 +38,12 @@ struct HostPlacedRoomPlacer {
         // Bounded: this runs detached, so it must not outlive the reason it was started.
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return }
 
-        for hostPlaced in HostPlacedProducts.all(tld: tld) {
-            await place(hostPlaced)
+        do {
+            for hostPlaced in try HostPlacedProducts.all(tld: tld) {
+                await place(hostPlaced)
+            }
+        } catch {
+            logger.error("Failed to list the host-placed rooms on \(tld): \(error)")
         }
     }
 }

@@ -1,8 +1,8 @@
-//! The products every host treats as part of itself.
+//! The products every host trusts as part of itself.
 
 use crate::{ProductId, ProductIdError};
 
-/// A product every host trusts and places itself, on whichever network it
+/// A product every host trusts as part of itself, on whichever network it
 /// runs.
 ///
 /// Each is a dotNS label reserved for it on every network, so `peopl.dot` and

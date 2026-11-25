@@ -8,7 +8,8 @@ use crate::platform::{PrivilegedProduct, ProductId, ProductIdError};
 pub struct HostPlacedChat {
 	/// Product the chat is with.
 	pub product_id: ProductId,
-	/// Room the product registers for the chat.
+	/// Room the product registers for the chat. No host can check it, so a
+	/// product that registers another room gets that chat beside an empty one.
 	pub room_id: String,
 	/// Name shown until the product's manifest supplies its own.
 	pub name: String,
