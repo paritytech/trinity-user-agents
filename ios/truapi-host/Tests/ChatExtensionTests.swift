@@ -4,7 +4,8 @@ import Testing
 
 struct ChatHostBridgeDefaultsTests {
     /// A product may declare the configuration that a host without the v2
-    /// requests serves anyway, so that host must accept it.
+    /// requests serves anyway, so that host must accept it, and the core then
+    /// finds the room in the room list of that host.
     @Test
     func defaultsAcceptTheConfigurationOfANewRoom() async throws {
         let bridge = FirstVersionChatHostBridge()
@@ -18,7 +19,9 @@ struct ChatHostBridgeDefaultsTests {
 
         #expect(status == .new)
         #expect(bridge.createdRooms == ["room"])
-        #expect(try await bridge.roomConfig(roomId: "room") == .hostDefault)
+        let hosted = ChatRoomState(participatingAs: .roomHost, config: .hostDefault)
+        #expect(try await bridge.room(roomId: "room") == hosted)
+        #expect(try await bridge.room(roomId: "other") == nil)
     }
 
     /// A declaration that the host cannot serve must fail, not disappear. A
@@ -58,9 +61,9 @@ struct ChatHostBridgeDefaultsTests {
     }
 
     /// The core reaches a bridge as `any ChatHostBridge`. A host that keeps
-    /// configurations overrides the four-argument `createRoom` and
-    /// `roomConfig`, so both must be protocol requirements: a method that only
-    /// the extension declares would run its default instead.
+    /// configurations overrides the four-argument `createRoom` and `room`, so
+    /// both must be protocol requirements: a method that only the extension
+    /// declares would run its default instead.
     @Test
     func aHostThatKeepsConfigurationsServesThemThroughTheProtocol() async throws {
         let declaring = DeclaringChatHostBridge()
@@ -72,7 +75,8 @@ struct ChatHostBridgeDefaultsTests {
 
         #expect(status == .new)
         #expect(declaring.configs == ["room": config])
-        #expect(try await bridge.roomConfig(roomId: "room") == config)
+        let hosted = ChatRoomState(participatingAs: .roomHost, config: config)
+        #expect(try await bridge.room(roomId: "room") == hosted)
     }
 
     /// A host that keeps configurations implements only the four-argument
@@ -110,8 +114,8 @@ private final class DeclaringChatHostBridge: ChatHostBridge, @unchecked Sendable
         return .new
     }
 
-    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
-        configs[roomId] ?? .hostDefault
+    func room(roomId: String) async throws -> ChatRoomState? {
+        configs[roomId].map { ChatRoomState(participatingAs: .roomHost, config: $0) }
     }
 
     func registerBot(
@@ -154,7 +158,9 @@ private final class FirstVersionChatHostBridge: ChatHostBridge, @unchecked Senda
 
     func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
 
-    func listRooms() async throws -> [ChatRoom] { [] }
+    func listRooms() async throws -> [ChatRoom] {
+        createdRooms.map { ChatRoom(roomId: $0, participatingAs: .roomHost) }
+    }
 }
 
 /// A host that creates no rooms: it implements neither `createRoom`.

@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use futures::{StreamExt, stream::BoxStream};
+use futures::stream::BoxStream;
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
 
@@ -48,12 +48,12 @@ use truapi::{
 		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
 		ChatPreviewReaction, ChatReaction, ChatReactionSummary, ChatReply, ChatReplyPreview,
 		ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig,
-		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, CodeFormat,
-		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		ChatRoomMetadata, ChatRoomParticipation, ChatRoomPreview, ChatRoomRegistrationStatus,
+		CodeFormat, FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatDeleteRoomRequest,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest, HostDevicePermissionRequest,
 		HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostFundingStatusSubscribeItem,
 		HostLocalStorageChangeItem, HostLocaleSubscribeItem, HostNavigateToError,
@@ -2359,11 +2359,12 @@ pub trait ChatPlatform: Send + Sync {
 	///
 	/// In the same step the host keeps `request.config` for the room, across
 	/// restarts, for a new room and for a room that exists: the configuration
-	/// replaces the one the host keeps. A change of `product_source` discards
-	/// the stored messages or the cached pages of the room. A host that cannot
-	/// keep a configuration other than the default refuses it with `Unknown`,
-	/// before it creates or changes anything. A request from a product built
-	/// against the earlier client carries the default configuration.
+	/// replaces the one the host keeps, and [`Self::chat_room`] answers it. A
+	/// change of `product_source` discards the stored messages or the cached
+	/// pages of the room. A host that cannot keep a configuration other than
+	/// the default refuses it with `Unknown`, before it creates or changes
+	/// anything. A request from a product built against the earlier client
+	/// carries the default configuration.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
@@ -2403,34 +2404,17 @@ pub trait ChatPlatform: Send + Sync {
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 
-	/// The current product-scoped room list, read one time.
+	/// What the host keeps for one room of the product, read one time.
 	///
-	/// The core uses it to check that a product hosts a room, before each
-	/// change to a room. A host that cannot read its rooms returns an error,
-	/// not an empty list. If a Rust host does not implement this method, the
-	/// core uses the first item of the room list subscription. A host whose
-	/// subscription registers a listener implements it: otherwise each check
-	/// leaves a listener behind.
-	async fn list_chat_rooms(
+	/// The core calls it once before each change to a room: to check that the
+	/// product hosts the room, and to read whether the host stores its
+	/// messages. `None` is a room that the product never created. A host that
+	/// cannot read its rooms returns an error, not `None`.
+	async fn chat_room(
 		&self,
 		product: &ProductContext,
-	) -> Result<HostChatListSubscribeItem, GenericError> {
-		self.subscribe_chat_rooms(product).next().await.unwrap_or_else(|| {
-			Err(GenericError { reason: "the host published no room list".to_string() })
-		})
-	}
-
-	/// The configuration of the last `create_chat_room` of a room.
-	///
-	/// The core reads it to decide whether the host stores the messages of the
-	/// room.
-	async fn read_chat_room_config(
-		&self,
-		_product: &ProductContext,
-		_room_id: String,
-	) -> Result<ChatRoomConfig, GenericError> {
-		Ok(ChatRoomConfig::default())
-	}
+		room_id: String,
+	) -> Result<Option<ChatRoomState>, GenericError>;
 
 	/// Replace the name, description, icon and empty-room text of a room.
 	///
@@ -2486,6 +2470,19 @@ pub trait ChatPlatform: Send + Sync {
 	) -> Result<ChatRoomChangeOutcome, GenericError> {
 		Ok(ChatRoomChangeOutcome::Unsupported)
 	}
+}
+
+/// What the host keeps for one room of a product.
+///
+/// [`ChatPlatform::chat_room`] answers it, so the core reads the room and its
+/// configuration in one host call.
+#[derive(Debug, PartialEq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ChatRoomState {
+	/// Whether the product hosts the room or takes part in it as a bot.
+	pub participating_as: ChatRoomParticipation,
+	/// The configuration of the last `create_chat_room` of the room.
+	pub config: ChatRoomConfig,
 }
 
 /// What the host did with a change to a room: a metadata change, a preview, a

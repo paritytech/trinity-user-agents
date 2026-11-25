@@ -292,7 +292,8 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     ///
     /// Throw ``HostChatCreateRoomError/Unknown(reason:)`` for a configuration
     /// the host cannot keep, before it creates or changes anything. The
-    /// default keeps only ``ChatRoomConfig/hostDefault``.
+    /// default keeps only ``ChatRoomConfig/hostDefault``. A host that keeps
+    /// other configurations also overrides ``room(roomId:)`` to answer them.
     func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) async throws
         -> ChatRoomRegistrationStatus
 
@@ -323,15 +324,19 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// the text input.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
-    /// Return the current product-scoped native Chat rooms. The core checks the
-    /// room of each change to a room against this list, so a host that cannot
-    /// read its rooms throws: an empty list makes the core answer `UnknownRoom`
-    /// for a room that exists.
+    /// Return the current product-scoped native Chat rooms. The default
+    /// ``room(roomId:)`` reads the room of each change to a room from this
+    /// list, so a host that cannot read its rooms throws: an empty list makes
+    /// the core answer `UnknownRoom` for a room that exists.
     func listRooms() async throws -> [ChatRoom]
 
-    /// Return the configuration of the last `createRoom` of a room. The core
-    /// reads it before each feed update of the room.
-    func roomConfig(roomId: String) async throws -> ChatRoomConfig
+    /// Return what the host keeps for one room of the product: whether the
+    /// product hosts it or takes part as a bot, and the configuration of its
+    /// last `createRoom`. The core reads it once before each change to a room.
+    /// Answer `nil` for a room that the product never created, and throw when
+    /// the host cannot read its rooms. The default finds the room in
+    /// ``listRooms()`` and pairs it with ``ChatRoomConfig/hostDefault``.
+    func room(roomId: String) async throws -> ChatRoomState?
 
     /// Replace the name, description, icon and empty-room text of a room, and
     /// answer ``ChatRoomChangeOutcome/applied``. An icon of `nil` keeps the
@@ -382,8 +387,10 @@ public extension ChatHostBridge {
         return try await createRoom(roomId: roomId, name: name, icon: icon)
     }
 
-    func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
-        .hostDefault
+    func room(roomId: String) async throws -> ChatRoomState? {
+        try await listRooms()
+            .first { $0.roomId == roomId }
+            .map { ChatRoomState(participatingAs: $0.participatingAs, config: .hostDefault) }
     }
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
@@ -723,8 +730,8 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.listRooms() }
     }
 
-    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
-        try await withHostRejection { try await bridge.roomConfig(roomId: roomId) }
+    func room(roomId: String) async throws -> ChatRoomState? {
+        try await withHostRejection { try await bridge.room(roomId: roomId) }
     }
 
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {

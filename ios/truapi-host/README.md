@@ -132,17 +132,17 @@ implements one of the two `createRoom` methods: the default
 defaults for a host that does not serve them yet:
 `createRoom(roomId:name:icon:config:)` creates the room only with
 `ChatRoomConfig.hostDefault`, through `createRoom(roomId:name:icon:)`, and
-refuses any other configuration before it creates anything, `roomConfig` answers
-`ChatRoomConfig.hostDefault`, and every other request answers
-`ChatRoomChangeOutcome.unsupported`, which the product receives as
-`Unsupported`. A host that serves one of them answers `.applied`. A room the
-product declares nothing for is a room the host stores, with the name and icon
-of `createRoom` and the text input.
+refuses any other configuration before it creates anything, `room(roomId:)`
+finds the room in `listRooms()` and pairs it with `ChatRoomConfig.hostDefault`,
+and every other request answers `ChatRoomChangeOutcome.unsupported`, which the
+product receives as `Unsupported`. A host that serves one of them answers
+`.applied`. A room the product declares nothing for is a room the host stores,
+with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
 | `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomError.Unknown` for a configuration the host cannot keep, before it creates anything |
-| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update |
+| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The core reads it once before each change to a room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
@@ -190,9 +190,8 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
 
-    func roomConfig(roomId: String) throws -> ChatRoomConfig {
-        store.config(roomId) ?? .hostDefault
-    }
+    // The room and its configuration in one read.
+    func room(roomId: String) throws -> ChatRoomState? { store.room(roomId) }
 
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatRoomChangeOutcome {
         store.apply(update, to: roomId, persist: persist)

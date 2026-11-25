@@ -103,13 +103,8 @@ export function makeHostCallbacks(
             postChatMessage: async () => ({ messageId: "message" }),
             setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
-            listChatRooms: async () => ({ rooms: [] }),
-            // A room that declared nothing has the default configuration,
-            // so the core keeps the messages in the host.
-            readChatRoomConfig: async () => ({
-              productSource: false,
-              reactionDetails: false,
-            }),
+            // No room exists until a fixture overrides this.
+            chatRoom: async () => undefined,
             setChatRoomMetadata: async () => "Applied",
             setChatRoomPreview: async () => "Applied",
             deleteChatRoom: async () => "Applied",

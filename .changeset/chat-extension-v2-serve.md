@@ -29,17 +29,20 @@ Breaking for a v2 product: the configuration has `productSource` and `reactionDe
 also gets the `Seen` user action when the user sees its newest message, because RFC 0002 makes seen reports part of
 the message source. `setRoomPreview` and `updateFeed` have no `RateLimited` error.
 
-Breaking for a web host that serves chat: its `chat` callbacks must now also implement `listChatRooms`,
-`readChatRoomConfig`, `setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and `updateChatFeed`, and its
-`createChatRoom` keeps `request.config` with the room. `setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and
-`updateChatFeed` answer `"Applied"`, or `"Unsupported"` for a request the host does not serve. A typed host that leaves
-out a callback does not compile, and a raw callback set without one serves no chat at all. A callback that throws fails
-the request with `HostFailure`, with two exceptions: a throwing `createChatRoom` fails `createRoom` with `Unknown`, and
-a throwing `listChatRooms` fails `setRoomFooter` with `Unknown`.
+Breaking for a web host that serves chat: its `chat` callbacks must now also implement `chatRoom`,
+`setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and `updateChatFeed`, and its `createChatRoom` keeps
+`request.config` with the room. `chatRoom` answers how the product takes part in a room and the configuration of the
+room, or `undefined` for a room the product never created, and the core calls it once before each change to a room.
+`setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and `updateChatFeed` answer `"Applied"`, or
+`"Unsupported"` for a request the host does not serve. A typed host that leaves out a callback does not compile, and a
+raw callback set without one serves no chat at all. A callback that throws fails the request with `HostFailure`, with
+two exceptions: a throwing `createChatRoom` fails `createRoom` with `Unknown`, and a throwing `chatRoom` fails
+`setRoomFooter` with `Unknown`.
 
 Breaking for a Rust `ChatPlatform` host: `create_chat_room` keeps `request.config` with the room, or refuses it before
-it creates anything. `ChatPlatform` has `list_chat_rooms`, `read_chat_room_config`, `set_chat_room_metadata`,
-`set_chat_room_preview`, `delete_chat_room` and `update_chat_feed`, each with a default. The last four answer a
-`ChatRoomChangeOutcome`. A host whose room list subscription registers a listener implements `list_chat_rooms`. The Rust
-defaults and the Swift and Kotlin bridges have one contract: a room reads as the default configuration, a room with the
-default configuration is accepted, and every other request answers `Unsupported`.
+it creates anything. `ChatPlatform` has a required `chat_room`, which answers a `ChatRoomState`, how the product takes
+part in the room and the configuration of the room, or `None` for a room the product never created; the core calls it
+once before each change to a room, and a host that cannot read its rooms returns an error. `ChatPlatform` also has
+`set_chat_room_metadata`, `set_chat_room_preview`, `delete_chat_room` and `update_chat_feed`, each with a default, and
+each answers a `ChatRoomChangeOutcome`. The Rust defaults and the Swift and Kotlin bridges have one contract: a room
+with the default configuration is accepted, and every other request answers `Unsupported`.

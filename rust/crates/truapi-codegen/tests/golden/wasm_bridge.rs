@@ -33,8 +33,7 @@ pub struct JsBridge {
     pub post_chat_message: Function,
     pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
-    pub list_chat_rooms: Function,
-    pub read_chat_room_config: Function,
+    pub chat_room: Function,
     pub set_chat_room_metadata: Function,
     pub set_chat_room_preview: Function,
     pub delete_chat_room: Function,
@@ -91,10 +90,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
-            list_chat_rooms: get_optional_function(callbacks, "listChatRooms")?
-                .unwrap_or_else(|| missing_callback("listChatRooms")),
-            read_chat_room_config: get_optional_function(callbacks, "readChatRoomConfig")?
-                .unwrap_or_else(|| missing_callback("readChatRoomConfig")),
+            chat_room: get_optional_function(callbacks, "chatRoom")?
+                .unwrap_or_else(|| missing_callback("chatRoom")),
             set_chat_room_metadata: get_optional_function(callbacks, "setChatRoomMetadata")?
                 .unwrap_or_else(|| missing_callback("setChatRoomMetadata")),
             set_chat_room_preview: get_optional_function(callbacks, "setChatRoomPreview")?
@@ -149,8 +146,7 @@ impl JsBridge {
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some()
-                && get_optional_function(callbacks, "listChatRooms")?.is_some()
-                && get_optional_function(callbacks, "readChatRoomConfig")?.is_some()
+                && get_optional_function(callbacks, "chatRoom")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomMetadata")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomPreview")?.is_some()
                 && get_optional_function(callbacks, "deleteChatRoom")?.is_some()
@@ -298,38 +294,28 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         )
     }
 
-    async fn list_chat_rooms(
+    async fn chat_room(
         &self,
         product: &crate::platform::ProductContext,
-    ) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.list_chat_rooms,
-            vec![Uint8Array::from(product.encode().as_slice()).into()],
-        )
-        .await?;
-        Ok(decode_bytes::<latest::HostChatListSubscribeItem>(
-            bytes,
-            "listChatRooms response did not decode",
-        )?)
-    }
-
-    async fn read_chat_room_config(
-        &self,
-        _product: &crate::platform::ProductContext,
-        _room_id: String,
-    ) -> Result<latest::ChatRoomConfig, latest::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.read_chat_room_config,
+        room_id: String,
+    ) -> Result<Option<crate::platform::ChatRoomState>, latest::GenericError> {
+        let bytes = invoke_optional_bytes_return(
+            &self.bridge.chat_room,
             vec![
-                Uint8Array::from(_product.encode().as_slice()).into(),
-                JsValue::from_str(&_room_id),
+                Uint8Array::from(product.encode().as_slice()).into(),
+                JsValue::from_str(&room_id),
             ],
+            "chatRoom must resolve to Uint8Array, null or undefined",
         )
         .await?;
-        Ok(decode_bytes::<latest::ChatRoomConfig>(
-            bytes,
-            "readChatRoomConfig response did not decode",
-        )?)
+        Ok(bytes
+            .map(|bytes| {
+                decode_bytes::<crate::platform::ChatRoomState>(
+                    bytes,
+                    "chatRoom response did not decode",
+                )
+            })
+            .transpose()?)
     }
 
     async fn set_chat_room_metadata(

@@ -50,6 +50,7 @@ import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
+import uniffi.truapi.ChatRoomState
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostDevicePermissionRequest
@@ -510,7 +511,8 @@ interface ChatHostBridge {
      *
      * Throw [HostChatCreateRoomException.Unknown] for a configuration the
      * host cannot keep, before it creates or changes anything. The default
-     * keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     * keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A host that keeps other
+     * configurations also overrides [room] to answer them.
      */
     @Throws(HostChatCreateRoomException::class)
     suspend fun createRoom(
@@ -561,10 +563,10 @@ interface ChatHostBridge {
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
     /**
-     * Return the current product-scoped native Chat rooms. The core checks the
-     * room of each change to a room against this list, so a host that cannot
-     * read its rooms throws: an empty list makes the core answer `UnknownRoom`
-     * for a room that exists.
+     * Return the current product-scoped native Chat rooms. The default [room]
+     * reads the room of each change to a room from this list, so a host that
+     * cannot read its rooms throws: an empty list makes the core answer
+     * `UnknownRoom` for a room that exists.
      */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
@@ -576,11 +578,18 @@ interface ChatHostBridge {
     // other before it creates anything.
 
     /**
-     * Return the configuration of the last `createRoom` of a room. The core
-     * reads it before each feed update of the room.
+     * Return what the host keeps for one room of the product: whether the
+     * product hosts it or takes part as a bot, and the configuration of its
+     * last `createRoom`. The core reads it once before each change to a room.
+     * Answer `null` for a room that the product never created, and throw when
+     * the host cannot read its rooms. The default finds the room in
+     * [listRooms] and pairs it with [HOST_DEFAULT_CHAT_ROOM_CONFIG].
      */
     @Throws(HostRejection::class)
-    suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
+    suspend fun room(roomId: String): ChatRoomState? =
+        listRooms()
+            .firstOrNull { it.roomId == roomId }
+            ?.let { ChatRoomState(it.participatingAs, HOST_DEFAULT_CHAT_ROOM_CONFIG) }
 
     /**
      * Replace the name, description, icon and empty-room text of a room, and
@@ -882,8 +891,7 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
 
-    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
-        withHostRejection { bridge.roomConfig(roomId) }
+    override suspend fun room(roomId: String): ChatRoomState? = withHostRejection { bridge.room(roomId) }
 
     override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) =
         withHostRejection { bridge.setRoomMetadata(roomId, metadata) }

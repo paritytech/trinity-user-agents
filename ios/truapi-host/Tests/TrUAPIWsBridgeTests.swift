@@ -401,7 +401,7 @@ final class StubChatHostBridge: ChatHostBridge {
 
     func listRooms() async throws -> [ChatRoom] { [] }
 
-    func roomConfig(roomId _: String) async throws -> ChatRoomConfig { .hostDefault }
+    func room(roomId _: String) async throws -> ChatRoomState? { nil }
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
         .applied

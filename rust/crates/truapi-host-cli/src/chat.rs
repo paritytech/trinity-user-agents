@@ -29,7 +29,7 @@ use truapi::{
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 		HostChatSetRoomFooterRequest,
 	},
-	platform::{ChatPlatform, ProductContext},
+	platform::{ChatPlatform, ChatRoomState, ProductContext},
 	v01::{ChatRoom, ChatRoomParticipation},
 };
 
@@ -208,14 +208,18 @@ impl ChatPlatform for CliChatHost {
 		stream::once(async move { Ok(snapshot) }).chain(receiver.map(Ok)).boxed()
 	}
 
-	/// The core checks the room of each change to a room against this list.
-	/// The default reads the subscription, which would leave one subscriber
-	/// for each check until the next room list goes out.
-	async fn list_chat_rooms(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
-	) -> Result<HostChatListSubscribeItem, GenericError> {
-		Ok(Self::room_list(&self.lock()))
+		room_id: String,
+	) -> Result<Option<ChatRoomState>, GenericError> {
+		// `create_chat_room` refuses every configuration but the default, so
+		// each room this host keeps has it.
+		let participating_as = self.lock().rooms.get(&room_id).copied();
+		Ok(participating_as.map(|participating_as| ChatRoomState {
+			participating_as,
+			config: ChatRoomConfig::default(),
+		}))
 	}
 }
 

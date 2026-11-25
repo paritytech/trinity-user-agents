@@ -46,10 +46,10 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, ChatRoomChangeOutcome, CoreStorage,
-	CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductStorage,
-	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	AuthPresenter, AuthState, ChainProvider, ChatPlatform, ChatRoomChangeOutcome, ChatRoomState,
+	CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation,
+	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
+	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
 	UserConfirmationReview,
 };
 
@@ -1453,28 +1453,24 @@ impl ChatPlatform for MockPlatform {
 		Box::pin(receiver.map(Ok))
 	}
 
-	async fn list_chat_rooms(
-		&self,
-		_product: &ProductContext,
-	) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
-		if let Some(reason) = &self.config.faults.chat_error {
-			return Err(latest::GenericError { reason: reason.clone() });
-		}
-		Ok(latest::HostChatListSubscribeItem { rooms: self.chat_rooms() })
-	}
-
-	async fn read_chat_room_config(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-	) -> Result<latest::ChatRoomConfig, latest::GenericError> {
+	) -> Result<Option<ChatRoomState>, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		Ok(self
+		let Some(room) =
+			self.chat_rooms.lock().expect("chat rooms poisoned").get(&room_id).cloned()
+		else {
+			return Ok(None);
+		};
+		let config = self
 			.chat_room_declarations(&room_id)
 			.and_then(|declarations| declarations.config)
-			.unwrap_or_default())
+			.unwrap_or_default();
+		Ok(Some(ChatRoomState { participating_as: room.participating_as, config }))
 	}
 
 	async fn set_chat_room_metadata(
