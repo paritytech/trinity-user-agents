@@ -117,7 +117,7 @@ impl WalletAccountHolder {
 			self.services.statement_store.chain_client("statement-store allowance").await?;
 		let rpc = client.rpc();
 		let chain = self.services.chain_context.get(&client).await?;
-		let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+		let network_suffix = self.services.people_network_suffix(&client).await?;
 		let period = statement_allowance::slot::current_period(current_unix_secs()?);
 		let reuse_existing = matches!(policy, OnExistingAllowancePolicy::Ignore);
 
@@ -263,7 +263,7 @@ impl WalletAccountHolder {
 			self.services.statement_store.chain_client("bulletin allowance claim").await?;
 		let people_rpc = people_client.rpc();
 		let chain = self.services.chain_context.get(&people_client).await?;
-		let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
+		let network_suffix = self.services.people_network_suffix(&people_client).await?;
 		let signer = self.personhood_signer(session).await?;
 		// Prefer light membership so switching collections cannot reset the person's budget.
 		let memberships = find_including_rings(

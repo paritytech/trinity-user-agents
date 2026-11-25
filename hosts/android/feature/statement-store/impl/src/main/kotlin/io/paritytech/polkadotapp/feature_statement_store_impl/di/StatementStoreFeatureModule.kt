@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.OneShotSessi
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStoreMessageProver
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStorePeer
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NotificationStatementAccountAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NotificationStatementMaxSizeProvider
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.RealStatementRequestDecoder
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.RealStatementStorePeer
@@ -32,6 +33,7 @@ import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificatio
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NotificationAllowanceOracle
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NotificationSlotSubmissionPolicy
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.RealNotificationStatementAccountAllocator
+import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.RealNotificationStatementMaxSizeProvider
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.CommunicationSessionCreatorFactory
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.RealOneShotSessionRequestPublisher
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.codec.IncomingTopicsProvider
@@ -99,6 +101,9 @@ interface StatementStoreFeatureApiModule {
 
     @Binds
     fun bindNotificationStatementAccountAllocator(impl: RealNotificationStatementAccountAllocator): NotificationStatementAccountAllocator
+
+    @Binds
+    fun bindNotificationStatementMaxSizeProvider(impl: RealNotificationStatementMaxSizeProvider): NotificationStatementMaxSizeProvider
 
     @Binds
     @Singleton

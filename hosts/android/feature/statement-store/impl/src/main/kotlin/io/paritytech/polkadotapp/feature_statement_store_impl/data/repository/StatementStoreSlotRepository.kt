@@ -12,6 +12,8 @@ interface StatementStoreSlotRepository {
     /** Min delay before an alias's entry can be replaced. */
     suspend fun replacementCooldown(): Result<Duration>
 
+    suspend fun supportsSlotReplacement(): Result<Boolean>
+
     suspend fun allowanceEntries(
         chainId: ChainId,
         period: UInt,
