@@ -3,9 +3,8 @@ use tokio::sync::mpsc;
 use super::*;
 use crate::{
 	PublicProfile, PublicProfileError,
-	native::tests::{native_host_runtime_config, native_host_runtime_no_session},
-	store::{Db, open_temporary_core_db},
-	test_support::StubPlatform,
+	native::tests::{EventCallbacks, native_host_runtime_config},
+	store::open_temporary_core_db,
 };
 
 struct Observer {
@@ -26,18 +25,17 @@ impl NativePublicProfileObserver for Observer {
 	}
 }
 
-fn profile_runtime(platform: Arc<StubPlatform>, db: Db) -> Arc<NativeTrUApiHostRuntime> {
-	let config = NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config()).unwrap();
-	let signing = SigningHostConfig {
-		host: config.host,
-		stack: crate::test_support::test_stack("paseo", [1; 32], [2; 32], [3; 32]),
-		materials_enabled: false,
+fn profile_runtime(
+	callbacks: Arc<EventCallbacks>,
+	directory: &std::path::Path,
+) -> Arc<NativeTrUApiHostRuntime> {
+	let config = HostRuntimeConfig {
+		database_directory: directory.to_str().unwrap().into(),
+		local_session_secret: None,
+		local_session_lite_username: None,
+		..native_host_runtime_config()
 	};
-	let core = HostRuntime::<SigningHost>::new(platform, signing, Spawner::for_test());
-	assert!(core.set_core_db(db));
-	let mut host = native_host_runtime_no_session();
-	Arc::get_mut(&mut host).unwrap().runtime = Arc::new(core);
-	host
+	NativeTrUApiHostRuntime::with_runtime_config(callbacks, config, None).unwrap()
 }
 
 #[tokio::test]
@@ -51,9 +49,8 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 		(true, false, true),
 		(true, true, true),
 	] {
-		let platform =
-			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
-		let (_directory, db) = open_temporary_core_db();
+		let callbacks = Arc::new(EventCallbacks::new());
+		let (directory, db) = open_temporary_core_db();
 		db.write(move |tx| {
 			let expires_at = crate::unix_time::current_unix_secs() + if fresh { 3600 } else { 0 };
 			tx.execute(
@@ -62,7 +59,8 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 			)?;
 			Ok(())
 		}).await.unwrap();
-		let host = profile_runtime(platform.clone(), db);
+		db.close().await.unwrap();
+		let host = profile_runtime(callbacks.clone(), directory.path());
 		let (events, mut received) = mpsc::unbounded_channel();
 		let subscription = host.observe_public_profile(
 			"alice.01".to_owned(),
@@ -84,11 +82,11 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 					Err(PublicProfileError::Dotns(_)) => "offline",
 					other => panic!("unexpected terminal callback: {other:?}"),
 				},
-				platform.chain_connects.lock().unwrap().clone()
+				callbacks.chain_connects.lock().unwrap().clone()
 			),
 			(
 				if fresh && !force_fresh { "complete" } else { "offline" },
-				if fresh && !force_fresh { vec![] } else { vec![[3; 32]] }
+				if fresh && !force_fresh { vec![] } else { vec![vec![0xcc; 32]] }
 			),
 		);
 		assert!(received.recv().await.is_none());
@@ -98,18 +96,20 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 
 #[tokio::test]
 async fn cancelling_native_observation_drops_an_in_progress_resolution_without_callbacks() {
-	let platform = Arc::new(StubPlatform { chain_connect_pending: true, ..Default::default() });
-	let (_directory, db) = open_temporary_core_db();
-	let host = profile_runtime(platform.clone(), db);
+	let callbacks = Arc::new(EventCallbacks::new());
+	*callbacks.chain_id.lock().unwrap() = Some(1);
+	let directory = tempfile::tempdir().unwrap();
+	let host = profile_runtime(callbacks.clone(), directory.path());
 	let (events, mut received) = mpsc::unbounded_channel();
 	let subscription = host.observe_public_profile(
 		"alice.01".to_owned(),
 		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
 		Arc::new(Observer { events }),
 	);
-	while platform.chain_connects.lock().unwrap().is_empty() {
-		tokio::task::yield_now().await;
-	}
+	crate::test_support::wait_until(
+		|| !callbacks.chain_sends.lock().unwrap().is_empty(),
+		"the lookup must reach the chain before cancellation",
+	);
 
 	subscription.cancel();
 

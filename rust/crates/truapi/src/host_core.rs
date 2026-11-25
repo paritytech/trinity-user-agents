@@ -325,11 +325,12 @@ impl<Role> HostRuntime<Role> {
 		crate::WorkerHold::acquire(&self.services, product_id)
 	}
 
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
+	/// Report that a worker attempt stopped without being asked to.
+	///
+	/// While something holds the worker and `attempt` is still its current one, the worker is
+	/// started again, with a growing wait when it keeps crashing.
+	pub fn worker_attempt_exited(&self, product_id: &ProductId, attempt: u64) {
+		self.services.worker_attempt_exited(product_id, attempt);
 	}
 }
 
@@ -1866,8 +1867,13 @@ pub struct ProductRuntimeControl {
 const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
 
 impl ProductRuntimeControl {
+	/// Whether the peer can still receive frames through this connection.
+	pub fn is_connected(&self) -> bool {
+		!self.disposed.load(Ordering::Acquire)
+	}
+
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
-		if self.disposed.load(Ordering::Acquire) {
+		if !self.is_connected() {
 			return Err(ProductRuntimeError::Closed);
 		}
 		Ok(&self.connection)

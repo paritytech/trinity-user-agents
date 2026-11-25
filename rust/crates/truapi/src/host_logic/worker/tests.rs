@@ -10,17 +10,25 @@ struct Recorder {
 }
 
 impl Recorder {
+	fn record(&self, product_id: &ProductId, transition: WorkerTransition) {
+		self.seen
+			.lock()
+			.expect("recorder mutex poisoned")
+			.push((product_id.to_string(), transition));
+	}
+
 	fn seen(&self) -> Vec<(String, WorkerTransition)> {
 		self.seen.lock().expect("recorder mutex poisoned").clone()
 	}
 }
 
 impl WorkerController for Recorder {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.seen
-			.lock()
-			.expect("recorder mutex poisoned")
-			.push((product_id.to_string(), transition));
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.record(product_id, WorkerTransition::Start);
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.record(product_id, WorkerTransition::Stop);
 	}
 
 	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
@@ -29,6 +37,11 @@ impl WorkerController for Recorder {
 			.expect("recorder mutex poisoned")
 			.push((product_id.to_string(), crashes));
 	}
+}
+
+/// The attempt serving `product`, or one the ledger never issued when nothing holds it.
+fn current(ledger: &WorkerLedger, product: &ProductId) -> u64 {
+	ledger.state().references.get(product).map_or(0, |demand| demand.attempt_id)
 }
 
 fn observed() -> (WorkerLedger, Arc<Recorder>) {
@@ -77,14 +90,15 @@ fn releasing_without_a_reference_is_a_no_op() {
 #[test]
 fn a_worker_that_exits_while_needed_is_started_again() {
 	let (ledger, recorder) = observed();
-	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None);
+	let product = ProductId::for_test("a.dot");
+	assert_eq!(ledger.exited(&product, current(&ledger, &product), 0), None);
 	assert!(recorder.seen().is_empty(), "a worker nothing needs stays stopped");
-	ledger.acquire(&ProductId::for_test("a.dot"));
-	ledger.acquire(&ProductId::for_test("a.dot"));
-	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None, "restarted at once");
-	assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 2, "the references stand");
-	ledger.release(&ProductId::for_test("a.dot"));
-	ledger.release(&ProductId::for_test("a.dot"));
+	ledger.acquire(&product);
+	ledger.acquire(&product);
+	assert_eq!(ledger.exited(&product, current(&ledger, &product), 0), None, "restarted at once");
+	assert_eq!(ledger.count(&product), 2, "the references stand");
+	ledger.release(&product);
+	ledger.release(&product);
 	assert_eq!(
 		recorder.seen(),
 		vec![
@@ -97,23 +111,33 @@ fn a_worker_that_exits_while_needed_is_started_again() {
 
 // A worker that keeps crashing waits longer before each restart, and the
 // host hears it is not working on the run's third crash; a quiet minute
-// starts a new run.
+// starts a new run, but only after a worker that ran.
 #[test]
 fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
-	let waits: Vec<_> = (0..12).map(|n| ledger.exited(&product, n * 10)).collect();
+	let exited = |now_ms| {
+		let attempt = current(&ledger, &product);
+		ledger.running(&product, attempt);
+		ledger.exited(&product, attempt, now_ms)
+	};
+	let waits: Vec<_> = (0..12).map(|n| exited(n * 10)).collect();
+	let waiting = current(&ledger, &product);
 	let restarts_before = recorder.seen().len();
-	ledger.restart(&product);
-	ledger.restart(&product);
-	let after_quiet = ledger.exited(&product, 11 * 10 + CRASH_RUN_WINDOW_MS + 1);
+	ledger.restart(&product, waiting);
+	ledger.restart(&product, waiting);
+	let quiet = CRASH_RUN_WINDOW_MS + 1;
+	let after_quiet = exited(11 * 10 + quiet);
+	ledger.running(&product, waiting);
+	let never_ran = ledger.exited(&product, current(&ledger, &product), 11 * 10 + 2 * quiet);
 
 	assert_eq!(
 		(
 			waits,
 			recorder.seen().len() - restarts_before,
 			after_quiet,
+			never_ran,
 			recorder.crashing.lock().expect("recorder mutex poisoned").clone()
 		),
 		(
@@ -134,6 +158,9 @@ fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 			// The restart once, not twice, then the new run's at once.
 			2,
 			None,
+			// A start that fails slowly is still the worker failing, whatever
+			// an attempt it replaced reports.
+			Some(1_000),
 			vec![("a.dot".to_string(), CRASH_NOTICE_AFTER)]
 		)
 	);
@@ -146,15 +173,22 @@ fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
-	ledger.exited(&product, 0);
-	assert!(ledger.exited(&product, 1).is_some());
+	ledger.exited(&product, current(&ledger, &product), 0);
+	let waiting = current(&ledger, &product);
+	assert!(ledger.exited(&product, waiting, 1).is_some());
 	ledger.release(&product);
-	ledger.restart(&product);
+	ledger.restart(&product, waiting);
 	ledger.acquire(&product);
-	assert!(ledger.exited(&product, 2).is_some());
+	assert_eq!(
+		ledger.exited(&product, current(&ledger, &product), 2),
+		None,
+		"a run of crashes ends with the holds that suffered it"
+	);
+	let replaced = current(&ledger, &product);
+	assert!(ledger.exited(&product, replaced, 3).is_some());
 	ledger.release(&product);
 	ledger.acquire(&product);
-	ledger.restart(&product);
+	ledger.restart(&product, replaced);
 
 	assert_eq!(
 		recorder.seen(),
@@ -162,6 +196,7 @@ fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
 			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Stop),
+			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Stop),
 			("a.dot".to_string(), WorkerTransition::Start),
@@ -195,22 +230,21 @@ struct Reentrant {
 	seen: Mutex<Vec<WorkerTransition>>,
 	/// Cleared after the one re-entrant pair, so the pair it produces does
 	/// not produce another.
-	reenter_on: Mutex<Option<WorkerTransition>>,
+	reenter_on_stop: Mutex<bool>,
 }
 
 impl WorkerController for Reentrant {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.seen.lock().expect("recorder mutex poisoned").push(transition);
-		{
-			let mut reenter_on = self.reenter_on.lock().expect("gate mutex poisoned");
-			if *reenter_on != Some(transition) {
-				return;
-			}
-			*reenter_on = None;
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Start);
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Stop);
+		if core::mem::take(&mut *self.reenter_on_stop.lock().expect("gate mutex poisoned")) {
+			let ledger = self.ledger.upgrade().expect("ledger outlives its controller");
+			ledger.acquire(product_id);
+			ledger.release(product_id);
 		}
-		let ledger = self.ledger.upgrade().expect("ledger outlives its controller");
-		ledger.acquire(product_id);
-		ledger.release(product_id);
 	}
 }
 
@@ -220,7 +254,7 @@ fn a_reentrant_call_from_the_controller_does_not_deadlock() {
 	let controller = Arc::new(Reentrant {
 		ledger: Arc::downgrade(&ledger),
 		seen: Mutex::new(Vec::new()),
-		reenter_on: Mutex::new(Some(WorkerTransition::Stop)),
+		reenter_on_stop: Mutex::new(true),
 	});
 	assert!(ledger.install_worker_controller(controller.clone()));
 
@@ -250,14 +284,18 @@ struct Gated {
 }
 
 impl WorkerController for Gated {
-	fn request_worker_transition(&self, _product_id: &ProductId, transition: WorkerTransition) {
-		self.seen.lock().expect("recorder mutex poisoned").push(transition);
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Start);
 		let gate = self.gate.lock().expect("gate mutex poisoned").take();
 		let Some(gate) = gate else {
 			return;
 		};
 		self.entered.send(()).expect("test thread gone");
 		gate.recv().expect("test thread gone");
+	}
+
+	fn stop_worker(&self, _product_id: &ProductId) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Stop);
 	}
 }
 
@@ -316,7 +354,11 @@ impl Counter {
 }
 
 impl WorkerController for Counter {
-	fn request_worker_transition(&self, _product_id: &ProductId, _transition: WorkerTransition) {
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		*self.delivered.lock().expect("counter mutex poisoned") += 1;
+	}
+
+	fn stop_worker(&self, _product_id: &ProductId) {
 		*self.delivered.lock().expect("counter mutex poisoned") += 1;
 	}
 }
@@ -400,31 +442,25 @@ fn nothing_stays_queued_once_the_ledger_falls_quiet() {
 	}
 }
 
-/// Observer that panics on its first call and records every call after.
-struct PanicsOnFirstCall {
+/// Observer that panics on startup and records the subsequent stop.
+struct PanicsOnStart {
 	seen: Mutex<Vec<WorkerTransition>>,
-	called_before: Mutex<bool>,
 }
 
-impl WorkerController for PanicsOnFirstCall {
-	fn request_worker_transition(&self, _product_id: &ProductId, transition: WorkerTransition) {
-		let mut called_before = self.called_before.lock().expect("gate mutex poisoned");
-		if !*called_before {
-			*called_before = true;
-			drop(called_before);
-			panic!("controller panics on its first call");
-		}
-		self.seen.lock().expect("recorder mutex poisoned").push(transition);
+impl WorkerController for PanicsOnStart {
+	fn start_worker(&self, _product_id: &ProductId, _attempt_id: u64) {
+		panic!("controller panics on its first call");
+	}
+
+	fn stop_worker(&self, _product_id: &ProductId) {
+		self.seen.lock().expect("recorder mutex poisoned").push(WorkerTransition::Stop);
 	}
 }
 
 #[test]
 fn a_panicking_delivery_still_lets_a_later_transition_through() {
 	let ledger = Arc::new(WorkerLedger::default());
-	let controller = Arc::new(PanicsOnFirstCall {
-		seen: Mutex::new(Vec::new()),
-		called_before: Mutex::new(false),
-	});
+	let controller = Arc::new(PanicsOnStart { seen: Mutex::new(Vec::new()) });
 	assert!(ledger.install_worker_controller(controller.clone()));
 
 	let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -440,4 +476,28 @@ fn a_panicking_delivery_still_lets_a_later_transition_through() {
 		vec![WorkerTransition::Stop]
 	);
 	assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+}
+
+#[test]
+fn an_older_crash_or_backoff_cannot_restart_a_replacement() {
+	let (ledger, recorder) = observed();
+	let product = ProductId::for_test("retry.dot");
+	let attempt = || current(&ledger, &product);
+	ledger.acquire(&product);
+	let first = attempt();
+	ledger.exited(&product, first, 0);
+	let waiting = attempt();
+	assert_eq!(ledger.exited(&product, waiting, 1), Some(1_000));
+	ledger.release(&product);
+	ledger.acquire(&product);
+	ledger.exited(&product, attempt(), 2);
+	let replacement = attempt();
+	assert_eq!(ledger.exited(&product, replacement, 3), Some(1_000));
+	let before = recorder.seen();
+	ledger.restart(&product, waiting);
+	assert_eq!(ledger.exited(&product, first, 4), None);
+	assert_eq!(recorder.seen(), before);
+	ledger.restart(&product, replacement);
+	assert_ne!(attempt(), replacement);
+	assert_eq!(recorder.seen().len(), before.len() + 1);
 }

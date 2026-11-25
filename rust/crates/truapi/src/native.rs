@@ -48,9 +48,9 @@ pub use crate::{
 	},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeStackCallbacks, NativeTopUpCallbacks,
+	ExecutionCallbacks, HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+	NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+	NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
@@ -72,7 +72,8 @@ pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
-	NativeWorkerClaim,
+	NativeHostWebViewWorker, NativeWorkerAttempt, NativeWorkerClaim, NativeWorkerExecution,
+	NativeWorkerExecutionObserver, NativeWorkerExecutionState,
 };
 pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};

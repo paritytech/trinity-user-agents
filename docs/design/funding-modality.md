@@ -74,7 +74,7 @@ flowchart LR
 | Host ↔ core (native names)  | Methods                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Callbacks (core → host)     | `present_funding` · `provider_frame_requested` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)` · `worker_crashing(product_id, crashes)`                                                                                                                                        |
-| Actions (host → core)       | `set_funding_callbacks` · `set_funding_provider_config` · `open_funding` · `open_provider_frame` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `worker_exited` |
+| Actions (host → core)       | `set_funding_callbacks` · `set_funding_provider_config` · `open_funding` · `open_provider_frame` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `NativeWorkerAttempt::failed` |
 | Reads (host → core)         | `funding_session` · `funding_session_open` · `funding_progress` · `funding_options` · `funding_quotes` · `funding_amount_issue` · `funding_frame_waiting` · `funding_entries` · `funding_summary` · `funding_history` · `funding_available`                                                                                               |
 | Free functions (no runtime) | `funding_resume_pending(database_directory)` · `funding_status_in_flight(status)` · `funding_page_origin` · `funding_page_allows_navigation` · `funding_page_allows_media` · `funding_page_matches_return`                                                                                                                                |
 
@@ -303,8 +303,8 @@ sequenceDiagram
   W->>C: handshake
   C->>W: assign(last update) per session, then unanswered cancels
   W->>W: resume from its saved state
-  Note over H,W: a crash later: worker_exited → Start again while a session or the overlay holds it
-  Note over H,W: crashes within a minute of each other back off from the second (1 s, doubling to 5 min); the third calls worker_crashing
+  Note over H,W: a crash later: the attempt reports failed → Start again while a session or the overlay holds it
+  Note over H,W: crashes in a run back off from the second (1 s, doubling to 5 min); the third calls worker_crashing
 ```
 
 ## Numbers
