@@ -43,9 +43,9 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
-  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
-  `dot` TLD.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
@@ -89,12 +89,12 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG` and refuses any other configuration before it creates anything, `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomMetadata` keeps the name and icon of `createRoom`, `setRoomPreview` and `deleteRoom` answer `ChatRoomChangeOutcome.UNSUPPORTED`, and `updateFeed` answers `ChatFeedOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default, and a host implements one of the two `createRoom` methods: the default three-argument `createRoom` refuses the room. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, through the three-argument one, and refuses any other configuration before it creates anything, `room` finds the room in `listRooms` and pairs it with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomMetadata`, `setRoomPreview` and `deleteRoom` answer `ChatRoomChangeOutcome.UNSUPPORTED`, and `updateFeed` answers `ChatFeedOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
 | `createRoom(roomId, name, icon, config)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomException.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update, preview and query |
+| `room` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `null` for a room the product never created. The core reads it once before each change to a room and before each query of the room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.APPLIED`, or the outcome that names why it did not apply the change |
@@ -113,6 +113,7 @@ import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.ChatRoomState
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostRuntimeConfig
@@ -122,9 +123,6 @@ import uniffi.truapi.ProductId
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override suspend fun createRoom(roomId: String, name: String, icon: String) =
-        createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
-
     // The room and its configuration land in one write.
     override suspend fun createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) =
         if (store.putRoom(roomId, name, icon, config)) ChatRoomRegistrationStatus.NEW
@@ -146,8 +144,8 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
 
     override suspend fun listRooms(): List<ChatRoom> = store.rooms()
 
-    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
-        store.config(roomId) ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
+    // The room and its configuration in one read.
+    override suspend fun room(roomId: String): ChatRoomState? = store.room(roomId)
 
     override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
         if (store.apply(roomId, update, persist)) ChatFeedOutcome.APPLIED else ChatFeedOutcome.UNKNOWN_MESSAGE
@@ -462,7 +460,7 @@ val runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer = "polkadotapp://stack?key=0x…&url=…",
         descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
-        allowsReservedValues = false,
+        reservedValues = ReservedValuesPolicy(allowed = false),
     ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.

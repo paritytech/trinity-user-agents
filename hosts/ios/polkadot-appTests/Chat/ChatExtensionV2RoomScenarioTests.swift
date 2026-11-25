@@ -32,7 +32,9 @@ struct ChatExtensionV2RoomScenarioTests {
         var defaults = ChatRoomPolicy.defaults
         defaults.configGeneration = 1
         #expect(chat.roomPolicy == defaults)
-        #expect(try await bridge.roomConfig(roomId: "lobby") == .hostDefault)
+        #expect(
+            try await bridge.room(roomId: "lobby") == ChatRoomState(participatingAs: .roomHost, config: .hostDefault)
+        )
         #expect(try await bridge.listRooms() == [ChatRoom(roomId: "lobby", participatingAs: .roomHost)])
     }
 
@@ -55,7 +57,7 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(chat.roomDeclarations?.config == Chat.RoomConfig(config))
         #expect(chat.roomDeclarations?.preview == Chat.RoomPreview(preview))
         #expect(chat.roomPolicy?.reportsSeen == true)
-        #expect(try await bridge.roomConfig(roomId: "lobby") == config)
+        #expect(try await bridge.room(roomId: "lobby") == ChatRoomState(participatingAs: .roomHost, config: config))
     }
 
     /// `set_room_metadata` reaches the chat-list row and the room screen. The native chat draws no
@@ -64,10 +66,10 @@ struct ChatExtensionV2RoomScenarioTests {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
 
-        try await bridge.setRoomMetadata(
+        #expect(try await bridge.setRoomMetadata(
             roomId: "lobby",
             metadata: ChatRoomMetadata(name: "Finals", description: "x", icon: nil, placeholder: "No games yet")
-        )
+        ) == .applied)
 
         let chat = try #require(try await fixture.storedChat("lobby"))
         let registry = SingleBotRegistry(bot: fixture.bot)
@@ -154,7 +156,7 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(try await fixture.messages("lobby").isEmpty)
         #expect(try await reactionCount() == 0)
         #expect(try await bridge.listRooms().isEmpty)
-        await #expect(throws: ChatRoomError.self) { try await bridge.roomConfig(roomId: "lobby") }
+        #expect(try await bridge.room(roomId: "lobby") == nil)
     }
 
     /// The chat list draws a product room from what the store holds, and the bot of the product asks for
@@ -290,7 +292,7 @@ private extension ChatExtensionV2RoomScenarioTests {
         let status = try await bridge.createRoom(roomId: "lobby", name: metadata.name, icon: icon, config: config)
 
         if status == .new {
-            try await bridge.setRoomMetadata(roomId: "lobby", metadata: metadata)
+            _ = try await bridge.setRoomMetadata(roomId: "lobby", metadata: metadata)
             if let preview {
                 _ = try await bridge.setRoomPreview(roomId: "lobby", preview: preview)
             }

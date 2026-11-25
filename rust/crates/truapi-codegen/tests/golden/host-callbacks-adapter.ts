@@ -6,7 +6,6 @@
 // primitives and byte blobs pass through unchanged.
 
 import {
-  ChatRoomConfig,
   ChatRoomRegistrationStatus,
   HostChatCreateRoomRequest,
   HostChatDeleteRoomRequest,
@@ -37,6 +36,7 @@ import {
   AuthState,
   ChatFeedOutcome,
   ChatRoomChangeOutcome,
+  ChatRoomState,
   CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
@@ -81,9 +81,14 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
-  listChatRooms?(product: Uint8Array): Promise<Uint8Array>;
-  readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
-  setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  chatRoom?(
+    product: Uint8Array,
+    roomId: string,
+  ): Promise<Uint8Array | null | undefined>;
+  setChatRoomMetadata?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
   setChatRoomPreview?(
     product: Uint8Array,
     request: Uint8Array,
@@ -201,21 +206,19 @@ export function createWasmRawCallbacks(
               (item) => sendItem(HostChatListSubscribeItem.enc(item)),
               sendError,
             ),
-          listChatRooms: async (product) =>
-            HostChatListSubscribeItem.enc(
-              await chat.listChatRooms(ProductContext.dec(product)),
-            ),
-          readChatRoomConfig: async (product, roomId) =>
-            ChatRoomConfig.enc(
-              await chat.readChatRoomConfig(
-                ProductContext.dec(product),
-                roomId,
-              ),
-            ),
-          setChatRoomMetadata: async (product, request) =>
-            await chat.setChatRoomMetadata(
+          chatRoom: async (product, roomId) => {
+            const value = await chat.chatRoom(
               ProductContext.dec(product),
-              HostChatSetRoomMetadataRequest.dec(request),
+              roomId,
+            );
+            return value === undefined ? undefined : ChatRoomState.enc(value);
+          },
+          setChatRoomMetadata: async (product, request) =>
+            ChatRoomChangeOutcome.enc(
+              await chat.setChatRoomMetadata(
+                ProductContext.dec(product),
+                HostChatSetRoomMetadataRequest.dec(request),
+              ),
             ),
           setChatRoomPreview: async (product, request) =>
             ChatRoomChangeOutcome.enc(

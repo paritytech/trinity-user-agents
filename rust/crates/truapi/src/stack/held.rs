@@ -5,7 +5,7 @@
 
 use trinity_stack::{Descriptor, Pointer, Refresh, StackReader, Verified, open};
 
-use super::{Stack, StackError, pinned::Pinned};
+use super::{ReservedValuesPolicy, Stack, StackError, pinned::Pinned};
 
 /// One verified copy of the descriptor, and the stack it names.
 pub struct HeldCopy {
@@ -30,24 +30,27 @@ impl HeldCopy {
 #[derive(Clone)]
 pub struct CopyRules {
 	pointer: Pointer,
-	allows_reserved_values: bool,
+	reserved_values: ReservedValuesPolicy,
 	pinned: Pinned,
 }
 
 impl CopyRules {
 	/// The rules for `pointer`'s stack, pinned to `bundled`, the signed copy
-	/// the build ships. `allows_reserved_values` lets the stack use
-	/// Polkadot's reserved values.
+	/// the build ships, under `reserved_values`, the build's policy, already
+	/// checked.
 	///
-	/// Fails when `bundled` does not verify under the pointer.
+	/// Fails when `bundled` does not verify under the pointer or is not a
+	/// stack the core can run under `reserved_values`, even when a newer stored
+	/// copy exists.
 	pub fn new(
 		pointer: Pointer,
 		bundled: &[u8],
-		allows_reserved_values: bool,
+		reserved_values: ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let bundled = open(bundled, &pointer).map_err(StackError::Descriptor)?;
+		Stack::from_descriptor(&pointer, &bundled.descriptor, &reserved_values)?;
 		let pinned = Pinned::new(&bundled.descriptor);
-		Ok(Self { pointer, allows_reserved_values, pinned })
+		Ok(Self { pointer, reserved_values, pinned })
 	}
 
 	/// The stack's pointer.
@@ -59,11 +62,8 @@ impl CopyRules {
 	///
 	/// Fails with the rule it breaks.
 	pub fn hold(&self, verified: Verified) -> Result<HeldCopy, StackError> {
-		let stack = Stack::from_descriptor(
-			&self.pointer,
-			&verified.descriptor,
-			self.allows_reserved_values,
-		)?;
+		let stack =
+			Stack::from_descriptor(&self.pointer, &verified.descriptor, &self.reserved_values)?;
 		self.pinned.refuse_change(&verified.descriptor)?;
 		Ok(HeldCopy { descriptor: verified.descriptor, stack })
 	}

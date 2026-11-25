@@ -37,7 +37,7 @@ use crate::{
 		ChatFeedOutcome, ChatFieldError, ChatPlatform, ChatRoomChangeOutcome,
 		normalize_chat_identifier, validate_chat_custom_message, validate_chat_feed_update,
 		validate_chat_icon, validate_chat_message_content, validate_chat_name,
-		validate_chat_room_metadata, validate_chat_room_preview,
+		validate_chat_resource, validate_chat_room_metadata, validate_chat_room_preview,
 	},
 	runtime::{
 		AccountHolder, ChatHandler, ProductConnection, ProductRuntimeHost, versioning::version,
@@ -76,7 +76,11 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				request.room_id_source = normalize_chat_identifier(field, &request.room_id_source)
 					.map_err(field_error)?;
 				request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
-				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
+				// RFC 0002 makes the icon of a v0.2 room a resource. A v0.1
+				// product keeps the icon rules it was built against.
+				let validate_icon =
+					if product_names_room { validate_chat_icon } else { validate_chat_resource };
+				request.icon = validate_icon("icon", &request.icon).map_err(field_error)?;
 				let room_id = if product_names_room {
 					request.room_id_source.clone()
 				} else {
@@ -212,8 +216,11 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 						})?,
 					);
 				}
-				request.room_id =
-					self.hosted_room(&platform, &request.room_id).await.map_err(footer_refusal)?;
+				request.room_id = self
+					.hosted_room(&platform, &request.room_id)
+					.await
+					.map_err(footer_refusal)?
+					.room_id;
 				platform.set_chat_room_footer(&self.connection.product, request).await.map_err(
 					|error| {
 						CallError::Domain(latest::HostChatSetRoomFooterError::Unknown {
@@ -236,11 +243,10 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.metadata =
 					validate_chat_room_metadata(request.metadata).map_err(room_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
-				platform
-					.set_chat_room_metadata(&self.connection.product, request)
-					.await
-					.map_err(room_host_error)
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?.room_id;
+				room_change(
+					platform.set_chat_room_metadata(&self.connection.product, request).await,
+				)
 			})
 			.await
 	}
@@ -256,14 +262,11 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.preview =
 					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
-				let config = platform
-					.read_chat_room_config(&self.connection.product, request.room_id.clone())
-					.await
-					.map_err(room_host_error)?;
+				let room = self.hosted_room(&platform, &request.room_id).await?;
+				request.room_id = room.room_id;
 				// In a room that the host stores, the host shows the messages and
 				// reactions of the user from its own store.
-				if !config.product_source && preview_shows_the_user(&request.preview) {
+				if !room.config.product_source && preview_shows_the_user(&request.preview) {
 					return Err(CallError::Domain(latest::HostChatSetRoomPreviewError::NotOwner));
 				}
 				room_change(platform.set_chat_room_preview(&self.connection.product, request).await)
@@ -281,7 +284,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
 				request.room_id = match self.hosted_room(&platform, &request.room_id).await {
-					Ok(room_id) => room_id,
+					Ok(room) => room.room_id,
 					// The host deletes a room that does not exist without an
 					// error, so a product can send a delete again when it lost
 					// the answer. A room that a stale list leaves out is still
@@ -315,12 +318,9 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.update =
 					validate_chat_feed_update(request.update).map_err(feed_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
-				let config = platform
-					.read_chat_room_config(&self.connection.product, request.room_id.clone())
-					.await
-					.map_err(room_host_error)?;
-				let persist = !config.product_source;
+				let room = self.hosted_room(&platform, &request.room_id).await?;
+				request.room_id = room.room_id;
+				let persist = !room.config.product_source;
 				// In a room that the host stores, the user writes and reacts
 				// only through the host. A product cannot write or react as the
 				// user.
@@ -361,8 +361,16 @@ enum RoomRefusal {
 	NotRoomHost,
 	/// The room id did not pass the core's checks.
 	Malformed(String),
-	/// The host could not list the rooms.
+	/// The host could not read the room.
 	HostFailure(String),
+}
+
+/// A room that the product hosts, as the host keeps it.
+struct HostedRoom {
+	/// The normalized id of the room.
+	room_id: String,
+	/// The configuration of the last `create_room` of the room.
+	config: latest::ChatRoomConfig,
 }
 
 /// The error of a room-changing call that names a room the product does not
@@ -504,8 +512,11 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 }
 
 impl ProductConnection {
-	/// Whether the declarations the host keeps for `room_id` declare
-	/// `handler`. The core asks a product a query only when they do.
+	/// Whether the declarations the host keeps for `room_id` declare `handler`.
+	///
+	/// The core asks a product a query only when they do. A room the product
+	/// never created declares no handler. Fails with the reason when this
+	/// connection has no chat platform or the host cannot read its rooms.
 	pub async fn chat_handler_declared(
 		&self,
 		room_id: String,
@@ -516,11 +527,9 @@ impl ProductConnection {
 			ChatHandler::Config(declared) => declared,
 			ChatHandler::Undeclared => return Ok(true),
 		};
-		let config = platform
-			.read_chat_room_config(&self.product, room_id.clone())
-			.await
-			.map_err(|error| error.reason)?;
-		Ok(declared(&config))
+		let room =
+			platform.chat_room(&self.product, room_id).await.map_err(|error| error.reason)?;
+		Ok(room.is_some_and(|room| declared(&room.config)))
 	}
 }
 
@@ -533,27 +542,27 @@ fn normalized_room_id(room_id: &str) -> Result<String, RoomRefusal> {
 }
 
 impl<H: AccountHolder> ProductRuntimeHost<H> {
-	/// The normalized id of a room this product hosts.
+	/// A room this product hosts, with its normalized id and configuration.
 	///
-	/// The room list is read once for each call, so every host answers a room
-	/// the product never created, or joined only as a bot, the same way.
+	/// The core reads the room from the host once for each call, so every host
+	/// answers a room the product never created, or joined only as a bot, the
+	/// same way.
 	async fn hosted_room(
 		&self,
 		platform: &Arc<dyn ChatPlatform>,
 		room_id: &str,
-	) -> Result<String, RoomRefusal> {
+	) -> Result<HostedRoom, RoomRefusal> {
 		let room_id = normalized_room_id(room_id)?;
-		let rooms = platform
-			.list_chat_rooms(&self.connection.product)
+		let room = platform
+			.chat_room(&self.connection.product, room_id.clone())
 			.await
-			.map_err(|error| RoomRefusal::HostFailure(error.reason))?
-			.rooms;
-		match rooms.iter().find(|room| room.room_id == room_id) {
+			.map_err(|error| RoomRefusal::HostFailure(error.reason))?;
+		match room {
 			None => Err(RoomRefusal::UnknownRoom(room_id)),
 			Some(room) if room.participating_as != latest::ChatRoomParticipation::RoomHost => {
 				Err(RoomRefusal::NotRoomHost)
 			},
-			Some(_) => Ok(room_id),
+			Some(room) => Ok(HostedRoom { room_id, config: room.config }),
 		}
 	}
 }

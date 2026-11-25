@@ -117,14 +117,22 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
     // MARK: - Chat Extension v2
 
+    /// The core reads `nil` as a room that the product never created, so a room that is gone by the time its
+    /// configuration is read answers `nil` too, never an error.
+    func room(roomId: String) async throws -> ChatRoomState? {
+        guard let room = try await listRooms().first(where: { $0.roomId == roomId }) else { return nil }
+        do {
+            let config = try await chatMessaging.roomDeclarations(roomId: roomId).effectiveConfig.wireValue
+            return ChatRoomState(participatingAs: room.participatingAs, config: config)
+        } catch ChatRoomError.unknownRoom {
+            return nil
+        }
+    }
+
     // The core checked that the product hosts each room and screened every value. A room that is gone by now
     // answers `ChatRoomError.unknownRoom`, which the product receives as the reason of a rejection.
 
-    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
-        try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
-    }
-
-    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
         logger.debug("[truapi:chat-bridge] setRoomMetadata \(roomId)")
         // An empty icon removes the icon, as in `createRoom`.
         let icon: Chat.RoomIconChange = metadata.icon.map { .replace($0.nilIfEmpty) } ?? .keep
@@ -134,6 +142,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             icon: icon,
             placeholder: metadata.placeholder
         )
+        return .applied
     }
 
     func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
