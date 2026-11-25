@@ -5,9 +5,19 @@
     struct SentryHostEventRecorder: HostEventRecording {
         func record(_ event: @autoclosure () -> HostEvent) {
             let event = event()
+
+            switch event.route {
+            case let .log(body, attributes):
+                SentrySDK.logger.info(body, attributes: attributes.mapValues(\.sentryValue))
+            case .capture:
+                capture(event)
+            }
+        }
+
+        private func capture(_ event: HostEvent) {
             let sentryEvent = Event(level: event.level.sentryLevel)
             sentryEvent.message = SentryMessage(formatted: event.name)
-            sentryEvent.logger = "host.telemetry"
+            sentryEvent.logger = HostEvent.logTag
             sentryEvent.fingerprint = event.fingerprint
             sentryEvent.tags = event.tags
             sentryEvent.extra = event.extras.mapValues(\.sentryValue)
