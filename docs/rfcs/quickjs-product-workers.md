@@ -139,7 +139,6 @@ Galaxy A26 table.
 - Cranelift compiles wasm close to native speed, but needs a JIT, which iOS forbids, and takes 2.3 s to compile the
   module on an Android phone.
 - The iOS and Android core builds need wasi-sdk and WABT and compile about 13 MB of generated C.
-- Workers do not run in the iOS Notification Service Extension, which shares the app's keychain group.
 
 ## Open questions
 
