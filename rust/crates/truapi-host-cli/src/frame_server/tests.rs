@@ -55,6 +55,13 @@ impl ConnectionRuntime for PendingRuntime {
 async fn start_tcp_server(
 	runtime: Arc<dyn ProductRuntimeFactory>,
 ) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
+	start_tcp_server_with(runtime, None).await
+}
+
+async fn start_tcp_server_with(
+	runtime: Arc<dyn ProductRuntimeFactory>,
+	surface: Option<Arc<ChatSurface>>,
+) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
 	let listener = TcpListener::bind("127.0.0.1:0").await?;
 	let address = listener.local_addr()?;
 	let endpoint = format!("ws://{address}");
@@ -63,7 +70,7 @@ async fn start_tcp_server(
 	std::fs::write(container.path(), "installSandbox();")?;
 	let server = tokio::spawn(async move {
 		let (stream, _) = listener.accept().await?;
-		serve_tcp_connection(runtime, product, stream, &endpoint, container.path()).await
+		serve_tcp_connection(runtime, product, stream, &endpoint, container.path(), surface).await
 	});
 	Ok((address, server))
 }
@@ -137,7 +144,12 @@ fn a_request_head_is_classified_by_its_upgrade_header() {
 async fn the_bridge_script_is_served_beside_the_frame_socket() -> Result<()> {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-	async fn fetch(target: &str, endpoint: &str, asset_present: bool) -> Result<String> {
+	async fn fetch_as(
+		peer: ConnectionPeer,
+		target: &str,
+		endpoint: &str,
+		asset_present: bool,
+	) -> Result<String> {
 		let listener = TcpListener::bind("127.0.0.1:0").await?;
 		let address = listener.local_addr()?;
 		let endpoint = endpoint.to_string();
@@ -150,7 +162,7 @@ async fn the_bridge_script_is_served_beside_the_frame_socket() -> Result<()> {
 			let (mut stream, _) = listener.accept().await?;
 			let request = read_request_head(&mut stream).await?;
 			assert!(!is_websocket_upgrade(request.head()));
-			serve_bridge_script(&mut stream, request.head(), &endpoint, container.path()).await
+			serve_http(&mut stream, peer, request.head(), &endpoint, container.path(), None).await
 		});
 
 		let mut client = TcpStream::connect(address).await?;
@@ -163,7 +175,19 @@ async fn the_bridge_script_is_served_beside_the_frame_socket() -> Result<()> {
 		Ok(response)
 	}
 
+	// The listener is loopback, so the peer a route sees is what the
+	// server was told, which is the one line of policy under test here.
+	async fn fetch(target: &str, endpoint: &str, asset_present: bool) -> Result<String> {
+		let loopback = ConnectionPeer::Tcp("127.0.0.1:3000".parse()?);
+		fetch_as(loopback, target, endpoint, asset_present).await
+	}
+
 	let endpoint = "ws://127.0.0.1:9955";
+	let remote = ConnectionPeer::Tcp("192.0.2.1:3000".parse()?);
+	let refused = fetch_as(remote, bootstrap::PATH, endpoint, true).await?;
+	assert!(refused.starts_with("HTTP/1.1 403 Forbidden"), "{refused}");
+	assert!(!refused.contains("installSandbox"), "{refused}");
+
 	let script = fetch(bootstrap::PATH, endpoint, true).await?;
 	assert!(script.starts_with("HTTP/1.1 200 OK"), "{script}");
 	assert!(script.contains("application/javascript"));
@@ -236,6 +260,7 @@ async fn fragmented_request_heads_do_not_starve_the_executor() -> Result<()> {
 		server_stream,
 		&endpoint,
 		container.path(),
+		None,
 	);
 
 	tokio::try_join!(server_exchange, client_exchange)?;
@@ -619,6 +644,147 @@ mod cross_product_storage {
 		);
 		Ok(())
 	}
+}
+
+/// Delegates to a real signing runtime, recording the kind of every
+/// connection it is asked to build.
+struct KindRecordingFactory {
+	inner: Arc<dyn ProductRuntimeFactory>,
+	kinds: std::sync::Mutex<Vec<ExecutableKind>>,
+}
+
+impl ProductRuntimeFactory for KindRecordingFactory {
+	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
+		self.kinds.lock().expect("kind mutex poisoned").push(product.execution_kind);
+		self.inner.product_runtime(product, sink)
+	}
+}
+
+fn chat_surface(worker_bundle: Option<std::path::PathBuf>) -> Arc<ChatSurface> {
+	ChatSurface::new(
+		crate::chat::CliChatHost::new(None),
+		worker_bundle,
+		ProductId::for_test("localhost:3000"),
+	)
+}
+
+async fn http_get(target: &str, surface: Option<Arc<ChatSurface>>) -> Result<(SocketAddr, String)> {
+	let (address, server) = start_tcp_server_with(Arc::new(UnusedRuntimeFactory), surface).await?;
+	let mut client = TcpStream::connect(address).await?;
+	client
+		.write_all(format!("GET {target} HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+		.await?;
+	let mut response = String::new();
+	client.read_to_string(&mut response).await?;
+	server.await??;
+	Ok((address, response))
+}
+
+/// Opening `/worker` as a worker is what lets the core serve it Chat. The
+/// same path on a host without a surface must stay an ordinary product
+/// connection, so `signing-host` and `pairing-host` keep their one kind.
+#[tokio::test]
+async fn only_a_surface_opens_the_worker_path_as_a_worker() -> Result<()> {
+	async fn open_worker_path(surface: Option<Arc<ChatSurface>>) -> Result<Vec<ExecutableKind>> {
+		let factory = Arc::new(KindRecordingFactory {
+			inner: signing_runtime()?,
+			kinds: std::sync::Mutex::new(Vec::new()),
+		});
+		let (address, server) = start_tcp_server_with(factory.clone(), surface.clone()).await?;
+		let stream = TcpStream::connect(address).await?;
+		let (websocket, _) = client_async(format!("ws://{address}/worker"), stream).await?;
+		if let Some(surface) = &surface {
+			tokio::time::timeout(Duration::from_secs(1), async {
+				while surface.connected_workers() != 1 {
+					tokio::task::yield_now().await;
+				}
+			})
+			.await?;
+		}
+		drop(websocket);
+		tokio::time::timeout(Duration::from_secs(1), server).await???;
+		if let Some(surface) = &surface {
+			assert_eq!(surface.connected_workers(), 0, "a closed worker detaches");
+		}
+		Ok(factory.kinds.lock().expect("kind mutex poisoned").clone())
+	}
+
+	assert_eq!(open_worker_path(Some(chat_surface(None))).await?, vec![ExecutableKind::Worker]);
+	assert_eq!(open_worker_path(None).await?, vec![ExecutableKind::App]);
+	Ok(())
+}
+
+#[tokio::test]
+async fn the_worker_bridge_script_dials_the_worker_endpoint() -> Result<()> {
+	let (address, script) =
+		http_get(chat_surface::WORKER_BOOTSTRAP_PATH, Some(chat_surface(None))).await?;
+	assert!(script.starts_with("HTTP/1.1 200 OK\r\n"), "{script}");
+	assert!(
+		script.contains(&format!(
+			r#"window.__truapi_localhost = {{ url: "ws://{address}/worker" }};"#
+		)),
+		"{script}"
+	);
+
+	let (_, without) = http_get(chat_surface::WORKER_BOOTSTRAP_PATH, None).await?;
+	assert!(without.starts_with("HTTP/1.1 404 Not Found"), "{without}");
+	Ok(())
+}
+
+#[tokio::test]
+async fn the_chat_page_boots_the_worker_only_when_a_bundle_is_configured() -> Result<()> {
+	let bundle = tempfile::NamedTempFile::new()?;
+	std::fs::write(bundle.path(), "export {};")?;
+	let configured = Some(chat_surface(Some(bundle.path().to_path_buf())));
+
+	let (_, page) = http_get(chat_surface::PAGE_PATH, configured.clone()).await?;
+	assert!(page.starts_with("HTTP/1.1 200 OK\r\n"), "{page}");
+	assert!(page.contains("Content-Type: text/html; charset=utf-8"));
+	assert!(!page.contains("<!--WORKER_BOOT-->"));
+	assert!(page.contains(r#"<script type="module" src="/worker/index.js"></script>"#));
+	let (_, served) = http_get(chat_surface::WORKER_BUNDLE_PATH, configured).await?;
+	assert!(served.starts_with("HTTP/1.1 200 OK\r\n"), "{served}");
+	assert!(served.ends_with("\r\n\r\nexport {};"), "{served}");
+
+	let (_, bare) = http_get(chat_surface::PAGE_PATH, Some(chat_surface(None))).await?;
+	assert!(bare.starts_with("HTTP/1.1 200 OK\r\n"), "{bare}");
+	assert!(!bare.contains("<!--WORKER_BOOT-->"));
+	assert!(!bare.contains("/worker/index.js\"></script>"));
+	let (_, missing) = http_get(chat_surface::WORKER_BUNDLE_PATH, Some(chat_surface(None))).await?;
+	assert!(missing.starts_with("HTTP/1.1 404 Not Found"), "{missing}");
+	assert!(missing.contains("--worker-bundle"), "{missing}");
+
+	let (_, no_surface) = http_get(chat_surface::PAGE_PATH, None).await?;
+	assert!(no_surface.starts_with("HTTP/1.1 404 Not Found"), "{no_surface}");
+	Ok(())
+}
+
+#[tokio::test]
+async fn the_chat_socket_opens_with_a_snapshot() -> Result<()> {
+	let (address, server) =
+		start_tcp_server_with(Arc::new(UnusedRuntimeFactory), Some(chat_surface(None))).await?;
+	let stream = TcpStream::connect(address).await?;
+	let (mut websocket, _) = client_async(format!("ws://{address}/chat/ws"), stream).await?;
+
+	let Some(Ok(Message::Text(first))) = websocket.next().await else {
+		panic!("the surface speaks first");
+	};
+	let snapshot: serde_json::Value = serde_json::from_str(&first)?;
+	assert_eq!(
+		snapshot,
+		serde_json::json!({
+			"kind": "snapshot",
+			"productId": "localhost:3000",
+			"peer": "native",
+			"worker": {"configured": false, "connected": 0},
+			"timeouts": {"page": 10000, "send": 30000, "action": 10000, "query": 5000},
+			"rooms": [],
+			"messages": [],
+		})
+	);
+	drop(websocket);
+	tokio::time::timeout(Duration::from_secs(1), server).await???;
+	Ok(())
 }
 
 /// A sink that records nothing: these tests are about the decorator's

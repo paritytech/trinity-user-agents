@@ -653,12 +653,17 @@ async fn script_completion_removes_the_private_frame_socket_before_returning() -
 			ProductId::for_test("script-cleanup.testnet"),
 			ExecutableKind::App,
 		);
-		let result =
-			with_frame_server(Arc::new(UnusedRuntimeFactory), product, frame_server, async move {
+		let result = with_frame_server(
+			Arc::new(UnusedRuntimeFactory),
+			product,
+			frame_server,
+			None,
+			async move {
 				anyhow::ensure!(!script_failed, "script failed");
 				Ok(())
-			})
-			.await;
+			},
+		)
+		.await;
 
 		assert_eq!(
 			(result.is_err(), socket.exists(), directory.exists()),

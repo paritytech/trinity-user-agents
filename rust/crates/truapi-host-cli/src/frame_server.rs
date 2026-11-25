@@ -36,7 +36,10 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, warn};
 
-use crate::bootstrap;
+use crate::{
+	bootstrap,
+	chat_surface::{self, ChatSurface, ChatWorker},
+};
 use truapi::{
 	ChannelId, DebugSink, FrameSink, HostRuntime, PairingHost, ProductContext, ProductRuntime,
 	ProductRuntimeError, SigningHost,
@@ -67,9 +70,10 @@ const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Process-local product selection shared by the command loop and frame server.
 pub struct ProductSelection {
 	current: watch::Sender<ProductContext>,
-	/// Execution kind every selection keeps. A host serves one kind for its
-	/// lifetime: the core reads it per connection, and chat is denied to a
-	/// connection that opened as `App`.
+	/// Execution kind every selection keeps, and the kind a connection opens
+	/// as by default: the core reads it per connection, and chat is denied to
+	/// a connection that opened as `App`. A development chat surface also
+	/// serves the same product as `Worker` on its worker endpoint.
 	execution_kind: ExecutableKind,
 }
 
@@ -307,10 +311,14 @@ fn bind_unix() -> Result<BoundFrameServer> {
 /// Each connection is driven independently on the Tokio worker pool. The
 /// shared dispatcher contract requires `Send` futures, while the WASM adapter
 /// may still poll those futures on its single-threaded local executor.
+///
+/// A `surface` adds the development chat routes to a TCP endpoint. Without
+/// one, only the default-kind frame socket and the bridge script are served.
 pub async fn accept_loop(
 	runtime: Arc<dyn ProductRuntimeFactory>,
 	product: Arc<ProductSelection>,
 	frame_server: BoundFrameServer,
+	surface: Option<Arc<ChatSurface>>,
 ) -> Result<()> {
 	let product_id = product.current();
 	let endpoint = frame_server.endpoint.clone();
@@ -318,7 +326,9 @@ pub async fn accept_loop(
 	#[cfg(unix)]
 	let _socket_directory = frame_server.socket_directory;
 	match frame_server.listener {
-		FrameListener::Tcp(listener) => accept_tcp_loop(runtime, product, listener, endpoint).await,
+		FrameListener::Tcp(listener) => {
+			accept_tcp_loop(runtime, product, listener, endpoint, surface).await
+		},
 		#[cfg(unix)]
 		FrameListener::Unix(listener) => accept_unix_loop(runtime, product, listener).await,
 	}
@@ -329,6 +339,7 @@ async fn accept_tcp_loop(
 	product: Arc<ProductSelection>,
 	listener: TcpListener,
 	endpoint: String,
+	surface: Option<Arc<ChatSurface>>,
 ) -> Result<()> {
 	let container = bootstrap::container_path();
 	loop {
@@ -348,9 +359,10 @@ async fn accept_tcp_loop(
 		let product = product.clone();
 		let endpoint = endpoint.clone();
 		let container = container.clone();
+		let surface = surface.clone();
 		tokio::spawn(async move {
 			if let Err(err) =
-				serve_tcp_connection(runtime, product, stream, &endpoint, &container).await
+				serve_tcp_connection(runtime, product, stream, &endpoint, &container, surface).await
 			{
 				debug!(%peer, %err, "frame connection ended");
 			}
@@ -359,22 +371,42 @@ async fn accept_tcp_loop(
 }
 
 /// Serve one TCP peer, which is either a product opening the frame socket or a
-/// browser fetching the bridge script.
+/// browser fetching the bridge script. With a `surface`, it may also be a
+/// worker opening its frame socket, or the chat surface page and its socket.
 async fn serve_tcp_connection(
 	runtime: Arc<dyn ProductRuntimeFactory>,
 	product: Arc<ProductSelection>,
 	mut stream: TcpStream,
 	endpoint: &str,
 	container: &Path,
+	surface: Option<Arc<ChatSurface>>,
 ) -> Result<()> {
 	let peer = ConnectionPeer::Tcp(stream.peer_addr().context("read TCP peer address")?);
 	let request = tokio::time::timeout(REQUEST_HEAD_TIMEOUT, read_request_head(&mut stream))
 		.await
 		.context("timed out reading the request head")??;
-	if is_websocket_upgrade(request.head()) {
-		return serve_connection(runtime, product, request.replay(stream), peer).await;
+	if !is_websocket_upgrade(request.head()) {
+		return serve_http(
+			&mut stream,
+			peer,
+			request.head(),
+			endpoint,
+			container,
+			surface.as_deref(),
+		)
+		.await;
 	}
-	serve_bridge_script(&mut stream, request.head(), endpoint, container).await
+	let path = request_path(request.head());
+	let stream = request.replay(stream);
+	match (surface, path.as_deref()) {
+		(Some(surface), Some(chat_surface::WORKER_PATH)) => {
+			serve_connection(runtime, product, stream, peer, Some(surface)).await
+		},
+		(Some(surface), Some(chat_surface::SOCKET_PATH)) => {
+			serve_surface(&surface, stream, peer).await
+		},
+		_ => serve_connection(runtime, product, stream, peer, None).await,
+	}
 }
 
 struct BufferedRequestHead {
@@ -489,30 +521,46 @@ fn header_value<'a>(head: &'a [u8], name: &str) -> Option<&'a str> {
 	})
 }
 
-/// Answer a plain HTTP request with the bridge script, or a 404.
+/// Answer a plain HTTP request with the bridge script, the chat surface's
+/// assets when a `surface` is configured, or a 404.
 ///
-/// Products load this from a development-only `<script>` tag, which is a
-/// cross-origin request no CORS header can gate, so the script carries no
-/// secret. What keeps another page from using the endpoint it names is the
-/// origin check on the WebSocket handshake.
-async fn serve_bridge_script(
+/// Every plain route is for a browser on this machine, so a peer that is not
+/// loopback gets a 403 before any route is looked at. The bridge script is
+/// loaded from a development-only `<script>` tag, a cross-origin request no
+/// CORS header can gate, so it carries no secret either way; what keeps
+/// another page from using the endpoint it names is the origin check on the
+/// WebSocket handshake. The chat page and the worker bundle come off the
+/// developer's disk, and the peer check is what keeps them off the network.
+async fn serve_http(
 	stream: &mut TcpStream,
+	peer: ConnectionPeer,
 	head: &[u8],
 	endpoint: &str,
 	container: &Path,
+	surface: Option<&ChatSurface>,
 ) -> Result<()> {
-	let response = match request_path(head).as_deref() {
-		Some(bootstrap::PATH) => match bootstrap::read_container(container) {
-			Ok(container) => http_response(
-				"200 OK",
-				"application/javascript; charset=utf-8",
-				&bootstrap::script(endpoint, &container),
-			),
-			Err(error) => http_response(
-				"500 Internal Server Error",
-				"text/plain; charset=utf-8",
-				&format!("{error:#}\n"),
-			),
+	if !connection_allowed(peer, None) {
+		warn!(?peer, "refused a plain HTTP request from a non-loopback peer");
+		let response = http_response(
+			"403 Forbidden",
+			"text/plain; charset=utf-8",
+			"forbidden; truapi-host serves this machine only\n",
+		);
+		stream.write_all(response.as_bytes()).await?;
+		stream.flush().await?;
+		return Ok(());
+	}
+	let response = match (request_path(head).as_deref(), surface) {
+		(Some(bootstrap::PATH), _) => bridge_script_response(endpoint, container),
+		(Some(chat_surface::WORKER_BOOTSTRAP_PATH), Some(_)) => {
+			bridge_script_response(&format!("{endpoint}{}", chat_surface::WORKER_PATH), container)
+		},
+		(Some(chat_surface::WORKER_BUNDLE_PATH), Some(surface)) => match surface.worker_bundle() {
+			Ok(bundle) => http_response("200 OK", "application/javascript; charset=utf-8", &bundle),
+			Err(reason) => http_response("404 Not Found", "text/plain; charset=utf-8", &reason),
+		},
+		(Some(chat_surface::PAGE_PATH), Some(surface)) => {
+			http_response("200 OK", "text/html; charset=utf-8", &surface.page())
 		},
 		_ => http_response(
 			"404 Not Found",
@@ -523,6 +571,22 @@ async fn serve_bridge_script(
 	stream.write_all(response.as_bytes()).await?;
 	stream.flush().await?;
 	Ok(())
+}
+
+/// The bridge script pointing at `endpoint`, or why it cannot be served.
+fn bridge_script_response(endpoint: &str, container: &Path) -> String {
+	match bootstrap::read_container(container) {
+		Ok(container) => http_response(
+			"200 OK",
+			"application/javascript; charset=utf-8",
+			&bootstrap::script(endpoint, &container),
+		),
+		Err(error) => http_response(
+			"500 Internal Server Error",
+			"text/plain; charset=utf-8",
+			&format!("{error:#}\n"),
+		),
+	}
 }
 
 fn http_response(status: &str, content_type: &str, body: &str) -> String {
@@ -618,7 +682,7 @@ async fn accept_unix_loop(
 		let product = product.clone();
 		tokio::spawn(async move {
 			if let Err(err) =
-				serve_connection(runtime, product, stream, ConnectionPeer::LocalSocket).await
+				serve_connection(runtime, product, stream, ConnectionPeer::LocalSocket, None).await
 			{
 				debug!(?peer, %err, "frame connection ended");
 			}
@@ -626,11 +690,14 @@ async fn accept_unix_loop(
 	}
 }
 
+/// Serve one product connection as the selection's default kind, or as a
+/// `Worker` attached to `worker_surface` for as long as it stays open.
 async fn serve_connection<S>(
 	runtime: Arc<dyn ProductRuntimeFactory>,
 	selected_product: Arc<ProductSelection>,
 	stream: S,
 	peer: ConnectionPeer,
+	worker_surface: Option<Arc<ChatSurface>>,
 ) -> Result<()>
 where
 	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -645,11 +712,31 @@ where
 	})
 	.await?;
 	let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<Message>();
-	let product = product_updates.borrow().clone();
+	let mut product = product_updates.borrow().clone();
+	if worker_surface.is_some() {
+		product = ProductContext::new_with_execution(product.product_id, ExecutableKind::Worker);
+	}
 	let sink = Arc::new(WsFrameSink { outbound: outbound_tx.clone() });
 	let product_runtime = Arc::new(runtime.product_runtime(product, sink));
+	let _attachment = worker_surface.map(|surface| {
+		let worker: Arc<dyn ChatWorker> = product_runtime.clone();
+		surface.attach_worker(&worker)
+	});
 
 	drive_connection(ws, product_runtime, reset, product_updates, outbound_tx, outbound_rx).await
+}
+
+/// Serve the chat surface protocol on one page connection.
+async fn serve_surface<S>(surface: &Arc<ChatSurface>, stream: S, peer: ConnectionPeer) -> Result<()>
+where
+	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+	#[allow(clippy::result_large_err)]
+	let ws = accept_hdr_async(stream, move |request: &Request, response: Response| {
+		check_origin(peer, request, response)
+	})
+	.await?;
+	surface.serve_ws(ws).await
 }
 
 async fn drive_connection<S>(

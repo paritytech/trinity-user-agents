@@ -77,8 +77,8 @@ pub mod latest {
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+		ChatActionPayload, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
+		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
 		CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment,
 		ContextualAlias, DerivationIndex, Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES,
 		FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
