@@ -470,8 +470,8 @@ internal fun JsGesture(
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 if (change.changedToUpIgnoreConsumed()) {
-                                    lifted = true
-                                    if (claimed) {
+                                    lifted = !change.isCancel()
+                                    if (claimed && lifted) {
                                         last = at(change.position)
                                         trace(last)
                                         change.consume()
@@ -564,8 +564,8 @@ internal fun JsGesture(
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.changedToUpIgnoreConsumed()) {
-                                lifted = true
-                                if (claimed) {
+                                lifted = !change.isCancel()
+                                if (claimed && lifted) {
                                     val rest = Offset(
                                         owed.x - GestureRules.caughtUp(owed.x, catchUpFrame),
                                         owed.y - GestureRules.caughtUp(owed.y, catchUpFrame),
@@ -693,6 +693,14 @@ private const val NANOS_PER_MS = 1_000_000L
 private const val NANOS_PER_FRAME = 1_000_000_000f / 60f
 
 /** The feel's damped spring home: its natural frequency squared is the stiffness. */
+
+/**
+ * Whether this up is a touch the system took away (palm rejection, a system gesture, a parent taking the touch) rather
+ * than a lift. Compose reports such a cancel as an up whose pointer arrives already consumed. A lift a child already
+ * consumed reads the same way, so it ends a pan as Cancelled and sends no tap: the child took it.
+ */
+private fun PointerInputChange.isCancel(): Boolean = changedToUpIgnoreConsumed() && isConsumed
+
 private fun JsPanFeel.springHome(): AnimationSpec<Float> = spring(dampingRatio = springDamping, stiffness = springStiffness())
 
 /**
