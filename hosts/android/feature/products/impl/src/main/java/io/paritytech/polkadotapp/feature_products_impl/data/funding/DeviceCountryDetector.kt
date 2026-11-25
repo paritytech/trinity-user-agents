@@ -19,12 +19,7 @@ import java.util.Locale
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * The country the user is likely in, as ISO 3166-1 alpha-2, for the core's funding quotes: the device's last
- * known location when a location permission is already granted, then its SIM or network country, then its
- * locale's region. It never asks for a permission, and gives up on a slow location lookup rather than hold up the
- * funding sheet that waits on it.
- */
+// Never asks for a location permission, and gives up on a slow lookup rather than hold up the funding sheet.
 class DeviceCountryDetector @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatchers: CoroutineDispatchers,

@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedP
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.pinnedCard
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashes
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -138,7 +139,7 @@ class TrUAPIHostRuntimeProviderTest {
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
         materialsSwitch = mockk(relaxed = true),
         workerSupervisor = { mockk(relaxed = true) },
-        workerCrashNotice = mockk(relaxed = true),
+        workerCrashes = WorkerCrashes(),
         dispatchers = testDispatchers(),
     )
 

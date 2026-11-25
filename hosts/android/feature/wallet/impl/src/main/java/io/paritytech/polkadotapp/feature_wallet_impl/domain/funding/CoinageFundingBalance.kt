@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.toHoldingsInfo
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
-/** The card's Ready figure, which is what a withdrawal can spend. */
 internal class CoinageFundingBalance @Inject constructor(
     private val coinageHoldingsUseCase: CoinageHoldingsUseCase,
     private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase,

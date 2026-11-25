@@ -9,10 +9,7 @@ import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import javax.inject.Qualifier
 
-/**
- * The app process's own scope, `ProcessLifecycleOwner.lifecycleScope`: for singletons whose work lasts as long as the
- * process. It runs on the main thread unless the caller adds a dispatcher.
- */
+// Runs on the main thread unless the caller adds a dispatcher.
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class ProcessScope
