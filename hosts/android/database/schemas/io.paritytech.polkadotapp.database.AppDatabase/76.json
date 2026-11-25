@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 76,
-    "identityHash": "67e5724c8a52e5118b574f4b1924faeb",
+    "identityHash": "7da64ee2024101a0358fe518b74918d7",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -2209,7 +2209,7 @@
       },
       {
         "tableName": "statement_store_slot_allocations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chainId` TEXT NOT NULL, `collection` TEXT NOT NULL, `accountId` BLOB NOT NULL, `seq` INTEGER NOT NULL, `latestRenewedPeriod` INTEGER NOT NULL, `sinceMillis` INTEGER NOT NULL, `priorityLevel` INTEGER NOT NULL, `tag` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chainId` TEXT NOT NULL, `collection` TEXT NOT NULL, `accountId` BLOB NOT NULL, `seq` INTEGER NOT NULL, `latestRenewedPeriod` INTEGER NOT NULL, `sinceMillis` INTEGER NOT NULL, `priorityLevel` INTEGER NOT NULL, `tag` TEXT, `signerDerivationPath` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -2262,6 +2262,11 @@
           {
             "fieldPath": "tag",
             "columnName": "tag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "signerDerivationPath",
+            "columnName": "signerDerivationPath",
             "affinity": "TEXT"
           }
         ],
@@ -3118,61 +3123,6 @@
         ]
       },
       {
-        "tableName": "chat_room_declarations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` BLOB NOT NULL, `config` BLOB, `configGeneration` INTEGER NOT NULL DEFAULT 0, `description` TEXT, `placeholder` TEXT, `preview` BLOB, `features` BLOB, `contact` BLOB, PRIMARY KEY(`chatId`))",
-        "fields": [
-          {
-            "fieldPath": "chatId",
-            "columnName": "chatId",
-            "affinity": "BLOB",
-            "notNull": true
-          },
-          {
-            "fieldPath": "config",
-            "columnName": "config",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "configGeneration",
-            "columnName": "configGeneration",
-            "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
-          },
-          {
-            "fieldPath": "description",
-            "columnName": "description",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "placeholder",
-            "columnName": "placeholder",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "preview",
-            "columnName": "preview",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "features",
-            "columnName": "features",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "contact",
-            "columnName": "contact",
-            "affinity": "BLOB"
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "chatId"
-          ]
-        }
-      },
-      {
         "tableName": "chat_seen_states",
         "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`contactAccountId` BLOB NOT NULL, `peerSeenOrder` INTEGER NOT NULL, `lastSentSeenMessageId` TEXT, `lastSentSeenOrder` INTEGER NOT NULL, `lastSentSeenTimestamp` INTEGER NOT NULL, PRIMARY KEY(`contactAccountId`), FOREIGN KEY(`contactAccountId`) REFERENCES `contacts`(`accountId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
@@ -3229,7 +3179,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '67e5724c8a52e5118b574f4b1924faeb')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7da64ee2024101a0358fe518b74918d7')"
     ]
   }
 }

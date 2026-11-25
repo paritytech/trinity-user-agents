@@ -6,12 +6,14 @@ import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchAlias
 import io.paritytech.polkadotapp.chains.storage.source.query.api.QueryableModule
 import io.paritytech.polkadotapp.chains.storage.source.query.api.QueryableStorageEntry1
 import io.paritytech.polkadotapp.chains.storage.source.query.api.QueryableStorageEntry2
+import io.paritytech.polkadotapp.chains.storage.source.query.api.constantOrNull
 import io.paritytech.polkadotapp.chains.storage.source.query.api.storage1
 import io.paritytech.polkadotapp.chains.storage.source.query.api.storage2
 import io.paritytech.polkadotapp.chains.util.WithRuntime
 import io.paritytech.polkadotapp.chains.util.resources
 import io.paritytech.polkadotapp.common.utils.scale.BigEndianU32Scale
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.NotificationRegistrationEntry
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.StatementAllowance
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.StmtStoreAllowanceEntry
 
 @JvmInline
@@ -27,3 +29,7 @@ val StatementStoreResourcesApi.statementStoreAllowances: QueryableStorageEntry2<
 context(withRuntime: WithRuntime)
 val StatementStoreResourcesApi.notificationRegistrationByAlias: QueryableStorageEntry1<BandersnatchAlias, NotificationRegistrationEntry>
     get() = storage1("NotificationRegistrationByAlias")
+
+context(withRuntime: WithRuntime)
+val StatementStoreResourcesApi.notificationAllowance: StatementAllowance?
+    get() = constantOrNull("NotificationAllowance")

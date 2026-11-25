@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_transactions_impl.data.validation
+package io.paritytech.polkadotapp.feature_transactions.api.data.validation
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.chains.network.binding.BlockHash
