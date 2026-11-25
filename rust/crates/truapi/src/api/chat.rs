@@ -229,9 +229,7 @@ pub trait Chat: Send + Sync {
 	/// host stores, the preview cannot show a message or a reaction of the user.
 	/// An image badge is an inline image as a `data:` URL with a Base64
 	/// payload, or the CID of a Bulletin preimage: a URL to fetch is refused. A
-	/// host that does not serve previews answers `Unsupported`. A preview whose
-	/// message is a contact event, a call or a payment answers `Unsupported`:
-	/// the core does not serve these bodies yet.
+	/// host that does not serve previews answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -300,9 +298,7 @@ pub trait Chat: Send + Sync {
 	/// The host stores the change for a room it stores, and only shows it for a
 	/// room the product keeps. In a room the host stores, a change cannot name
 	/// the user as the author of a message, a quote or a reaction. A host that
-	/// does not serve feed updates answers `Unsupported`. A contact event, a
-	/// call or a payment answers `Unsupported`: the core does not serve these
-	/// bodies yet.
+	/// does not serve feed updates answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({

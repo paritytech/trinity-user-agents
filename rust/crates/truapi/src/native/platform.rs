@@ -805,7 +805,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		_product: &ProductContext,
 		request: truapi::latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatFeedOutcome, truapi::latest::GenericError> {
 		self.chat
 			.update_feed(request.room_id, request.update, persist)
 			.await

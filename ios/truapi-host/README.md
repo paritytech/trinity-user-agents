@@ -134,10 +134,12 @@ defaults for a host that does not serve them yet:
 `ChatRoomConfig.hostDefault`, through `createRoom(roomId:name:icon:)`, and
 refuses any other configuration before it creates anything, `room(roomId:)`
 finds the room in `listRooms()` and pairs it with `ChatRoomConfig.hostDefault`,
-and every other request answers `ChatRoomChangeOutcome.unsupported`, which the
-product receives as `Unsupported`. A host that serves one of them answers
-`.applied`. A room the product declares nothing for is a room the host stores,
-with the name and icon of `createRoom` and the text input.
+`setRoomMetadata`, `setRoomPreview` and `deleteRoom` answer
+`ChatRoomChangeOutcome.unsupported`, and `updateFeed` answers
+`ChatFeedOutcome.unsupported`, which the product receives as `Unsupported`. A
+host that serves one of them answers `.applied`. A room the product declares
+nothing for is a room the host stores, with the name and icon of `createRoom`
+and the text input.
 
 | Request | What the host does |
 | --- | --- |
@@ -145,7 +147,7 @@ with the name and icon of `createRoom` and the text input.
 | `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The host looks the room up among the rooms of the product only. The core reads it once before each change to a room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen. The core has not checked that the product created the room, so the host deletes only a room that the product hosts, and does nothing for any other id |
-| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
+| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.applied`, or the outcome that names why it did not apply the change |
 | `setRoomFooter` | Shows the text input, nothing, or a card that the product draws |
 
 The core checks that the product created the room before it calls any of
@@ -193,9 +195,8 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     // The room and its configuration in one read.
     func room(roomId: String) throws -> ChatRoomState? { store.room(roomId) }
 
-    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatRoomChangeOutcome {
-        store.apply(update, to: roomId, persist: persist)
-        return .applied
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatFeedOutcome {
+        store.apply(update, to: roomId, persist: persist) ? .applied : .unknownMessage
     }
 }
 

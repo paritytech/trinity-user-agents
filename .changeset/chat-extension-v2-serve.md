@@ -15,9 +15,7 @@ with `HostFailure`. A room with the default configuration is a room the host sto
 updates; a room with `productSource` only shows them.
 
 In a room the host stores, the user writes and reacts only through the host: a feed update or a preview that names the
-user as the author of a message, of the message a reply quotes, or of a reaction fails with `NotOwner`. A feed update or
-a preview with a contact event, a call or a payment body answers `Unsupported`: the host draws these with its own
-strings, and the core does not serve them yet.
+user as the author of a message, of the message a reply quotes, or of a reaction fails with `NotOwner`.
 
 The icon of a version 2 `createRoom`, the icon of `setRoomMetadata` and an image badge of `setRoomPreview` are
 resources, as RFC 0002 names them: an inline image as a `data:` URL with a Base64 payload, or the CID of a Bulletin

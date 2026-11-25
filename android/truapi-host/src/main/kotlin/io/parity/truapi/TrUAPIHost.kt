@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
@@ -637,16 +638,18 @@ interface ChatHostBridge {
     suspend fun deleteRoom(roomId: String): ChatRoomChangeOutcome = ChatRoomChangeOutcome.UNSUPPORTED
 
     /**
-     * Apply one change to the messages of a room, and answer
-     * [ChatRoomChangeOutcome.APPLIED]. With [persist] the host stores the
-     * change. Without it the host applies the change only to an open room
-     * screen and to the chat list preview. An exception that it throws
-     * reaches the product as `HostFailure`. The default answers
-     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     * Apply one change to the messages of a room. With [persist] the host
+     * stores the change. Without it the host applies the change only to an
+     * open room screen and to the chat list preview.
+     *
+     * Return [ChatFeedOutcome.APPLIED], or the outcome that names why the host
+     * did not apply the change. The product receives each outcome as its own
+     * error. Throw only for a failure of the host, which the product receives
+     * as `HostFailure`. The default answers [ChatFeedOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
-    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatRoomChangeOutcome =
-        ChatRoomChangeOutcome.UNSUPPORTED
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
+        ChatFeedOutcome.UNSUPPORTED
 }
 
 /**
@@ -937,7 +940,7 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
 
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
         withHostRejection { bridge.updateFeed(roomId, update, persist) }
 }
 

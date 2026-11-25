@@ -137,6 +137,28 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(chat.message == nil)
     }
 
+    /// `delete_room` removes the room, its messages and reactions, and its declarations. A second delete
+    /// succeeds.
+    @Test func deleteRemovesTheRoomAndEverythingInIt() async throws {
+        let bridge = await fixture.bridge()
+        try await create(bridge, metadata: metadata, config: config, preview: preview)
+        _ = try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", text: "hi")), persist: true)
+        _ = try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .reactionPlaced(messageId: "m1", participantId: "alice", emoji: "👍"),
+            persist: true
+        )
+
+        #expect(try await bridge.deleteRoom(roomId: "lobby") == .applied)
+        #expect(try await bridge.deleteRoom(roomId: "lobby") == .applied)
+
+        #expect(try await fixture.storedChat("lobby") == nil)
+        #expect(try await fixture.messages("lobby").isEmpty)
+        #expect(try await reactionCount() == 0)
+        #expect(try await bridge.listRooms().isEmpty)
+        #expect(try await bridge.room(roomId: "lobby") == nil)
+    }
+
     /// The chat list draws a product room from what the store holds, and the bot of the product asks for
     /// no worker to do so.
     @Test func theListDrawsARoomWithoutTheWorker() async throws {
@@ -277,5 +299,11 @@ private extension ChatExtensionV2RoomScenarioTests {
         }
 
         return status
+    }
+
+    func reactionCount() async throws -> Int {
+        try await fixture.storageFacade.databaseService.performRead { context in
+            try context.count(for: CDChatMessageReaction.fetchRequest())
+        }
     }
 }

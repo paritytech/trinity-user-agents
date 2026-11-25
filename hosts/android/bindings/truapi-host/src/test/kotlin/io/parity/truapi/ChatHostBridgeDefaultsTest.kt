@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatMessageStatus
@@ -66,14 +67,14 @@ class ChatHostBridgeDefaultsTest {
         )
         val update = ChatFeedUpdate.StatusChanged(messageId = "message", status = ChatMessageStatus.READ)
         assertEquals(
-            List(4) { ChatRoomChangeOutcome.UNSUPPORTED },
+            List(3) { ChatRoomChangeOutcome.UNSUPPORTED },
             listOf(
                 bridge.setRoomMetadata("room", metadata),
                 bridge.setRoomPreview("room", preview),
                 bridge.deleteRoom("room"),
-                bridge.updateFeed("room", update, persist = true),
             ),
         )
+        assertEquals(ChatFeedOutcome.UNSUPPORTED, bridge.updateFeed("room", update, persist = true))
     }
 
     // The core reaches a bridge as a `ChatHostBridge`. A host that keeps

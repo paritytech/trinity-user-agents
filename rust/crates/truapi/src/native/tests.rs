@@ -120,8 +120,8 @@ pub struct EventCallbacks {
 	pub chat_declared: Mutex<Vec<String>>,
 	pub chat_room_configs: Mutex<HashMap<String, truapi::latest::ChatRoomConfig>>,
 	pub chat_feed: Mutex<Vec<(String, truapi::latest::ChatFeedUpdate, bool)>>,
-	/// The rejection reason of `update_feed`, if any.
-	pub chat_feed_rejection: Mutex<Option<String>>,
+	/// The answer of `update_feed`.
+	pub chat_feed_answer: Mutex<Result<crate::platform::ChatFeedOutcome, HostRejection>>,
 	/// The host serves no metadata change, preview, delete or feed update, as
 	/// a host that keeps the defaults of its bridge.
 	pub chat_unserved: Mutex<bool>,
@@ -196,7 +196,7 @@ impl EventCallbacks {
 			chat_declared: Mutex::new(Vec::new()),
 			chat_room_configs: Mutex::new(HashMap::new()),
 			chat_feed: Mutex::new(Vec::new()),
-			chat_feed_rejection: Mutex::new(None),
+			chat_feed_answer: Mutex::new(Ok(crate::platform::ChatFeedOutcome::Applied)),
 			chat_unserved: Mutex::new(false),
 			chat_posted: Mutex::new(Vec::new()),
 			theme: Mutex::new(v01::HostThemeSubscribeItem {
@@ -623,20 +623,18 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		update: truapi::latest::ChatFeedUpdate,
 		persist: bool,
-	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
+	) -> Result<crate::platform::ChatFeedOutcome, HostRejection> {
 		if !self.serves_room_changes() {
-			return Ok(crate::platform::ChatRoomChangeOutcome::Unsupported);
+			return Ok(crate::platform::ChatFeedOutcome::Unsupported);
 		}
-		if let Some(reason) =
-			self.chat_feed_rejection.lock().expect("feed rejection mutex poisoned").clone()
-		{
-			return Err(HostRejection::Rejected { reason });
+		let answer = self.chat_feed_answer.lock().expect("feed answer mutex poisoned").clone();
+		if matches!(answer, Ok(crate::platform::ChatFeedOutcome::Applied)) {
+			self.chat_feed
+				.lock()
+				.expect("feed mutex poisoned")
+				.push((room_id, update, persist));
 		}
-		self.chat_feed
-			.lock()
-			.expect("feed mutex poisoned")
-			.push((room_id, update, persist));
-		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
+		answer
 	}
 }
 
@@ -2168,11 +2166,17 @@ fn native_chat_adapter_passes_an_unsupported_change_on() {
 				true,
 			)
 			.await?;
-		Ok::<_, truapi::latest::GenericError>([metadata, preview, deleted, fed])
+		Ok::<_, truapi::latest::GenericError>(([metadata, preview, deleted], fed))
 	})
 	.expect("an unsupported change is an answer of the host, not a failure");
 	let unsupported = || crate::platform::ChatRoomChangeOutcome::Unsupported;
-	assert_eq!(outcomes, [unsupported(), unsupported(), unsupported(), unsupported()]);
+	assert_eq!(
+		outcomes,
+		(
+			[unsupported(), unsupported(), unsupported()],
+			crate::platform::ChatFeedOutcome::Unsupported
+		)
+	);
 
 	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
 	assert!(
@@ -2182,7 +2186,7 @@ fn native_chat_adapter_passes_an_unsupported_change_on() {
 }
 
 #[test]
-fn native_chat_adapter_applies_a_feed_update_or_reports_the_host_failure() {
+fn native_chat_adapter_reports_feed_outcomes_by_kind() {
 	let (callbacks, platform, product) = chat_adapter();
 	let update = || truapi::latest::HostChatUpdateFeedRequest {
 		room_id: "support".to_string(),
@@ -2200,8 +2204,8 @@ fn native_chat_adapter_applies_a_feed_update_or_reports_the_host_failure() {
 			persist,
 		))
 	};
-	assert_eq!(apply(false), Ok(crate::platform::ChatRoomChangeOutcome::Applied));
-	assert_eq!(apply(true), Ok(crate::platform::ChatRoomChangeOutcome::Applied));
+	assert_eq!(apply(false), Ok(crate::platform::ChatFeedOutcome::Applied));
+	assert_eq!(apply(true), Ok(crate::platform::ChatFeedOutcome::Applied));
 	// The host stores the update only when the core says so, so the flag
 	// reaches it as the core set it.
 	assert_eq!(
@@ -2212,10 +2216,21 @@ fn native_chat_adapter_applies_a_feed_update_or_reports_the_host_failure() {
 		]
 	);
 
-	*callbacks.chat_feed_rejection.lock().expect("feed rejection mutex poisoned") =
-		Some("store locked".to_string());
+	let answered = |answer| {
+		*callbacks.chat_feed_answer.lock().expect("feed answer mutex poisoned") = answer;
+		apply(true)
+	};
+	for outcome in [
+		crate::platform::ChatFeedOutcome::UnknownMessage,
+		crate::platform::ChatFeedOutcome::DuplicateMessage,
+		crate::platform::ChatFeedOutcome::NotOwner,
+		crate::platform::ChatFeedOutcome::Unsupported,
+	] {
+		assert_eq!(answered(Ok(outcome)), Ok(outcome));
+	}
+	// A thrown error names no outcome: it is a failure of the host.
 	assert_eq!(
-		apply(true),
+		answered(Err(HostRejection::Rejected { reason: "store locked".to_string() })),
 		Err(truapi::latest::GenericError { reason: "store locked".to_string() })
 	);
 }

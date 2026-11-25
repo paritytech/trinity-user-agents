@@ -380,7 +380,7 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         _product: &crate::platform::ProductContext,
         _request: latest::HostChatUpdateFeedRequest,
         _persist: bool,
-    ) -> Result<crate::platform::ChatRoomChangeOutcome, latest::GenericError> {
+    ) -> Result<crate::platform::ChatFeedOutcome, latest::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.update_chat_feed,
             vec![
@@ -390,7 +390,7 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             ],
         )
         .await?;
-        Ok(decode_bytes::<crate::platform::ChatRoomChangeOutcome>(
+        Ok(decode_bytes::<crate::platform::ChatFeedOutcome>(
             bytes,
             "updateChatFeed response did not decode",
         )?)

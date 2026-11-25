@@ -605,8 +605,8 @@ pub enum HostChatUpdateFeedError {
 	MessageTooLarge,
 	/// In a room the host stores: a new or replaced message that names `"user"`
 	/// as its author, as the author of the message it quotes, or as one who
-	/// reacted to it; a reaction placed or removed as `"user"`; or `Edited` or
-	/// `Deleted` of a message the product did not write.
+	/// reacted to it; a reaction placed or removed as `"user"`; or `Edited`,
+	/// `Replaced` or `Deleted` of a message the product did not write.
 	NotOwner,
 }
 

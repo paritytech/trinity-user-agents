@@ -34,6 +34,7 @@ import {
 import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
+  ChatFeedOutcome,
   ChatRoomChangeOutcome,
   ChatRoomState,
   CoreStorageKey,
@@ -234,7 +235,7 @@ export function createWasmRawCallbacks(
               ),
             ),
           updateChatFeed: async (product, request, persist) =>
-            ChatRoomChangeOutcome.enc(
+            ChatFeedOutcome.enc(
               await chat.updateChatFeed(
                 ProductContext.dec(product),
                 HostChatUpdateFeedRequest.dec(request),

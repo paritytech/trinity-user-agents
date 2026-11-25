@@ -89,7 +89,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default, and a host implements one of the two `createRoom` methods: the default three-argument `createRoom` refuses the room. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, through the three-argument one, and refuses any other configuration before it creates anything, `room` finds the room in `listRooms` and pairs it with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, and every other request answers `ChatRoomChangeOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `ChatRoomChangeOutcome.APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default, and a host implements one of the two `createRoom` methods: the default three-argument `createRoom` refuses the room. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, through the three-argument one, and refuses any other configuration before it creates anything, `room` finds the room in `listRooms` and pairs it with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomMetadata`, `setRoomPreview` and `deleteRoom` answer `ChatRoomChangeOutcome.UNSUPPORTED`, and `updateFeed` answers `ChatFeedOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
@@ -97,7 +97,7 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 | `room` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `null` for a room the product never created. The host looks the room up among the rooms of the product only. The core reads it once before each change to a room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen. The core has not checked that the product created the room, so the host deletes only a room that the product hosts, and does nothing for any other id |
-| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
+| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.APPLIED`, or the outcome that names why it did not apply the change |
 | `setRoomFooter` | Shows the text input, nothing, or a card that the product draws |
 
 The core checks that the product created the room before it calls any of these, except `createRoom` and `deleteRoom`. It calls `deleteRoom` for every room except one that the product takes part in as a bot, so a room that does not exist is not an error.
@@ -105,10 +105,10 @@ The core checks that the product created the room before it calls any of these, 
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.ChatFeedOutcome
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
-import uniffi.truapi.ChatRoomChangeOutcome
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
@@ -147,10 +147,8 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
     // The room and its configuration in one read.
     override suspend fun room(roomId: String): ChatRoomState? = store.room(roomId)
 
-    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatRoomChangeOutcome {
-        store.apply(roomId, update, persist)
-        return ChatRoomChangeOutcome.APPLIED
-    }
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
+        if (store.apply(roomId, update, persist)) ChatFeedOutcome.APPLIED else ChatFeedOutcome.UNKNOWN_MESSAGE
 }
 
 val runtime = TrUAPIHostRuntime(

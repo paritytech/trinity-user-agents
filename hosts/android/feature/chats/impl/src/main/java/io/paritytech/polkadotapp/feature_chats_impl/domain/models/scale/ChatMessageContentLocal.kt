@@ -139,6 +139,10 @@ sealed class ChatMessageContentLocal {
     object CompactionUnavailable : ChatMessageContentLocal()
 
     @Serializable
+    @EnumIndex(24)
+    class ProductBody(val body: ProductMessageBodyLocal) : ChatMessageContentLocal()
+
+    @Serializable
     @EnumIndex(255)
     class Custom(val rendererId: String, val rawContent: ByteArray?) : ChatMessageContentLocal()
 }

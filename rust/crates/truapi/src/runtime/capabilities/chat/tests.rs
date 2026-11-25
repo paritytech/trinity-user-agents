@@ -23,6 +23,7 @@ struct RecordingHost {
 	configs: Mutex<BTreeMap<String, latest::ChatRoomConfig>>,
 	icons: Mutex<Vec<String>>,
 	feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
+	previews: Mutex<Vec<latest::HostChatSetRoomPreviewRequest>>,
 	calls: Mutex<Vec<String>>,
 	/// How many times the core read a room through `chat_room`.
 	room_reads: Mutex<usize>,
@@ -33,6 +34,8 @@ struct RecordingHost {
 	/// The host serves no metadata change, preview, delete or feed update, as
 	/// a host that keeps the defaults of `ChatPlatform`.
 	unserved: Mutex<bool>,
+	/// What the host answers to a feed update; `Applied` when unset.
+	feed_outcome: Mutex<Option<ChatFeedOutcome>>,
 	/// The host keeps only the default configuration, as a host that does
 	/// not serve the configurations yet.
 	default_config_only: Mutex<bool>,
@@ -169,7 +172,11 @@ impl ChatPlatform for RecordingHost {
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomPreviewRequest,
 	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
-		self.change("preview", &request.room_id)
+		let outcome = self.change("preview", &request.room_id)?;
+		if outcome == ChatRoomChangeOutcome::Applied {
+			self.previews.lock().unwrap().push(request);
+		}
+		Ok(outcome)
 	}
 
 	async fn delete_chat_room(
@@ -192,12 +199,12 @@ impl ChatPlatform for RecordingHost {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+	) -> Result<ChatFeedOutcome, latest::GenericError> {
 		if *self.unserved.lock().unwrap() {
-			return Ok(ChatRoomChangeOutcome::Unsupported);
+			return Ok(ChatFeedOutcome::Unsupported);
 		}
 		self.feed.lock().unwrap().push((request, persist));
-		Ok(ChatRoomChangeOutcome::Applied)
+		Ok(self.feed_outcome.lock().unwrap().unwrap_or(ChatFeedOutcome::Applied))
 	}
 }
 
@@ -594,11 +601,12 @@ fn previews_of_the_user() -> [latest::ChatRoomPreview; 3] {
 	]
 }
 
-// The host draws a contact event, a call and a payment with its own strings,
-// so a product could show a payment or a call that did not happen. The core
-// does not serve them yet, in any room, and the host never sees one.
+// The iOS and Android hosts draw a contact event, a call and a payment with
+// their own strings. The core passes these bodies to the host as it screens
+// them, in a message, a reply quote, an edit and a preview, in a room the host
+// stores and in one the product keeps. A refusal leaves them out of the chat.
 #[test]
-fn a_contact_event_call_or_payment_is_unsupported() {
+fn a_contact_event_call_or_payment_reaches_the_host() {
 	let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
 	configure(
 		&chat,
@@ -616,7 +624,9 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 		latest::ChatMessageBody::Payment(latest::ChatPaymentRecord { amount: 1, legacy: false }),
 	];
 
-	for room_id in ["stored", "sourced"] {
+	let mut sent_updates = Vec::new();
+	let mut sent_previews = Vec::new();
+	for (room_id, persist) in [("stored", true), ("sourced", false)] {
 		for body in &bodies {
 			let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
 				unreachable!("text_message builds a new message")
@@ -634,7 +644,10 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 			for update in
 				[latest::ChatFeedUpdate::New(message), latest::ChatFeedUpdate::New(quote), edit]
 			{
-				assert_eq!(update_feed(&runtime, room_id, update), Err(CallError::Unsupported));
+				update_feed(&runtime, room_id, update.clone()).expect("a host-drawn body");
+				let request =
+					latest::HostChatUpdateFeedRequest { room_id: room_id.to_string(), update };
+				sent_updates.push((request, persist));
 			}
 
 			let message = latest::ChatPreviewMessage {
@@ -657,14 +670,18 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 				latest::ChatRoomPreview { last_message: Some(message), ..empty_preview() },
 				latest::ChatRoomPreview { last_reaction: Some(reaction), ..empty_preview() },
 			] {
-				assert_eq!(set_preview(&runtime, room_id, preview), Err(CallError::Unsupported));
+				set_preview(&runtime, room_id, preview.clone())
+					.expect("a preview of a host-drawn body");
+				sent_previews.push(latest::HostChatSetRoomPreviewRequest {
+					room_id: room_id.to_string(),
+					preview,
+				});
 			}
 		}
 	}
-	assert!(
-		chat.feed.lock().unwrap().is_empty() && chat.calls().is_empty(),
-		"a host that draws these with its own strings would show what the product claims"
-	);
+
+	assert_eq!(*chat.feed.lock().unwrap(), sent_updates);
+	assert_eq!(*chat.previews.lock().unwrap(), sent_previews);
 }
 
 // In a room that the host stores, the user writes and reacts only through
@@ -751,8 +768,8 @@ fn a_preview_cannot_show_the_user_in_a_room_the_host_keeps() {
 	assert_eq!(chat.calls(), ["preview sourced"; 3]);
 }
 
-// A deletion names its message as the core screens it, and the host of a
-// room it keeps stores it.
+// A deletion names no author, so the core sends it to the host. The host
+// refuses the deletion of a message that the product did not write.
 #[test]
 fn a_product_deletes_a_message_in_a_room_the_host_keeps() {
 	let chat = RecordingHost::with_rooms(&[hosted("stored")]);
@@ -796,6 +813,27 @@ fn an_oversized_feed_update_is_too_large() {
 
 	assert_eq!(update_feed(&runtime, "stored", edit(text)), too_large);
 	assert_eq!(update_feed(&runtime, "stored", edit(custom)), too_large);
+}
+
+// The host answers why it did not apply an update, and the product gets
+// that reason as its own error.
+#[test]
+fn the_host_names_why_it_did_not_apply_an_update() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+	let runtime = chat_runtime(chat.clone());
+	let deleted = || latest::ChatFeedUpdate::Deleted { message_id: "m1".to_string() };
+
+	for (outcome, error) in [
+		(ChatFeedOutcome::UnknownMessage, latest::HostChatUpdateFeedError::UnknownMessage),
+		(ChatFeedOutcome::DuplicateMessage, latest::HostChatUpdateFeedError::DuplicateMessage),
+		(ChatFeedOutcome::NotOwner, latest::HostChatUpdateFeedError::NotOwner),
+	] {
+		*chat.feed_outcome.lock().unwrap() = Some(outcome);
+		assert_eq!(
+			update_feed(&runtime, "stored", deleted()),
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(error)))
+		);
+	}
 }
 
 // A product sends a delete again when it lost the answer, so a room that is

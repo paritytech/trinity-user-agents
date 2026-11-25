@@ -417,5 +417,5 @@ final class StubChatHostBridge: ChatHostBridge {
         roomId _: String,
         update _: ChatFeedUpdate,
         persist _: Bool
-    ) async throws -> ChatRoomChangeOutcome { .applied }
+    ) async throws -> ChatFeedOutcome { .applied }
 }

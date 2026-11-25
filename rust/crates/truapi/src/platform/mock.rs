@@ -46,11 +46,11 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, ChatRoomChangeOutcome, ChatRoomState,
-	CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation,
-	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome,
+	ChatRoomState, CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost,
+	Navigation, Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext,
+	ProductId, ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -1541,11 +1541,11 @@ impl ChatPlatform for MockPlatform {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+	) -> Result<ChatFeedOutcome, latest::GenericError> {
 		self.declare_chat_room(request.room_id, |room| {
 			room.feed.push(ChatFeedRecord { update: request.update, persist })
 		})?;
-		Ok(ChatRoomChangeOutcome::Applied)
+		Ok(ChatFeedOutcome::Applied)
 	}
 }
 

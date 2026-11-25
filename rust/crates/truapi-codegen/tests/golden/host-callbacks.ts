@@ -153,8 +153,24 @@ export interface ChainExtensionVersion {
 }
 
 /**
- * What the host did with a change to a room: a metadata change, a preview, a
- * delete or a feed update.
+ * What a host did with one change to the messages of a room.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value: the web and native bridges turn each error that a
+ * callback throws into `HostFailure`. A host that does not serve feed updates
+ * answers `Unsupported`, and the product receives the `Unsupported` call
+ * error.
+ */
+export type ChatFeedOutcome =
+  | "Applied"
+  | "UnknownMessage"
+  | "DuplicateMessage"
+  | "NotOwner"
+  | "Unsupported";
+
+/**
+ * What the host did with a change to a room: a metadata change, a preview or
+ * a delete.
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value. A host that does not serve the request answers
@@ -1112,8 +1128,28 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 );
 
 /**
- * What the host did with a change to a room: a metadata change, a preview, a
- * delete or a feed update.
+ * What a host did with one change to the messages of a room.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value: the web and native bridges turn each error that a
+ * callback throws into `HostFailure`. A host that does not serve feed updates
+ * answers `Unsupported`, and the product receives the `Unsupported` call
+ * error.
+ */
+export const ChatFeedOutcome: S.Codec<ChatFeedOutcome> = S.lazy(
+  (): S.Codec<ChatFeedOutcome> =>
+    S.Status(
+      "Applied",
+      "UnknownMessage",
+      "DuplicateMessage",
+      "NotOwner",
+      "Unsupported",
+    ),
+);
+
+/**
+ * What the host did with a change to a room: a metadata change, a preview or
+ * a delete.
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value. A host that does not serve the request answers
@@ -1802,10 +1838,12 @@ export interface ChainProvider {
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
  * delivered as the parser resolved it. The one exception is the node of a HOP
- * media item: the core screens it only as a name, and does not check that it
- * is a `wss` URL. The icon of a v2 `create_chat_room`, the icon of the room
- * metadata and an image badge take no URL to fetch: an inline Base64 image or
- * the CID of a Bulletin preimage, as RFC 0002 names resources.
+ * media item: the core checks only that it is a `wss://` URL of at most
+ * `CHAT_HOP_NODE_MAX_CHARS` characters with no control or bidi character,
+ * and passes it on as the product wrote it. The icon of a v2
+ * `create_chat_room`, the icon of the room metadata and an image badge take
+ * no URL to fetch: an inline Base64 image or the CID of a Bulletin preimage,
+ * as RFC 0002 names resources.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1948,8 +1986,10 @@ export interface ChatPlatform {
    *
    * With `persist` the host stores the change, because it keeps the
    * messages of the room. Without it the host applies the change only to an
-   * open room screen and the chat list preview. A failure of the host
-   * reaches the product as `HostFailure`. If a Rust host does not implement
+   * open room screen and the chat list preview. The host answers the
+   * outcome `Applied`, or the outcome that names why it did not apply the
+   * change. It answers an error only for a failure of its own, which the
+   * product receives as `HostFailure`. If a Rust host does not implement
    * this method, it answers `Unsupported`.
    *
    * The core decides `persist` from the room it read just before this call.
@@ -1962,7 +2002,7 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatUpdateFeedRequest,
     persist: boolean,
-  ): Promise<ChatRoomChangeOutcome>;
+  ): Promise<ChatFeedOutcome>;
 }
 
 /**

@@ -1,6 +1,6 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
-	StackFetchResponse, StackStatus, UserConfirmationReview,
+	AuthState, ChatFeedOutcome, DevicePermissionStatus, PermissionDecision, ProductId,
+	StackFetchRequest, StackFetchResponse, StackStatus, UserConfirmationReview,
 };
 use truapi::latest;
 
@@ -402,14 +402,17 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Apply one change to the messages of a room. With `persist` the host
 	/// stores the change; without it the host applies it only to an open room
-	/// screen and the chat list preview. A host that does not serve it answers
-	/// `Unsupported`. A rejection reaches the product as `HostFailure`.
+	/// screen and the chat list preview. The host answers
+	/// [`ChatFeedOutcome::Applied`], or the outcome that names why it did not
+	/// apply the change. A host that does not serve it answers
+	/// [`ChatFeedOutcome::Unsupported`]. It throws only for a failure of its
+	/// own, which the product receives as `HostFailure`.
 	async fn update_feed(
 		&self,
 		room_id: String,
 		update: latest::ChatFeedUpdate,
 		persist: bool,
-	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
+	) -> Result<ChatFeedOutcome, HostRejection>;
 }
 
 /// Native game-reminder adapter. Hosts that can hold reminders pass an

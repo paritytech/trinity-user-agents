@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use futures::stream::BoxStream;
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub use truapi_provider::{
 	ProviderError,
@@ -459,6 +460,29 @@ fn validate_chat_emoji(field: &'static str, value: &str) -> Result<String, ChatF
 	Ok(normalized)
 }
 
+/// Largest accepted length for one reaction of a Chat Extension v2 message, in
+/// bytes.
+pub const CHAT_EMOJI_MAX_BYTES: usize = 64;
+
+/// Bound and screen the emoji of a reaction in a feed update, a reaction
+/// summary or a room preview: one extended grapheme cluster, of at most
+/// [`CHAT_EMOJI_MAX_BYTES`] after normalization. A host draws a reaction as one
+/// emoji, so the core refuses anything else before a host sees it.
+fn validate_chat_reaction_emoji(
+	field: &'static str,
+	value: &str,
+) -> Result<String, ChatFieldError> {
+	let emoji = validate_chat_emoji(field, value)?;
+	if emoji.len() > CHAT_EMOJI_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_EMOJI_MAX_BYTES });
+	}
+	match emoji.graphemes(true).count() {
+		0 => Err(ChatFieldError::Empty { field }),
+		1 => Ok(emoji),
+		_ => Err(ChatFieldError::NotOneGrapheme { field }),
+	}
+}
+
 /// Resolve a product-supplied `https` URL to what a host will actually be
 /// handed, or reject it.
 ///
@@ -593,14 +617,40 @@ fn inline_chat_image(candidate: &str) -> Option<String> {
 	Some(format!("{header},{data}"))
 }
 
-/// Validate the resource of a media item. The node of a HOP file reaches the
-/// host as text, so the core screens it as a name.
+/// Largest accepted length for a room description, in bytes.
+pub const CHAT_DESCRIPTION_MAX_BYTES: usize = 1024;
+
+/// Largest accepted number of reaction summaries on one message.
+pub const CHAT_REACTIONS_MAX: usize = 64;
+
+/// The largest file a [`ChatResource::Hop`] names: the largest the native chat sends.
+pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
+
+/// The longest node URL of a [`ChatResource::Hop`].
+pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
+
+/// Validate the resource of a media item: a HOP file.
 fn validate_chat_media_resource(
 	field: &'static str,
 	resource: ChatResource,
 ) -> Result<ChatResource, ChatFieldError> {
-	let ChatResource::Hop { identifier, ticket, node, size } = resource;
-	Ok(ChatResource::Hop { identifier, ticket, node: validate_chat_name(field, &node)?, size })
+	let ChatResource::Hop { node, size, .. } = &resource;
+	if !node.starts_with("wss://") {
+		return Err(ChatFieldError::RejectedScheme { field });
+	}
+	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
+	}
+	if node.chars().any(is_display_unsafe) {
+		return Err(ChatFieldError::UnsafeCharacter { field });
+	}
+	if *size == 0 {
+		return Err(ChatFieldError::Empty { field });
+	}
+	if *size > CHAT_HOP_FILE_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_FILE_MAX_BYTES as usize });
+	}
+	Ok(resource)
 }
 
 /// Hosts compare a media type with allowlists. Thus the core screens it as a
@@ -611,6 +661,15 @@ fn validate_chat_mime_type(field: &'static str, mime_type: &str) -> Result<Strin
 		return Err(ChatFieldError::Empty { field });
 	}
 	Ok(mime_type)
+}
+
+/// Bound and screen a description. A description can have more than one line,
+/// so the core keeps its line breaks and does not normalize it.
+fn validate_chat_description(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
+	if value.len() > CHAT_DESCRIPTION_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_DESCRIPTION_MAX_BYTES });
+	}
+	validate_chat_body(field, value)
 }
 
 /// Reject a list longer than `limit`.
@@ -629,7 +688,8 @@ fn check_chat_count<T>(
 ///
 /// The icon is a resource: an inline Base64 image or the CID of a preimage,
 /// never a URL to fetch. A description or an empty-room text can have more than
-/// one line, so it has the rules of a message body.
+/// one line, so it has the rules of a message body, within
+/// [`CHAT_DESCRIPTION_MAX_BYTES`].
 pub fn validate_chat_room_metadata(
 	metadata: ChatRoomMetadata,
 ) -> Result<ChatRoomMetadata, ChatFieldError> {
@@ -637,12 +697,12 @@ pub fn validate_chat_room_metadata(
 		name: validate_chat_name("name", &metadata.name)?,
 		description: metadata
 			.description
-			.map(|description| validate_chat_body("description", &description))
+			.map(|description| validate_chat_description("description", &description))
 			.transpose()?,
 		icon: metadata.icon.map(|icon| validate_chat_resource("icon", &icon)).transpose()?,
 		placeholder: metadata
 			.placeholder
-			.map(|placeholder| validate_chat_body("placeholder", &placeholder))
+			.map(|placeholder| validate_chat_description("placeholder", &placeholder))
 			.transpose()?,
 	})
 }
@@ -657,7 +717,7 @@ pub fn validate_chat_room_preview(
 			.last_reaction
 			.map(|reaction| {
 				Ok::<_, ChatFieldError>(ChatPreviewReaction {
-					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+					emoji: validate_chat_reaction_emoji("emoji", &reaction.emoji)?,
 					by_user: reaction.by_user,
 					message: reaction.message.map(validate_chat_preview_message).transpose()?,
 					removed: reaction.removed,
@@ -759,12 +819,13 @@ fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFi
 /// Validate one message, as a product writes it into a feed or answers it in
 /// a page.
 fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
+	check_chat_count("reactions", &message.reactions, CHAT_REACTIONS_MAX)?;
 	let mut seen = BTreeSet::new();
 	let reactions: Vec<ChatReactionSummary> = message
 		.reactions
 		.into_iter()
 		.map(|reaction| {
-			let emoji = validate_chat_emoji("emoji", &reaction.emoji)?;
+			let emoji = validate_chat_reaction_emoji("emoji", &reaction.emoji)?;
 			if !seen.insert(emoji.clone()) {
 				return Err(ChatFieldError::Duplicate { field: "emoji" });
 			}
@@ -844,14 +905,14 @@ pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdat
 			ChatFeedUpdate::ReactionPlaced {
 				message_id: message_id(&id)?,
 				participant_id: participant_id(&by)?,
-				emoji: validate_chat_emoji("emoji", &emoji)?,
+				emoji: validate_chat_reaction_emoji("emoji", &emoji)?,
 			}
 		},
 		ChatFeedUpdate::ReactionRemoved { message_id: id, participant_id: by, emoji } => {
 			ChatFeedUpdate::ReactionRemoved {
 				message_id: message_id(&id)?,
 				participant_id: participant_id(&by)?,
-				emoji: validate_chat_emoji("emoji", &emoji)?,
+				emoji: validate_chat_reaction_emoji("emoji", &emoji)?,
 			}
 		},
 		ChatFeedUpdate::StatusChanged { message_id: id, status } => {
@@ -1006,6 +1067,13 @@ pub enum ChatFieldError {
 	/// The icon carried a scheme a host must not render.
 	#[display("{field} carries a scheme that cannot be rendered")]
 	RejectedScheme {
+		/// Offending field name.
+		field: &'static str,
+	},
+	/// The reaction carried more than one character as a reader sees it (one
+	/// extended grapheme cluster).
+	#[display("{field} must be one emoji, one grapheme cluster")]
+	NotOneGrapheme {
 		/// Offending field name.
 		field: &'static str,
 	},
@@ -2352,10 +2420,12 @@ pub trait PreimageHost: Send + Sync {
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
 /// fetch or open is restricted to `https` or an inline raster image and
 /// delivered as the parser resolved it. The one exception is the node of a HOP
-/// media item: the core screens it only as a name, and does not check that it
-/// is a `wss` URL. The icon of a v2 `create_chat_room`, the icon of the room
-/// metadata and an image badge take no URL to fetch: an inline Base64 image or
-/// the CID of a Bulletin preimage, as RFC 0002 names resources.
+/// media item: the core checks only that it is a `wss://` URL of at most
+/// [`CHAT_HOP_NODE_MAX_CHARS`] characters with no control or bidi character,
+/// and passes it on as the product wrote it. The icon of a v2
+/// `create_chat_room`, the icon of the room metadata and an image badge take
+/// no URL to fetch: an inline Base64 image or the CID of a Bulletin preimage,
+/// as RFC 0002 names resources.
 ///
 /// The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
 /// `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -2494,8 +2564,10 @@ pub trait ChatPlatform: Send + Sync {
 	///
 	/// With `persist` the host stores the change, because it keeps the
 	/// messages of the room. Without it the host applies the change only to an
-	/// open room screen and the chat list preview. A failure of the host
-	/// reaches the product as `HostFailure`. If a Rust host does not implement
+	/// open room screen and the chat list preview. The host answers the
+	/// outcome `Applied`, or the outcome that names why it did not apply the
+	/// change. It answers an error only for a failure of its own, which the
+	/// product receives as `HostFailure`. If a Rust host does not implement
 	/// this method, it answers `Unsupported`.
 	///
 	/// The core decides `persist` from the room it read just before this call.
@@ -2508,8 +2580,8 @@ pub trait ChatPlatform: Send + Sync {
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
-	) -> Result<ChatRoomChangeOutcome, GenericError> {
-		Ok(ChatRoomChangeOutcome::Unsupported)
+	) -> Result<ChatFeedOutcome, GenericError> {
+		Ok(ChatFeedOutcome::Unsupported)
 	}
 }
 
@@ -2526,8 +2598,8 @@ pub struct ChatRoomState {
 	pub config: ChatRoomConfig,
 }
 
-/// What the host did with a change to a room: a metadata change, a preview, a
-/// delete or a feed update.
+/// What the host did with a change to a room: a metadata change, a preview or
+/// a delete.
 ///
 /// It is the answer of the host, not an error, so a host returns it as it
 /// returns any other value. A host that does not serve the request answers
@@ -2539,6 +2611,29 @@ pub enum ChatRoomChangeOutcome {
 	/// The host applied the change.
 	Applied,
 	/// The host does not serve this request.
+	Unsupported,
+}
+
+/// What a host did with one change to the messages of a room.
+///
+/// It is the answer of the host, not an error, so a host returns it as it
+/// returns any other value: the web and native bridges turn each error that a
+/// callback throws into `HostFailure`. A host that does not serve feed updates
+/// answers `Unsupported`, and the product receives the `Unsupported` call
+/// error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ChatFeedOutcome {
+	/// The host applied the change.
+	Applied,
+	/// The change names a message that the room does not hold.
+	UnknownMessage,
+	/// `New` names a message that the room holds already.
+	DuplicateMessage,
+	/// The change edits, replaces or deletes a message that the product did
+	/// not write.
+	NotOwner,
+	/// The host does not serve feed updates.
 	Unsupported,
 }
 
