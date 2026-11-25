@@ -571,12 +571,16 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
 	}
 }
 
-/// Validate a product-supplied image that RFC 0002 makes a resource: absent,
-/// an inline PNG, JPEG, GIF, WebP, or AVIF image, or the CID of a Bulletin
-/// preimage, which the core writes in its one text form.
+/// Validate a product-supplied image that RFC 0002 makes a resource.
 ///
-/// A URL that names where to fetch the image is refused, so the host never
-/// fetches from where a product points.
+/// After trimming, a resource is empty (no image), the text of a
+/// [`BulletinCid`], or an inline image: `data:`, a PNG, JPEG, GIF, WebP or
+/// AVIF media type, `;base64,`, and standard padded Base64 data of at least one
+/// byte. Nothing else is removed before the comparison. The core answers a CID
+/// in its one text form, and an inline image with its header in lower case and
+/// its data as it came. A value past [`CHAT_ICON_MAX_BYTES`] is `TooLong`, and
+/// any other text, a URL included, is `NotAResource`, so the host never fetches
+/// from where a product points.
 pub fn validate_chat_resource(
 	field: &'static str,
 	resource: &str,
@@ -588,16 +592,29 @@ pub fn validate_chat_resource(
 	if trimmed.len() > CHAT_ICON_MAX_BYTES {
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_ICON_MAX_BYTES });
 	}
-	if trimmed.chars().any(is_display_unsafe) {
-		return Err(ChatFieldError::UnsafeCharacter { field });
-	}
 	if let Ok(cid) = trimmed.parse::<BulletinCid>() {
 		return Ok(cid.to_string());
 	}
-	match icon_scheme(trimmed).as_deref() {
-		Some("data") if is_allowed_icon_data_url(trimmed) => Ok(trimmed.to_string()),
-		_ => Err(ChatFieldError::NotAResource { field }),
+	inline_chat_image(trimmed).ok_or(ChatFieldError::NotAResource { field })
+}
+
+/// The inline image `candidate` spells, with its header in lower case, or
+/// `None` when it is not `data:`, an allowed media type, `;base64,` and
+/// standard padded Base64 data of at least one byte.
+fn inline_chat_image(candidate: &str) -> Option<String> {
+	use base64::{Engine, engine::general_purpose::STANDARD};
+
+	let (header, data) = candidate.split_once(',')?;
+	let header = header.to_ascii_lowercase();
+	let media_type = header.strip_prefix("data:")?.strip_suffix(";base64")?;
+	if !ALLOWED_ICON_DATA_TYPES.contains(&media_type) {
+		return None;
 	}
+	let bytes = STANDARD.decode(data).ok()?;
+	if bytes.is_empty() {
+		return None;
+	}
+	Some(format!("{header},{data}"))
 }
 
 /// Largest accepted length for a room description, in bytes.
@@ -647,6 +664,9 @@ fn validate_chat_media_resource(
 	}
 	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
+	}
+	if node.chars().any(is_display_unsafe) {
+		return Err(ChatFieldError::UnsafeCharacter { field });
 	}
 	if *size == 0 {
 		return Err(ChatFieldError::Empty { field });
@@ -699,10 +719,12 @@ fn check_chat_count<T>(
 	Ok(())
 }
 
-/// Validate the name, description, icon and empty-room text of a room. The icon
-/// is a resource: inline image data or the CID of a preimage, never a URL. A
-/// description or an empty-room text can have more than one line, so it has the
-/// rules of a message body, within [`CHAT_DESCRIPTION_MAX_BYTES`].
+/// Validate the name, description, icon and empty-room text of a room.
+///
+/// The icon is a resource: an inline Base64 image or the CID of a preimage,
+/// never a URL to fetch. A description or an empty-room text can have more than
+/// one line, so it has the rules of a message body, within
+/// [`CHAT_DESCRIPTION_MAX_BYTES`].
 pub fn validate_chat_room_metadata(
 	metadata: ChatRoomMetadata,
 ) -> Result<ChatRoomMetadata, ChatFieldError> {
@@ -763,14 +785,14 @@ fn validate_chat_room_badge(badge: ChatRoomBadge) -> Result<ChatRoomBadge, ChatF
 			}
 			Ok(ChatRoomBadge::Image { icon })
 		},
-		badge => Ok(badge),
+		badge @ ChatRoomBadge::UnreadCount { .. } => Ok(badge),
 	}
 }
 
 /// Validate what a message says.
 ///
-/// A size rejection names `text` or `payload`, the field a product shrinks by
-/// sending less.
+/// A size rejection of the text or of a custom payload names `text` or
+/// `payload`, the content a product shrinks by sending less.
 fn validate_chat_message_body(body: ChatMessageBody) -> Result<ChatMessageBody, ChatFieldError> {
 	Ok(match body {
 		ChatMessageBody::Text { text } => {
@@ -834,7 +856,7 @@ fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFi
 pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
 	check_chat_count("reactions", &message.reactions, CHAT_REACTIONS_MAX)?;
 	let mut seen = BTreeSet::new();
-	let reactions = message
+	let reactions: Vec<ChatReactionSummary> = message
 		.reactions
 		.into_iter()
 		.map(|reaction| {
@@ -1162,8 +1184,8 @@ pub enum ChatFieldError {
 		/// Offending field name.
 		field: &'static str,
 	},
-	/// The image was neither inline image data nor the CID of a preimage.
-	#[display("{field} must be an inline image or the CID of a preimage, not a URL")]
+	/// The image was neither an inline Base64 image nor the CID of a preimage.
+	#[display("{field} must be an inline Base64 image or the CID of a preimage")]
 	NotAResource {
 		/// Offending field name.
 		field: &'static str,
@@ -2506,10 +2528,11 @@ pub trait PreimageHost: Send + Sync {
 /// fetch or open is restricted to `https` or an inline raster image and
 /// delivered as the parser resolved it. The one exception is the node of a HOP
 /// media item: the core checks only that it is a `wss://` URL of at most
-/// [`CHAT_HOP_NODE_MAX_CHARS`] characters, and passes it on as the product
-/// wrote it. The icon of a v2 `create_chat_room`, the icon of the room
-/// metadata and an image badge take no URL at all: inline image data or the
-/// CID of a Bulletin preimage, as RFC 0002 names resources.
+/// [`CHAT_HOP_NODE_MAX_CHARS`] characters with no control or bidi character,
+/// and passes it on as the product wrote it. The icon of a v2
+/// `create_chat_room`, the icon of the room metadata and an image badge take
+/// no URL to fetch: an inline Base64 image or the CID of a Bulletin preimage,
+/// as RFC 0002 names resources.
 ///
 /// The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
 /// `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -2530,14 +2553,26 @@ pub trait ChatPlatform: Send + Sync {
 	/// gave. The host stores the room under this id, and every later call names
 	/// the room with it.
 	///
+	/// A room id is unique only among the rooms of one product, so the host
+	/// keeps each room under the product and the id. A product built against
+	/// the earlier client chooses its room ids freely. The host never changes a
+	/// room that the product does not host: a room of another product with the
+	/// same id, or a room that the product takes part in as a bot.
+	///
+	/// The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+	/// `data:` URL with an image type. Only a product built against the earlier
+	/// client sends an `https` URL, and the core has not checked the payload of
+	/// its `data:` URL. The `data:` URL of any other product has a Base64
+	/// payload that the core decoded.
+	///
 	/// In the same step the host keeps `request.config` for the room, across
 	/// restarts, for a new room and for a room that exists: the configuration
 	/// replaces the one the host keeps, and [`Self::chat_room`] answers it. A
 	/// change of `product_source` discards the stored messages or the cached
-	/// pages of the room. A host that cannot keep a configuration other than
-	/// the default answers `UnsupportedConfig` for it, before it creates or
-	/// changes anything. A request from a product built against the earlier
-	/// client carries the default configuration.
+	/// pages of the room, and its preview. A host that cannot keep a
+	/// configuration other than the default answers `UnsupportedConfig` for it,
+	/// before it creates or changes anything. A request from a product built
+	/// against the earlier client carries the default configuration.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
@@ -2582,9 +2617,10 @@ pub trait ChatPlatform: Send + Sync {
 	/// The core calls it once before each change to a room: to check that the
 	/// product hosts the room, and to read whether the host stores its
 	/// messages. It calls it once before each query it asks the product, to
-	/// read which queries the product answers. `None` is a room that the
-	/// product never created. A host that cannot read its rooms returns an
-	/// error, not `None`.
+	/// read which queries the product answers. The host looks the room up
+	/// among the rooms of the product only. `None` is a room that the product
+	/// never created. A host that cannot read its rooms returns an error, not
+	/// `None`.
 	async fn chat_room(
 		&self,
 		product: &ProductContext,
@@ -2620,8 +2656,11 @@ pub trait ChatPlatform: Send + Sync {
 	/// screen.
 	///
 	/// The core calls it for every room except one that the product takes
-	/// part in as a bot, so a room that does not exist is not an error. If a
-	/// Rust host does not implement this method, it answers `Unsupported`.
+	/// part in as a bot, so a room that does not exist is not an error. The
+	/// core has not checked that the product created the room, so the host
+	/// deletes only a room that the product hosts, and does nothing for any
+	/// other id. If a Rust host does not implement this method, it answers
+	/// `Unsupported`.
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,

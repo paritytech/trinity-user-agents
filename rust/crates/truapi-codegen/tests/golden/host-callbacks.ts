@@ -1839,10 +1839,11 @@ export interface ChainProvider {
  * fetch or open is restricted to `https` or an inline raster image and
  * delivered as the parser resolved it. The one exception is the node of a HOP
  * media item: the core checks only that it is a `wss://` URL of at most
- * `CHAT_HOP_NODE_MAX_CHARS` characters, and passes it on as the product
- * wrote it. The icon of a v2 `create_chat_room`, the icon of the room
- * metadata and an image badge take no URL at all: inline image data or the
- * CID of a Bulletin preimage, as RFC 0002 names resources.
+ * `CHAT_HOP_NODE_MAX_CHARS` characters with no control or bidi character,
+ * and passes it on as the product wrote it. The icon of a v2
+ * `create_chat_room`, the icon of the room metadata and an image badge take
+ * no URL to fetch: an inline Base64 image or the CID of a Bulletin preimage,
+ * as RFC 0002 names resources.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1864,14 +1865,26 @@ export interface ChatPlatform {
    * gave. The host stores the room under this id, and every later call names
    * the room with it.
    *
+   * A room id is unique only among the rooms of one product, so the host
+   * keeps each room under the product and the id. A product built against
+   * the earlier client chooses its room ids freely. The host never changes a
+   * room that the product does not host: a room of another product with the
+   * same id, or a room that the product takes part in as a bot.
+   *
+   * The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+   * `data:` URL with an image type. Only a product built against the earlier
+   * client sends an `https` URL, and the core has not checked the payload of
+   * its `data:` URL. The `data:` URL of any other product has a Base64
+   * payload that the core decoded.
+   *
    * In the same step the host keeps `request.config` for the room, across
    * restarts, for a new room and for a room that exists: the configuration
    * replaces the one the host keeps, and `Self::chat_room` answers it. A
    * change of `product_source` discards the stored messages or the cached
-   * pages of the room. A host that cannot keep a configuration other than
-   * the default answers `UnsupportedConfig` for it, before it creates or
-   * changes anything. A request from a product built against the earlier
-   * client carries the default configuration.
+   * pages of the room, and its preview. A host that cannot keep a
+   * configuration other than the default answers `UnsupportedConfig` for it,
+   * before it creates or changes anything. A request from a product built
+   * against the earlier client carries the default configuration.
    */
   createChatRoom(
     product: ProductContext,
@@ -1921,9 +1934,10 @@ export interface ChatPlatform {
    * The core calls it once before each change to a room: to check that the
    * product hosts the room, and to read whether the host stores its
    * messages. It calls it once before each query it asks the product, to
-   * read which queries the product answers. ``undefined`` is a room that the
-   * product never created. A host that cannot read its rooms returns an
-   * error, not ``undefined``.
+   * read which queries the product answers. The host looks the room up
+   * among the rooms of the product only. ``undefined`` is a room that the product
+   * never created. A host that cannot read its rooms returns an error, not
+   * ``undefined``.
    */
   chatRoom(
     product: ProductContext,
@@ -1958,8 +1972,11 @@ export interface ChatPlatform {
    * screen.
    *
    * The core calls it for every room except one that the product takes
-   * part in as a bot, so a room that does not exist is not an error. If a
-   * Rust host does not implement this method, it answers `Unsupported`.
+   * part in as a bot, so a room that does not exist is not an error. The
+   * core has not checked that the product created the room, so the host
+   * deletes only a room that the product hosts, and does nothing for any
+   * other id. If a Rust host does not implement this method, it answers
+   * `Unsupported`.
    */
   deleteChatRoom?(
     product: ProductContext,
