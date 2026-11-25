@@ -1042,6 +1042,7 @@ fn the_refreshed_stack_equals_the_bundled_one() {
 
 	assert_eq!(
 		refresh.stack(),
-		Stack::bundled(&link, &bundled, false).expect("bundled copy is valid")
+		Stack::bundled(&link, &bundled, &ReservedValuesPolicy::default())
+			.expect("bundled copy is valid")
 	);
 }
