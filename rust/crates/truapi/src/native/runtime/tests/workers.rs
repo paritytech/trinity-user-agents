@@ -263,30 +263,47 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	);
 }
 
+/// Ends the session from inside its second `start` call.
 #[derive(Default)]
 struct EndsSessionWhileStarting {
-	runtime: std::sync::OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
+	runtime: OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
 	starting: AtomicBool,
 	starts: Mutex<Vec<u64>>,
-	stops: Mutex<Vec<(u64, bool)>>,
+	stops: Mutex<Vec<WebViewStop>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct WebViewStop {
+	attempt: u64,
+	during_start: bool,
+	session_unlocked: bool,
 }
 
 impl NativeHostWebViewWorker for EndsSessionWhileStarting {
 	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
+		let mut starts = self.starts.lock().unwrap();
+		starts.push(attempt.id());
+		if starts.len() == 1 {
+			return;
+		}
+		drop(starts);
 		self.starting.store(true, Ordering::Relaxed);
-		self.starts.lock().unwrap().push(attempt.id());
 		self.runtime.get().unwrap().upgrade().unwrap().shutdown_product_workers();
 		self.starting.store(false, Ordering::Relaxed);
 	}
 
-	fn stop(&self, _product_id: ProductId, attempt_id: u64) {
-		let starting = self.starting.load(Ordering::Relaxed);
-		self.stops.lock().unwrap().push((attempt_id, starting));
+	fn stop(&self, _product_id: ProductId, attempt: u64) {
+		let runtime = self.runtime.get().unwrap().upgrade().unwrap();
+		self.stops.lock().unwrap().push(WebViewStop {
+			attempt,
+			during_start: self.starting.load(Ordering::Relaxed),
+			session_unlocked: runtime.workers.try_lock().is_some(),
+		});
 	}
 }
 
 #[tokio::test]
-async fn a_session_ended_from_a_start_callback_stops_that_webview_once_the_callback_returns() {
+async fn ending_a_session_disposes_its_webviews_unlocked_and_never_one_still_starting() {
 	let host = Arc::new(EndsSessionWhileStarting::default());
 	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
@@ -295,12 +312,17 @@ async fn a_session_ended_from_a_start_callback_stops_that_webview_once_the_callb
 	)
 	.unwrap();
 	host.runtime.set(Arc::downgrade(&runtime)).unwrap();
-	let _claim = runtime.claim_worker(ProductId::for_test("shared.dot"));
+	let _idle = runtime.claim_worker(ProductId::for_test("idle.dot"));
+	let _ending = runtime.claim_worker(ProductId::for_test("ending.dot"));
 	let starts = host.starts.lock().unwrap().clone();
 	assert_eq!(
-		(starts.len(), host.stops.lock().unwrap().clone()),
-		(1, vec![(starts[0], false)]),
-		"the host disposes a WebView only after it finished creating it"
+		host.stops.lock().unwrap().clone(),
+		vec![
+			WebViewStop { attempt: starts[0], during_start: true, session_unlocked: true },
+			WebViewStop { attempt: starts[1], during_start: false, session_unlocked: true },
+		],
+		"the idle WebView goes before the session end returns, with the host free to call back, \
+		 and the one being created only after its start call returned"
 	);
 }
 

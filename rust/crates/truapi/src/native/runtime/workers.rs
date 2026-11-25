@@ -488,8 +488,9 @@ impl NativeTrUApiHostRuntime {
 
 	/// Revoke all worker claims and dispose their executions when the host session ends.
 	///
-	/// The workers are disposed when this returns, except one whose start or stop another thread
-	/// is delivering, which completes on that thread. Observers receive `finished` afterwards.
+	/// The workers are disposed when this returns, except one whose
+	/// [`NativeHostWebViewWorker::start`] or stop call is still running, on this thread or
+	/// another, which is disposed when that call returns. Observers receive `finished` afterwards.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();
 		let session = self.workers.lock().take();
