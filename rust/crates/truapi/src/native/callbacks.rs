@@ -312,8 +312,8 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// In the same step the host keeps `config` for the room across restarts,
 	/// for a new room and for a room that exists. A change of `product_source`
 	/// discards the stored messages or the cached pages of the room, and its
-	/// preview. A host that cannot keep `config` refuses it with `Unknown`
-	/// before it creates or changes anything.
+	/// preview. A host that cannot keep `config` refuses it with
+	/// `UnsupportedConfig` before it creates or changes anything.
 	async fn create_room(
 		&self,
 		room_id: String,

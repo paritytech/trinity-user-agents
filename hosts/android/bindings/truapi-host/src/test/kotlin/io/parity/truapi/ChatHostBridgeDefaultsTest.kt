@@ -52,7 +52,7 @@ class ChatHostBridgeDefaultsTest {
 
         val refusal = runCatching { bridge.createRoom("room", "Room", "", sourced) }.exceptionOrNull()
 
-        assertTrue("$refusal", refusal is HostChatCreateRoomException.Unknown)
+        assertTrue("$refusal", refusal is HostChatCreateRoomException.UnsupportedConfig)
         assertEquals(emptyList<String>(), bridge.createdRooms)
         val metadata = ChatRoomMetadata(name = "Room", description = null, icon = null, placeholder = null)
         val preview = ChatRoomPreview(

@@ -1,0 +1,42 @@
+package io.paritytech.polkadotapp.feature_chats_api.domain.productRoom
+
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+
+/** The reserved participant ids of Chat Extension v2. */
+object ProductParticipant {
+    /** The user of the host. */
+    const val USER = "user"
+
+    /** The product itself. */
+    const val PRODUCT = "product"
+}
+
+/** The status of a message as its product gives it (`ChatMessageStatus`). */
+enum class ProductMessageStatusModel { PREPARING, SENT, DELIVERED, READ, FAILED }
+
+data class ProductReactionSummaryModel(val emoji: String, val count: Int, val reactedByUser: Boolean)
+
+/** A message of a product room as the product gives it (`ChatMessage`). */
+data class ProductRoomMessage(
+    /** The id that the product picked. It is unique in the room only. */
+    val messageId: String,
+    val participantId: String,
+    /** Milliseconds since the Unix epoch. */
+    val timestamp: Long,
+    val content: ChatMessage.Content,
+    val status: ProductMessageStatusModel,
+    /** The id of the message that this message replies to, as the product names it. */
+    val replyTo: String?,
+    val editedAt: Long?,
+    val reactions: List<ProductReactionSummaryModel>,
+    /** The message is the welcome message of a chat request. */
+    val request: Boolean,
+    /** The message that [replyTo] names, so the quote shows while that message is not loaded. */
+    val replyPreview: ProductReplyPreviewModel? = null,
+)
+
+/** The author and the body of a replied message (`ChatReplyPreview`). */
+data class ProductReplyPreviewModel(val participantId: String, val content: ChatMessage.Content)
+
+/** The room does not exist, or another extension owns it. */
+class UnknownChatRoomException : Exception("the chat room does not exist")

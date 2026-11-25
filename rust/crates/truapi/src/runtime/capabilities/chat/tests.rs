@@ -96,9 +96,7 @@ impl ChatPlatform for RecordingHost {
 		if *self.default_config_only.lock().unwrap() &&
 			request.config != latest::ChatRoomConfig::default()
 		{
-			return Err(latest::HostChatCreateRoomError::Unknown {
-				reason: "this host keeps only the default configuration".to_string(),
-			});
+			return Err(latest::HostChatCreateRoomError::UnsupportedConfig);
 		}
 		self.icons.lock().unwrap().push(request.icon);
 		self.rooms
@@ -988,9 +986,7 @@ fn a_host_that_cannot_keep_a_configuration_creates_no_room() {
 	assert_eq!(
 		create(latest::ChatRoomConfig { reaction_details: true, ..Default::default() }),
 		Err(CallError::Domain(HostChatCreateRoomError::V2(
-			latest::HostChatCreateRoomError::Unknown {
-				reason: "this host keeps only the default configuration".to_string(),
-			}
+			latest::HostChatCreateRoomError::UnsupportedConfig
 		)))
 	);
 	assert!(

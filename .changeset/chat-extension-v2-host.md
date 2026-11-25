@@ -14,7 +14,7 @@ in `listRooms` and pairs it with the default configuration, so a host that keeps
 A host that does not implement the new requests yet keeps serving products as before. The three-argument `createRoom`,
 `postMessage` and `setRoomFooter` keep their shapes. The four-argument `createRoom` creates a room with the default
 configuration through the three-argument one, and refuses any other configuration with
-`HostChatCreateRoomError.Unknown` (`HostChatCreateRoomException` in Kotlin) before it creates anything. The
+`HostChatCreateRoomError.UnsupportedConfig` (`HostChatCreateRoomException` in Kotlin) before it creates anything. The
 three-argument `createRoom` has a default that refuses the room, so a host that implements the four-argument one need
 not implement it.
 

@@ -219,6 +219,20 @@ enum MessageContent {
         payload: CustomMessagePayload,
         preview_text: Option<String>,
     },
+
+    // A line about the room that the Host draws with its own strings. The
+    // origin is the participant who acted: "Ana added Ben".
+    RoomEvent(RoomEvent),
+}
+
+enum RoomEvent {
+    Created,
+    MemberAdded(ChatParticipantId),
+    MemberRemoved(ChatParticipantId),
+    MemberLeft,
+    Renamed(String),
+    AvatarChanged,
+    DescriptionChanged,
 }
 
 enum ChatMedia {
@@ -333,7 +347,9 @@ enum UserChatAction {
     },
     MessageDeleted {
         message_id: MessageId
-    }
+    },
+    // The user changed the name, the avatar or the description of the room.
+    EditRoom(RoomMetadata),
 }
 
 // Return type varies by action:
@@ -658,6 +674,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 17. **Customizable input**: Configurable chat footer — default input with optional payment/attachment buttons, no input, or fully custom.
 18. **Participant actions**: Configurable actions when tapping on a participant.
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
+20. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
 
 #### Non-Functional Requirements
 

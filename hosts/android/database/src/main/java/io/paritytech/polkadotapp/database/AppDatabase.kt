@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.database.dao.ChatMessageReactionDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestSyncStateDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDao
+import io.paritytech.polkadotapp.database.dao.ChatRoomDeclarationsDao
 import io.paritytech.polkadotapp.database.dao.ChatSearchRecentDao
 import io.paritytech.polkadotapp.database.dao.ChatSeenDao
 import io.paritytech.polkadotapp.database.dao.CoinDao
@@ -106,6 +107,7 @@ import io.paritytech.polkadotapp.database.model.ChatMessageProcessingLocal
 import io.paritytech.polkadotapp.database.model.ChatMessageReactionLocal
 import io.paritytech.polkadotapp.database.model.ChatRequestLocal
 import io.paritytech.polkadotapp.database.model.ChatRequestSyncStateLocal
+import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
 import io.paritytech.polkadotapp.database.model.ChatRoomLocal
 import io.paritytech.polkadotapp.database.model.ChatSearchRecentLocal
 import io.paritytech.polkadotapp.database.model.ChatSeenStateLocal
@@ -150,7 +152,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 76,
+    version = 77,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -205,6 +207,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ProductTopUpLocal::class,
         ChatAcceptanceLocal::class,
         ChatIdentitySigningConsentLocal::class,
+        ChatRoomDeclarationsLocal::class,
         ChatSeenStateLocal::class,
     ],
     autoMigrations = [
@@ -302,6 +305,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 74, to = 75),
         // Add statement_store_slot_allocations.signerDerivationPath for slot eviction
         AutoMigration(from = 75, to = 76),
+        // Add chat_room_declarations (what products declare for their rooms, Chat Extension v2)
+        AutoMigration(from = 76, to = 77),
     ]
 )
 @TypeConverters(
@@ -419,6 +424,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun productIntegrationDao(): ProductIntegrationDao
 
     abstract fun chatRoomDao(): ChatRoomDao
+
+    abstract fun chatRoomDeclarationsDao(): ChatRoomDeclarationsDao
 
     abstract fun fileUploadDao(): FileUploadDao
 

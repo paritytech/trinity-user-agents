@@ -156,9 +156,7 @@ fn a_room_with_a_configuration_this_host_cannot_keep_is_not_created() {
 			"support".to_string(),
 			sourced
 		)),
-		Err(HostChatCreateRoomError::Unknown {
-			reason: "this host keeps only the default room configuration".to_string(),
-		})
+		Err(HostChatCreateRoomError::UnsupportedConfig)
 	);
 	assert!(
 		host.lock().rooms.is_empty(),

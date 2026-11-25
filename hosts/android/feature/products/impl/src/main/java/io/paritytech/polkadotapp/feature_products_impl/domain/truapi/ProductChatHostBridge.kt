@@ -1,8 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
@@ -14,22 +17,44 @@ import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomChangeOutcome
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
+import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.ChatRoomState
+import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 
+/**
+ * Answers the core's chat callbacks for one product against its chat binding. The core has checked
+ * that the product hosts each room and screened every value; the empty-id checks keep a broken call
+ * away from the chat store.
+ */
 class ProductChatHostBridge(
     private val productId: ProductId,
     private val chatMessaging: ProductChatMessaging,
 ) : ChatHostBridge {
-    override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
+    override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus =
+        createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
+
+    // The room screen reads the messages of a room from the host store only, so this host refuses a room whose product
+    // keeps the messages, before it creates anything.
+    override suspend fun createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        val roomIcon = ProductChatIcon.fromString(icon).orReject()
-        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, roomIcon))
-            .orReject()
-            .status
-            .toCoreStatus()
+        if (config.productSource) throw HostChatCreateRoomException.UnsupportedConfig()
+        val roomIcon = ProductChatIcon.fromCallback(icon).orReject()
+        val room = ProductChatIdParameter(roomId)
+        val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status
+        chatMessaging.setRoomConfig(room, config.toModel()).orReject()
+        return status.toCoreStatus()
     }
 
     override suspend fun registerBot(botId: String, name: String, icon: String): ChatBotRegistrationStatus =
@@ -57,8 +82,43 @@ class ProductChatHostBridge(
     override suspend fun listRooms(): List<ChatRoom> =
         chatMessaging.subscribeChatRooms().firstOrNull()?.map { it.toCoreChatRoom() } ?: emptyList()
 
+    // The core reads null as a room that the product never created, so a room that is gone by the time its
+    // declarations are read answers null too, never an error.
+    override suspend fun room(roomId: String): ChatRoomState? {
+        val room = listRooms().firstOrNull { it.roomId == roomId } ?: return null
+        val declarations = chatMessaging.roomDeclarations(ProductChatIdParameter(roomId))
+        if (declarations.exceptionOrNull() is UnknownChatRoomException) return null
+        val config = declarations.orReject()?.config?.toCore() ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
+        return ChatRoomState(room.participatingAs, config)
+    }
+
+    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata): ChatRoomChangeOutcome {
+        val room = requireRoom(roomId)
+        val iconChange = metadata.icon?.let { RoomIconChange(ProductChatIcon.fromCallback(it).orReject()?.value) }
+        chatMessaging.setRoomMetadata(room, metadata.name, iconChange, metadata.toModel()).orReject()
+        return ChatRoomChangeOutcome.APPLIED
+    }
+
+    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): ChatRoomChangeOutcome {
+        chatMessaging.setRoomPreview(requireRoom(roomId), preview.toModel(productId)).orReject()
+        return ChatRoomChangeOutcome.APPLIED
+    }
+
+    override suspend fun deleteRoom(roomId: String): ChatRoomChangeOutcome {
+        chatMessaging.deleteRoom(requireRoom(roomId)).orReject()
+        return ChatRoomChangeOutcome.APPLIED
+    }
+
+    private fun requireRoom(roomId: String): ProductChatIdParameter {
+        if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
+        return ProductChatIdParameter(roomId)
+    }
+
     private fun <T> Result<T>.orReject(): T = getOrElse { failure ->
-        if (failure is HostRejection) throw failure
+        when (failure) {
+            is HostRejection -> throw failure
+            is UnknownChatRoomException -> throw HostRejection.Rejected("no such chat room")
+        }
         Timber.w(failure, "truapi.chat refused for %s", productId.value)
         throw HostRejection.Rejected(failure.message ?: failure.toString())
     }
