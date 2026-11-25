@@ -7042,7 +7042,10 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	install_pairing_session(&host, session);
 	let mut cx = CallContext::with_request_id(message_id.to_string());
-	cx.set_timeout(std::time::Duration::from_millis(1));
+	// The People connection is dialled in a task of its own, so the timeout
+	// leaves it time to subscribe. No allocation response is scripted, so the
+	// call still ends by the timeout.
+	cx.set_timeout(std::time::Duration::from_millis(500));
 
 	let err = futures::executor::block_on(ResourceAllocation::request(
 		&host,
@@ -7057,7 +7060,7 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 		)) => {
 			assert_eq!(
 				reason,
-				"Account authority request timed out after 1ms for allocation-timeout"
+				"Account authority request timed out after 500ms for allocation-timeout"
 			)
 		},
 		other => panic!("expected resource-allocation timeout, got {other:?}"),
