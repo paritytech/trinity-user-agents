@@ -1,5 +1,6 @@
 import Foundation
 import SubstrateSdk
+import BigInt
 
 /// The user-chosen privacy preset. The raw value is the persisted key.
 public enum RecyclingStrategyType: String, CaseIterable, Equatable, Sendable {
@@ -13,16 +14,14 @@ public extension RecyclingStrategyType {
     static let minRecyclableAge: Int16 = 1
 
     private static let balancedAgeDivisor: Int16 = 3
-    private static let minimumVoucherMembers: UInt32 = 32
-    private static let minimumVoucherAge: TimeInterval = 10 * 60
 
     /// Resolves the preset into concrete parameters. `forcedRecyclingAge` is the chain ceiling
     /// (`getCoinRecyclingAge()` = `coinMaxAge - 2`), the anchor the presets are expressed against.
-    func params(forcedRecyclingAge: Int16) -> RecyclingParams {
+    func params(forcedRecyclingAge: Int16, privacyConfig: CoinagePrivacyConfig) -> RecyclingParams {
         switch self {
         case .minPrivacy:
             // Zero budget never voluntarily gates; only the chain-limits decorator forces coins at
-            // the ceiling. Reproduces today's behaviour, which is why it is the default.
+            // the ceiling.
             RecyclingParams(
                 maxUnavailableBalance: .percent(of: 0),
                 minRecyclingAge: forcedRecyclingAge,
@@ -33,11 +32,7 @@ public extension RecyclingStrategyType {
             RecyclingParams(
                 maxUnavailableBalance: .percent(of: 20),
                 minRecyclingAge: max(Self.minRecyclableAge, forcedRecyclingAge / Self.balancedAgeDivisor),
-                voucherReadiness: .ringFillOrMembersAndAge(
-                    requiredRingFill: .percent(of: 20),
-                    minimumMembers: Self.minimumVoucherMembers,
-                    minimumAge: Self.minimumVoucherAge
-                ),
+                voucherReadiness: Self.voucherReadiness(for: privacyConfig.balanced),
                 allowsConfirmedSpend: true
             )
         case .maxPrivacy:
@@ -46,13 +41,19 @@ public extension RecyclingStrategyType {
             RecyclingParams(
                 maxUnavailableBalance: .percent(of: 100),
                 minRecyclingAge: Self.minRecyclableAge,
-                voucherReadiness: .ringFillOrMembersAndAge(
-                    requiredRingFill: .percent(of: 90),
-                    minimumMembers: Self.minimumVoucherMembers,
-                    minimumAge: Self.minimumVoucherAge
-                ),
+                voucherReadiness: Self.voucherReadiness(for: privacyConfig.maxPrivacy),
                 allowsConfirmedSpend: false
             )
         }
+    }
+}
+
+private extension RecyclingStrategyType {
+    static func voucherReadiness(for thresholds: CoinagePrivacyConfig.Thresholds) -> VoucherReadiness {
+        .ringFillOrAnonymityMinutes(
+            requiredRingFill: .percent(of: BigUInt(thresholds.ringFillPercent)),
+            anonymityMinutes: thresholds.anonymityMinutes,
+            anonymityMembers: thresholds.anonymityMembers
+        )
     }
 }

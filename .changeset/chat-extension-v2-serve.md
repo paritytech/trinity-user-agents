@@ -43,6 +43,8 @@ Breaking for a Rust `ChatPlatform` host: `create_chat_room` keeps `request.confi
 it creates anything. `ChatPlatform` has a required `chat_room`, which answers a `ChatRoomState`, how the product takes
 part in the room and the configuration of the room, or `None` for a room the product never created; the core calls it
 once before each change to a room, and a host that cannot read its rooms returns an error. `ChatPlatform` also has
-`set_chat_room_metadata`, `set_chat_room_preview`, `delete_chat_room` and `update_chat_feed`, each with a default, and
-each answers a `ChatRoomChangeOutcome`. The Rust defaults and the Swift and Kotlin bridges have one contract: a room
-with the default configuration is accepted, and every other request answers `Unsupported`.
+`set_chat_room_metadata`, `set_chat_room_preview`, `delete_chat_room` and `update_chat_feed`, each with a default. The
+first three answer a `ChatRoomChangeOutcome`, and `update_chat_feed` answers an outcome with the same `Applied` and
+`Unsupported`. The Rust defaults and the Swift and Kotlin bridges have one contract: a host creates a room only with the
+default configuration and refuses any other before it creates anything, and each of these four requests answers
+`Unsupported`.
