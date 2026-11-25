@@ -92,11 +92,11 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay, the one in `HostLogSinkTree` and the one in `HostLogSinkDestination` beside its info `minLevel`.
 
-Each tag sends at most 60 lines a minute, and each `truapi.core` marker 60 of its own, so one noisy tag or marker cannot hide the others. A tagged line, core marker or host event name stuck in a loop therefore costs at most 60 lines a minute per device.
+Each tag sends at most 60 lines a minute, and each `truapi.core` marker 60 of its own, so one noisy tag or marker cannot hide the others. A core event counts against its marker, and on iOS a host event counts against its own name. A tag, marker or event name stuck in a loop therefore costs at most 60 lines a minute per device.
 
-Where that count happens differs by host. Android counts in `HostLogSinkTree`, which precedes the first line after a minute that dropped some with one more line that counts them, carrying the count as a `dropped` attribute and the marker as a `marker` attribute. A count that no later line follows, because the tag went quiet or the app stopped, is never sent. Core events reaching the sink through `CoreEventLogger` are not counted.
+Both hosts count at the SDK's own gate, in `HostLogFilter`, which the SDK calls on every log whatever route reached the logger. A log carrying no tag this host writes is turned away there, so a line reaching the logger by a route nobody planned never leaves. The first line after a minute that dropped some carries the count as a `dropped` attribute rather than following an extra line, since emitting a log from inside the callback would re-enter it.
 
-iOS counts at the SDK's own gate, in `HostLogFilter`, which the `beforeSendLog` option calls on every log whatever route reached the logger. A log carrying no tag this host writes is turned away there, so a line that reaches `SentrySDK.logger` by a route nobody planned never leaves. A host event counts against its own name and a core event against its marker, and the first line after a minute that dropped some carries the count as a `dropped` attribute of its own rather than following an extra line.
+Android installs that gate in `SentryLogGate`, which starts the SDK itself so the gate is in place before the first log, and reads every other option from the manifest as the SDK does when it starts itself. A build whose manifest carries no DSN starts nothing.
 
 A product's console output never reaches the sink. `ProductWebChromeClient` on Android and `JSEngineLogger` on iOS log it untagged at its own level. Only a testing build keeps it on the device, in the Android debug log or the iOS testnet log file, and a release build drops it. A product reports to its own Sentry project.
 

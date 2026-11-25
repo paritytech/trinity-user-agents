@@ -22,7 +22,7 @@ class SentryHostLogSink @Inject constructor(
         )
     }
 
-    private companion object {
+    internal companion object {
         const val TAG_ATTRIBUTE = "tag"
     }
 }
