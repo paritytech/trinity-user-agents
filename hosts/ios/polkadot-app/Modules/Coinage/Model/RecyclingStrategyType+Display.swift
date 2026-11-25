@@ -13,11 +13,27 @@ extension RecyclingStrategyType {
         }
     }
 
-    var displayDescription: String {
+    /// The mode's trade-offs, in the order speed, readiness, coin quality.
+    var displayBullets: [String] {
         switch self {
-        case .minPrivacy: String(localized: .settingsPrivacymodeFastestDetails)
-        case .balanced: String(localized: .settingsPrivacymodeBalancedDetails)
-        case .maxPrivacy: String(localized: .settingsPrivacymodePrivateDetails)
+        case .minPrivacy:
+            [
+                String(localized: .settingsPrivacymodeFastestBullet1),
+                String(localized: .settingsPrivacymodeFastestBullet2),
+                String(localized: .settingsPrivacymodeFastestBullet3)
+            ]
+        case .balanced:
+            [
+                String(localized: .settingsPrivacymodeBalancedBullet1),
+                String(localized: .settingsPrivacymodeBalancedBullet2),
+                String(localized: .settingsPrivacymodeBalancedBullet3)
+            ]
+        case .maxPrivacy:
+            [
+                String(localized: .settingsPrivacymodePrivateBullet1),
+                String(localized: .settingsPrivacymodePrivateBullet2),
+                String(localized: .settingsPrivacymodePrivateBullet3)
+            ]
         }
     }
 

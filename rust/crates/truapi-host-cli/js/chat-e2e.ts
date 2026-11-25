@@ -240,35 +240,34 @@ export async function runChatScreeningE2e(
         ),
   );
 
-  // The icon path is where the budget was measured on the arriving string
-  // rather than the resolved one, so it gets a case of its own: the room must
-  // not reach the host at all.
+  // A version 2 icon is a resource, so the budget case sends an inline image
+  // just past the icon budget: the room must not reach the host at all.
   startedAt = performance.now();
   const roomsBefore = registrations(chatLogPath);
   const oversizedIcon = await client.chat.createRoom({
     roomIdSource: "oversized-icon",
     name: "Oversized",
-    icon: `https://icons.invalid/${pathThatGrowsPast(ICON_MAX_BYTES)}`,
+    icon: `data:image/png;base64,${"A".repeat(ICON_MAX_BYTES)}`,
     config: HOST_STORED_ROOM,
   });
   const roomsAfter = registrations(chatLogPath);
   rows.push(
     oversizedIcon.isOk()
       ? row(
-          "create_room_refuses_an_icon_that_resolves_past_its_budget",
+          "create_room_refuses_an_icon_past_its_budget",
           "fail",
           `accepted: ${JSON.stringify(oversizedIcon.value)}`,
           startedAt,
         )
       : roomsAfter === roomsBefore
         ? row(
-            "create_room_refuses_an_icon_that_resolves_past_its_budget",
+            "create_room_refuses_an_icon_past_its_budget",
             "pass",
             `${JSON.stringify(oversizedIcon.error)}; host registered no room`,
             startedAt,
           )
         : row(
-            "create_room_refuses_an_icon_that_resolves_past_its_budget",
+            "create_room_refuses_an_icon_past_its_budget",
             "fail",
             "rejected the product, but the host registered the room",
             startedAt,

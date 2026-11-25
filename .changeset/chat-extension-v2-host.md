@@ -13,7 +13,7 @@ host that does not implement the new requests yet keeps serving products as befo
 creates a room with the default configuration through the three-argument one, and refuses any other configuration with
 `HostChatCreateRoomError.UnsupportedConfig` (`HostChatCreateRoomException` in Kotlin) before it creates anything. The
 three-argument `createRoom` has a default that refuses the room, so a host that implements the four-argument one need
-not implement it. `setRoomMetadata`, `setRoomPreview`, `deleteRoom` and `updateFeed` answer
-`ChatRoomChangeOutcome.unsupported` (`UNSUPPORTED` in Kotlin), which the product receives as `Unsupported`. A host that
-serves one of them answers `.applied` (`APPLIED`). A `HostRejection` that `createRoom` or `updateFeed` throws reaches
+not implement it. `setRoomMetadata`, `setRoomPreview` and `deleteRoom` answer `ChatRoomChangeOutcome.unsupported`, and
+`updateFeed` answers the `unsupported` case of its outcome (`UNSUPPORTED` in Kotlin), which the product receives as
+`Unsupported`. A host that serves one of them answers `.applied` (`APPLIED`). A `HostRejection` that `createRoom` or `updateFeed` throws reaches
 the product with the reason that the host wrote.
