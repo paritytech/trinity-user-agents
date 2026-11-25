@@ -271,8 +271,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		watermarked: bool,
 	) -> Result<latest::HostSignPayloadResponse, CallError<latest::HostSignPayloadError>> {
 		debug!("sign_raw: requesting signing-host signature");
-		let inner = request;
-		let request = self.connection.serve(inner)?;
+		let request = self.connection.serve(request)?;
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
