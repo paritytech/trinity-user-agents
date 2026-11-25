@@ -395,8 +395,24 @@ scope for now.
 
 ## Cancel
 
-`cancel_funding` answers `Ended`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or its overlay is up).
+`cancel_funding(intent)` is the host's one way to stop a session; the core picks what it does from the session's
+state. It answers `Cancelled`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or no such session).
 
+| State | Effect | Answer |
+| --- | --- | --- |
+| Overlay up, never started | no longer started on its best quote; the overlay closes as though dismissed and the session is dropped | `Cancelled` |
+| Overlay up, a provider already chosen | the session runs as started and its provider is asked to stop | `Requested` |
+| Started, no provider | ends as `Failed { Cancelled }` | `Cancelled` |
+| Provider serving it, before money moved | the provider is asked to stop; asked again, the session ends | `Requested`, then `Cancelled` |
+| After money moved | the provider is asked, and answers with a refusal or an offer | `Requested`, `Pending` or `TooLate` |
+| Ended, or unknown | nothing | `Refused` |
+
+Closing the overlay is not a cancel. Before the session started the host answers `present_funding` with `Dismissed`,
+which drops it as a cancel would; once it started the session runs on and the core is not told.
+
+- **While the overlay is up:** the core drops its `present_funding` call, which the host answers by taking the overlay
+  down, and the session ends as `Failed { Cancelled }` for anyone watching it. A provider chosen in the overlay may
+  already work on the session, so the session is kept as started and the provider is asked to stop.
 - **No provider serves the session:** it ends as `Failed { Cancelled }`.
 - **Before money moved:** the core calls `cancel` and the provider answers `Stopped`; the core ends the session as
   `Failed { Cancelled }`. Asked again, the session ends as `Failed { Cancelled }` and the worker is let go, so a

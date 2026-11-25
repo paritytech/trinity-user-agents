@@ -57,7 +57,7 @@ struct ProductNotificationSchedulerTests {
     }
 
     @Test func bookingRecordsScheduled() async throws {
-        let id = try await scheduler.schedule(productId: productId, request: request)
+        let id = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
         #expect(recorder.events == [scheduled(id)])
     }
@@ -66,7 +66,7 @@ struct ProductNotificationSchedulerTests {
         center.refuseAdd()
 
         await #expect(throws: FakeScheduledNotificationCenter.AddRefused()) {
-            _ = try await scheduler.schedule(productId: productId, request: request)
+            _ = try await scheduler.schedule(productId: productId, title: nil, request: request)
         }
 
         let id = try #require(center.lastAttemptedBookingId)
@@ -77,7 +77,7 @@ struct ProductNotificationSchedulerTests {
         center.refuseAdd()
 
         await #expect(throws: FakeScheduledNotificationCenter.AddRefused()) {
-            _ = try await scheduler.schedule(productId: productId, request: request)
+            _ = try await scheduler.schedule(productId: productId, title: nil, request: request)
         }
 
         #expect(issues.issues.map { [$0.flow, $0.kind, $0.errorType] } == [
@@ -88,12 +88,12 @@ struct ProductNotificationSchedulerTests {
     @Test func bookingPastTheSlotLimitRecordsNotScheduledWithoutAnId() async throws {
         var ids: [UInt32] = []
         for _ in 0 ..< Self.slotLimit {
-            let id = try await scheduler.schedule(productId: productId, request: request)
+            let id = try await scheduler.schedule(productId: productId, title: nil, request: request)
             ids.append(id)
         }
 
         let error = await #expect(throws: ProductNativeApiError.self) {
-            _ = try await scheduler.schedule(productId: productId, request: request)
+            _ = try await scheduler.schedule(productId: productId, title: nil, request: request)
         }
 
         #expect(error?.localizedDescription == ProductNativeApiError.scheduleLimitReached.localizedDescription)
@@ -101,7 +101,7 @@ struct ProductNotificationSchedulerTests {
     }
 
     @Test func cancelRecordsCancelled() async throws {
-        let id = try await scheduler.schedule(productId: productId, request: request)
+        let id = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
         try await scheduler.cancel(productId: productId, notificationId: id)
 
@@ -109,8 +109,8 @@ struct ProductNotificationSchedulerTests {
     }
 
     @Test func cancelAllRecordsOneCancelledPerBooking() async throws {
-        let first = try await scheduler.schedule(productId: productId, request: request)
-        let second = try await scheduler.schedule(productId: productId, request: request)
+        let first = try await scheduler.schedule(productId: productId, title: nil, request: request)
+        let second = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
         try await scheduler.cancelAll(forProductId: productId)
 
@@ -122,16 +122,16 @@ struct ProductNotificationSchedulerTests {
     }
 
     @Test func aCancelledBookingIsNotAlsoReportedGone() async throws {
-        let cancelledId = try await scheduler.schedule(productId: productId, request: request)
+        let cancelledId = try await scheduler.schedule(productId: productId, title: nil, request: request)
         try await scheduler.cancel(productId: productId, notificationId: cancelledId)
 
-        let nextId = try await scheduler.schedule(productId: productId, request: request)
+        let nextId = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
         #expect(recorder.events == [scheduled(cancelledId), cancelled(cancelledId), scheduled(nextId)])
     }
 
     @Test func startReportsABookingStillInNotificationCenterAsDelivered() async throws {
-        let id = try await scheduler.schedule(productId: productId, request: request)
+        let id = try await scheduler.schedule(productId: productId, title: nil, request: request)
         center.firePending(at: firedAt)
 
         await scheduler.start()
@@ -146,19 +146,19 @@ struct ProductNotificationSchedulerTests {
     }
 
     @Test func theNextBookingReportsAStaleBookingOnce() async throws {
-        let lostId = try await scheduler.schedule(productId: productId, request: request)
+        let lostId = try await scheduler.schedule(productId: productId, title: nil, request: request)
         center.losePending()
 
-        let secondId = try await scheduler.schedule(productId: productId, request: request)
-        let thirdId = try await scheduler.schedule(productId: productId, request: request)
+        let secondId = try await scheduler.schedule(productId: productId, title: nil, request: request)
+        let thirdId = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
         #expect(recorder.events == [scheduled(lostId), gone(lostId), scheduled(secondId), scheduled(thirdId)])
     }
 
     @Test func aBookingStillPendingIsNotReported() async throws {
-        let firstId = try await scheduler.schedule(productId: productId, request: request)
+        let firstId = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
-        let secondId = try await scheduler.schedule(productId: productId, request: request)
+        let secondId = try await scheduler.schedule(productId: productId, title: nil, request: request)
 
         #expect(recorder.events == [scheduled(firstId), scheduled(secondId)])
     }

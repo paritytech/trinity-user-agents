@@ -5,24 +5,25 @@
 
 use std::sync::Arc;
 
-use js_sys::{Function, Object, Reflect, Uint8Array};
+use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use send_wrapper::SendWrapper;
 use truapi::latest::GenericError;
 use wasm_bindgen::{JsCast, JsValue};
 
+#[cfg(feature = "test-host")]
+use super::get_required_bytes32_at;
 use super::{
-	await_optional_promise, call_js_function, get_optional_bool_at, get_optional_function,
-	get_optional_string_at, get_required_object, get_required_string_at, js_to_string,
+	await_optional_promise, bytes32_from_js, call_js_function, get_optional_array_at,
+	get_optional_bool_at, get_optional_function, get_optional_object, get_optional_string_at,
+	get_required_object, get_required_string_at, js_to_string, string_from_js,
 };
 #[cfg(feature = "test-host")]
-use super::{get_optional_object, get_required_bytes32_at};
-#[cfg(feature = "test-host")]
-use crate::platform::StackChains;
+use crate::platform::{StackChains, StackIdentity};
 use crate::{
 	Spawner,
 	platform::{
-		CoreStorage, CoreStorageRecords, Stack, StackFetchRequest, StackFetchResponse, StackHost,
-		StackRefresh, StackRefreshOutcome, StackStatus,
+		CoreStorage, CoreStorageRecords, ReservedValuesPolicy, Stack, StackFetchRequest,
+		StackFetchResponse, StackHost, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -46,19 +47,19 @@ pub async fn stack_from_js(
 		return Ok((test_stack_from_js(&test_stack)?, None));
 	}
 	let stack = get_required_object(runtime_config, "stack", "runtimeConfig.stack")?;
+	refuse_unknown_fields(
+		&stack,
+		"runtimeConfig.stack",
+		&["pointer", "descriptor", "reservedValues"],
+	)?;
 	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
 	let descriptor = bytes_at(&stack, "descriptor")?
 		.ok_or_else(|| JsValue::from_str("runtimeConfig.stack.descriptor must be a Uint8Array"))?;
-	let allows_reserved_values = get_optional_bool_at(
-		&stack,
-		"allowsReservedValues",
-		"runtimeConfig.stack.allowsReservedValues",
-	)?
-	.unwrap_or(false);
+	let reserved_values = reserved_values_from_js(&stack, "runtimeConfig.stack.reservedValues")?;
 	let refresh = StackRefresh::load(
 		&pointer,
 		&descriptor,
-		allows_reserved_values,
+		reserved_values,
 		Box::new(CoreStorageRecords::new(storage)),
 		Arc::new(RealTimer),
 		Box::new(SystemClock),
@@ -99,11 +100,26 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 	refresh.map_or(JsValue::UNDEFINED, |refresh| status_to_js(&refresh.status()))
 }
 
-/// `runtimeConfig.testStack`: `network`, `tld`, `assetHub`, `people`,
-/// `bulletin` and the optional `relay`, each `{ genesisHash }`, and
-/// `allowsReservedValues`, which defaults to false.
+/// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
+/// `assetHub`, `people`, `bulletin` and the optional `relay`, each
+/// `{ genesisHash }`, and the optional `reservedValues`.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
+	refuse_unknown_fields(
+		stack,
+		"runtimeConfig.testStack",
+		&[
+			"id",
+			"generation",
+			"network",
+			"tld",
+			"relay",
+			"assetHub",
+			"people",
+			"bulletin",
+			"reservedValues",
+		],
+	)?;
 	let genesis = |role: &str| {
 		let path = format!("runtimeConfig.testStack.{role}");
 		get_optional_object(stack, role, &path)?
@@ -123,18 +139,66 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		people: required("people")?,
 		bulletin: required("bulletin")?,
 	};
+	let identity = StackIdentity {
+		id: get_required_string_at(stack, "id", "runtimeConfig.testStack.id")?,
+		generation: get_required_string_at(
+			stack,
+			"generation",
+			"runtimeConfig.testStack.generation",
+		)?,
+	};
 	Stack::new(
+		identity,
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,
-		get_optional_bool_at(
-			stack,
-			"allowsReservedValues",
-			"runtimeConfig.testStack.allowsReservedValues",
-		)?
-		.unwrap_or(false),
+		&reserved_values_from_js(stack, "runtimeConfig.testStack.reservedValues")?,
 	)
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
+}
+
+/// Refuses a field of the config object at `path` outside `fields`. A misspelt
+/// or retired field would otherwise be read as absent, and its value ignored.
+fn refuse_unknown_fields(object: &JsValue, path: &str, fields: &[&str]) -> Result<(), JsValue> {
+	if Array::is_array(object) {
+		return Err(JsValue::from_str(&format!("{path} must be an object")));
+	}
+	let unknown_field = Reflect::own_keys(object)?
+		.iter()
+		.filter_map(|key| key.as_string())
+		.find(|key| !fields.contains(&key.as_str()));
+	match unknown_field {
+		Some(field) => Err(JsValue::from_str(&format!(
+			"{path}.{field} is not a field; {path} takes {}",
+			fields.join(", ")
+		))),
+		None => Ok(()),
+	}
+}
+
+/// A stack config's optional `reservedValues`, at `path`. Each of its fields
+/// is optional, and one it does not have is refused.
+fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValuesPolicy, JsValue> {
+	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
+		return Ok(ReservedValuesPolicy::default());
+	};
+	refuse_unknown_fields(&reserved_values, path, &["allowed", "extraGenesisHashes", "extraTlds"])?;
+	Ok(ReservedValuesPolicy {
+		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
+			.unwrap_or(false),
+		extra_genesis_hashes: get_optional_array_at(
+			&reserved_values,
+			"extraGenesisHashes",
+			&format!("{path}.extraGenesisHashes"),
+			bytes32_from_js,
+		)?,
+		extra_tlds: get_optional_array_at(
+			&reserved_values,
+			"extraTlds",
+			&format!("{path}.extraTlds"),
+			string_from_js,
+		)?,
+	})
 }
 
 /// `runtimeConfig.stack.<name>` as bytes, or `None` when it is not set.

@@ -692,15 +692,15 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 	}
 }
 
-fn get_required_object(value: &JsValue, name: &str, path: &str) -> Result<JsValue, JsValue> {
+/// The property `name` of `value`, or `None` when it is null or undefined.
+fn get_optional_property(value: &JsValue, name: &str) -> Result<Option<JsValue>, JsValue> {
 	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Err(JsValue::from_str(&format!("{path} is required")));
-	}
-	if !property.is_object() {
-		return Err(JsValue::from_str(&format!("{path} must be an object")));
-	}
-	Ok(property)
+	Ok((!property.is_null() && !property.is_undefined()).then_some(property))
+}
+
+fn get_required_object(value: &JsValue, name: &str, path: &str) -> Result<JsValue, JsValue> {
+	get_optional_object(value, name, path)?
+		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
 fn get_optional_object(
@@ -708,14 +708,11 @@ fn get_optional_object(
 	name: &str,
 	path: &str,
 ) -> Result<Option<JsValue>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	if !property.is_object() {
+	let property = get_optional_property(value, name)?;
+	if property.as_ref().is_some_and(|property| !property.is_object()) {
 		return Err(JsValue::from_str(&format!("{path} must be an object")));
 	}
-	Ok(Some(property))
+	Ok(property)
 }
 
 fn get_optional_string_at(
@@ -723,25 +720,46 @@ fn get_optional_string_at(
 	name: &str,
 	path: &str,
 ) -> Result<Option<String>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	property
+	get_optional_property(value, name)?
+		.map(|property| string_from_js(property, path))
+		.transpose()
+}
+
+fn string_from_js(value: JsValue, path: &str) -> Result<String, JsValue> {
+	value
 		.as_string()
-		.map(Some)
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
 }
 
 fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Option<bool>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
+	get_optional_property(value, name)?
+		.map(|property| {
+			property
+				.as_bool()
+				.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+		})
+		.transpose()
+}
+
+/// Each entry of an optional array property, read with `entry` at the entry's
+/// own path. Empty when the property is absent.
+fn get_optional_array_at<T>(
+	value: &JsValue,
+	name: &str,
+	path: &str,
+	entry: impl Fn(JsValue, &str) -> Result<T, JsValue>,
+) -> Result<Vec<T>, JsValue> {
+	let Some(property) = get_optional_property(value, name)? else {
+		return Ok(Vec::new());
+	};
+	if !Array::is_array(&property) {
+		return Err(JsValue::from_str(&format!("{path} must be an array")));
 	}
-	property
-		.as_bool()
-		.map(Some)
-		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+	Array::from(&property)
+		.iter()
+		.enumerate()
+		.map(|(index, item)| entry(item, &format!("{path}[{index}]")))
+		.collect()
 }
 
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
@@ -755,20 +773,21 @@ fn get_optional_bytes32_at(
 	name: &str,
 	path: &str,
 ) -> Result<Option<[u8; 32]>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
+	get_optional_property(value, name)?
+		.map(|property| bytes32_from_js(property, path))
+		.transpose()
+}
+
+/// A 32-byte value given as a hex string or a `Uint8Array`.
+fn bytes32_from_js(value: JsValue, path: &str) -> Result<[u8; 32], JsValue> {
+	if let Some(hex) = value.as_string() {
+		return parse_hex32(&hex).map_err(|reason| JsValue::from_str(&format!("{path}: {reason}")));
 	}
-	if let Some(hex) = property.as_string() {
-		return parse_hex32(&hex)
-			.map(Some)
-			.map_err(|reason| JsValue::from_str(&format!("{path}: {reason}")));
-	}
-	let array = property
+	let array = value
 		.dyn_into::<Uint8Array>()
 		.map_err(|_| JsValue::from_str(&format!("{path} must be hex or Uint8Array")))?;
 	let bytes = array.to_vec();
-	bytes.try_into().map(Some).map_err(|bytes: Vec<u8>| {
+	bytes.try_into().map_err(|bytes: Vec<u8>| {
 		JsValue::from_str(&format!("{path} must be exactly 32 bytes, got {}", bytes.len()))
 	})
 }
@@ -779,7 +798,6 @@ fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
-#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {
@@ -899,11 +917,9 @@ struct WasmCoreInner {
 }
 
 /// Forwards every worker transition request to the host's
-/// `requestWorkerTransition(productId, transition)` callback, and a worker
-/// that keeps crashing to its optional `workerCrashing(productId, crashes)`.
+/// `requestWorkerTransition(productId, transition)` callback.
 struct WasmWorkerController {
 	request: SendWrapper<Function>,
-	crashing: Option<SendWrapper<Function>>,
 }
 
 impl WasmWorkerController {
@@ -924,16 +940,6 @@ impl crate::host_logic::worker::WorkerController for WasmWorkerController {
 	fn stop_worker(&self, product_id: &ProductId) {
 		self.request(product_id, "Stop");
 	}
-
-	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
-		if let Some(crashing) = &self.crashing {
-			let _ = crashing.call2(
-				&JsValue::NULL,
-				&JsValue::from_str(product_id.as_str()),
-				&JsValue::from(crashes),
-			);
-		}
-	}
 }
 
 /// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
@@ -943,11 +949,9 @@ fn install_worker_controller(
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
 	let request = get_function(callbacks, "requestWorkerTransition")?;
-	let crashing = get_optional_function(callbacks, "workerCrashing")?;
 	assert!(
 		ledger.install_worker_controller(Arc::new(WasmWorkerController {
 			request: SendWrapper::new(request),
-			crashing: crashing.map(SendWrapper::new),
 		})),
 		"a freshly built runtime installs its worker controller once"
 	);
@@ -968,13 +972,6 @@ fn claim_worker<Role>(runtime: &HostRuntime<Role>, raw_id: &str) -> Option<WasmW
 		)
 		.ok()?;
 	Some(WasmWorkerClaim { _reference: runtime.hold_worker(&product) })
-}
-
-fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
-	match product_id.parse::<ProductId>() {
-		Ok(product_id) => runtime.worker_exited(&product_id),
-		Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
-	}
 }
 
 /// JS-callable handle to a long-lived pairing-host runtime shared by product
@@ -1208,16 +1205,6 @@ impl WasmPairingHostRuntime {
 	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
 		claim_worker(&self.runtime, &raw_product_id)
 	}
-
-	/// Report that the product's worker stopped running without being asked
-	/// to. While references remain, `"Start"` is reported again to the
-	/// host's `requestWorkerTransition` callback. An id that is not a product
-	/// id is logged and dropped.
-	#[wasm_bindgen(js_name = workerExited)]
-	pub fn worker_exited(&self, product_id: String) {
-		worker_exited(&self.runtime, &product_id);
-	}
-
 }
 
 /// Whether `productId` is a first-party product the host grants every
@@ -1472,16 +1459,6 @@ impl WasmSigningHostRuntime {
 	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
 		claim_worker(&self.runtime, &raw_product_id)
 	}
-
-	/// Report that the product's worker stopped running without being asked
-	/// to. While references remain, `"Start"` is reported again to the
-	/// host's `requestWorkerTransition` callback. An id that is not a product
-	/// id is logged and dropped.
-	#[wasm_bindgen(js_name = workerExited)]
-	pub fn worker_exited(&self, product_id: String) {
-		worker_exited(&self.runtime, &product_id);
-	}
-
 }
 
 /// Derive a product's hard-subtree public key from a session's root entropy.
