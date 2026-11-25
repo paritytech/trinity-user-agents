@@ -18,6 +18,10 @@ final class PaymentRequestContext {
         self.destination = destination
     }
 
+    deinit {
+        continuation?.resume(returning: .rejected)
+    }
+
     func setContinuation(_ continuation: CheckedContinuation<PaymentApprovalDecision, Never>) {
         self.continuation = continuation
     }

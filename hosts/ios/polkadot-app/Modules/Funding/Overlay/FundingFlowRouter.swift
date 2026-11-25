@@ -26,8 +26,6 @@ protocol FundingFlowRouting: AnyObject {
     func showHistory()
     /// Opens a new session in `direction`.
     func startOver(direction: FundingDirection)
-    /// Whether session `entryId`'s flow is on screen.
-    func isShowing(entryId: String) -> Bool
     /// The session's progress: on its open flow, or the session shown again.
     func showProgress(entryId: String)
 }
@@ -36,12 +34,19 @@ protocol FundingFlowRouting: AnyObject {
 final class FundingFlowRouter: FundingFlowRouting {
     private let service: FundingServiceProtocol
     private let environment: FundingOverlayEnvironment
+    private let tracker: FundingFlowTracking
     private let logger: LoggerProtocol
     private var flows: [String: FundingFlowWireframe] = [:]
 
-    init(service: FundingServiceProtocol, environment: FundingOverlayEnvironment, logger: LoggerProtocol) {
+    init(
+        service: FundingServiceProtocol,
+        environment: FundingOverlayEnvironment,
+        tracker: FundingFlowTracking,
+        logger: LoggerProtocol
+    ) {
         self.service = service
         self.environment = environment
+        self.tracker = tracker
         self.logger = logger
     }
 
@@ -80,10 +85,6 @@ final class FundingFlowRouter: FundingFlowRouting {
         }
     }
 
-    func isShowing(entryId: String) -> Bool {
-        flows[entryId]?.navigation?.presentingViewController != nil
-    }
-
     func showProgress(entryId: String) {
         if let flow = flows[entryId] {
             flow.showProgress()
@@ -109,14 +110,19 @@ private extension FundingFlowRouter {
             environment: environment,
             viewModelFactory: makeViewModelFactory()
         )
-        flow.onClose = { [weak self] in self?.flows[entry.id] = nil }
+        flow.onClose = { [weak self] in
+            self?.flows[entry.id] = nil
+            self?.tracker.flowClosed(entryId: entry.id)
+        }
         flow.onHistory = { [weak self] in self?.showHistory() }
         flow.onStartOver = { [weak self] direction in self?.startOver(direction: direction) }
         flows[entry.id] = flow
 
-        if !environment.present(flow.makeSheet(screens)) {
+        guard environment.present(flow.makeSheet(screens)) else {
             flow.close()
+            return
         }
+        tracker.flowOpened(entryId: entry.id)
     }
 
     /// A session left running shows its progress, with the crypto deposit

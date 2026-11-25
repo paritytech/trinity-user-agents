@@ -82,7 +82,7 @@ struct TrackedAssetMapperTests {
         try await save(coin(installation: .other, key: key, isOnchain: false, handoffMark: .committed))
 
         let tracked = try #require(await trackedCoins().first)
-        let status = CoinageTransferStatusService.transferStatus(tracked, atFinalized: [key: false])
+        let status = CoinageTransferStatusService.status(tracked, failedReclaims: [], atFinalized: [key: false])
         #expect(status == .claimed(finalized: true))
     }
 }

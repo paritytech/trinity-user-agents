@@ -382,7 +382,8 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 	for network in Network::value_variants() {
 		let built_in = network.built_in_stack();
 		let link = built_in.pointer().to_link(trinity_stack::DEFAULT_LINK_BASE);
-		let bundled = truapi::platform::Stack::bundled(&link, built_in.bundle, true)
+		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
+		let bundled = truapi::platform::Stack::bundled(&link, built_in.bundle, &allowed)
 			.expect("the bundled copy starts an app");
 		let identity = truapi::platform::StackIdentity {
 			id: bundled.id().to_string(),
@@ -393,7 +394,7 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
-			true,
+			&allowed,
 		);
 
 		assert_eq!(network.bundled_stack(ChainBackend::Rpc).core_stack(), expected, "{network:?}");
