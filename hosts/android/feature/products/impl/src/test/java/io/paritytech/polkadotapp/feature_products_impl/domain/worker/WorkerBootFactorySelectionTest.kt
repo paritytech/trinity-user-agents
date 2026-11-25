@@ -112,7 +112,7 @@ class WorkerBootFactorySelectionTest {
         val runtimeProvider: TrUAPIHostRuntimeProvider = mock()
         val runtime: TrUAPIHostRuntime = mock()
         whenever(runtimeProvider.runtime()).thenReturn(Result.success(runtime))
-        whenever(runtime.acquireWorker(productId)).thenThrow(IllegalStateException("acquireWorker boom"))
+        whenever(runtime.claimWorker(productId)).thenThrow(IllegalStateException("claimWorker boom"))
         val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
         val factory = factory(
             settingsWith(enabled = true),

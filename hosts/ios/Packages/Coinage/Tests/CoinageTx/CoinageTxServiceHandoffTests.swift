@@ -49,6 +49,45 @@ struct CoinageTxServiceHandoffTests {
         // Must not throw: the guard is per asset, not a blanket refusal once anything is handed off.
         _ = try await service.preCommitHandoff([other])
     }
+
+    @Test("a standalone schedule registers its entries under the group and locks their inputs")
+    func standaloneScheduleRegistersAndLocks() async throws {
+        let service = makeSchedulingService(repository: MockCoinageTxRepository())
+        let input = CoinageTxInput.coin(.own(11, testKey(11)))
+
+        _ = try await service.scheduleTransactions(
+            [makeRequest(inputs: [input], outputs: [.coin(31, testKey(31))])],
+            groupId: "group"
+        )
+
+        let entries = try await service.getOperationGroupStatuses("group")
+        #expect(entries.count == 1)
+
+        await #expect(throws: CoinageTxError.inputAlreadyClaimed(testKey(11).toHex())) {
+            _ = try await service.scheduleTransactions(
+                [makeRequest(inputs: [input], outputs: [.coin(32, testKey(32))])],
+                groupId: "other"
+            )
+        }
+    }
+
+    @Test("a standalone schedule the ledger rejects leaves nothing in its group")
+    func rejectedStandaloneScheduleLeavesGroupEmpty() async throws {
+        let repository = MockCoinageTxRepository()
+        let service = makeSchedulingService(repository: repository)
+        let handedOff = OwnAsset.coin(42, testKey(42))
+        try await repository.markHandedOff(handedOff)
+
+        await #expect(throws: CoinageTxError.inputHandedOff(testKey(42).toHex())) {
+            _ = try await service.scheduleTransactions(
+                [makeRequest(inputs: [handedOff.asInput], outputs: [.coin(33, testKey(33))])],
+                groupId: "group"
+            )
+        }
+
+        let entries = try await service.getOperationGroupStatuses("group")
+        #expect(entries.isEmpty)
+    }
 }
 
 private extension CoinageTxServiceHandoffTests {
@@ -57,6 +96,22 @@ private extension CoinageTxServiceHandoffTests {
             engine: FakeRegistrationEngine(),
             ledger: repository.ledger,
             logger: nil
+        )
+    }
+
+    func makeSchedulingService(repository: MockCoinageTxRepository) -> CoinageTxService {
+        CoinageTxService(
+            engine: InMemorySchedulingEngine(store: repository.durable),
+            ledger: repository.ledger,
+            logger: nil
+        )
+    }
+
+    func makeRequest(inputs: [CoinageTxInput], outputs: [OwnAsset]) -> CoinageScheduledTxRequest {
+        CoinageScheduledTxRequest(
+            policy: SubmissionPolicy(id: SubmissionPolicyId("handoff-test"), params: Data()),
+            inputs: inputs,
+            outputs: outputs
         )
     }
 

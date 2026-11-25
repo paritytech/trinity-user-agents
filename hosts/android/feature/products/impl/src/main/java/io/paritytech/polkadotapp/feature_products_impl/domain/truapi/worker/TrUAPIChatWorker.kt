@@ -52,10 +52,10 @@ class TrUAPIChatWorker(
 ) : ProductWorker {
     init {
         val workerJob = scope.coroutineContext.job
-        runtime.acquireWorker(productId)
+        val claim = runtime.claimWorker(productId)
         workerJob.invokeOnCompletion {
-            runCatching { runtime.releaseWorker(productId) }
-                .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
+            runCatching { claim.release() }
+                .onFailure { Timber.w(it, "TrUAPI worker claim release failed for %s", productId.value) }
         }
         scope.launch {
             workers.executionState(productId)

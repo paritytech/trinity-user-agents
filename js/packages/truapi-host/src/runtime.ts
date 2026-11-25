@@ -56,6 +56,37 @@ export interface ChainConnection {
  */
 export type LogLevel = string;
 
+/**
+ * A host build's policy on reserved values for its stack. The core reserves
+ * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
+ * and cannot reserve fewer. A stack that names a reserved value, the core's or
+ * the build's, under any chain role starts only when `allowed` is set.
+ *
+ * The core refuses a policy that would reserve less than it says: a field this
+ * type does not have, `allowed` together with extra values, which the allowed
+ * stack may name anyway, and an extra TLD that no stack can have. It refuses
+ * the policy before it reads the stack.
+ */
+export interface ReservedValuesPolicy {
+  /**
+   * Whether the stack may name reserved values. Only a Polkadot or
+   * Polkadot-fork build sets it, and then reserves no extra values. Defaults
+   * to `false`.
+   */
+  allowed?: boolean;
+  /**
+   * Genesis hashes reserved on top of the core's, as hex or bytes. The `0x`
+   * prefix is optional.
+   */
+  extraGenesisHashes?: (string | Uint8Array)[];
+  /**
+   * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
+   * is, without the leading dot. The core's refusal of any other entry names
+   * the TLDs a stack can have.
+   */
+  extraTlds?: string[];
+}
+
 /** The Trinity stack a host build bundles. */
 export interface BundledStack {
   /**
@@ -68,12 +99,8 @@ export interface BundledStack {
    * under the pointer's key.
    */
   descriptor: Uint8Array;
-  /**
-   * Whether this build may run a stack that uses Polkadot's genesis hashes or
-   * the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it. Defaults to
-   * `false`.
-   */
-  allowsReservedValues?: boolean;
+  /** The build's policy on reserved values. Defaults to refusing the core's. */
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A fetch of the stack's descriptor for the host to make. */
@@ -99,6 +126,25 @@ export type StackFetchResponse =
   /** `304 Not Modified`. */
   | { status: "notModified" };
 
+/**
+ * A difference between the stack's descriptor and what one of its chains
+ * answered.
+ */
+export interface StackMismatch {
+  /**
+   * `genesisHash`: the chain's last connection reached one with a different
+   * genesis hash from the descriptor's, as happens after a chain restarts
+   * from genesis. The core refused that connection.
+   */
+  kind: "genesisHash";
+  /** The chain's role in the descriptor. */
+  role: string;
+  /** The genesis hash the descriptor names, as `0x` hex. */
+  named: string;
+  /** The genesis hash the chain gave, as `0x` hex. */
+  answered: string;
+}
+
 /** The stack the core runs, and what the host shows and does about it. */
 export interface StackStatus {
   /**
@@ -123,12 +169,16 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core stored a newer copy that changes a chain, the network, the TLD
-   * or the generation. It runs that copy from its next
-   * start, so build the runtime again to follow it.
+   * The core stored a newer copy that changes a chain, the network or the
+   * generation. It runs that copy from its next start, so build the runtime
+   * again to follow it. A copy on another TLD is refused and never sets it.
    */
   restartRequired: boolean;
-  /** The last finished fetch. Not set before the first one. */
+  /**
+   * The last finished fetch. Not set before the first one. A fetch that
+   * changed the stored record finishes once that record is stored or its
+   * store fails; the whole status shows it only from then on.
+   */
   lastRefresh?: {
     /**
      * `current`: the published descriptor is the copy the core holds.
@@ -144,6 +194,15 @@ export interface StackStatus {
      */
     reason?: string;
   };
+  /**
+   * The chains whose last answer differed from the descriptor the core runs,
+   * in the descriptor's order. While any is listed, a host with
+   * `fetchStackDescriptor` is asked for the descriptor every five minutes
+   * instead of every hour, until a newer copy sets `restartRequired`. A light
+   * client answers from its own chain spec, so it never lists a chain that
+   * restarted.
+   */
+  mismatches: StackMismatch[];
 }
 
 /**
@@ -163,9 +222,9 @@ export interface StackCallbacks {
     request: StackFetchRequest,
   ): StackFetchResponse | Promise<StackFetchResponse>;
   /**
-   * The stack's status when the runtime starts, and on each change. A host
-   * without `fetchStackDescriptor` gets the one at start. A runtime built
-   * from a test stack has no status and calls neither callback.
+   * The stack's status when the runtime starts, and on each change. For a
+   * host without `fetchStackDescriptor` only `mismatches` can change. A
+   * runtime built from a test stack has no status and calls neither callback.
    */
   stackChanged?(status: StackStatus): void;
 }
@@ -272,10 +331,6 @@ export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
    * returned disposer is called. Reports failure through `sink.onError` rather
    * than throwing, so a dead render never takes the host's surrounding surface
    * with it.
-   *
-   * An open render holds one worker reference for the provider's product: the
-   * runtime acquires it when the stream starts and releases it when the stream
-   * ends or the disposer runs.
    *
    * Present only on runtimes that keep a live channel to the core.
    */

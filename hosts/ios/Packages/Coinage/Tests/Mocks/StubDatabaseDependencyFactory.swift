@@ -26,6 +26,13 @@ final class StubDatabaseDependencyFactory: DatabaseDependencyFactoring, @uncheck
     func makeCoinRepository() -> AnyDataProviderRepository<Coin> { unsupported() }
     func makeCoinRepository(publicKeys _: [PublicKey]) -> AnyDataProviderRepository<Coin> { unsupported() }
     func makeTrackedCoinRepository() -> AnyDataProviderRepository<TrackedCoin> { unsupported() }
+
+    func makeTrackedCoinRepository(publicKeys: [PublicKey]) -> AnyDataProviderRepository<TrackedCoin> {
+        let requested = Set(publicKeys)
+        let models = (trackedCoins.value ?? []).filter { requested.contains($0.coin.publicKey) }
+        return AnyDataProviderRepository(StubRepository(models: models))
+    }
+
     func makeCoinPresenceRepository() -> AnyDataProviderRepository<CoinPresenceUpdate> { unsupported() }
     func makeVoucherRepository() -> AnyDataProviderRepository<Voucher> { unsupported() }
     func makeVoucherRepository(publicKeys _: [PublicKey]) -> AnyDataProviderRepository<Voucher> { unsupported() }

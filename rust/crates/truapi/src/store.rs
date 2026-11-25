@@ -8,7 +8,6 @@
 mod migration;
 mod observe;
 
-use core::convert::Infallible;
 use std::{
 	path::{Path, PathBuf},
 	sync::Arc,
@@ -199,36 +198,37 @@ impl Db {
 		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, DbError> + Send + 'static,
 		T: Send + 'static,
 	{
-		let never_refused = move |tx: &rusqlite::Transaction<'_>| Ok(Ok::<_, Infallible>(f(tx)?));
-		Ok(self
-			.write_unless_refused(never_refused)
-			.await?
-			.unwrap_or_else(|never| match never {}))
+		self.write_interactive(f).await
 	}
 
 	/// Runs `f` in one `BEGIN IMMEDIATE` transaction on the writer, like
-	/// [`Self::write`], and commits only when `f` returns `Ok(Ok(_))`. An
-	/// inner `Err` is a refusal: the transaction rolls back and the refusal is
-	/// returned as it is.
-	pub async fn write_unless_refused<T, E, F>(&self, f: F) -> Result<Result<T, E>, DbError>
+	/// [`Self::write`], with the caller's error type. Commits when `f` returns
+	/// `Ok`; when it returns `Err`, rolls back and returns that error as it
+	/// is, so a hook can refuse a write after inspecting it. A database
+	/// failure reaches the caller through `E::from`.
+	pub async fn write_interactive<T, E, F>(&self, f: F) -> Result<T, E>
 	where
-		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<Result<T, E>, DbError> + Send + 'static,
+		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
-		E: Send + 'static,
+		E: From<DbError> + Send + 'static,
 	{
 		let invalidation = self.invalidation.clone();
-		self.writer
+		let written = self
+			.writer
 			.conn_mut_and_then(move |conn| {
-				let outcome = in_transaction_unless_refused(conn, f);
+				let outcome = in_transaction(conn, f);
 				// Publish only once readers can see the rows: `commit_hook`
 				// runs before the commit is visible.
 				match outcome {
-					Ok(Ok(_)) => invalidation.publish(),
-					Ok(Err(_)) | Err(_) => invalidation.discard(),
+					Ok(_) => invalidation.publish(),
+					Err(_) => invalidation.discard(),
 				}
-				outcome
+				// The pool's own error must convert from its crate's errors,
+				// which `E` does not, so `E` travels inside its `Ok`.
+				Ok::<_, DbError>(outcome)
 			})
-			.await
+			.await;
+		written.map_err(E::from)?
 	}
 
 	/// Runs `f` on a read-only connection that sees the last committed state.
@@ -264,19 +264,19 @@ impl Db {
 	}
 }
 
-/// Runs `f` in a transaction that commits only when `f` returns `Ok(Ok(_))`
-/// and otherwise rolls back when it is dropped.
-fn in_transaction_unless_refused<T, E>(
+/// Runs `f` in a transaction that commits only when `f` returns `Ok` and
+/// otherwise rolls back when it is dropped. A failure to begin or commit
+/// reaches the caller through `E::from`.
+fn in_transaction<T, E: From<DbError>>(
 	conn: &mut rusqlite::Connection,
-	f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Result<T, E>, DbError>,
-) -> Result<Result<T, E>, DbError> {
-	let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-	let value = match f(&tx)? {
-		Ok(value) => value,
-		Err(refusal) => return Ok(Err(refusal)),
-	};
-	tx.commit()?;
-	Ok(Ok(value))
+	f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, E>,
+) -> Result<T, E> {
+	let tx = conn
+		.transaction_with_behavior(TransactionBehavior::Immediate)
+		.map_err(DbError::from)?;
+	let value = f(&tx)?;
+	tx.commit().map_err(DbError::from)?;
+	Ok(value)
 }
 
 const BUSY_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);

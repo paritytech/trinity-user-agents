@@ -17,7 +17,7 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
 	},
 	v02,
 	versioned::{
@@ -87,10 +87,6 @@ use truapi::{
 			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
-		worker::{
-			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
-			HostWorkerEndOperationRequest,
-		},
 	},
 };
 
@@ -1844,6 +1840,55 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	std::thread::sleep(std::time::Duration::from_millis(200));
 
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
+}
+
+/// A call that ignores a withdrawal is dropped after a two-second grace.
+/// People's connection can take half a minute to open, while the host redials
+/// or the genesis check waits out a halted chain, so the wait for it watches
+/// the withdrawal and the product is answered at once. The call is polled by
+/// hand, so it has to end in the poll after the withdrawal, before any grace
+/// could pass: the error alone reads the same either way.
+#[test]
+fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		chain_connect_pending: true,
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("sign-raw-connecting".to_string(), cancel.clone());
+	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+		account: account_id("myapp.dot", 0),
+		payload: raw_payload(),
+	});
+	let mut call = Box::pin(host.sign_raw(&cx, request));
+	let dialled = || {
+		assert!(call.as_mut().now_or_never().is_none(), "the call waits for People");
+		!platform.chain_connects.lock().unwrap().is_empty()
+	};
+	wait_until(dialled, "People is dialled");
+
+	cancel.cancel();
+	let answer = call.as_mut().now_or_never();
+
+	let Some(Err(CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown {
+		reason,
+	})))) = answer
+	else {
+		panic!("expected the call to end on the withdrawal at once, got {answer:?}");
+	};
+	assert!(
+		reason.contains("cancelled") && reason.contains("sign-raw-connecting"),
+		"expected the withdrawal of this call, got {reason}"
+	);
+	assert_eq!(
+		platform.chain_connects.lock().unwrap().clone(),
+		vec![paseo_test_stack().chains().people],
+		"the call was waiting on People"
+	);
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.
@@ -6719,127 +6764,6 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	);
 }
 
-#[test]
-fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let begin = |label: Option<&str>| {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: label.map(str::to_string),
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation")
-	};
-
-	assert_eq!(begin(Some("funding")), 1);
-	assert_eq!(begin(None), 2);
-	assert_eq!(
-		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
-		vec![
-			(ProductId::for_test("myapp.dot"), "funding".to_string()),
-			(ProductId::for_test("myapp.dot"), String::new()),
-		],
-		"begin reaches the platform under the calling product; a missing label is empty"
-	);
-
-	end(1);
-	end(99);
-	assert_eq!(
-		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
-		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
-		"end reaches the platform under the calling product, unknown ids included"
-	);
-}
-
-#[test]
-fn an_open_operation_holds_worker_demand_until_it_ends() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: Some("funding".to_string()),
-			}),
-		))
-		.expect("begin operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"an open operation is demand on the worker, so the host is told to run it"
-	);
-
-	futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	))
-	.expect("end operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"ending the last operation drops the demand it held"
-	);
-}
-
-#[test]
-fn ending_an_operation_twice_releases_only_the_demand_it_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-	let begin = || {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: None,
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation");
-	};
-
-	let first = begin();
-	begin();
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
-
-	end(first);
-	end(first);
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
-	);
-}
-
 /// Records every worker-demand transition the ledger reports.
 #[derive(Default)]
 struct DemandRecorder {
@@ -6863,162 +6787,6 @@ impl crate::host_logic::worker::WorkerController for DemandRecorder {
 			.expect("demand recorder mutex poisoned")
 			.push((product_id.to_string(), transition));
 	}
-}
-
-#[test]
-fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
-	use crate::host_logic::worker::WorkerTransition;
-
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let recorder = Arc::new(DemandRecorder::default());
-	assert!(
-		host.connection
-			.services()
-			.worker_ledger
-			.install_worker_controller(recorder.clone())
-	);
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-
-	host.connection.release_open_operations();
-
-	// A native reconnect drops the replaced connection's last reference only
-	// after the new one exists, so a stop deferred to that point would reach
-	// the host as a stop for the worker it had just restarted.
-	assert_eq!(
-		recorder.seen(),
-		vec![
-			("myapp.dot".to_string(), WorkerTransition::Start),
-			("myapp.dot".to_string(), WorkerTransition::Stop),
-		],
-		"teardown reports the stop, rather than leaving it to the last Arc"
-	);
-
-	drop(host);
-
-	assert_eq!(recorder.seen().len(), 2, "the eventual drop has nothing left to report");
-}
-
-#[test]
-fn a_cancelled_begin_ends_the_operation_the_host_started() {
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		begin_operation_gate: Mutex::new(Some(gate)),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-
-	// Poll once so the call reaches the host, then drop it the way an aborted
-	// dispatch does while the host is still deciding.
-	let mut begun = Box::pin(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	));
-	assert!(
-		futures::executor::block_on(futures::future::poll_fn(|cx| {
-			std::task::Poll::Ready(futures::FutureExt::poll_unpin(&mut begun, cx).is_pending())
-		})),
-		"the host has not answered yet"
-	);
-	drop(begun);
-
-	// Without the fix the host's call went with the cancelled dispatch, so the
-	// gate may already be gone.
-	let _ = release.send(());
-
-	// Nobody is left to receive the id, so the operation the host started is
-	// ended rather than stranded in its store.
-	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-	loop {
-		let ended = platform
-			.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.clone();
-		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-			break;
-		}
-		assert!(
-			std::time::Instant::now() < deadline,
-			"a cancelled begin leaves the host holding nothing; saw {ended:?}"
-		);
-		std::thread::yield_now();
-	}
-	assert_eq!(
-		host.connection
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		0
-	);
-}
-
-#[test]
-fn a_failed_end_still_drops_the_demand_the_operation_held() {
-	let platform = Arc::new(StubPlatform {
-		end_operation_error: Some("store unavailable"),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: None,
-			}),
-		))
-		.expect("begin operation");
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	let ended = futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	));
-	assert!(ended.is_err(), "the host's failure still reaches the product");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"the product declared the operation over, so the core stops counting it \
-         whatever the host made of the call"
-	);
-}
-
-#[test]
-fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let services = host.connection.services().clone();
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	drop(host);
-
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"a product that goes away without ending its operations leaves no demand behind"
-	);
 }
 
 #[test]
@@ -7274,7 +7042,10 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	install_pairing_session(&host, session);
 	let mut cx = CallContext::with_request_id(message_id.to_string());
-	cx.set_timeout(std::time::Duration::from_millis(1));
+	// The People connection is dialled in a task of its own, so the timeout
+	// leaves it time to subscribe. No allocation response is scripted, so the
+	// call still ends by the timeout.
+	cx.set_timeout(std::time::Duration::from_millis(500));
 
 	let err = futures::executor::block_on(ResourceAllocation::request(
 		&host,
@@ -7289,7 +7060,7 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 		)) => {
 			assert_eq!(
 				reason,
-				"Account authority request timed out after 1ms for allocation-timeout"
+				"Account authority request timed out after 500ms for allocation-timeout"
 			)
 		},
 		other => panic!("expected resource-allocation timeout, got {other:?}"),

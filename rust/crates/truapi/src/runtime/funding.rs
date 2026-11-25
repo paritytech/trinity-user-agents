@@ -72,7 +72,7 @@ use truapi::latest::{
 };
 
 use super::{
-	funding_quotes::WorkerHold,
+	WorkerHold,
 	funding_telemetry::{Common, FrameClose, FrameTarget, FundingAttributes as _, Telemetry},
 	services::RuntimeServices,
 };
@@ -1585,7 +1585,7 @@ impl FundingRegistry {
 			let mut holding = self.lock_holding();
 			let stale: Vec<String> = holding
 				.iter()
-				.filter(|(intent, hold)| held_for(sessions, intent) != Some(hold.provider()))
+				.filter(|(intent, hold)| held_for(sessions, intent) != Some(hold.product()))
 				.map(|(intent, _)| intent.clone())
 				.collect();
 			let released: Vec<WorkerHold> =
@@ -1609,7 +1609,7 @@ impl FundingRegistry {
 				.into_iter()
 				.filter_map(|(intent, hold)| {
 					if holding.contains_key(&intent) ||
-						held_for(sessions, &intent) != Some(hold.provider())
+						held_for(sessions, &intent) != Some(hold.product())
 					{
 						return Some(hold);
 					}
@@ -2920,7 +2920,7 @@ impl RuntimeServices {
 			.funding_providers()
 			.quote_targets()
 			.iter()
-			.map(|provider_id| super::funding_quotes::WorkerHold::acquire(&self, provider_id))
+			.map(|provider_id| WorkerHold::acquire(&self, provider_id))
 			.collect();
 		let present = platform.present_funding(product.as_ref(), presentation);
 		// The cancel is polled first, so one that came before the overlay

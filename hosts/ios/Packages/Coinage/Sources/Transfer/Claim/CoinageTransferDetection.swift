@@ -7,6 +7,9 @@ public enum CoinageTransferDetection: Equatable, Sendable {
     /// Nothing the keys control is on chain yet, so there is nothing to claim.
     case detecting
 
+    /// A look answered for none of the keys and nothing has settled: the coins are not on chain right now.
+    case noCoinsOnChain
+
     /// Claims are under way and none of the coins is ours yet. No failures so far.
     case claiming
 
