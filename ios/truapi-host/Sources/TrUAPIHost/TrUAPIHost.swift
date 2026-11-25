@@ -278,7 +278,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// for the surface that renders them is still the host's job.
     ///
     /// The default ``createRoom(roomId:name:icon:config:)`` calls it for a
-    /// room with ``ChatRoomConfig/hostDefault``.
+    /// room with ``ChatRoomConfig/hostDefault``, so a host that keeps only the
+    /// default configuration implements this one. A host that implements
+    /// ``createRoom(roomId:name:icon:config:)`` needs nothing here. The default
+    /// refuses the room.
     func createRoom(roomId: String, name: String, icon: String) async throws
         -> ChatRoomRegistrationStatus
 
@@ -289,7 +292,8 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     ///
     /// Throw ``HostChatCreateRoomError/UnsupportedConfig`` for a configuration
     /// the host cannot keep, before it creates or changes anything. The
-    /// default keeps only ``ChatRoomConfig/hostDefault``.
+    /// default keeps only ``ChatRoomConfig/hostDefault``. A host that keeps
+    /// other configurations also overrides ``room(roomId:)`` to answer them.
     func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) async throws
         -> ChatRoomRegistrationStatus
 
@@ -320,24 +324,27 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// the text input.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
-    /// Return the current product-scoped native Chat rooms. The core checks the
-    /// room of each change to a room against this list, so a host that cannot
-    /// read its rooms throws: an empty list makes the core answer `UnknownRoom`
-    /// for a room that exists.
+    /// Return the current product-scoped native Chat rooms. The default
+    /// ``room(roomId:)`` reads the room of each change to a room from this
+    /// list, so a host that cannot read its rooms throws: an empty list makes
+    /// the core answer `UnknownRoom` for a room that exists.
     func listRooms() async throws -> [ChatRoom]
 
-    /// Return the configuration of the last `createRoom` of a room, or
-    /// ``ChatRoomConfig/hostDefault`` for a room the host does not know. The
-    /// core reads it before each feed update, preview, query and posted
-    /// message of the room. For a posted message it reads it for the room the
-    /// product names, before any check that the product created the room.
-    func roomConfig(roomId: String) async throws -> ChatRoomConfig
+    /// Return what the host keeps for one room of the product: whether the
+    /// product hosts it or takes part as a bot, and the configuration of its
+    /// last `createRoom`. The core reads it once before each change to a room
+    /// and before each query of the room. Before a posted message it reads the
+    /// room the product names, before any check that the product created the
+    /// room. Answer `nil` for a room that the product never created, and throw
+    /// when the host cannot read its rooms. The default finds the room in
+    /// ``listRooms()`` and pairs it with ``ChatRoomConfig/hostDefault``.
+    func room(roomId: String) async throws -> ChatRoomState?
 
-    /// Replace the name, description, icon and empty-room text of a room. An
-    /// icon of `nil` keeps the icon, and an empty icon removes it. The default
-    /// ignores the metadata, and the room keeps the name and icon of
-    /// `createRoom`.
-    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
+    /// Replace the name, description, icon and empty-room text of a room, and
+    /// answer ``ChatRoomChangeOutcome/applied``. An icon of `nil` keeps the
+    /// icon, and an empty icon removes it. The default answers
+    /// ``ChatRoomChangeOutcome/unsupported``.
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome
 
     /// Replace how a room shows in the chat list, and answer
     /// ``ChatRoomChangeOutcome/applied``. The default answers
@@ -363,11 +370,16 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
-/// The product receives `Unsupported` for each request, with two exceptions.
-/// The host ignores metadata and keeps the name and icon of `createRoom`. The
-/// host creates a room with the configuration that keeps the behaviour that it
-/// serves, and refuses any other before it creates anything.
+/// The product receives `Unsupported` for each request, with one exception:
+/// the host creates a room with the configuration that keeps the behaviour
+/// that it serves, and refuses any other before it creates anything. The
+/// three-argument `createRoom` refuses the room, so a host implements it or
+/// the four-argument one.
 public extension ChatHostBridge {
+    func createRoom(roomId _: String, name _: String, icon _: String) async throws -> ChatRoomRegistrationStatus {
+        throw HostRejection.Rejected(reason: "this host does not create chat rooms")
+    }
+
     func createRoom(
         roomId: String,
         name: String,
@@ -378,11 +390,15 @@ public extension ChatHostBridge {
         return try await createRoom(roomId: roomId, name: name, icon: icon)
     }
 
-    func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
-        .hostDefault
+    func room(roomId: String) async throws -> ChatRoomState? {
+        try await listRooms()
+            .first { $0.roomId == roomId }
+            .map { ChatRoomState(participatingAs: $0.participatingAs, config: .hostDefault) }
     }
 
-    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
+        .unsupported
+    }
 
     func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
         .unsupported
@@ -717,11 +733,11 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.listRooms() }
     }
 
-    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
-        try await withHostRejection { try await bridge.roomConfig(roomId: roomId) }
+    func room(roomId: String) async throws -> ChatRoomState? {
+        try await withHostRejection { try await bridge.room(roomId: roomId) }
     }
 
-    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
         try await withHostRejection {
             try await bridge.setRoomMetadata(roomId: roomId, metadata: metadata)
         }

@@ -348,20 +348,28 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// Return the current product-scoped native Chat room list.
 	async fn list_rooms(&self) -> Result<Vec<latest::ChatRoom>, HostRejection>;
 
-	/// Return the configuration of the last `create_room` of a room, or the
-	/// default configuration for a room the host does not know. The core reads
-	/// it before each feed update, preview, query and posted message of the
-	/// room. For a posted message it reads it for the room the product names,
-	/// before any check that the product created the room.
-	async fn room_config(&self, room_id: String) -> Result<latest::ChatRoomConfig, HostRejection>;
+	/// Return what the host keeps for one room of the product.
+	///
+	/// That is whether the product hosts the room or takes part as a bot, and
+	/// the configuration of its last `create_room`. The core reads it once
+	/// before each change to a room and before each query of the room. Before
+	/// a posted message it reads the room the product names, before any check
+	/// that the product created the room. `None` is a room that the product
+	/// never created; a host that cannot read its rooms returns a rejection,
+	/// not `None`.
+	async fn room(
+		&self,
+		room_id: String,
+	) -> Result<Option<crate::platform::ChatRoomState>, HostRejection>;
 
 	/// Replace the name, description, icon and empty-room text of a room. An
-	/// icon of `None` keeps the icon, and an empty icon removes it.
+	/// icon of `None` keeps the icon, and an empty icon removes it. A host that
+	/// does not serve it answers `Unsupported`.
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
 		metadata: latest::ChatRoomMetadata,
-	) -> Result<(), HostRejection>;
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Replace how a room shows in the chat list. A host that does not serve it
 	/// answers `Unsupported`.

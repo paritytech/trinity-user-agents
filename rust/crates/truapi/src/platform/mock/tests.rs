@@ -739,8 +739,7 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 	// test of a failing host reaches every one of them.
 	let room = || "lobby".to_string();
 	let refusals = vec![
-		block_on(p.list_chat_rooms(&product)).map(drop),
-		block_on(p.read_chat_room_config(&product, room())).map(drop),
+		block_on(p.chat_room(&product, room())).map(drop),
 		block_on(p.set_chat_room_metadata(
 			&product,
 			latest::HostChatSetRoomMetadataRequest {
@@ -752,7 +751,8 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 					placeholder: None,
 				},
 			},
-		)),
+		))
+		.map(drop),
 		block_on(p.set_chat_room_preview(
 			&product,
 			latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: empty_preview() },
@@ -769,7 +769,7 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 		))
 		.map(drop),
 	];
-	assert_eq!(refusals, vec![Err(latest::GenericError { reason: "chat down".into() }); 6]);
+	assert_eq!(refusals, vec![Err(latest::GenericError { reason: "chat down".into() }); 5]);
 
 	assert!(p.chat_rooms().is_empty());
 	assert!(p.posted_chat_messages().is_empty());
@@ -988,18 +988,27 @@ fn reset_clears_recordings_and_restores_policy_fallback() {
 	assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
 }
 
-// The core checks the room of each call that changes a room. A check
-// through a subscription keeps one sender for each call, so the mock
-// answers the check with one read, as the TS mock does.
+// The core reads the room of each call that changes a room. The mock answers
+// a room it keeps with its configuration and a room it never created with
+// `None`, as the TS mock does. A read through a subscription would keep one
+// sender for each call, so the mock reads without one.
 #[test]
-fn a_room_check_reads_the_room_list_once() {
+fn a_room_read_answers_the_room_without_a_subscriber() {
 	let p = MockPlatform::new();
 	let product = mock_product();
 	create_room(&p, "lobby");
+	let read = |room_id: &str| {
+		block_on(p.chat_room(&product, room_id.to_string())).expect("the mock reads its rooms")
+	};
 
-	let listed = block_on(p.list_chat_rooms(&product)).expect("the mock lists its rooms");
-
-	assert_eq!(listed.rooms, p.chat_rooms());
+	assert_eq!(
+		read("lobby"),
+		Some(ChatRoomState {
+			participating_as: latest::ChatRoomParticipation::RoomHost,
+			config: latest::ChatRoomConfig::default(),
+		})
+	);
+	assert_eq!(read("missing"), None);
 	assert!(p.chat_room_subscribers.lock().expect("chat subscribers poisoned").is_empty());
 }
 
@@ -1039,11 +1048,13 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		status: latest::ChatMessageStatus::Read,
 	};
 
-	block_on(p.set_chat_room_metadata(
-		&product,
-		latest::HostChatSetRoomMetadataRequest { room_id: room(), metadata: metadata.clone() },
-	))
-	.unwrap();
+	assert_eq!(
+		block_on(p.set_chat_room_metadata(
+			&product,
+			latest::HostChatSetRoomMetadataRequest { room_id: room(), metadata: metadata.clone() },
+		)),
+		Ok(ChatRoomChangeOutcome::Applied)
+	);
 	block_on(p.set_chat_room_preview(
 		&product,
 		latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: preview.clone() },
@@ -1058,7 +1069,13 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		Ok(ChatFeedOutcome::Applied)
 	);
 
-	assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));
+	assert_eq!(
+		block_on(p.chat_room(&product, room())),
+		Ok(Some(ChatRoomState {
+			participating_as: latest::ChatRoomParticipation::RoomHost,
+			config: config.clone(),
+		}))
+	);
 	assert_eq!(
 		p.chat_room_declarations("lobby"),
 		Some(ChatRoomDeclarations {

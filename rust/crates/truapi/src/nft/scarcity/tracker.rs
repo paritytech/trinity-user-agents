@@ -9,8 +9,7 @@ use subxt::utils::{AccountId32, H256};
 
 use super::chain::{ScarcityNft, nfts_by_owner};
 use crate::{
-	Spawner,
-	background_task::BackgroundTask,
+	BackgroundTask, Spawner,
 	chain::{DecodedEntryChanges, WatchedHead, WatchedStorage},
 	nft::{HeldItem, ItemKey, NftLedger},
 };
@@ -43,7 +42,7 @@ impl HoldingTracker {
 	pub fn start(deps: HoldingTrackerDeps) -> Self {
 		let HoldingTrackerDeps { ledger, storage, genesis, spawner } = deps;
 		let tracking = Tracking { ledger, storage, genesis };
-		Self { _tracking: BackgroundTask::spawn(&spawner, tracking.run()) }
+		Self { _tracking: spawner.create_task(tracking.run()) }
 	}
 }
 

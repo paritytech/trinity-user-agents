@@ -45,7 +45,9 @@ use truapi::{
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
 		ProductChatUserActionResponse,
 	},
-	platform::{ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome, ProductContext},
+	platform::{
+		ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome, ChatRoomState, ProductContext,
+	},
 };
 
 use crate::transcript::Transcript;
@@ -1083,25 +1085,29 @@ impl ChatPlatform for CliChatHost {
 		stream::once(async move { Ok(snapshot) }).chain(receiver.map(Ok)).boxed()
 	}
 
-	async fn read_chat_room_config(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-	) -> Result<ChatRoomConfig, GenericError> {
-		Ok(self.room_config(&room_id).unwrap_or_default())
+	) -> Result<Option<ChatRoomState>, GenericError> {
+		Ok(self.lock().rooms.get(&room_id).map(|room| ChatRoomState {
+			participating_as: room.participating_as,
+			config: room.config.clone(),
+		}))
 	}
 
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		request: HostChatSetRoomMetadataRequest,
-	) -> Result<(), GenericError> {
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
 		self.declare("metadata", &request.room_id, &request, |room| {
 			room.metadata = request.metadata.clone();
 			if let Some(icon) = &request.metadata.icon {
 				room.icon_url = icon.clone();
 			}
-		})
+		})?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn set_chat_room_preview(
@@ -1170,16 +1176,6 @@ impl ChatPlatform for CliChatHost {
 			"payload": hex::encode(request.update.encode()),
 		}));
 		Ok(ChatFeedOutcome::Applied)
-	}
-
-	/// The core checks the room of each change to a room against this list.
-	/// The default reads the subscription, which would leave one subscriber
-	/// for each check until the next room list goes out.
-	async fn list_chat_rooms(
-		&self,
-		_product: &ProductContext,
-	) -> Result<HostChatListSubscribeItem, GenericError> {
-		Ok(Self::room_list(&self.lock()))
 	}
 }
 

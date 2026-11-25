@@ -67,6 +67,7 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func cancelChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
+    func reclaimTransfer(messageId: Chat.MessageId, coinKeys: [Data])
     /// Asks the message source for the page before the window.
     func loadOlderMessages()
     /// Asks the message source for the page after the window.
@@ -93,6 +94,8 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     func didDeclineChatRequest()
 
+    func didFailReclaim(messageId: Chat.MessageId, error: Error)
+
     /// The chat of the screen went away, for example because its product deleted the room.
     func didRemoveChat()
 
@@ -101,7 +104,7 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 }
 
 @MainActor
-protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
+protocol ChatWireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable, AuthorizationPresentable {
     func showSendAsset(
         from view: ControllerBackedProtocol?,
         chatMetadata: ChatMetadata

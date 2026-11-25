@@ -75,6 +75,9 @@ pub struct Dimensions {
 }
 
 /// Typography presets, resolved by the host's design system.
+///
+/// The variants keep their SCALE index, so a preset added later goes at the
+/// end whatever its size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum TypographyStyle {
@@ -88,6 +91,14 @@ pub enum TypographyStyle {
 	BodyMediumRegular,
 	/// Small body text, regular weight.
 	BodySmallRegular,
+	/// Medium headline text, one step below `HeadlineLarge`.
+	HeadlineMedium,
+	/// Small headline text, one step below `HeadlineMedium`.
+	HeadlineSmall,
+	/// Extra large title text, one step below `HeadlineSmall`.
+	TitleExtraLarge,
+	/// Large title text, one step below `TitleExtraLarge`.
+	TitleLarge,
 }
 
 /// Button emphasis.
