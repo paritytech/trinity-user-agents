@@ -150,7 +150,7 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
     }
 }
 
-extension PocketFlight: UIViewControllerInteractiveTransitioning {
+extension PocketFlight: BackSwipeScrubbing {
     /// A close that fades is scrubbed too: the screen and its backdrop fade under the finger.
     func startInteractiveTransition(_ context: UIViewControllerContextTransitioning) {
         let toSlot = prepare(context)

@@ -22,7 +22,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     private let pageController = UIViewController()
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private lazy var edgeSwipe = PocketEdgeSwipe(screen: self) { [weak self] in self?.canSwipeBack == true }
     private var faceSetByPage = false
     private var isClosing = false
     private var isInFlight = false
@@ -65,7 +64,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         setupFace()
         setupPage()
         pullDown.install()
-        edgeSwipe.install()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -229,10 +227,8 @@ extension ExpandedPocketCardViewController: NavigationTransitionAnimating {
         return PocketFlight(screen: self, origin: origin, opening: operation == .push)
     }
 
-    func navigationInteractor(
-        for animator: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        edgeSwipe.interactor(for: animator)
+    var allowsBackSwipe: Bool {
+        canSwipeBack
     }
 }
 

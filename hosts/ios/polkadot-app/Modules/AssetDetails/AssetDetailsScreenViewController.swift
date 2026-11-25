@@ -18,7 +18,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private lazy var edgeSwipe = PocketEdgeSwipe(screen: self) { [weak self] in self?.canSwipeBack == true }
 
     private var isInFlight = false
 
@@ -40,7 +39,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         view.backgroundColor = .bgSurfaceMain
         setupHosting()
         pullDown.install()
-        edgeSwipe.install()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -138,10 +136,8 @@ extension AssetDetailsScreenViewController: NavigationTransitionAnimating {
         flight(opening: operation == .push)
     }
 
-    func navigationInteractor(
-        for animator: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        edgeSwipe.interactor(for: animator)
+    var allowsBackSwipe: Bool {
+        canSwipeBack
     }
 }
 

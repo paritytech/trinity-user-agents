@@ -7,7 +7,6 @@ import Testing
 /// of it has to be a moment of the close the timed flight plays.
 struct PocketFlightChoreographyTests {
     private let toSlot = CGPoint(x: 12, y: 420)
-    private let width: CGFloat = 393
 
     private var choreography: PocketFlightChoreography {
         PocketFlightChoreography(toSlot: toSlot)
@@ -64,27 +63,6 @@ struct PocketFlightChoreographyTests {
     @Test(arguments: [(0.1, 0.5), (0.2, 0), (0.6, 0)] as [(CGFloat, CGFloat)])
     func thePageIsGoneAFifthOfTheWayBack(progress: CGFloat, pageAlpha: CGFloat) {
         #expect(choreography.frame(progress: progress).pageAlpha == pageAlpha)
-    }
-
-    /// A finger can leave the screen's edges, and the card must not pass its
-    /// slot or its open place when it does.
-    @Test(arguments: [(-40, 0), (0, 0), (196.5, 0.5), (393, 1), (600, 1)] as [(CGFloat, CGFloat)])
-    func progressFollowsTheFingerAndStopsAtBothEnds(travel: CGFloat, progress: CGFloat) {
-        #expect(PocketFlightChoreography.progress(travel: travel, width: width) == progress)
-    }
-
-    /// A touch at the edge must not close a card by accident, and a flick must
-    /// not need a long drag. A slow drag is not a flick however far it would coast.
-    @Test(arguments: [
-        (118, 0, true),
-        (117, 0, false),
-        (0, 400, true),
-        (40, 1_200, true),
-        (40, 200, false),
-        (100, 250, false)
-    ] as [(CGFloat, CGFloat, Bool)])
-    func aReleaseClosesWhenItCameFarEnoughOrWasFlung(travel: CGFloat, velocity: CGFloat, commits: Bool) {
-        #expect(PocketFlightChoreography.commits(travel: travel, velocity: velocity, width: width) == commits)
     }
 
     /// The release takes the flight's time for the part of the way still to
