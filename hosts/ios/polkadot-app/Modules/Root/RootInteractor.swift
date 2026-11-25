@@ -65,6 +65,7 @@ final class RootInteractor {
     let observer: RootSetupObserver
     let appliedConfigReader: () -> RemoteAppConfig?
     let paymentAssetBranding: PaymentAssetBranding
+    let coinagePrivacyConfigStore: CoinagePrivacyConfigStore
     let clock: any Clock<Duration>
 
     private var completionTask: Task<Void, Never>?
@@ -89,6 +90,7 @@ final class RootInteractor {
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         appliedConfigReader: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         paymentAssetBranding: PaymentAssetBranding = .shared,
+        coinagePrivacyConfigStore: CoinagePrivacyConfigStore = .shared,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.chainRegistryClosure = chainRegistryClosure
@@ -103,6 +105,7 @@ final class RootInteractor {
         self.tldProvider = tldProvider
         self.appliedConfigReader = appliedConfigReader
         self.paymentAssetBranding = paymentAssetBranding
+        self.coinagePrivacyConfigStore = coinagePrivacyConfigStore
         self.clock = clock
     }
 
@@ -267,6 +270,7 @@ extension RootInteractor: RootInteractorInputProtocol {
         initializer.start()
 
         paymentAssetBranding.start()
+        coinagePrivacyConfigStore.start()
 
         let chainRegistry = chainRegistryClosure()
         beginSetupAttempt(with: chainRegistry)

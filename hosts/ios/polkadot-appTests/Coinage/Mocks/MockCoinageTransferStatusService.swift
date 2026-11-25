@@ -7,6 +7,7 @@ import SubstrateSdk
 final class MockCoinageTransferStatusService: CoinageTransferStatusServicing, @unchecked Sendable {
     private let lock = NSLock()
     private var recordedCoinKeys: [[Data]] = []
+    private var recordedGroupIds: [CoinageTxGroupId] = []
 
     let snapshots: [[PublicKey: CoinageTransferState]]
 
@@ -20,9 +21,19 @@ final class MockCoinageTransferStatusService: CoinageTransferStatusServicing, @u
         return recordedCoinKeys
     }
 
-    func subscribeStatuses(coinKeys: [Data]) -> AnyAsyncSequence<[PublicKey: CoinageTransferState]> {
+    var reclaimGroupIds: [CoinageTxGroupId] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedGroupIds
+    }
+
+    func subscribeStatuses(
+        coinKeys: [Data],
+        reclaimGroupId: CoinageTxGroupId
+    ) -> AnyAsyncSequence<[PublicKey: CoinageTransferState]> {
         lock.lock()
         recordedCoinKeys.append(coinKeys)
+        recordedGroupIds.append(reclaimGroupId)
         lock.unlock()
 
         let snapshots = snapshots

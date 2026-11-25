@@ -21,8 +21,7 @@ pub use self::{asset_hub::AssetHubRecoveryChain, recovered_purses::recovery_scan
 use self::recovered_purses::{NftScannedPurses, recovery_passes};
 use super::{HeldItem, ItemKey, ItemKeyDeriver, dao};
 use crate::{
-	Spawner,
-	background_task::BackgroundTask,
+	BackgroundTask, Spawner,
 	chain_runtime::RuntimeFailure,
 	gap_scan::{GapScanConfig, HoldingLookup, PurseScanError, PurseScanner},
 	host_logic::session::SessionState,
@@ -127,7 +126,7 @@ impl NftRecovery {
 	pub fn start(deps: NftRecoveryDeps) -> Self {
 		let spawner = deps.spawner.clone();
 		let db = deps.db.clone();
-		let following = BackgroundTask::spawn(&spawner, recover_during_sessions(Arc::new(deps)));
+		let following = spawner.create_task(recover_during_sessions(Arc::new(deps)));
 		Self(RecoveryState::Running { db, _following: following })
 	}
 
@@ -176,7 +175,7 @@ async fn recover_during_sessions(deps: Arc<NftRecoveryDeps>) {
 
 /// A run that retries until it succeeds.
 fn spawn_recovery_run(deps: &Arc<NftRecoveryDeps>) -> BackgroundTask {
-	BackgroundTask::spawn(&deps.spawner, recover_until_done(deps.clone()))
+	deps.spawner.create_task(recover_until_done(deps.clone()))
 }
 
 /// Runs recovery until a run succeeds, pausing longer after each failure.

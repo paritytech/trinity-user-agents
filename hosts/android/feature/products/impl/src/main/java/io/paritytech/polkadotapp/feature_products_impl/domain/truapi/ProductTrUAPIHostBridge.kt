@@ -439,7 +439,7 @@ internal fun logCoreLine(marker: String, detail: String) {
 
 // The priority each core marker is logged at, read once from the core's own table. A marker the
 // table keeps on the device, or does not list at all, has no priority here and is logged below the
-// level `SentryLogTree` forwards. Read lazily rather than in the file's initializer, so a core that
+// level `HostLogSinkTree` forwards. Read lazily rather than in the file's initializer, so a core that
 // cannot answer costs the log line instead of every top-level helper in this file.
 internal val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
     coreMarkers().mapNotNull { (marker, markerClass) ->

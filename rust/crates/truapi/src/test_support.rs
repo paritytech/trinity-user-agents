@@ -29,10 +29,10 @@ use crate::platform::{
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
-	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductContext, ProductId, ProductStorage as PlatformProductStorage, ProductStorageKey,
+	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
+	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -244,18 +244,6 @@ pub struct StubPlatform {
 	/// Open `subscribe_storage` streams by namespaced key; `write` and
 	/// `clear` push each change to the matching ones.
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
-	/// Every `begin_operation` as `(product_id, label)`, in order. The
-	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
-	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
-	/// Held open by a test so `begin_operation` is still in flight while the
-	/// dispatch awaiting it goes away.
-	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-	/// When set, `end_operation` records the call and then fails with this
-	/// reason, standing in for a host that drops the operation and still
-	/// reports an error.
-	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
@@ -364,7 +352,8 @@ pub fn test_stack(
 		generation: "test-generation".to_string(),
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
+	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
+	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, &allowed)
 		.expect("test stack is valid")
 }
 
@@ -449,6 +438,69 @@ pub fn published_test_descriptor(
 	descriptor["sequence"] = sequence.into();
 	descriptor["generation"] = generation.into();
 	descriptor
+}
+
+/// The test stack's descriptor at `sequence`, on the bundled chains and
+/// generation.
+pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
+}
+
+/// `descriptor` moved to the `testnet` TLD.
+pub fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["tld"] = "testnet".into();
+	descriptor
+}
+
+/// `descriptor` without its Bulletin chain. It still passes the descriptor
+/// rules, but the core cannot run it.
+pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.retain(|chain| chain["role"] != "Bulletin");
+	descriptor
+}
+
+/// The `ETag` every [`stored_test_record`] carries.
+const STORED_TEST_ETAG: &str = "\"stored\"";
+
+/// The record a store holds once a reader stored `descriptor`, fetched at
+/// the Unix time `fetched_at` and served with an `ETag`.
+pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
+	let (link, bytes) = sign_test_descriptor(descriptor);
+	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");
+	let served = trinity_stack::Served::Document { bytes: &bytes, etag: Some(STORED_TEST_ETAG) };
+	trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
+		.fetched(&pointer, served, fetched_at)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored")
+}
+
+/// The status of a core running `descriptor`, neither stale nor expired, with
+/// no restart pending.
+pub fn stack_status(
+	descriptor: &serde_json::Value,
+	last_refresh: Option<crate::platform::StackRefreshOutcome>,
+) -> crate::platform::StackStatus {
+	let plain: trinity_stack::Descriptor =
+		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
+	crate::platform::StackStatus {
+		descriptor: serde_json::to_string(&plain).expect("a descriptor always serialises"),
+		generation: plain.generation,
+		stale: false,
+		expired: false,
+		restart_required: false,
+		last_refresh,
+	}
+}
+
+/// The outcome of fetching a copy on another TLD.
+pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
+	Some(crate::platform::StackRefreshOutcome::Refused {
+		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+	})
 }
 
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
@@ -1199,59 +1251,6 @@ impl PlatformProductStorage for StubPlatform {
 		Box::pin(
 			stream::once(async move { Ok(v01::HostLocalStorageChangeItem { value }) }).chain(rx),
 		)
-	}
-}
-
-#[async_trait::async_trait]
-impl PlatformProductOperations for StubPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		let gate = self
-			.begin_operation_gate
-			.lock()
-			.expect("begin operation gate mutex poisoned")
-			.take();
-		if let Some(gate) = gate {
-			let _ = gate.await;
-		}
-		// The stub has no worker lifecycle to keep alive; it only records the
-		// call and hands back its position as the id.
-		let id = {
-			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
-			begun.push((product.product_id.clone(), label));
-			u32::try_from(begun.len()).expect("test product count fits in u32")
-		};
-		// The operation exists host-side from here on, so a test holding the
-		// gate keeps only the answer in flight.
-		let gate = self
-			.begin_operation_gate
-			.lock()
-			.expect("begin operation gate mutex poisoned")
-			.take();
-		if let Some(gate) = gate {
-			let _ = gate.await;
-		}
-		Ok(v01::HostWorkerBeginOperationResponse { id })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), v01::HostWorkerOperationError> {
-		self.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.push((product.product_id.clone(), id));
-		match self.end_operation_error {
-			Some(reason) => {
-				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })
-			},
-			None => Ok(()),
-		}
 	}
 }
 

@@ -86,7 +86,7 @@ class TrUAPIHostRuntimeProviderTest {
     fun `starts the core on the stack its chain environment bundles`() = runTest {
         val started = TestnetEnvironment.entries.associateWith { environment ->
             provider(environment = environment).runtime().getOrThrow()
-            runtimeConfig.captured.stack.let { StartedStack(it.tld(), it.allowsReservedValues) }
+            runtimeConfig.captured.stack.let { StartedStack(it.tld(), it.reservedValues.allowed) }
         }
 
         assertEquals(
@@ -133,7 +133,7 @@ class TrUAPIHostRuntimeProviderTest {
         installations = mockk(),
         extensionVersions = mockk(),
         pinnedPocketCards = pinnedPocketCards,
-        coreEventLogger = CoreEventLogger { _, _, _ -> },
+        coreEventLogger = CoreEventLogger { _, _, _, _ -> },
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
         materialsSwitch = mockk(relaxed = true),
         workerSupervisor = { mockk(relaxed = true) },

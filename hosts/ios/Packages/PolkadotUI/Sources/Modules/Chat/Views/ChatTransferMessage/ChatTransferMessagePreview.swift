@@ -32,7 +32,8 @@
                 (.claiming, nil),
                 (.claimed, nil),
                 (.claimed, "$55"),
-                (.failed, nil)
+                (.failed, nil),
+                (.returnedToSender, nil)
             ]
             return states.map { state, originalAmount in
                 let configuration = ChatTransferMessageConfiguration.inbox(
@@ -57,9 +58,14 @@
             let states: [(ChatTransferMessageConfiguration.OutgoingState, String?)] = [
                 (.sending, nil),
                 (.sent, nil),
+                (.unclaimed, nil),
                 (.claimed, nil),
                 (.claimed, "$99"),
-                (.failed, nil)
+                (.failed, nil),
+                (.reclaiming, nil),
+                (.reclaimed(partialAmount: nil), nil),
+                (.reclaimed(partialAmount: "$40"), nil),
+                (.reclaimFailed, nil)
             ]
             return states.map { state, originalAmount in
                 let configuration = ChatTransferMessageConfiguration.outbox(
