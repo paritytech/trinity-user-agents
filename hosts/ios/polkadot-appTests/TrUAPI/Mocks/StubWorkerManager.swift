@@ -33,38 +33,40 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         self.startupWindow = startupWindow
     }
 
-    /// Held open so a test can dispose a handler while its ask is still in
-    /// flight, which is the window the real manager has between the handler
-    /// asking and the core registering the request.
-    var holdsTheAsk = false
+    /// Lets a test dispose a claimed worker while its readiness check is suspended.
+    var suspendsReadiness = false
 
-    var asks: AsyncStream<Void> { entered.stream }
+    var readinessChecks: AsyncStream<Void> { entered.stream }
 
     /// One element per `currentExecution(of:)` call, so a test can wait until a caller has looked for a worker.
     var executionLookups: AsyncStream<Void> { lookups.stream }
 
-    func openTheAsk() {
+    func resumeReadiness() {
         gate.continuation.finish()
     }
 
-    func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
+    func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming {
+        references.claim(productId)
+    }
+
+    func waitUntilReady(_ productId: ProductId) async throws {
+        let suspend = suspendsReadiness
         entered.continuation.yield(())
-        if holdsTheAsk {
+        if suspend {
             for await _ in gate.stream {}
         }
-        references.acquireWorker(productId: productId)
 
-        return try await withTimeout(startupWindow) { [self] in
+        try await withTimeout(startupWindow) { [self] in
             for try await execution in executions(of: productId) {
-                if let execution { return execution }
+                if execution != nil { return }
             }
 
             throw TrUAPIWorkerError.noWorker(productId)
         }
     }
 
-    func releaseWorker(for productId: ProductId) {
-        references.releaseWorker(productId: productId)
+    func finishExecutions() {
+        subject.send(.finished)
     }
 
     func publish(_ executions: [ProductId: TrUAPIProductExecutionProtocol]) {
@@ -74,7 +76,7 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     /// Returns once one more value has reached a follower of `executions(of:)`,
     /// counting the value a new follower starts from. A follower takes the next
     /// value only after handling the last, so an arrival proves the value before
-    /// it was handled. Counts every follower, `ensureWorker` included.
+    /// it was handled. Counts every follower, `waitUntilReady` included.
     func awaitExecutionsDelivered() async {
         _ = await deliveredSignals.next()
     }
@@ -119,27 +121,40 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 /// threads is a data race, and the test that reads it fails at random.
 final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
     private let records = OSAllocatedUnfairLock(
-        initialState: (acquired: [ProductId](), released: [ProductId](), log: [String]())
+        initialState: (acquired: [ProductId](), released: [ProductId](), log: [String](), releaseCounts: [Int]())
     )
 
+    var releaseCounts: [Int] { records.withLock { $0.releaseCounts } }
     var acquired: [ProductId] { records.withLock { $0.acquired } }
     var released: [ProductId] { records.withLock { $0.released } }
     /// Both in the order they happened. A release reaching the core before its
     /// acquire drops the count of a worker another holder is drawing from.
     var log: [String] { records.withLock { $0.log } }
 
-    func acquireWorker(productId: ProductId) {
-        records.withLock {
+    func claim(_ productId: ProductId) -> any TrUAPIWorkerClaiming {
+        let index = records.withLock {
             $0.acquired.append(productId)
             $0.log.append("acquire \(productId)")
+            $0.releaseCounts.append(0)
+            return $0.releaseCounts.count - 1
+        }
+        return Claim { [self] in
+            records.withLock {
+                $0.releaseCounts[index] += 1
+                $0.released.append(productId)
+                $0.log.append("release \(productId)")
+            }
         }
     }
 
-    func releaseWorker(productId: ProductId) {
-        records.withLock {
-            $0.released.append(productId)
-            $0.log.append("release \(productId)")
+    private final class Claim: TrUAPIWorkerClaiming, Sendable {
+        let onRelease: @Sendable () -> Void
+
+        init(_ onRelease: @escaping @Sendable () -> Void) {
+            self.onRelease = onRelease
         }
+
+        func release() { onRelease() }
     }
 
     var exited: [ProductId] {
@@ -150,6 +165,6 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
     }
 
     func workerExited(productId: ProductId) {
-        records.withLock { _ = $0.log.append("exited \(productId)") }
+        records.withLock { $0.log.append("exited \(productId)") }
     }
 }
