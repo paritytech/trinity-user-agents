@@ -26,7 +26,7 @@ enum PocketFlightTiming {
         .timingCurve(curveStart.x, curveStart.y, curveEnd.x, curveEnd.y, duration: duration)
     }
 
-    static func makeAnimator() -> UIViewPropertyAnimator {
+    static func makeAnimator(duration: TimeInterval = PocketFlightTiming.duration) -> UIViewPropertyAnimator {
         UIViewPropertyAnimator(
             duration: duration,
             timingParameters: UICubicTimingParameters(controlPoint1: curveStart, controlPoint2: curveEnd)
@@ -44,7 +44,7 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
     /// The page is shown only once the Pocket's cards have left it, and is gone
     /// before they come back over it.
     private static let pageDelay: CGFloat = 0.35
-    private static let pageFadeOut = PocketFlightTiming.duration * 0.2
+    private static let pageFadeOut = PocketFlightTiming.duration * Double(PocketFlightChoreography.pageFadeOutFraction)
     private static let crossfadeDuration: TimeInterval = 0.18
 
     enum Motion: Equatable {
@@ -53,11 +53,25 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
         case crossfade
     }
 
+    private struct Scrub {
+        let context: UIViewControllerContextTransitioning
+        let choreography: PocketFlightChoreography
+    }
+
+    private struct Release {
+        let progress: CGFloat
+        let commits: Bool
+    }
+
     private let screen: PocketFlightScreen
     private let origin: PocketOrigin?
     private let opening: Bool
     /// Read once, so the duration UIKit is told and the motion that runs agree.
     private let reduceMotion: Bool
+    /// The close a finger is scrubbing, from when UIKit starts it until the finger lets go.
+    private var scrub: Scrub?
+    /// A release that came before UIKit started the transition.
+    private var earlyRelease: Release?
 
     init(screen: PocketFlightScreen, origin: PocketOrigin?, opening: Bool) {
         self.screen = screen
@@ -124,6 +138,77 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
+        guard !context.isInteractive else { return }
+
+        switch Self.motion(toSlot: prepare(context), reduceMotion: reduceMotion) {
+        case let .fly(slot):
+            fly(context, toSlot: slot)
+        case .fade,
+             .crossfade:
+            fadeInPlace(context)
+        }
+    }
+}
+
+extension PocketFlight: UIViewControllerInteractiveTransitioning {
+    /// A close with no slot to fly to, or under Reduce Motion, has nothing for a finger to scrub and plays its fade.
+    func startInteractiveTransition(_ context: UIViewControllerContextTransitioning) {
+        guard case let .fly(toSlot) = Self.motion(toSlot: prepare(context), reduceMotion: reduceMotion) else {
+            context.finishInteractiveTransition()
+            fadeInPlace(context)
+            return
+        }
+
+        screen.setItemHidden(true)
+        scrub = Scrub(context: context, choreography: PocketFlightChoreography(toSlot: toSlot))
+        update(progress: 0)
+
+        if let earlyRelease {
+            release(progress: earlyRelease.progress, commits: earlyRelease.commits)
+        }
+    }
+
+    /// Draws the close at `progress`, from 0, the item open, to 1, the item back in its slot.
+    func update(progress: CGFloat) {
+        guard let scrub else { return }
+
+        apply(scrub.choreography.frame(progress: progress))
+        scrub.context.updateInteractiveTransition(progress)
+    }
+
+    /// Runs the rest of the close, or the way back to the open screen, from where the finger left it.
+    func release(progress: CGFloat, commits: Bool) {
+        guard let scrub else {
+            earlyRelease = Release(progress: progress, commits: commits)
+            return
+        }
+
+        self.scrub = nil
+        let context = scrub.context
+        let end = scrub.choreography.frame(progress: commits ? 1 : 0)
+        let duration = PocketFlightChoreography.releaseDuration(remaining: commits ? 1 - progress : progress)
+
+        let animator = PocketFlightTiming.makeAnimator(duration: duration)
+        animator.addAnimations { [self] in
+            screen.moveItem(by: end.itemOffset)
+            screen.setPageAlpha(end.pageAlpha)
+        }
+        animator.addCompletion { [self] _ in finish(context) }
+
+        if commits {
+            context.finishInteractiveTransition()
+        } else {
+            context.cancelInteractiveTransition()
+        }
+        origin?.moveOpenItem(by: end.pocketOffset, clearance: end.clearance, animatedOver: duration)
+        animator.startAnimation()
+    }
+}
+
+private extension PocketFlight {
+    /// Places both screens for the flight and measures the way from the item's place to its slot, which is nil
+    /// when the Pocket cannot place the item.
+    func prepare(_ context: UIViewControllerContextTransitioning) -> CGPoint? {
         let container = context.containerView
         if opening {
             screen.view.frame = context.finalFrame(for: screen)
@@ -136,23 +221,19 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
         screen.beginFlight()
         container.layoutIfNeeded()
 
-        let toSlot = origin?.frame(of: screen.pocketItem).map { slot in
+        return origin?.frame(of: screen.pocketItem).map { slot in
             let item = screen.itemFrame(in: container)
             let landing = container.convert(slot, from: nil)
             return CGPoint(x: landing.minX - item.minX, y: landing.minY - item.minY)
         }
-
-        switch Self.motion(toSlot: toSlot, reduceMotion: reduceMotion) {
-        case let .fly(slot):
-            fly(context, toSlot: slot)
-        case .fade,
-             .crossfade:
-            fadeInPlace(context)
-        }
     }
-}
 
-private extension PocketFlight {
+    func apply(_ frame: PocketFlightFrame) {
+        screen.moveItem(by: frame.itemOffset)
+        screen.setPageAlpha(frame.pageAlpha)
+        origin?.moveOpenItem(by: frame.pocketOffset, clearance: frame.clearance, animatedOver: nil)
+    }
+
     func fly(_ context: UIViewControllerContextTransitioning, toSlot: CGPoint) {
         let lifted = CGSize(width: -toSlot.x, height: -toSlot.y)
 

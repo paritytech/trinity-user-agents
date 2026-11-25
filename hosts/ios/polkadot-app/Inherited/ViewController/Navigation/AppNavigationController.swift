@@ -21,6 +21,19 @@ protocol NavigationControlling: AnyObject {
 /// A screen that animates its own push and pop. Nil keeps the default transition.
 protocol NavigationTransitionAnimating: AnyObject {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning?
+
+    /// What drives `animator` when a gesture started the transition. Nil lets it run on its own.
+    func navigationInteractor(
+        for animator: UIViewControllerAnimatedTransitioning
+    ) -> UIViewControllerInteractiveTransitioning?
+}
+
+extension NavigationTransitionAnimating {
+    func navigationInteractor(
+        for _: UIViewControllerAnimatedTransitioning
+    ) -> UIViewControllerInteractiveTransitioning? {
+        nil
+    }
 }
 
 protocol AppNavigationControllerTransitionObserving: AnyObject {
@@ -38,6 +51,10 @@ protocol AppNavigationControllerTransitionObserving: AnyObject {
 
 class AppNavigationController: UINavigationController {
     weak var transitionObserver: AppNavigationControllerTransitionObserving?
+
+    /// The screen animating the transition in progress. A popped screen has left the stack by the time UIKit asks
+    /// what drives its animator, so it is kept from when it supplied one.
+    private weak var transitioningScreen: NavigationTransitionAnimating?
 
     var closeButtonImage: UIImage = .buttonClose
 
@@ -235,7 +252,15 @@ extension AppNavigationController: UINavigationControllerDelegate {
         to toViewController: UIViewController
     ) -> UIViewControllerAnimatedTransitioning? {
         let moving = operation == .push ? toViewController : fromViewController
-        return (moving as? NavigationTransitionAnimating)?.navigationAnimator(for: operation)
+        transitioningScreen = moving as? NavigationTransitionAnimating
+        return transitioningScreen?.navigationAnimator(for: operation)
+    }
+
+    func navigationController(
+        _: UINavigationController,
+        interactionControllerFor animationController: UIViewControllerAnimatedTransitioning
+    ) -> UIViewControllerInteractiveTransitioning? {
+        transitioningScreen?.navigationInteractor(for: animationController)
     }
 }
 
