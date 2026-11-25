@@ -2,11 +2,13 @@
 //!
 //! The core takes all of its chain configuration from the stack.
 //! [`StackRefresh::load`] checks the descriptor a host build bundles against
-//! the key in the stack's link, starts from it or from a newer copy the core
-//! stored, and fetches newer copies while the core runs. A copy on another
-//! TLD than the bundled one is refused. It resolves the [`Stack`] the core
-//! runs on. A runtime built on that [`Stack`] also checks the genesis hash of
-//! each chain it connects to, and the refresh reports the ones that differ.
+//! the key in the stack's link and against the build's
+//! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
+//! stored, and fetches newer copies while the core runs. Every copy is held to
+//! the same policy, and a copy on another TLD than the bundled one is refused.
+//! It resolves the [`Stack`] the core runs on. A runtime built on that
+//! [`Stack`] also checks the genesis hash of each chain it connects to, and
+//! the refresh reports the ones that differ.
 
 mod held;
 mod pinned;
@@ -67,6 +69,78 @@ const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
+/// A host build's policy on reserved values for its stack.
+///
+/// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
+/// reserve more here and cannot reserve fewer. A stack that names a reserved
+/// value, the core's or the build's, under any chain role starts only when
+/// `allowed` is set.
+///
+/// The core refuses a policy that would reserve less than it says: `allowed`
+/// together with extra values, which the allowed stack may name anyway, and
+/// an extra TLD that no stack can have, one outside
+/// [`DOTNS_TLDS`](crate::platform::DOTNS_TLDS). It refuses the policy before
+/// it reads the stack.
+#[derive(Clone, Default)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReservedValuesPolicy {
+	/// Whether the stack may name reserved values. Only a Polkadot or
+	/// Polkadot-fork build sets it, and then reserves no extra values.
+	pub allowed: bool,
+	/// Genesis hashes reserved on top of the core's.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub extra_genesis_hashes: Vec<[u8; 32]>,
+	/// dotNS TLDs reserved on top of the core's, each written as a stack's TLD
+	/// is, without the leading dot.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub extra_tlds: Vec<String>,
+}
+
+impl ReservedValuesPolicy {
+	/// Allows the stack every reserved value and reserves no extra ones.
+	pub const ALLOWED: Self =
+		Self { allowed: true, extra_genesis_hashes: Vec::new(), extra_tlds: Vec::new() };
+
+	/// Refuses extra values that would reserve nothing: any at all when the
+	/// stack is allowed reserved values, and a TLD no stack can have.
+	fn refuse_extras_that_reserve_nothing(&self) -> Result<(), StackError> {
+		if self.allowed && !(self.extra_genesis_hashes.is_empty() && self.extra_tlds.is_empty()) {
+			return Err(StackError::AllowedWithExtras);
+		}
+		match self.extra_tlds.iter().find(|tld| !DOTNS_TLDS.contains(&tld.as_str())) {
+			Some(tld) => Err(StackError::UnsupportedReservedTld { tld: tld.clone() }),
+			None => Ok(()),
+		}
+	}
+
+	fn refuse_tld(&self, tld: &str) -> Result<(), StackError> {
+		if self.allowed {
+			return Ok(());
+		}
+		if tld == RESERVED_TLD || self.extra_tlds.iter().any(|extra| extra == tld) {
+			return Err(StackError::ReservedTld { tld: tld.to_owned() });
+		}
+		Ok(())
+	}
+
+	fn refuse_genesis(
+		&self,
+		genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
+	) -> Result<(), StackError> {
+		if self.allowed {
+			return Ok(());
+		}
+		let is_reserved = |genesis_hash: &[u8; 32]| {
+			RESERVED_GENESIS_HASHES.contains(genesis_hash) ||
+				self.extra_genesis_hashes.contains(genesis_hash)
+		};
+		match genesis_hashes.into_iter().find(is_reserved) {
+			Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
+			None => Ok(()),
+		}
+	}
+}
+
 /// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
 /// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
 /// and the Asset Hub contracts the core reads.
@@ -91,8 +165,7 @@ pub struct StackIdentity {
 	/// An opaque, non-empty string that tells this stack apart from others,
 	/// including a fork with its source's genesis hashes.
 	///
-	/// [`Stack::from_descriptor`], which [`Stack::bundled`] and
-	/// [`StackRefresh::load`] build through, takes
+	/// [`Stack::bundled`] and [`StackRefresh::load`] take
 	/// `trinity_stack::Pointer::stack_id` of the pointer, the key in hex. The CLI takes the same
 	/// for a link or a URL, and `file:` and the canonical path for a local descriptor file. A
 	/// test host passes any string.
@@ -158,13 +231,28 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
-	/// The stack runs on Polkadot's TLD, which this build does not allow.
-	#[display("stack uses Polkadot's reserved tld {RESERVED_TLD}, which this build does not allow")]
-	ReservedTld,
-	/// A chain, under any role, has one of Polkadot's genesis hashes, which
-	/// this build does not allow.
+	/// The build allows its stack reserved values and also reserves extra
+	/// ones, which that stack may then name.
 	#[display(
-		"stack uses Polkadot's reserved genesis hash 0x{}, which this build does not allow",
+		"reserved values that allow the stack every reserved value cannot reserve extra ones"
+	)]
+	AllowedWithExtras,
+	/// The build reserves a TLD that no stack can have, so it reserves nothing.
+	#[display("reserved tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
+	UnsupportedReservedTld {
+		/// The entry as the build wrote it.
+		tld: String,
+	},
+	/// The TLD is reserved, and the build does not allow it.
+	#[display("stack uses the reserved tld {tld}, which this build does not allow")]
+	ReservedTld {
+		/// The reserved TLD.
+		tld: String,
+	},
+	/// A chain, under any role, has a reserved genesis hash, and the build
+	/// does not allow it.
+	#[display(
+		"stack uses the reserved genesis hash 0x{}, which this build does not allow",
 		hex::encode(genesis_hash)
 	)]
 	ReservedGenesis {
@@ -181,38 +269,38 @@ pub enum StackError {
 
 impl Stack {
 	/// The stack a host build bundles, read from the bundled copy alone:
-	/// `pointer` is the stack's link (`polkadotapp://stack?key=0x…&url=…`) and
-	/// `descriptor` the signed copy the build ships. A host starts through
+	/// `pointer` is the stack's link (`polkadotapp://stack?key=0x…&url=…`),
+	/// `descriptor` the signed copy the build ships, and `reserved_values` the
+	/// build's policy on reserved values. A host starts through
 	/// [`StackRefresh::load`] instead, which also reads the copy the core
 	/// stored.
 	///
-	/// Fails like [`Self::from_descriptor`], and when the copy does not verify
-	/// under the pointer's key.
+	/// Fails with a [`StackError`] naming the rule the policy or the copy
+	/// breaks, the policy's first. `validUntil` and `expiresAt` are not
+	/// checked.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
-		allows_reserved_values: bool,
+		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
 		let pointer = signed_pointer(pointer)?;
 		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
-		Self::from_descriptor(&pointer, &verified.descriptor, allows_reserved_values)
+		Self::from_descriptor(&pointer, &verified.descriptor, reserved_values)
 	}
 
 	/// The stack a verified descriptor read from `pointer` names, when the
-	/// core can run it. Its id is the pointer's and its generation the
-	/// descriptor's. `allows_reserved_values` is whether the build lets it use
-	/// Polkadot's genesis hashes and the `dot` TLD.
-	///
-	/// Fails with a [`StackError`] naming the rule the descriptor breaks.
+	/// core can run it under `reserved_values`, a policy already checked. Its
+	/// id is the pointer's and its generation the descriptor's. A reserved
+	/// genesis hash is refused under any role, including one the core does
+	/// not read.
 	/// `validUntil` and `expiresAt` are not checked.
-	pub fn from_descriptor(
+	fn from_descriptor(
 		pointer: &Pointer,
 		descriptor: &Descriptor,
-		allows_reserved_values: bool,
+		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
-		if !allows_reserved_values {
-			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
-		}
+		reserved_values.refuse_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		let genesis_of =
 			|chain: ChainIdentifier| descriptor.chain(chain.into()).map(Chain::genesis);
 		let required = |chain| genesis_of(chain).ok_or(StackError::MissingChain { chain });
@@ -224,12 +312,12 @@ impl Stack {
 		};
 		let identity =
 			StackIdentity { id: pointer.stack_id(), generation: descriptor.generation.clone() };
-		let stack = Self::new(
+		let stack = Self::from_chains(
 			identity,
 			descriptor.network.clone(),
 			descriptor.tld.clone(),
 			chains,
-			allows_reserved_values,
+			reserved_values,
 		)?;
 		Ok(Self { account_data_store: account_data_store_in(descriptor), ..stack })
 	}
@@ -237,15 +325,28 @@ impl Stack {
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's. It names no contracts.
 	///
-	/// Applies the same TLD and reserved-value rules as
-	/// [`Self::from_descriptor`], and refuses an empty id or generation and an
+	/// Applies the same policy, TLD and reserved-value rules as
+	/// [`Self::bundled`], and refuses an empty id or generation and an
 	/// all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
 		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
-		allows_reserved_values: bool,
+		reserved_values: &ReservedValuesPolicy,
+	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
+		Self::from_chains(identity, network, tld, chains, reserved_values)
+	}
+
+	/// Checks a stack's identity, TLD and chains under a policy already
+	/// checked.
+	fn from_chains(
+		identity: StackIdentity,
+		network: String,
+		tld: String,
+		chains: StackChains,
+		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let fields = [("id", &identity.id), ("generation", &identity.generation)];
 		if let Some((field, _)) = fields.into_iter().find(|(_, value)| value.is_empty()) {
@@ -261,12 +362,8 @@ impl Stack {
 		if asset_hub == [0; 32] {
 			return Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub });
 		}
-		if !allows_reserved_values {
-			if tld == RESERVED_TLD {
-				return Err(StackError::ReservedTld);
-			}
-			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
-		}
+		reserved_values.refuse_tld(&tld)?;
+		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		Ok(Self { identity, network, tld, chains, account_data_store: None, checks: None })
 	}
 
@@ -356,15 +453,6 @@ fn signed_pointer(link: &str) -> Result<Pointer, StackError> {
 	match pointer.key() {
 		Some(_) => Ok(pointer),
 		None => Err(StackError::Unsigned),
-	}
-}
-
-fn refuse_reserved_genesis(
-	genesis_hashes: impl IntoIterator<Item = [u8; 32]>,
-) -> Result<(), StackError> {
-	match genesis_hashes.into_iter().find(|hash| RESERVED_GENESIS_HASHES.contains(hash)) {
-		Some(genesis_hash) => Err(StackError::ReservedGenesis { genesis_hash }),
-		None => Ok(()),
 	}
 }
 

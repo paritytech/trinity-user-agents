@@ -218,7 +218,7 @@ fn load(
 	futures::executor::block_on(StackRefresh::load(
 		&link,
 		&bundled,
-		false,
+		ReservedValuesPolicy::default(),
 		Box::new(records),
 		timer,
 		Box::new(clock),
@@ -286,6 +286,30 @@ fn people_gave(answered: [u8; 32]) -> Vec<StackMismatch> {
 		named: TEST_STACK_PEOPLE,
 		answered,
 	}]
+}
+
+/// The policy is the build's own and holds for every copy it will run, so a
+/// fault in it is reported before the link or the bundled copy is read.
+#[test]
+fn a_policy_fault_is_reported_before_the_link() {
+	let policy = ReservedValuesPolicy {
+		extra_tlds: vec!["kusama".to_string()],
+		..ReservedValuesPolicy::default()
+	};
+
+	let refused = futures::executor::block_on(StackRefresh::load(
+		"not a stack link",
+		b"not a descriptor",
+		policy,
+		Box::new(Arc::<MemoryRecords>::default()),
+		Arc::new(ManualTimer::default()),
+		Box::new(manual_clock()),
+	));
+
+	assert_eq!(
+		refused.err(),
+		Some(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })
+	);
 }
 
 /// A host that is offline at launch still runs: the stack comes from the
@@ -524,7 +548,7 @@ fn a_record_read_that_never_finishes_starts_from_the_bundled_copy() {
 	let mut load = Box::pin(StackRefresh::load(
 		&link,
 		&bundled,
-		false,
+		ReservedValuesPolicy::default(),
 		Box::new(records),
 		timer.clone(),
 		Box::new(manual_clock()),

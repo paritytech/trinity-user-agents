@@ -179,8 +179,9 @@ Both host configs carry a `Stack`, the core's only chain configuration. Its
 doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell puts three things in its runtime config: the stack's
-pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. The core resolves the `Stack` from them with
+pointer, the signed descriptor its build bundles, and the build's
+[`ReservedValuesPolicy`](src/stack.rs), whose doc says what the core reserves
+and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
 A Rust host that resolves its chains itself, such as the CLI, uses
@@ -248,7 +249,10 @@ The check has three limits:
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start,
+whichever has the higher `sequence`. The bundled descriptor has to be one the
+core can run under the build's policy even when the stored one is newer, so a
+build that refuses its own bundle fails on every device, not only on fresh
+installs. It never waits on the network to start,
 and waits a few seconds at most for the stored copy before it starts from the
 bundled one.
 
@@ -407,7 +411,7 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`, and the host
+bindings expose it as `claim_worker`, one reference per claim, and the host
 reports a worker that stopped without being asked, because it crashed, failed
 to boot or the system killed it, with `worker_exited`: while references remain
 the ledger requests `Start` again, and the core hands the restarted worker its

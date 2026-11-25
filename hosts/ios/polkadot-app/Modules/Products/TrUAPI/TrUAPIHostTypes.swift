@@ -19,4 +19,5 @@ typealias TrUAPIHostPaymentTopUpError = HostPaymentTopUpError
 typealias TrUAPIHostShape = Shape
 typealias TrUAPIHostHorizontalAlignment = HorizontalAlignment
 typealias TrUAPIHostVerticalAlignment = VerticalAlignment
+typealias TrUAPIHostTypographyStyle = TypographyStyle
 typealias TrUAPIPermissionDecision = PermissionDecision
