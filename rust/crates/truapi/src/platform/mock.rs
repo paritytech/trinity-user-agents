@@ -1004,7 +1004,7 @@ pub fn mock_stack(
 	let identity =
 		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
+	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, 0, false)
 		.expect("a mock stack names no reserved value")
 }
 

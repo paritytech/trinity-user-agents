@@ -394,6 +394,7 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
+			bundled.sequence(),
 			true,
 		);
 

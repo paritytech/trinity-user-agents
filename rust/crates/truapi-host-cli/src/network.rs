@@ -207,6 +207,7 @@ impl Stack {
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
+			self.descriptor.sequence,
 			true,
 		)
 	}

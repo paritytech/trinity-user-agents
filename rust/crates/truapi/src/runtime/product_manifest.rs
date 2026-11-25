@@ -822,7 +822,8 @@ pub enum CachePolicy {
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
 /// younger than [`MANIFEST_TTL_SECS`] and was read in the run the stack's
 /// chains are in, and where it was read. Whatever `fetch` answers, including
-/// that there is nothing published, is cached for that lifetime.
+/// that there is nothing published, is cached for that lifetime, unless a
+/// later run of the stack cached the entry, which is left as it is.
 ///
 /// A failed lookup is not cached. It says nothing about what is published,
 /// only that the chain could not be read, and holding that for a day would
@@ -844,9 +845,10 @@ where
 	// honoured forever. The TTL is documented as the revocation bound, so such
 	// an entry is one a publisher could never withdraw. Treating it as stale
 	// costs one lookup and cannot be worse than that.
+	let stored = platform.read_core_storage(key.clone()).await.ok().flatten();
 	if policy == CachePolicy::UseCache &&
-		let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
-		let Some(entry) = run.read_stamped(&bytes) &&
+		let Some(bytes) = &stored &&
+		let Some(entry) = run.read_stamped(bytes) &&
 		let Ok(cached) = CachedManifest::decode(&mut &*entry) &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
@@ -855,7 +857,9 @@ where
 	}
 
 	let json = fetch().await?;
-	let entry = encode_cached_root_manifest(run, json.as_deref(), now);
-	let _ = platform.write_core_storage(key, entry).await;
+	if !stored.as_deref().is_some_and(|bytes| run.later_run_stamped(bytes)) {
+		let entry = encode_cached_root_manifest(run, json.as_deref(), now);
+		let _ = platform.write_core_storage(key, entry).await;
+	}
 	Ok((json, DotnsRead::Fetched))
 }

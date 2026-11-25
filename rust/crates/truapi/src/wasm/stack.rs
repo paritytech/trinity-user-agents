@@ -102,6 +102,7 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 /// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
 /// `assetHub`, `people`, `bulletin` and the optional `relay`, each
 /// `{ genesisHash }`, and `allowsReservedValues`, which defaults to false.
+/// A test stack has no descriptor, so its `sequence` is 0.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	let genesis = |role: &str| {
@@ -136,6 +137,7 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,
+		0,
 		get_optional_bool_at(
 			stack,
 			"allowsReservedValues",

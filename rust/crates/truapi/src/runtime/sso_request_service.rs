@@ -22,7 +22,10 @@ use crate::{
 	background_task::BackgroundTask,
 	chain_runtime::ChainRuntime,
 	host_logic::{
-		session::{SessionInfo, SessionState, encode_persisted_session, usernames_record},
+		session::{
+			SessionInfo, SessionState, encode_persisted_session, usernames_record,
+			usernames_record_vouches_for,
+		},
 		session_store::SessionStoreChangeNotifier,
 	},
 	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo},
@@ -234,7 +237,9 @@ impl SsoRequestService {
 	async fn blob_usernames(&self, blob: &[u8]) -> BlobUsernames {
 		match self.platform.read_core_storage(CoreStorageKey::SessionUsernamesRun).await {
 			Ok(None) => BlobUsernames::Unrecorded,
-			Ok(Some(record)) if record == usernames_record(&self.host_config.stack.run(), blob) => {
+			Ok(Some(record))
+				if usernames_record_vouches_for(&self.host_config.stack.run(), &record, blob) =>
+			{
 				BlobUsernames::Current
 			},
 			Ok(Some(_)) | Err(_) => BlobUsernames::Stale,
@@ -350,7 +355,8 @@ impl SsoRequestService {
 	}
 
 	/// Rewrites the `AuthSession` slot with `named` while it still holds
-	/// `stored`, and records the run of its usernames.
+	/// `stored`, and records the run of its usernames. A slot whose usernames
+	/// a later run of the stack recorded is left as it is, with its record.
 	async fn store_named_session(&self, stored: &[u8], named: &SessionInfo) {
 		match self.platform.read_core_storage(CoreStorageKey::AuthSession).await {
 			Ok(Some(latest)) if latest == stored => {},
@@ -359,6 +365,12 @@ impl SsoRequestService {
 				warn!(reason = %error.reason, "reading the stored session to name it failed");
 				return;
 			},
+		}
+		let record = self.platform.read_core_storage(CoreStorageKey::SessionUsernamesRun).await;
+		if let Ok(Some(record)) = record &&
+			self.host_config.stack.run().later_run_stamped(&record)
+		{
+			return;
 		}
 		let blob = encode_persisted_session(named);
 		if blob == stored {

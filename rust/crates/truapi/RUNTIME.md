@@ -239,8 +239,8 @@ so the core notices a wipe at its next start.
 These values the core stores about the chains carry the run they were written
 in:
 
-- Cached manifests and allowance keys from another run, or stored without a
-  run, are ignored until they are written again.
+- Cached manifests and allowance keys from an earlier run, or stored without
+  a run, are ignored until they are written again.
 - The ring-VRF registry is the wallet's own record, so it is kept. Each ring
   names its chain, and the registry loses the rings on the chains of its run
   that restarted: all of them when the `generation` changed, otherwise those
@@ -250,6 +250,26 @@ in:
   `AuthSession` blob were read, with a hash of that blob.
 
 The session and the stored permissions are kept.
+
+Runs are ordered by the descriptor's `sequence`: a runtime records the
+`sequence` of the descriptor it started from next to its run. A runtime can be
+in an earlier run than the values in storage, as when the stored descriptor
+could not be read and it started from the bundled copy, or when two tabs that
+share storage start on either side of a refresh. What a later run stored then
+reads as nothing and is neither cleared nor written over: an allowance key is
+not stored, revoking a product leaves the later run's keys, a manifest read is
+not cached, an update of the ring-VRF registry is refused, and the usernames a
+lookup finds stay out of the `AuthSession` slot. Ending the session still
+clears its allowance keys whichever run stored them, so a revoked session
+keeps no secret at rest. Values of another run with the same `sequence`,
+which a signed stack never publishes, are replaced like an earlier run's. A
+value stamped before the stamp carried the `sequence` is not read, like one
+stored without a run.
+
+Finding a later run's values does not set `restart_required`. The fetch that
+brings the later descriptor sets it, as for any newer copy, and when the
+stored copy could not be read, building the runtime again could fail the same
+way.
 
 The public-profile cache of a native host does not carry the run. It is keyed
 by username and serves a stored record first, so after a wipe a profile read

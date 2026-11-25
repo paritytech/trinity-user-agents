@@ -357,27 +357,53 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 /// Identity of every [`test_stack`].
 pub const TEST_STACK_ID: &str = "test-stack";
 
-/// A stack on `tld` over these chains, without a relay. Reserved values are
-/// allowed, so a test may run on `dot`.
+/// A stack on `tld` over these chains, without a relay, read from a
+/// descriptor with `sequence` 0. Reserved values are allowed, so a test may
+/// run on `dot`.
 pub fn test_stack(
 	tld: &str,
 	people: [u8; 32],
 	bulletin: [u8; 32],
 	asset_hub: [u8; 32],
 ) -> crate::platform::Stack {
+	test_stack_from(tld, people, bulletin, asset_hub, 0)
+}
+
+/// A [`test_stack`] read from a descriptor with `sequence`.
+pub fn test_stack_from(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: [u8; 32],
+	sequence: u32,
+) -> crate::platform::Stack {
 	let identity = crate::platform::StackIdentity {
 		id: TEST_STACK_ID.to_string(),
 		generation: "test-generation".to_string(),
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
-		.expect("test stack is valid")
+	crate::platform::Stack::new(
+		identity,
+		"paseo".to_string(),
+		tld.to_string(),
+		chains,
+		sequence,
+		true,
+	)
+	.expect("test stack is valid")
 }
 
 /// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
 /// and `asset_hub`: what a cached manifest must name to be read on it.
 pub fn test_run(asset_hub: [u8; 32]) -> crate::platform::StackRun {
 	test_stack("paseo", [0; 32], [0xbb; 32], asset_hub).run()
+}
+
+/// A [`test_run`] started from a descriptor with `sequence`. Over another
+/// `asset_hub` and with `sequence` above 0, it is a later run than a
+/// [`test_run`], as after a wipe the operator published a new descriptor for.
+pub fn test_run_from(asset_hub: [u8; 32], sequence: u32) -> crate::platform::StackRun {
+	test_stack_from("paseo", [0; 32], [0xbb; 32], asset_hub, sequence).run()
 }
 
 /// A genesis hash no [`StubPlatform`] serves: `connect` to it always fails.

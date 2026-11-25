@@ -4,8 +4,8 @@ use crate::{
 	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{
 		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, dotns_usernames_responder,
-		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, unnamed_sso_session_info,
-		wait_until,
+		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, test_run_from,
+		test_stack_from, unnamed_sso_session_info, wait_until,
 	},
 };
 use futures::{FutureExt, executor::block_on, future::BoxFuture};
@@ -942,5 +942,58 @@ fn a_usernames_record_that_cannot_be_read_drops_the_usernames() {
 	assert_eq!(
 		host.session_state.current(),
 		Some(SessionInfo { lite_username: None, full_username: None, ..stored })
+	);
+}
+
+/// The usernames record names the run they were read in, whichever descriptor
+/// `sequence` the runtime that read them started from. A runtime in the same
+/// run started from another copy of the descriptor, such as one republished
+/// with new endpoints, still takes them and does not look them up again.
+#[test]
+fn a_record_of_this_run_vouches_whatever_descriptor_wrote_it() {
+	let storage = Arc::new(CleanupStorage::default());
+	let host = pairing_host(&storage, offline());
+	let stored = named(&unnamed_sso_session_info());
+	let blob = encode_persisted_session(&stored);
+	let paseo = paseo_test_stack();
+	let republished = test_stack_from(
+		paseo.tld(),
+		paseo.chains().people,
+		paseo.chains().bulletin,
+		paseo.chains().asset_hub,
+		5,
+	);
+	let record = usernames_record(&republished.run(), &blob);
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
+	block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record)).unwrap();
+
+	block_on(host.activate_stored_session()).expect("the stored session activates");
+
+	assert_eq!(host.session_state.current(), Some(stored));
+}
+
+/// A runtime started from an older copy of the descriptor finds usernames a
+/// later run recorded for the stored session. What its own lookup finds goes
+/// into its session, but the slot and the record stay the later run's.
+#[test]
+fn naming_a_session_leaves_a_slot_a_later_run_recorded() {
+	let storage = Arc::new(CleanupStorage::default());
+	let installed = unnamed_sso_session_info();
+	let host = host_with_session(&storage, offline(), &installed);
+	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
+	let record = usernames_record(&test_run_from([0x77; 32], 1), &blob);
+	block_on(storage.write_core_storage(CoreStorageKey::SessionUsernamesRun, record.clone()))
+		.unwrap();
+
+	block_on(host.name_session(&installed, named.clone(), Some(blob.clone())));
+
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(Some(named), Some(blob), Some(record))
 	);
 }

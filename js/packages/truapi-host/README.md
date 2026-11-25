@@ -97,6 +97,14 @@ hashes, and stops using what it read from the old chains:
 
 The session and stored permissions stay.
 
+A runtime that starts on an earlier run than the values in storage, as when
+the stored descriptor could not be read and it started from the bundled copy,
+or when two tabs that share storage start on either side of a refresh, leaves
+what the later run stored as it is. The descriptor's `sequence` tells which
+run came later. Such a runtime reads none of those values: it does not keep
+allowance keys or cached manifests, and it cannot update the ring-VRF
+registry, until the host builds it again on the later run.
+
 A session restored from storage or passed to `activateExternalSession` comes up
 at once, and the core looks its usernames up afterwards. If the lookup fails,
 as on an offline device, nothing changes. If it finds no username, the stored

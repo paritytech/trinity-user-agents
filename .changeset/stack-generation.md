@@ -8,7 +8,9 @@ registry loses the rings on chains that are gone, and the session's usernames ar
 stored permissions stay.
 
 The core tells a restart by the descriptor's `generation` and the Asset Hub, People and Bulletin genesis hashes, so a
-wipe that changes a hash is caught even when `generation` was left as it was.
+wipe that changes a hash is caught even when `generation` was left as it was. It orders runs by the descriptor's
+`sequence`: a runtime that starts on an earlier run than the values in storage, as when the stored descriptor could not
+be read, reads none of them and neither clears nor writes over them.
 
 A restored session comes up without waiting for its usernames. The core looks them up afterwards and records in the new
 `SessionUsernamesRun` slot which run it read them in. A host that keeps `AuthSession` under a key of its own has to keep

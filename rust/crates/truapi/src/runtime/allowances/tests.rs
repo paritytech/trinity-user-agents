@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{MemoryCoreStorage, sso_session_info, test_run};
+use crate::test_support::{MemoryCoreStorage, sso_session_info, test_run, test_run_from};
 
 /// The run the chains are in.
 fn this_run() -> StackRun {
@@ -9,6 +9,12 @@ fn this_run() -> StackRun {
 /// The run before a wipe replaced Asset Hub and made it [`this_run`].
 fn earlier_run() -> StackRun {
 	test_run([0x99; 32])
+}
+
+/// A run after [`this_run`]: another wipe replaced Asset Hub, and the
+/// descriptor published for it has a higher `sequence`.
+fn later_run() -> StackRun {
+	test_run_from([0x77; 32], 1)
 }
 
 /// What is stored for `session`, whichever run stored it.
@@ -234,4 +240,32 @@ fn revoking_a_product_keeps_only_the_other_keys_of_this_run() {
 
 	let only_the_other_key = this_run().stamp(&vec![bulletin_entry("other.dot", 2)].encode());
 	assert_eq!(after_revoke, [Some(only_the_other_key), None, None]);
+}
+
+/// Runs are ordered by the descriptor's `sequence`. A runtime started from an
+/// older copy of the descriptor, as when the stored copy could not be read,
+/// is in an earlier run than the keys a later runtime stored. It reads none of
+/// them, and neither a key it writes nor a product it revokes touches them.
+/// A later run still replaces the keys of an earlier one, as after a wipe.
+#[test]
+fn only_keys_an_earlier_run_stored_are_replaced() {
+	let session = sso_session_info();
+	let held_by_later = storage_with_two_keys(Some(&later_run()));
+	let later_keys = stored(&held_by_later, &session);
+	let read_in_earlier = read_bulletin_key(&held_by_later, &this_run(), "dotli.dot");
+	write_bulletin_key(&held_by_later, &this_run(), "other.dot", 3);
+	futures::executor::block_on(clear_product_allowance_keys(
+		&held_by_later,
+		&this_run(),
+		&session,
+		&ProductId::for_test("dotli.dot"),
+	))
+	.unwrap();
+	let held_by_earlier = storage_with_two_keys(Some(&this_run()));
+	write_bulletin_key(&held_by_earlier, &later_run(), "other.dot", 3);
+
+	assert_eq!(
+		(read_in_earlier, stored(&held_by_later, &session), stored(&held_by_earlier, &session)),
+		(None, later_keys, Some(later_run().stamp(&vec![bulletin_entry("other.dot", 3)].encode())))
+	);
 }

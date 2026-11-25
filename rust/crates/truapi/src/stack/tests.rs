@@ -127,7 +127,7 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 	let tlds = ["kusama", "", ".paseo", "Paseo"];
 
 	assert_eq!(
-		tlds.map(|tld| Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true)),
+		tlds.map(|tld| Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), 0, true)),
 		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
 	);
 	assert_eq!(
@@ -175,8 +175,9 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 
 	assert_eq!(
 		(
-			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains.clone(), false).err(),
-			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains, true).is_ok(),
+			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains.clone(), 0, false)
+				.err(),
+			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains, 0, true).is_ok(),
 		),
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
@@ -188,7 +189,7 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 fn an_all_zero_relay_or_asset_hub_is_refused() {
 	let stack = |relay, asset_hub| {
 		let chains = StackChains { relay, asset_hub, people: [0xa1; 32], bulletin: [0xb2; 32] };
-		Stack::new(identity(), "paseo".into(), "paseo".into(), chains, true)
+		Stack::new(identity(), "paseo".into(), "paseo".into(), chains, 0, true)
 	};
 
 	assert_eq!(
@@ -230,7 +231,7 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	};
 	let stack = |id: &str, generation: &str| {
 		let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
-		Stack::new(identity, "paseo".into(), "paseo".into(), chains.clone(), false).err()
+		Stack::new(identity, "paseo".into(), "paseo".into(), chains.clone(), 0, false).err()
 	};
 
 	assert_eq!(
@@ -242,49 +243,96 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	);
 }
 
-/// A stack in `generation` over `chains`.
-fn stack_in_run(generation: &str, chains: StackChains) -> Stack {
+/// A stack in `generation` over `chains`, read from a descriptor with
+/// `sequence`.
+fn stack_in_run(generation: &str, chains: StackChains, sequence: u32) -> Stack {
 	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
-	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, false)
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, false)
 		.expect("stack is valid")
 }
 
-/// A value stamped in one run is read back in that run only. A new
-/// `generation`, or a new Asset Hub, People or Bulletin chain, is another run.
-/// The relay chain, which the core never reads, is not part of the run, so a
-/// host that starts or stops serving it keeps what the core stored. A stamp of
-/// another version is another run, so a later layout cannot be misread as this
-/// one.
+/// The chains of the stamp tests.
+fn stamp_test_chains() -> StackChains {
+	StackChains { relay: None, asset_hub: [0xc3; 32], people: [0xa1; 32], bulletin: [0xb2; 32] }
+}
+
+/// A value stamped in one run is read back in that run only, whichever
+/// descriptor `sequence` a runtime in it started from. A new `generation`, or
+/// a new Asset Hub, People or Bulletin chain, is another run. The relay chain,
+/// which the core never reads, is not part of the run, so a host that starts
+/// or stops serving it keeps what the core stored. A value stamped before the
+/// stamp carried the `sequence` is not read, like one stored without a run, so
+/// the earlier layout cannot be misread as this one.
 #[test]
 fn a_stamped_value_is_read_back_in_its_own_run_only() {
-	let chains = StackChains {
-		relay: None,
-		asset_hub: [0xc3; 32],
-		people: [0xa1; 32],
-		bulletin: [0xb2; 32],
-	};
-	let run = stack_in_run("g1", chains.clone()).run();
+	let chains = stamp_test_chains();
+	let run = stack_in_run("g1", chains.clone(), 10).run();
 	let stamped = run.stamp(b"value");
-	let read_in = |generation: &str, chains: StackChains| {
-		stack_in_run(generation, chains)
+	let read_in = |generation: &str, chains: StackChains, sequence: u32| {
+		stack_in_run(generation, chains, sequence)
 			.run()
 			.read_stamped(&stamped)
 			.map(<[u8]>::to_vec)
 	};
-	let mut other_version = stamped.clone();
-	other_version[0] = 2;
+	let mut first_layout = vec![1];
+	run.chains.encode_to(&mut first_layout);
+	first_layout.extend_from_slice(b"value");
 
 	assert_eq!(
 		[
-			read_in("g1", chains.clone()),
-			read_in("g1", StackChains { relay: Some([0x01; 32]), ..chains.clone() }),
-			read_in("g2", chains.clone()),
-			read_in("g1", StackChains { asset_hub: [0xc4; 32], ..chains.clone() }),
-			read_in("g1", StackChains { people: [0xa2; 32], ..chains.clone() }),
-			read_in("g1", StackChains { bulletin: [0xb3; 32], ..chains }),
-			run.read_stamped(&other_version).map(<[u8]>::to_vec),
+			read_in("g1", chains.clone(), 10),
+			read_in("g1", chains.clone(), 11),
+			read_in("g1", StackChains { relay: Some([0x01; 32]), ..chains.clone() }, 10),
+			read_in("g2", chains.clone(), 10),
+			read_in("g1", StackChains { asset_hub: [0xc4; 32], ..chains.clone() }, 10),
+			read_in("g1", StackChains { people: [0xa2; 32], ..chains.clone() }, 10),
+			read_in("g1", StackChains { bulletin: [0xb3; 32], ..chains }, 10),
+			run.read_stamped(&first_layout).map(<[u8]>::to_vec),
 		],
-		[Some(b"value".to_vec()), Some(b"value".to_vec()), None, None, None, None, None]
+		[
+			Some(b"value".to_vec()),
+			Some(b"value".to_vec()),
+			Some(b"value".to_vec()),
+			None,
+			None,
+			None,
+			None,
+			None,
+		]
+	);
+}
+
+/// What one run stamped is stale in another run that came later by the
+/// descriptor's `sequence`, and is replaced. A runtime started from an older
+/// copy of the descriptor, as when the stored copy could not be read, finds
+/// what the later run stamped and leaves it as it is. Two runs with one
+/// `sequence`, which a signed stack never has, and a stamp in the earlier
+/// layout or none, are stale as before.
+#[test]
+fn a_value_another_run_stamped_is_left_only_when_that_run_came_later() {
+	let chains = stamp_test_chains();
+	let reading = stack_in_run("g2", chains.clone(), 11).run();
+	let stamped_in = |generation: &str, sequence: u32| {
+		stack_in_run(generation, chains.clone(), sequence).run().stamp(b"value")
+	};
+	let held = |stamped: Vec<u8>| match reading.read(&stamped) {
+		Stamped::ThisRun(value) => format!("this run: {}", String::from_utf8_lossy(value)),
+		Stamped::LaterRun => "later run".to_string(),
+		Stamped::Stale => "stale".to_string(),
+	};
+	let mut first_layout = vec![1];
+	stack_in_run("g3", chains.clone(), 12).run().chains.encode_to(&mut first_layout);
+
+	assert_eq!(
+		[
+			held(stamped_in("g2", 9)),
+			held(stamped_in("g3", 12)),
+			held(stamped_in("g1", 10)),
+			held(stamped_in("g0", 11)),
+			held(first_layout),
+			held(b"value".to_vec()),
+		],
+		["this run: value", "later run", "stale", "stale", "stale", "stale"]
 	);
 }
 
@@ -302,10 +350,15 @@ fn a_refresh_keeps_the_run_unless_it_restarts_the_chains() {
 		bundled(&descriptor, false).expect("stack is valid")
 	};
 	let running = bundled(&base, false).expect("stack is valid");
+	let republished = |descriptor: &mut serde_json::Value| {
+		let sequence = descriptor["sequence"].as_u64().expect("the descriptor has a sequence");
+		descriptor["sequence"] = (sequence + 1).into();
+	};
 	let refreshed = [
 		edited(|descriptor| {
 			descriptor["chains"][1]["rpc"] = serde_json::json!(["wss://other.test.invalid"]);
 		}),
+		edited(republished),
 		edited(|descriptor| descriptor["generation"] = "next".into()),
 		edited(|descriptor| {
 			descriptor["chains"][2]["genesisHash"] =
@@ -314,8 +367,8 @@ fn a_refresh_keeps_the_run_unless_it_restarts_the_chains() {
 	];
 
 	assert_eq!(
-		refreshed.map(|stack| (stack == running, stack.run() == running.run())),
-		[(true, true), (false, false), (false, false)]
+		refreshed.map(|stack| (running.runs_as(&stack), stack.run() == running.run())),
+		[(true, true), (true, true), (false, false), (false, false)]
 	);
 }
 

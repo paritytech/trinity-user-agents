@@ -86,12 +86,13 @@ fn listed(
 }
 
 /// A stack with this `generation` over People `people` and the Bulletin and
-/// Asset Hub of the [`paseo_test_stack`].
-fn stack_in(generation: &str, people: [u8; 32]) -> Stack {
+/// Asset Hub of the [`paseo_test_stack`], read from a descriptor with
+/// `sequence`.
+fn stack_in(generation: &str, people: [u8; 32], sequence: u32) -> Stack {
 	let paseo = paseo_test_stack();
 	let identity = StackIdentity { id: paseo.id().to_string(), generation: generation.to_string() };
 	let chains = StackChains { people, ..paseo.chains().clone() };
-	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, true)
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, true)
 		.expect("test stack is valid")
 }
 
@@ -115,8 +116,8 @@ fn a_registry_loses_only_the_rings_on_chains_a_wipe_replaced() {
 	assert_eq!(
 		[
 			listed_on(&paseo),
-			listed_on(&stack_in(paseo.generation(), [0x77; 32])),
-			listed_on(&stack_in("next", people)),
+			listed_on(&stack_in(paseo.generation(), [0x77; 32], 1)),
+			listed_on(&stack_in("next", people, 1)),
 		],
 		[
 			(vec![kept, kept, kept], true),
@@ -288,4 +289,32 @@ fn owner_listing_rejects_foreign_and_duplicate_entries() {
 		validate_owner_listing(&owner, &[entry.clone(), entry]),
 		Err(RingVrfError::Unknown { reason }) if reason.contains("duplicate key handle")
 	));
+}
+
+/// A runtime started from an older copy of the descriptor, as when the stored
+/// copy could not be read, finds the registry a later run stored. It lists
+/// nothing from it and refuses to register over it, so the later run keeps its
+/// registrations and the provider each ring has selected.
+#[test]
+fn a_registry_a_later_run_stored_is_left_as_it_is() {
+	let earlier = paseo_test_stack();
+	let later = stack_in("next", [0x77; 32], 1);
+	let registry = registered_on(&[later.chains().people]);
+	let stored = later.run().stamp(&registry.encode());
+	let platform = Arc::new(StubPlatform::default());
+	let root = [1; 32];
+	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
+	futures::executor::block_on(platform.write_core_storage(key.clone(), stored.clone()))
+		.expect("stub core storage writes");
+	let store = RingVrfRegistryStore::new(platform.clone(), &earlier);
+	let registered = &registry.entries[0];
+
+	let (listed, registering) = futures::executor::block_on(async {
+		let listed = store.entry(root, &registered.handle).await.unwrap();
+		let registering = store.register(root, handle("owner.dot", 9), ring(1), [9; 32]).await;
+		(listed, registering.is_err())
+	});
+
+	let kept = futures::executor::block_on(platform.read_core_storage(key)).unwrap();
+	assert_eq!((listed, registering, kept), (None, true, Some(stored)));
 }

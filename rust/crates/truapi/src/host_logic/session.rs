@@ -238,6 +238,13 @@ pub fn usernames_record(run: &StackRun, blob: &[u8]) -> Vec<u8> {
 	run.stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
+/// Whether `record`, as [`usernames_record`] writes it, says the usernames in
+/// `blob` were read in `run`, whichever descriptor `sequence` the run that
+/// wrote it started from.
+pub fn usernames_record_vouches_for(run: &StackRun, record: &[u8], blob: &[u8]) -> bool {
+	run.read_stamped(record) == Some(&sp_crypto_hashing::blake2_256(blob)[..])
+}
+
 /// Decode a core-owned persisted session blob.
 ///
 /// Takes the first layout that consumes the blob exactly: the tagged one, then
