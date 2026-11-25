@@ -8,14 +8,14 @@ final class FundingNetworkPresenter: FundingScreenPresenter {
     private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingNetworkInteractor,
         wireframe: FundingNetworkWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
@@ -25,7 +25,7 @@ final class FundingNetworkPresenter: FundingScreenPresenter {
 
 extension FundingNetworkPresenter: FundingNetworkPresenterProtocol {
     func chooseNetwork(_ id: String) {
-        context.update { draft in
+        flowState.update { draft in
             draft.network = id
             draft.asset = nil
         }

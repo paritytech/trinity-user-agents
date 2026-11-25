@@ -8,14 +8,14 @@ final class FundingCountryPresenter: FundingScreenPresenter {
     private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingCountryInteractor,
         wireframe: FundingCountryWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
@@ -25,7 +25,7 @@ final class FundingCountryPresenter: FundingScreenPresenter {
 
 extension FundingCountryPresenter: FundingCountryPresenterProtocol {
     func chooseCountry(_ country: PaymentCountry) {
-        context.update { draft in
+        flowState.update { draft in
             draft.hasPickedCountry = true
             draft.country = country
         }

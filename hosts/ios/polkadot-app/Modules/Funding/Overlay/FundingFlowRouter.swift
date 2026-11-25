@@ -98,24 +98,24 @@ extension FundingFlowRouter: FundingToastPresentable {}
 
 private extension FundingFlowRouter {
     func show(_ entry: FundingEntry, on screens: [FundingFlowScreen]) {
-        let context = FundingFlowContext(
+        let flowState = FundingFlowState(
             entry: entry,
             cashInfo: environment.cashInfo,
             branding: environment.branding,
             iconLoader: environment.iconLoader
         )
+        flowState.onClose = { [weak self] in
+            self?.flows[entry.id] = nil
+            self?.tracker.flowClosed(entryId: entry.id)
+        }
+        flowState.onHistory = { [weak self] in self?.showHistory() }
+        flowState.onStartOver = { [weak self] direction in self?.startOver(direction: direction) }
         let flow = FundingFlowWireframe(
-            context: context,
+            flowState: flowState,
             service: service,
             environment: environment,
             viewModelFactory: makeViewModelFactory()
         )
-        flow.onClose = { [weak self] in
-            self?.flows[entry.id] = nil
-            self?.tracker.flowClosed(entryId: entry.id)
-        }
-        flow.onHistory = { [weak self] in self?.showHistory() }
-        flow.onStartOver = { [weak self] direction in self?.startOver(direction: direction) }
         flows[entry.id] = flow
 
         guard environment.present(flow.makeSheet(screens)) else {

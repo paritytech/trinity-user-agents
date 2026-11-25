@@ -11,7 +11,7 @@ final class FundingSummaryPresenter: FundingScreenPresenter {
     private let logger: LoggerProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingSummaryInteractor,
         wireframe: FundingSummaryWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol,
@@ -21,7 +21,7 @@ final class FundingSummaryPresenter: FundingScreenPresenter {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
@@ -54,7 +54,7 @@ extension FundingSummaryPresenter: FundingSummaryPresenterProtocol {
             } catch let FundingStartError.notSelected(failure) {
                 activity.startError = failure?.failedText ?? String(localized: .Funding.errorStartFailed)
             } catch {
-                logger.error("[funding] \(context.entryId): selecting \(providerId) failed: \(error)")
+                logger.error("[funding] \(flowState.entryId): selecting \(providerId) failed: \(error)")
                 activity.startError = String(localized: .Funding.errorStartFailed)
             }
         }

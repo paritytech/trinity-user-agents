@@ -7,7 +7,7 @@ import TrUAPIHost
 /// model, and adds its own actions.
 @MainActor
 class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
-    let context: FundingFlowContext
+    let flowState: FundingFlowState
     let entryInteractor: FundingEntryInteractor
     private(set) var entry: FundingEntry
     /// What this screen is doing, drawn over the shared state.
@@ -15,20 +15,20 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
         didSet { render() }
     }
 
-    init(context: FundingFlowContext, interactor: FundingEntryInteractor) {
-        self.context = context
+    init(flowState: FundingFlowState, interactor: FundingEntryInteractor) {
+        self.flowState = flowState
         entryInteractor = interactor
-        entry = context.latestEntry
+        entry = flowState.latestEntry
     }
 
     func setup() {
-        context.observe(self) { [weak self] in self?.render() }
+        flowState.observe(self) { [weak self] in self?.render() }
         render()
         entryInteractor.setup()
     }
 
-    var state: FundingFlowState {
-        var state = context.state(for: entry)
+    var state: FundingEntryModel {
+        var state = flowState.model(for: entry)
         state.amountIssue = activity.amountIssue
         state.isStarting = activity.isStarting
         state.startError = activity.startError
@@ -44,7 +44,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     /// Tells the core of the draft's selection when it changed since the
     /// core was last told, and the session has not started.
     func reportSelection() {
-        guard let selection = context.selectionToReport(hasStarted: entry.hasStarted) else { return }
+        guard let selection = flowState.selectionToReport(hasStarted: entry.hasStarted) else { return }
         entryInteractor.select(selection)
     }
 
@@ -63,7 +63,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     func didReceive(entry newEntry: FundingEntry) {
         let previous = entry
         entry = newEntry
-        context.absorb(newEntry)
+        flowState.absorb(newEntry)
         reportSelection()
         render()
         entryDidChange(from: previous)

@@ -3,9 +3,9 @@ import UIKit
 @MainActor
 enum FundingDepositViewFactory {
     static func createView(wireframe: FundingFlowWireframe) -> UIViewController {
-        let interactor = FundingDepositInteractor(service: wireframe.service, entryId: wireframe.context.entryId)
+        let interactor = FundingDepositInteractor(service: wireframe.service, entryId: wireframe.flowState.entryId)
         let presenter = FundingDepositPresenter(
-            context: wireframe.context,
+            flowState: wireframe.flowState,
             interactor: interactor,
             wireframe: wireframe,
             viewModelFactory: wireframe.viewModelFactory

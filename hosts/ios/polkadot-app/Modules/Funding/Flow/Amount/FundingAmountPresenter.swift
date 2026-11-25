@@ -13,7 +13,7 @@ final class FundingAmountPresenter: FundingScreenPresenter {
     private let quoteDebouncer = Debouncer(delay: 0.6)
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingAmountInteractor,
         wireframe: FundingAmountWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
@@ -21,7 +21,7 @@ final class FundingAmountPresenter: FundingScreenPresenter {
         self.interactor = interactor
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
@@ -35,10 +35,10 @@ final class FundingAmountPresenter: FundingScreenPresenter {
         interactor.followEntries { [weak self] entries in
             self?.activity.historyClock = FundingHistoryClock(entries: entries)
         }
-        guard context.direction == .out else { return }
+        guard flowState.direction == .out else { return }
 
         interactor.followSpendable { [weak self] spendable in
-            self?.context.update { $0.spendable = spendable }
+            self?.flowState.update { $0.spendable = spendable }
             self?.refreshAmountIssue()
         }
     }
@@ -50,9 +50,9 @@ final class FundingAmountPresenter: FundingScreenPresenter {
 
 extension FundingAmountPresenter: FundingAmountPresenterProtocol {
     func selectRail(_ rail: FundingRail) {
-        guard rail != context.draft.rail else { return }
+        guard rail != flowState.draft.rail else { return }
 
-        context.update { draft in
+        flowState.update { draft in
             draft.rail = rail
             draft.network = nil
             draft.asset = nil
@@ -63,7 +63,7 @@ extension FundingAmountPresenter: FundingAmountPresenterProtocol {
     }
 
     func amountTextChanged(_ text: String) {
-        context.update { $0.amountText = text }
+        flowState.update { $0.amountText = text }
         refreshAmountIssue()
         askAfterPause()
     }
@@ -72,7 +72,7 @@ extension FundingAmountPresenter: FundingAmountPresenterProtocol {
         guard state.canContinue else { return }
 
         quoteDebouncer.cancel()
-        switch context.draft.rail {
+        switch flowState.draft.rail {
         case .crypto:
             wireframe.show(.network)
         case .card,
@@ -98,7 +98,7 @@ private extension FundingAmountPresenter {
     /// replacing the ask waiting on the pause before it.
     func askAfterPause() {
         quoteDebouncer.cancel()
-        guard context.draft.rail != .crypto, (state.amount ?? 0) > 0 else { return }
+        guard flowState.draft.rail != .crypto, (state.amount ?? 0) > 0 else { return }
 
         quoteDebouncer.debounce { [weak self] in
             self?.requestQuote()
@@ -107,7 +107,7 @@ private extension FundingAmountPresenter {
 
     /// Reads the core's issue with the typed amount again.
     func refreshAmountIssue() {
-        let spendable = context.draft.spendable
+        let spendable = flowState.draft.spendable
         activity.amountIssue = state.amount.flatMap { interactor.amountIssue($0, spendable: spendable) }
     }
 }

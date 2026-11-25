@@ -9,14 +9,14 @@ final class FundingProvidersPresenter: FundingScreenPresenter {
     private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingProvidersInteractor,
         wireframe: FundingProvidersWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
@@ -26,7 +26,7 @@ final class FundingProvidersPresenter: FundingScreenPresenter {
 
 extension FundingProvidersPresenter: FundingProvidersPresenterProtocol {
     func chooseProvider(_ providerId: ProductId) {
-        context.update { $0.chosenProviderId = providerId }
+        flowState.update { $0.chosenProviderId = providerId }
         wireframe.showToast(String(localized: .Funding.providerChanged))
         wireframe.back()
     }

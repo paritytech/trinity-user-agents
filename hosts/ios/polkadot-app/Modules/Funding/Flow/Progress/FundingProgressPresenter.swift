@@ -13,7 +13,7 @@ final class FundingProgressPresenter: FundingScreenPresenter {
     private var hasShownDeposit = false
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingProgressInteractor,
         wireframe: FundingProgressWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol,
@@ -23,7 +23,7 @@ final class FundingProgressPresenter: FundingScreenPresenter {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
@@ -74,7 +74,7 @@ extension FundingProgressPresenter: FundingProgressInteractorOutputProtocol {
         case let .success(answer):
             answer.toast.map(wireframe.showToast)
         case let .failure(error):
-            logger.error("[funding] \(context.entryId): answering the cancel offer failed: \(error)")
+            logger.error("[funding] \(flowState.entryId): answering the cancel offer failed: \(error)")
             wireframe.showToast(String(localized: .Funding.errorCancelFailed))
         }
     }

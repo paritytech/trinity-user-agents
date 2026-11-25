@@ -6,7 +6,7 @@ import TrUAPIHost
 // MARK: - Deposit
 
 extension FundingViewModelFactory {
-    func makeDepositViewModel(for state: FundingFlowState) -> FundingDepositViewModel {
+    func makeDepositViewModel(for state: FundingEntryModel) -> FundingDepositViewModel {
         let title =
             switch state.rail {
             case .card: String(localized: .Funding.summaryCardTitle)
@@ -33,7 +33,7 @@ extension FundingViewModelFactory {
 }
 
 private extension FundingViewModelFactory {
-    func depositContent(for state: FundingFlowState) -> FundingDepositViewModel.Content {
+    func depositContent(for state: FundingEntryModel) -> FundingDepositViewModel.Content {
         if let failure = state.failure {
             return .error(failure.failedText)
         }
@@ -107,7 +107,7 @@ private extension FundingViewModelFactory {
 // MARK: - Progress
 
 extension FundingViewModelFactory {
-    func makeProgressViewModel(for state: FundingFlowState) -> FundingProgressViewModel {
+    func makeProgressViewModel(for state: FundingEntryModel) -> FundingProgressViewModel {
         let quote = state.chosenQuote
         let cashAmount = state.session
             .flatMap { FundingActivityItem(session: $0, progress: state.progress).amount }
@@ -155,7 +155,7 @@ extension FundingViewModelFactory {
 }
 
 private extension FundingViewModelFactory {
-    func progressSteps(for state: FundingFlowState, isSlow: Bool) -> [FundingStepBar.Step] {
+    func progressSteps(for state: FundingEntryModel, isSlow: Bool) -> [FundingStepBar.Step] {
         let reported = state.progress?.steps ?? []
         let firstUnreached = reported.firstIndex { $0.reachedAtMs == nil }
 
@@ -177,7 +177,7 @@ private extension FundingViewModelFactory {
 
     /// Where a cancel stands, else the band's line, worded for the session's
     /// rail and amount.
-    func progressNote(for state: FundingFlowState, amount: String?) -> FundingProgressViewModel.Note? {
+    func progressNote(for state: FundingEntryModel, amount: String?) -> FundingProgressViewModel.Note? {
         guard let progress = state.progress else { return nil }
 
         if let line = progress.status.cancelLine(direction: state.direction) {
@@ -196,7 +196,7 @@ private extension FundingViewModelFactory {
         return band.map { FundingProgressViewModel.Note(text: $0.text, isWarning: $0.isWarning) }
     }
 
-    func progressDetails(for state: FundingFlowState) -> FundingProgressViewModel.Details {
+    func progressDetails(for state: FundingEntryModel) -> FundingProgressViewModel.Details {
         let quote = state.chosenQuote
 
         switch (state.direction, state.rail) {
@@ -219,7 +219,7 @@ private extension FundingViewModelFactory {
 
     /// "Send this exact amount" until the transfer is seen, then what was
     /// sent, with the account to pay into once the provider named it.
-    func progressBank(for state: FundingFlowState) -> FundingProgressViewModel.Bank {
+    func progressBank(for state: FundingEntryModel) -> FundingProgressViewModel.Bank {
         let isReceived = state.hasReached(.received)
         let amountTitle = isReceived
             ? String(localized: .Funding.progressYouSent)
@@ -247,7 +247,7 @@ private extension FundingViewModelFactory {
     }
 
     /// While the funds are not seen, the way back to the address to pay.
-    func progressCryptoDeposit(for state: FundingFlowState) -> FundingProgressViewModel.CryptoDeposit {
+    func progressCryptoDeposit(for state: FundingEntryModel) -> FundingProgressViewModel.CryptoDeposit {
         guard !state.hasReached(.received) else { return .hidden }
         guard case let .crypto(_, _, _, _, _, exact, _, _)? = state.progress?.deposit else { return .preparing }
 

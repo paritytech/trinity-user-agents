@@ -9,7 +9,7 @@ final class FundingDepositPresenter: FundingScreenPresenter {
     private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingDepositInteractor,
         wireframe: FundingDepositWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
@@ -17,7 +17,7 @@ final class FundingDepositPresenter: FundingScreenPresenter {
         self.interactor = interactor
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {

@@ -3,9 +3,12 @@ import UIKit
 @MainActor
 enum FundingCancelConfirmViewFactory {
     static func createView(wireframe: FundingFlowWireframe) -> UIViewController {
-        let interactor = FundingCancelConfirmInteractor(service: wireframe.service, entryId: wireframe.context.entryId)
+        let interactor = FundingCancelConfirmInteractor(
+            service: wireframe.service,
+            entryId: wireframe.flowState.entryId
+        )
         let presenter = FundingCancelConfirmPresenter(
-            context: wireframe.context,
+            flowState: wireframe.flowState,
             interactor: interactor,
             wireframe: wireframe,
             viewModelFactory: wireframe.viewModelFactory
