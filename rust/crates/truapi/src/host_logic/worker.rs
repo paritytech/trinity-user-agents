@@ -37,9 +37,6 @@ pub trait WorkerController: Send + Sync {
 	/// needed, so the host tells the user it is not working. The core keeps
 	/// starting it again, waiting longer each time.
 	fn worker_crashing(&self, _product_id: &ProductId, _crashes: u32) {}
-
-	/// Release the platform adapter after all session stops have been delivered.
-	fn shutdown(&self) {}
 }
 
 /// An exit more than this long after the previous one starts a new run of
@@ -58,7 +55,6 @@ enum LedgerEvent {
 	Start { product_id: ProductId, attempt_id: u64 },
 	Stop { product_id: ProductId },
 	Crashing { product_id: ProductId, consecutive_crashes: u32 },
-	Shutdown,
 }
 
 /// A product's run of crashes.
@@ -289,7 +285,6 @@ impl WorkerLedger {
 			for product_id in core::mem::take(&mut state.references).into_keys() {
 				state.request(&product_id, WorkerTransition::Stop);
 			}
-			state.pending.push_back(LedgerEvent::Shutdown);
 		}
 		self.drain();
 	}
@@ -363,7 +358,6 @@ impl WorkerLedger {
 				next
 			};
 			match next {
-				LedgerEvent::Shutdown => controller.shutdown(),
 				LedgerEvent::Start { product_id, attempt_id } => {
 					controller.start_worker(&product_id, attempt_id)
 				},

@@ -439,13 +439,6 @@ impl WorkerController for Controller {
 			callbacks.worker_crashing(product_id.clone(), crashes);
 		}
 	}
-
-	fn shutdown(&self) {
-		if let Some(runtime) = self.0.upgrade() {
-			let session = runtime.workers.lock().take();
-			drop(session);
-		}
-	}
 }
 
 #[uniffi::export]
@@ -497,9 +490,11 @@ impl NativeTrUApiHostRuntime {
 
 	/// Revoke all worker claims and dispose their executions when the host session ends.
 	///
-	/// While another thread is delivering a worker start or stop, the disposal completes on that
-	/// thread after this call returns. An observer's `finished` follows it.
+	/// The workers are disposed when this returns, except one whose start or stop another thread
+	/// is delivering, which completes on that thread. Observers receive `finished` afterwards.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();
+		let session = self.workers.lock().take();
+		drop(session);
 	}
 }

@@ -255,6 +255,46 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	assert!(pending.open_execution(Arc::new(EventCallbacks::new()), None, None).is_err());
 }
 
+#[derive(Default)]
+struct EndsSessionWhileStarting {
+	runtime: std::sync::OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
+	starting: AtomicBool,
+	starts: Mutex<Vec<u64>>,
+	stops: Mutex<Vec<(u64, bool)>>,
+}
+
+impl NativeHostWebViewWorker for EndsSessionWhileStarting {
+	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
+		self.starting.store(true, Ordering::Relaxed);
+		self.starts.lock().unwrap().push(attempt.id());
+		self.runtime.get().unwrap().upgrade().unwrap().shutdown_product_workers();
+		self.starting.store(false, Ordering::Relaxed);
+	}
+
+	fn stop(&self, _product_id: ProductId, attempt_id: u64) {
+		self.stops.lock().unwrap().push((attempt_id, self.starting.load(Ordering::Relaxed)));
+	}
+}
+
+#[tokio::test]
+async fn a_session_ended_from_a_start_callback_stops_that_webview_once_the_callback_returns() {
+	let host = Arc::new(EndsSessionWhileStarting::default());
+	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+		Some(host.clone()),
+	)
+	.unwrap();
+	host.runtime.set(Arc::downgrade(&runtime)).unwrap();
+	let _claim = runtime.claim_worker(ProductId::for_test("shared.dot"));
+	let starts = host.starts.lock().unwrap().clone();
+	assert_eq!(
+		(starts.len(), host.stops.lock().unwrap().clone()),
+		(1, vec![(starts[0], false)]),
+		"the host disposes a WebView only after it finished creating it"
+	);
+}
+
 #[tokio::test]
 async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancels_its_boot() {
 	let (runtime, views, product) = setup();
