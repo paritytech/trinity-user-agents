@@ -73,8 +73,14 @@ struct CrashRun {
 	restart_pending: bool,
 }
 
+/// The holds on one product's worker and the attempt started for them.
 struct Demand {
+	/// Live [`crate::WorkerHold`]s. Core operations and host modalities such as
+	/// Chat and Pocket each take their own, so the first one starts the worker
+	/// and dropping the last one stops it.
 	count: usize,
+	/// The latest attempt started for these holds, which tells its reports
+	/// from those of an attempt it replaced.
 	attempt_id: u64,
 }
 
@@ -86,6 +92,8 @@ struct LedgerState {
 	references: HashMap<ProductId, Demand>,
 	/// Shared across products so each worker boot has a distinct ID within the session.
 	last_attempt_id: u64,
+	/// Set once by [`WorkerLedger::shutdown`]. A hold taken afterwards counts
+	/// for nothing, so no worker starts after the session ended.
 	closed: bool,
 	/// Each product's current run of crashes.
 	crashes: HashMap<ProductId, CrashRun>,

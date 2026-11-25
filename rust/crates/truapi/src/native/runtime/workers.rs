@@ -19,7 +19,11 @@ use crate::{
 	platform::{ExecutableKind, ProductContext, ProductId},
 };
 
-/// How long an attempt may go without running, from its start and from each lost connection.
+/// How long an attempt may take to start running.
+///
+/// An attempt runs once its module has started and its bridge connection is authenticated. The
+/// time counts from the attempt's start, and again each time a running attempt loses its
+/// connection.
 const STARTUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(90);
 
 /// Starts and disposes the WebView of each worker attempt.
@@ -358,6 +362,11 @@ impl Drop for WebView {
 	}
 }
 
+/// The worker ledger's controller for a native runtime.
+///
+/// Turns each start the ledger requests into an attempt on the session's WebView host, or into
+/// a failed state when the session has none, and each stop into the disposal of that attempt.
+/// The runtime owns the ledger that holds this controller, so the reference back is weak.
 struct Controller(Weak<NativeTrUApiHostRuntime>);
 
 /// Deliver worker demand queued during runtime construction.
