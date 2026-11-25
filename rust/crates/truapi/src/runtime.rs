@@ -1408,8 +1408,9 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		// A v0.1 product names the room with its own `roomId` in every later
 		// call, and its answer carries no other id. So its room keeps that id.
 		// Only a v0.2 request gets the id that the host derives.
-		let product_names_room = matches!(request, HostChatCreateRoomRequest::V1(_));
-		version(request)
+		let request = version(request);
+		let product_names_room = request.caller_version() < 2;
+		request
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
 				let field = if product_names_room { "roomId" } else { "roomIdSource" };

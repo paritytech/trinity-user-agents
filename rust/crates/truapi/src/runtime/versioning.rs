@@ -21,6 +21,15 @@ pub fn version<Request: IntoLatest>(request: Request) -> VersionedRequest<Reques
 }
 
 impl<Request> VersionedRequest<Request> {
+	/// The protocol version of the caller.
+	///
+	/// It is `Versioned::version` of the envelope that the caller sent: 1 for
+	/// v0.1 and 2 for v0.2. A handler reads it when its behaviour, and not only
+	/// its payload, depends on the version.
+	pub fn caller_version(&self) -> u8 {
+		self.version
+	}
+
 	/// Convert every handler outcome, including early exits, to the caller's version.
 	pub async fn exec<Output: VersionedOutput, Fut: Future<Output = Output::Latest>>(
 		self,

@@ -49,6 +49,12 @@ fn read_cases() -> [ReadCase; 2] {
 }
 
 #[test]
+fn the_caller_version_is_the_version_of_the_request() {
+	let versions = read_cases().map(|case| version(case.request).caller_version());
+	assert_eq!(versions, [1, 2]);
+}
+
+#[test]
 fn latest_responses_return_in_the_request_version() {
 	for case in read_cases() {
 		let response: Result<HostLocalStorageReadResponse, CallError<HostLocalStorageReadError>> =
