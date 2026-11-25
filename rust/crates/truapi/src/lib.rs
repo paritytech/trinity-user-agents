@@ -404,7 +404,6 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 
 cfg_select! {
 	feature = "runtime" => {
-		pub mod background_task;
 		pub mod bootstrap;
 		pub mod chain;
 		mod chain_runtime;
@@ -485,7 +484,7 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		mod materials;
 
-		pub use spawner::Spawner;
+		pub use spawner::{BackgroundTask, Spawner};
 
 		pub use truapi_core::TrUApiCore;
 

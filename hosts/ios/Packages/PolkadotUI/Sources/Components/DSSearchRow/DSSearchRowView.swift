@@ -181,20 +181,15 @@ private extension DSSearchRowView {
 
     /// Text attributes hold a resolved colour and font, so they are rebuilt when the theme or the typography changes.
     func applyTextAttributes() {
-        searchField.defaultTextAttributes = Self.labelStyle(.bodyLarge).attributes(
+        searchField.defaultTextAttributes = LabelStyle(typography: .bodyLarge).attributes(
             textColor: UIColor.fgPrimary.resolvedColor(with: traitCollection)
         )
         searchField.attributedPlaceholder = NSAttributedString(
             string: String(localized: .searchContactFieldPlaceholder),
-            attributes: Self.labelStyle(.bodyMedium).attributes(
+            attributes: LabelStyle(typography: .bodyMedium).attributes(
                 textColor: UIColor.fgSecondary.resolvedColor(with: traitCollection)
             )
         )
-    }
-
-    static func labelStyle(_ typography: TypographyStyle) -> LabelStyle {
-        let spec = typography.resolvedSpec
-        return LabelStyle(font: .app(typography), lineHeight: spec.lineHeight, tracking: spec.tracking)
     }
 
     func setConstraints(_ constraints: [Constraint], active: Bool) {
