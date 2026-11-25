@@ -1,10 +1,11 @@
 use super::*;
-use crate::{
-	durable::DurableTxFailureKind,
-	pgas_claims::testing::{
-		ClaimsHarness, FakeClaimBuilder, destination, transient,
-	},
-};
+use crate::durable::DurableTxFailureKind;
+
+mod live;
+mod testing;
+
+pub use testing::{BuildCall, FakeClaimBuilder, TEST_DAY, destination};
+use testing::{ClaimsHarness, transient};
 
 /// A caller finds its claim again by the destination alone, so the claim
 /// lives in that destination's group.

@@ -1,28 +1,29 @@
 //! A durable PGAS claim on the live Paseo Next Asset Hub. Ignored by default;
 //! run with
-//! `cargo test -p truapi --all-features --lib pgas_claims::live -- --ignored --nocapture`.
+//! `cargo test -p truapi --all-features --lib pgas_claims::tests::live -- --ignored --nocapture`.
 //!
 //! Needs a person in a People ring: `TRUAPI_LIVE_PERSON_MNEMONIC` names one,
 //! and the test skips without it. Each run spends one of the person's PGAS
-//! slots for the day. `TRUAPI_LIVE_PEOPLE_WS`, `LIVE_ASSET_HUB_WS` and
-//! `LIVE_ASSET_HUB_GENESIS` point it at other nodes.
+//! slots for the day. The chains are the Asset Hub and People chain of the
+//! bundled `paseo-next-v2` stack.
 
 use core::time::Duration;
 use std::{collections::BTreeSet, sync::Arc};
 
 use futures::{StreamExt, future::ready};
 use subxt::utils::{AccountId32, H256};
+use trinity_stack::{Chain, Descriptor};
 
-use super::{
-	BuiltClaim, ClaimBuildError, ClaimSlot, PgasClaimBuilder, PgasClaims, build_claim_in_free_slot,
-	with_pgas_claims,
-};
 use crate::{
-	chain::{ExtrinsicService, FixedExtensionVersions, live_asset_hub, live_asset_hub_genesis},
+	chain::{ExtrinsicService, FixedExtensionVersions, bundled_paseo_next_v2, live_chains},
 	chain_runtime::ChainRuntime,
 	durable::{DurableRegistry, DurableTxEngine, DurableTxId, DurableTxStatus, live_engine},
 	host_logic::root_entropy::RootEntropy,
 	nft::ASSET_HUB_PIPELINE,
+	pgas_claims::{
+		BuiltClaim, ClaimBuildError, ClaimSlot, PgasClaimBuilder, PgasClaims,
+		build_claim_in_free_slot, with_pgas_claims,
+	},
 	runtime::statement_allowance::{
 		self as alloc, CollectionCandidate, FixedPersonhoodSigner, StatementAllowanceError,
 		collection::PersonhoodCollection,
@@ -41,18 +42,20 @@ struct LivePerson {
 	people: alloc::rpc::RpcClient,
 	people_metadata: alloc::extension::Metadata,
 	extrinsics: ExtrinsicService,
+	chain: ChainRuntime,
 	genesis: H256,
 }
 
 impl LivePerson {
-	/// The person behind `entropy`, on `chain`, the Asset Hub with `genesis`,
-	/// and the People node the environment names.
-	async fn connect(chain: &ChainRuntime, genesis: H256, entropy: RootEntropy) -> Self {
-		let asset_hub_rpc = chain.rpc_client("live PGAS claim", &genesis.0).await.unwrap();
-		let asset_hub = alloc::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(asset_hub_rpc));
-		let people_ws = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
-			.unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".into());
-		let people = alloc::rpc::RpcClient::connect(&people_ws).await.unwrap();
+	/// The person behind `entropy` on the Asset Hub and People chain of
+	/// `stack`, both reached through one chain runtime.
+	async fn connect(stack: &Descriptor, entropy: RootEntropy) -> Self {
+		let asset_hub_chain = stack.chain("AssetHub").expect("the stack has an Asset Hub");
+		let people_chain = stack.chain("People").expect("the stack has a People chain");
+		let chain = live_chains([asset_hub_chain, people_chain]);
+		let asset_hub = allowance_rpc(&chain, asset_hub_chain).await;
+		let people = allowance_rpc(&chain, people_chain).await;
+		let genesis = H256(asset_hub_chain.genesis());
 		let versions = FixedExtensionVersions::one_chain(genesis, ASSET_HUB_PIPELINE);
 		Self {
 			entropy,
@@ -62,6 +65,7 @@ impl LivePerson {
 			asset_hub,
 			people,
 			extrinsics: ExtrinsicService::over_chain(chain.clone(), Arc::new(versions)),
+			chain,
 			genesis,
 		}
 	}
@@ -126,6 +130,12 @@ impl LivePerson {
 	}
 }
 
+/// The statement allowance RPC client of `target`, reached through `chain`.
+async fn allowance_rpc(chain: &ChainRuntime, target: &Chain) -> alloc::rpc::RpcClient {
+	let rpc = chain.rpc_client("live PGAS claim", &target.genesis()).await.unwrap();
+	alloc::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(rpc))
+}
+
 /// The first status of claim `id` past submission: in a block, or failed.
 /// Panics when none comes within three minutes, the inclusion wait of a
 /// direct claim plus the ring revision wait of a build.
@@ -165,12 +175,10 @@ async fn a_durable_claim_lands_on_asset_hub_and_the_engine_sees_it() {
 		return;
 	};
 	let entropy = RootEntropy::new(bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy());
-	let genesis = live_asset_hub_genesis();
-	let chain = live_asset_hub(genesis);
-	let person = Arc::new(LivePerson::connect(&chain, genesis, entropy).await);
+	let person = Arc::new(LivePerson::connect(&bundled_paseo_next_v2(), entropy).await);
 	let (_dir, db) = open_temporary_core_db();
-	let registry = with_pgas_claims(DurableRegistry::new(), genesis, person.clone());
-	let engine = live_engine(&chain, db, registry);
+	let registry = with_pgas_claims(DurableRegistry::new(), person.genesis, person.clone());
+	let engine = live_engine(&person.chain, db, registry);
 	let claims = PgasClaims::new(engine.clone());
 	let dest = AccountId32(rand::random());
 

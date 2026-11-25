@@ -5,12 +5,8 @@
 
 mod builder;
 mod claim_extrinsic;
-#[cfg(test)]
-mod live;
 mod params;
 mod policy;
-#[cfg(test)]
-mod testing;
 
 use std::sync::Arc;
 
