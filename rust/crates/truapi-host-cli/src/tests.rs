@@ -66,6 +66,27 @@ async fn session_selection_retries_the_active_unfinished_profile() -> Result<()>
 	Ok(())
 }
 
+/// A clear may name the running session by the name it was created under
+/// before its promotion. Whether the clear includes the running session is
+/// decided from the name it resolves to, so the host warns and stops before
+/// that session's data goes, and its messages name the session it clears.
+#[tokio::test]
+async fn a_clear_by_the_name_the_running_session_was_created_under_includes_it() -> Result<()> {
+	let temporary = tempfile::tempdir()?;
+	let network = Network::default().bundled_stack(ChainBackend::Rpc);
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), network.state_directory())?;
+	let provisional = catalog.ensure_profile("worker-0")?;
+	let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
+	std::fs::write(promoted.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
+	let session = unfinished_session(temporary.path(), "alice.01").await?;
+
+	assert_eq!(
+		validate_session_clear(&session, &SessionClearTarget::Named("worker-0".to_string()))?,
+		(SessionClearTarget::Named("alice.01".to_string()), true)
+	);
+	Ok(())
+}
+
 #[tokio::test]
 async fn session_selection_activates_a_finished_account_without_reprovisioning() -> Result<()> {
 	let temporary = tempfile::tempdir()?;

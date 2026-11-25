@@ -2905,20 +2905,24 @@ async fn remove_paired_host_locally(
 	Ok(())
 }
 
+/// What a clear of `target` removes, with a name resolved as session selection
+/// resolves it, and whether that includes the running session, which the host
+/// has to stop before its data goes.
 fn validate_session_clear(
 	session: &SigningHostSession,
 	target: &SessionClearTarget,
-) -> Result<bool> {
+) -> Result<(SessionClearTarget, bool)> {
 	if session.mnemonic.is_some() {
 		bail!("session clearing is unavailable when launched with --mnemonic");
 	}
-	session.catalog.validate_clear_target(target)?;
-	Ok(match target {
+	let target = session.catalog.resolve_clear_target(target)?;
+	let active = match &target {
 		SessionClearTarget::All => true,
 		SessionClearTarget::Named(name) => {
 			session.profile.as_ref().is_some_and(|profile| profile.name == *name)
 		},
-	})
+	};
+	Ok((target, active))
 }
 
 fn session_clear_confirmation(
@@ -3632,8 +3636,8 @@ async fn signing_interactive_loop(
 				}
 			},
 			ShellCommand::Session(SessionCommand::Clear(target)) => {
-				let active = match validate_session_clear(session, &target) {
-					Ok(active) => active,
+				let (target, active) = match validate_session_clear(session, &target) {
+					Ok(resolved) => resolved,
 					Err(error) => {
 						ui.error(error.to_string());
 						continue;
@@ -3966,7 +3970,7 @@ async fn execute_non_interactive_command(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Session(SessionCommand::Clear(target)) => {
-			validate_session_clear(session, &target)?;
+			let (target, _) = validate_session_clear(session, &target)?;
 			let clear = session.catalog.prepare_clear(&target)?;
 			session.responders.stop_all();
 			session.runtime_factory.reset_connections();

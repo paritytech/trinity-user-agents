@@ -455,18 +455,10 @@ impl SessionCatalog {
 		}
 	}
 
-	/// Check `target` and take the account store locks a clear of it needs,
-	/// before anything is removed or a host stops for it.
-	///
-	/// The locks are the shared store's, when there is one, and each removed
-	/// session's own, so a host provisioning one of those sessions cannot write
-	/// it back after the clear. With no shared store there are no records to
-	/// remove, so a host provisioning on another stack does not refuse the
-	/// clear. Fails as [`Self::validate_clear_target`] does, and when another
-	/// process holds one of the locks.
-	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
-		// Resolve once here, so a name promoted away clears the session it
-		// created just as it selects it everywhere else.
+	/// `target` with a name resolved as session selection resolves it, so a
+	/// name promoted away clears the session it created. Fails as
+	/// [`Self::validate_clear_target`] does.
+	pub fn resolve_clear_target(&self, target: &SessionClearTarget) -> Result<SessionClearTarget> {
 		let target = match target {
 			SessionClearTarget::Named(name) => {
 				SessionClearTarget::Named(self.resolve_session_name(name)?)
@@ -474,6 +466,20 @@ impl SessionCatalog {
 			SessionClearTarget::All => SessionClearTarget::All,
 		};
 		self.validate_clear_target(&target)?;
+		Ok(target)
+	}
+
+	/// Check `target` and take the account store locks a clear of it needs,
+	/// before anything is removed or a host stops for it.
+	///
+	/// The locks are the shared store's, when there is one, and each removed
+	/// session's own, so a host provisioning one of those sessions cannot write
+	/// it back after the clear. With no shared store there are no records to
+	/// remove, so a host provisioning on another stack does not refuse the
+	/// clear. Fails as [`Self::resolve_clear_target`] does, and when another
+	/// process holds one of the locks.
+	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
+		let target = self.resolve_clear_target(target)?;
 		let names = match &target {
 			SessionClearTarget::Named(name) => vec![name.clone()],
 			SessionClearTarget::All => self.list()?,
