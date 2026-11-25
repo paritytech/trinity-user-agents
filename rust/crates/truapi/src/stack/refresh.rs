@@ -129,8 +129,10 @@ impl StackRefresh {
 		})
 	}
 
-	/// The stack the core runs. It stays the same for the life of the
-	/// runtime: a newer copy that changes it applies at the next start.
+	/// The stack the core runs. A newer copy that changes it in anything but
+	/// the descriptor's `sequence` applies at the next start. One that changes
+	/// only the `sequence` applies at once, so this stack's `sequence` can
+	/// grow while the runtime runs, which keeps its run.
 	pub fn stack(&self) -> Stack {
 		self.shared.source().stack().clone()
 	}

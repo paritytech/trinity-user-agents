@@ -291,10 +291,25 @@ fn owner_listing_rejects_foreign_and_duplicate_entries() {
 	));
 }
 
+/// The registry stored under `root` in `platform`.
+fn stored_registry(platform: &StubPlatform, root: [u8; 32]) -> Option<Vec<u8>> {
+	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
+	futures::executor::block_on(platform.read_core_storage(key)).unwrap()
+}
+
+/// Stores `stored` as the registry under `root` in `platform`, as another
+/// runtime sharing its storage would.
+fn store_registry(platform: &StubPlatform, root: [u8; 32], stored: Vec<u8>) {
+	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
+	futures::executor::block_on(platform.write_core_storage(key, stored))
+		.expect("stub core storage writes");
+}
+
 /// A runtime started from an older copy of the descriptor, as when the stored
 /// copy could not be read, finds the registry a later run stored. It lists
-/// nothing from it and refuses to register over it, so the later run keeps its
-/// registrations and the provider each ring has selected.
+/// nothing from it. What it registers is its own to use, kept in memory, and
+/// the later run keeps its registrations and the provider each ring has
+/// selected in storage.
 #[test]
 fn a_registry_a_later_run_stored_is_left_as_it_is() {
 	let earlier = paseo_test_stack();
@@ -303,18 +318,94 @@ fn a_registry_a_later_run_stored_is_left_as_it_is() {
 	let stored = later.run().stamp(&registry.encode());
 	let platform = Arc::new(StubPlatform::default());
 	let root = [1; 32];
-	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
-	futures::executor::block_on(platform.write_core_storage(key.clone(), stored.clone()))
-		.expect("stub core storage writes");
+	store_registry(&platform, root, stored.clone());
 	let store = RingVrfRegistryStore::new(platform.clone(), &earlier);
-	let registered = &registry.entries[0];
+	let (registered, own) = (&registry.entries[0], handle("owner.dot", 9));
 
-	let (listed, registering) = futures::executor::block_on(async {
+	let (listed, own_listed) = futures::executor::block_on(async {
 		let listed = store.entry(root, &registered.handle).await.unwrap();
-		let registering = store.register(root, handle("owner.dot", 9), ring(1), [9; 32]).await;
-		(listed, registering.is_err())
+		store
+			.register(root, own.clone(), ring(1), [9; 32])
+			.await
+			.expect("registers in memory");
+		(listed.is_some(), store.entry(root, &own).await.unwrap().is_some())
 	});
 
-	let kept = futures::executor::block_on(platform.read_core_storage(key)).unwrap();
-	assert_eq!((listed, registering, kept), (None, true, Some(stored)));
+	assert_eq!((listed, own_listed, stored_registry(&platform, root)), (false, true, Some(stored)));
+}
+
+/// Another runtime sharing the storage can store a later run's registry after
+/// this store read its own. The write that follows checks the stored registry
+/// again and leaves the later run's in place, keeping its own update in
+/// memory.
+#[test]
+fn a_registry_a_later_run_stores_after_a_load_is_not_written_over() {
+	let earlier = paseo_test_stack();
+	let later = stack_in("next", [0x77; 32], 1);
+	let stored = later.run().stamp(&registered_on(&[later.chains().people]).encode());
+	let root = [1; 32];
+	let (first, second) = (handle("owner.dot", 1), handle("owner.dot", 2));
+	let after = |update: &dyn Fn(&RingVrfRegistryStore)| {
+		let platform = Arc::new(StubPlatform::default());
+		let store = RingVrfRegistryStore::new(platform.clone(), &earlier);
+		futures::executor::block_on(async {
+			store.register(root, first.clone(), ring(1), [1; 32]).await.expect("stored");
+			store.register(root, second.clone(), ring(1), [2; 32]).await.expect("stored");
+		});
+		store_registry(&platform, root, stored.clone());
+
+		update(&store);
+
+		let selected = futures::executor::block_on(store.selected_provider(root, &ring(1)));
+		(selected.unwrap(), stored_registry(&platform, root) == Some(stored.clone()))
+	};
+
+	assert_eq!(
+		[
+			after(&|store| {
+				futures::executor::block_on(store.register(
+					root,
+					handle("owner.dot", 3),
+					ring(2),
+					[3; 32],
+				))
+				.expect("registers in memory")
+			}),
+			after(&|store| {
+				futures::executor::block_on(store.select_provider(root, ring(1), second.clone()))
+					.expect("selects in memory")
+			}),
+		],
+		[(Some(first.clone()), true), (Some(second.clone()), true)]
+	);
+}
+
+/// A descriptor republished with only a higher `sequence`, such as one with
+/// new endpoints, keeps the run. A runtime started from the earlier copy reads
+/// the registry the later copy's runtime stored as its own, and writes it.
+#[test]
+fn a_registry_stored_in_the_same_run_from_a_later_descriptor_is_read() {
+	let paseo = paseo_test_stack();
+	let republished = stack_in(paseo.generation(), paseo.chains().people, 4);
+	let registry = registered_on(&[paseo.chains().people]);
+	let platform = Arc::new(StubPlatform::default());
+	let root = [1; 32];
+	store_registry(&platform, root, republished.run().stamp(&registry.encode()));
+	let store = RingVrfRegistryStore::new(platform.clone(), &paseo);
+
+	let listed = futures::executor::block_on(store.entry(root, &registry.entries[0].handle))
+		.unwrap()
+		.is_some();
+	futures::executor::block_on(store.register(root, handle("owner.dot", 9), ring(1), [9; 32]))
+		.expect("registers");
+
+	assert_eq!(
+		(
+			listed,
+			stored_registry(&platform, root)
+				.and_then(|stored| paseo.run().read_stamped(&stored).map(<[u8]>::to_vec))
+				.is_some()
+		),
+		(true, true)
+	);
 }

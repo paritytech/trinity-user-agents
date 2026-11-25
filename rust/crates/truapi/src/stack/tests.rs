@@ -246,7 +246,12 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 /// A stack in `generation` over `chains`, read from a descriptor with
 /// `sequence`.
 fn stack_in_run(generation: &str, chains: StackChains, sequence: u32) -> Stack {
-	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
+	stack_with_id("stack", generation, chains, sequence)
+}
+
+/// [`stack_in_run`] for the stack with this `id`, such as a fork's.
+fn stack_with_id(id: &str, generation: &str, chains: StackChains, sequence: u32) -> Stack {
+	let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
 	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, false)
 		.expect("stack is valid")
 }
@@ -260,9 +265,8 @@ fn stamp_test_chains() -> StackChains {
 /// descriptor `sequence` a runtime in it started from. A new `generation`, or
 /// a new Asset Hub, People or Bulletin chain, is another run. The relay chain,
 /// which the core never reads, is not part of the run, so a host that starts
-/// or stops serving it keeps what the core stored. A value stamped before the
-/// stamp carried the `sequence` is not read, like one stored without a run, so
-/// the earlier layout cannot be misread as this one.
+/// or stops serving it keeps what the core stored. A value led by another
+/// byte than the stamp's is not read, like a value stored without a stamp.
 #[test]
 fn a_stamped_value_is_read_back_in_its_own_run_only() {
 	let chains = stamp_test_chains();
@@ -274,9 +278,8 @@ fn a_stamped_value_is_read_back_in_its_own_run_only() {
 			.read_stamped(&stamped)
 			.map(<[u8]>::to_vec)
 	};
-	let mut first_layout = vec![1];
-	run.chains.encode_to(&mut first_layout);
-	first_layout.extend_from_slice(b"value");
+	let mut other_tag = stamped.clone();
+	other_tag[0] = 1;
 
 	assert_eq!(
 		[
@@ -287,7 +290,7 @@ fn a_stamped_value_is_read_back_in_its_own_run_only() {
 			read_in("g1", StackChains { asset_hub: [0xc4; 32], ..chains.clone() }, 10),
 			read_in("g1", StackChains { people: [0xa2; 32], ..chains.clone() }, 10),
 			read_in("g1", StackChains { bulletin: [0xb3; 32], ..chains }, 10),
-			run.read_stamped(&first_layout).map(<[u8]>::to_vec),
+			run.read_stamped(&other_tag).map(<[u8]>::to_vec),
 		],
 		[
 			Some(b"value".to_vec()),
@@ -302,12 +305,21 @@ fn a_stamped_value_is_read_back_in_its_own_run_only() {
 	);
 }
 
+/// How `run` reads what `stamped` holds.
+fn read_as(run: &StackRun, stamped: &[u8]) -> String {
+	match run.read(stamped) {
+		Stamped::ThisRun(value) => format!("this run: {}", String::from_utf8_lossy(value)),
+		Stamped::LaterRun => "later run".to_string(),
+		Stamped::Stale => "stale".to_string(),
+	}
+}
+
 /// What one run stamped is stale in another run that came later by the
 /// descriptor's `sequence`, and is replaced. A runtime started from an older
 /// copy of the descriptor, as when the stored copy could not be read, finds
-/// what the later run stamped and leaves it as it is. Two runs with one
-/// `sequence`, which a signed stack never has, and a stamp in the earlier
-/// layout or none, are stale as before.
+/// what the later run stamped and leaves it as it is. Another run with the
+/// same `sequence`, which a signed stack never publishes, and a value with no
+/// stamp are stale.
 #[test]
 fn a_value_another_run_stamped_is_left_only_when_that_run_came_later() {
 	let chains = stamp_test_chains();
@@ -315,24 +327,34 @@ fn a_value_another_run_stamped_is_left_only_when_that_run_came_later() {
 	let stamped_in = |generation: &str, sequence: u32| {
 		stack_in_run(generation, chains.clone(), sequence).run().stamp(b"value")
 	};
-	let held = |stamped: Vec<u8>| match reading.read(&stamped) {
-		Stamped::ThisRun(value) => format!("this run: {}", String::from_utf8_lossy(value)),
-		Stamped::LaterRun => "later run".to_string(),
-		Stamped::Stale => "stale".to_string(),
-	};
-	let mut first_layout = vec![1];
-	stack_in_run("g3", chains.clone(), 12).run().chains.encode_to(&mut first_layout);
 
 	assert_eq!(
 		[
-			held(stamped_in("g2", 9)),
-			held(stamped_in("g3", 12)),
-			held(stamped_in("g1", 10)),
-			held(stamped_in("g0", 11)),
-			held(first_layout),
-			held(b"value".to_vec()),
+			read_as(&reading, &stamped_in("g2", 9)),
+			read_as(&reading, &stamped_in("g3", 12)),
+			read_as(&reading, &stamped_in("g1", 10)),
+			read_as(&reading, &stamped_in("g0", 11)),
+			read_as(&reading, b"value"),
 		],
-		["this run: value", "later run", "stale", "stale", "stale", "stale"]
+		["this run: value", "later run", "stale", "stale", "stale"]
+	);
+}
+
+/// Stacks that share core storage, such as a fork the CLI runs in its
+/// source's namespace, or the stack a host build ships before and after an
+/// update, number their descriptors apart. One stack's `sequence` says nothing
+/// about another's, so what either stamped in another run is stale to the
+/// other and replaced, in both directions, and neither can keep the other
+/// from storing.
+#[test]
+fn another_stacks_value_is_stale_whatever_its_sequence() {
+	let chains = stamp_test_chains();
+	let source = stack_with_id("source", "g1", chains.clone(), 10).run();
+	let fork = stack_with_id("source-fork", "f1", chains.clone(), 3).run();
+
+	assert_eq!(
+		[read_as(&fork, &source.stamp(b"value")), read_as(&source, &fork.stamp(b"value"))],
+		["stale", "stale"]
 	);
 }
 

@@ -241,30 +241,39 @@ in:
 
 - Cached manifests and allowance keys from an earlier run, or stored without
   a run, are ignored until they are written again.
-- The ring-VRF registry is the wallet's own record, so it is kept. Each ring
-  names its chain, and the registry loses the rings on the chains of its run
-  that restarted: all of them when the `generation` changed, otherwise those
-  whose genesis hash the stack no longer has. One stored without a run is not
-  read.
+- The ring-VRF registry is the wallet's own record, so a wipe does not drop
+  it whole. Each ring names its chain, and the registry loses the rings on the
+  chains of its run that restarted: all of them when the `generation` changed,
+  otherwise those whose genesis hash the stack no longer has. One stored
+  without a run is not read: the registry starts empty and the next update
+  replaces it, so every registration and provider choice in it is lost. On a
+  signing host, which signs from its registry, `ring_vrf_sign` then fails with
+  `KeyNotRegistered` until each product registers its keys again.
 - The `SessionUsernamesRun` slot records the run in which the usernames of the
   `AuthSession` blob were read, with a hash of that blob.
 
 The session and the stored permissions are kept.
 
-Runs are ordered by the descriptor's `sequence`: a runtime records the
-`sequence` of the descriptor it started from next to its run. A runtime can be
-in an earlier run than the values in storage, as when the stored descriptor
-could not be read and it started from the bundled copy, or when two tabs that
-share storage start on either side of a refresh. What a later run stored then
-reads as nothing and is neither cleared nor written over: an allowance key is
+The runs of a stack are ordered by its descriptor's `sequence`: a runtime
+stores the stack's id and the `sequence` of the descriptor it started from
+next to its run. A runtime can be in an earlier run than the values in
+storage, as when the stored descriptor could not be read and it started from
+the bundled copy, or when two tabs that share storage start on either side of
+a refresh. What a later run of the same stack stored then reads as nothing and
+is neither cleared nor written over: an allowance key is kept in memory but
 not stored, revoking a product leaves the later run's keys, a manifest read is
-not cached, an update of the ring-VRF registry is refused, and the usernames a
-lookup finds stay out of the `AuthSession` slot. Ending the session still
-clears its allowance keys whichever run stored them, so a revoked session
-keeps no secret at rest. Values of another run with the same `sequence`,
-which a signed stack never publishes, are replaced like an earlier run's. A
-value stamped before the stamp carried the `sequence` is not read, like one
-stored without a run.
+not cached, an update of the ring-VRF registry is kept in memory and the
+stored registry is checked again before each write, and the usernames a lookup
+finds stay out of the `AuthSession` slot. Ending the session still clears its
+allowance keys whichever run stored them, so a revoked session keeps no secret
+at rest.
+
+What another stack stored in another run, such as a fork that shares its
+source's storage or the stack a host build ships after an update, is stale and
+replaced whatever its `sequence`, since one stack's `sequence` says nothing
+about another's. So are values of another run of the same stack with the same
+`sequence`, which a signed stack never publishes, and values stored without a
+stamp this core reads.
 
 Finding a later run's values does not set `restart_required`. The fetch that
 brings the later descriptor sets it, as for any newer copy, and when the

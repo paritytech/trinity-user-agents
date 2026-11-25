@@ -289,3 +289,37 @@ fn a_manifest_a_later_run_cached_is_left_as_it_is() {
 		]
 	);
 }
+
+/// A manifest cache entry stored without a stamp leads with its
+/// `fetched_at_secs`. One whose first byte is the stamp's tag can decode as a
+/// stamp of a run with a high `sequence`, but it names no stack this core runs,
+/// so it is stale and replaced, not kept as a later run's.
+#[test]
+fn an_unstamped_entry_that_starts_like_a_stamp_is_replaced() {
+	use crate::platform::CoreStorage;
+	let platform = crate::test_support::StubPlatform::default();
+	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let run = crate::test_support::paseo_test_stack().run();
+	let unstamped = CachedManifest { fetched_at_secs: 2, json: Some("a".repeat(200)) }.encode();
+
+	let cached_after = futures::executor::block_on(async {
+		platform
+			.write_core_storage(key.clone(), unstamped.clone())
+			.await
+			.expect("seeded");
+		cached_dotns_json(&platform, &run, key.clone(), CachePolicy::UseCache, || async {
+			Ok::<_, String>(Some("read".to_string()))
+		})
+		.await
+		.expect("read");
+		let stored = platform.read_core_storage(key.clone()).await.unwrap().unwrap();
+		run.read_stamped(&stored)
+			.and_then(|entry| CachedManifest::decode(&mut &*entry).ok())
+			.and_then(|entry| entry.json)
+	});
+
+	assert_eq!(
+		(StackRun::split_stamped(&unstamped).is_some(), cached_after),
+		(true, Some("read".to_string()))
+	);
+}

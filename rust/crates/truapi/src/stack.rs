@@ -93,8 +93,8 @@ pub struct StackIdentity {
 	pub generation: String,
 }
 
-/// One run of a stack's chains, from one wipe to the next, and the
-/// `sequence` of the descriptor a runtime in it started from.
+/// One run of a stack's chains, from one wipe to the next, with the stack's
+/// id and the `sequence` of the descriptor a runtime in it started from.
 ///
 /// A run is the descriptor's `generation` and the genesis hashes of the chains
 /// the core reads. A wipe changes `generation`, and the genesis hashes too
@@ -103,12 +103,15 @@ pub struct StackIdentity {
 /// the core never reads it, so adding or removing it is not a wipe.
 ///
 /// Two values are the same run when those match, whatever their `sequence`.
-/// The `sequence` orders different runs: a signed stack's `sequence` only
-/// grows, so a run started from a higher one came later. What the core stored
-/// in an earlier run is stale. What a later run stored, which a runtime finds
-/// when it started from an older copy of the descriptor, is left as it is.
+/// The `sequence` orders the runs of one stack: a signed stack's `sequence`
+/// only grows, so a run it started from a higher one came later. What the core
+/// stored in an earlier run is stale. What a later run of the same stack
+/// stored, which a runtime finds when it started from an older copy of the
+/// descriptor, is left as it is. Another stack's `sequence` says nothing about
+/// this one's, so what another stack stored in another run is stale.
 #[derive(Encode, Decode)]
 pub struct StackRun {
+	stack_id: String,
 	chains: RunChains,
 	sequence: u32,
 }
@@ -129,19 +132,19 @@ impl PartialEq for StackRun {
 }
 
 /// The byte that leads a value [`StackRun::stamp`] wrote, ahead of the run.
-/// A value led by `1`, from before the stamp carried the `sequence`, is not
-/// read, as one stored without a run.
-const STAMP_V2: u8 = 2;
+/// A value led by another byte, or too short to hold a run after it, reads as
+/// stored without a run.
+const STAMP_TAG: u8 = 2;
 
 /// What a value [`StackRun::stamp`] may have written holds for a run.
 pub enum Stamped<'a> {
 	/// This run stamped the value.
 	ThisRun(&'a [u8]),
-	/// A later run stamped it. It reads as nothing, and is neither cleared
-	/// nor written over.
+	/// A later run of the same stack stamped it. It reads as nothing, and is
+	/// neither cleared nor written over.
 	LaterRun,
-	/// Another run that did not come later stamped it, or nothing this core
-	/// reads did. It reads as nothing and is replaced.
+	/// Another run that did not come later stamped it, another stack did, or
+	/// nothing this core reads did. It reads as nothing and is replaced.
 	Stale,
 }
 
@@ -149,7 +152,7 @@ impl StackRun {
 	/// `value` led by this run, for a value read from the chains that is
 	/// stored. [`Self::read`] gives it back only in the same run.
 	pub fn stamp(&self, value: &[u8]) -> Vec<u8> {
-		let mut stamped = vec![STAMP_V2];
+		let mut stamped = vec![STAMP_TAG];
 		self.encode_to(&mut stamped);
 		stamped.extend_from_slice(value);
 		stamped
@@ -180,15 +183,15 @@ impl StackRun {
 	}
 
 	/// The run that stamped `stamped` and the value it leads, or `None` when
-	/// `stamped` carries no stamp of this version.
+	/// `stamped` carries no stamp.
 	pub fn split_stamped(stamped: &[u8]) -> Option<(Self, &[u8])> {
-		let mut value = stamped.strip_prefix(&[STAMP_V2])?;
+		let mut value = stamped.strip_prefix(&[STAMP_TAG])?;
 		Some((Self::decode(&mut value).ok()?, value))
 	}
 
-	/// Whether this is another run than `other` that came after it.
+	/// Whether this is another run of `other`'s stack that came after it.
 	pub fn is_later_than(&self, other: &Self) -> bool {
-		*self != *other && self.sequence > other.sequence
+		self.stack_id == other.stack_id && *self != *other && self.sequence > other.sequence
 	}
 
 	/// Whether one of the chains of this run has `genesis_hash`.
@@ -406,7 +409,7 @@ impl Stack {
 		let StackChains { asset_hub, people, bulletin, .. } = self.chains;
 		let generation = self.identity.generation.clone();
 		let chains = RunChains { generation, asset_hub, people, bulletin };
-		StackRun { chains, sequence: self.sequence }
+		StackRun { stack_id: self.identity.id.clone(), chains, sequence: self.sequence }
 	}
 
 	/// Whether the core can run `other` without starting again: it is this

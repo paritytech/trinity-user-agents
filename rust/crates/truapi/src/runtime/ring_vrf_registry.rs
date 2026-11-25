@@ -55,9 +55,6 @@ pub struct RingVrfRegistryStore {
 	platform: Arc<dyn Platform>,
 	run: StackRun,
 	cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
-	/// Roots whose stored registry a later run of the stack wrote, which this
-	/// store reads as empty and does not write over.
-	stored_by_later_run: Mutex<HashSet<[u8; 32]>>,
 	storage_guard: futures::lock::Mutex<()>,
 }
 
@@ -184,15 +181,15 @@ impl RingVrfRegistryStore {
 	/// is stored with the run it was written in. One read in a later run
 	/// loses the rings on the chains that run lost, as
 	/// [`StackRun::lost_since`] tells, and keeps every other ring. One stored
-	/// without a run is not read. One a later run stored, which a runtime
-	/// started from an older copy of the descriptor finds, reads as empty, and
-	/// an update over it is refused, so it is left as it is.
+	/// without a run is not read. One a later run of the stack stored, which a
+	/// runtime started from an older copy of the descriptor finds, reads as
+	/// empty and is left as it is: updates are kept in this store only, and
+	/// each write checks the stored registry again first.
 	pub fn new(platform: Arc<dyn Platform>, stack: &Stack) -> Arc<Self> {
 		Arc::new(Self {
 			platform,
 			run: stack.run(),
 			cache: Mutex::new(HashMap::new()),
-			stored_by_later_run: Mutex::new(HashSet::new()),
 			storage_guard: futures::lock::Mutex::new(()),
 		})
 	}
@@ -256,27 +253,12 @@ impl RingVrfRegistryStore {
 	}
 
 	/// Load one root's registry while retaining storage serialization.
-	///
-	/// Fails when a later run of the stack stored that registry, which this
-	/// store does not write over.
 	pub async fn prepare_update(
 		&self,
 		root_public_key: [u8; 32],
 	) -> Result<RegistryUpdate<'_>, RingVrfError> {
 		let guard = self.storage_guard.lock().await;
 		let snapshot = self.load_under_guard(root_public_key).await?;
-		let stored_by_later_run = self
-			.stored_by_later_run
-			.lock()
-			.expect("ring-VRF registry later-run mutex poisoned")
-			.contains(&root_public_key);
-		if stored_by_later_run {
-			return Err(RingVrfError::Unknown {
-				reason: "the ring-VRF registry was stored by a later run of the stack's chains; \
-				         this runtime started from an older descriptor and leaves it as it is"
-					.to_string(),
-			});
-		}
 		Ok(RegistryUpdate { store: self, root_public_key, snapshot, _guard: guard })
 	}
 
@@ -370,10 +352,6 @@ impl RingVrfRegistryStore {
 		let stored = self.platform.read_core_storage(key.clone()).await.map_err(storage_error)?;
 		let snapshot = match stored.as_deref().and_then(StackRun::split_stamped) {
 			Some((stored_in, _)) if stored_in.is_later_than(&self.run) => {
-				self.stored_by_later_run
-					.lock()
-					.expect("ring-VRF registry later-run mutex poisoned")
-					.insert(root_public_key);
 				RegistrySnapshot::default()
 			},
 			Some((stored_in, value)) => match decode_snapshot(value) {
@@ -407,13 +385,19 @@ impl RingVrfRegistryStore {
 		{
 			return Ok(());
 		}
-		self.platform
-			.write_core_storage(
-				CoreStorageKey::RingVrfRegistry { root_public_key },
-				self.run.stamp(&snapshot.encode()),
-			)
-			.await
-			.map_err(storage_error)?;
+		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
+		let stored = self.platform.read_core_storage(key.clone()).await.map_err(storage_error)?;
+		if stored.as_deref().is_some_and(|stored| self.run.later_run_stamped(stored)) {
+			tracing::warn!(
+				"a later run of the stack stored the ring-VRF registry; keeping this update in \
+				 memory only"
+			);
+		} else {
+			self.platform
+				.write_core_storage(key, self.run.stamp(&snapshot.encode()))
+				.await
+				.map_err(storage_error)?;
+		}
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")
