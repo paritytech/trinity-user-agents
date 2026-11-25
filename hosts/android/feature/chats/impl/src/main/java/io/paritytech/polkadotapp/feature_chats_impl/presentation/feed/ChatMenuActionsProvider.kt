@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMessageMenuAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isIncoming
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.canSendMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.isPeerLeft
@@ -36,7 +37,11 @@ class ChatMenuActionsProvider @Inject constructor() {
         }.toPersistentList()
     }
 
-    fun getMessageActions(message: ChatMessageUiModel, userInputState: ChatUserInputState): List<AllowedMessageMenuAction> {
+    fun getMessageActions(
+        message: ChatMessageUiModel,
+        userInputState: ChatUserInputState,
+        deletesUserMessages: Boolean,
+    ): List<AllowedMessageMenuAction> {
         return buildList {
             userInputState.doWhenCanSendMessage {
                 add(AllowedMessageMenuAction.Reply)
@@ -49,6 +54,10 @@ class ChatMenuActionsProvider @Inject constructor() {
             }
 
             tryAddEditHistory(message)
+
+            if (deletesUserMessages && message.isOutgoing()) {
+                userInputState.doWhenCanSendMessage { add(AllowedMessageMenuAction.Delete) }
+            }
         }
     }
 

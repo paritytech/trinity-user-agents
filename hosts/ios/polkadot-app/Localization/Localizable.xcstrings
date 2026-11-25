@@ -647,6 +647,17 @@
         }
       }
     },
+    "chat.delete" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete"
+          }
+        }
+      }
+    },
     "chat.depositAdded" : {
       "extractionState" : "manual",
       "localizations" : {

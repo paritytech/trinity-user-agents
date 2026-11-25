@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -14,6 +15,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
 import io.paritytech.polkadotapp.design.components.icon.vectors.Edit
 import io.paritytech.polkadotapp.design.components.icon.vectors.ReplyArrow
+import io.paritytech.polkadotapp.design.components.icon.vectors.Trash
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -76,6 +78,15 @@ internal fun ActionMenuList(
                             onClick = { onMessageAction(MessageAction.ViewEditHistory(state.message)) }
                         )
                     }
+
+                    is AllowedMessageMenuAction.Delete -> {
+                        ActionMenuItem(
+                            text = stringResource(RCommon.string.common_delete),
+                            icon = NovaIcons.Trash,
+                            color = PolkadotTheme.colors.fg.error,
+                            onClick = { onMessageAction(MessageAction.Delete(state.message)) }
+                        )
+                    }
                 }
             }
         }
@@ -87,6 +98,7 @@ private fun ActionMenuItem(
     text: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    color: Color = PolkadotTheme.colors.fg.primary,
 ) {
     Row(
         modifier = Modifier
@@ -101,7 +113,7 @@ private fun ActionMenuItem(
         NovaIcon(
             modifier = Modifier.size(20.dp),
             imageVector = icon,
-            tint = PolkadotTheme.colors.fg.primary
+            tint = color
         )
 
         HorizontalSpacer { smallIncreased }
@@ -109,7 +121,7 @@ private fun ActionMenuItem(
         NovaText(
             text = text,
             style = PolkadotTheme.typography.body.large,
-            color = PolkadotTheme.colors.fg.primary
+            color = color
         )
     }
 }

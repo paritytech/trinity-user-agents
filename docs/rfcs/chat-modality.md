@@ -129,6 +129,30 @@ enum ChatRoomRegistrationErr {
 }
 ```
 
+#### 2.4 Links and Invites
+
+A chat link is a `Deeplink` that the Host opens in the Product that owns the room.
+
+```rust
+enum ChatLink {
+    Room(RoomId),
+    Message(RoomId, MessageId),
+    Call(RoomId, MessageId),
+    Invite(Invite),
+}
+
+struct Invite {
+    room_id: RoomId,
+    // Proves the invite to the members that manage the room.
+    token: Vec<u8>,
+    expires_at: Option<Timestamp>,
+    max_uses: Option<u32>,
+}
+```
+
+- A user who opens an invite sends `JoinRequest`. When the room approves joins, a member that manages it answers with `AnswerJoin`. A request waits until such a member is online.
+- A user sets an `Audience` (8.1) for who may add it to a room. An add by anyone else is a request (`RoomRequest::Incoming`) that the user answers.
+
 ### 3. Room Metadata & Preview
 
 Products control how rooms appear in the chat list and inside the chat screen.
@@ -146,6 +170,13 @@ struct RoomMetadata {
     parent: Option<RoomId>,
     position: u32,
     settings: RoomSettings,
+    pinned: Vec<PinnedMessage>,
+}
+
+struct PinnedMessage {
+    message_id: MessageId,
+    by: ChatParticipantId,
+    until: Option<Timestamp>,
 }
 
 enum RoomKind {
@@ -175,6 +206,8 @@ struct RoomSettings {
     slow_mode: u32,
     // A text that a member can read after the join.
     welcome: Option<String>,
+    // A join by invite waits for `AnswerJoin`.
+    approve_joins: bool,
     // A sender sets `expires_at` this many milliseconds after the send.
     message_timer: Option<u64>,
     // A reader drops a message from a participant who is not an admin.
@@ -210,6 +243,18 @@ struct ChatRoomPreview {
     order: ChatRoomPreviewOrder,
     timestamp: Timestamp,
     badge: ChatRoomPreviewBadge,
+    // The user's own state of the room, from the room actions (4.3).
+    archived: bool,
+    muted_until: Option<Timestamp>,
+    marked_unread: bool,
+    request: Option<RoomRequest>,
+}
+
+// A direct room that waits for an answer.
+enum RoomRequest {
+    Incoming { since: Timestamp },
+    Outgoing { since: Timestamp },
+    Declined,
 }
 ```
 
@@ -272,8 +317,9 @@ enum MessageContent {
     },
 
     // A deleted message that keeps its place, so that replies still point
-    // at it. The Host draws "Message deleted".
-    Deleted,
+    // at it. The Host draws "Message deleted", and names an admin who
+    // deleted it.
+    Deleted { by: ChatParticipantId },
 
     // A line about the room that the Host draws with its own strings. The
     // origin is the participant who acted: "Ana added Ben".
@@ -283,8 +329,19 @@ enum MessageContent {
     // offer. Only the `CallSignal`s of its participants change it.
     Call(Call),
 
+    // Each participant answers with `Answer`.
+    Poll(Poll),
+
+    Location(Location),
+
+    // A person that the receiver can open a chat with.
+    ContactCard { participant_id: ChatParticipantId, name: String },
+
     // A long post. Its Markdown also has headings and tables.
     Article { title: String, blocks: Vec<ArticleBlock> },
+
+    // Each participant answers with `Answer`: 0 going, 1 maybe, 2 not going.
+    CalendarEvent(CalendarEvent),
 
     // A payment that the Host made. The origin is the payer. The Host of a
     // reader checks `reference` and draws the state that it reads
@@ -308,9 +365,40 @@ enum PaymentReference {
     Transfer { chain: String, block_hash: [u8; 32], extrinsic_hash: [u8; 32] },
 }
 
+struct CalendarEvent {
+    name: String,
+    description: Option<String>,
+    starts_at: Timestamp,
+    ends_at: Option<Timestamp>,
+    location: Option<String>,
+    allow_guests: bool,
+    cancelled: bool,
+}
+
 enum ArticleBlock {
     Text(String),
     Media(ChatMedia),
+}
+
+struct Location {
+    // Degrees times 10^7.
+    latitude: i32,
+    longitude: i32,
+    title: Option<String>,
+    // A live location, which its origin moves with edits until this time.
+    live_until: Option<Timestamp>,
+}
+
+struct Poll {
+    question: String,
+    options: Vec<String>,
+    multiple: bool,
+    // No Product shows who answered. Between Products the record of an
+    // answer still names its origin.
+    anonymous: bool,
+    // A quiz: the index of the correct option.
+    correct: Option<u32>,
+    closes_at: Option<Timestamp>,
 }
 
 struct Call {
@@ -328,11 +416,15 @@ enum RoomEvent {
     Created,
     MemberAdded(ChatParticipantId),
     MemberRemoved(ChatParticipantId),
+    MemberJoined,
     MemberLeft,
+    RequestAccepted,
     Renamed(String),
     AvatarChanged,
     DescriptionChanged,
     SettingsChanged,
+    MessagePinned(MessageId),
+    RoleChanged { participant_id: ChatParticipantId, role: Role },
     // Each Product writes it when it sees the change. A user may hide it
     // on a device.
     SecurityKeyChanged,
@@ -452,14 +544,23 @@ struct Message {
     silent: bool,
     expires_at: Option<Timestamp>,
     forward: Option<ForwardSource>,
+    // Rows of buttons under the message (5.3).
+    buttons: Vec<Vec<MessageButton>>,
     last_edited: Option<Timestamp>,
     edit_count: u32,
     reactions: Map<Emoji, AggregatedReaction>,
     receipts: Option<ReceiptSummary>,
     // The thread whose root is this message.
     thread: Option<ThreadSummary>,
+    answers: Option<AnswerSummary>,
     // The readers of a post of a Channel.
     views: Option<u32>,
+}
+
+struct AnswerSummary {
+    // The number of participants for each option.
+    counts: Vec<u32>,
+    mine: Vec<u32>,
 }
 
 // A forward keeps the resources of the media, so a receiver fetches the
@@ -553,9 +654,11 @@ enum UserChatAction {
         silent: bool,
         expires_at: Option<Timestamp>,
         forward: Option<ForwardSource>,
+        buttons: Vec<Vec<MessageButton>>,
     },
-    // Changes only the text of `Text` or `RichText`, and keeps the media.
-    // A reader drops any other edit, and an edit by another origin.
+    // Changes only the text of `Text` or `RichText` (and keeps the media),
+    // the point of a live `Location`, or a `CalendarEvent` (also to cancel
+    // it). A reader drops any other edit, and an edit by another origin.
     EditMessage {
         message_id: MessageId,
         new_content: MessageContent,
@@ -575,8 +678,25 @@ enum UserChatAction {
     },
     // The user opened the view-once media of a message.
     Opened { message_id: MessageId },
+    // A pin that every member sees, until a time or the unpin.
+    PinMessage { message_id: MessageId, until: Option<Timestamp> },
+    UnpinMessage { message_id: MessageId },
     // The user changed the metadata or the settings of the room.
     EditRoom(RoomMetadata),
+    // Room actions. The Product keeps the result in the room preview, so
+    // it follows the user to the user's other devices.
+    PinRoom(bool),
+    ArchiveRoom(bool),
+    // None unmutes. Timestamp::MAX mutes until the user unmutes.
+    MuteRoom(Option<Timestamp>),
+    MarkUnread(bool),
+    // Removes the history on the user's own devices.
+    ClearRoom,
+    LeaveRoom,
+    AnswerRequest { accept: bool },
+    // Blocks (true) or unblocks the other participant of a direct room.
+    Block(bool),
+
     // A step of the call of a `Call` message. `payload` is for the call
     // transport, and the Host does not read it.
     CallSignal {
@@ -584,6 +704,22 @@ enum UserChatAction {
         signal: CallSignalKind,
         payload: Vec<u8>,
     },
+
+    // Links and invites (2.4). A reset is a revoke, then a create.
+    CreateInvite { expires_at: Option<Timestamp>, max_uses: Option<u32> },
+    RevokeInvite { token: Vec<u8> },
+    JoinRequest(Invite),
+    AnswerJoin { participant_id: ChatParticipantId, accept: bool },
+
+    // Only an admin (8.1).
+    SetRole { participant_id: ChatParticipantId, role: Role },
+
+    // The indexes of the chosen options. It replaces an earlier answer of
+    // the same participant.
+    Answer { message_id: MessageId, choices: Vec<u32> },
+
+    // Answered with `Toast` or `Acknowledged`.
+    PressButton { message_id: MessageId, button_id: String },
 }
 
 enum CallSignalKind {
@@ -599,6 +735,9 @@ enum CallSignalKind {
 // - EditMessage, ReactionPlaced, ReactionRemoved → void
 enum UserChatActionResult {
     MessageCreated(Message),
+    InviteCreated(Invite),
+    // A short text that the Host shows for a moment.
+    Toast(String),
     Acknowledged,
 }
 
@@ -627,16 +766,20 @@ fn handle_chat_messages_source(
 );
 ```
 
+- `LeaveRoom`: the member that leaves sends it, and the member or Host that manages the room removes the member. In a direct room the user's devices clear the room, and the other participant sees `MemberLeft` and keeps it. A later message from either side opens the room again.
 - Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
+- A decline and a block are not shown to the other participant. A reader applies them, and tells its user nothing: a decline closes the request on both sides, a block stops delivery (or the reader drops the records of the blocked participant in that room), and an unblock ends that.
+
 #### 4.4 Message Details
 
-When a user asks who reacted, who read a message, or how it read before an edit, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
+When a user asks who reacted, who read a message, how it read before an edit, or who answered, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
 
 ```rust
 enum MessageDetailsKind {
     Reactions,
     Receipts,
     Edits,
+    Answers,
 }
 
 enum MessageDetails {
@@ -644,6 +787,12 @@ enum MessageDetails {
     Receipts(Vec<MessageReceipt>),
     // The earlier versions, oldest first.
     Edits(Vec<MessageVersion>),
+    Answers(Vec<ParticipantAnswer>),
+}
+
+struct ParticipantAnswer {
+    participant_id: ChatParticipantId,
+    choices: Vec<u32>,
 }
 
 struct MessageVersion {
@@ -743,6 +892,27 @@ enum ProductMessageActionHandler {
 // If not called, Host uses default built-in actions.
 fn handle_message_actions(
     get_message_actions: fn(Message) -> MessageActions
+);
+```
+
+#### 5.3 Buttons and Commands
+
+A message can carry buttons, for example from a bot. A press goes to the Product as `PressButton`. A room can offer commands, which the Host lists when the user types `/`.
+
+```rust
+struct MessageButton {
+    id: String,
+    label: String,
+}
+
+struct ChatCommand {
+    name: String,
+    description: String,
+}
+
+fn handle_chat_commands(
+    room_id: RoomId,
+    get_commands: fn() -> Vec<ChatCommand>,
 );
 ```
 
@@ -905,7 +1075,7 @@ enum ChatParticipantKind {
 }
 ```
 
-The role of a participant in a Space applies in each room of the Space.
+Only an `Admin` or the `Owner` adds and removes members, answers joins, deletes the messages of others, posts when `only_admins_post` is set, changes the room metadata and settings, manages the rooms of a Space, mentions everyone, and sets the role of another participant (not of the Owner). A reader drops such an action from a `Member`. The role of a participant in a Space applies in each room of the Space.
 
 #### 8.2 Methods
 
@@ -969,10 +1139,11 @@ When a Product does **not** register a handler, the Host applies these defaults:
 | Unread count | Derived from read status vs total message count |
 | Message actions | Copy, Reply, Edit (own messages only), Reaction (all emoji) |
 | Toolbar actions | None |
+| Commands | None |
 | Chat footer | Default input, payment disabled, default attachments |
 | Participants | Two participants: user and Product |
 | Participant actions | Based on participant type (open contact, open product info) |
-| Message details | Not available: no view of who reacted, who read, or earlier versions |
+| Message details | Not available: no view of who reacted, read or answered, or of earlier versions |
 | Placeholder | None |
 
 ### 11. Transport & Serialization
@@ -1010,11 +1181,15 @@ This RFC follows the same transport and serialization rules as the Host API prot
 18. **Participant actions**: Configurable actions when tapping on a participant.
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
 20. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
-21. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
-22. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
-23. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
-24. **Stories**: Posts that expire, for an audience, with views and replies.
-25. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
+21. **Room actions**: Pin, archive, mute, mark unread, clear and leave a room, and answer or block a request, with the same state on all the user's devices.
+22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
+23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
+24. **Links and invites**: Links to a room, a message, a call or an invite, join requests, and consent before an add.
+25. **Polls and events**: Questions with options, quizzes and anonymous polls, and calendar events with RSVP, with one tally for every Product.
+26. **Buttons and commands**: Buttons on a message with an answer to a press, and the commands of a room.
+27. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+28. **Stories**: Posts that expire, for an audience, with views and replies.
+29. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
@@ -1063,7 +1238,15 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows text edits that keep the media.
 
-2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
+2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Buttons and commands (5.3) give a bot its messages; bot registration is deferred to a future RFC.
+
+3. **Visible decline**: This RFC hides a decline from the requester. Should every Product show it instead?
+
+4. **Pinned messages**: How many pinned messages may one room hold? Chat apps range from three to no limit.
+
+5. **Event guests**: When a `CalendarEvent` allows guests, is the number of guests part of the answer?
+
+6. **Admins**: How many admins may one room have?
 
 ## Related Discussions
 

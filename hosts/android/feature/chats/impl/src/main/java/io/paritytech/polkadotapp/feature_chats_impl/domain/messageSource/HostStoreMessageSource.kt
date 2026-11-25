@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.combine
 
 /**
  * The messages of a room that the host database keeps: a person chat or a host-store product room. The
- * window is the whole room. The writes of the user keep the paths of [ChatEngine].
+ * window is the whole room. The writes of the user keep the paths of [ChatEngine], so [perform] refuses them.
  */
 class HostStoreMessageSource(
     private val chatId: ChatId,
@@ -33,6 +33,8 @@ class HostStoreMessageSource(
     override suspend fun loadNewer(): ChatPageOutcome = ChatPageOutcome.End
 
     override suspend fun jump(messageId: ChatMessageId): Boolean = false
+
+    override suspend fun perform(action: ChatSourceAction): ChatSourceActionOutcome = ChatSourceActionOutcome.Refused(reason = null)
 
     override suspend fun reload() = Unit
 
