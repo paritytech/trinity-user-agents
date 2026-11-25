@@ -53,7 +53,7 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import type { ProductRuntimeConfig, ReservedValuesPolicy } from "../runtime.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -1447,19 +1447,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async setChatRoomFooter() {
         if (faults.chatError) throw new Error(faults.chatError);
       },
-      async readChatRoomConfig(_product, roomId) {
-        if (faults.chatError) throw new Error(faults.chatError);
-        return (
-          chatDeclarations.get(roomId)?.config ?? {
-            productSource: false,
-            reactionDetails: false,
-          }
-        );
-      },
       async setChatRoomMetadata(_product, request) {
         declareChatRoom(request.roomId, (room) => {
           room.metadata = request.metadata;
         });
+        return "Applied";
       },
       async setChatRoomPreview(_product, request) {
         declareChatRoom(request.roomId, (room) => {
@@ -1498,9 +1490,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           },
         );
       },
-      async listChatRooms() {
+      async chatRoom(_product, roomId) {
         if (faults.chatError) throw new Error(faults.chatError);
-        return { rooms: byKey(chatRooms) };
+        const room = chatRooms.get(roomId);
+        if (!room) return undefined;
+        return {
+          participatingAs: room.participatingAs,
+          config: chatDeclarations.get(roomId)?.config ?? {
+            productSource: false,
+            reactionDetails: false,
+          },
+        };
       },
     },
 
@@ -1849,10 +1849,10 @@ export interface TestStack {
   /** The relay chain. */
   relay?: TestStackChain;
   /**
-   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
-   * Defaults to `false`, as on a real host.
+   * The host's policy on reserved values. Defaults to refusing the core's, as on
+   * a real host.
    */
-  allowsReservedValues?: boolean;
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */

@@ -47,10 +47,10 @@ use truapi::latest;
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome,
-	CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation,
-	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	ChatRoomState, CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost,
+	Navigation, Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext,
+	ProductId, ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -1078,8 +1078,15 @@ pub fn mock_stack(
 	let identity =
 		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
-		.expect("a mock stack names no reserved value")
+	let reserved_values = crate::platform::ReservedValuesPolicy::default();
+	crate::platform::Stack::new(
+		identity,
+		"mock".to_string(),
+		"paseo".to_string(),
+		chains,
+		&reserved_values,
+	)
+	.expect("a mock stack names no reserved value")
 }
 
 /// Placeholder genesis hashes for the chains a mock host serves.
@@ -1453,36 +1460,33 @@ impl ChatPlatform for MockPlatform {
 		Box::pin(receiver.map(Ok))
 	}
 
-	async fn list_chat_rooms(
-		&self,
-		_product: &ProductContext,
-	) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
-		if let Some(reason) = &self.config.faults.chat_error {
-			return Err(latest::GenericError { reason: reason.clone() });
-		}
-		Ok(latest::HostChatListSubscribeItem { rooms: self.chat_rooms() })
-	}
-
-	async fn read_chat_room_config(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-	) -> Result<latest::ChatRoomConfig, latest::GenericError> {
+	) -> Result<Option<ChatRoomState>, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		Ok(self
+		let Some(room) =
+			self.chat_rooms.lock().expect("chat rooms poisoned").get(&room_id).cloned()
+		else {
+			return Ok(None);
+		};
+		let config = self
 			.chat_room_declarations(&room_id)
 			.and_then(|declarations| declarations.config)
-			.unwrap_or_default())
+			.unwrap_or_default();
+		Ok(Some(ChatRoomState { participating_as: room.participating_as, config }))
 	}
 
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn set_chat_room_preview(

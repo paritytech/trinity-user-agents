@@ -52,6 +52,15 @@ struct CoinageDatabaseDependencyFactory: DatabaseDependencyFactoring, @unchecked
         return AnyDataProviderRepository(repository)
     }
 
+    func makeTrackedCoinRepository(publicKeys: [PublicKey]) -> AnyDataProviderRepository<TrackedCoin> {
+        let repository = storageFacade.createRepository(
+            filter: NSPredicate(format: "%K IN %@", #keyPath(CDCoin.publicKey), publicKeys.map { $0.toHex() }),
+            sortDescriptors: [],
+            mapper: AnyCoreDataMapper(makeTrackedCoinMapper())
+        )
+        return AnyDataProviderRepository(repository)
+    }
+
     func makeCoinPresenceRepository() -> AnyDataProviderRepository<CoinPresenceUpdate> {
         let repository = storageFacade.createRepository(
             filter: nil,
