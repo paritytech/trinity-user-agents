@@ -4,6 +4,10 @@
 // before any host runs and is the same on every run. That is what lets a suite
 // fund it once, in a `globalSetup`, rather than per test: funding is a property
 // of the account, not of the run.
+//
+// The product id is the one the host's stack serves the product under. On a
+// stack whose TLD is not `dot`, the core reads `tx-demo.dot` as
+// `tx-demo.<tld>`, and so does the derivation here.
 
 import type { ProductId } from "@parity/truapi";
 import { readFile } from "node:fs/promises";
@@ -11,6 +15,7 @@ import { pathToFileURL } from "node:url";
 
 import { DerivationIndex } from "@parity/truapi";
 
+import { mockTestStack, type TestStack } from "../web/create-mock-host.js";
 import {
   checkDerivationIndex,
   resolveAccount,
@@ -27,11 +32,20 @@ export interface ProductAccountQuery {
   productId: ProductId;
   /** Index within the product's subtree. Defaults to `0`. */
   index?: number;
+  /**
+   * The test stack the host runs, which decides the id the product is served
+   * under. Defaults to the mock test stack.
+   */
+  testStack?: TestStack;
 }
 
 /** The core's pure derivation helpers, as the node bundle exports them. */
 interface Derivation {
   default: (init: { module_or_path: Uint8Array }) => Promise<unknown>;
+  testStackServedProductId(
+    testStack: TestStack,
+    productId: ProductId,
+  ): ProductId;
   deriveProductSubtreePublicKey(
     rootEntropy: Uint8Array,
     productId: ProductId,
@@ -85,7 +99,11 @@ export async function productAccountAddress(
     value: checkDerivationIndex(query.index ?? 0),
   });
   const core = await derivation();
-  const subtree = core.deriveProductSubtreePublicKey(entropy, query.productId);
+  const served = core.testStackServedProductId(
+    query.testStack ?? mockTestStack(),
+    query.productId,
+  );
+  const subtree = core.deriveProductSubtreePublicKey(entropy, served);
   return core.productAccountAddress(
     core.deriveProductAccountPublicKey(subtree, index),
   );

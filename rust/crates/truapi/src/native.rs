@@ -106,26 +106,27 @@ impl Stack {
 	/// Classify a navigation input exactly like the core's internal navigate
 	/// host call: the Pocket deeplink first, then dotNS, then `localhost`, then
 	/// normalized external, with everything else rejected. A name is dotNS only
-	/// under a TLD this stack serves. Hosts call it on every webview-internal
-	/// navigation.
+	/// under a TLD this stack accepts, and the decision names its product by
+	/// the id the stack serves it under. Hosts call it on every
+	/// webview-internal navigation.
 	pub fn parse_navigate(&self, input: String) -> NavigateDecision {
 		dotns::parse_navigate(&input, self)
 	}
 
-	/// The product a share host names, when it is under a TLD this stack
-	/// serves.
+	/// The id this stack serves the product a share host names under, when it
+	/// serves it: `game.paseo` on a `paseo` stack for `game.dot.li`.
 	pub fn parse_product_share_host(&self, input: String) -> Option<ProductId> {
-		ProductId::from_share_host(&input).filter(|product_id| self.serves(product_id))
+		ProductId::from_share_host(&input).and_then(|product_id| self.served_id(&product_id).ok())
 	}
 
-	/// Share domains of the TLDs this stack serves.
+	/// Share domains of the TLDs this stack accepts product names under.
 	pub fn product_share_hosts(&self) -> Vec<String> {
 		dotns::product_share_hosts(self)
 	}
 
 	/// Whether `product_id` is a first-party product the host grants every
 	/// [`truapi::latest::RemotePermission`] without prompting: a trusted label
-	/// under a TLD this stack serves.
+	/// under a TLD this stack accepts.
 	///
 	/// Trusted products bypass recorded permissions and permission prompts.
 	/// Device permissions still need the OS grant. Hosts mediating product

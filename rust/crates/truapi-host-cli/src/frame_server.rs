@@ -74,8 +74,9 @@ pub struct ProductSelection {
 }
 
 impl ProductSelection {
-	/// Select the initial product identity. Fails when `stack`, the stack the
-	/// host runs, does not serve the product's TLD.
+	/// Select the initial product identity, under the id `stack`, the stack
+	/// the host runs, serves the product under. Fails when it does not serve
+	/// the product.
 	pub fn new(
 		product_id: ProductId,
 		execution_kind: ExecutableKind,
@@ -93,7 +94,7 @@ impl ProductSelection {
 
 	/// Select a product, returning whether the selection changed. Fails, and
 	/// keeps the selection, when `stack`, the stack the host runs, does not
-	/// serve the product's TLD.
+	/// serve the product.
 	pub fn select(
 		&self,
 		product_id: ProductId,

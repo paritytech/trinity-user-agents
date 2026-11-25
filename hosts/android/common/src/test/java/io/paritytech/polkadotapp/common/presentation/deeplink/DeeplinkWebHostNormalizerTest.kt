@@ -77,4 +77,9 @@ class DeeplinkWebHostNormalizerTest {
         assertEquals("browse.paseo", dotProductHost("https", "browse.paseo.li", PASEO))
         assertNull(dotProductHost("https", "browse.testnet.li", PASEO))
     }
+
+    @Test
+    fun `a product under Polkadot's share domain is the stack's own product`() {
+        assertEquals("browse.paseo", dotProductHost("https", "browse.dot.li", PASEO))
+    }
 }

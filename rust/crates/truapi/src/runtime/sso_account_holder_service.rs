@@ -66,8 +66,7 @@ impl SsoAccountHolderService {
 	/// A request whose review names a product the stack does not serve is
 	/// refused before the user is asked, because the wallet would refuse it
 	/// anyway. Each handler serves the relayed caller and the products its
-	/// payload names before the wallet sees them, except `sign_vrf`, whose
-	/// payload this check serves through its review.
+	/// payload names before the wallet sees them.
 	async fn confirmed<'a, T, F>(
 		&self,
 		invocation: AccountInvocation<'a>,
@@ -444,12 +443,13 @@ impl SsoAccountHolderService {
 			let caller = self.wallet.serve(request.calling_product_id)?;
 			validate_vrf_transcript(&request.payload)
 				.map_err(|reason| AuthorityError::Unknown { reason })?;
+			let payload = self.wallet.serve(request.payload)?.into_inner();
 			let review = UserConfirmationReview::SignVrf(SignVrfReview {
 				calling_product_id: ProductId::clone(&caller),
-				request: request.payload.clone(),
+				request: payload.clone(),
 			});
 			self.confirmed(cx.account_invocation(Some(&caller)), review, |invocation| {
-				self.wallet.sign_vrf(invocation, request.payload)
+				self.wallet.sign_vrf(invocation, payload)
 			})
 			.await
 		}

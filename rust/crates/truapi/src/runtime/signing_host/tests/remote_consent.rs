@@ -165,7 +165,7 @@ fn a_relayed_caller_the_stack_does_not_serve_is_refused() {
 	);
 
 	let unserved = Err(RingVrfError::Unknown {
-		reason: "product peopl.testnet is not under a TLD the dot stack serves".to_string(),
+		reason: "the dot stack does not serve product peopl.testnet".to_string(),
 	});
 	assert_eq!(
 		(
@@ -226,7 +226,7 @@ fn a_relayed_request_naming_an_unserved_product_is_refused() {
 
 	let unserved = || {
 		Err(RingVrfError::Unknown {
-			reason: "product foo.testnet is not under a TLD the dot stack serves".to_string(),
+			reason: "the dot stack does not serve product foo.testnet".to_string(),
 		})
 	};
 	assert_eq!(

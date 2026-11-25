@@ -53,6 +53,13 @@ descriptor without an Asset Hub, People or Bulletin chain, a field `stack` does
 not have, and the TLDs `li`, which share hosts end in, and `localhost`, whose
 names all resolve to the local machine.
 
+The core runs products under the stack's TLD. A `productId` may also be written
+under `dot`: on a stack with another TLD the core reads it as the same name
+under the stack's TLD, so on `paseo` a host that passes `chat-bot.dot` runs
+`chat-bot.paseo`. That is the product's id everywhere: in the accounts and
+entropy it gets, in what the core stores for it, and in the `productId` the
+core hands to callbacks such as `subscribeWorkerDemand`.
+
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
 `WasmProductRuntime` built on its own starts from the stored copy but does not
@@ -320,6 +327,11 @@ const address = await productAccountAddress({
 });
 ```
 
+The address is the one the host gives the product, so the product id is read as
+the host's stack reads it. The mock test stack's TLD is `paseo`, which makes
+`tx-demo.dot` the product `tx-demo.paseo`. A suite whose host runs another test
+stack passes it as `testStack`.
+
 Which one to reach for:
 
 - `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
@@ -328,9 +340,9 @@ Which one to reach for:
 - `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
   is asynchronous and runs the whole derivation from a dev account's session
   root. It needs the built testing bundle, so it is for suites only. Because
-  the address depends on nothing but the root, the product id and the index, a
-  suite can work it out in a `globalSetup` and fund it once rather than per
-  test.
+  the address depends on nothing but the root, the id the stack serves the
+  product under and the index, a suite can work it out in a `globalSetup` and
+  fund it once rather than per test.
 
 A running fixture answers the same address through
 `testHost.getProductAccountAddress(productId?, index?)`, which reads the session

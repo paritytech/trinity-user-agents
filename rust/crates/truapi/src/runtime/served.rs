@@ -1,12 +1,13 @@
 //! Proof that the stack serves every product a value names.
 //!
-//! [`serve`] checks a value against the stack and wraps it in [`Served`]. A
-//! product's handler serves a request that names another product, and a paired
-//! host's handler serves the caller and the request it relays, before either
-//! acts. `HostAccounts`, the account holder's ring-VRF calls that name a key,
-//! owner or context, and the signing requests the core builds take their
-//! products as `Served`, so no key is resolved for a product the stack does not
-//! serve.
+//! [`serve`] replaces each product id a value names with the id the stack
+//! serves it under and wraps the value in [`Served`]. A product's handler
+//! serves a request that names another product, and a paired host's handler
+//! serves the caller and the request it relays, before either acts.
+//! `HostAccounts`, the account holder's ring-VRF calls that name a key, owner
+//! or context, and the signing requests the core builds take their products
+//! as `Served`, so no key is resolved for a product the stack does not serve,
+//! or under an id it does not serve it under.
 
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
@@ -20,7 +21,8 @@ use crate::{
 	stack::{Stack, UnservedProduct},
 };
 
-/// A value that names only products the stack serves.
+/// A value that names only products the stack serves, each under the id the
+/// stack serves it under.
 ///
 /// Only [`serve`] creates one, so a function that takes `Served` cannot be
 /// called without the check. It derefs to the value. It does not record
@@ -55,33 +57,34 @@ impl Served<ProductAccountTxPayload> {
 /// A value that names products. The core acts on it only if the stack serves
 /// all of them.
 pub trait NamesProducts {
-	/// Every product the value names.
-	fn products(&self) -> Vec<&ProductId>;
+	/// Every product the value names, for [`serve`] to replace with the id
+	/// the stack serves it under.
+	fn products(&mut self) -> Vec<&mut ProductId>;
 }
 
-/// `value` as [`Served`] once `stack` serves every product it names. Fails
-/// with the first one it does not.
-pub fn serve<T: NamesProducts>(stack: &Stack, value: T) -> Result<Served<T>, UnservedProduct> {
+/// `value` as [`Served`], with every product it names under
+/// [`Stack::served_id`]. Fails with the first one `stack` does not serve.
+pub fn serve<T: NamesProducts>(stack: &Stack, mut value: T) -> Result<Served<T>, UnservedProduct> {
 	for product_id in value.products() {
-		stack.require_served(product_id)?;
+		*product_id = stack.served_id(product_id)?;
 	}
 	Ok(Served(value))
 }
 
 impl NamesProducts for ProductId {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		vec![self]
 	}
 }
 
 impl NamesProducts for ProductAccountId {
-	fn products(&self) -> Vec<&ProductId> {
-		vec![&self.dot_ns_identifier]
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		vec![&mut self.dot_ns_identifier]
 	}
 }
 
 impl NamesProducts for NftPurseOwner {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		match self {
 			Self::Product(product_id) => vec![product_id],
 			Self::Root => vec![],
@@ -90,8 +93,8 @@ impl NamesProducts for NftPurseOwner {
 }
 
 impl NamesProducts for RemotePermissionRequest {
-	fn products(&self) -> Vec<&ProductId> {
-		match &self.permission {
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		match &mut self.permission {
 			RemotePermission::NftPurseRead { owner } => owner.products(),
 			RemotePermission::Remote { .. } |
 			RemotePermission::WebRtc |
@@ -104,49 +107,49 @@ impl NamesProducts for RemotePermissionRequest {
 }
 
 impl NamesProducts for HostSignPayloadRequest {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		self.account.products()
 	}
 }
 
 impl NamesProducts for HostSignRawRequest {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		self.account.products()
 	}
 }
 
 impl NamesProducts for ProductAccountTxPayload {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		self.signer.products()
 	}
 }
 
 impl NamesProducts for HostAccountSignVrfRequest {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		self.account.products()
 	}
 }
 
 impl NamesProducts for HostAccountGetAliasRequest {
-	fn products(&self) -> Vec<&ProductId> {
-		vec![&self.key_handle.dot_ns_identifier, &self.context.product_id]
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		vec![&mut self.key_handle.dot_ns_identifier, &mut self.context.product_id]
 	}
 }
 
 impl NamesProducts for HostAccountCreateProofRequest {
-	fn products(&self) -> Vec<&ProductId> {
-		vec![&self.key_handle.dot_ns_identifier, &self.context.product_id]
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		vec![&mut self.key_handle.dot_ns_identifier, &mut self.context.product_id]
 	}
 }
 
 impl NamesProducts for HostAccountListRingVrfKeysRequest {
-	fn products(&self) -> Vec<&ProductId> {
-		vec![&self.owner]
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		vec![&mut self.owner]
 	}
 }
 
 impl NamesProducts for HostAccountRingVrfSignRequest {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		self.key_handle.products()
 	}
 }

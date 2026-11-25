@@ -140,7 +140,10 @@ test(
       },
     );
     try {
+      // The host names the product as it likes. The stack is on `paseo`, so
+      // the core runs it, and reports its demand, as `shared-worker.paseo`.
       const productId = "shared-worker.dot";
+      const served = "shared-worker.paseo";
       const changes = [];
       runtime.subscribeWorkerDemand((change) => changes.push(change));
       const chat = runtime.claimWorker(productId);
@@ -164,12 +167,12 @@ test(
       pocket.release();
       pocket.release();
       await runtime.parseProductId(productId);
-      assert.deepEqual(changes, [{ productId, wanted: true }]);
+      assert.deepEqual(changes, [{ productId: served, wanted: true }]);
       chat.release();
       await runtime.parseProductId(productId);
       assert.deepEqual(changes, [
-        { productId, wanted: true },
-        { productId, wanted: false },
+        { productId: served, wanted: true },
+        { productId: served, wanted: false },
       ]);
       closeRender();
     } finally {

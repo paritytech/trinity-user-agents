@@ -126,10 +126,9 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 pub const ENTROPY: [u8; 16] = [0xAB; 16];
 
 /// Wraps `value` in `Served` for the account calls. Every product these tests
-/// name is under `dot`, which every stack serves.
+/// name is under `dot`, the TLD of the stack they run on.
 pub fn served<T: NamesProducts>(value: T) -> Served<T> {
-	serve(&crate::test_support::paseo_test_stack(), value)
-		.expect("every stack serves a .dot product")
+	serve(&crate::test_support::dot_test_stack(), value).expect("a dot stack serves a .dot product")
 }
 
 /// A locked signing host on `.dot`. With no dotNS Asset Hub, activation looks
@@ -1893,7 +1892,7 @@ fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
 	);
 	assert_eq!(
 		platform.chain_connects.lock().unwrap().clone(),
-		vec![paseo_test_stack().chains().people],
+		vec![dot_test_stack().chains().people],
 		"the call was waiting on People"
 	);
 }
@@ -4253,22 +4252,26 @@ fn a_restored_session_starts_no_worker_for_a_provider_the_stack_does_not_serve()
 	use crate::host_logic::worker::WorkerTransition::Start;
 	let db = crate::store::open_memory_core_db();
 	let (host_config, _) = runtime_config("funding.dot");
-	let before = RuntimeServices::new(
-		stub_platform(),
-		host_config.host.host_info.clone(),
-		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], [0xcc; 32]),
-		Spawner::for_test(),
-	);
-	assert!(before.install_core_db(db.clone()).is_some());
-	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
-		crate::platform::FundingPresentOutcome::Started,
-	)));
-	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
-		product_id: ProductId::for_test(provider_id),
-		worker_manifest: Some(RAMP_MANIFEST.to_string()),
-	};
-	before.set_funding_providers(vec![entry("ramp.dot"), entry("ramp.testnet")]);
+	// Each session is stored by a host on its provider's TLD.
 	let assigned_to = |provider_id: &str| {
+		let provider = ProductId::for_test(provider_id);
+		let tld = provider.network_suffix().expect("a provider has a TLD");
+		let before = RuntimeServices::new(
+			stub_platform(),
+			host_config.host.host_info.clone(),
+			crate::test_support::test_stack(tld, [0; 32], [0xbb; 32], [0xcc; 32]),
+			Spawner::for_test(),
+		);
+		assert!(before.install_core_db(db.clone()).is_some());
+		assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Started,
+		)));
+		before.set_funding_providers(vec![
+			crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: provider.clone(),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			},
+		]);
 		let intent = futures::executor::block_on(before.open_funding(
 			None,
 			new_intent(),
@@ -4280,7 +4283,7 @@ fn a_restored_session_starts_no_worker_for_a_provider_the_stack_does_not_serve()
 		assert!(
 			futures::executor::block_on(before.select_funding_provider(
 				&intent,
-				&ProductId::for_test(provider_id),
+				&provider,
 				&offer_test_quote(&before, &intent, provider_id)
 			))
 			.expect("selected")
@@ -5681,9 +5684,9 @@ fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
 	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
 }
 
-/// Manifests are cached by bare label, so `foo.testnet` would get
-/// `foo.paseo`'s manifest. For an id on an unserved TLD the readers return no
-/// manifest.
+/// Manifests are cached by bare label, so `granting.paseo` would get
+/// `granting.dot`'s manifest. For an id the stack does not serve the readers
+/// return no manifest.
 #[test]
 fn an_unserved_product_is_not_answered_with_its_namesakes_manifest() {
 	use futures::executor::block_on;
@@ -5731,7 +5734,7 @@ fn an_unserved_product_is_not_answered_with_its_namesakes_manifest() {
 	};
 
 	assert_eq!(reads("granting.dot"), [true; 3]);
-	assert_eq!(reads("granting.paseo"), [true; 3]);
+	assert_eq!(reads("granting.paseo"), [false; 3]);
 	assert_eq!(reads("granting.com"), [false; 3]);
 }
 
@@ -6682,6 +6685,38 @@ fn derive_entropy_matches_dotli_vector() {
 	assert_eq!(
 		hex::encode(inner.entropy),
 		"ab1887248c9de3cf4b8c5a255782796d3d35a98c8eb2d7df61a410db8b14da36"
+	);
+}
+
+/// A pairing host derives product entropy from the session's entropy source
+/// without asking the wallet, so it refuses an id its stack does not serve
+/// itself. On a `paseo` host that includes a `dot` id, whose entropy is a
+/// Polkadot product's.
+#[test]
+fn derive_entropy_refuses_an_id_the_stack_does_not_serve() {
+	use crate::test_support::{dot_test_stack, paseo_test_stack};
+
+	let derives = |stack: crate::platform::Stack, product_id: &str| {
+		let (mut host_config, product) = runtime_config(product_id);
+		host_config.stack = stack;
+		let host =
+			ProductRuntimeHost::new(stub_platform(), (host_config, product), Spawner::for_test());
+		let mut session = sso_session_info();
+		session.root_entropy_source = session_info().root_entropy_source;
+		install_pairing_session(&host, session);
+		let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+			context: b"product-key".to_vec(),
+		});
+		futures::executor::block_on(host.derive(&CallContext::default(), request)).is_ok()
+	};
+
+	assert_eq!(
+		[
+			derives(paseo_test_stack(), "myapp.paseo"),
+			derives(paseo_test_stack(), "myapp.dot"),
+			derives(dot_test_stack(), "myapp.dot"),
+		],
+		[true, false, true]
 	);
 }
 
@@ -8853,7 +8888,7 @@ fn a_refusal_past_the_key_check_is_warned_once() {
 	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
 	let host = dim2_with_a_pairing_session(platform);
 	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
-	request.context.product_id = ProductId::for_test("dim2.paseo");
+	request.context.product_id = ProductId::for_test("localhost:3000");
 	let lines = crate::logging::testing::host_sink_lines(|| {
 		let _ = futures::executor::block_on(host.create_account_proof(
 			&CallContext::default(),
@@ -8865,7 +8900,7 @@ fn a_refusal_past_the_key_check_is_warned_once() {
 		vec![
 			"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
 			 {because=context on another network, entry=dim2, caller=dim2.dot, \
-			 owner=peopl.dot, context=dim2.paseo, scopes=None}"
+			 owner=peopl.dot, context=localhost:3000, scopes=None}"
 		]
 	);
 }

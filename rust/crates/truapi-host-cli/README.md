@@ -225,7 +225,7 @@ client could drive a host that auto-approves confirmations. Unix-socket clients
 and loopback TCP clients that send no `Origin` are treated as local processes.
 
 The product is then detected as hosted and holds the real product account for
-its own `.dot` name, so signing, statements, entropy, permissions and storage
+its own name, so signing, statements, entropy, permissions and storage
 all take their production code paths with no phone involved. `--product-id` is
 not optional: the host derives the product account from it and refuses to _sign_
 for any other product id, and a mismatch only surfaces later, as a
@@ -743,7 +743,9 @@ try {
 
 `--product-id` (a dotNS name ending in `.dot` or in the stack's TLD, or a
 `localhost` identifier; default
-`headless-playground.dot`) sets the initial product. `/product <id>` changes it
+`headless-playground.dot`) sets the initial product. On a stack whose TLD is
+not `dot`, a `.dot` name selects the same name under the stack's TLD, so the
+default is `headless-playground.paseo` on Paseo. `/product <id>` changes it
 for the lifetime of the process. Switching disconnects active product
 WebSockets. Reload browser dev pages to use the new product context. The
 network, pairing relationship, signing-host session, and wallet identity stay active.

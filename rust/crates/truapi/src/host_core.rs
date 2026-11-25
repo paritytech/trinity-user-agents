@@ -318,6 +318,14 @@ impl<Role> HostRuntime<Role> {
 		self.services.stack()
 	}
 
+	/// The id a host's call about the product `product_id` names acts on:
+	/// [`Stack::served_id`], or the id as written for a product the stack
+	/// does not serve, so a host can still read, change and clear what such a
+	/// product left.
+	fn named(&self, product_id: &ProductId) -> ProductId {
+		self.stack().served_id(product_id).unwrap_or_else(|_| product_id.clone())
+	}
+
 	/// Reference counts per product worker, shared by every connection of
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
@@ -330,7 +338,7 @@ impl<Role> HostRuntime<Role> {
 	/// A product the stack does not serve is logged and gets no hold, since its
 	/// worker can never open.
 	pub fn hold_worker(&self, product_id: &ProductId) -> Option<crate::WorkerHold> {
-		crate::WorkerHold::acquire(&self.services, product_id)
+		crate::WorkerHold::acquire(&self.services, &self.named(product_id))
 			.inspect_err(|error| tracing::warn!(%error, "worker reference for an unserved product"))
 			.ok()
 	}
@@ -339,7 +347,7 @@ impl<Role> HostRuntime<Role> {
 	/// it is started again while something holds it, with a growing wait
 	/// when it keeps crashing.
 	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
+		self.services.worker_exited(&self.named(product_id));
 	}
 }
 
@@ -452,7 +460,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id))
+		self.product_admin(product_context(&self.named(product_id)))
 			.permission_authorization_status(request)
 			.await
 	}
@@ -468,7 +476,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id))
+		self.product_admin(product_context(&self.named(product_id)))
 			.permission_authorization_statuses(requests)
 			.await
 	}
@@ -481,7 +489,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id))
+		self.product_admin(product_context(&self.named(product_id)))
 			.set_permission_authorization_status(request, status)
 			.await
 	}
@@ -560,10 +568,11 @@ impl HostRuntime<PairingHost> {
 		&self,
 		product_id: &ProductId,
 	) -> Result<(), v01::GenericError> {
-		self.role.clear_product_state(product_id).await?;
+		let product_id = self.named(product_id);
+		self.role.clear_product_state(&product_id).await?;
 		self.services
 			.platform
-			.clear_product(product_id.clone())
+			.clear_product(product_id)
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
@@ -606,7 +615,7 @@ impl HostRuntime<PairingHost> {
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.role
 			.accounts()
-			.product_subtree_public_key_within(product_id, subtree_timeout(timeout_ms))
+			.product_subtree_public_key_within(&self.named(product_id), subtree_timeout(timeout_ms))
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
@@ -624,7 +633,7 @@ impl HostRuntime<PairingHost> {
 		&self,
 		product_id: &ProductId,
 	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
-		let product = product_context(product_id);
+		let product = product_context(&self.named(product_id));
 		match self.role.session().request_login(&product).await {
 			Ok(response) => Ok(response),
 			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
@@ -709,7 +718,7 @@ impl HostRuntime<SigningHost> {
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.role
-			.product_subtree_public_key(product_id)
+			.product_subtree_public_key(&self.named(product_id))
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
@@ -1299,10 +1308,11 @@ impl HostRuntime<SigningHost> {
 		&self,
 		product_id: &ProductId,
 	) -> Result<(), v01::GenericError> {
-		self.role.clear_product_state(product_id);
+		let product_id = self.named(product_id);
+		self.role.clear_product_state(&product_id);
 		self.services
 			.platform
-			.clear_product(product_id.clone())
+			.clear_product(product_id)
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}

@@ -42,7 +42,7 @@ fn test_stack_from_descriptor() {
 }
 
 /// The core serves names under a stack's TLD without knowing that TLD
-/// in advance.
+/// in advance, and reads a `dot` name as one of them.
 #[test]
 fn test_stack_runs_on_its_own_tld() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
@@ -51,9 +51,15 @@ fn test_stack_runs_on_its_own_tld() {
 		.core_stack()
 		.expect("core stack");
 	let served = |product_id: &str| {
-		stack.require_served(&truapi::platform::ProductId::for_test(product_id)).is_ok()
+		stack
+			.served_id(&truapi::platform::ProductId::for_test(product_id))
+			.ok()
+			.map(String::from)
 	};
-	assert_eq!(["app.staging", "app.dot", "app.paseo"].map(served), [true, true, false]);
+	assert_eq!(
+		["app.staging", "app.dot", "app.paseo"].map(served),
+		[Some("app.staging".to_string()), Some("app.staging".to_string()), None]
+	);
 }
 
 /// The host routes each role by its genesis, so two roles on one genesis

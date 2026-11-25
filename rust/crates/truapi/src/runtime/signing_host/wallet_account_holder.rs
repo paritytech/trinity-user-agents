@@ -380,11 +380,13 @@ impl WalletKeys {
 		self.entropy.derive_root_keypair().map(|root| root.public.to_bytes())
 	}
 
-	/// Refuses a product the stack does not serve. Every key derivation keyed
-	/// by a product id calls it first, so a paired host's request and a stored
-	/// renewal target, which reaches the wallet without a request, are checked
-	/// as well. The contact handle key does not, since only a connection's own
-	/// product reaches it.
+	/// Refuses an id the stack serves no product under, a `dot` name on a
+	/// stack with another TLD included: the stack serves that product under
+	/// its own TLD, and no key may derive under the Polkadot id. Every key
+	/// derivation keyed by a product id calls it first, so a paired host's
+	/// request and a stored renewal target, which reaches the wallet without
+	/// a request, are checked as well. The contact handle key does not, since
+	/// only a connection's own product reaches it.
 	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
 		Ok(self.stack.require_served(product_id)?)
 	}

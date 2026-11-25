@@ -1960,7 +1960,7 @@ impl ProductRuntimeHost<RemoteAccountHolder> {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			crate::test_support::paseo_test_stack(),
+			crate::test_support::dot_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")

@@ -623,6 +623,12 @@ Fund that address once, from a faucet or a transfer, with the native token
 (see "Allowances" in section 2). Derivation is deterministic, so it holds for
 every later run. Re-fund only when the suite changes its `accounts` or its
 product id: both feed the derivation, so either change is a different account.
+
+From the release that carries #2076, a host whose stack is not on `dot` runs a
+`.dot` product under the stack's TLD, and the test stack's is `paseo`: the
+account of `tx-demo.dot` is the account of `tx-demo.paseo`. A suite that funded
+the address an earlier release gave for a `.dot` id funds the new one once.
+`productAccountAddress` and `getProductAccountAddress` already answer it.
 A product that signs from several indices needs each `index` funded. A suite
 on a fork can instead top up whatever signs as it submits.
 

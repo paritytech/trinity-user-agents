@@ -13,14 +13,13 @@ use std::sync::Arc;
 
 use super::{
 	super::{
-		AccountHolder, HostRole, HostSession, NamesProducts, ProductConnection, ProductRuntimeHost,
-		RuntimeServices, Served, SigningHost, SsoAccountHolderService,
+		AccountHolder, HostRole, HostSession, ProductConnection, ProductRuntimeHost,
+		RuntimeServices, SigningHost, SsoAccountHolderService,
 		authority::{
 			AccountCaller, AccountInvocation, AuthorityError, AuthoritySession,
 			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
 			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
-		serve,
 	},
 	LocalActivation, TEST_NETWORK_SUFFIX, WalletAccountHolder,
 	ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
@@ -409,8 +408,8 @@ fn a_refused_signature_tells_the_host_what_it_judged_by() {
 /// A refusal by the context check names the context it refused.
 ///
 /// A stored denial lists the scopes the manifest grants, which shows the
-/// manifest was not the reason. A context on another network reads no
-/// manifest at all, so its line has no source.
+/// manifest was not the reason. A context off the owner's network, as a
+/// localhost id is, reads no manifest at all, so its line has no source.
 #[test]
 fn a_context_refusal_tells_the_host_which_context() {
 	let context_grants = Some(r#"{"dim2next":["context"]}"#);
@@ -429,7 +428,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 			Door::Product,
 			OWNER_GRANTS_DIM2NEXT,
 			context_grants,
-			context_of("dim2.paseo"),
+			context_of("localhost:3000"),
 			|_| {},
 		);
 	});
@@ -439,7 +438,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 	);
 	let off_network_line = refusal_line(
 		"because=context on another network, entry=dim2next, caller=dim2next.dot, \
-		 owner=peopl.dot, context=dim2.paseo, scopes=None",
+		 owner=peopl.dot, context=localhost:3000, scopes=None",
 	);
 	assert_eq!(
 		(pin_cache_ages(denied, seeded_at_secs, 0), off_network),
@@ -712,7 +711,7 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			served_on_paseo(v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
@@ -746,16 +745,10 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 		"the granting product is all its executables, so its context is too"
 	);
 	assert_eq!(
-		mint("dim2.dot", "dim2.paseo").err(),
+		mint("dim2.dot", "localhost:3000").err(),
 		Some(RingVrfError::NotAllowlisted),
-		"the grantee's own namesake on another network is a different \
-         product, so its context is not the grantee's"
-	);
-	assert_eq!(
-		mint("dim2.dot", "peopl.paseo").err(),
-		Some(RingVrfError::NotAllowlisted),
-		"a grant published on one network must not reach the pseudonym a \
-         namesake presents on another"
+		"a grant published on a network must not reach the pseudonym a \
+         development id presents, which is on none"
 	);
 }
 
@@ -769,9 +762,6 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 ///
 /// `context_grants` of `None` caches the chain's answer that `dim2`
 /// publishes no manifest, so no case reaches for a chain the stub lacks.
-///
-/// The signing host runs on a `paseo` stack, which serves `.dot` and
-/// `.paseo`, so a `.paseo` context reaches the context check at both doors.
 fn third_product_context(
 	door: Door,
 	owner_grants: &str,
@@ -805,18 +795,8 @@ fn third_product_context(
 		.expect("stub core storage accepts the entry"),
 	}
 	seed(&platform);
-	let services = RuntimeServices::new(
-		platform,
-		crate::platform::HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		crate::test_support::paseo_test_stack(),
-		crate::Spawner::for_test(),
-	);
-	let authority = SigningHost::with_ring_resolver(services, full_person_ring_resolver());
+	let (_services, authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
@@ -838,7 +818,7 @@ fn third_product_context(
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("dim2next.dot")),
-		served_on_paseo(v01::HostAccountGetAliasRequest {
+		served(v01::HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location: ring,
@@ -918,14 +898,10 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 			"a narrower scope does not imply context",
 		),
 		(
-			// The paseo stack serves `dim2.paseo`, and `dim2.dot`'s manifest is
-			// cached by bare label, so it is the document a `.paseo` context
-			// would read: a namesake's grant. Only the off-network check refuses
-			// it.
 			OWNER_GRANTS_DIM2NEXT,
 			Some(r#"{"dim2next":["context"]}"#),
-			"dim2.paseo",
-			"a grant must not reach the pseudonym on another network",
+			"localhost:3000",
+			"a grant must not reach the pseudonym of a development id, which is on no network",
 		),
 	];
 	for (owner, grants, context, why) in cases {
@@ -1245,7 +1221,7 @@ fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			served_on_paseo(v01::HostAccountGetAliasRequest {
+			served(v01::HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
@@ -1271,7 +1247,7 @@ fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 		"the granting product is all its executables here too"
 	);
 	assert_eq!(
-		alias("dim2.dot", "peopl.paseo").err(),
+		alias("dim2.dot", "localhost:3000").err(),
 		Some(RingVrfError::NotAllowlisted),
 		"the network rule binds the read as well as the proof: the alias and \
          the proof come out of one VRF evaluation"
@@ -1605,16 +1581,6 @@ enum Door {
 
 const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 
-/// Wraps `value` as a `paseo` stack would; that stack serves both `.dot` and
-/// `.paseo`. [`third_product_context`] runs on one, so a `.paseo` context
-/// there is refused by the off-network check alone. The other fixtures run on
-/// `dot`, where reading a `.paseo` context's manifest refuses it as well, so
-/// their `.paseo` cases do not pin that check on their own.
-fn served_on_paseo<T: NamesProducts>(value: T) -> Served<T> {
-	serve(&crate::test_support::paseo_test_stack(), value)
-		.expect("a paseo stack serves .dot and .paseo products")
-}
-
 /// The account holder's answer to `payload` from a paired peer naming itself `caller`.
 fn paired_request<P>(
 	authority: &SigningHost,
@@ -1653,7 +1619,7 @@ impl Door {
 				session,
 				&CallContext::default(),
 				&ProductContext::new(ProductId::for_test(caller)),
-				served_on_paseo(request),
+				served(request),
 			)),
 			Door::Paired => paired_request(authority, caller, request),
 		}

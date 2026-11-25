@@ -38,6 +38,7 @@ import {
   type MockHost,
   type MockHostConfig,
   type MockRuntimeConfig,
+  type TestStack,
 } from "../web/create-mock-host.js";
 import { stackGenesisHashes } from "./networks.js";
 import {
@@ -296,6 +297,16 @@ export async function startTestHost(
     })();
     return derivation;
   };
+  // The key the core reads a product's entry by. The core runs the product
+  // under the id its stack serves, so `mock.dot` stores as `mock.paseo` on
+  // the mock stack.
+  const storedKey = async (productId: ProductId, key: string) => {
+    const helpers = await deriveHelpers();
+    return helpers.productStorageKey(
+      helpers.testStackServedProductId(hostConfig.testStack, productId),
+      key,
+    );
+  };
 
   if ((options.topology ?? "worker") === "worker") {
     // Production topology: the core runs in a Web Worker, reached over the
@@ -408,14 +419,11 @@ export async function startTestHost(
   // startup finds these entries rather than racing a seed.
   const seeded = Object.entries(options.productStorage ?? {});
   const bootStorage: [string, Uint8Array][] = [];
-  if (seeded.length) {
-    const helpers = await deriveHelpers();
-    for (const [key, value] of seeded) {
-      bootStorage.push([
-        helpers.productStorageKey(hostProduct, key),
-        new TextEncoder().encode(value),
-      ]);
-    }
+  for (const [key, value] of seeded) {
+    bootStorage.push([
+      await storedKey(hostProduct, key),
+      new TextEncoder().encode(value),
+    ]);
   }
   const writeBootStorage = () => {
     for (const [storedKey, value] of bootStorage) {
@@ -523,9 +531,8 @@ export async function startTestHost(
       value: Uint8Array | string,
       productId?: ProductId,
     ) {
-      const helpers = await deriveHelpers();
       host.writeProductStorage(
-        helpers.productStorageKey(productId ?? hostProduct, key),
+        await storedKey(productId ?? hostProduct, key),
         typeof value === "string" ? new TextEncoder().encode(value) : value,
       );
     },
@@ -612,6 +619,7 @@ interface ProductAccountDerivation {
   ): Uint8Array;
   productAccountAddress(publicKey: Uint8Array): string;
   productStorageKey(productId: string, key: string): string;
+  testStackServedProductId(testStack: TestStack, productId: string): string;
 }
 
 /** The main-thread signing runtime: hands back a product core directly. */

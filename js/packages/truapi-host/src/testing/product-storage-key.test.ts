@@ -2,30 +2,39 @@ import { describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-import { coreProductStorageKey } from "../web/create-mock-host.js";
+import {
+  coreProductStorageKey,
+  mockTestStack,
+  type TestStack,
+} from "../web/create-mock-host.js";
 import { wasmArtifact, wasmIsBuilt } from "./require-wasm.js";
 
 const suite = wasmIsBuilt("testing/truapi_server.js")
   ? describe
   : describe.skip;
 
-/** The core's storage key encoder, loaded the way `productAccountAddress` loads its helpers. */
-async function productStorageKey(
-  productId: string,
-  key: string,
-): Promise<string> {
+/** The core's seeding helpers, loaded the way `productAccountAddress` loads its own. */
+async function seedingHelpers() {
   const glue = (await import(
     pathToFileURL(wasmArtifact("testing/truapi_server.js")).href
   )) as {
     default: (init: { module_or_path: Uint8Array }) => Promise<unknown>;
     productStorageKey(productId: string, key: string): string;
+    testStackServedProductId(testStack: TestStack, productId: string): string;
   };
   await glue.default({
     module_or_path: await readFile(
       wasmArtifact("testing/truapi_server_bg.wasm"),
     ),
   });
-  return glue.productStorageKey(productId, key);
+  return glue;
+}
+
+async function productStorageKey(
+  productId: string,
+  key: string,
+): Promise<string> {
+  return (await seedingHelpers()).productStorageKey(productId, key);
 }
 
 suite("the key a seeded product storage entry is stored under", () => {
@@ -46,5 +55,25 @@ suite("the key a seeded product storage entry is stored under", () => {
     await expect(productStorageKey("", "mykey")).rejects.toThrow(
       "product_id must not be empty",
     );
+  });
+
+  it("names the product as the host's stack serves it", async () => {
+    // The core runs `calc.dot` as `calc.paseo` on the mock stack and reads
+    // its storage by that id, so a seed keyed by the id as written would
+    // land where the product never looks.
+    const { testStackServedProductId } = await seedingHelpers();
+    const onDot = {
+      ...mockTestStack(),
+      tld: "dot",
+      reservedValues: { allowed: true },
+    };
+    expect([
+      testStackServedProductId(mockTestStack(), "calc.dot"),
+      testStackServedProductId(mockTestStack(), "localhost:5173"),
+      testStackServedProductId(onDot, "calc.dot"),
+    ]).toEqual(["calc.paseo", "localhost:5173", "calc.dot"]);
+    expect(() =>
+      testStackServedProductId(mockTestStack(), "calc.testnet"),
+    ).toThrow("the paseo stack does not serve product calc.testnet");
   });
 });

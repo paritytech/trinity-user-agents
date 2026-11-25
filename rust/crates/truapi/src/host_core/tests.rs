@@ -408,7 +408,7 @@ fn a_kept_subtree_of_an_unserved_product_is_not_returned() {
 
 	let error = futures::executor::block_on(runtime.product_subtree_public_key(&unserved, None))
 		.expect_err("an unserved product has no subtree");
-	assert_eq!(error.reason, "product foo.testnet is not under a TLD the paseo stack serves");
+	assert_eq!(error.reason, "the dot stack does not serve product foo.testnet");
 }
 
 #[test]
@@ -1471,7 +1471,7 @@ fn retired_worker_operation_calls_cannot_create_or_release_references() {
 	};
 
 	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
-	let product_id = ProductId::for_test("worker.dot");
+	let product_id = ProductId::for_test("worker.testnet");
 	let product = ProductContext::new_with_execution(
 		product_id.clone(),
 		crate::platform::ExecutableKind::Worker,
@@ -1572,7 +1572,7 @@ fn the_device_pairing_observer_is_installed_once() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::paseo_test_stack(),
+		crate::test_support::dot_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime = HostRuntime::<SigningHost>::new(
@@ -2095,14 +2095,17 @@ fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
 	);
 }
 
-/// Write a value for each of two products, so a clear can show it removed
-/// only the cleared product's. The kept id starts with the cleared one, so
-/// matching on the bare id would remove both.
-fn seed_two_products(platform: &StubPlatform) -> (String, String) {
+/// Write a value for `myapp.<tld>` and for another product under `tld`, so a
+/// clear can show it removed only the cleared product's. The kept id starts
+/// with the cleared one, so matching on the bare id would remove both.
+fn seed_two_products(platform: &StubPlatform, tld: &str) -> (String, String) {
 	use crate::platform::{ProductStorage, ProductStorageKey};
 
-	let cleared = ProductStorageKey::new(ProductId::for_test("myapp.dot"), "theme").encode();
-	let kept = ProductStorageKey::new(ProductId::for_test("myapp.dotapp.dot"), "theme").encode();
+	let stored_by = |product_id: String| {
+		ProductStorageKey::new(ProductId::for_test(&product_id), "theme").encode()
+	};
+	let cleared = stored_by(format!("myapp.{tld}"));
+	let kept = stored_by(format!("myapp.{tld}app.{tld}"));
 	futures::executor::block_on(async {
 		platform.write(cleared.clone(), vec![1]).await.expect("seed write");
 		platform.write(kept.clone(), vec![2]).await.expect("seed write");
@@ -2123,7 +2126,7 @@ fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
 	let (host_config, _) = runtime_config("myapp.dot");
 	let runtime =
 		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
-	let (cleared, kept) = seed_two_products(&platform);
+	let (cleared, kept) = seed_two_products(&platform, "dot");
 
 	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
 		.expect("clear product state");
@@ -2136,10 +2139,43 @@ fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
 fn forgetting_a_product_on_a_signing_host_clears_its_storage() {
 	let platform = Arc::new(StubPlatform::default());
 	let runtime = activated_signing_runtime(platform.clone());
-	let (cleared, kept) = seed_two_products(&platform);
+	let (cleared, kept) = seed_two_products(&platform, "testnet");
 
-	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.testnet")))
 		.expect("clear product state");
 
 	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
+}
+
+/// A host names a product as it likes. On a stack with another TLD a `dot`
+/// name is the stack's own product, so the call acts on what that product
+/// stored. A product the stack does not serve keeps its id, and what it left
+/// can still be cleared.
+#[test]
+fn a_host_call_reads_a_dot_name_as_the_stacks_own_product() {
+	use crate::platform::{ProductStorage, ProductStorageKey};
+
+	let platform = Arc::new(StubPlatform::default());
+	let runtime = activated_signing_runtime(platform.clone());
+	let stored_by = |product_id: &str| {
+		ProductStorageKey::new(ProductId::for_test(product_id), "theme").encode()
+	};
+	let keys = ["myapp.testnet", "myapp.dot", "left.paseo"].map(stored_by);
+	futures::executor::block_on(async {
+		for key in &keys {
+			platform.write(key.clone(), vec![1]).await.expect("seed write");
+		}
+	});
+	let stored = || {
+		let storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+		keys.clone().map(|key| storage.contains_key(&key))
+	};
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+		.expect("clear product state");
+	assert_eq!(stored(), [false, true, true]);
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("left.paseo")))
+		.expect("clear product state");
+	assert_eq!(stored(), [false, true, false]);
 }

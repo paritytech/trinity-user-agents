@@ -1,6 +1,7 @@
 import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 
+import { mockTestStack } from "../web/create-mock-host.js";
 import { productAccountAddress } from "./product-account.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 
@@ -13,23 +14,55 @@ suite("the address a product account will be given", () => {
   // tx-demo reported these after connecting to a host whose session was
   // activated from the `bob` dev account. Pinned as literals because the point
   // of deriving here is to get the same answer a host will, and a derivation
-  // checked only against itself would agree with a host that disagreed.
+  // checked only against itself would agree with a host that disagreed. That
+  // host served a `.dot` id as written, which a stack on `dot` does.
   const CONTRACTS = "5DkXL5QxHcJV4mzcEfScZuS7HJYFzGVJHB1x3m8pLcwpBgja";
   const TX = "5GWoDJDcE2k6LV1aA2wntxwZf9DbES4Tq8423jDA333KqoG3";
+  const onDot = {
+    ...mockTestStack(),
+    tld: "dot",
+    reservedValues: { allowed: true },
+  };
 
   it("matches what a host gives the product", async () => {
     expect(
       await productAccountAddress({
         account: "bob",
         productId: asProductId("contracts-demo.dot"),
+        testStack: onDot,
       }),
     ).toBe(CONTRACTS);
     expect(
       await productAccountAddress({
         account: "bob",
         productId: asProductId("tx-demo.dot"),
+        testStack: onDot,
       }),
     ).toBe(TX);
+  });
+
+  it("reads a dot name as the host's stack does", async () => {
+    // The mock test stack is on `paseo`, where the core runs `tx-demo.dot` as
+    // `tx-demo.paseo`. A suite that funded the account of the id as written
+    // would fund one the product never signs with.
+    const written = await productAccountAddress({
+      account: "bob",
+      productId: asProductId("tx-demo.dot"),
+    });
+    const served = await productAccountAddress({
+      account: "bob",
+      productId: asProductId("tx-demo.paseo"),
+    });
+    expect([written === served, written === TX]).toEqual([true, false]);
+  });
+
+  it("refuses a product the host's stack does not serve", async () => {
+    await expect(
+      productAccountAddress({
+        account: "bob",
+        productId: asProductId("tx-demo.testnet"),
+      }),
+    ).rejects.toThrow("the paseo stack does not serve product tx-demo.testnet");
   });
 
   it("gives each product its own account", async () => {
@@ -53,6 +86,7 @@ suite("the address a product account will be given", () => {
     const asCharlie = await productAccountAddress({
       account: "charlie",
       productId: asProductId("contracts-demo.dot"),
+      testStack: onDot,
     });
     expect(asCharlie).not.toBe(CONTRACTS);
   });
@@ -62,6 +96,7 @@ suite("the address a product account will be given", () => {
       account: "bob",
       productId: asProductId("contracts-demo.dot"),
       index: 1,
+      testStack: onDot,
     });
     expect(second).not.toBe(CONTRACTS);
   });

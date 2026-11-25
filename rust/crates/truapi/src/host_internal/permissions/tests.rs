@@ -19,9 +19,8 @@ static OTHER_PRODUCT: LazyLock<ProductContext> =
 static PEOPL_APP: LazyLock<ProductContext> =
 	LazyLock::new(|| ProductContext::new(ProductId::for_test("app.peopl.dot")));
 
-/// The stack every service here runs on: `paseo`, which serves `dot` and
-/// `paseo` names.
-static STACK: LazyLock<Stack> = LazyLock::new(crate::test_support::paseo_test_stack);
+/// The stack every service here runs on: `dot`, the TLD of their products.
+static STACK: LazyLock<Stack> = LazyLock::new(crate::test_support::dot_test_stack);
 
 static PEOPL: LazyLock<ProductContext> =
 	LazyLock::new(|| ProductContext::new(ProductId::for_test("peopl.dot")));
@@ -1067,17 +1066,18 @@ fn a_trusted_product_ignores_stored_wildcard_denials() {
 	}
 }
 
-/// A trusted label skips every prompt only under a TLD the stack serves. The
+/// A trusted label skips every prompt only under a TLD the stack accepts. The
 /// host's settings screen reads the same service, so it must not report
 /// `peopl.testnet` as authorized on a `paseo` host that will not run it.
 #[test]
-fn a_trusted_label_is_trusted_only_under_a_tld_the_stack_serves() {
+fn a_trusted_label_is_trusted_only_under_a_tld_the_stack_accepts() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
+	let stack = crate::test_support::paseo_test_stack();
 
 	let status = |product_id: &str| {
 		let product = ProductContext::new(ProductId::for_test(product_id));
-		let service = PermissionsService::new(&storage, &prompt, &product, &STACK);
+		let service = PermissionsService::new(&storage, &prompt, &product, &stack);
 		futures::executor::block_on(service.peek_remote(&remote(RemotePermission::ChainSubmit)))
 			.unwrap()
 	};

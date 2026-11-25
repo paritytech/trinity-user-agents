@@ -573,7 +573,7 @@ fn resource_allocation_requires_confirmation_before_allocation() {
 		&signing_host,
 		"alloc-1",
 		v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-			calling_product_id: ProductId::for_test("myapp.dot"),
+			calling_product_id: ProductId::for_test("myapp.paseo"),
 			resources: vec![api::AllocatableResource::StatementStoreAllowance],
 			on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
 		}),
@@ -591,7 +591,7 @@ fn resource_allocation_requires_confirmation_before_allocation() {
 		.lock()
 		.expect("resource allocation review list mutex poisoned");
 	assert_eq!(reviews.len(), 1);
-	assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.dot"));
+	assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.paseo"));
 }
 
 #[test]
@@ -605,18 +605,18 @@ fn native_product_reset_does_not_invalidate_remote_allocation_review() {
 	let (_, signing_host) = signing_fixture(platform.clone());
 	let entropy = RootEntropy::new(ENTROPY);
 	let expected_secret = entropy
-		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.paseo"))
 		.unwrap()
 		.secret
 		.to_bytes();
 	let expected_domain = entropy
-		.derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+		.derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.paseo"))
 		.unwrap();
 	let service = sso_service(&signing_host);
 	let answer = service.answer(allocation_request("remote-reset"));
 	futures::pin_mut!(answer);
 	assert!(answer.as_mut().now_or_never().is_none());
-	signing_host.clear_product_state(&ProductId::for_test("myapp.dot"));
+	signing_host.clear_product_state(&ProductId::for_test("myapp.paseo"));
 	release.send(()).unwrap();
 	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(answer) else {
 		panic!("expected an allocation response")
@@ -720,7 +720,7 @@ fn allocation_request(message_id: &str) -> RemoteMessage {
 	RemoteMessage::request(
 		message_id.to_string(),
 		sso_messages::ResourceAllocationRequest {
-			calling_product_id: ProductId::for_test("myapp.dot"),
+			calling_product_id: ProductId::for_test("myapp.paseo"),
 			resources: vec![api::AllocatableResource::AutoSigning],
 			on_existing: OnExistingAllowancePolicy::Ignore,
 		},
@@ -1222,6 +1222,28 @@ fn product_subtree_request_is_consent_free_and_hard_derived() {
 		&signing_host,
 		"subtree-1",
 		v1::RemoteMessage::ProductSubtreeRequest(sso_messages::ProductSubtreeRequest {
+			product_id: ProductId::for_test("browse.paseo"),
+		}),
+	);
+
+	let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
+		panic!("expected product subtree response");
+	};
+	assert_eq!(response.responding_to, "subtree-1");
+	assert_eq!(response.payload, Ok(subtree_public_key("browse.paseo")));
+}
+
+/// A paired host names a product as it likes, and the subtree needs no
+/// consent. On a `paseo` wallet `browse.dot` is what paseo's registry
+/// publishes as `browse`, so the request gets that product's subtree. The
+/// subtree of Polkadot's `browse.dot` under the same seed is not handed out.
+#[test]
+fn a_paired_request_for_a_dot_name_gets_the_stacks_own_products_subtree() {
+	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+	let response = answer(
+		&signing_host,
+		"subtree-1",
+		v1::RemoteMessage::ProductSubtreeRequest(sso_messages::ProductSubtreeRequest {
 			product_id: ProductId::for_test("browse.dot"),
 		}),
 	);
@@ -1229,13 +1251,19 @@ fn product_subtree_request_is_consent_free_and_hard_derived() {
 	let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
 		panic!("expected product subtree response");
 	};
-	let expected = RootEntropy::new(ENTROPY)
-		.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+	assert_eq!(
+		(response.payload, subtree_public_key("browse.paseo") == subtree_public_key("browse.dot")),
+		(Ok(subtree_public_key("browse.paseo")), false)
+	);
+}
+
+/// The public key of `product_id`'s subtree under the fixture's seed.
+fn subtree_public_key(product_id: &str) -> [u8; 32] {
+	RootEntropy::new(ENTROPY)
+		.derive_product_subtree_keypair(&ProductId::for_test(product_id))
 		.expect("fixture derives subtree")
 		.public
-		.to_bytes();
-	assert_eq!(response.responding_to, "subtree-1");
-	assert_eq!(response.payload, Ok(expected));
+		.to_bytes()
 }
 
 #[test]

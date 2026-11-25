@@ -1093,8 +1093,9 @@ fn a_review_names_the_caller_and_every_product_it_asks_about() {
 		),
 	];
 
-	for (review, expected) in reviews {
-		let named: Vec<&str> = review.products().into_iter().map(ProductId::as_str).collect();
+	for (mut review, expected) in reviews {
+		let named: Vec<String> =
+			review.products().into_iter().map(|product_id| product_id.to_string()).collect();
 		assert_eq!(named, expected, "{review:?}");
 	}
 }

@@ -52,9 +52,9 @@ const APP_SUBNAME: &str = "app";
 /// The two are one answer because a caller cannot act on the difference.
 ///
 /// The TLD the identifier carries is discarded and the node re-derived under
-/// the TLD the network reports. A stack also serves `dot` names, so `dim2.dot`
-/// on a `paseo` deployment resolves as `dim2.paseo`: no registry there holds a
-/// `dim2.dot` node.
+/// the TLD the network reports. The readers below pass only ids the stack
+/// serves, which are under its own TLD, so the two differ only when the chain
+/// and the stack disagree.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
 async fn fetch_root_manifest(
 	chain: &ChainRuntime,
@@ -270,7 +270,7 @@ pub enum ManifestSource {
 	/// The lookup ran past [`MANIFEST_RESOLUTION_CEILING`].
 	#[display("dotNS lookup timed out")]
 	TimedOut,
-	/// The product is under a TLD the stack does not serve, so nothing was
+	/// The id is not one the stack serves a product under, so nothing was
 	/// read for it.
 	#[display("not a product of this stack")]
 	Unserved,

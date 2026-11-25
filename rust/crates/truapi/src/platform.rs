@@ -226,17 +226,18 @@ impl ProductContext {
 		Self { product_id, execution_kind }
 	}
 
-	/// The product a host asks the core to run on `stack`.
+	/// The product a host asks the core to run on `stack`, under
+	/// [`Stack::served_id`]: a host on a `paseo` stack that asks for
+	/// `game.dot` runs `game.paseo`.
 	///
-	/// Fails when the stack does not serve the product's TLD. Every bridge
-	/// builds a host-supplied product through here.
+	/// Fails when the stack does not serve the product. Every bridge builds a
+	/// host-supplied product through here.
 	pub fn served_by(
 		stack: &Stack,
 		product_id: ProductId,
 		execution_kind: ExecutableKind,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		stack.require_served(&product_id)?;
-		Ok(Self::new_with_execution(product_id, execution_kind))
+		Ok(Self::new_with_execution(stack.served_id(&product_id)?, execution_kind))
 	}
 }
 
@@ -735,7 +736,7 @@ pub enum RuntimeConfigValidationError {
 	#[display("{_0}")]
 	#[from]
 	InvalidProductId(#[error(not(source))] ProductIdError),
-	/// The product's TLD is not one the host's stack serves.
+	/// The host's stack does not serve the product.
 	#[display("{_0}")]
 	#[from]
 	UnservedProduct(UnservedProduct),
@@ -1972,58 +1973,58 @@ pub enum UserConfirmationReview {
 /// The products a review names to the user: the caller, and the owner of each
 /// account, context or purse it asks about.
 impl NamesProducts for UserConfirmationReview {
-	fn products(&self) -> Vec<&ProductId> {
+	fn products(&mut self) -> Vec<&mut ProductId> {
 		fn account<'a>(
-			calling: &'a Option<ProductId>,
-			account: &'a ProductAccountId,
-		) -> Vec<&'a ProductId> {
-			calling.iter().chain([&account.dot_ns_identifier]).collect()
+			calling: &'a mut Option<ProductId>,
+			account: &'a mut ProductAccountId,
+		) -> Vec<&'a mut ProductId> {
+			calling.iter_mut().chain([&mut account.dot_ns_identifier]).collect()
 		}
-		fn legacy(account: &LegacySigningAccount) -> Vec<&ProductId> {
+		fn legacy(account: &mut LegacySigningAccount) -> Vec<&mut ProductId> {
 			match account {
 				LegacySigningAccount::Identity => vec![],
-				LegacySigningAccount::Product(account) => vec![&account.dot_ns_identifier],
+				LegacySigningAccount::Product(account) => vec![&mut account.dot_ns_identifier],
 			}
 		}
 		match self {
 			Self::SignPayload(SignPayloadReview::Product { calling_product_id, request }) => {
-				account(calling_product_id, &request.account)
+				account(calling_product_id, &mut request.account)
 			},
 			Self::SignPayload(SignPayloadReview::LegacyAccount { account, .. }) => {
-				vec![&account.dot_ns_identifier]
+				vec![&mut account.dot_ns_identifier]
 			},
 			Self::SignRaw(SignRawReview::Product { calling_product_id, request, .. }) => {
-				account(calling_product_id, &request.account)
+				account(calling_product_id, &mut request.account)
 			},
 			Self::SignRaw(SignRawReview::LegacyAccount { account, .. }) => legacy(account),
 			Self::StatementStoreProductSign(review) => {
-				account(&review.calling_product_id, &review.account)
+				account(&mut review.calling_product_id, &mut review.account)
 			},
 			Self::CreateTransaction(CreateTransactionReview::Product {
 				calling_product_id,
 				payload,
-			}) => account(calling_product_id, &payload.signer),
+			}) => account(calling_product_id, &mut payload.signer),
 			Self::CreateTransaction(CreateTransactionReview::LegacyAccount { account, .. }) => {
 				legacy(account)
 			},
 			Self::AccountAlias(review) => {
-				vec![&review.calling_product_id, &review.context.product_id]
+				vec![&mut review.calling_product_id, &mut review.context.product_id]
 			},
 			Self::CreateProof(review) => {
-				vec![&review.calling_product_id, &review.context.product_id]
+				vec![&mut review.calling_product_id, &mut review.context.product_id]
 			},
-			Self::IdentityDisclosure(review) => vec![&review.product_id],
-			Self::ResourceAllocation(review) => vec![&review.calling_product_id],
+			Self::IdentityDisclosure(review) => vec![&mut review.product_id],
+			Self::ResourceAllocation(review) => vec![&mut review.calling_product_id],
 			Self::AccountAccess(review) => {
-				vec![&review.requesting_product_id, &review.target_product_id]
+				vec![&mut review.requesting_product_id, &mut review.target_product_id]
 			},
 			Self::SignVrf(review) => {
-				vec![&review.calling_product_id, &review.request.account.dot_ns_identifier]
+				vec![&mut review.calling_product_id, &mut review.request.account.dot_ns_identifier]
 			},
-			Self::ProductSubtree(review) => vec![&review.product_id],
-			Self::NftPurseDrain(review) => match &review.owner {
-				NftPurseOwner::Product(owner) => vec![&review.calling_product_id, owner],
-				NftPurseOwner::Root => vec![&review.calling_product_id],
+			Self::ProductSubtree(review) => vec![&mut review.product_id],
+			Self::NftPurseDrain(review) => match &mut review.owner {
+				NftPurseOwner::Product(owner) => vec![&mut review.calling_product_id, owner],
+				NftPurseOwner::Root => vec![&mut review.calling_product_id],
 			},
 		}
 	}

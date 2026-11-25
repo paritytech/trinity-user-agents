@@ -30,9 +30,8 @@ pub enum HostLocalStorageReadError {
 	/// One variant answers every reason a product the host serves gives no
 	/// access: it does not resolve, it published no manifest, or its manifest
 	/// grants this caller nothing. Distinguishing them would make the call a
-	/// probe for which products exist and which hold data. A product under a
-	/// TLD the host's stack does not serve fails the call as `MalformedFrame`
-	/// instead.
+	/// probe for which products exist and which hold data. A product the
+	/// host's stack does not serve fails the call as `MalformedFrame` instead.
 	#[display("the owning product grants no read access to its storage")]
 	AccessNotGranted,
 	/// Catch-all.

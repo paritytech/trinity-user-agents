@@ -727,7 +727,8 @@ impl NativeTrUApiHostRuntime {
 	/// Chat modality pass `None`. `game_callbacks` does the same for game
 	/// reminders.
 	///
-	/// Fails when the stack does not serve the product's TLD. An
+	/// The execution runs under the id the stack serves the product under,
+	/// and fails to open when the stack does not serve it. An
 	/// `execution_config.product_id` UniFFI cannot parse throws in Swift and
 	/// Kotlin the same way.
 	pub fn open_product_execution(

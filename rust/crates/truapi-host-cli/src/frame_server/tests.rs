@@ -357,11 +357,14 @@ async fn a_non_loopback_origin_cannot_open_the_tcp_websocket() -> Result<()> {
 	Ok(())
 }
 
+/// A selection is the id the stack serves the product under, so the default
+/// network's `paseo` stack reads a `dot` name as its own product.
 #[test]
 fn product_selection_compares_canonical_ids() {
 	let product = selection(" Dotli.DOT ");
 
-	assert_eq!(product.current().as_str(), "dotli.dot");
+	assert_eq!(product.current().as_str(), "dotli.paseo");
+	assert_eq!(product.select(ProductId::for_test("dotli.paseo"), &stack()), Ok(false));
 	assert_eq!(product.select(ProductId::for_test("localhost:3000"), &stack()), Ok(true));
 	assert_eq!(product.current().as_str(), "localhost:3000");
 	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000"), &stack()), Ok(false));
@@ -390,10 +393,10 @@ async fn changing_product_notifies_connections() -> Result<()> {
 	let product = selection("first.dot");
 	let mut connection = product.subscribe();
 
-	assert_eq!(product.select(ProductId::for_test("second.dot"), &stack()), Ok(true));
+	assert_eq!(product.select(ProductId::for_test("second.paseo"), &stack()), Ok(true));
 	connection.changed().await?;
-	assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-	assert_eq!(product.select(ProductId::for_test("SECOND.DOT"), &stack()), Ok(false));
+	assert_eq!(connection.borrow().product_id.as_str(), "second.paseo");
+	assert_eq!(product.select(ProductId::for_test("SECOND.PASEO"), &stack()), Ok(false));
 	assert!(!connection.has_changed()?);
 	Ok(())
 }

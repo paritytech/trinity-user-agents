@@ -15,7 +15,7 @@ use crate::{
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 
 /// Trusted product labels. A label counts only under a TLD the host's
-/// stack serves.
+/// stack accepts.
 ///
 /// These products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant.
@@ -212,6 +212,19 @@ impl ProductId {
 		self.0.rsplit_once('.').map(|(name, _tld)| name)
 	}
 
+	/// The same name under `tld`: `app.dim2.dot` under `paseo` is
+	/// `app.dim2.paseo`. A localhost identifier has no TLD and is returned
+	/// unchanged.
+	///
+	/// Fails when `tld` is not one DNS label, or when the name under it is
+	/// longer than [`PRODUCT_ID_MAX_BYTES`].
+	pub fn under_tld(&self, tld: &str) -> Result<Self, ProductIdError> {
+		match self.dotns_name() {
+			Some(name) => Self::from_name(name, tld),
+			None => Ok(self.clone()),
+		}
+	}
+
 	/// Whether this dotNS identity belongs to the explicitly configured network.
 	pub fn matches_network(&self, network_suffix: &str) -> bool {
 		self.network_suffix() == Some(network_suffix)
@@ -227,8 +240,8 @@ impl ProductId {
 	/// Stored decisions don't change this.
 	///
 	/// Matches the whole label: `peopl.dot` and `peopl.paseo` are trusted,
-	/// `app.peopl.dot` and localhost ids are not. The TLD is not checked here,
-	/// so call this only for a product the host's stack serves.
+	/// `app.peopl.dot` and localhost ids are not. The TLD is not checked here:
+	/// `Stack::trusts` checks both.
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {

@@ -684,7 +684,8 @@ fn an_execution_opens_only_for_a_product_the_stack_serves() {
 
 /// A worker claim for a product the stack does not serve holds nothing. The
 /// worker can never open, so a reference would make the host retry it
-/// forever.
+/// forever. A claim by a `dot` name starts the worker under the id the stack
+/// serves the product under.
 #[test]
 fn a_worker_claim_for_an_unserved_product_starts_nothing() {
 	let callbacks = Arc::new(EventCallbacks::new());
@@ -699,7 +700,7 @@ fn a_worker_claim_for_an_unserved_product_starts_nothing() {
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
-		vec![(ProductId::for_test("shared.dot"), crate::WorkerTransition::Start)]
+		vec![(ProductId::for_test("shared.paseo"), crate::WorkerTransition::Start)]
 	);
 }
 

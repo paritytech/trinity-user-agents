@@ -45,7 +45,7 @@ pub enum DevServerError {
 	)]
 	NotADevServer,
 	/// The `product_id` query does not parse as a product id. One that parses
-	/// but is under a TLD the host's stack does not serve is refused when the
+	/// but names a product the host's stack does not serve is refused when the
 	/// host opens the product.
 	#[error(transparent)]
 	InvalidProductId(#[from] ProductIdError),

@@ -47,7 +47,8 @@ pub enum PocketDeeplinkAction {
 pub enum NavigateDecision {
 	/// A dotNS identifier plus path/query/hash suffix (no leading `/`).
 	DotName {
-		/// Lower-cased dotNS host (e.g. `mytestapp.dot`).
+		/// The id the stack serves the named product under: `mytestapp.paseo`
+		/// on a `paseo` stack for a link to `mytestapp.dot`.
 		identifier: ProductId,
 		/// Path/query/hash suffix without a leading `/`.
 		path: String,
@@ -69,8 +70,8 @@ pub enum NavigateDecision {
 	/// `polkadotapp://pocket/<action>?product=<id>&card=<id>`. The deeplink is the
 	/// host's own, so no path of any product is read as one.
 	Pocket {
-		/// Normalized dotNS name of the product that backs the card, from the
-		/// `product` query parameter.
+		/// The id the stack serves the product that backs the card under, from
+		/// the `product` query parameter.
 		identifier: ProductId,
 		/// Requested Pocket action.
 		action: PocketDeeplinkAction,
@@ -143,9 +144,12 @@ impl ProductLink {
 	}
 }
 
-/// Public share domains of the TLDs `stack` serves.
+/// Public share domains of the TLDs `stack` accepts product names under.
 pub fn product_share_hosts(stack: &Stack) -> Vec<String> {
-	stack.served_tlds().map(|tld| format!("{tld}{PRODUCT_SHARE_SUFFIX}")).collect()
+	stack
+		.accepted_tlds()
+		.map(|tld| format!("{tld}{PRODUCT_SHARE_SUFFIX}"))
+		.collect()
 }
 
 fn join_url(scheme: &str, host: &str, path: &str) -> String {
@@ -155,8 +159,9 @@ fn join_url(scheme: &str, host: &str, path: &str) -> String {
 /// Classify a URL the way the host navigation handler does: try the Pocket
 /// deeplink first, then dotNS, then `localhost`, then normalize as external.
 ///
-/// A name is dotNS only under a TLD the host's `stack` serves, so any other
-/// host is external.
+/// A name is dotNS only under a TLD the host's `stack` accepts, so any other
+/// host is external. A dotNS or Pocket decision names the product by
+/// [`Stack::served_id`].
 pub fn parse_navigate(input: &str, stack: &Stack) -> NavigateDecision {
 	let trimmed = input.trim();
 	if trimmed.is_empty() {
@@ -181,13 +186,13 @@ pub fn parse_navigate(input: &str, stack: &Stack) -> NavigateDecision {
 	}
 }
 
-/// Whether `host` ends in a TLD `stack` serves, applied to
+/// Whether `host` ends in a TLD `stack` accepts, applied to
 /// the [`normalize_host`] form so `Example.DOT` and the trailing-dot FQDN
 /// `example.dot.` classify like `example.dot`.
 fn is_dotns_domain(host: &str, stack: &Stack) -> bool {
 	normalize_host(host)
 		.rsplit_once('.')
-		.is_some_and(|(_, tld)| stack.serves_tld(tld))
+		.is_some_and(|(_, tld)| stack.accepts_tld(tld))
 }
 
 fn parse_with_explicit_https(input: &str) -> Option<Url> {
@@ -240,13 +245,15 @@ fn classify_pocket(input: &str, stack: &Stack) -> Option<NavigateDecision> {
 			reason: "pocket deeplink names no product or no card".to_string(),
 		});
 	};
-	let identifier = match product.parse::<ProductId>() {
-		Ok(identifier) if !identifier.is_localhost() && stack.serves(&identifier) => identifier,
-		_ => {
-			return Some(NavigateDecision::Reject {
-				reason: "pocket deeplink names no dotNS product this host serves".to_string(),
-			});
-		},
+	let served = product
+		.parse::<ProductId>()
+		.ok()
+		.filter(|identifier| !identifier.is_localhost())
+		.and_then(|identifier| stack.served_id(&identifier).ok());
+	let Some(identifier) = served else {
+		return Some(NavigateDecision::Reject {
+			reason: "pocket deeplink names no dotNS product this host serves".to_string(),
+		});
 	};
 	// A deeplink and `remove_card` name the same card, so both screen the id
 	// the same way. Without this, `?card=%20loyalty%20` would add a card under
@@ -324,9 +331,13 @@ fn classify_dotns(input: &str, stack: &Stack) -> Option<NavigateDecision> {
 		});
 	}
 
-	let identifier = match normalize_host(hostname).parse::<ProductId>() {
+	let served = normalize_host(hostname)
+		.parse::<ProductId>()
+		.map_err(|error| error.to_string())
+		.and_then(|identifier| stack.served_id(&identifier).map_err(|error| error.to_string()));
+	let identifier = match served {
 		Ok(identifier) => identifier,
-		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
+		Err(reason) => return Some(NavigateDecision::Reject { reason }),
 	};
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
 	let canonical_url = join_url(PRODUCT_SCHEME, identifier.as_str(), &path);

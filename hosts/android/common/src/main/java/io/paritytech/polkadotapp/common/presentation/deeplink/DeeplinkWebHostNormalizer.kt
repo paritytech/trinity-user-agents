@@ -11,8 +11,9 @@ private fun webDeeplinkHostOrNull(scheme: String?, host: String?): String? =
 
 /**
  * Rewrites a share-domain web App Link of the [stack] to the app scheme: a subdomain is a product
- * (`product.dot.li/a` -> `polkadotapp://product.dot/a`), a bare host carries the action in the
- * path (`dot.li/pair` -> `polkadotapp://pair`). Null if not a web deeplink host the stack serves.
+ * under the id the stack serves it by (`product.dot.li/a` -> `polkadotapp://product.paseo/a` on
+ * paseo), a bare host carries the action in the path (`dot.li/pair` -> `polkadotapp://pair`). Null
+ * if not a web deeplink host the stack serves.
  */
 internal fun Uri.toAppSchemeDeeplinkOrNull(stack: Stack): Uri? {
     dotProductHost(scheme, host, stack)?.let { productHost ->

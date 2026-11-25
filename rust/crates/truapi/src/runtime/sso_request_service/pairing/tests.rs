@@ -646,7 +646,7 @@ fn dropped_request_login_clears_single_flight_for_next_attempt() {
 		"first login did not enter pairing state"
 	);
 
-	let people = crate::test_support::paseo_test_stack().chains().people;
+	let people = crate::test_support::dot_test_stack().chains().people;
 	crate::test_support::wait_until(
 		|| platform.chain_connects.lock().unwrap().contains(&people),
 		"the first login dials People",

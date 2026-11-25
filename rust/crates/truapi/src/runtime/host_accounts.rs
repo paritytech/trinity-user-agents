@@ -629,12 +629,17 @@ impl<H: AccountHolder> HostAccounts<H> {
 	}
 
 	/// Derive entropy scoped to `product_id` under the selected session.
+	///
+	/// Fails for an id the stack does not serve. A pairing host derives the
+	/// entropy from the session's entropy source without asking the wallet,
+	/// so the wallet's own check does not cover it.
 	pub fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
 		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
+		self.services.stack().require_served(product_id)?;
 		self.holder.derive_entropy(session, product_id, context)
 	}
 

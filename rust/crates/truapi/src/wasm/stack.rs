@@ -102,6 +102,20 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 	refresh.map_or(JsValue::UNDEFINED, |refresh| status_to_js(&refresh.status()))
 }
 
+/// The id the test stack `test_stack` serves the product `product_id` names
+/// under. Fails for a stack the core would refuse and for a product the stack
+/// does not serve.
+#[cfg(feature = "test-host")]
+pub fn test_stack_served_id(test_stack: &JsValue, product_id: &str) -> Result<String, JsValue> {
+	let product_id = product_id
+		.parse::<crate::ProductId>()
+		.map_err(|error| JsValue::from_str(&error.to_string()))?;
+	test_stack_from_js(test_stack)?
+		.served_id(&product_id)
+		.map(String::from)
+		.map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
 /// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
 /// `assetHub`, `people`, `bulletin` and the optional `relay`, each
 /// `{ genesisHash }`, and the optional `reservedValues`.

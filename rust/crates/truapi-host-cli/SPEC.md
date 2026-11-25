@@ -631,6 +631,11 @@ Accepted product identifiers are:
 Identifiers are trimmed, Unicode-NFC normalized, and lowercased. For example,
 `" Dotli.DOT "` becomes `dotli.dot`.
 
+On a stack whose TLD is not `dot`, a name ending in `.dot` selects the same
+name under the stack's TLD, because the stack's own dotNS registry resolves it:
+on `paseo`, `dotli.dot` is the product `dotli.paseo`. The host shows that id,
+and it is the id that scopes everything below.
+
 Other identifiers, including an ordinary `example.com`, are rejected.
 
 The product id scopes:

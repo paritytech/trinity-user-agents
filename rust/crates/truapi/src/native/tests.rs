@@ -822,7 +822,7 @@ fn process_runtime_counts_worker_references_per_product() {
 		native_host_runtime_config(),
 	)
 	.expect("host runtime config should be valid");
-	let product = || ProductId::for_test("shared.dot");
+	let product = || ProductId::for_test("shared.paseo");
 
 	let first = host.claim_worker(product());
 	let second = host.claim_worker(product());
@@ -3013,7 +3013,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		let service = runtime.open_sso_service(statement, encryption).unwrap();
 		let request = RemoteMessage::request(
 			"subtree".to_string(),
-			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
+			ProductSubtreeRequest { product_id: ProductId::for_test("browse.paseo") },
 		)
 		.encode();
 		let response = |payload| SsoRequestOutcome::Response {
@@ -3027,7 +3027,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			.encode(),
 		};
 		let public_key = root_entropy
-			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.paseo"))
 			.unwrap()
 			.public
 			.to_bytes();
@@ -3156,7 +3156,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 				callbacks.clone(),
 				None,
 				None,
-				native_execution_config("fetch.dot", ExecutableKind::Worker),
+				native_execution_config("fetch.paseo", ExecutableKind::Worker),
 			)
 			.unwrap();
 		let request = truapi::latest::RemotePermissionRequest {
@@ -3168,7 +3168,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 			futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
 		assert_eq!(
 			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
-			(granted, vec![(ProductId::for_test("fetch.dot"), ExecutableKind::Worker)]),
+			(granted, vec![(ProductId::for_test("fetch.paseo"), ExecutableKind::Worker)]),
 		);
 	}
 }
@@ -3816,12 +3816,14 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
 
+/// A share host names a product by the id the stack serves it under, so a
+/// `dot.li` link opens the stack's own product.
 #[test]
-fn share_hosts_require_a_tld_the_stack_serves() {
+fn share_hosts_require_a_tld_the_stack_accepts() {
 	let stack = crate::test_support::test_stack("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 	for (input, expected) in [
 		("BROWSE.TESTNET.LI", Some("browse.testnet")),
-		("browse.dot.li", Some("browse.dot")),
+		("browse.dot.li", Some("browse.testnet")),
 		("browse.paseo.li", None),
 		("browse.test.li", None),
 		("browse.dot", None),

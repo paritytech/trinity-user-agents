@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::{ProductContext, ResourceAllocationReview},
-	test_support::{StubPlatform, paseo_test_stack},
+	test_support::{StubPlatform, dot_test_stack, paseo_test_stack},
 };
 use PermissionAuthorizationStatus::{Authorized, Denied};
 
@@ -12,7 +12,7 @@ fn consent_answering(
 		permission_confirmation_decisions: Mutex::new(decisions.into_iter().collect()),
 		..StubPlatform::default()
 	});
-	(platform.clone(), ProductConsent::new(platform, paseo_test_stack()))
+	(platform.clone(), ProductConsent::new(platform, dot_test_stack()))
 }
 
 fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
@@ -74,7 +74,7 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 		account_access_confirmation_gate: Mutex::new(Some(gate)),
 		..StubPlatform::default()
 	});
-	let consent = ProductConsent::new(platform.clone(), paseo_test_stack());
+	let consent = ProductConsent::new(platform.clone(), dot_test_stack());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let (first, second, ()) = futures::executor::block_on(async {
 		futures::join!(
@@ -86,11 +86,15 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 	assert_eq!((first.unwrap(), second.unwrap(), prompts(&platform)), (Authorized, Authorized, 1));
 }
 
-/// A trusted label is trusted only under a TLD the stack serves, so
-/// `peopl.testnet` on a paseo stack is asked like any other product.
+/// A trusted label is trusted only under a TLD the stack accepts, so
+/// `dim2.testnet` on a paseo stack is asked like any other product.
 #[test]
 fn a_trusted_label_off_the_stack_is_asked_for_account_access() {
-	let (platform, consent) = consent_answering([PermissionDecision::Deny]);
+	let platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: Mutex::new([PermissionDecision::Deny].into()),
+		..StubPlatform::default()
+	});
+	let consent = ProductConsent::new(platform.clone(), paseo_test_stack());
 	assert_eq!(
 		(access(&consent, "dim2.paseo"), access(&consent, "dim2.testnet"), prompts(&platform)),
 		(Authorized, Denied, 1)
@@ -98,7 +102,7 @@ fn a_trusted_label_off_the_stack_is_asked_for_account_access() {
 }
 
 /// A trusted product skips the review of its own operations, but only under a
-/// TLD the stack serves.
+/// TLD the stack accepts.
 #[test]
 fn a_trusted_label_off_the_stack_does_not_skip_a_review() {
 	let stack = paseo_test_stack();

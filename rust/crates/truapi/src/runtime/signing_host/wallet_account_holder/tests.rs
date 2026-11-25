@@ -113,13 +113,15 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 	));
 }
 
-/// Every derivation keyed by a product id refuses a product the stack does
-/// not serve, whoever asked for it. A paired host's request reaches these
-/// without a handler's check.
+/// Every derivation keyed by a product id refuses an id the stack serves no
+/// product under, whoever asked for it. A paired host's request reaches these
+/// without a handler's check. On a stack with another TLD that includes a
+/// `dot` id: its keys are a Polkadot product's, and the stack serves that name
+/// under its own TLD.
 #[test]
-fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
-	let keys = WalletKeys::new(RootEntropy::new([7; 32]), crate::test_support::paseo_test_stack());
-	let derives = |product: &str| {
+fn no_key_is_derived_for_an_id_the_stack_does_not_serve() {
+	let derives_on = |stack: Stack, product: &str| {
+		let keys = WalletKeys::new(RootEntropy::new([7; 32]), stack);
 		let product_id = ProductId::for_test(product);
 		let account = ProductAccountId {
 			dot_ns_identifier: product_id.clone(),
@@ -136,8 +138,11 @@ fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
 		]
 	};
 
+	let derives = |product| derives_on(crate::test_support::paseo_test_stack(), product);
+
 	assert_eq!(derives("myapp.paseo"), [true; 7]);
-	assert_eq!(derives("myapp.dot"), [true; 7]);
+	assert_eq!(derives("myapp.dot"), [false; 7]);
 	assert_eq!(derives("myapp.testnet"), [false; 7]);
 	assert_eq!(derives("example.com"), [false; 7]);
+	assert_eq!(derives_on(crate::test_support::dot_test_stack(), "myapp.dot"), [true; 7]);
 }

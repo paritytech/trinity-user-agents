@@ -1241,7 +1241,7 @@ impl WasmPairingHostRuntime {
 
 	/// Whether `productId` is a first-party product the host grants every
 	/// `RemotePermission` without prompting: a trusted label under a TLD this
-	/// host's stack serves.
+	/// host's stack accepts.
 	///
 	/// Trusted products bypass recorded permissions and permission prompts.
 	/// Device permissions still need the OS grant. Hosts mediating product
@@ -1514,7 +1514,7 @@ impl WasmSigningHostRuntime {
 
 	/// Whether `productId` is a first-party product the host grants every
 	/// `RemotePermission` without prompting: a trusted label under a TLD this
-	/// host's stack serves.
+	/// host's stack accepts.
 	///
 	/// Trusted products bypass recorded permissions and permission prompts.
 	/// Device permissions still need the OS grant. Hosts mediating product
@@ -1587,6 +1587,22 @@ pub fn product_storage_key(product_id: String, key: String) -> Result<String, Js
 		.parse::<ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	Ok(crate::platform::ProductStorageKey::new(product_id, key).encode())
+}
+
+/// The id `testStack` serves the product `productId` names under.
+///
+/// For test hosts: a harness that seeds what the core will read, or works out
+/// an address before a host runs, names the product to something other than a
+/// runtime, so it has to read the name as the core will. On a test stack
+/// whose TLD is not `dot`, `tx-demo.dot` is `tx-demo.<tld>`. Throws for a
+/// stack the core would refuse and for a product the stack does not serve.
+#[cfg(feature = "test-host")]
+#[wasm_bindgen(js_name = testStackServedProductId)]
+pub fn test_stack_served_product_id(
+	test_stack: JsValue,
+	product_id: &str,
+) -> Result<String, JsValue> {
+	stack::test_stack_served_id(&test_stack, product_id)
 }
 
 /// The ring-VRF member for `entropy`, derived through the module this core

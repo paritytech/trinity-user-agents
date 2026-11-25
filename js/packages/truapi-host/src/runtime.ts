@@ -231,7 +231,11 @@ export interface StackCallbacks {
 
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
-  /** Stable identifier used to scope product accounts, permissions, and storage. */
+  /**
+   * Stable identifier used to scope product accounts, permissions, and storage.
+   * On a stack whose TLD is not `dot`, the core reads a name under `dot` as
+   * the same name under the stack's TLD and scopes by that id.
+   */
   productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
   executionKind?: ExecutableKind;
