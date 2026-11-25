@@ -16,7 +16,9 @@ them.
 In a room the host stores, the user writes and reacts only through the host: a feed update or a preview that names the
 user as the author of a message, of the message a reply quotes, or of a reaction fails with `NotOwner`. The icon of
 `setRoomMetadata` and an image badge of `setRoomPreview` are resources, as RFC 0002 names them: inline image data or
-the CID of a Bulletin preimage. A URL that names where to fetch the image fails the screen.
+the CID of a Bulletin preimage. A URL that names where to fetch the image fails the screen. A feed update or a preview
+with a contact event, a call or a payment body answers `Unsupported`: the host draws these with its own strings, and
+the core does not serve them yet.
 
 `createRoom` is one call to the host. The host keeps the configuration of the request with the room, for a new room
 and for a room that exists, or refuses it before it creates anything. A change of `productSource` discards the stored
