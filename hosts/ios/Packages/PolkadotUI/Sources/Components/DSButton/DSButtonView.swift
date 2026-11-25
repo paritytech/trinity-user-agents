@@ -71,7 +71,8 @@ public final class DSButtonView: UIControl {
         size: DSButtonStyle.Size = .large,
         leadingIcon: ImageResource? = nil,
         trailingIcon: ImageResource? = nil,
-        expands: Bool = false
+        expands: Bool = false,
+        horizontalPadding: CGFloat? = nil
     ) {
         model = Model(
             title: title,
@@ -80,7 +81,8 @@ public final class DSButtonView: UIControl {
             size: size,
             leadingIcon: leadingIcon,
             trailingIcon: trailingIcon,
-            expands: expands
+            expands: expands,
+            horizontalPadding: horizontalPadding
         )
         super.init(frame: .zero)
         model.action = { [weak self] in
@@ -131,6 +133,7 @@ private extension DSButtonView {
         var leadingIcon: ImageResource?
         var trailingIcon: ImageResource?
         var expands: Bool
+        var horizontalPadding: CGFloat?
         var isEnabled: Bool = true
 
         @ObservationIgnored var action: () -> Void = {}
@@ -142,7 +145,8 @@ private extension DSButtonView {
             size: DSButtonStyle.Size,
             leadingIcon: ImageResource?,
             trailingIcon: ImageResource?,
-            expands: Bool
+            expands: Bool,
+            horizontalPadding: CGFloat?
         ) {
             self.title = title
             self.style = style
@@ -151,6 +155,7 @@ private extension DSButtonView {
             self.leadingIcon = leadingIcon
             self.trailingIcon = trailingIcon
             self.expands = expands
+            self.horizontalPadding = horizontalPadding
         }
     }
 
@@ -166,6 +171,7 @@ private extension DSButtonView {
                 leadingIcon: model.leadingIcon,
                 trailingIcon: model.trailingIcon,
                 expands: model.expands,
+                horizontalPadding: model.horizontalPadding,
                 action: model.action
             )
             .disabled(!model.isEnabled)

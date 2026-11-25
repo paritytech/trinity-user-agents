@@ -37,6 +37,7 @@ public enum CoinageSubmissionParams {
     public static let splitPolicyId = SubmissionPolicyId("coinage-split")
     public static let unloadPolicyId = SubmissionPolicyId("coinage-unload")
     public static let claimPolicyId = SubmissionPolicyId("coinage-claim")
+    public static let reclaimPolicyId = SubmissionPolicyId("coinage-reclaim")
 
     public static func splitPolicy(_ params: TransferSubmissionParams) throws -> SubmissionPolicy {
         try SubmissionPolicy(id: splitPolicyId, params: encode(params))
@@ -44,6 +45,10 @@ public enum CoinageSubmissionParams {
 
     public static func unloadPolicy(_ params: TransferSubmissionParams) throws -> SubmissionPolicy {
         try SubmissionPolicy(id: unloadPolicyId, params: encode(params))
+    }
+
+    public static func reclaimPolicy(_ params: TransferSubmissionParams) throws -> SubmissionPolicy {
+        try SubmissionPolicy(id: reclaimPolicyId, params: encode(params))
     }
 
     public static func claimPolicy(_ params: ClaimSubmissionParams) throws -> SubmissionPolicy {
