@@ -13,10 +13,14 @@ import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.SentryLogLevel
+import io.sentry.logger.ILoggerApi
 import io.sentry.logger.SentryLogParameters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +33,7 @@ import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
 import java.util.UUID
+import javax.inject.Provider
 
 class HostProcessTelemetryTest {
     private val origin = HostEventOrigin(
@@ -40,7 +45,7 @@ class HostProcessTelemetryTest {
         appBuild = 42L,
     )
     private val sentryCapture: SentryEventCapture = mock(SentryEventCapture::class.java)
-    private val sentryLog: SentryLogCapture = mock(SentryLogCapture::class.java)
+    private val sentryLogger: ILoggerApi = mock(ILoggerApi::class.java)
 
     @Test
     fun `captures the process event with the shared host tags when the app initializes`() {
@@ -102,7 +107,7 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
-            sentryLog = sentryLog,
+            sentryLogger = Provider { sentryLogger },
         )
 
         capture.capture { error("event metadata must stay lazy") }
@@ -116,7 +121,7 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
-            sentryLog = sentryLog,
+            sentryLogger = Provider { sentryLogger },
         )
 
         capture.capture {
@@ -128,7 +133,7 @@ class HostProcessTelemetryTest {
             )
         }
 
-        verifyNoInteractions(sentryLog)
+        verifyNoInteractions(sentryLogger)
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
         assertEquals(SentryLevel.WARNING, sentryEvent?.level)
         assertEquals("host.telemetry", sentryEvent?.logger)
@@ -143,24 +148,24 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
-            sentryLog = sentryLog,
+            sentryLogger = Provider { sentryLogger },
         )
 
         capture.capture {
             HostEvent(name = "host.one", level = HostEventLevel.ERROR, tags = emptyMap(), extras = emptyMap())
         }
 
-        verifyNoInteractions(sentryLog)
+        verifyNoInteractions(sentryLogger)
         assertEquals(SentryLevel.ERROR, sentryEvent?.level)
     }
 
     @Test
     fun `sends an info host event to Sentry Logs with its tags and extras as attributes`() {
-        val logs = mutableListOf<Triple<SentryLogLevel, SentryLogParameters, String>>()
+        val logger = mockk<ILoggerApi>(relaxed = true)
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = sentryCapture,
-            sentryLog = SentryLogCapture { level, parameters, body -> logs += Triple(level, parameters, body) },
+            sentryLogger = Provider { logger },
         )
 
         capture.capture {
@@ -173,9 +178,8 @@ class HostProcessTelemetryTest {
         }
 
         verifyNoInteractions(sentryCapture)
-        val (level, parameters, body) = logs.single()
-        assertEquals(SentryLogLevel.INFO, level)
-        assertEquals("host.process.started", body)
+        val parameters = slot<SentryLogParameters>()
+        verify(exactly = 1) { logger.log(SentryLogLevel.INFO, capture(parameters), "host.process.started") }
         assertEquals(
             mapOf(
                 "host.platform" to "android",
@@ -184,7 +188,7 @@ class HostProcessTelemetryTest {
                 "event.name" to "host.process.started",
                 "tag" to "host.telemetry",
             ),
-            parameters.attributes?.attributes?.mapValues { it.value.value },
+            parameters.captured.attributes?.attributes?.mapValues { it.value.value },
         )
     }
 
@@ -194,7 +198,7 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { fingerprints += it.fingerprints },
-            sentryLog = sentryLog,
+            sentryLogger = Provider { sentryLogger },
         )
         val otherBuild = origin.copy(appVariant = "debug", nativeAppVersion = "9.9.9", appBuild = 7L)
 
@@ -233,7 +237,7 @@ class HostProcessTelemetryTest {
         val disabledCapture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
-            sentryLog = sentryLog,
+            sentryLogger = Provider { sentryLogger },
         )
         disabledCapture.capture {
             eventBuilt = true
@@ -279,7 +283,7 @@ class HostProcessTelemetryTest {
         HostEvent(name = name, level = HostEventLevel.WARNING, tags = tags, extras = extras)
 
     private fun verifyNothingSentToSentry() {
-        verifyNoInteractions(sentryCapture, sentryLog)
+        verifyNoInteractions(sentryCapture, sentryLogger)
     }
 
     private fun assertSuccess(result: Result<*>) {

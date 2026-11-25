@@ -45,29 +45,17 @@ internal class RealSentryEventCapture @Inject constructor() : SentryEventCapture
     }
 }
 
-internal fun interface SentryLogCapture {
-    fun log(level: SentryLogLevel, parameters: SentryLogParameters, body: String)
-}
-
-// A Provider, so the logger is read once Sentry has started rather than when this is built.
-internal class RealSentryLogCapture @Inject constructor(
-    private val logger: Provider<ILoggerApi>,
-) : SentryLogCapture {
-    override fun log(level: SentryLogLevel, parameters: SentryLogParameters, body: String) {
-        logger.get().log(level, parameters, body)
-    }
-}
-
 internal class RealHostEventCapture @Inject constructor(
     private val enabledProvider: HostTelemetryEnabledProvider,
     private val sentryCapture: SentryEventCapture,
-    private val sentryLog: SentryLogCapture,
+    // A Provider, so the logger is read once Sentry has started rather than when this is built.
+    private val sentryLogger: Provider<ILoggerApi>,
 ) : HostEventCapture {
     override fun capture(event: () -> HostEvent) {
         if (enabledProvider.isEnabled()) {
             val hostEvent = event()
             when (hostEvent.level) {
-                HostEventLevel.INFO -> sentryLog.log(SentryLogLevel.INFO, hostEvent.toLogParameters(), hostEvent.name)
+                HostEventLevel.INFO -> sentryLogger.get().log(SentryLogLevel.INFO, hostEvent.toLogParameters(), hostEvent.name)
                 HostEventLevel.WARNING, HostEventLevel.ERROR -> sentryCapture.capture(hostEvent.toSentryEvent())
             }
         }
