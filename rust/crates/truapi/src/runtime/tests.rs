@@ -1888,6 +1888,11 @@ fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
 		reason.contains("cancelled") && reason.contains("sign-raw-connecting"),
 		"expected the withdrawal of this call, got {reason}"
 	);
+	assert_eq!(
+		platform.chain_connects.lock().unwrap().clone(),
+		vec![paseo_test_stack().chains().people],
+		"the call was waiting on People"
+	);
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.
