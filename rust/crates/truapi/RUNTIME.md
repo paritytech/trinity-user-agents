@@ -232,7 +232,11 @@ bundled copy: the set of chain roles and each role's genesis hash, `assets`,
 `contracts`, `dotns`, `coinage`, and the `sha256` of the relay's `lightSpec`,
 which carries the relay's sync checkpoint. A descriptor that changes one is
 refused the same way. A fresher relay checkpoint, and a fork made again from a
-later block, change the relay's `lightSpec` and so need a new build.
+later block, change the relay's `lightSpec` and so need a new build. So does a
+wipe: a stack whose build allows it reserved values, such as pcf-devnet in
+dotli, cannot follow a wipe of its chains, because the new genesis hashes are
+pinned. The core refuses the new descriptor and stays on the wiped chains until
+a host build that bundles the new descriptor replaces the running one.
 
 The pins fix what the descriptor names for those fields, so a stolen
 descriptor key cannot name other genesis hashes, assets or contracts for such a

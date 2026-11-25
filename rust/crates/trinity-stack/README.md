@@ -84,7 +84,9 @@ only change is to a pinned field.
 A build whose copy predates a change to one of those fields refuses each newer descriptor that carries the change and
 runs the values it bundles, also on a device that stored the newer copy under an earlier build. For the same reason, the
 operator of a pinned stack cannot change those fields without stranding the builds already shipped: each one refuses the
-new descriptor and stays on the copy it holds until a new build replaces it.
+new descriptor and stays on the copy it holds until a new build replaces it. A pinned stack cannot follow a wipe of its
+chains either, since the new genesis hashes are pinned fields: a build that sets `allowed` for it, such as dotli for
+pcf-devnet, stays on the wiped chains until a host build that bundles the new descriptor is deployed.
 
 ## What else is here
 
