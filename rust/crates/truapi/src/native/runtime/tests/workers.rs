@@ -272,7 +272,8 @@ impl NativeHostWebViewWorker for EndsSessionWhileStarting {
 	}
 
 	fn stop(&self, _product_id: ProductId, attempt_id: u64) {
-		self.stops.lock().unwrap().push((attempt_id, self.starting.load(Ordering::Relaxed)));
+		let starting = self.starting.load(Ordering::Relaxed);
+		self.stops.lock().unwrap().push((attempt_id, starting));
 	}
 }
 
