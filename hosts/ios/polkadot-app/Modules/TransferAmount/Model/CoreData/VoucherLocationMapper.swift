@@ -4,13 +4,13 @@ import Coinage
 import Operation_iOS
 
 /// Writes only the location-sync fields (`onChainState`, `recyclerIndex`, `recyclerMembers`,
-/// `enteredAt` and the two fungibility scores) onto an existing `CDVoucher`, leaving every other
-/// column untouched.
+/// `recyclerUnloaded`, `enteredAt` and the two fungibility scores) onto an existing `CDVoucher`, leaving
+/// every other column untouched.
 ///
 /// Write-only in the sense that it never transforms an entity back into a model. It does read
-/// `recyclerIndex`, `enteredAt` and `maxFungibilityCaptured`: both the first confirmed inclusion
-/// time and the frozen ceiling are held for as long as the voucher stays in one ring, so the write
-/// has to know which ring was stored before it.
+/// `recyclerIndex`, `enteredAt`, `recyclerUnloaded` and `maxFungibilityCaptured`: the first confirmed
+/// inclusion time, the last delivered unloaded count and the frozen ceiling are held for as long as the
+/// voucher stays in one ring, so the write has to know which ring was stored before it.
 final class VoucherLocationMapper {
     enum MappingError: Error {
         case missingVoucher
@@ -66,6 +66,8 @@ extension VoucherLocationMapper: CoreDataMapperProtocol {
                  .onboarding: 0
             }
 
+        populateUnloaded(entity: entity, from: model, previousRecyclerIndex: previousRecyclerIndex)
+
         entity.onChainState =
             switch model.remoteState {
             case .unlocated: 0
@@ -80,6 +82,26 @@ extension VoucherLocationMapper: CoreDataMapperProtocol {
 }
 
 private extension VoucherLocationMapper {
+    func populateUnloaded(
+        entity: CoreDataEntity,
+        from model: DataProviderModel,
+        previousRecyclerIndex: Int64
+    ) {
+        entity.recyclerUnloaded =
+            switch model.remoteState {
+            case let .inRecycler(recycler):
+                if let unloadedCount = recycler.unloadedCount {
+                    NSNumber(value: Int64(unloadedCount))
+                } else if previousRecyclerIndex == Int64(recycler.index) {
+                    entity.recyclerUnloaded
+                } else {
+                    nil
+                }
+            case .unlocated,
+                 .onboarding: nil
+            }
+    }
+
     /// The current score tracks every reading; the ceiling is captured once per ring membership —
     /// on entry, and again only if the voucher is ever placed in a different ring.
     ///

@@ -19,6 +19,9 @@ public protocol CoinageServicing: Actor {
     /// Claims coins a peer handed us, driven off the durability group `groupId = messageId`.
     nonisolated var claimCoinsService: any ClaimCoinsServicing { get }
 
+    /// Takes back the coins of a handed-off payment that no peer claimed.
+    nonisolated var reclaimCoinsService: any ReclaimCoinsServicing { get }
+
     /// The Appendix-A derived payment status of coins we handed off.
     nonisolated var transferStatusService: any CoinageTransferStatusServicing { get }
 
@@ -132,6 +135,7 @@ public actor CoinageService {
     public nonisolated let ongoingTransferService: any OngoingTransferServicing
     public nonisolated let txService: any CoinageTxServicing
     public nonisolated let claimCoinsService: any ClaimCoinsServicing
+    public nonisolated let reclaimCoinsService: any ReclaimCoinsServicing
     public nonisolated let transferStatusService: any CoinageTransferStatusServicing
 
     // Sync services
@@ -144,6 +148,7 @@ public actor CoinageService {
 
     // Recycling strategy evaluation — the evaluator is built lazily once the context resolves.
     private nonisolated let recyclingStrategySettings: any CoinageRecyclingStrategyProviding
+    private nonisolated let privacyConfigProvider: any CoinagePrivacyConfigProviding
     private let recyclingStrategyResolver: any RecyclingStrategyProviding
     private let ringCapacityProvider: any RingCapacityProviding
     private let preClassificator: any CoinageAssetsPreClassificating
@@ -187,6 +192,7 @@ public actor CoinageService {
         ongoingTransferService: any OngoingTransferServicing,
         txService: any CoinageTxServicing,
         claimCoinsService: any ClaimCoinsServicing,
+        reclaimCoinsService: any ReclaimCoinsServicing,
         transferStatusService: any CoinageTransferStatusServicing,
         externalPaymentService: any ExternalPaymentServicing,
         contextLoader: DenominationContextLoaderProtocol,
@@ -194,6 +200,7 @@ public actor CoinageService {
         voucherLocationService: VoucherLocationService,
         recyclingService: any CoinageRecyclingServicing,
         recyclingStrategySettings: any CoinageRecyclingStrategyProviding,
+        privacyConfigProvider: any CoinagePrivacyConfigProviding,
         recyclingStrategyResolver: any RecyclingStrategyProviding,
         ringCapacityProvider: any RingCapacityProviding,
         preClassificator: any CoinageAssetsPreClassificating,
@@ -216,6 +223,7 @@ public actor CoinageService {
         self.voucherLocationService = voucherLocationService
         self.recyclingService = recyclingService
         self.recyclingStrategySettings = recyclingStrategySettings
+        self.privacyConfigProvider = privacyConfigProvider
         self.recyclingStrategyResolver = recyclingStrategyResolver
         self.ringCapacityProvider = ringCapacityProvider
         self.preClassificator = preClassificator
@@ -226,6 +234,7 @@ public actor CoinageService {
         self.backedUpInstallation = backedUpInstallation
         self.txService = txService
         self.claimCoinsService = claimCoinsService
+        self.reclaimCoinsService = reclaimCoinsService
         self.transferStatusService = transferStatusService
         self.incomingPaymentService = incomingPaymentService
         self.logger = logger
@@ -425,6 +434,7 @@ extension CoinageService: CoinageServicing {
             databaseFactory: databaseFactory,
             verdicts: evaluator.verdicts,
             settings: recyclingStrategySettings,
+            privacyConfigProvider: privacyConfigProvider,
             strategyResolver: recyclingStrategyResolver,
             ringCapacityProvider: ringCapacityProvider,
             preClassificator: preClassificator,

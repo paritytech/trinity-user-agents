@@ -86,7 +86,6 @@ export function createHeadlessHostCallbacks(
   const supportedGenesis = new Set(
     host.servedChains.map((genesisHash) => genesisHash.toLowerCase()),
   );
-  let nextOperationId = 0;
 
   return {
     coreStorage: host.coreStorage,
@@ -114,12 +113,6 @@ export function createHeadlessHostCallbacks(
         throw unsupported("Push notifications");
       },
       async cancelNotification() {},
-    },
-    productOperations: {
-      async beginOperation() {
-        return { id: nextOperationId++ };
-      },
-      async endOperation() {},
     },
     extrinsicVersion: host.extrinsicVersion ?? {
       async transactionExtensionVersions() {

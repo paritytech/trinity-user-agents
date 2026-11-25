@@ -61,6 +61,20 @@ final class StubGroupTxService: CoinageTxServicing, @unchecked Sendable {
         store(entries, for: groupId)
     }
 
+    /// Pre-registers a group holding one claim of `receivedPublicKey`, as a prior run would have left it.
+    func seedClaim(_ groupId: CoinageTxGroupId, receivedPublicKey: Data, status: CoinageTxStatus) {
+        let entry = CoinageTxEntry(
+            inputs: [.coin(.received(receivedPublicKey))],
+            outputs: [],
+            groupId: groupId,
+            txHash: Data(repeating: 0xAB, count: 32),
+            checkpoint: BlockRef(number: 0, hash: Data(repeating: 0, count: 32)),
+            mortality: 300,
+            status: status
+        )
+        store([entry], for: groupId)
+    }
+
     @discardableResult
     func submitTransactions(
         _ requests: [CoinageTxRequest],
@@ -99,6 +113,14 @@ final class StubGroupTxService: CoinageTxServicing, @unchecked Sendable {
         groupId _: CoinageTxGroupId,
         joining _: any DurableTxRegistrationScope
     ) throws -> [CoinageTxId] {
+        []
+    }
+
+    @discardableResult
+    func scheduleTransactions(
+        _: [CoinageScheduledTxRequest],
+        groupId _: CoinageTxGroupId
+    ) async throws -> [CoinageTxId] {
         []
     }
 

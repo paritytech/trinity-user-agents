@@ -129,7 +129,8 @@ private final class StubRemoteConfig: RemoteConfigManaging, @unchecked Sendable 
             offrampUrl: nil,
             accountDataStoreContract: nil,
             paymentAsset: nil,
-            appSharingUrl: nil
+            appSharingUrl: nil,
+            coinagePrivacyConfig: nil
         )
     }
 
