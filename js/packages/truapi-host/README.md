@@ -64,15 +64,32 @@ refresh it.
   copy it stored was fetched less than an hour ago, and on `refreshStack()`.
   A sleeping device can stretch that hour, so call `refreshStack()` when the
   page becomes visible again.
-- `stackChanged(status)`: the `StackStatus` at start and on each change, also
-  for a host without `fetchStackDescriptor`. The same value comes from
-  `stackStatus()`. `restartRequired` means a newer copy changes the genesis
+- `stackChanged(status)`: the `StackStatus` at start, and on each change. For a
+  host without `fetchStackDescriptor` only `mismatches` changes, when a chain's
+  answer changes it. `restartRequired` means a newer copy changes the genesis
   hash of the relay, Asset Hub, People or Bulletin chain, the network, the
   generation or the `accountDataStore` contract, and applies once the runtime
   is built again. A copy on another TLD than the bundled descriptor is
   refused, and so is one that changes a field a stack allowed reserved values
   pins. `lastRefresh` says so. `generation` changes when the stack restarts
-  its chains: key cached chain data by it.
+  its chains: key cached chain data by it. `mismatches` lists each chain whose
+  last connection reached one with a different genesis hash from the
+  descriptor's.
+
+After a stack's chains restart from genesis, the same endpoints serve new
+chains with new genesis hashes. To catch that, the core asks every chain
+connection for its genesis hash before anything else uses it. If the hash is
+not the descriptor's, calls to that chain fail and `stackStatus()` lists the
+chain in `mismatches`. The core also asks the connections it opened earlier for
+that chain again, apart from statement subscriptions, and closes those that now
+give a different hash or say the chain is halted.
+While a chain is listed, the core asks `fetchStackDescriptor` every five
+minutes instead of every hour, until `restartRequired` is set.
+
+A chain that cannot be reached is unavailable and is not listed. A light client
+never lists a restarted chain either, because it answers from its own chain
+spec. A `WasmProductRuntime` built on its own also refuses a chain with a
+different hash, but has no status to report it in.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key. It starts from that copy when it is newer than the bundled
@@ -83,7 +100,9 @@ and the core starts from the bundled copy. `create` waits a few seconds at
 most for that read, then starts from the bundled copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
-`/web` worker runtime does not pass these callbacks yet.
+`/web` and `/node` hosts run the core in a worker, `worker-runtime`, that does
+not pass these callbacks yet and exposes no `stackStatus()` to the host, so a
+host on them sees a refused chain only as failing calls.
 
 The test host has no descriptor, so it passes `testStack` instead: an `id` and
 a `generation`, the network, the TLD and each chain's genesis hash. Only the

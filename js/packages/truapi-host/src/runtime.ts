@@ -150,6 +150,25 @@ export type StackFetchResponse =
   /** `304 Not Modified`. */
   | { status: "notModified" };
 
+/**
+ * A difference between the stack's descriptor and what one of its chains
+ * answered.
+ */
+export interface StackMismatch {
+  /**
+   * `genesisHash`: the chain's last connection reached one with a different
+   * genesis hash from the descriptor's, as happens after a chain restarts
+   * from genesis. The core refused that connection.
+   */
+  kind: "genesisHash";
+  /** The chain's role in the descriptor. */
+  role: string;
+  /** The genesis hash the descriptor names, as `0x` hex. */
+  named: string;
+  /** The genesis hash the chain gave, as `0x` hex. */
+  answered: string;
+}
+
 /** The stack the core runs, and what the host shows and does about it. */
 export interface StackStatus {
   /**
@@ -182,7 +201,11 @@ export interface StackStatus {
    * that copy.
    */
   restartRequired: boolean;
-  /** The last finished fetch. Not set before the first one. */
+  /**
+   * The last finished fetch. Not set before the first one. A fetch that
+   * changed the stored record finishes once that record is stored or its
+   * store fails; the whole status shows it only from then on.
+   */
   lastRefresh?: {
     /**
      * `current`: the published descriptor is the copy the core holds.
@@ -198,6 +221,15 @@ export interface StackStatus {
      */
     reason?: string;
   };
+  /**
+   * The chains whose last answer differed from the descriptor the core runs,
+   * in the descriptor's order. While any is listed, a host with
+   * `fetchStackDescriptor` is asked for the descriptor every five minutes
+   * instead of every hour, until a newer copy sets `restartRequired`. A light
+   * client answers from its own chain spec, so it never lists a chain that
+   * restarted.
+   */
+  mismatches: StackMismatch[];
 }
 
 /**
@@ -217,9 +249,9 @@ export interface StackCallbacks {
     request: StackFetchRequest,
   ): StackFetchResponse | Promise<StackFetchResponse>;
   /**
-   * The stack's status when the runtime starts, and on each change. A host
-   * without `fetchStackDescriptor` gets the one at start. A runtime built
-   * from a test stack has no status and calls neither callback.
+   * The stack's status when the runtime starts, and on each change. For a
+   * host without `fetchStackDescriptor` only `mismatches` can change. A
+   * runtime built from a test stack has no status and calls neither callback.
    */
   stackChanged?(status: StackStatus): void;
 }

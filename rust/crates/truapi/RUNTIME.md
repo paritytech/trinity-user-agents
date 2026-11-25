@@ -192,8 +192,59 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain and
-does not check genesis hashes against the live chains.
+derivation working offline. The core does not check it against the chain.
+
+#### Checks against the chains
+
+When an operator restarts a stack's chains from genesis, the same endpoints
+serve new chains with new genesis hashes. A build that still runs the old
+descriptor would read them as the old chains. So the core asks every chain
+connection for its genesis hash before anything else uses the connection. This
+covers the core's own connections, each product's, and the statement
+subscriptions on People.
+
+- If the hash is the one the connection was opened for, the core hands the
+  connection out.
+- If the hash is different, the call fails with a host failure. For a chain of
+  the stack, `StackStatus::mismatches` lists it until a connection reaches the
+  chain the descriptor names. Without delaying that failure, the core also
+  asks the connections it handed out earlier for that chain again, apart from
+  the statement subscriptions, because a host may have redialled underneath
+  them. It closes those that give a different hash or say the chain is halted,
+  as dotli does while it redials. Those that give the right hash, fail another
+  way, or say nothing for 30 seconds stay open, since one endpoint can front
+  several nodes.
+- If the chain cannot be reached, or says nothing for 30 seconds, the call fails
+  as unavailable and the next connection asks again. A chain that dotli reports
+  as halted is asked again for up to 47 seconds, as a halted follow is, and is
+  unavailable after that. Any other error fails the call with a host failure.
+  None of these is a mismatch.
+
+While a chain is listed, the core fetches the descriptor every five minutes
+instead of every hour, since the operator publishes the new genesis hashes with
+the restart. Once the core holds a descriptor that changes a chain, it sets
+`restart_required` and fetches hourly again.
+
+A host learns of a mismatch through its stack callbacks, and can read it from
+`stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
+(`worker-runtime.ts`), which builds the pairing runtime without the stack
+callbacks and exposes no `stackStatus()` to the host, so a host on them sees a
+refused chain only as failing calls. A `WasmProductRuntime` built on its own
+has no status either. A browser host that passes `stackChanged` without
+`fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
+Without the callbacks the chain is still refused, and nothing is fetched. A host
+shows a listed chain as out of service and keeps its own features off it.
+
+The check has three limits:
+
+- It runs only when the core opens a connection. If a host redials underneath
+  one, as dotli does, the core notices when it opens the next connection for
+  that chain, in any scope.
+- A light client answers from its chain spec, so a chain that restarted is out
+  of its reach and never listed. Only the hourly fetch brings it the new
+  descriptor.
+- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
+  is not checked.
 
 #### Descriptor refresh
 
@@ -242,8 +293,8 @@ The pins fix what the descriptor names for those fields, so a stolen
 descriptor key cannot name other genesis hashes, assets or contracts for such a
 stack.
 They do not cover what a host reads from the chains. The descriptor's
-endpoints are not pinned and the core does not check genesis hashes against
-the live chains, so those reads are protected only by a light client that
+endpoints are not pinned, and the genesis hash the core checks is the one an
+endpoint reports, so those reads are protected only by a light client that
 starts from the pinned relay light spec, and that protects the relay alone: a
 parachain's `paraId` and `lightSpec` are not pinned. A host that reads over RPC
 has no such protection.
@@ -252,8 +303,11 @@ A newer descriptor the core takes that changes the genesis hash of the relay,
 Asset Hub, People or Bulletin chain, the network, the `generation` or the
 `accountDataStore` contract applies from the next start. Once the core has
 stored it, `StackStatus` has `restart_required` set, and the host builds the
-runtime again. Any other change applies at once. `StackStatus` documents the rest,
-including the `generation` a host keys cached chain data by.
+runtime again. Any other change needs no restart. `StackStatus` carries it
+once the core has stored the descriptor or its store has failed, at most 30
+seconds after the fetch, and shows the copy from before the fetch until then.
+It documents the rest, including the `generation` a host keys cached chain
+data by.
 
 ### Core database
 

@@ -105,11 +105,10 @@ final class FirebaseApplicationService: RemoteConfigManaging {
             dotNsResolver: dotNsResolverAddress(),
             dotNsNameRegistry: dotNsNameRegistryAddress(),
             coinageInstanceId: coinageInstanceId(),
-            fundingUrl: fundingConfigValue(.onrampUrl),
-            offrampUrl: fundingConfigValue(.offrampUrl),
             accountDataStoreContract: accountDataStoreContractAddress(),
             paymentAsset: paymentAssetConfig(),
             appSharingUrl: url(for: .appSharingUrl),
+            coinagePrivacyConfig: coinagePrivacyConfigData(),
             fundingProviders: fundingProviders()
         )
     }
@@ -168,12 +167,6 @@ private extension FirebaseApplicationService {
         return URL(string: value)
     }
 
-    /// One JSON object shared with Android, passed through as published:
-    /// `{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp", "providers": […] }`.
-    func fundingConfigValue(_ field: String) -> String? {
-        FundingConfig.string(field, in: remoteConfig[.fundingConfig].jsonValue as? [String: Any])
-    }
-
     /// One JSON object shared with Android: `{ "contractAddress": "0x…" }`, decoded to an EVM address
     /// here so consumers never see a malformed one. A delivered address that cannot be used is a
     /// config mistake, not a payload still on its way: both stall registration, only the log tells them apart.
@@ -191,6 +184,11 @@ private extension FirebaseApplicationService {
     func paymentAssetConfig() -> PaymentAssetConfig? {
         guard let json = remoteConfig[.paymentAssetConfig].jsonValue as? [String: String] else { return nil }
         return PaymentAssetConfig(json: json)
+    }
+
+    func coinagePrivacyConfigData() -> Data? {
+        let data = remoteConfig[.coinagePrivacyConfig].dataValue
+        return data.isEmpty ? nil : data
     }
 
     func fundingProviders() -> [String] {
@@ -285,13 +283,12 @@ private extension String {
     static let ipfsGatewayUrl = "ipfs_gateway_url"
     static let dotNsResolver = "dot_ns_config"
     static let coinageInstanceId = "coinage_instance_id"
-    static let fundingConfig = "funding_config"
-    static let onrampUrl = "onrampUrl"
-    static let offrampUrl = "offrampUrl"
     static let accountDataStoreConfig = "account_data_store_config"
     static let contractAddress = "contractAddress"
     static let paymentAssetConfig = "payment_asset_config"
+    static let coinagePrivacyConfig = "coinage_privacy_config"
     static let appSharingUrl = "app_sharing_url"
+    static let fundingConfig = "funding_config"
     static let issueProxyUrl = "issue_proxy_url"
     static let issueProxyApiKey = "issue_proxy_api_key"
 }

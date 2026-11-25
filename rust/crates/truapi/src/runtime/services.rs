@@ -230,6 +230,10 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let chain = match stack.genesis_check() {
+			Some(check) => chain.checking_genesis(check),
+			None => chain,
+		};
 		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
 			chain.clone(),
 			stack.chains().asset_hub,
