@@ -20,6 +20,27 @@ struct HostLogFilterTests {
             == .send(dropped: 0))
     }
 
+    /// The gate is fail closed, so a producer writing its tag under any other
+    /// key would have every one of its logs turned away.
+    @Test func aHostEventIsWrittenUnderTheKeysTheGateReads() {
+        let event = HostEvent(
+            name: "host.test.stepped",
+            level: .info,
+            fingerprint: ["host.test", "stepped"],
+            tags: [:],
+            extras: [:],
+            counters: [:]
+        )
+
+        guard case let .log(_, attributes) = event.route else {
+            Issue.record("an info host event did not leave as a log line")
+            return
+        }
+
+        #expect(attributes[HostLogFilter.tagAttribute] == .string(HostEvent.logTag))
+        #expect(attributes[HostLogFilter.eventNameAttribute] == .string("host.test.stepped"))
+    }
+
     @Test func aLoopingTagSendsABoundedNumberOfLinesAndThenCountsWhatItDropped() {
         let clock = ManualClock()
         let filter = HostLogFilter(now: { clock.now })
