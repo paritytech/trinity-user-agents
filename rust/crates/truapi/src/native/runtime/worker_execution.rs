@@ -11,6 +11,22 @@ use truapi::latest;
 /// The consumer operations on one shared product execution.
 ///
 /// Retaining this handle does not keep the worker running.
+///
+/// A call on this handle enters Rust, and the execution talks to the product's worker. For
+/// [`Self::render`] on a worker hosted in a WebView:
+///
+/// ```text
+///  Chat, Pocket             this execution            product JavaScript
+///  native                   Rust                      native, in the worker WebView
+///       |                         |                           |
+///       |-- render(request) ----->|                           |
+///       |          UniFFI         |-- Start frame ----------->|
+///       |                         |         WebSocket         |
+///       |                         |<-- tree, per redraw ------|
+///       |<-- on_update(tree) -----|                           |
+///       |                         |                           |
+///       |-- cancel -------------->|-- Stop frame ------------>|
+/// ```
 #[uniffi::export(rust)]
 pub trait NativeWorkerExecution: Send + Sync {
 	/// Deliver the host's complete Chat room list to this worker.
