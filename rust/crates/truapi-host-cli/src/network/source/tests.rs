@@ -65,23 +65,25 @@ async fn a_missing_local_stack_says_why() {
 	);
 }
 
-/// A readable stack file with no canonical path, such as `<(curl …)` on Linux,
-/// has nothing to name its state by. The error says so, with the system's
-/// reason and what to do instead.
-#[cfg(target_os = "linux")]
+/// `<(curl …)` gives a pipe at `/dev/fd/<n>`, a path every such stack would
+/// share. The error says the pipe cannot name a stack and what to do instead.
+/// The writer is closed first, so nothing waits on the pipe whatever happens.
+#[cfg(unix)]
 #[tokio::test]
-async fn a_local_stack_with_no_canonical_path_says_why() {
+async fn a_piped_local_stack_says_why() {
 	use std::os::fd::AsRawFd as _;
 
-	let (reader, _writer) = std::io::pipe().expect("a pipe");
+	let (reader, writer) = std::io::pipe().expect("a pipe");
+	drop(writer);
 	let path = format!("/dev/fd/{}", reader.as_raw_fd());
 
-	let error = stack_error(&path).await;
-
-	let prefix =
-		format!("--stack: cannot resolve the canonical path of {path}, which names the stack (");
-	let remedy = "); save the descriptor to a file and give its path";
-	assert!(error.starts_with(&prefix) && error.ends_with(remedy), "{error}");
+	assert_eq!(
+		stack_error(&path).await,
+		format!(
+			"--stack: {path} is not a regular file, so it cannot name a stack; save the \
+			 descriptor to a file and give its path"
+		)
+	);
 }
 
 /// A bundled copy whose light spec no longer matches what its server returns

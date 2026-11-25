@@ -1878,7 +1878,9 @@ key of the link when it has one, and otherwise the URL. The URL of a built-in
 stack with no key is read with that stack's key, so it is verified and is the
 same stack as under its network name. A local file's id is `file:` followed by
 its canonical path: two files are two stacks, and a file that moves becomes
-another stack. A file whose canonical path is not UTF-8 is refused.
+another stack. A path that is not a regular file, such as the pipe `<(curl …)`
+gives or a fifo, is refused, since one such path can carry any descriptor; so is
+a file whose canonical path is not UTF-8.
 
 #### `network-check`
 

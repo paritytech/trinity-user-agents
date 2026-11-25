@@ -74,8 +74,9 @@ pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<Descripto
 
 /// The id of the stack a `--stack` value names, read with `key`: the id of the pointer a link or
 /// a URL carries. A local file has no pointer of its own, so its id is `file:` followed by its
-/// canonical path: two files are two stacks, and a file that moves becomes another stack. A file
-/// whose canonical path is not UTF-8 is refused.
+/// canonical path: two files are two stacks, and a file that moves becomes another stack. A path
+/// that is not a regular file, such as a pipe or a fifo, is refused, since one path can carry any
+/// descriptor; so is a file whose canonical path is not UTF-8.
 pub fn stack_id(stack: &str, key: Option<&str>) -> Result<String> {
 	match pointer_of(stack, key)? {
 		Some(pointer) => Ok(pointer.stack_id()),
@@ -84,7 +85,13 @@ pub fn stack_id(stack: &str, key: Option<&str>) -> Result<String> {
 }
 
 fn local_file_id(path: &str) -> Result<String> {
-	fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
+	let metadata = fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
+	if !metadata.is_file() {
+		bail!(
+			"{path} is not a regular file, so it cannot name a stack; save the descriptor to a \
+			 file and give its path"
+		);
+	}
 	let canonical = fs::canonicalize(path).map_err(|error| {
 		anyhow!(
 			"cannot resolve the canonical path of {path}, which names the stack ({error}); save \

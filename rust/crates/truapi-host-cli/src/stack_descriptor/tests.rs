@@ -234,3 +234,25 @@ fn a_local_file_path_that_is_not_utf8_is_refused() {
 		[Err(refusal.to_string()), Err(refusal.to_string()), Ok("file:/s.json".to_string())]
 	);
 }
+
+/// A fifo's path can carry any descriptor, so naming the stack by it would put
+/// every descriptor sent through it in one state directory. It is refused,
+/// with what to do instead. Its id is asked for without reading it, so the
+/// test does not wait for a writer.
+#[cfg(unix)]
+#[test]
+fn a_local_stack_that_is_not_a_regular_file_is_refused() {
+	let directory = tempfile::tempdir().expect("tempdir");
+	let fifo = directory.path().join("stack.fifo");
+	let created = std::process::Command::new("mkfifo").arg(&fifo).status().expect("run mkfifo");
+	assert!(created.success(), "mkfifo {}", fifo.display());
+	let path = fifo.to_str().expect("temporary path is UTF-8");
+
+	assert_eq!(
+		stack_id(path, None).map_err(|error| error.to_string()),
+		Err(format!(
+			"{path} is not a regular file, so it cannot name a stack; save the descriptor to a \
+			 file and give its path"
+		))
+	);
+}
