@@ -11,11 +11,16 @@
 //! distinction is the whole point of screening content in the runtime; the
 //! transcript is what lets a battery assert the first reading.
 //!
+//! A room id is unique only among the rooms of one product, because a first
+//! version product names its rooms itself. So the host keeps each room under
+//! its product and its id, and a product lists, reads and changes only its
+//! own rooms: a room of another product is an unknown room.
+//!
 //! The same state is what the development chat surface draws. A room keeps
 //! what the product declared about it (metadata, configuration, preview and
 //! footer), and its messages: every message of a room the host keeps, and a
 //! page cache of a room the product keeps. Each change goes to every observer
-//! as the JSON the surface protocol names.
+//! of the room's product as the JSON the surface protocol names.
 
 use std::{
 	collections::{BTreeMap, BTreeSet},
@@ -42,11 +47,11 @@ use truapi::{
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
-		ProductChatUserActionResponse,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest, ProductChatUserActionResponse,
 	},
 	platform::{
 		ChatFeedOutcome, ChatPlatform, ChatRoomChangeOutcome, ChatRoomState, ProductContext,
+		ProductId,
 	},
 };
 
@@ -207,11 +212,51 @@ fn summaries(reactions: &[(String, String)]) -> Vec<ChatReactionSummary> {
 	out
 }
 
+/// The product that created a room and the id it names the room with.
+///
+/// The keys of one product compare by room id, so the rooms of a product stay
+/// in room-id order.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct RoomKey {
+	product_id: ProductId,
+	room_id: String,
+}
+
+impl RoomKey {
+	/// The key of the room `room_id` of `product_id`.
+	fn new(product_id: &ProductId, room_id: &str) -> Self {
+		Self { product_id: product_id.clone(), room_id: room_id.to_string() }
+	}
+}
+
+/// A live channel to someone who follows the rooms of one product.
+struct Listener<Item> {
+	product_id: ProductId,
+	sender: mpsc::UnboundedSender<Item>,
+}
+
+/// Send `item` to every listener of `product_id`, and drop every closed
+/// listener. A listener of another product is sent nothing.
+fn send_to_product<Item: Clone>(
+	listeners: &mut Vec<Listener<Item>>,
+	product_id: &ProductId,
+	item: &Item,
+) {
+	listeners.retain(|listener| {
+		if listener.product_id == *product_id {
+			listener.sender.unbounded_send(item.clone()).is_ok()
+		} else {
+			!listener.sender.is_closed()
+		}
+	});
+}
+
 /// Rooms, bots and messages for one process.
 #[derive(Default)]
 struct State {
-	/// Room id to what the product created and declared.
-	rooms: BTreeMap<String, RoomRecord>,
+	/// What each product created and declared, under the product and the room
+	/// id.
+	rooms: BTreeMap<RoomKey, RoomRecord>,
 	/// Registered bot ids. A bot is not a room, so registering one does not
 	/// republish the room list.
 	bots: BTreeSet<String>,
@@ -219,27 +264,39 @@ struct State {
 	/// trigger against that id, so product and user messages share one
 	/// sequence.
 	assigned: u64,
-	/// Live room-list subscribers, one per product connection.
-	subscribers: Vec<mpsc::UnboundedSender<HostChatListSubscribeItem>>,
-	/// Live surface observers. Each gets the surface-protocol events.
-	observers: Vec<mpsc::UnboundedSender<Value>>,
+	/// Live room-list subscribers, one per product connection. Each gets the
+	/// list of its product.
+	subscribers: Vec<Listener<HostChatListSubscribeItem>>,
+	/// Live surface observers. Each gets the surface-protocol events of the
+	/// rooms of its product.
+	observers: Vec<Listener<Value>>,
 }
 
 impl State {
-	/// The next host-assigned id that `room` does not hold.
-	fn next_id(&mut self, room_id: &str) -> String {
+	/// The next host-assigned id that the room at `key` does not hold.
+	fn next_id(&mut self, key: &RoomKey) -> String {
 		loop {
 			self.assigned += 1;
 			let id = format!("m{}", self.assigned);
-			let taken = self.rooms.get(room_id).is_some_and(|room| room.position(&id).is_some());
+			let taken = self.rooms.get(key).is_some_and(|room| room.position(&id).is_some());
 			if !taken {
 				return id;
 			}
 		}
 	}
+
+	/// The rooms of `product_id` with their ids, in room-id order.
+	fn rooms_of(&self, product_id: &ProductId) -> Vec<(&str, &RoomRecord)> {
+		self.rooms
+			.iter()
+			.filter(|(key, _)| key.product_id == *product_id)
+			.map(|(key, room)| (key.room_id.as_str(), room))
+			.collect()
+	}
 }
 
-/// Everything an observer is shown on subscribing, as surface-protocol JSON.
+/// Everything an observer is shown on subscribing, as surface-protocol JSON:
+/// the rooms of its product.
 pub struct ChatSnapshot {
 	/// `Room` views in room-id order.
 	pub rooms: Vec<Value>,
@@ -289,15 +346,18 @@ impl CliChatHost {
 		self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
 
-	/// Current state plus every change after it. Both are taken under one
-	/// lock, so an observer neither misses nor repeats a change that lands
-	/// while it subscribes.
-	pub fn observe(&self) -> (ChatSnapshot, mpsc::UnboundedReceiver<Value>) {
+	/// The rooms of `product_id` as they are now, plus every later change to
+	/// them. Both are taken under one lock, so an observer neither misses nor
+	/// repeats a change that lands while it subscribes.
+	pub fn observe(
+		&self,
+		product_id: &ProductId,
+	) -> (ChatSnapshot, mpsc::UnboundedReceiver<Value>) {
 		let mut state = self.lock();
+		let rooms = state.rooms_of(product_id);
 		let snapshot = ChatSnapshot {
-			rooms: state.rooms.iter().map(|(room_id, room)| room_json(room_id, room)).collect(),
-			messages: state
-				.rooms
+			rooms: rooms.iter().map(|(room_id, room)| room_json(room_id, room)).collect(),
+			messages: rooms
 				.iter()
 				.filter(|(_, room)| room.host_store())
 				.flat_map(|(room_id, room)| {
@@ -308,30 +368,38 @@ impl CliChatHost {
 				.collect(),
 		};
 		let (sender, receiver) = mpsc::unbounded();
-		state.observers.push(sender);
+		state.observers.push(Listener { product_id: product_id.clone(), sender });
 		(snapshot, receiver)
 	}
 
-	/// The configuration the product declared for `room_id`, if the room
-	/// exists.
-	pub fn room_config(&self, room_id: &str) -> Option<ChatRoomConfig> {
-		self.lock().rooms.get(room_id).map(|room| room.config.clone())
+	/// The configuration `product_id` declared for `room_id`, if the product
+	/// has the room.
+	pub fn room_config(&self, product_id: &ProductId, room_id: &str) -> Option<ChatRoomConfig> {
+		self.lock()
+			.rooms
+			.get(&RoomKey::new(product_id, room_id))
+			.map(|room| room.config.clone())
 	}
 
 	/// A message the room holds or the page cache saw.
 	#[cfg(test)]
-	pub fn message(&self, room_id: &str, message_id: &str) -> Option<ChatMessage> {
+	pub fn message(
+		&self,
+		product_id: &ProductId,
+		room_id: &str,
+		message_id: &str,
+	) -> Option<ChatMessage> {
 		let state = self.lock();
-		let room = state.rooms.get(room_id)?;
+		let room = state.rooms.get(&RoomKey::new(product_id, room_id))?;
 		room.position(message_id).map(|index| room.messages[index].message.clone())
 	}
 
 	/// Keep one page the product answered in the page cache of a room it
 	/// keeps. The page goes back to the surface that asked for it, so no
 	/// observer is told.
-	pub fn cache_page(&self, room_id: &str, messages: &[ChatMessage]) {
+	pub fn cache_page(&self, product_id: &ProductId, room_id: &str, messages: &[ChatMessage]) {
 		let mut state = self.lock();
-		let Some(room) = state.rooms.get_mut(room_id) else {
+		let Some(room) = state.rooms.get_mut(&RoomKey::new(product_id, room_id)) else {
 			return;
 		};
 		if room.host_store() {
@@ -345,20 +413,22 @@ impl CliChatHost {
 		}
 	}
 
-	/// Store a message the user sent into a room the host keeps, and tell
-	/// every observer. The host gives the id.
+	/// Store a message the user sent into a room of `product_id` the host
+	/// keeps, and tell every observer of the product. The host gives the id.
 	pub fn post_user_message(
 		&self,
+		product_id: &ProductId,
 		room_id: &str,
 		body: ChatMessageBody,
 		reply_to: Option<String>,
 	) -> Result<ChatMessage, String> {
 		let mut state = self.lock();
-		let room = state.rooms.get(room_id).ok_or_else(|| unknown_room(room_id))?;
+		let key = RoomKey::new(product_id, room_id);
+		let room = state.rooms.get(&key).ok_or_else(|| unknown_room(room_id))?;
 		if !room.host_store() {
 			return Err("the room keeps its messages in the product".to_string());
 		}
-		let message_id = state.next_id(room_id);
+		let message_id = state.next_id(&key);
 		let message = ChatMessage {
 			message_id,
 			origin: ChatMessageOrigin { participant_id: USER.to_string() },
@@ -379,23 +449,32 @@ impl CliChatHost {
 			"payload": hex::encode(message.body.encode()),
 			"replyTo": message.reply.as_ref().map(|reply| &reply.message_id),
 		});
-		let room = state.rooms.get_mut(room_id).expect("the room was just found");
+		let room = state.rooms.get_mut(&key).expect("the room was just found");
 		room.messages.push(StoredMessage::new(message.clone()));
 		let index = room.messages.len() - 1;
-		Self::announce_message(&mut state, room_id, index);
+		Self::announce_message(&mut state, &key, index);
 		drop(state);
 		self.record(line);
 		Ok(message)
 	}
 
-	/// Mark `message_id` as the newest message the user saw in `room_id`.
-	pub fn mark_seen(&self, room_id: &str, message_id: &str) -> Result<(), String> {
+	/// Mark `message_id` as the newest message the user saw in the room
+	/// `room_id` of `product_id`.
+	pub fn mark_seen(
+		&self,
+		product_id: &ProductId,
+		room_id: &str,
+		message_id: &str,
+	) -> Result<(), String> {
 		let mut state = self.lock();
-		let room = state.rooms.get_mut(room_id).ok_or_else(|| unknown_room(room_id))?;
+		let room = state
+			.rooms
+			.get_mut(&RoomKey::new(product_id, room_id))
+			.ok_or_else(|| unknown_room(room_id))?;
 		room.position(message_id).ok_or_else(|| unknown_message(message_id))?;
 		room.last_seen = Some(message_id.to_string());
 		let event = with_kind("room", room_json(room_id, room));
-		Self::broadcast(&mut state, event);
+		Self::broadcast(&mut state, product_id, event);
 		Ok(())
 	}
 
@@ -403,18 +482,20 @@ impl CliChatHost {
 	/// so the screen shows the outcome.
 	pub fn apply_source_action(
 		&self,
+		product_id: &ProductId,
 		room_id: &str,
 		action: &ChatUserAction,
 		answer: &ProductChatUserActionResponse,
 	) {
 		let mut state = self.lock();
-		let Some(room) = state.rooms.get_mut(room_id) else {
+		let key = RoomKey::new(product_id, room_id);
+		let Some(room) = state.rooms.get_mut(&key) else {
 			return;
 		};
 		if let ChatUserAction::DeleteMessage { message_id } = action {
 			if let Some(index) = room.position(message_id) {
 				room.messages.remove(index);
-				Self::announce_deletion(&mut state, room_id, message_id);
+				Self::announce_deletion(&mut state, &key, message_id);
 			}
 			return;
 		}
@@ -465,49 +546,54 @@ impl CliChatHost {
 			) => None,
 		};
 		if let Some(index) = changed {
-			Self::announce_message(&mut state, room_id, index);
+			Self::announce_message(&mut state, &key, index);
 		}
 	}
 
-	/// Tell every observer one message changed, with the chat-list view of
-	/// its room, which the change can move.
-	fn announce_message(state: &mut State, room_id: &str, index: usize) {
-		let Some(room) = state.rooms.get(room_id) else {
+	/// Tell every observer of the room's product one message changed, with
+	/// the chat-list view of its room, which the change can move.
+	fn announce_message(state: &mut State, key: &RoomKey, index: usize) {
+		let Some(room) = state.rooms.get(key) else {
 			return;
 		};
 		let event = json!({
 			"kind": "message",
-			"roomId": room_id,
+			"roomId": key.room_id,
 			"persisted": room.host_store(),
 			"message": message_json(&room.messages[index].message),
 			"list": list_json(room),
 		});
-		Self::broadcast(state, event);
+		Self::broadcast(state, &key.product_id, event);
 	}
 
-	/// Tell every observer a message left a room, with the chat-list view of
-	/// its room, which the deletion can change.
-	fn announce_deletion(state: &mut State, room_id: &str, message_id: &str) {
-		let Some(room) = state.rooms.get(room_id) else {
+	/// Tell every observer of the room's product a message left the room,
+	/// with the chat-list view of its room, which the deletion can change.
+	fn announce_deletion(state: &mut State, key: &RoomKey, message_id: &str) {
+		let Some(room) = state.rooms.get(key) else {
 			return;
 		};
 		let event = json!({
 			"kind": "messageDeleted",
-			"roomId": room_id,
+			"roomId": key.room_id,
 			"messageId": message_id,
 			"list": list_json(room),
 		});
-		Self::broadcast(state, event);
+		Self::broadcast(state, &key.product_id, event);
 	}
 
 	/// Give a first-version message the product posted its id, and append it
 	/// to the transcript. Product and user messages share one id sequence.
-	fn accept_legacy(&self, request: &HostChatPostMessageRequest) -> Option<String> {
+	fn accept_legacy(
+		&self,
+		product_id: &ProductId,
+		request: &HostChatPostMessageRequest,
+	) -> Option<String> {
 		let mut state = self.lock();
-		if !state.rooms.contains_key(&request.room_id) {
+		let key = RoomKey::new(product_id, &request.room_id);
+		if !state.rooms.contains_key(&key) {
 			return None;
 		}
-		let message_id = state.next_id(&request.room_id);
+		let message_id = state.next_id(&key);
 		drop(state);
 		self.record(json!({
 			"kind": "message",
@@ -525,10 +611,12 @@ impl CliChatHost {
 	}
 
 	/// Change one declaration of a room the product hosts, tell every
-	/// observer the new room view, and append the request to the transcript.
+	/// observer of the product the new room view, and append the request to
+	/// the transcript.
 	fn declare<R: Encode>(
 		&self,
 		kind: &str,
+		product_id: &ProductId,
 		room_id: &str,
 		request: &R,
 		change: impl FnOnce(&mut RoomRecord),
@@ -536,46 +624,43 @@ impl CliChatHost {
 		let mut state = self.lock();
 		let room = state
 			.rooms
-			.get_mut(room_id)
+			.get_mut(&RoomKey::new(product_id, room_id))
 			.ok_or_else(|| GenericError { reason: unknown_room(room_id) })?;
 		change(room);
 		let event = with_kind("room", room_json(room_id, room));
-		Self::broadcast(&mut state, event);
+		Self::broadcast(&mut state, product_id, event);
 		drop(state);
 		self.record_declaration(kind, room_id, request);
 		Ok(())
 	}
 
-	/// Current room list, in room-id order so a replacement that changes
-	/// nothing is byte-identical to the one before it.
-	fn room_list(state: &State) -> HostChatListSubscribeItem {
+	/// Current room list of `product_id`, in room-id order so a replacement
+	/// that changes nothing is byte-identical to the one before it.
+	fn room_list(state: &State, product_id: &ProductId) -> HostChatListSubscribeItem {
 		HostChatListSubscribeItem {
 			rooms: state
-				.rooms
-				.iter()
+				.rooms_of(product_id)
+				.into_iter()
 				.map(|(room_id, room)| ChatRoom {
-					room_id: room_id.clone(),
+					room_id: room_id.to_string(),
 					participating_as: room.participating_as,
 				})
 				.collect(),
 		}
 	}
 
-	/// Send the current list to every live subscriber, dropping closed ones.
-	fn republish(state: &mut State) {
-		let item = Self::room_list(state);
-		state
-			.subscribers
-			.retain(|subscriber| subscriber.unbounded_send(item.clone()).is_ok());
+	/// Send the current list of `product_id` to each of its live subscribers,
+	/// dropping closed ones.
+	fn republish(state: &mut State, product_id: &ProductId) {
+		let item = Self::room_list(state, product_id);
+		send_to_product(&mut state.subscribers, product_id, &item);
 	}
 
-	/// Send one event to every live observer, dropping closed ones. Called
-	/// with the state locked, so observers see changes in the order they
-	/// happened.
-	fn broadcast(state: &mut State, event: Value) {
-		state
-			.observers
-			.retain(|observer| observer.unbounded_send(event.clone()).is_ok());
+	/// Send one event about a room of `product_id` to each of its live
+	/// observers, dropping closed ones. Called with the state locked, so
+	/// observers see changes in the order they happened.
+	fn broadcast(state: &mut State, product_id: &ProductId, event: Value) {
+		send_to_product(&mut state.observers, product_id, &event);
 	}
 
 	/// Append one accepted room or bot registration.
@@ -987,15 +1072,17 @@ fn body_variant(body: &ChatMessageBody) -> &'static str {
 impl ChatPlatform for CliChatHost {
 	async fn create_chat_room(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		room_id: String,
 		request: HostChatCreateRoomRequest,
 	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
+		let product_id = &product.product_id;
+		let key = RoomKey::new(product_id, &room_id);
 		let mut state = self.lock();
 		// A room that exists keeps its name and its other declarations. The
 		// configuration is the one of this call, for a new room and for a room
 		// that exists.
-		let (status, config_changed) = match state.rooms.get_mut(&room_id) {
+		let (status, config_changed) = match state.rooms.get_mut(&key) {
 			Some(room) => {
 				let changed = room.config != request.config;
 				// A room that changes its store discards the messages that it
@@ -1007,7 +1094,7 @@ impl ChatPlatform for CliChatHost {
 				room.config = request.config.clone();
 				if changed {
 					let event = with_kind("room", room_json(&room_id, room));
-					Self::broadcast(&mut state, event);
+					Self::broadcast(&mut state, product_id, event);
 				}
 				(ChatRoomRegistrationStatus::Exists, changed)
 			},
@@ -1020,9 +1107,9 @@ impl ChatPlatform for CliChatHost {
 				let changed = room.config != request.config;
 				room.config = request.config.clone();
 				let event = with_kind("room", room_json(&room_id, &room));
-				state.rooms.insert(room_id.clone(), room);
-				Self::republish(&mut state);
-				Self::broadcast(&mut state, event);
+				state.rooms.insert(key, room);
+				Self::republish(&mut state, product_id);
+				Self::broadcast(&mut state, product_id, event);
 				(ChatRoomRegistrationStatus::New, changed)
 			},
 		};
@@ -1052,11 +1139,11 @@ impl ChatPlatform for CliChatHost {
 
 	async fn post_chat_message(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		request: HostChatPostMessageRequest,
 	) -> Result<HostChatPostMessageResponse, HostChatPostMessageError> {
 		// A room this host never created is not one it can store against.
-		let message_id = self.accept_legacy(&request).ok_or_else(|| {
+		let message_id = self.accept_legacy(&product.product_id, &request).ok_or_else(|| {
 			HostChatPostMessageError::Unknown { reason: unknown_room(&request.room_id) }
 		})?;
 		Ok(HostChatPostMessageResponse { message_id })
@@ -1064,22 +1151,24 @@ impl ChatPlatform for CliChatHost {
 
 	async fn set_chat_room_footer(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		request: HostChatSetRoomFooterRequest,
 	) -> Result<(), GenericError> {
-		self.declare("footer", &request.room_id, &request, |room| {
+		self.declare("footer", &product.product_id, &request.room_id, &request, |room| {
 			room.footer = request.footer.clone();
 		})
 	}
 
 	fn subscribe_chat_rooms(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>> {
 		let mut state = self.lock();
-		let snapshot = Self::room_list(&state);
+		let snapshot = Self::room_list(&state, &product.product_id);
 		let (sender, receiver) = mpsc::unbounded();
-		state.subscribers.push(sender);
+		state
+			.subscribers
+			.push(Listener { product_id: product.product_id.clone(), sender });
 		// The snapshot first, then every replacement, so a product that
 		// subscribes before creating a room still sees the room it creates.
 		stream::once(async move { Ok(snapshot) }).chain(receiver.map(Ok)).boxed()
@@ -1087,10 +1176,11 @@ impl ChatPlatform for CliChatHost {
 
 	async fn chat_room(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		room_id: String,
 	) -> Result<Option<ChatRoomState>, GenericError> {
-		Ok(self.lock().rooms.get(&room_id).map(|room| ChatRoomState {
+		let key = RoomKey::new(&product.product_id, &room_id);
+		Ok(self.lock().rooms.get(&key).map(|room| ChatRoomState {
 			participating_as: room.participating_as,
 			config: room.config.clone(),
 		}))
@@ -1098,10 +1188,10 @@ impl ChatPlatform for CliChatHost {
 
 	async fn set_chat_room_metadata(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		request: HostChatSetRoomMetadataRequest,
 	) -> Result<ChatRoomChangeOutcome, GenericError> {
-		self.declare("metadata", &request.room_id, &request, |room| {
+		self.declare("metadata", &product.product_id, &request.room_id, &request, |room| {
 			room.metadata = request.metadata.clone();
 			if let Some(icon) = &request.metadata.icon {
 				room.icon_url = icon.clone();
@@ -1112,10 +1202,10 @@ impl ChatPlatform for CliChatHost {
 
 	async fn set_chat_room_preview(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		request: HostChatSetRoomPreviewRequest,
 	) -> Result<ChatRoomChangeOutcome, GenericError> {
-		self.declare("preview", &request.room_id, &request, |room| {
+		self.declare("preview", &product.product_id, &request.room_id, &request, |room| {
 			room.preview = Some(request.preview.clone());
 		})?;
 		Ok(ChatRoomChangeOutcome::Applied)
@@ -1123,15 +1213,17 @@ impl ChatPlatform for CliChatHost {
 
 	async fn delete_chat_room(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		request: HostChatDeleteRoomRequest,
 	) -> Result<ChatRoomChangeOutcome, GenericError> {
+		let product_id = &product.product_id;
 		let mut state = self.lock();
 		// Idempotent: a room that is gone is deleted.
-		if state.rooms.remove(&request.room_id).is_some() {
-			Self::republish(&mut state);
+		if state.rooms.remove(&RoomKey::new(product_id, &request.room_id)).is_some() {
+			Self::republish(&mut state, product_id);
 			Self::broadcast(
 				&mut state,
+				product_id,
 				json!({ "kind": "roomDeleted", "roomId": request.room_id }),
 			);
 		}
@@ -1142,14 +1234,15 @@ impl ChatPlatform for CliChatHost {
 
 	async fn update_chat_feed(
 		&self,
-		_product: &ProductContext,
+		product: &ProductContext,
 		request: HostChatUpdateFeedRequest,
 		persist: bool,
 	) -> Result<ChatFeedOutcome, GenericError> {
+		let key = RoomKey::new(&product.product_id, &request.room_id);
 		let mut state = self.lock();
 		let room = state
 			.rooms
-			.get_mut(&request.room_id)
+			.get_mut(&key)
 			.ok_or_else(|| GenericError { reason: unknown_room(&request.room_id) })?;
 		let change = match apply_feed(room, &request.update, persist) {
 			Ok(change) => change,
@@ -1158,10 +1251,10 @@ impl ChatPlatform for CliChatHost {
 		};
 		match change {
 			Some(FeedChange::Message(index)) => {
-				Self::announce_message(&mut state, &request.room_id, index);
+				Self::announce_message(&mut state, &key, index);
 			},
 			Some(FeedChange::Deleted(message_id)) => {
-				Self::announce_deletion(&mut state, &request.room_id, &message_id);
+				Self::announce_deletion(&mut state, &key, &message_id);
 			},
 			None => {},
 		}

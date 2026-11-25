@@ -11,3 +11,6 @@ list with pinned rooms first, previews, activity lines, badges (a count or an im
 empty-room text, every message body kind, status, reactions, replies, the message menu, who reacted and the footer,
 draws a `Replaced` message again in place, and removes a deleted one. A room the host keeps takes the user's messages
 only; edits and reactions there come from the product.
+
+The in-memory chat host, which `signing-host` and `pairing-host` also use for a Worker, keeps each room under its
+product and its id. A product lists, reads and changes only its own rooms, also after the run selects another product.

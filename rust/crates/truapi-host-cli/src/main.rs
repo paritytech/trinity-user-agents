@@ -2239,7 +2239,7 @@ async fn run_dev(
 	let surface = chat_surface::ChatSurface::new(
 		chat::CliChatHost::from_env(),
 		args.worker_bundle,
-		product_id.to_string(),
+		product_id.clone(),
 	);
 	let signing = SigningHostArgs {
 		product_id,

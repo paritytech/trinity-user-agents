@@ -664,7 +664,7 @@ fn chat_surface(worker_bundle: Option<std::path::PathBuf>) -> Arc<ChatSurface> {
 	ChatSurface::new(
 		crate::chat::CliChatHost::new(None),
 		worker_bundle,
-		"localhost:3000".to_string(),
+		ProductId::for_test("localhost:3000"),
 	)
 }
 

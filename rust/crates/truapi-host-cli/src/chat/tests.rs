@@ -19,6 +19,10 @@ fn product() -> ProductContext {
 	ProductContext::new(ProductId::for_test("chat.dot"))
 }
 
+fn product_id() -> ProductId {
+	product().product_id
+}
+
 fn text(text: &str) -> ChatMessageContent {
 	ChatMessageContent::Text { text: text.to_string() }
 }
@@ -90,7 +94,7 @@ fn feed(
 }
 
 fn room_view(host: &CliChatHost, room_id: &str) -> Value {
-	host.observe()
+	host.observe(&product_id())
 		.0
 		.rooms
 		.into_iter()
@@ -183,12 +187,14 @@ fn a_room_appears_in_the_list_a_subscriber_already_holds() {
 #[test]
 fn an_observer_sees_changes_after_its_snapshot_exactly_once() {
 	let host = CliChatHost::new(None);
-	let (before, mut early) = host.observe();
+	let (before, mut early) = host.observe(&product_id());
 	assert!(before.rooms.is_empty());
 
 	create(&host, room("support"));
-	let (after, mut late) = host.observe();
-	let posted = host.post_user_message("support", body("hi"), None).expect("the room exists");
+	let (after, mut late) = host.observe(&product_id());
+	let posted = host
+		.post_user_message(&product_id(), "support", body("hi"), None)
+		.expect("the room exists");
 
 	let room = early.try_recv().expect("the room event");
 	assert_eq!(room["kind"], "room");
@@ -227,7 +233,9 @@ fn user_and_product_messages_share_one_id_sequence() {
 	};
 
 	let first = post(text("welcome"));
-	let second = host.post_user_message("support", body("hello"), None).expect("the room exists");
+	let second = host
+		.post_user_message(&product_id(), "support", body("hello"), None)
+		.expect("the room exists");
 	let third = post(text("hi there"));
 	assert_eq!((first.as_str(), second.message_id.as_str(), third.as_str()), ("m1", "m2", "m3"));
 	assert_eq!(second.origin.participant_id, USER);
@@ -237,14 +245,14 @@ fn user_and_product_messages_share_one_id_sequence() {
 	assert_eq!(recorded[2]["messageId"], "m2");
 	assert_eq!(recorded[2]["payload"], hex::encode(body("hello").encode()));
 
-	assert!(host.post_user_message("elsewhere", body("lost"), None).is_err());
-	assert_eq!(host.observe().0.messages.len(), 1);
+	assert!(host.post_user_message(&product_id(), "elsewhere", body("lost"), None).is_err());
+	assert_eq!(host.observe(&product_id()).0.messages.len(), 1);
 }
 
 #[test]
 fn a_room_the_product_keeps_takes_no_message_from_the_user_through_the_host() {
 	let host = host_with_rooms(None);
-	assert!(host.post_user_message("kept", body("hi"), None).is_err());
+	assert!(host.post_user_message(&product_id(), "kept", body("hi"), None).is_err());
 }
 
 // A room that exists keeps its name and what it declared. Its configuration
@@ -266,7 +274,7 @@ fn a_room_that_exists_keeps_what_it_declared() {
 	.expect("an existing room is found again");
 
 	assert_eq!(again, ChatRoomRegistrationStatus::Exists);
-	assert_eq!(host.room_config("kept"), Some(source_config()));
+	assert_eq!(host.room_config(&product_id(), "kept"), Some(source_config()));
 	assert_eq!(room_view(&host, "kept")["name"], "Support");
 }
 
@@ -276,13 +284,14 @@ fn a_room_that_exists_keeps_what_it_declared() {
 fn a_room_that_changes_its_store_discards_its_messages() {
 	let host = CliChatHost::new(None);
 	create(&host, room("support"));
-	host.post_user_message("support", body("mine"), None).expect("the room exists");
-	assert_eq!(host.observe().0.messages.len(), 1);
+	host.post_user_message(&product_id(), "support", body("mine"), None)
+		.expect("the room exists");
+	assert_eq!(host.observe(&product_id()).0.messages.len(), 1);
 
 	create(&host, HostChatCreateRoomRequest { config: source_config(), ..room("support") });
 
-	assert_eq!(host.room_config("support"), Some(source_config()));
-	assert!(host.observe().0.messages.is_empty());
+	assert_eq!(host.room_config(&product_id(), "support"), Some(source_config()));
+	assert!(host.observe(&product_id()).0.messages.is_empty());
 }
 
 // The core reads the room to learn whether the host stores its messages, so
@@ -295,9 +304,8 @@ fn a_room_reads_back_with_its_configuration() {
 		futures::executor::block_on(host.chat_room(&product(), room_id.to_string()))
 			.expect("the host reads its rooms")
 	};
-	let hosted = |config| {
-		Some(ChatRoomState { participating_as: ChatRoomParticipation::RoomHost, config })
-	};
+	let hosted =
+		|config| Some(ChatRoomState { participating_as: ChatRoomParticipation::RoomHost, config });
 	assert_eq!(read("kept"), hosted(source_config()));
 	assert_eq!(read("support"), hosted(ChatRoomConfig::default()));
 	assert_eq!(read("never-created"), None);
@@ -307,7 +315,7 @@ fn a_room_reads_back_with_its_configuration() {
 #[test]
 fn metadata_replaces_the_name_description_and_icon() {
 	let host = host_with_rooms(None);
-	let (_, mut events) = host.observe();
+	let (_, mut events) = host.observe(&product_id());
 	let mut declare = |name: &str, icon: Option<&str>| {
 		futures::executor::block_on(host.set_chat_room_metadata(
 			&product(),
@@ -339,20 +347,19 @@ fn metadata_replaces_the_name_description_and_icon() {
 #[test]
 fn a_deleted_message_leaves_the_room() {
 	let host = host_with_rooms(None);
-	let user = host.post_user_message("support", body("mine"), None).expect("the room exists");
+	let user = host
+		.post_user_message(&product_id(), "support", body("mine"), None)
+		.expect("the room exists");
 	feed(&host, "support", ChatFeedUpdate::New(message("p-1", PRODUCT, "hi")), true)
 		.expect("a new message is stored");
-	let (_, mut events) = host.observe();
+	let (_, mut events) = host.observe(&product_id());
 	let deleted = |id: &str| ChatFeedUpdate::Deleted { message_id: id.to_string() };
 
 	assert_eq!(
 		feed(&host, "support", deleted(&user.message_id), true),
 		Err(ChatFeedOutcome::NotOwner)
 	);
-	assert_eq!(
-		feed(&host, "support", deleted("p-9"), true),
-		Err(ChatFeedOutcome::UnknownMessage)
-	);
+	assert_eq!(feed(&host, "support", deleted("p-9"), true), Err(ChatFeedOutcome::UnknownMessage));
 	feed(&host, "support", deleted("p-1"), true).expect("the product deletes its message");
 
 	let events = drain(&mut events);
@@ -361,15 +368,15 @@ fn a_deleted_message_leaves_the_room() {
 		(events[0]["kind"].clone(), events[0]["messageId"].clone()),
 		(json!("messageDeleted"), json!("p-1"))
 	);
-	assert!(host.message("support", "p-1").is_none());
-	assert!(host.message("support", &user.message_id).is_some());
+	assert!(host.message(&product_id(), "support", "p-1").is_none());
+	assert!(host.message(&product_id(), "support", &user.message_id).is_some());
 
 	// A room the product keeps deletes what its cache holds, and an
 	// update for a message off screen changes nothing.
-	host.cache_page("kept", &[message("s-1", USER, "cached")]);
+	host.cache_page(&product_id(), "kept", &[message("s-1", USER, "cached")]);
 	feed(&host, "kept", deleted("s-0"), false).expect("a message off screen is fine");
 	feed(&host, "kept", deleted("s-1"), false).expect("the screen drops the message");
-	assert!(host.message("kept", "s-1").is_none());
+	assert!(host.message(&product_id(), "kept", "s-1").is_none());
 }
 
 #[test]
@@ -458,7 +465,7 @@ fn deleting_a_room_removes_it_and_is_idempotent() {
 	let host = host_with_rooms(Some(transcript.path().to_path_buf()));
 	let mut rooms = host.subscribe_chat_rooms(&product());
 	futures::executor::block_on(rooms.next());
-	let (_, mut events) = host.observe();
+	let (_, mut events) = host.observe(&product_id());
 	let delete = |room_id: &str| {
 		futures::executor::block_on(host.delete_chat_room(
 			&product(),
@@ -477,7 +484,7 @@ fn deleting_a_room_removes_it_and_is_idempotent() {
 		.expect("the list is republished")
 		.expect("not an error");
 	assert_eq!(list.rooms.iter().map(|room| room.room_id.as_str()).collect::<Vec<_>>(), ["kept"]);
-	assert!(host.room_config("support").is_none());
+	assert!(host.room_config(&product_id(), "support").is_none());
 	let kinds: Vec<_> = transcript_lines(transcript.path())
 		.into_iter()
 		.map(|line| line["kind"].clone())
@@ -489,8 +496,10 @@ fn deleting_a_room_removes_it_and_is_idempotent() {
 fn the_store_of_a_room_takes_every_feed_update() {
 	let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
 	let host = host_with_rooms(Some(transcript.path().to_path_buf()));
-	let user = host.post_user_message("support", body("mine"), None).expect("the room exists");
-	let (_, mut events) = host.observe();
+	let user = host
+		.post_user_message(&product_id(), "support", body("mine"), None)
+		.expect("the room exists");
+	let (_, mut events) = host.observe(&product_id());
 
 	feed(&host, "support", ChatFeedUpdate::New(message("p-1", PRODUCT, "first")), true)
 		.expect("a new message is stored");
@@ -639,7 +648,7 @@ fn the_store_of_a_room_takes_every_feed_update() {
 #[test]
 fn a_feed_update_of_a_room_the_product_keeps_is_for_the_screen_only() {
 	let host = host_with_rooms(None);
-	let (_, mut events) = host.observe();
+	let (_, mut events) = host.observe(&product_id());
 
 	// The page cache never saw it: nothing to change, and no error.
 	feed(&host, "kept", ChatFeedUpdate::Replaced(message("old", PRODUCT, "")), false)
@@ -655,7 +664,7 @@ fn a_feed_update_of_a_room_the_product_keeps_is_for_the_screen_only() {
 		reacted_by_user: false,
 		unseen: false,
 	}];
-	host.cache_page("kept", &[summary]);
+	host.cache_page(&product_id(), "kept", &[summary]);
 	feed(
 		&host,
 		"kept",
@@ -678,8 +687,11 @@ fn a_feed_update_of_a_room_the_product_keeps_is_for_the_screen_only() {
 	);
 	// The product's own badge rules: nothing unless it set one.
 	assert_eq!(events[1]["list"]["badge"], Value::Null);
-	assert!(host.message("kept", "s-2").is_some());
-	assert!(host.observe().0.messages.is_empty(), "the snapshot holds only the host's store");
+	assert!(host.message(&product_id(), "kept", "s-2").is_some());
+	assert!(
+		host.observe(&product_id()).0.messages.is_empty(),
+		"the snapshot holds only the host's store"
+	);
 }
 
 #[test]
@@ -716,23 +728,24 @@ fn the_newest_seen_message_clears_the_unread_count() {
 	}
 	assert_eq!(room_view(&host, "support")["list"]["badge"]["count"], 2);
 
-	host.mark_seen("support", "p-1").expect("known");
+	host.mark_seen(&product_id(), "support", "p-1").expect("known");
 	assert_eq!(room_view(&host, "support")["list"]["badge"]["count"], 1);
-	host.mark_seen("support", "p-2").expect("known");
+	host.mark_seen(&product_id(), "support", "p-2").expect("known");
 	assert_eq!(room_view(&host, "support")["list"]["badge"], Value::Null);
 	assert_eq!(room_view(&host, "support")["lastSeen"], "p-2");
-	assert!(host.mark_seen("support", "nope").is_err());
-	assert!(host.mark_seen("kept", "nope").is_err());
+	assert!(host.mark_seen(&product_id(), "support", "nope").is_err());
+	assert!(host.mark_seen(&product_id(), "kept", "nope").is_err());
 }
 
 #[test]
 fn the_answer_to_a_user_action_shows_on_the_screen() {
 	let host = host_with_rooms(None);
-	host.cache_page("kept", &[message("s-1", USER, "first")]);
-	let (_, mut events) = host.observe();
+	host.cache_page(&product_id(), "kept", &[message("s-1", USER, "first")]);
+	let (_, mut events) = host.observe(&product_id());
 	let created = message("s-2", USER, "hello");
 
 	host.apply_source_action(
+		&product_id(),
 		"kept",
 		&ChatUserAction::NewMessage {
 			body: body("hello"),
@@ -744,17 +757,20 @@ fn the_answer_to_a_user_action_shows_on_the_screen() {
 	);
 	let acknowledged = ProductChatUserActionResponse::Acknowledged;
 	host.apply_source_action(
+		&product_id(),
 		"kept",
 		&ChatUserAction::EditMessage { message_id: "s-1".to_string(), body: body("edited") },
 		&acknowledged,
 	);
 	host.apply_source_action(
+		&product_id(),
 		"kept",
 		&ChatUserAction::ReactionPlaced { message_id: "s-1".to_string(), emoji: "+1".to_string() },
 		&acknowledged,
 	);
-	host.apply_source_action("kept", &ChatUserAction::AcceptRequest, &acknowledged);
+	host.apply_source_action(&product_id(), "kept", &ChatUserAction::AcceptRequest, &acknowledged);
 	host.apply_source_action(
+		&product_id(),
 		"kept",
 		&ChatUserAction::Seen { message_id: "s-1".to_string() },
 		&acknowledged,
@@ -924,4 +940,294 @@ fn a_room_read_answers_the_room_and_leaves_no_subscriber() {
 	}
 	assert_eq!(read("missing"), None);
 	assert!(host.lock().subscribers.is_empty());
+}
+
+/// A second product, which names its rooms as the first one does.
+fn other_product() -> ProductContext {
+	ProductContext::new(ProductId::for_test("other.dot"))
+}
+
+/// What a page of `product_id` is shown when it opens.
+fn shown(host: &CliChatHost, product_id: &ProductId) -> Value {
+	let (snapshot, _) = host.observe(product_id);
+	json!({ "rooms": snapshot.rooms, "messages": snapshot.messages })
+}
+
+/// The room ids of each list a room-list subscription delivered so far.
+fn lists(
+	rooms: &mut BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>,
+) -> Vec<Vec<String>> {
+	use futures::FutureExt;
+	std::iter::from_fn(|| rooms.next().now_or_never().flatten())
+		.map(|list| {
+			let list = list.expect("a list, not an error");
+			list.rooms.into_iter().map(|room| room.room_id).collect()
+		})
+		.collect()
+}
+
+/// A first-version product names its rooms itself, so two products can each
+/// have a room `main`. What one product does to its room must not reach the
+/// room of the other.
+#[test]
+fn two_products_keep_their_rooms_of_one_id_apart() {
+	let host = CliChatHost::new(None);
+	let (first, second) = (product(), other_product());
+	let mut first_lists = host.subscribe_chat_rooms(&first);
+	let mut second_lists = host.subscribe_chat_rooms(&second);
+	let create_main = |product: &ProductContext, request| {
+		futures::executor::block_on(host.create_chat_room(product, "main".to_string(), request))
+			.expect("a room is created")
+	};
+	let read = |product: &ProductContext| {
+		futures::executor::block_on(host.chat_room(product, "main".to_string()))
+			.expect("the host reads its rooms")
+	};
+	let hosted =
+		|config| Some(ChatRoomState { participating_as: ChatRoomParticipation::RoomHost, config });
+
+	assert_eq!(
+		[
+			create_main(&first, room("main")),
+			create_main(
+				&second,
+				HostChatCreateRoomRequest { config: source_config(), ..room("main") }
+			),
+		],
+		[ChatRoomRegistrationStatus::New, ChatRoomRegistrationStatus::New],
+		"the second product creates a room of its own, not the room of the first"
+	);
+	assert_eq!(
+		(read(&first), read(&second)),
+		(hosted(ChatRoomConfig::default()), hosted(source_config()))
+	);
+
+	let first_view = shown(&host, &first.product_id);
+	futures::executor::block_on(host.set_chat_room_metadata(
+		&second,
+		HostChatSetRoomMetadataRequest {
+			room_id: "main".to_string(),
+			metadata: ChatRoomMetadata {
+				name: "Renamed".to_string(),
+				description: None,
+				icon: None,
+				placeholder: None,
+			},
+		},
+	))
+	.expect("the second product has the room");
+	futures::executor::block_on(host.update_chat_feed(
+		&second,
+		HostChatUpdateFeedRequest {
+			room_id: "main".to_string(),
+			update: ChatFeedUpdate::New(message("s-1", PRODUCT, "hi")),
+		},
+		false,
+	))
+	.expect("the second product has the room");
+	futures::executor::block_on(
+		host.delete_chat_room(&second, HostChatDeleteRoomRequest { room_id: "main".to_string() }),
+	)
+	.expect("a delete is applied");
+
+	assert_eq!(
+		shown(&host, &first.product_id),
+		first_view,
+		"a change by the second product must not reach the room of the first"
+	);
+	assert_eq!((read(&first), read(&second)), (hosted(ChatRoomConfig::default()), None));
+	assert_eq!(lists(&mut first_lists), [vec![], vec!["main"]]);
+	assert_eq!(lists(&mut second_lists), [vec![], vec!["main"], vec![]]);
+}
+
+/// The core reads the room before each change, and a host that answered a
+/// room of another product would let one product change the rooms of
+/// another.
+#[test]
+fn a_room_of_another_product_is_an_unknown_room() {
+	let host = host_with_rooms(None);
+	let mine = host
+		.post_user_message(&product_id(), "support", body("mine"), None)
+		.expect("the room exists");
+	let before = shown(&host, &product_id());
+	let other = other_product();
+	let unknown = || GenericError { reason: unknown_room("support") };
+
+	assert_eq!(
+		futures::executor::block_on(host.chat_room(&other, "support".to_string())),
+		Ok(None)
+	);
+	assert_eq!(
+		futures::executor::block_on(host.post_chat_message(
+			&other,
+			HostChatPostMessageRequest {
+				room_id: "support".to_string(),
+				payload: text("hello"),
+				alt: None,
+			},
+		)),
+		Err(HostChatPostMessageError::Unknown { reason: unknown_room("support") })
+	);
+	let footer = futures::executor::block_on(host.set_chat_room_footer(
+		&other,
+		HostChatSetRoomFooterRequest {
+			room_id: "support".to_string(),
+			footer: ChatRoomFooter::Empty,
+		},
+	));
+	let metadata = futures::executor::block_on(host.set_chat_room_metadata(
+		&other,
+		HostChatSetRoomMetadataRequest {
+			room_id: "support".to_string(),
+			metadata: ChatRoomMetadata {
+				name: "Taken".to_string(),
+				description: None,
+				icon: None,
+				placeholder: None,
+			},
+		},
+	));
+	let preview = futures::executor::block_on(host.set_chat_room_preview(
+		&other,
+		HostChatSetRoomPreviewRequest {
+			room_id: "support".to_string(),
+			preview: ChatRoomPreview {
+				timestamp: Some(42),
+				badge: None,
+				last_message: None,
+				last_reaction: None,
+				unseen_reactions: 0,
+				pinned: true,
+				activity: None,
+			},
+		},
+	));
+	let fed = futures::executor::block_on(host.update_chat_feed(
+		&other,
+		HostChatUpdateFeedRequest {
+			room_id: "support".to_string(),
+			update: ChatFeedUpdate::New(message("p-1", PRODUCT, "hi")),
+		},
+		true,
+	));
+	assert_eq!(
+		(footer, metadata, preview, fed),
+		(Err(unknown()), Err(unknown()), Err(unknown()), Err(unknown()))
+	);
+	let other_id = &other.product_id;
+	assert_eq!(
+		(
+			host.room_config(other_id, "support"),
+			host.message(other_id, "support", &mine.message_id),
+			host.post_user_message(other_id, "support", body("not here"), None),
+			host.mark_seen(other_id, "support", &mine.message_id),
+		),
+		(None, None, Err(unknown_room("support")), Err(unknown_room("support")))
+	);
+	host.cache_page(other_id, "kept", &[message("s-1", USER, "cached")]);
+	host.apply_source_action(
+		other_id,
+		"kept",
+		&ChatUserAction::NewMessage {
+			body: body("hello"),
+			reply_to: None,
+			message_id: None,
+			timestamp: None,
+		},
+		&ProductChatUserActionResponse::MessageCreated(message("s-2", USER, "hello")),
+	);
+	assert_eq!(
+		futures::executor::block_on(host.delete_chat_room(
+			&other,
+			HostChatDeleteRoomRequest { room_id: "support".to_string() },
+		)),
+		Ok(ChatRoomChangeOutcome::Applied),
+		"a delete is idempotent, so a product that has no such room gets no error to tell rooms by"
+	);
+
+	assert_eq!(
+		shown(&host, &product_id()),
+		before,
+		"a product must not change a room by naming the id that another product uses"
+	);
+}
+
+/// A run that changes its product leaves the room lists and the pages of the
+/// earlier product closed. No room of that product changes again, so a change
+/// of any product must drop them, or each change of product would leave more.
+#[test]
+fn a_change_drops_the_closed_listeners_of_every_product() {
+	let host = CliChatHost::new(None);
+	drop(host.subscribe_chat_rooms(&product()));
+	drop(host.observe(&product_id()));
+
+	futures::executor::block_on(host.create_chat_room(
+		&other_product(),
+		"main".to_string(),
+		room("main"),
+	))
+	.expect("a room is created");
+
+	let state = host.lock();
+	assert_eq!((state.subscribers.len(), state.observers.len()), (0, 0));
+}
+
+/// A page draws the rooms of one product, so a room of another product, even
+/// one of the same id, must neither be in its snapshot nor reach it as an
+/// event.
+#[test]
+fn an_observer_sees_only_the_rooms_of_its_product() {
+	let host = host_with_rooms(None);
+	host.post_user_message(&product_id(), "support", body("mine"), None)
+		.expect("the room exists");
+	let other = other_product();
+	let other_id = &other.product_id;
+	let (second_view, mut second_events) = host.observe(other_id);
+	let (_, mut first_events) = host.observe(&product_id());
+
+	futures::executor::block_on(host.create_chat_room(
+		&other,
+		"support".to_string(),
+		room("support"),
+	))
+	.expect("a room is created");
+	let posted = host
+		.post_user_message(other_id, "support", body("theirs"), None)
+		.expect("the second product has the room");
+	host.mark_seen(other_id, "support", &posted.message_id)
+		.expect("the message is in the room");
+	let update = |update| {
+		futures::executor::block_on(host.update_chat_feed(
+			&other,
+			HostChatUpdateFeedRequest { room_id: "support".to_string(), update },
+			true,
+		))
+		.expect("the second product has the room")
+	};
+	update(ChatFeedUpdate::New(message("p-1", PRODUCT, "hi")));
+	update(ChatFeedUpdate::Deleted { message_id: "p-1".to_string() });
+	futures::executor::block_on(
+		host.delete_chat_room(&other, HostChatDeleteRoomRequest { room_id: "support".to_string() }),
+	)
+	.expect("a delete is applied");
+	host.post_user_message(&product_id(), "support", body("again"), None)
+		.expect("the room exists");
+
+	assert_eq!(
+		(second_view.rooms, second_view.messages),
+		(Vec::new(), Vec::new()),
+		"a page of the second product must not draw the rooms of the first"
+	);
+	let kinds = |events: &mut mpsc::UnboundedReceiver<Value>| -> Vec<Value> {
+		drain(events).into_iter().map(|event| event["kind"].clone()).collect()
+	};
+	assert_eq!(
+		kinds(&mut first_events),
+		["message"],
+		"an event of the second product would show its messages on the first product's page"
+	);
+	assert_eq!(
+		kinds(&mut second_events),
+		["room", "message", "room", "message", "messageDeleted", "roomDeleted"]
+	);
 }

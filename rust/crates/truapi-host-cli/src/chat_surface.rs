@@ -41,6 +41,7 @@ use truapi::{
 		ProductChatReactionsQueryResponse, ProductChatUserActionError,
 		ProductChatUserActionRequest, ProductChatUserActionResponse,
 	},
+	platform::ProductId,
 };
 
 use crate::chat::{ChatSnapshot, CliChatHost, message_json};
@@ -181,7 +182,8 @@ struct Workers {
 pub struct ChatSurface {
 	chat: Arc<CliChatHost>,
 	worker_bundle: Option<PathBuf>,
-	product_id: String,
+	/// The product whose rooms the page shows and acts on.
+	product_id: ProductId,
 	workers: Mutex<Workers>,
 	/// Number of live workers, for every open page.
 	connected: watch::Sender<usize>,
@@ -287,12 +289,13 @@ enum Unanswered<E> {
 }
 
 impl ChatSurface {
-	/// Build a surface over `chat` for `product_id`, serving the worker bundle
-	/// at `worker_bundle` when one is configured.
+	/// Build a surface over the rooms of `product_id` in `chat`, serving the
+	/// worker bundle at `worker_bundle` when one is configured. The page
+	/// shows and acts on no room of another product.
 	pub fn new(
 		chat: Arc<CliChatHost>,
 		worker_bundle: Option<PathBuf>,
-		product_id: String,
+		product_id: ProductId,
 	) -> Arc<Self> {
 		Self::with_timeouts(chat, worker_bundle, product_id, Timeouts::default())
 	}
@@ -301,7 +304,7 @@ impl ChatSurface {
 	pub fn with_timeouts(
 		chat: Arc<CliChatHost>,
 		worker_bundle: Option<PathBuf>,
-		product_id: String,
+		product_id: ProductId,
 		timeouts: Timeouts,
 	) -> Arc<Self> {
 		Arc::new(Self {
@@ -399,7 +402,7 @@ impl ChatSurface {
 	where
 		S: AsyncRead + AsyncWrite + Unpin,
 	{
-		let (snapshot, mut events) = self.chat.observe();
+		let (snapshot, mut events) = self.chat.observe(&self.product_id);
 		let mut connected = self.connected.subscribe();
 		let (answers, mut answered) = mpsc::unbounded_channel::<Value>();
 		let (mut write, mut read) = ws.split();
@@ -478,7 +481,7 @@ impl ChatSurface {
 
 	fn apply_op(self: &Arc<Self>, op: &PageOp) -> Applied {
 		let room_id = op_room(op).to_string();
-		let Some(config) = self.chat.room_config(&room_id) else {
+		let Some(config) = self.chat.room_config(&self.product_id, &room_id) else {
 			return Applied::Now(unknown_room(&room_id));
 		};
 		let source = config.product_source;
@@ -528,7 +531,7 @@ impl ChatSurface {
 					let action = ChatUserAction::Seen { message_id: message_id.clone() };
 					return self.later_action("seen", *req_id, room_id, action);
 				}
-				if let Err(reason) = self.chat.mark_seen(&room_id, message_id) {
+				if let Err(reason) = self.chat.mark_seen(&self.product_id, &room_id, message_id) {
 					return Applied::Now(error_reply(reason));
 				}
 				Applied::Now(answer_ok("seen", *req_id, json!({ "type": "Kept" })))
@@ -554,7 +557,7 @@ impl ChatSurface {
 						})
 						.await;
 					if let Ok(page) = &answer {
-						surface.chat.cache_page(&room_id, &page.messages);
+						surface.chat.cache_page(&surface.product_id, &room_id, &page.messages);
 					}
 					answer_json("messages", req_id, answer, page_json, query_error_json)
 				}))
@@ -599,7 +602,7 @@ impl ChatSurface {
 		// Stored first, so the user's message precedes any reply the worker
 		// posts to it.
 		let body = ChatMessageBody::Text { text: text.clone() };
-		match self.chat.post_user_message(&room_id, body, reply_to) {
+		match self.chat.post_user_message(&self.product_id, &room_id, body, reply_to) {
 			Ok(message) => {
 				let posted = ChatActionPayload::MessagePosted(ChatMessageContent::Text { text });
 				let delivered = self.deliver(name, &room_id, posted);
@@ -640,7 +643,12 @@ impl ChatSurface {
 			let answer =
 				surface.ask(timeout, move |worker| worker.user_action(asked.clone())).await;
 			if let Ok(item) = &answer {
-				surface.chat.apply_source_action(&room_id, &request.action, item);
+				surface.chat.apply_source_action(
+					&surface.product_id,
+					&room_id,
+					&request.action,
+					item,
+				);
 			}
 			answer_json(name, req_id, answer, user_action_json, user_action_error_json)
 		}))
@@ -836,6 +844,7 @@ mod tests {
 	use std::collections::VecDeque;
 
 	use super::*;
+	use tokio::io::DuplexStream;
 	use truapi::{
 		latest::{
 			ChatMessage, ChatMessageOrigin, ChatMessageStatus, ChatReactionDetail, ChatRoomConfig,
@@ -997,7 +1006,7 @@ mod tests {
 		};
 		create("daily", "Daily", ChatRoomConfig::default());
 		create("kept", "Kept", ChatRoomConfig { product_source: true, reaction_details: true });
-		ChatSurface::with_timeouts(Arc::clone(&chat), worker_bundle, "chat.dot".to_string(), SHORT)
+		ChatSurface::with_timeouts(Arc::clone(&chat), worker_bundle, product().product_id, SHORT)
 	}
 
 	fn attach(surface: &Arc<ChatSurface>) -> (Arc<FakeWorker>, WorkerAttachment) {
@@ -1108,7 +1117,7 @@ mod tests {
 		let surface = surface(None);
 		let (first, _first) = attach(&surface);
 		let (second, _second) = attach(&surface);
-		let (_, mut events) = surface.chat().observe();
+		let (_, mut events) = surface.chat().observe(&product().product_id);
 
 		let reply = now(
 			&surface,
@@ -1173,7 +1182,7 @@ mod tests {
 	async fn a_send_in_a_room_the_product_keeps_waits_for_the_product() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
-		let (_, mut events) = surface.chat().observe();
+		let (_, mut events) = surface.chat().observe(&product().product_id);
 		let created = product_message("kept-u-1", "user");
 		FakeWorker::script(
 			&worker.actions,
@@ -1208,7 +1217,7 @@ mod tests {
 		assert!(worker.received().is_empty(), "no event: the product heard it as a user action");
 		let shown = events.try_recv().expect("the created message is drawn");
 		assert_eq!(shown["message"]["messageId"], "kept-u-1");
-		assert!(surface.chat().message("kept", "kept-u-1").is_some());
+		assert!(surface.chat().message(&product().product_id, "kept", "kept-u-1").is_some());
 	}
 
 	#[tokio::test]
@@ -1255,7 +1264,7 @@ mod tests {
 		assert_eq!(page["ok"]["next"], "0");
 		assert_eq!(page["ok"]["messages"][0]["messageId"], "h-1");
 		// The page is in the cache, so a menu can be asked for it.
-		assert!(surface.chat().message("kept", "h-1").is_some());
+		assert!(surface.chat().message(&product().product_id, "kept", "h-1").is_some());
 
 		FakeWorker::script(&worker.pages, Err(CallError::unavailable()));
 		FakeWorker::script(&worker.pages, Err(CallError::unavailable()));
@@ -1306,9 +1315,11 @@ mod tests {
 	async fn the_users_changes_in_a_room_the_product_keeps_are_user_actions() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
-		surface
-			.chat()
-			.cache_page("kept", &[product_message("s-1", "user"), product_message("s-2", "user")]);
+		surface.chat().cache_page(
+			&product().product_id,
+			"kept",
+			&[product_message("s-1", "user"), product_message("s-2", "user")],
+		);
 		for _ in 0..4 {
 			FakeWorker::script(&worker.actions, Ok(ProductChatUserActionResponse::Acknowledged));
 		}
@@ -1337,8 +1348,8 @@ mod tests {
 		assert!(actions[1].contains("Seen"));
 		assert!(actions[2].contains("EditMessage"));
 		assert!(actions[3].contains("DeleteMessage"));
-		assert!(surface.chat().message("kept", "s-2").is_none());
-		let cached = surface.chat().message("kept", "s-1").expect("cached");
+		assert!(surface.chat().message(&product().product_id, "kept", "s-2").is_none());
+		let cached = surface.chat().message(&product().product_id, "kept", "s-1").expect("cached");
 		assert_eq!(cached.body, ChatMessageBody::Text { text: "new".to_string() });
 		assert!(cached.reactions[0].reacted_by_user);
 		assert!(worker.received().is_empty());
@@ -1397,6 +1408,84 @@ mod tests {
 		Ok(())
 	}
 
+	/// The next frame the surface sends the page.
+	async fn next_frame(page: &mut WebSocketStream<DuplexStream>) -> Result<Value> {
+		match tokio::time::timeout(Duration::from_secs(1), page.next()).await? {
+			Some(Ok(Message::Text(text))) => Ok(serde_json::from_str(&text)?),
+			other => anyhow::bail!("expected a frame, got {other:?}"),
+		}
+	}
+
+	/// The page serves the product of the run, while the chat host can hold
+	/// the rooms of another product too, even a room of the same id. The
+	/// other product keeps the messages of its rooms, so a page that read its
+	/// rooms would send the product a user action instead of storing a post.
+	#[tokio::test]
+	async fn the_page_shows_and_acts_on_the_rooms_of_its_product_only() -> Result<()> {
+		use tokio_tungstenite::tungstenite::protocol::Role;
+		let surface = surface(None);
+		let other = ProductContext::new("other.dot".parse().expect("valid product id"));
+		let create_other = |room_id: &str| {
+			futures::executor::block_on(surface.chat().create_chat_room(
+				&other,
+				room_id.to_string(),
+				HostChatCreateRoomRequest {
+					room_id_source: room_id.to_string(),
+					name: "Other".to_string(),
+					icon: String::new(),
+					config: ChatRoomConfig { product_source: true, ..ChatRoomConfig::default() },
+				},
+			))
+			.expect("a new room is created");
+		};
+		create_other("daily");
+		let (page_end, host_end) = tokio::io::duplex(1 << 16);
+		let served = Arc::clone(&surface);
+		let server = tokio::spawn(async move {
+			let ws = WebSocketStream::from_raw_socket(host_end, Role::Server, None).await;
+			served.serve_ws(ws).await
+		});
+		let mut page = WebSocketStream::from_raw_socket(page_end, Role::Client, None).await;
+
+		let snapshot = next_frame(&mut page).await?;
+		let names: Vec<_> = snapshot["rooms"]
+			.as_array()
+			.into_iter()
+			.flatten()
+			.map(|room| room["name"].clone())
+			.collect();
+		assert_eq!(names, ["Daily", "Kept"]);
+
+		create_other("elsewhere");
+		for op in [
+			json!({"op":"post","reqId":1,"roomId":"elsewhere","text":"hi"}),
+			json!({"op":"post","reqId":2,"roomId":"daily","text":"hi"}),
+		] {
+			page.send(Message::Text(op.to_string())).await?;
+		}
+		let frames = [
+			next_frame(&mut page).await?,
+			next_frame(&mut page).await?,
+			next_frame(&mut page).await?,
+		];
+		let kinds: Vec<_> =
+			frames.iter().map(|frame| json!([frame["kind"], frame["reqId"]])).collect();
+		assert_eq!(
+			kinds,
+			[json!(["error", 1]), json!(["answer", 2]), json!(["message", null])],
+			"a room of the other product is unknown to the page, and its new room is no event"
+		);
+		let message_id = frames[1]["ok"]["message"]["messageId"].as_str().expect("an id");
+		assert!(
+			surface.chat().message(&product().product_id, "daily", message_id).is_some(),
+			"the host must store the post in the room of the product that the page serves"
+		);
+
+		page.close(None).await?;
+		tokio::time::timeout(Duration::from_secs(1), server).await???;
+		Ok(())
+	}
+
 	#[test]
 	fn an_unknown_room_is_refused_before_any_worker_sees_it() {
 		let surface = surface(None);
@@ -1413,7 +1502,7 @@ mod tests {
 		}
 		assert!(worker.received().is_empty());
 		assert!(worker.asked().is_empty());
-		assert!(surface.chat().observe().0.messages.is_empty());
+		assert!(surface.chat().observe(&product().product_id).0.messages.is_empty());
 		assert_eq!(now(&surface, json!("{"))["kind"], "error");
 	}
 
@@ -1436,7 +1525,7 @@ mod tests {
 	#[test]
 	fn the_snapshot_names_the_time_outs_the_page_waits_for() {
 		let surface = surface(None);
-		let (snapshot, _) = surface.chat().observe();
+		let (snapshot, _) = surface.chat().observe(&product().product_id);
 		let view = surface.snapshot(snapshot, 0);
 		assert_eq!(view["timeouts"], json!({"page":300,"send":300,"action":300,"query":300}));
 		assert_eq!(view["rooms"].as_array().map(Vec::len), Some(2));
