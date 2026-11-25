@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIChatWorker
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,13 +30,11 @@ class WorkerBootFactorySelectionTest {
     private fun TestScope.factory(
         runtimeSettings: ProductRuntimeSettings,
         runtimeProvider: TrUAPIHostRuntimeProvider = mock(),
-        workerSupervisor: TrUAPIWorkerSupervisor = mock(),
         scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock(),
     ): RealWorkerBootFactory = RealWorkerBootFactory(
         scriptExecutorFactory = scriptExecutorFactory,
         runtimeSettings = runtimeSettings,
         runtimeProvider = Lazy { runtimeProvider },
-        workerSupervisor = Lazy { workerSupervisor },
     )
 
     private fun settingsWith(enabled: Boolean): ProductRuntimeSettings {
@@ -90,12 +87,10 @@ class WorkerBootFactorySelectionTest {
         val runtime: TrUAPIHostRuntime = mock()
         whenever(runtimeProvider.runtime()).thenReturn(Result.success(runtime))
         val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
-        val workerSupervisor: TrUAPIWorkerSupervisor = mock()
-        whenever(workerSupervisor.executionState(productId)).thenReturn(emptyFlow())
+        whenever(runtime.workerExecutionState(productId)).thenReturn(emptyFlow())
         val factory = factory(
             settingsWith(enabled = true),
             runtimeProvider = runtimeProvider,
-            workerSupervisor = workerSupervisor,
             scriptExecutorFactory = scriptExecutorFactory,
         )
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))

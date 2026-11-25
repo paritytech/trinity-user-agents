@@ -67,8 +67,14 @@ class ContainerHttpAuthorizationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
-        TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("http-policy.paseo").getOrThrow(), kind)).use { execution ->
+        val product = ProductId.parse("http-policy.paseo").getOrThrow()
+        val workers = if (kind == ExecutableKind.WORKER) InstrumentedWorkerHost() else null
+        TrUAPIHostRuntime(bridge, config, workers).use { runtime ->
+            val claim = workers?.let { runtime.claimWorker(product) }
+            val attempt = workers?.awaitAttempt()
+            val opened = attempt?.openExecution(bridge, null, null)
+                ?: runtime.openAppExecution(bridge, product)
+            opened.use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
                     MockWebServer().use { server ->
@@ -130,6 +136,7 @@ class ContainerHttpAuthorizationTest {
 
                         try {
                             assertTrue("product script did not load", reports.ready.await(15, TimeUnit.SECONDS))
+                            if (attempt != null) assertTrue(attempt.moduleStarted())
                             val operations = listOf("script", "image", "fetch", "xhr")
                             for (operation in operations) {
                                 execution.setPermissionAuthorizationStatus(
@@ -162,6 +169,7 @@ class ContainerHttpAuthorizationTest {
                     }
                 }
             }
+            claim?.release()
         }
     }
 

@@ -1,15 +1,19 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime
 
+import android.os.Handler
+import android.os.Looper
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import io.paritytech.polkadotapp.common.utils.evaluateJavascript
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.ContainerTransport
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.webView.WebViewJsBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebViewProvider
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
+import java.util.UUID
 
 /**
  * [JsRuntime] implementation backed by a [WebViewProvider].
@@ -66,7 +70,9 @@ class WebViewRuntime(
         }
     }
 
-    override suspend fun loadEntryModule(srcPath: String): Result<Unit> {
+    override suspend fun loadEntryModule(srcPath: String): Result<Unit> = injectEntryModule(srcPath, "")
+
+    private suspend fun injectEntryModule(srcPath: String, observe: String): Result<Unit> {
         if (!initialized) return Result.failure(IllegalStateException("Runtime not initialized"))
 
         return runCatching {
@@ -77,10 +83,38 @@ class WebViewRuntime(
                     var script = document.createElement('script');
                     script.type = 'module';
                     script.src = $srcLiteral;
+                    $observe
                     document.head.appendChild(script);
                 })();
             """.trimIndent()
             webViewProvider.accessWebView { it.evaluateJavascript(injector) }
+        }
+    }
+
+    /** Wait for module loading and initial execution. Top-level await may need a host call. */
+    suspend fun startWorkerModule(srcPath: String) {
+        val loaded = CompletableDeferred<Unit>()
+        val callback = "worker-module-${UUID.randomUUID()}"
+        jsBridge.registerFunction(callback) { error ->
+            if (error.isEmpty()) loaded.complete(Unit) else loaded.completeExceptionally(IllegalStateException(error))
+            ""
+        }
+        try {
+            val observe = """
+                const finish = error => {
+                    script.onload = script.onerror = null;
+                    window.removeEventListener("error", failed);
+                    Android.call("$callback", error);
+                };
+                const failed = event => finish(event.message || "Worker module failed");
+                window.addEventListener("error", failed);
+                script.onerror = () => finish("Could not load worker module");
+                script.onload = () => finish("");
+            """.trimIndent()
+            injectEntryModule(srcPath, observe).getOrThrow()
+            loaded.await()
+        } finally {
+            jsBridge.unregisterFunction(callback)
         }
     }
 
@@ -116,8 +150,10 @@ class WebViewRuntime(
 
     override fun dispose() {
         if (initialized) {
-            val view = webViewProvider.getWebViewOrNull()
-            view?.post { view.destroy() }
+            webViewProvider.getWebViewOrNull()?.let { view ->
+                val main = Looper.getMainLooper()
+                if (Looper.myLooper() == main) view.destroy() else Handler(main).post { view.destroy() }
+            }
         }
         _state.value = RuntimeState.Error("Disposed")
     }

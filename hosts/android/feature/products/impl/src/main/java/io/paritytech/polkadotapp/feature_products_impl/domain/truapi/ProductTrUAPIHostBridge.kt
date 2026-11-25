@@ -13,6 +13,7 @@ import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.parity.truapi.openExecution
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -53,7 +54,7 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
+import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -282,10 +283,35 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         productId: ProductId,
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
-        kind: ExecutableKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
+    ): Result<TrUAPIProductExecution> = attach(productId, chains, onReadyToInject) {
+        val bridge = buildBridge(productId, navigationPolicy, card)
+        val game = gameBridge(productId)
+        if (card != null) {
+            runtime.openWidgetExecution(bridge, productId, chat, game)
+        } else {
+            runtime.openAppExecution(bridge, productId, chat, game)
+        }
+    }
+
+    suspend fun attachWorker(
+        attempt: NativeWorkerAttempt,
+        productId: ProductId,
+        chains: TrUAPIChains,
+        navigationPolicy: NavigationPolicy,
+        chat: ChatHostBridge?,
+        onReadyToInject: suspend (bootstrap: String) -> Unit,
+    ): Result<TrUAPIProductExecution> = attach(productId, chains, onReadyToInject) {
+        attempt.openExecution(buildBridge(productId, navigationPolicy, null), chat, gameBridge(productId))
+    }
+
+    private suspend fun attach(
+        productId: ProductId,
+        chains: TrUAPIChains,
+        onReadyToInject: suspend (String) -> Unit,
+        open: () -> TrUAPIProductExecution,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
             Timber.w("truapi.attach: already attached to %s, ignoring", productId.value)
@@ -295,12 +321,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
             cachedChains.set(chains)
-            val opened = runtime.openProductExecution(
-                bridge = buildBridge(productId, navigationPolicy, card),
-                configuration = ProductExecutionConfig(productId, kind),
-                chat = chat,
-                game = gameBridge(productId),
-            )
+            val opened = open()
             execution = opened
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.

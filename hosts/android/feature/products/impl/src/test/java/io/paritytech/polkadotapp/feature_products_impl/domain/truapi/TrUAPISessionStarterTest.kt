@@ -98,8 +98,8 @@ class TrUAPISessionStarterTest {
         coEvery { provider.addWebViewSetup(capture(webViewSetups)) } just Runs
         coEvery { provider.loadInitialContent() } just Runs
         every { telemetry.report(capture(reportedSessionId)) } just Runs
-        coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
-            arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
+        coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            arg<suspend (String) -> Unit>(6)("endpoint-bootstrap")
             Result.success(execution)
         }
     }

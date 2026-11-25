@@ -80,16 +80,22 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 - `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
 - `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
 - `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
-- `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
-- `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
+- `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openAppExecution` or `openWidgetExecution`, which return a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
+- `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openAppExecution` or `openWidgetExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - Pocket - the core keeps the collection in its database: the cards in the Pocket and the newest face of each. The host lists the cards it pins in `HostRuntimeConfig.pinnedPocketCards`, follows the collection with `pocketCards()` (pinned first, after every change), and calls `addPocketCard`, `removePocketCard` (returning `PocketCardRemoval.REMOVED`, `ABSENT` or `PRIVILEGED`) and `pocketCardFace` on the runtime. The core keeps the newest face from every Pocket card render. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`.
 - Materials - with `HostRuntimeConfig.materialsEnabled`, `resolveMaterials(tree, context, floatFilterable)` on the runtime (a saved face or a preview) or on an execution (a body its product rendered, whose failures also reach the product) returns `MaterialsResolution`: the newest materials as a `StateFlow` (`resolved`), with each `Materials` node loading, ready with its GLSL ES shaders, or plain with a reason, and `report(node, material, reason)` for a shader that did not compile or an image argument `checkMaterialImage` refused. `materialNoise(seed)` makes the body's noise image. Start resolving a new tree before closing the old one, so shared materials keep their fetch.
-- `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
+- `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openAppExecution` or `openWidgetExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
 - `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It calls `followTopUp`, `followPayment` and `followBalance` for what it follows, and the host pushes what its engine reports through `notifyTopUpStatus`, `notifyPaymentStatus` and `notifyBalance` until the call returns or is cancelled. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
+
+## Shared product workers
+
+Pass a `NativeHostWebViewWorker` as `workers` when creating the runtime. An app or widget host can omit it. Rust asks the host to start one WebView for the first claim on a product. The host opens an execution through that startup attempt, loads the worker module and acknowledges the same execution. Rust publishes the ready execution to Chat and Pocket.
+
+A consumer calls `claimWorker(productId)` and holds the returned claim for as long as it needs the worker. Collect `workerExecutionState(productId)` to follow startup and retries. The running execution exposes Chat and renderer operations. Call `claim.release()` when the consumer leaves. Releasing the same claim twice is safe. Rust requests WebView disposal when the last claim or core-held reference ends.
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ExecutableKind.WORKER`:
+A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) for the worker opened by its WebView host.
 
 ```kotlin
 import io.parity.truapi.*
@@ -99,11 +105,8 @@ import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostRuntimeConfig
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductId
 
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
@@ -135,24 +138,18 @@ val runtime = TrUAPIHostRuntime(
         hostName = "My Chat Host",
         stack = bundledStack,
     ),
+    workers = workers,
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
 runtime.activateLocalSession(secret)
 
-val execution = runtime.openProductExecution(
-    bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("chat.dot").getOrThrow(), ExecutableKind.WORKER),
-    chat = MyChatBridge(store),
-)
+// In NativeHostWebViewWorker.start(productId, attempt):
+val execution = attempt.openExecution(bridge, chat = MyChatBridge(store), game = null)
 val endpoint = execution.startWsBridge()
 val bootstrap = LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token)
 ```
 
-Install `bootstrap` and `ContainerScriptBundle` at document start before loading the product, as in the example below.
-
-Chat requires an active session: `openProductExecution` succeeds without one,
-but every Chat call then answers `Denied` until `activateLocalSession` or SSO
-pairing completes.
+Install `bootstrap` and `ContainerScriptBundle` at document start. Once the WebView has loaded the worker module, call `attempt.moduleStarted()`. If startup fails or the WebView process exits, call `attempt.failed(reason)`.
 
 The core bounds and screens the product-supplied fields it forwards — ids,
 names, icons, message bodies, URLs, and the action and media counts. Ids and
@@ -178,7 +175,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns ret
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. A feature takes a worker reference with `runtime.claimWorker(productId)` when it needs the product and calls `claim.release()` when that work ends. The runtime bridge receives the resulting `requestWorkerTransition` calls. Opening, replacing or closing a render stream leaves the feature's claim intact. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -441,9 +438,9 @@ check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
     "WebView lacks DOCUMENT_START_SCRIPT"
 }
 val container = ContainerScriptBundle.load(webView.context)
-val execution = runtime.openProductExecution(
+val execution = runtime.openAppExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("my-product.dot").getOrThrow(), ExecutableKind.APP),
+    productId = ProductId.parse("my-product.dot").getOrThrow(),
 )
 val endpoint = execution.startWsBridge()
 

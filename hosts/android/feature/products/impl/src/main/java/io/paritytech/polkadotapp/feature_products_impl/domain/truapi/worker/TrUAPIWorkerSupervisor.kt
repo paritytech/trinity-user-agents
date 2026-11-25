@@ -1,11 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
-import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
-import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -13,7 +10,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChat
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ChatWorkerNavigation
@@ -21,37 +17,19 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import uniffi.truapi.ExecutableKind
+import uniffi.truapi.NativeHostWebViewWorker
+import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 import javax.inject.Inject
-import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
 
-enum class WorkerDemand { START, STOP }
-
-sealed interface WorkerExecutionState {
-    data class Running(val execution: TrUAPIProductExecution) : WorkerExecutionState
-    data class Failed(val reason: Throwable) : WorkerExecutionState
-}
-
-/**
- * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
- * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
- */
-@Singleton
+/** Creates and disposes each worker's hidden WebView on the main thread. */
 class TrUAPIWorkerSupervisor @Inject constructor(
-    // Lazy breaks the Dagger cycle: the runtime's own bridge reports demand back into this supervisor.
-    private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
     private val hostBridgeFactory: ProductTrUAPIHostBridge.Factory,
     private val chainDirectory: TrUAPIChainDirectory,
     private val scriptResolver: ProductScriptResolver,
@@ -60,127 +38,68 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
-) {
-    private class RunningWorker(val scope: CoroutineScope) {
-        var webViewRuntime: WebViewRuntime? = null
+) : NativeHostWebViewWorker {
+    private class WebViewWorker(val scope: CoroutineScope) {
+        var runtime: WebViewRuntime? = null
     }
 
-    // WebViews are created and driven on the main thread.
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.main)
-    private val transitions = Mutex()
-    private val workers = mutableMapOf<ProductId, RunningWorker>()
-    private val executionStates = MutableStateFlow<Map<ProductId, WorkerExecutionState>>(emptyMap())
+    private val workers = mutableMapOf<ULong, WebViewWorker>()
 
-    /** Demand crossing zero, as the core reports it. May arrive on any thread, so the work is handed to [scope]. */
-    fun onDemandChanged(productId: ProductId, demand: WorkerDemand) {
+    override fun start(productId: ProductId, attempt: NativeWorkerAttempt) {
         scope.launch {
-            transitions.withLock {
-                when (demand) {
-                    WorkerDemand.START -> start(productId)
-                    WorkerDemand.STOP -> stop(productId)
+            val id = attempt.id()
+            val worker = WebViewWorker(scope.childScope())
+            workers[id] = worker
+            worker.scope.launch {
+                try {
+                    boot(productId, attempt, worker)
+                    if (!attempt.moduleStarted()) dispose(id)
+                } catch (cause: Exception) {
+                    ensureActive()
+                    Timber.w(cause, "TrUAPI worker for %s failed to start", productId.value)
+                    attempt.failed(cause.message ?: cause.toString())
+                    dispose(id)
                 }
             }
         }
     }
 
-    /** The product's worker execution while it runs, null otherwise. */
-    fun execution(productId: ProductId): Flow<TrUAPIProductExecution?> =
-        executionState(productId).map { (it as? WorkerExecutionState.Running)?.execution }.distinctUntilChanged()
-
-    fun currentExecution(productId: ProductId): TrUAPIProductExecution? =
-        (executionStates.value[productId] as? WorkerExecutionState.Running)?.execution
-
-    fun executionState(productId: ProductId): Flow<WorkerExecutionState?> =
-        executionStates.map { it[productId] }.distinctUntilChanged()
-
-    private fun start(productId: ProductId) {
-        if (productId in workers) return
-        val worker = RunningWorker(scope.childScope())
-        workers[productId] = worker
-        executionStates.update { it - productId }
-        worker.scope.launch {
-            boot(productId, worker)
-                .logFailure("TrUAPI worker for ${productId.value} failed to start")
-                // A half-booted worker left in the map swallows every later start, and the core
-                // keeps counting the reference the card holds, so no stop ever arrives to clear it.
-                // Only this one: a stop and a new start may have overtaken the failure.
-                .onFailure { cause ->
-                    transitions.withLock {
-                        if (workers[productId] === worker) {
-                            stop(productId)
-                            executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
-                        }
-                    }
-                }
-                .onSuccess { execution ->
-                    transitions.withLock {
-                        if (workers[productId] === worker) {
-                            executionStates.update { it + (productId to WorkerExecutionState.Running(execution)) }
-                            Timber.d("TrUAPI worker for %s is running", productId.value)
-                        }
-                    }
-                }
-        }
+    override fun stop(productId: ProductId, attemptId: ULong) {
+        scope.launch { dispose(attemptId) }
     }
 
-    private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
-        val script = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
-        val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
+    private suspend fun boot(productId: ProductId, attempt: NativeWorkerAttempt, worker: WebViewWorker) {
+        val script = scriptResolver.resolveWorker(productId).getOrThrow()
         val workerScript = WorkerScript.of(script.scriptUrl)
-
         val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
-        val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
-        // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
-        val installBootstrap = runCatching {
-            webViewRuntime.initialize()
-            bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
-        }.getOrElse { return Result.failure(it) }
-        provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
-
-        return hostBridgeFactory.create(worker.scope)
-            .attach(
-                runtime,
-                productId,
-                chainDirectory.resolve(),
-                navigation.policy(productId, worker.scope),
-                ExecutableKind.WORKER,
-                chat = if (script.includesChat) {
-                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
-                } else {
-                    null
-                },
-            ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
-            .flatMap { execution ->
-                runCatching {
-                    provider.useTrUAPIPermissions(execution)
-                    webViewRuntime.loadInitialPage()
-                    // A page that never reports ready would otherwise hold the boot open forever,
-                    // and with it the execution, the WebView and the card's static face.
-                    withTimeout(READY_TIMEOUT) { webViewRuntime.waitForReady() }
-                }
-                    // The bootstrap runs at document start; the entry module loads once the page
-                    // exists, so it connects.
-                    .flatMap { webViewRuntime.loadEntryModule(workerScript.entrypoint) }
-                    .map { execution }
-            }
-    }
-
-    // The renderer takes the running script with it, and only a fresh boot runs the script again.
-    private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
-        scope.launch {
-            transitions.withLock {
-                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
-                stop(productId)
-                start(productId)
-            }
+        val webViewRuntime = WebViewRuntime(provider)
+        worker.runtime = webViewRuntime
+        webViewRuntime.initialize()
+        val installBootstrap = bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
+        provider.addOnWebViewDestroyedListener {
+            if (worker.scope.isActive) attempt.failed("WebView renderer exited")
+        }
+        val chat = if (script.includesChat) ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId)) else null
+        val execution = hostBridgeFactory.create(worker.scope).attachWorker(
+            attempt,
+            productId,
+            chainDirectory.resolve(),
+            navigation.policy(productId, worker.scope),
+            chat,
+        ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }.getOrThrow()
+        provider.useTrUAPIPermissions(execution)
+        webViewRuntime.loadInitialPage()
+        withTimeout(READY_TIMEOUT) {
+            webViewRuntime.waitForReady()
+            webViewRuntime.startWorkerModule(workerScript.entrypoint)
         }
     }
 
-    private fun stop(productId: ProductId) {
-        executionStates.update { it - productId }
-        val worker = workers.remove(productId) ?: return
-        worker.webViewRuntime?.dispose()
+    private fun dispose(id: ULong) {
+        val worker = workers.remove(id) ?: return
         worker.scope.cancel()
+        worker.runtime?.dispose()
     }
 
     companion object {

@@ -2,6 +2,7 @@ package io.parity.truapi
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -16,16 +17,15 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import uniffi.truapi.ExecutableKind
-import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
-import uniffi.truapi.WorkerTransition
 import java.util.UUID
-import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class WorkerReferenceTest {
@@ -41,16 +41,13 @@ class WorkerReferenceTest {
     fun chatAndPocketOwnTheWorkerWhileARenderCanStillBeOpenAtLastRelease() = runBlocking {
         directory.mkdirs()
         val product = ProductId.parse("worker.paseo").getOrThrow()
-        val transitions = CopyOnWriteArrayList<WorkerTransition>()
-        val bridge = object : HostBridge by InertHostBridge(context) {
-            override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
-                if (productId == product) transitions += transition
-            }
-        }
-        TrUAPIHostRuntime(bridge, instrumentedRuntimeConfig(directory.absolutePath)).use { runtime ->
+        val bridge = InertHostBridge(context)
+        val workers = InstrumentedWorkerHost()
+        TrUAPIHostRuntime(bridge, instrumentedRuntimeConfig(directory.absolutePath), workers).use { runtime ->
             val chat = runtime.claimWorker(product)
             val pocket = runtime.claimWorker(product)
-            runtime.openProductExecution(bridge, ProductExecutionConfig(product, ExecutableKind.WORKER)).use { execution ->
+            val attempt = workers.awaitAttempt()
+            attempt.openExecution(bridge, null, null).use { execution ->
                 val endpoint = execution.startWsBridge()
                 val received = Channel<ByteString>(Channel.UNLIMITED)
                 val client = OkHttpClient()
@@ -72,20 +69,20 @@ class WorkerReferenceTest {
                 try {
                     withTimeout(10_000) {
                         received.receive()
+                        assertTrue(attempt.moduleStarted())
                         val face = execution.render(ProductRendererRenderRequest(RenderContext.PocketCard("loyalty"), byteArrayOf()))
                         val first = launch { face.collect {} }
                         received.receive()
                         first.cancelAndJoin()
                         received.receive()
-                        val render = launch { face.collect {} }
+                        val render = async { runCatching { face.collect {} } }
                         received.receive()
                         pocket.release()
                         pocket.release()
-                        assertEquals(listOf(WorkerTransition.START), transitions.toList())
+                        assertFalse(workers.stopped.isDone)
                         chat.release()
-                        assertEquals(listOf(WorkerTransition.START, WorkerTransition.STOP), transitions.toList())
-                        render.cancelAndJoin()
-                        assertEquals(listOf(WorkerTransition.START, WorkerTransition.STOP), transitions.toList())
+                        assertEquals(attempt.id(), workers.stopped.get(10, TimeUnit.SECONDS))
+                        assertTrue(render.await().exceptionOrNull() is RendererStreamException)
                     }
                 } finally {
                     socket.cancel()

@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
-import io.parity.truapi.TrUAPIProductExecution
+import io.parity.truapi.TrUAPIWorkerExecution
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
@@ -37,7 +37,7 @@ private const val ROOM_2 = "room-2"
 
 class TrUAPIChatRoomForwardingTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
-    private val execution: TrUAPIProductExecution = mock()
+    private val execution: TrUAPIWorkerExecution = mock()
 
     private class Forwarding(val scope: CoroutineScope, val job: Job)
 

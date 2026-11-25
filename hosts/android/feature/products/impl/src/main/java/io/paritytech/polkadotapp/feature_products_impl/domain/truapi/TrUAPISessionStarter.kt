@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.Expa
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -80,10 +79,9 @@ class TrUAPISessionStarter @Inject constructor(
             )
         }.getOrElse { return Result.failure(it) }
 
-        val kind = if (card != null) ExecutableKind.WIDGET else ExecutableKind.APP
         val webViewEventReported = AtomicBoolean(false)
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card = card) { bootstrap ->
+            .attach(runtime, productId, chainDirectory.resolve(), navigation, card = card) { bootstrap ->
                 val setup = installBootstrap(bootstrap)
                 provider.addWebViewSetup { webView ->
                     setup(webView)
