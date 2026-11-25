@@ -49,7 +49,7 @@ use spawner::test_spawner;
 /// BIP-39 entropy the local session is activated from.
 const ENTROPY: [u8; 32] = [0xab; 32];
 /// dotNS identifier of the product doing the signing.
-const PRODUCT_ID: &str = "myapp.dot";
+const PRODUCT_ID: &str = "myapp.paseo";
 /// Message the product asks to have signed.
 const MESSAGE: &[u8] = b"keystone";
 /// Content seeded into the mock's preimage store.

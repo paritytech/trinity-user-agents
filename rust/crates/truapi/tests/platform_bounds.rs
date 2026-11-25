@@ -131,7 +131,8 @@ fn product_id_validation_cases() {
 }
 
 /// A web domain parses, because any DNS label is a valid TLD. The host runs
-/// it as a product only under `dot` or its stack's TLD.
+/// a product only under its stack's TLD, and reads a `dot` name as one under
+/// it.
 #[test]
 fn a_host_runs_only_products_its_stack_serves() {
 	let stack = truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]);
@@ -142,11 +143,15 @@ fn a_host_runs_only_products_its_stack_serves() {
 			.map_err(|error| (error, product_id))
 	};
 
-	for served in ["dotli.dot", "host-playground44.paseo", "localhost:3000"] {
-		assert_eq!(run(served).map(String::from), Ok(served.to_string()));
+	for (named, served) in [
+		("dotli.dot", "dotli.paseo"),
+		("host-playground44.paseo", "host-playground44.paseo"),
+		("localhost:3000", "localhost:3000"),
+	] {
+		assert_eq!(run(named).map(String::from), Ok(served.to_string()));
 	}
 	for unserved in ["example.com", "browse.testnet", "dotli.dotty"] {
-		let (error, product_id) = run(unserved).expect_err("the stack serves dot and paseo only");
+		let (error, product_id) = run(unserved).expect_err("the stack serves paseo only");
 		assert_eq!(error, UnservedProduct { product_id, stack_tld: "paseo".to_string() }.into());
 	}
 }
