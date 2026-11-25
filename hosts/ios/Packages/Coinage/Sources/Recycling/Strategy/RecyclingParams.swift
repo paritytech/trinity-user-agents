@@ -34,19 +34,27 @@ public struct RecyclingParams: Equatable {
 public enum VoucherReadiness: Equatable {
     /// Ready once inclusion in a recycler ring is confirmed.
     case immediate
-    /// Ready at the required ring fill, or with enough members and enough time since confirmed inclusion.
-    case ringFillOrMembersAndAge(
+    /// Ready at the required ring fill, or once minutes since confirmed inclusion × unclaimed ring members
+    /// reaches `anonymityMinutes` × `anonymityMembers`.
+    case ringFillOrAnonymityMinutes(
         requiredRingFill: BigRational,
-        minimumMembers: UInt32,
-        minimumAge: TimeInterval
+        anonymityMinutes: UInt32,
+        anonymityMembers: UInt32
     )
 
-    func readyAt(for voucher: Voucher) -> Date? {
-        guard case let .ringFillOrMembersAndAge(_, minimumMembers, minimumAge) = self,
-              let recycler = voucher.recycler,
-              recycler.membersCount >= minimumMembers,
-              let enteredAt = recycler.enteredAt else { return nil }
+    private static let secondsPerMinute: TimeInterval = 60
 
-        return enteredAt.addingTimeInterval(minimumAge)
+    func readyAt(for voucher: Voucher) -> Date? {
+        guard case let .ringFillOrAnonymityMinutes(_, anonymityMinutes, anonymityMembers) = self,
+              let recycler = voucher.recycler,
+              let enteredAt = recycler.enteredAt,
+              let unloadedCount = recycler.unloadedCount else { return nil }
+
+        let unclaimedMembers = recycler.membersCount - min(unloadedCount, recycler.membersCount)
+        guard unclaimedMembers > 0 else { return nil }
+
+        let delay = TimeInterval(anonymityMinutes) * Self.secondsPerMinute * TimeInterval(anonymityMembers)
+            / TimeInterval(unclaimedMembers)
+        return enteredAt.addingTimeInterval(delay)
     }
 }

@@ -71,8 +71,9 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     func openProviderFrame(_ request: FundingFrameRequest)
 
     /// The screens providers asked for that the app has not opened, so their
-    /// notices can be shown again after the screens were drawn anew.
-    func waitingFrames() -> [FundingFrameRequest]
+    /// notices can be shown again after the screens were drawn anew. Waits
+    /// for the runtime to be built.
+    func waitingFrames() async -> [FundingFrameRequest]
 
     /// Answers the provider's screen `frame`, once it is gone.
     func answer(frame: FundingFrame.ID, with outcome: FundingFrameOutcome)

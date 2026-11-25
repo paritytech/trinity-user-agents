@@ -574,7 +574,7 @@ missed:
   spec using one fails with `TS2339`: `clearChat`, `clearOperationLog`,
   `clearProductStorage`, `clearResourceAllocationLog`,
   `clearUserConfirmationLog`, `getDevicePermissionStatuses`,
-  `getFeatureSupport`, `getLocale`, `getOpenOperations`, `getOperationLog`,
+  `getFeatureSupport`, `getLocale`, `getOperationLog`,
   `getProductStorageEntries`, `getResourceAllocationLog`, `getSupportedChains`,
   `getUserConfirmationLog`, `seedChatBot`, `seedChatRoom`,
   `setDevicePermissionStatus`, `setFeatureSupport`, `setLocale`,

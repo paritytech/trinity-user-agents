@@ -397,7 +397,9 @@ private extension FundingServiceTests {
     var intent: String { "intent" }
 
     func makeService(_ runtime: MockFundingRuntime) -> FundingService {
-        FundingService(runtime: runtime, logger: MockLogger())
+        let service = FundingService(logger: MockLogger())
+        service.attach(runtime: runtime)
+        return service
     }
 
     func state(_ service: FundingService) async -> FundingEntry {

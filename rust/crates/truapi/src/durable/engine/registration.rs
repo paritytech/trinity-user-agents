@@ -360,7 +360,7 @@ impl DurableTxEngine {
 	{
 		let submissions = request.transactions.presigned().to_vec();
 		let scope = DependencyScope { registry: self.registry.clone(), genesis };
-		let (ids, value, claims) = self.record(request, scope, on_register).await??;
+		let (ids, value, claims) = self.record(request, scope, on_register).await?;
 		for (id, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
 			spawn_watch(&self, Attempt::new(id, genesis, &extrinsic), extrinsic.extrinsic);
 		}
@@ -378,7 +378,7 @@ impl DurableTxEngine {
 		request: DurableRequest<E>,
 		scope: DependencyScope,
 		on_register: F,
-	) -> Result<Result<(Vec<DurableTxId>, T, Vec<DurableTxId>), RegistrationError<E>>, DbError>
+	) -> Result<(Vec<DurableTxId>, T, Vec<DurableTxId>), RegistrationError<E>>
 	where
 		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
@@ -388,20 +388,17 @@ impl DurableTxEngine {
 		let (ownership, claims) = (self.ownership.clone(), taken.clone());
 		let write_rows_and_hook = move |tx: &rusqlite::Transaction<'_>| {
 			let presigned = request.transactions.presigned().len();
-			let ids = match request.insert_all(tx, &scope) {
-				Ok(ids) => ids,
-				Err(refusal) => return Ok(Err(refusal)),
-			};
+			let ids = request.insert_all(tx, &scope)?;
 			claims.lock().extend(claim_presigned(&ownership, &ids, presigned));
-			let hooked = on_register(tx, &ids).map_err(RegistrationError::Hook);
-			Ok(hooked.map(|value| (ids, value)))
+			let value = on_register(tx, &ids).map_err(RegistrationError::Hook)?;
+			Ok((ids, value))
 		};
-		let written = self.db.write_unless_refused(write_rows_and_hook).await;
+		let written = self.db.write_interactive(write_rows_and_hook).await;
 		let claims = core::mem::take(&mut *taken.lock());
-		if !matches!(written, Ok(Ok(_))) {
+		if written.is_err() {
 			claims.iter().for_each(|id| self.ownership.release(*id));
 		}
-		written.map(|recorded| recorded.map(|(ids, value)| (ids, value, claims)))
+		written.map(|(ids, value)| (ids, value, claims))
 	}
 }
 
