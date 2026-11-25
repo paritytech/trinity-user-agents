@@ -801,6 +801,16 @@ fn poll_once(mut task: BoxFuture<'static, ()>) -> Option<BoxFuture<'static, ()>>
 	task.as_mut().now_or_never().is_none().then_some(task)
 }
 
+/// What `run` returns, and the tasks spawned on `tasks` while it ran.
+fn spawned_while<T>(
+	tasks: &HandPolled,
+	run: impl FnOnce() -> T,
+) -> (T, Vec<BoxFuture<'static, ()>>) {
+	let before = tasks.lock().unwrap().len();
+	let ran = run();
+	(ran, tasks.lock().unwrap().split_off(before))
+}
+
 /// A host can drop its runtime while the username lookup of an activation
 /// waits on dotNS. The service owns the lookup, so dropping the service ends
 /// it, and the dotNS read it started stops with it, as a read does once its
@@ -821,10 +831,22 @@ fn a_lookup_stops_when_its_service_is_dropped() {
 	let installed = SessionInfo { sso: None, ..session_to_look_up() };
 	let blob = encode_persisted_session(&installed);
 	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
-	block_on(host.activate_stored_session()).expect("the stored session activates");
-	let lookup = tasks.lock().unwrap().pop().expect("the activation starts a lookup");
-	let lookup = poll_once(lookup).expect("the lookup waits on dotNS");
-	let read = tasks.lock().unwrap().pop().expect("the lookup starts a dotNS read");
+	let (activated, spawned) = spawned_while(&tasks, || {
+		let activation = std::thread::spawn({
+			let host = host.clone();
+			move || block_on(host.activate_stored_session())
+		});
+		finished(activation, "the activation ends without running a task")
+	});
+	activated.expect("the stored session activates");
+	let Ok([lookup]) = <[_; 1]>::try_from(spawned) else {
+		panic!("the activation spawns its lookup and nothing else");
+	};
+	let (lookup, spawned) = spawned_while(&tasks, || poll_once(lookup));
+	let lookup = lookup.expect("the lookup waits on dotNS");
+	let Ok([read]) = <[_; 1]>::try_from(spawned) else {
+		panic!("the lookup spawns its dotNS read and nothing else");
+	};
 
 	let service = Arc::downgrade(&host);
 	drop(host);
