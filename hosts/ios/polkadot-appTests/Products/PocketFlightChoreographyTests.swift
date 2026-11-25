@@ -22,7 +22,8 @@ struct PocketFlightChoreographyTests {
             itemOffset: .zero,
             pocketOffset: CGSize(width: -12, height: -420),
             pageAlpha: 1,
-            clearance: 1
+            clearance: 1,
+            screenAlpha: 1
         )
 
         #expect(choreography.frame(progress: 0) == opened)
@@ -32,7 +33,13 @@ struct PocketFlightChoreographyTests {
     /// Pocket at rest and the page gone.
     @Test
     func endsWithTheCardInItsSlotAndThePocketAtRest() {
-        let closed = PocketFlightFrame(itemOffset: toSlot, pocketOffset: .zero, pageAlpha: 0, clearance: 0)
+        let closed = PocketFlightFrame(
+            itemOffset: toSlot,
+            pocketOffset: .zero,
+            pageAlpha: 0,
+            clearance: 0,
+            screenAlpha: 1
+        )
 
         #expect(choreography.frame(progress: 1) == closed)
     }
@@ -45,7 +52,8 @@ struct PocketFlightChoreographyTests {
             itemOffset: CGPoint(x: 6, y: 210),
             pocketOffset: CGSize(width: -6, height: -210),
             pageAlpha: 0,
-            clearance: 0.5
+            clearance: 0.5,
+            screenAlpha: 1
         )
 
         #expect(choreography.frame(progress: 0.5) == halfWay)
@@ -83,6 +91,28 @@ struct PocketFlightChoreographyTests {
     /// go, and a release with almost nothing left still animates.
     @Test(arguments: [(1, 0.5), (0.5, 0.25), (0.1, 0.15), (0, 0.15)] as [(CGFloat, TimeInterval)])
     func aReleaseTakesItsShareOfTheFlightsTime(remaining: CGFloat, duration: TimeInterval) {
-        #expect(PocketFlightChoreography.releaseDuration(remaining: remaining) == duration)
+        #expect(choreography.releaseDuration(remaining: remaining) == duration)
+    }
+
+    /// Under Reduce Motion, or with no slot to fly to, the close is a fade:
+    /// the screen's visibility follows the finger and nothing moves.
+    @Test
+    func aFadeFollowsTheFingerWithNothingMoving() {
+        let fading = PocketFlightFrame(
+            itemOffset: .zero,
+            pocketOffset: .zero,
+            pageAlpha: 1,
+            clearance: 0,
+            screenAlpha: 0.75
+        )
+
+        #expect(PocketFlightChoreography(toSlot: nil).frame(progress: 0.25) == fading)
+    }
+
+    /// A released fade takes its share of the crossfade's time, which is
+    /// short enough to need no floor.
+    @Test(arguments: [(1, 0.18), (0.5, 0.09), (0, 0)] as [(CGFloat, TimeInterval)])
+    func aReleasedFadeTakesItsShareOfTheCrossfadesTime(remaining: CGFloat, duration: TimeInterval) {
+        #expect(PocketFlightChoreography(toSlot: nil).releaseDuration(remaining: remaining) == duration)
     }
 }

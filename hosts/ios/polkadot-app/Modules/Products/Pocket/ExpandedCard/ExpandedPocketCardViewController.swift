@@ -238,13 +238,8 @@ extension ExpandedPocketCardViewController: NavigationTransitionAnimating {
 }
 
 private extension ExpandedPocketCardViewController {
-    /// Only a card that would fly back has a close for a finger to scrub.
     var canSwipeBack: Bool {
-        guard !isInFlight, !isClosing, !pullDown.isPulling, !UIAccessibility.isReduceMotionEnabled else {
-            return false
-        }
-
-        return origin?.frame(of: pocketItem) != nil
+        !isInFlight && !isClosing && !pullDown.isPulling
     }
 
     func setupFace() {

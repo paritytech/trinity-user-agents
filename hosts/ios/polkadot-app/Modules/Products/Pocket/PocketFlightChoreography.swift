@@ -10,6 +10,8 @@ struct PocketFlightFrame: Equatable {
     let pageAlpha: CGFloat
     /// How far the rest of the Pocket is cleared away: 0 at rest, 1 cleared.
     let clearance: CGFloat
+    /// How visible the whole screen is, for a close that fades instead of flying.
+    let screenAlpha: CGFloat
 }
 
 /// A close as a function of its progress, from 0, the item open on its screen,
@@ -27,17 +29,27 @@ struct PocketFlightChoreography: Equatable {
     private static let decelerationRate: CGFloat = 0.998
     private static let shortestRelease: TimeInterval = 0.15
 
-    /// From the item's open place to its slot.
-    let toSlot: CGPoint
+    /// From the item's open place to its slot. Nil for a close that fades, with nowhere to fly or under Reduce Motion.
+    let toSlot: CGPoint?
 
     func frame(progress: CGFloat) -> PocketFlightFrame {
         let remaining = 1 - progress
+        guard let toSlot else {
+            return PocketFlightFrame(
+                itemOffset: .zero,
+                pocketOffset: .zero,
+                pageAlpha: 1,
+                clearance: 0,
+                screenAlpha: remaining
+            )
+        }
 
         return PocketFlightFrame(
             itemOffset: CGPoint(x: toSlot.x * progress, y: toSlot.y * progress),
             pocketOffset: CGSize(width: -toSlot.x * remaining, height: -toSlot.y * remaining),
             pageAlpha: 1 - min(progress / Self.pageFadeOutFraction, 1),
-            clearance: remaining
+            clearance: remaining,
+            screenAlpha: 1
         )
     }
 
@@ -55,8 +67,11 @@ struct PocketFlightChoreography: Equatable {
         return travel > width * commitTravelFraction || isFlung
     }
 
-    /// The flight's duration for the part of the way still to go, never so short that the release flashes.
-    static func releaseDuration(remaining: CGFloat) -> TimeInterval {
-        max(PocketFlightTiming.duration * Double(remaining), shortestRelease)
+    /// The motion's own time for the part of the way still to go. A flight is never so short that the release
+    /// flashes.
+    func releaseDuration(remaining: CGFloat) -> TimeInterval {
+        guard toSlot != nil else { return PocketFlight.crossfadeDuration * Double(remaining) }
+
+        return max(PocketFlightTiming.duration * Double(remaining), Self.shortestRelease)
     }
 }
