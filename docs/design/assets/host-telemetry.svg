@@ -95,7 +95,7 @@
 
   <rect x="850" y="400" width="300" height="56" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
   <text x="864" y="420" class="tb">host-originated lines</text>
-  <text x="864" y="440" class="sub">truapi.auth &#183; truapi.chain &#183; truapi.product &#183; truapi.payments</text>
+  <text x="864" y="440" class="sub">truapi.auth &#183; truapi.chain &#183; truapi.payments</text>
   <text x="864" y="472" class="elab">severity preserved here, unlike core lines</text>
 
   <rect x="590" y="480" width="560" height="60" rx="6" fill="#fdf8ef" stroke="#b07415" stroke-width="1.6"/>
