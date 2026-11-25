@@ -1948,6 +1948,55 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
+/// A call that ignores a withdrawal is dropped after a two-second grace.
+/// People's connection can take half a minute to open, while the host redials
+/// or the genesis check waits out a halted chain, so the wait for it watches
+/// the withdrawal and the product is answered at once. The call is polled by
+/// hand, so it has to end in the poll after the withdrawal, before any grace
+/// could pass: the error alone reads the same either way.
+#[test]
+fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		chain_connect_pending: true,
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("sign-raw-connecting".to_string(), cancel.clone());
+	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+		account: account_id("myapp.dot", 0),
+		payload: raw_payload(),
+	});
+	let mut call = Box::pin(host.sign_raw(&cx, request));
+	let dialled = || {
+		assert!(call.as_mut().now_or_never().is_none(), "the call waits for People");
+		!platform.chain_connects.lock().unwrap().is_empty()
+	};
+	wait_until(dialled, "People is dialled");
+
+	cancel.cancel();
+	let answer = call.as_mut().now_or_never();
+
+	let Some(Err(CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown {
+		reason,
+	})))) = answer
+	else {
+		panic!("expected the call to end on the withdrawal at once, got {answer:?}");
+	};
+	assert!(
+		reason.contains("cancelled") && reason.contains("sign-raw-connecting"),
+		"expected the withdrawal of this call, got {reason}"
+	);
+	assert_eq!(
+		platform.chain_connects.lock().unwrap().clone(),
+		vec![paseo_test_stack().chains().people],
+		"the call was waiting on People"
+	);
+}
+
 /// `message_id`s every `Cancel` this host has published names, oldest first.
 pub fn withdrawn_requests(platform: &Arc<StubPlatform>, session: &SessionInfo) -> Vec<String> {
 	submitted_remote_messages(platform, session)
@@ -7099,7 +7148,10 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	install_pairing_session(&host, session);
 	let mut cx = CallContext::with_request_id(message_id.to_string());
-	cx.set_timeout(std::time::Duration::from_millis(1));
+	// The People connection is dialled in a task of its own, so the timeout
+	// leaves it time to subscribe. No allocation response is scripted, so the
+	// call still ends by the timeout.
+	cx.set_timeout(std::time::Duration::from_millis(500));
 
 	let err = futures::executor::block_on(ResourceAllocation::request(
 		&host,
@@ -7114,7 +7166,7 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 		)) => {
 			assert_eq!(
 				reason,
-				"Account authority request timed out after 1ms for allocation-timeout"
+				"Account authority request timed out after 500ms for allocation-timeout"
 			)
 		},
 		other => panic!("expected resource-allocation timeout, got {other:?}"),

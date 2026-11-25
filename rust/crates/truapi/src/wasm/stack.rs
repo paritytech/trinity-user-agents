@@ -21,9 +21,11 @@ use super::{
 use crate::platform::{StackChains, StackIdentity};
 use crate::{
 	Spawner,
+	chain_runtime::encode_hex,
 	platform::{
 		CoreStorage, CoreStorageRecords, ReservedValuesPolicy, Stack, StackFetchRequest,
-		StackFetchResponse, StackHost, StackRefresh, StackRefreshOutcome, StackStatus,
+		StackFetchResponse, StackHost, StackMismatch, StackRefresh, StackRefreshOutcome,
+		StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -71,26 +73,26 @@ pub async fn stack_from_js(
 
 /// Starts keeping `refresh` current through the host's `fetchStackDescriptor`
 /// callback, and reports the status to `stackChanged` at start and on each
-/// change. A host without `fetchStackDescriptor` gets the status once, at
-/// start: nothing changes it after that.
+/// change. Without `fetchStackDescriptor` the core stays on the copy it
+/// started from, and `stackChanged` gets the status at start and again
+/// whenever what a chain answered changes it.
 pub fn start_refresh(
 	refresh: &StackRefresh,
 	callbacks: &JsValue,
 	spawner: &Spawner,
 ) -> Result<(), JsValue> {
 	let changed = get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new);
-	match get_optional_function(callbacks, "fetchStackDescriptor")? {
-		Some(fetch) => {
+	let fetch = get_optional_function(callbacks, "fetchStackDescriptor")?;
+	let started = match (fetch, changed) {
+		(Some(fetch), changed) => {
 			let host = JsStackHost { fetch: SendWrapper::new(fetch), changed };
-			let started = refresh.start(Box::new(host), spawner);
-			debug_assert!(started, "a refresh that was just loaded has not started");
+			refresh.start(Box::new(host), spawner)
 		},
-		None => {
-			if let Some(changed) = &changed {
-				report_status(changed, &refresh.status());
-			}
-		},
-	}
+		(None, Some(changed)) => refresh
+			.start_reporting(Box::new(move |status| report_status(&changed, status)), spawner),
+		(None, None) => return Ok(()),
+	};
+	debug_assert!(started, "a refresh that was just loaded has not started");
 	Ok(())
 }
 
@@ -291,11 +293,19 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 }
 
 /// `{ descriptor, generation, stale, expired, restartRequired,
-/// lastRefresh? }`, where `lastRefresh` is `{ outcome, reason? }` and
-/// `outcome` is `current`, `unreachable`, `refused` or `notStored`.
+/// lastRefresh?, mismatches }`, where `lastRefresh` is `{ outcome, reason? }`
+/// and `outcome` is `current`, `unreachable`, `refused` or `notStored`.
+/// `mismatches` holds what [`mismatch_to_js`] gives for each.
 fn status_to_js(status: &StackStatus) -> JsValue {
-	let StackStatus { descriptor, generation, stale, expired, restart_required, last_refresh } =
-		status;
+	let StackStatus {
+		descriptor,
+		generation,
+		stale,
+		expired,
+		restart_required,
+		last_refresh,
+		mismatches,
+	} = status;
 	let last_refresh = last_refresh.as_ref().map_or(JsValue::UNDEFINED, |outcome| {
 		let (outcome, reason) = match outcome {
 			StackRefreshOutcome::Current => ("current", None),
@@ -305,6 +315,7 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 		};
 		object(&[("outcome", JsValue::from_str(outcome)), ("reason", JsValue::from(reason))])
 	});
+	let mismatches: Array = mismatches.iter().map(mismatch_to_js).collect();
 	object(&[
 		("descriptor", JsValue::from_str(descriptor)),
 		("generation", JsValue::from_str(generation)),
@@ -312,5 +323,19 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 		("expired", JsValue::from(*expired)),
 		("restartRequired", JsValue::from(*restart_required)),
 		("lastRefresh", last_refresh),
+		("mismatches", mismatches.into()),
 	])
+}
+
+/// `{ kind: "genesisHash", role, named, answered }`, with both hashes as `0x`
+/// hex.
+fn mismatch_to_js(mismatch: &StackMismatch) -> JsValue {
+	match mismatch {
+		StackMismatch::GenesisHash { role, named, answered } => object(&[
+			("kind", JsValue::from_str("genesisHash")),
+			("role", JsValue::from_str(role)),
+			("named", JsValue::from_str(&encode_hex(named))),
+			("answered", JsValue::from_str(&encode_hex(answered))),
+		]),
+	}
 }

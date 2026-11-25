@@ -298,6 +298,14 @@ impl HostRpcClient {
 		self.inner.closed.load(Ordering::Relaxed)
 	}
 
+	/// Closes the connection for every handle to it.
+	///
+	/// Each request still waiting fails with `reason`, and each subscription
+	/// ends. Does nothing once the connection is closed.
+	pub fn close(&self, reason: &str) {
+		self.inner.close_with_error(client_error(reason));
+	}
+
 	/// Send a JSON-RPC request without waiting for its response.
 	///
 	/// Used by best-effort notifications where the caller must not block on

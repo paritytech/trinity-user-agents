@@ -6,7 +6,9 @@
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
 //! the same policy, and a copy on another TLD than the bundled one is refused.
-//! It resolves the [`Stack`] the core runs on.
+//! It resolves the [`Stack`] the core runs on. A runtime built on that
+//! [`Stack`] also checks the genesis hash of each chain it connects to, and
+//! the refresh reports the ones that differ.
 
 mod held;
 mod pinned;
@@ -14,17 +16,22 @@ mod records;
 mod refresh;
 mod source;
 
+use std::sync::Arc;
+
 use parity_scale_codec::{Decode, Encode};
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::{chain_runtime::GenesisCheck, dotns_name::DOTNS_TLDS};
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
+use refresh::StackChecks;
 pub use refresh::{StackHost, StackRefresh};
-pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
+pub use source::{
+	StackFetchRequest, StackFetchResponse, StackMismatch, StackRefreshOutcome, StackStatus,
+};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -139,7 +146,10 @@ impl ReservedValuesPolicy {
 /// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
 /// the Asset Hub contracts the core reads, and the `sequence` of the
 /// descriptor it was read from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
+/// hands out also carries the checks of its chains, which equality ignores.
+#[derive(derive_more::Debug, Clone, derive_more::PartialEq, derive_more::Eq)]
 pub struct Stack {
 	identity: StackIdentity,
 	network: String,
@@ -147,6 +157,9 @@ pub struct Stack {
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
 	sequence: u32,
+	#[debug(skip)]
+	#[partial_eq(skip)]
+	checks: Option<StackChecks>,
 }
 
 /// A stack's id and the generation of its chains.
@@ -485,7 +498,15 @@ impl Stack {
 		}
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
-		Ok(Self { identity, network, tld, chains, account_data_store: None, sequence })
+		Ok(Self {
+			identity,
+			network,
+			tld,
+			chains,
+			account_data_store: None,
+			sequence,
+			checks: None,
+		})
 	}
 
 	/// The stack's identity. See [`StackIdentity::id`].
@@ -540,6 +561,14 @@ impl Stack {
 	/// all-zero address.
 	pub fn account_data_store(&self) -> Option<[u8; 20]> {
 		self.account_data_store
+	}
+
+	/// The check a chain runtime reports each connection's genesis hash to.
+	///
+	/// `None` unless a [`StackRefresh`] handed the stack out: the core does
+	/// not check the chains of a stack built any other way.
+	pub fn genesis_check(&self) -> Option<Arc<dyn GenesisCheck>> {
+		self.checks.as_ref().map(StackChecks::genesis_check)
 	}
 
 	/// The genesis hash of the chain with this role, or `None` when the stack
