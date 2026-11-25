@@ -975,6 +975,20 @@ fn a_hop_file_is_media_with_a_wss_node() {
 	);
 }
 
+// The core passes the node on as the product wrote it. A control or bidi
+// character is no part of a URL that an app dials, and it can hide what the
+// node is where an app shows it.
+#[test]
+fn a_hop_node_has_no_control_or_bidi_character() {
+	for node in ["wss://hop.example\u{202e}", "wss://hop.example\n", "wss://hop\u{200b}.example"] {
+		assert_eq!(
+			validate_chat_media_resource("media", hop(node, 1_000)),
+			Err(ChatFieldError::UnsafeCharacter { field: "media" }),
+			"{node:?}"
+		);
+	}
+}
+
 // The host shows the length of a video, so the validation must keep it.
 #[test]
 fn a_video_keeps_its_length() {

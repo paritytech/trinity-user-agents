@@ -623,6 +623,9 @@ fn validate_chat_media_resource(
 	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
 	}
+	if node.chars().any(is_display_unsafe) {
+		return Err(ChatFieldError::UnsafeCharacter { field });
+	}
 	if *size == 0 {
 		return Err(ChatFieldError::Empty { field });
 	}
@@ -2398,10 +2401,11 @@ pub trait PreimageHost: Send + Sync {
 /// fetch or open is restricted to `https` or an inline raster image and
 /// delivered as the parser resolved it. The one exception is the node of a HOP
 /// media item: the core checks only that it is a `wss://` URL of at most
-/// [`CHAT_HOP_NODE_MAX_CHARS`] characters, and passes it on as the product
-/// wrote it. The icon of a v2 `create_chat_room`, the icon of the room
-/// metadata and an image badge take no URL at all: inline image data or the
-/// CID of a Bulletin preimage, as RFC 0002 names resources.
+/// [`CHAT_HOP_NODE_MAX_CHARS`] characters with no control or bidi character,
+/// and passes it on as the product wrote it. The icon of a v2
+/// `create_chat_room`, the icon of the room metadata and an image badge take
+/// no URL at all: inline image data or the CID of a Bulletin preimage, as RFC
+/// 0002 names resources.
 ///
 /// The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
 /// `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
