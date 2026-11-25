@@ -104,7 +104,8 @@ pub struct SigningHostConfig {
 	pub host: HostIdentity,
 	/// The stack the host runs. Every reserved RFC-0022 identity the wallet
 	/// derives ends in its TLD, which has to equal the People chain's
-	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
+	/// `NetworkSuffix.NetworkSuffix`. For a stack a [`StackRefresh`] handed out
+	/// the core reports a difference in [`StackStatus::mismatches`].
 	pub stack: Stack,
 	/// Whether the host draws materials. Off by default: `new` leaves it off.
 	pub materials_enabled: bool,
