@@ -110,6 +110,57 @@ class JsGestureCancelTest {
         }
     }
 
+    @Test
+    fun aDragCancelledBeforeItTakesTheFingerSendsNothing() {
+        draw(
+            JsWidget.Gesture(
+                tapAction = TAP,
+                modifiers = listOf(JsModifier.Size(width = 300, height = 100)),
+                pan = JsPanGesture(drag = JsPanDrag(release = JsPanRelease.Complete(80)), startAction = START, endAction = END),
+                children = listOf(JsWidget.Box(modifiers = listOf(JsModifier.Size(width = 50, height = 100)))),
+            ),
+        )
+        pressAndCancel()
+        compose.runOnIdle { assertEquals(emptyList<Pair<String, JsGesturePhase>>(), sent) }
+    }
+
+    @Test
+    fun aTapCancelledBeforeTheLiftSendsNoTap() {
+        draw(
+            JsWidget.Gesture(
+                tapAction = TAP,
+                modifiers = listOf(JsModifier.Size(width = 300, height = 100)),
+                children = listOf(JsWidget.Box(modifiers = listOf(JsModifier.Size(width = 300, height = 100)))),
+            ),
+        )
+        pressAndCancel()
+        compose.runOnIdle { assertEquals(emptyList<Pair<String, JsGesturePhase>>(), sent) }
+    }
+
+    @Test
+    fun aLiftedTapStillTaps() {
+        draw(
+            JsWidget.Gesture(
+                tapAction = TAP,
+                modifiers = listOf(JsModifier.Size(width = 300, height = 100)),
+                children = listOf(JsWidget.Box(modifiers = listOf(JsModifier.Size(width = 300, height = 100)))),
+            ),
+        )
+        compose.onRoot().performTouchInput { down(Offset(width * 25f / 300f, height / 2f)) }
+        compose.mainClock.advanceTimeBy(48)
+        compose.onRoot().performTouchInput { up() }
+        compose.mainClock.advanceTimeBy(48)
+        compose.runOnIdle { assertEquals(listOf(TAP to JsGesturePhase.TAP), sent) }
+    }
+
+    /** Down on the child, no movement, then the system takes the touch away. */
+    private fun pressAndCancel() {
+        compose.onRoot().performTouchInput { down(Offset(width * 25f / 300f, height / 2f)) }
+        compose.mainClock.advanceTimeBy(48)
+        compose.onRoot().performTouchInput { cancel() }
+        compose.mainClock.advanceTimeBy(48)
+    }
+
     private fun drawDrag(release: JsPanRelease) = draw(
         JsWidget.Gesture(
             modifiers = listOf(JsModifier.Size(width = 300, height = 100)),
@@ -150,5 +201,7 @@ class JsGestureCancelTest {
     private companion object {
         const val END = "end"
         const val INNER_END = "innerEnd"
+        const val START = "start"
+        const val TAP = "tap"
     }
 }
