@@ -62,8 +62,6 @@ use super::{
 		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
-#[cfg(doc)]
-use crate::WorkerTransition;
 
 /// Carries both kinds of core traffic to one host's callbacks.
 ///
@@ -84,6 +82,23 @@ impl crate::logging::HostSink for CallbackSink {
 		if let Some(callbacks) = self.callbacks.upgrade() {
 			callbacks.on_core_event(marker.to_string(), attributes);
 		}
+	}
+}
+
+/// One consumer's reference on a product worker.
+///
+/// Release the claim when its owner finishes. Dropping the last handle also releases it.
+#[derive(uniffi::Object)]
+pub struct NativeWorkerClaim {
+	reference: Mutex<Option<crate::WorkerHold>>,
+}
+
+#[uniffi::export]
+impl NativeWorkerClaim {
+	/// Release this claim once, even if several owners of this handle call concurrently.
+	pub fn release(&self) {
+		let reference = self.reference.lock().expect("worker claim mutex poisoned").take();
+		drop(reference);
 	}
 }
 
@@ -159,11 +174,11 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
-			pointer,
-			descriptor,
-			*allows_reserved_values,
+			&pointer,
+			&descriptor,
+			reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
@@ -729,11 +744,13 @@ impl NativeTrUApiHostRuntime {
 		))
 	}
 
-	/// Take one reference on the product's worker for a modality holder. The
-	/// first one requests [`WorkerTransition::Start`]; pair every call with
-	/// one [`Self::release_worker`].
-	pub fn acquire_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().acquire(&product_id);
+	/// Claim a product's worker while this consumer needs it.
+	///
+	/// Each call returns a separate claim on the worker.
+	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
+		Arc::new(NativeWorkerClaim {
+			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
+		})
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -742,12 +759,6 @@ impl NativeTrUApiHostRuntime {
 	/// start it again.
 	pub fn worker_exited(&self, product_id: ProductId) {
 		self.runtime.worker_exited(&product_id);
-	}
-
-	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
-	/// Releasing with none held is a no-op.
-	pub fn release_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().release(&product_id);
 	}
 
 	/// Forget one product: revoke its grants and Allow once answers, then

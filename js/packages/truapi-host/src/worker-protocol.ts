@@ -91,8 +91,8 @@ export type MainToWorker =
   | { kind: "cancelPairing" }
   | { kind: "notifySessionStoreChanged" }
   | { kind: "notifyContactsChanged" }
-  | { kind: "acquireWorker"; productId: ProductId }
-  | { kind: "releaseWorker"; productId: ProductId }
+  | { kind: "claimWorker"; claimId: number; productId: ProductId }
+  | { kind: "releaseWorker"; claimId: number }
   | { kind: "activateStoredSession"; requestId: number }
   | { kind: "activateExternalSession"; requestId: number; blob: Uint8Array }
   /**

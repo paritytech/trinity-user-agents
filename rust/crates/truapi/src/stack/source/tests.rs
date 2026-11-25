@@ -21,10 +21,30 @@ fn signed(descriptor: &serde_json::Value) -> Vec<u8> {
 }
 
 fn load(bundled: &serde_json::Value, stored: Option<&[u8]>) -> StackSource {
+	load_reserving(bundled, stored, ReservedValuesPolicy::default())
+}
+
+fn load_reserving(
+	bundled: &serde_json::Value,
+	stored: Option<&[u8]>,
+	reserved_values: ReservedValuesPolicy,
+) -> StackSource {
 	let (link, bytes) = sign_test_descriptor(bundled);
 	let pointer = signed_pointer(&link).expect("test link carries a key");
-	StackSource::load(pointer, &bytes, stored, false, START).expect("bundled copy is valid")
+	StackSource::load(pointer, &bytes, stored, reserved_values, START)
+		.expect("bundled copy is valid")
 }
+
+/// A build that reserves the `testnet` TLD and one more genesis hash.
+fn reserving_extras() -> ReservedValuesPolicy {
+	ReservedValuesPolicy {
+		extra_genesis_hashes: vec![EXTRA_RESERVED_GENESIS],
+		extra_tlds: vec!["testnet".to_string()],
+		..ReservedValuesPolicy::default()
+	}
+}
+
+const EXTRA_RESERVED_GENESIS: [u8; 32] = [0xdd; 32];
 
 fn serve(source: &mut StackSource, descriptor: &serde_json::Value, now: i64) -> Option<Vec<u8>> {
 	let bytes = signed(descriptor);
@@ -214,6 +234,84 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 				})
 			)
 		)
+	);
+}
+
+/// The build's own reserved values hold for every copy it runs, not only the
+/// bundled one, so a newer copy that names one is refused and not stored.
+#[test]
+fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut on_extra_tld = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	on_extra_tld["tld"] = "testnet".into();
+	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
+	let refused = |reason: String| {
+		(None, stack_status(&bundled, Some(StackRefreshOutcome::Refused { reason })))
+	};
+
+	assert_eq!(
+		[&on_extra_tld, &on_extra_genesis].map(|newer| {
+			let mut source = load_reserving(&bundled, None, reserving_extras());
+			(serve(&mut source, newer, START), source.status())
+		}),
+		[
+			refused("stack uses the reserved tld testnet, which this build does not allow".into()),
+			refused(format!(
+				"stack uses the reserved genesis hash 0x{}, which this build does not allow",
+				hex::encode(EXTRA_RESERVED_GENESIS)
+			)),
+		]
+	);
+}
+
+/// A copy stored before the build reserved one of its values is not run: the
+/// bundled copy starts the host.
+#[test]
+fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let (link, _) = sign_test_descriptor(&bundled);
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
+	let mut reader = StackReader::new(Refresh::Never);
+	let record = reader
+		.fetched(
+			&pointer,
+			Served::Document { bytes: &signed(&on_extra_genesis), etag: None },
+			START,
+		)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored");
+
+	let source = load_reserving(&bundled, Some(&record), reserving_extras());
+
+	assert_eq!(source.status(), stack_status(&bundled, None));
+}
+
+/// A fresh install starts from the bundled copy, so a build whose policy
+/// refuses that copy cannot run there. A device that holds a newer stored copy
+/// is refused the same way, so the mistake shows the first time the build
+/// runs anywhere rather than only on new installs.
+#[test]
+fn a_bundled_copy_the_policy_refuses_fails_the_start_with_or_without_a_stored_copy() {
+	let bundled = published_test_descriptor(1, "first", EXTRA_RESERVED_GENESIS);
+	let (link, bytes) = sign_test_descriptor(&bundled);
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	let newer = stored_test_record(&published_test_descriptor(2, "first", TEST_STACK_PEOPLE), 0);
+
+	let start = |stored, reserved_values| {
+		StackSource::load(pointer.clone(), &bytes, stored, reserved_values, START).err()
+	};
+	let refused = || Some(StackError::ReservedGenesis { genesis_hash: EXTRA_RESERVED_GENESIS });
+
+	assert_eq!(
+		[
+			start(None, reserving_extras()),
+			start(Some(newer.as_slice()), reserving_extras()),
+			start(Some(newer.as_slice()), ReservedValuesPolicy::default()),
+		],
+		[refused(), refused(), None],
+		"the policy refuses the bundled copy on any device, and the stored copy is one it takes"
 	);
 }
 

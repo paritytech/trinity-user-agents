@@ -13,6 +13,8 @@ import {
 } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import type {
+  BundledStack,
+  ReservedValuesPolicy,
   StackCallbacks,
   StackFetchRequest,
   StackFetchResponse,
@@ -79,6 +81,25 @@ const glueUrl = new URL(
   "../../dist/wasm/web/truapi_server.js",
   import.meta.url,
 );
+/** Starts a pairing host on a stack, as the production bundle does. */
+async function pairingHostStarter(): Promise<
+  (stack: BundledStack) => Promise<unknown>
+> {
+  const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+  const { createWasmRawCallbacks } =
+    await import("../generated/host-callbacks-adapter.js");
+  initSync({ module: readFileSync(wasmUrl) });
+  const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+  return (stack) =>
+    WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      { ...hostConfig, stack },
+    );
+}
+
 // The gate lives in `require-wasm.ts` so rewriting any one suite cannot
 // quietly disable it for the others.
 const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
@@ -174,26 +195,95 @@ suite("real WASM core ↔ createMockHost bridge", () => {
   it("refuses a stack pointer without a key", async () => {
     // A copy the host fetches later is checked against the pointer's key, so
     // the production bundle refuses a pointer without one.
-    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } =
-      await import("../generated/host-callbacks-adapter.js");
-    initSync({ module: readFileSync(wasmUrl) });
-    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
-    const pointer = new URL(hostConfig.stack.pointer);
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const pointer = new URL(stack.pointer);
     pointer.searchParams.delete("key");
 
+    await expect(start({ ...stack, pointer: pointer.href })).rejects.toThrow(
+      "runtimeConfig.stack: stack pointer has no key",
+    );
+  });
+
+  it("holds a stack to the reserved values its build adds", async () => {
+    // A build that reserves previewnet's TLD or one of its genesis hashes does
+    // not start previewnet, and one that allows its stack every reserved value
+    // has none of its own to add.
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
+    const genesisHash: string = JSON.parse(atob(envelope.payload)).chains[0]
+      .genesisHash;
+    const reserving = (reservedValues: ReservedValuesPolicy) =>
+      start({ ...stack, reservedValues });
+
+    await expect(reserving({ extraTlds: ["testnet"] })).rejects.toThrow(
+      "runtimeConfig.stack: stack uses the reserved tld testnet",
+    );
     await expect(
-      WasmPairingHostRuntime.create(
-        {
-          ...createWasmRawCallbacks(createMockHost().callbacks),
-          requestWorkerTransition: () => {},
-        },
-        {
-          ...hostConfig,
-          stack: { ...hostConfig.stack, pointer: pointer.href },
-        },
+      reserving({ extraGenesisHashes: [genesisHash] }),
+    ).rejects.toThrow(
+      `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
+    );
+    await expect(
+      reserving({ allowed: true, extraTlds: ["testnet"] }),
+    ).rejects.toThrow(
+      "runtimeConfig.stack: reserved values that allow the stack every reserved value cannot reserve extra ones",
+    );
+    await expect(reserving({ allowed: true })).resolves.toBeDefined();
+  });
+
+  it("refuses a stack field it does not have", async () => {
+    // A retired or misspelt field would be read as absent, and a host on an
+    // older shape would meet a refusal that does not name its mistake.
+    const start = await pairingHostStarter();
+    const stack = { ...bundledTestStack(), allowsReservedValues: true };
+
+    await expect(start(stack)).rejects.toThrow(
+      "runtimeConfig.stack.allowsReservedValues is not a field; runtimeConfig.stack takes pointer, descriptor, reservedValues",
+    );
+  });
+
+  it("refuses reserved values it cannot read in full", async () => {
+    // A field or entry the core skipped would leave the build reserving less
+    // than it wrote, with nothing to say so.
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const path = "runtimeConfig.stack.reservedValues";
+    const refusal = async (reservedValues: unknown) => {
+      try {
+        await start({ ...stack, reservedValues } as BundledStack);
+        return "started";
+      } catch (error) {
+        return String(error);
+      }
+    };
+
+    expect(
+      await Promise.all(
+        [
+          ["testnet"],
+          { extraTLDs: ["testnet"] },
+          { allowed: "true" },
+          { extraTlds: "testnet" },
+          { extraTlds: ["paseo", null] },
+          { extraTlds: [".testnet"] },
+          { extraTlds: ["kusama"] },
+          { extraGenesisHashes: ["0x1234"] },
+          { extraGenesisHashes: [new Uint8Array(31)] },
+        ].map(refusal),
       ),
-    ).rejects.toThrow("runtimeConfig.stack: stack pointer has no key");
+    ).toEqual([
+      `${path} must be an object`,
+      `${path}.extraTLDs is not a field; ${path} takes allowed, extraGenesisHashes, extraTlds`,
+      `${path}.allowed must be a boolean`,
+      `${path}.extraTlds must be an array`,
+      `${path}.extraTlds[1] must be a string`,
+      'runtimeConfig.stack: reserved tld ".testnet" is not one of dot, paseo, testnet',
+      'runtimeConfig.stack: reserved tld "kusama" is not one of dot, paseo, testnet',
+      `${path}.extraGenesisHashes[0]: expected 32-byte hex string, got 4 hex chars`,
+      `${path}.extraGenesisHashes[0] must be exactly 32 bytes, got 31`,
+    ]);
   });
 
   it("refreshes the stack through the host's fetch and reports each change", async () => {

@@ -376,7 +376,7 @@ Core side (`feature/products/impl/.../domain/truapi/`):
   `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
   down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
-- `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
+- `TrUAPIPocketFaceStreams` takes one `claimWorker` claim per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
   renderer actions. The core serves a product's Pocket calls from its own collection, so the worker's execution takes
   no Pocket callback.

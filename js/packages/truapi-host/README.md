@@ -43,12 +43,14 @@ the host build runs:
 - `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
 - `descriptor`: the bytes of the signed copy the build bundles. The core checks
   it against the pointer's key.
-- `allowsReservedValues`: set only by a Polkadot or Polkadot-fork build. Without
-  it the core refuses Polkadot's genesis hashes and the `dot` TLD.
+- `reservedValues`: the build's `ReservedValuesPolicy`. Its doc in
+  [`src/runtime.ts`](src/runtime.ts) says what the core reserves and which
+  policies it refuses.
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
-signing host's TLD from the descriptor. It refuses a pointer without a key and a
-descriptor without an Asset Hub, People or Bulletin chain.
+signing host's TLD from the descriptor. It refuses a pointer without a key, a
+descriptor without an Asset Hub, People or Bulletin chain, and a field `stack`
+does not have.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
@@ -101,8 +103,8 @@ host on them sees a refused chain only as failing calls.
 
 The test host has no descriptor, so it passes `testStack` instead: an `id` and
 a `generation`, the network, the TLD and each chain's genesis hash. Only the
-`wasm/testing` bundle reads it.
-A runtime built from it does not refresh: it calls neither stack callback, and
+`wasm/testing` bundle reads it, and refuses a field it does not have. A runtime
+built from it does not refresh: it calls neither stack callback, and
 `stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
@@ -260,9 +262,8 @@ render cannot take the surrounding surface with it. Exactly one terminal fires
 per render: `onComplete` means the last tree delivered stands, `onError` means
 it is partial and must not be shown as final. A product that declines the
 render, a tree that fails to decode, a closed connection, and a throwing
-renderer all arrive as `onError`. An open render holds one worker reference for
-the provider's product, released when the stream ends or the disposer runs, so
-the product's worker stays up for as long as something is being drawn.
+renderer all arrive as `onError`. A surface that needs the worker takes a claim and releases it when the surface leaves.
+It can end or replace a render without changing worker demand.
 
 `publishChatAction` is the path for posted messages, commands and host-drawn
 `Actions` buttons. Each action entry point sits behind its own service's access
@@ -508,8 +509,7 @@ leaves. The host runs and stops the worker executable itself; the runtime only t
 
 | Runtime method                    | Use it to                                                        |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `acquireWorker(productId)`        | Take one reference while a holder is on screen or in flight.     |
-| `releaseWorker(productId)`        | Release one reference; with none held it is a no-op.             |
+| `claimWorker(productId)`          | Hold one reference until the returned handle's `release()` runs.  |
 | `subscribeWorkerDemand(listener)` | Learn which workers to run: current set first, then each change. |
 
 ```ts
@@ -518,8 +518,9 @@ const stop = runtime.subscribeWorkerDemand(({ productId, wanted }) => {
   else stopProductWorker(productId);
 });
 
-runtime.acquireWorker("chat-bot.dot"); // a room it serves came on screen
-runtime.releaseWorker("chat-bot.dot"); // the room left the screen
+const productId = await runtime.parseProductId("chat-bot.dot");
+const room = runtime.claimWorker(productId); // the room came on screen
+room.release(); // the room left the screen
 ```
 
 Two holders of one product hold one worker: the listener hears `wanted: true` once, on the first, and `wanted: false`
