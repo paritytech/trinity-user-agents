@@ -26,6 +26,7 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.ChatRoomState
 import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
@@ -84,13 +85,21 @@ class ProductChatHostBridge(
     override suspend fun listRooms(): List<ChatRoom> =
         chatMessaging.subscribeChatRooms().firstOrNull()?.map { it.toCoreChatRoom() } ?: emptyList()
 
-    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
-        chatMessaging.roomDeclarations(requireRoom(roomId)).orReject()?.config?.toCore() ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
+    // The core reads null as a room that the product never created, so a room that is gone by the time its
+    // declarations are read answers null too, never an error.
+    override suspend fun room(roomId: String): ChatRoomState? {
+        val room = listRooms().firstOrNull { it.roomId == roomId } ?: return null
+        val declarations = chatMessaging.roomDeclarations(ProductChatIdParameter(roomId))
+        if (declarations.exceptionOrNull() is UnknownChatRoomException) return null
+        val config = declarations.orReject()?.config?.toCore() ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
+        return ChatRoomState(room.participatingAs, config)
+    }
 
-    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {
+    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata): ChatRoomChangeOutcome {
         val room = requireRoom(roomId)
         val iconChange = metadata.icon?.let { RoomIconChange(ProductChatIcon.fromString(it).orReject()?.value) }
         chatMessaging.setRoomMetadata(room, metadata.name, iconChange, metadata.toModel()).orReject()
+        return ChatRoomChangeOutcome.APPLIED
     }
 
     override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): ChatRoomChangeOutcome {

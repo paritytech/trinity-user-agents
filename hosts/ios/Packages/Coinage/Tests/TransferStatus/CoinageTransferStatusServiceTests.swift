@@ -1,3 +1,4 @@
+import DurableTransactions
 import DurableTransactionsTestSupport
 import Foundation
 import NovaCrypto
@@ -11,6 +12,8 @@ struct CoinageTransferStatusServiceTests {
     private let chainFactory: FakePinnedChainViewFactory<CoinageChainState>
     private let database = StubDatabaseDependencyFactory()
     private let coinQuery = StubCoinOnChainQuery()
+    private let store = MockCoinageTxRepository()
+    private let group: CoinageTxGroupId = "chat-reclaim:message-1"
     private let service: CoinageTransferStatusService
     private let secret: Data
     private let publicKey: PublicKey
@@ -30,6 +33,7 @@ struct CoinageTransferStatusServiceTests {
             chainViewFactory: chainFactory,
             chainId: "status-chain",
             coinOnChainQuery: coinQuery,
+            txService: MockCoinageTxService(store: store),
             snKeyFactory: SNKeyFactory(),
             logger: nil
         )
@@ -40,7 +44,7 @@ struct CoinageTransferStatusServiceTests {
         coinQuery.setPresent(publicKey, atBlockHash: chain.finalizedHead.hash)
         database.trackedCoins.send([claimedOnBestHead()])
 
-        var iterator = service.subscribeStatuses(coinKeys: [secret]).makeAsyncIterator()
+        var iterator = service.subscribeStatuses(coinKeys: [secret], reclaimGroupId: group).makeAsyncIterator()
         let beforeFinality = try await iterator.next()
         #expect(beforeFinality?[publicKey]?.status == .claimed(finalized: false))
 
@@ -56,7 +60,7 @@ struct CoinageTransferStatusServiceTests {
         coinQuery.setPresent(publicKey, atBlockHash: chain.finalizedHead.hash)
         database.trackedCoins.send([claimedOnBestHead()])
 
-        var iterator = service.subscribeStatuses(coinKeys: [secret]).makeAsyncIterator()
+        var iterator = service.subscribeStatuses(coinKeys: [secret], reclaimGroupId: group).makeAsyncIterator()
         _ = try await iterator.next()
 
         chainFactory.emitFinalizedHead(1)
@@ -70,25 +74,73 @@ struct CoinageTransferStatusServiceTests {
     @Test("no coins to watch is a finished stream, not one waiting for a head")
     func emptyKeySetFinishes() async throws {
         var emissions = 0
-        for try await _ in service.subscribeStatuses(coinKeys: []) {
+        for try await _ in service.subscribeStatuses(coinKeys: [], reclaimGroupId: group) {
             emissions += 1
         }
         #expect(emissions == 0)
     }
+
+    @Test("a failed reclaim reads reclaimFailed until a later attempt for its coin supersedes it")
+    func failedReclaimIsSupersededByRetry() async throws {
+        coinQuery.setPresent(publicKey, atBlockHash: chain.finalizedHead.hash)
+        database.trackedCoins.send([awaitingOnChain()])
+        try await store.markHandedOff(.coin(0, publicKey))
+        try await store.register(reclaimEntry(status: .failure))
+
+        var iterator = service.subscribeStatuses(coinKeys: [secret], reclaimGroupId: group).makeAsyncIterator()
+        let failed = try await iterator.next()
+        #expect(failed?[publicKey]?.status == .reclaimFailed)
+
+        try await store.register(reclaimEntry(status: .pending))
+
+        let retried = try await iterator.next()
+        #expect(retried?[publicKey]?.status == .awaitingClaim(finalized: true))
+    }
+
+    @Test("a coin under reclaim is left out of the finalized presence read")
+    func reclaimTrackedCoinSkipsPresenceRead() async throws {
+        database.trackedCoins.send([claimedOnBestHead(consumer: .pendingSuccess)])
+
+        var iterator = service.subscribeStatuses(coinKeys: [secret], reclaimGroupId: group).makeAsyncIterator()
+        let first = try await iterator.next()
+
+        #expect(first?[publicKey]?.status == .reclaimed(finalized: false))
+        #expect(coinQuery.reads.isEmpty)
+    }
 }
 
 private extension CoinageTransferStatusServiceTests {
-    func claimedOnBestHead() -> TrackedCoin {
+    func claimedOnBestHead(consumer: CoinageTxStatus? = nil) -> TrackedCoin {
+        trackedCoin(isOnchain: false, consumer: consumer)
+    }
+
+    func awaitingOnChain() -> TrackedCoin {
+        trackedCoin(isOnchain: true, consumer: nil)
+    }
+
+    func trackedCoin(isOnchain: Bool, consumer: CoinageTxStatus?) -> TrackedCoin {
         TrackedCoin(
             coin: Coin(
                 exponent: 1,
                 derivationIndex: 0,
                 age: 3,
-                isOnchain: false,
+                isOnchain: isOnchain,
                 handoffMark: .committed,
                 publicKey: publicKey
             ),
-            state: CoinageAssetState(handedOff: true, consumerStatus: nil, minterStatus: .finalizedSuccess)
+            state: CoinageAssetState(handedOff: true, consumerStatus: consumer, minterStatus: .finalizedSuccess)
+        )
+    }
+
+    func reclaimEntry(status: CoinageTxStatus) -> CoinageTxEntry {
+        CoinageTxEntry(
+            inputs: [.coin(.reclaimed(0, publicKey))],
+            outputs: [],
+            groupId: group,
+            txHash: Data(repeating: 0xAB, count: 32),
+            checkpoint: BlockRef(number: 0, hash: Data(repeating: 0, count: 32)),
+            mortality: 300,
+            status: status
         )
     }
 }

@@ -2,27 +2,19 @@ import UIKit
 import Foundation_iOS
 import UIKitExt
 import ChainRegistry
-import Products
 
 @MainActor
 final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
     let context: WalletFlowContextProtocol
 
     private let moduleNavigator: ModuleNavigating
-    private let fundingDomainProvider: FundingDomainProviding
 
     init(
         context: WalletFlowContextProtocol,
-        fundingDomainProvider: FundingDomainProviding,
         moduleNavigator: ModuleNavigating = ModuleNavigator()
     ) {
         self.context = context
-        self.fundingDomainProvider = fundingDomainProvider
         self.moduleNavigator = moduleNavigator
-    }
-
-    func showProduct(page: ProductPage) {
-        moduleNavigator.presentProduct(page: page)
     }
 
     func showBackupSettings() {
@@ -33,7 +25,11 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
         guard let searchView = SearchAccountViewFactory.createView(
             for: chainAsset,
             coinageServicing: context.coinageService,
-            fundingDomainProvider: fundingDomainProvider
+            fundingOpener: ServiceFundingOpener(
+                service: context.fundingService,
+                activity: context.fundingActivityCenter,
+                logger: Logger.shared
+            )
         ) else {
             return
         }

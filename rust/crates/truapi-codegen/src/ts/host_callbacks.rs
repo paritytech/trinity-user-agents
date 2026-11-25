@@ -1049,13 +1049,15 @@ fn validate_adapter_codec_boundary(
 
 	match &method.return_shape.inner {
 		PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
-			validate_adapter_codec_boundary_type(
-				ok,
-				codec_types,
-				local_codec_types,
-				"return value",
-				&method.name,
-			)?;
+			if optional_codec_result(ok, codec_types, local_codec_types).is_none() {
+				validate_adapter_codec_boundary_type(
+					ok,
+					codec_types,
+					local_codec_types,
+					"return value",
+					&method.name,
+				)?;
+			}
 		},
 		PlatformInner::Stream(item) => {
 			validate_adapter_codec_boundary_type(
@@ -1087,11 +1089,33 @@ fn validate_adapter_codec_boundary_type(
 	Ok(())
 }
 
+/// The codec of a result that is an optional codec payload, `Option<Codec>`.
+///
+/// The adapter encodes the value a host answers and passes `undefined` on as
+/// it is, so the WASM bridge reads `Uint8Array | undefined` and decodes the
+/// bytes. `None` for any other type.
+fn optional_codec_result<'a>(
+	ty: &'a TypeRef,
+	codec_types: &BTreeSet<String>,
+	local_codec_types: &BTreeSet<String>,
+) -> Option<&'a str> {
+	let TypeRef::Option(inner) = ty else { return None };
+	match inner.as_ref() {
+		TypeRef::Named { name, .. }
+			if codec_types.contains(name) || local_codec_types.contains(name) =>
+		{
+			Some(name)
+		},
+		_ => None,
+	}
+}
+
 /// The WASM adapter only knows how to translate a direct codec payload:
 /// `Codec` maps to raw `Uint8Array` and the adapter emits `Codec.dec/enc`.
 /// Containers such as `Vec<Codec>`, `Option<Codec>`, or `(Codec, ...)` would
 /// still be declared as raw bytes at the WASM boundary, but no generated code
 /// knows how to encode or decode the container. Reject those shapes at codegen.
+/// The one exception is a result that [`optional_codec_result`] names.
 fn contains_non_direct_codec_type(
 	ty: &TypeRef,
 	codec_types: &BTreeSet<String>,
@@ -1141,6 +1165,11 @@ fn adapter_unary_impl(
 		.collect::<Vec<_>>()
 		.join(", ");
 	let call = format!("{host_method}({args})");
+	if let Some(ty) = optional_codec_result(ok, codec_types, local_codec_types) {
+		return Ok(format!(
+			"async ({params}) => {{ const value = await {call}; return value === undefined ? undefined : {ty}.enc(value); }}"
+		));
+	}
 	let body = match ok {
 		TypeRef::Named { name: ty, .. }
 			if codec_types.contains(ty) || local_codec_types.contains(ty) =>
