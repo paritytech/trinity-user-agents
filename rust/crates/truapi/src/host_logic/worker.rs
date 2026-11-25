@@ -39,8 +39,8 @@ pub trait WorkerController: Send + Sync {
 	fn worker_crashing(&self, _product_id: &ProductId, _crashes: u32) {}
 }
 
-/// An exit more than this long after the previous one starts a new run of
-/// crashes, in milliseconds.
+/// An attempt that ran and exits more than this long after the previous exit
+/// starts a new run of crashes, in milliseconds.
 const CRASH_RUN_WINDOW_MS: u64 = 60_000;
 /// The wait before restarting a worker after its second crash in a run; it
 /// doubles with each further crash.
@@ -76,6 +76,8 @@ struct Demand {
 	/// ID of the latest attempt started for these holds. Reports from older
 	/// attempts are ignored.
 	attempt_id: u64,
+	/// Whether that attempt has run, as [`WorkerLedger::running`] reported.
+	ran: bool,
 }
 
 /// Counts and the transitions they have produced but not yet reported.
@@ -104,8 +106,9 @@ impl LedgerState {
 			WorkerTransition::Start => {
 				self.last_attempt_id += 1;
 				let attempt_id = self.last_attempt_id;
-				self.references.get_mut(product_id).expect("start requires demand").attempt_id =
-					attempt_id;
+				let demand = self.references.get_mut(product_id).expect("start requires demand");
+				demand.attempt_id = attempt_id;
+				demand.ran = false;
 				self.pending
 					.push_back(LedgerEvent::Start { product_id: product_id.clone(), attempt_id });
 			},
@@ -137,10 +140,11 @@ impl WorkerLedger {
 			if state.closed {
 				return;
 			}
-			let demand = state
-				.references
-				.entry(product_id.clone())
-				.or_insert(Demand { count: 0, attempt_id: 0 });
+			let demand = state.references.entry(product_id.clone()).or_insert(Demand {
+				count: 0,
+				attempt_id: 0,
+				ran: false,
+			});
 			demand.count += 1;
 			if demand.count != 1 {
 				return;
@@ -151,8 +155,9 @@ impl WorkerLedger {
 	}
 
 	/// Release one reference. The last one requests [`WorkerTransition::Stop`]
-	/// through the installed controller. Releasing a product with no reference
-	/// is a no-op.
+	/// through the installed controller and ends the product's run of crashes,
+	/// which belongs to the holds that suffered it. Releasing a product with
+	/// no reference is a no-op.
 	pub fn release(&self, product_id: &ProductId) {
 		{
 			let mut state = self.state();
@@ -166,6 +171,7 @@ impl WorkerLedger {
 			// The last one: an entry is dropped rather than left at zero, so
 			// every stored count is at least one and none of this can wrap.
 			state.references.remove(product_id);
+			state.crashes.remove(product_id);
 			state.request(product_id, WorkerTransition::Stop);
 		}
 		self.drain();
@@ -178,7 +184,9 @@ impl WorkerLedger {
 	/// has been replaced.
 	///
 	/// Otherwise the exit joins the product's run of crashes, which starts
-	/// anew after [`CRASH_RUN_WINDOW_MS`] without one. The first crash of a
+	/// anew after [`CRASH_RUN_WINDOW_MS`] without one if the attempt ran. An
+	/// attempt that never ran always joins, since the time it took to fail
+	/// says nothing about the worker being well. The first crash of a
 	/// run requests [`WorkerTransition::Start`] at once and answers `None`.
 	/// A later one answers the wait before the caller calls
 	/// [`Self::restart`]: [`RESTART_BACKOFF_FIRST`], doubling with each
@@ -192,12 +200,13 @@ impl WorkerLedger {
 			if attempt_id != demand.attempt_id {
 				return None;
 			}
+			let ran = demand.ran;
 			let run = state.crashes.entry(product_id.clone()).or_insert(CrashRun {
 				crashes: 0,
 				backoff: Backoff::new(RESTART_BACKOFF_FIRST, RESTART_BACKOFF_LONGEST),
 				last_exit_ms: now_ms,
 			});
-			if now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
+			if ran && now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
 				run.crashes = 0;
 				run.backoff.reset();
 			}
@@ -235,6 +244,20 @@ impl WorkerLedger {
 			state.request(product_id, WorkerTransition::Start);
 		}
 		self.drain();
+	}
+
+	/// The host reports that this attempt of the product's worker runs.
+	///
+	/// A report from an attempt that has been replaced is ignored.
+	pub fn running(&self, product_id: &ProductId, attempt_id: u64) {
+		let mut state = self.state();
+		let current = state
+			.references
+			.get_mut(product_id)
+			.filter(|demand| demand.attempt_id == attempt_id);
+		if let Some(demand) = current {
+			demand.ran = true;
+		}
 	}
 
 	/// Whether this specific attempt still serves current demand.
@@ -295,6 +318,12 @@ impl WorkerLedger {
 	#[cfg(test)]
 	pub fn count(&self, product_id: &ProductId) -> usize {
 		self.state().references.get(product_id).map_or(0, |demand| demand.count)
+	}
+
+	/// Whether the product's current attempt was reported as running.
+	#[cfg(test)]
+	pub fn ran(&self, product_id: &ProductId) -> bool {
+		self.state().references.get(product_id).is_some_and(|demand| demand.ran)
 	}
 
 	/// Request queued transitions through the controller, one thread at a time and in

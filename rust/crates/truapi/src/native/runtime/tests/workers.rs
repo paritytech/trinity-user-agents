@@ -92,11 +92,14 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 		runtime.current_worker_execution(product.clone()).is_none(),
 		"acknowledgement alone cannot serve a render"
 	);
+	let ledger = runtime.runtime.worker_ledger();
+	assert!(!ledger.ran(&product), "a worker that cannot serve yet counts as never having run");
 	let mut socket = connect(&owner).await;
 	crate::test_support::wait_until(
 		|| runtime.current_worker_execution(product.clone()).is_some(),
 		"connected worker published",
 	);
+	assert!(ledger.ran(&product), "the ledger must hear of a running worker to end a crash run");
 	let consumer = runtime.current_worker_execution(product.clone()).unwrap();
 	chat.release();
 	chat.release();
@@ -217,6 +220,25 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 		.publish_chat_action(text_chat_action("new"))
 		.unwrap();
 	assert_eq!(*views.stops.lock().unwrap(), vec![old.id()]);
+}
+
+#[tokio::test]
+async fn a_start_that_takes_too_long_is_stopped_and_retried() {
+	let (runtime, views, product) = setup();
+	let callbacks: Arc<dyn HostCallbacks> = Arc::new(EventCallbacks::new());
+	*runtime.workers.lock() =
+		Some(crate::native::runtime::workers::Session::new_with_startup_deadline(
+			&callbacks,
+			Some(views.clone()),
+			Duration::from_millis(50),
+		));
+	let _claim = runtime.claim_worker(product);
+	let first = views.latest();
+	crate::test_support::wait_until(
+		|| views.starts.lock().unwrap().len() == 2,
+		"the attempt that never ran was replaced once its deadline passed",
+	);
+	assert_eq!(views.stops.lock().unwrap().first(), Some(&first.id()));
 }
 
 #[tokio::test]

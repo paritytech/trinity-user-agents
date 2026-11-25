@@ -111,25 +111,33 @@ fn a_worker_that_exits_while_needed_is_started_again() {
 
 // A worker that keeps crashing waits longer before each restart, and the
 // host hears it is not working on the run's third crash; a quiet minute
-// starts a new run.
+// starts a new run, but only after a worker that ran.
 #[test]
 fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
-	let exited = |now_ms| ledger.exited(&product, current(&ledger, &product), now_ms);
+	let exited = |now_ms| {
+		let attempt = current(&ledger, &product);
+		ledger.running(&product, attempt);
+		ledger.exited(&product, attempt, now_ms)
+	};
 	let waits: Vec<_> = (0..12).map(|n| exited(n * 10)).collect();
 	let waiting = current(&ledger, &product);
 	let restarts_before = recorder.seen().len();
 	ledger.restart(&product, waiting);
 	ledger.restart(&product, waiting);
-	let after_quiet = exited(11 * 10 + CRASH_RUN_WINDOW_MS + 1);
+	let quiet = CRASH_RUN_WINDOW_MS + 1;
+	let after_quiet = exited(11 * 10 + quiet);
+	ledger.running(&product, waiting);
+	let never_ran = ledger.exited(&product, current(&ledger, &product), 11 * 10 + 2 * quiet);
 
 	assert_eq!(
 		(
 			waits,
 			recorder.seen().len() - restarts_before,
 			after_quiet,
+			never_ran,
 			recorder.crashing.lock().expect("recorder mutex poisoned").clone()
 		),
 		(
@@ -150,6 +158,9 @@ fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 			// The restart once, not twice, then the new run's at once.
 			2,
 			None,
+			// A start that fails slowly is still the worker failing, whatever
+			// an attempt it replaced reports.
+			Some(1_000),
 			vec![("a.dot".to_string(), CRASH_NOTICE_AFTER)]
 		)
 	);
@@ -168,8 +179,13 @@ fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
 	ledger.release(&product);
 	ledger.restart(&product, waiting);
 	ledger.acquire(&product);
+	assert_eq!(
+		ledger.exited(&product, current(&ledger, &product), 2),
+		None,
+		"a run of crashes ends with the holds that suffered it"
+	);
 	let replaced = current(&ledger, &product);
-	assert!(ledger.exited(&product, replaced, 2).is_some());
+	assert!(ledger.exited(&product, replaced, 3).is_some());
 	ledger.release(&product);
 	ledger.acquire(&product);
 	ledger.restart(&product, replaced);
@@ -180,6 +196,7 @@ fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
 			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Stop),
+			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Start),
 			("a.dot".to_string(), WorkerTransition::Stop),
 			("a.dot".to_string(), WorkerTransition::Start),
@@ -473,11 +490,12 @@ fn an_older_crash_or_backoff_cannot_restart_a_replacement() {
 	assert_eq!(ledger.exited(&product, waiting, 1), Some(1_000));
 	ledger.release(&product);
 	ledger.acquire(&product);
+	ledger.exited(&product, attempt(), 2);
 	let replacement = attempt();
-	assert_eq!(ledger.exited(&product, replacement, 2), Some(2_000));
+	assert_eq!(ledger.exited(&product, replacement, 3), Some(1_000));
 	let before = recorder.seen();
 	ledger.restart(&product, waiting);
-	assert_eq!(ledger.exited(&product, first, 3), None);
+	assert_eq!(ledger.exited(&product, first, 4), None);
 	assert_eq!(recorder.seen(), before);
 	ledger.restart(&product, replacement);
 	assert_ne!(attempt(), replacement);

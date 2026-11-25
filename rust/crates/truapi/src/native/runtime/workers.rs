@@ -2,6 +2,7 @@
 
 mod registry;
 
+use core::time::Duration;
 use std::sync::{Arc, Weak};
 
 use futures::{StreamExt, channel::mpsc};
@@ -23,7 +24,7 @@ use registry::{Registry, Removed, Signal};
 /// An attempt runs once its module has started and its bridge connection is authenticated. The
 /// time counts from the attempt's start, and again each time a running attempt loses its
 /// connection.
-const STARTUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(90);
+const STARTUP_DEADLINE: Duration = Duration::from_secs(90);
 
 /// Starts and disposes the WebView of each worker attempt.
 ///
@@ -83,6 +84,7 @@ pub struct Session {
 	registry: Registry,
 	worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
 	callbacks: Arc<dyn HostCallbacks>,
+	startup_deadline: Duration,
 }
 
 impl Session {
@@ -91,7 +93,21 @@ impl Session {
 		callbacks: &Arc<dyn HostCallbacks>,
 		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
 	) -> Self {
-		Self { registry: Registry::default(), worker_host, callbacks: callbacks.clone() }
+		Self::new_with_startup_deadline(callbacks, worker_host, STARTUP_DEADLINE)
+	}
+
+	/// [`Self::new`], with `startup_deadline` in place of [`STARTUP_DEADLINE`].
+	pub fn new_with_startup_deadline(
+		callbacks: &Arc<dyn HostCallbacks>,
+		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+		startup_deadline: Duration,
+	) -> Self {
+		Self {
+			registry: Registry::default(),
+			worker_host,
+			callbacks: callbacks.clone(),
+			startup_deadline,
+		}
 	}
 }
 
@@ -126,7 +142,7 @@ impl NativeWorkerAttempt {
 		let stale =
 			|| HostRejection::Rejected { reason: "worker startup is no longer pending".into() };
 		let runtime = self.runtime.upgrade().ok_or_else(stale)?;
-		let mut registry = self.current(&runtime).ok_or_else(stale)?;
+		let mut session = self.current(&runtime).ok_or_else(stale)?;
 		let open = || {
 			runtime.open_execution(
 				callbacks,
@@ -134,7 +150,7 @@ impl NativeWorkerAttempt {
 				Some(self.clone()),
 			)
 		};
-		registry.attach(&self.product, open).ok_or_else(stale)
+		session.registry.attach(&self.product, open).ok_or_else(stale)
 	}
 
 	/// Acknowledge that the module of this attempt's execution started. Its authenticated
@@ -154,29 +170,32 @@ impl NativeWorkerAttempt {
 }
 
 impl NativeWorkerAttempt {
-	fn deadline(self: &Arc<Self>, runtime: &NativeTrUApiHostRuntime) -> BackgroundTask {
+	fn deadline(
+		self: &Arc<Self>,
+		runtime: &NativeTrUApiHostRuntime,
+		after: Duration,
+	) -> BackgroundTask {
 		let attempt = self.clone();
 		BackgroundTask::spawn(&runtime.spawner, async move {
-			tokio::time::sleep(STARTUP_DEADLINE).await;
+			tokio::time::sleep(after).await;
 			attempt.startup_timeout();
 		})
 	}
 
-	/// The session's registry, locked, while the ledger counts this attempt as the product's
-	/// current one.
+	/// The session, locked, while the ledger counts this attempt as the product's current one.
 	///
 	/// The product's active entry is then this attempt's: an attempt is created in the lock hold
 	/// that enters it, and the ledger's IDs only grow.
 	fn current<'runtime>(
 		&self,
 		runtime: &'runtime NativeTrUApiHostRuntime,
-	) -> Option<MappedMutexGuard<'runtime, Registry>> {
+	) -> Option<MappedMutexGuard<'runtime, Session>> {
 		let session = runtime.worker_session()?;
 		runtime
 			.runtime
 			.worker_ledger()
 			.is_current(&self.product, self.id)
-			.then(|| MappedMutexGuard::map(session, |session| &mut session.registry))
+			.then_some(session)
 	}
 
 	fn fail(
@@ -187,7 +206,7 @@ impl NativeWorkerAttempt {
 		let Some(runtime) = self.runtime.upgrade() else { return };
 		let removed = self
 			.current(&runtime)
-			.and_then(|mut registry| remove(&mut registry, &self.product));
+			.and_then(|mut session| remove(&mut session.registry, &self.product));
 		let Some(removed) = removed else { return };
 		tracing::warn!(
 			product = %self.product,
@@ -210,15 +229,20 @@ impl NativeWorkerAttempt {
 	/// Withdraw a disconnected worker until its WebView authenticates a new connection.
 	pub fn disconnected(self: &Arc<Self>) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
-		if let Some(mut registry) = self.current(&runtime) {
-			registry.lost(&self.product, || self.deadline(&runtime));
+		if let Some(mut session) = self.current(&runtime) {
+			let after = session.startup_deadline;
+			session.registry.lost(&self.product, || self.deadline(&runtime, after));
 		}
 	}
 
 	fn update_readiness(&self, signal: Signal) -> bool {
 		let Some(runtime) = self.runtime.upgrade() else { return false };
-		self.current(&runtime)
-			.is_some_and(|mut registry| registry.ready(&self.product, signal))
+		let Some(mut session) = self.current(&runtime) else { return false };
+		let used = session.registry.ready(&self.product, signal);
+		if session.registry.running(&self.product).is_some() {
+			runtime.runtime.worker_ledger().running(&self.product, self.id);
+		}
+		used
 	}
 }
 
@@ -268,7 +292,7 @@ impl WorkerController for Controller {
 				runtime: self.0.clone(),
 			});
 			let webview = Arc::new(WebView { host, attempt });
-			let timeout = webview.attempt.deadline(&runtime);
+			let timeout = webview.attempt.deadline(&runtime, session.startup_deadline);
 			// A stop racing startup must reach the native host after its start callback returns.
 			let previous = session.registry.begin(product_id, timeout, webview.clone());
 			(previous, webview)
