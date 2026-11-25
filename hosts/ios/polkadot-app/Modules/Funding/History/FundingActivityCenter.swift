@@ -1,63 +1,94 @@
 import Foundation
 import FoundationExt
 import Observation
-import os
 import TrUAPIHost
 
+/// Hears which session's flow the router has on screen.
+@MainActor
+protocol FundingFlowTracking: AnyObject {
+    func flowOpened(entryId: String)
+    func flowClosed(entryId: String)
+}
+
+/// What the screens around the funding overlay ask of the session's funding
+/// lists: the tab bar's funding screens attach their router, the CASH card
+/// shows the sessions in flight before starting another, and the tab bar
+/// asks whether a session's flow is on screen.
+@MainActor
+protocol FundingActivityCenterProtocol: FundingFlowTracking, Sendable {
+    /// Starts following the sessions, shown through `router`.
+    func attach(router: FundingFlowRouting)
+    /// Shows the sessions in flight in `direction` before starting another.
+    /// Returns false, showing nothing, when none is.
+    func showPending(direction: FundingDirection) -> Bool
+    /// Whether session `entryId`'s flow is on screen.
+    func isShowingFlow(entryId: String) -> Bool
+}
+
 /// The CASH card's funding lists: the sessions in flight and the ended ones,
-/// as the funding service lists them.
+/// as the funding service lists them, and the sessions whose flow is on
+/// screen.
 @MainActor
 @Observable
-final class FundingActivityCenter {
-    static let shared = FundingActivityCenter()
-
+final class FundingActivityCenter: FundingActivityCenterProtocol {
     private(set) var inFlight: [FundingActivityItem] = []
     private(set) var history: [FundingActivityItem] = []
     /// Sessions that left In progress while the lists were showing, with when
     /// they did, so their rows arrive in the history with their completion.
     private(set) var justFinished: [String: Date] = [:]
 
+    @ObservationIgnored private let service: FundingServiceProtocol
     @ObservationIgnored private let clock: any Clock<Duration>
     @ObservationIgnored private let logger: LoggerProtocol
+    @ObservationIgnored private weak var router: FundingFlowRouting?
+    @ObservationIgnored private var shownFlows: Set<String> = []
     @ObservationIgnored private var followingTask: Task<Void, Never>?
     /// Draws the sessions again when one turns to taking longer.
     @ObservationIgnored private var longerTask: Task<Void, Never>?
 
-    init(clock: any Clock<Duration> = ContinuousClock(), logger: LoggerProtocol = Logger.shared) {
+    init(
+        service: FundingServiceProtocol,
+        clock: any Clock<Duration> = ContinuousClock(),
+        logger: LoggerProtocol
+    ) {
+        self.service = service
         self.clock = clock
         self.logger = logger
     }
 
-    /// The service and router are built with the runtime, off the main
-    /// thread, so they are handed over through a lock rather than through the
-    /// main actor.
-    nonisolated static func attach(service: FundingServiceProtocol, router: FundingFlowRouting) {
-        attached.withLock { attached in
-            attached.service = service
-            attached.router = router
-        }
-        Task { @MainActor in shared.follow() }
+    func attach(router: FundingFlowRouting) {
+        self.router = router
+        follow()
     }
 
     /// Shows a row's session: in flight on its progress screen, ended on its
     /// detail screen.
     func openDetail(_ item: FundingActivityItem) {
-        Self.attached.withLock { $0.router }?.reopen(entryId: item.id)
+        router?.reopen(entryId: item.id)
     }
 
-    /// Shows the sessions in flight in `direction` before starting another.
-    /// Returns false, showing nothing, when none is.
     func showPending(direction: FundingDirection) -> Bool {
-        guard inFlight.contains(where: { $0.direction == direction }),
-              let router = Self.attached.withLock({ $0.router })
-        else { return false }
+        guard inFlight.contains(where: { $0.direction == direction }), let router else { return false }
+
         router.showPending(direction: direction)
         return true
     }
 
+    func isShowingFlow(entryId: String) -> Bool {
+        shownFlows.contains(entryId)
+    }
+
+    func flowOpened(entryId: String) {
+        shownFlows.insert(entryId)
+    }
+
+    func flowClosed(entryId: String) {
+        shownFlows.remove(entryId)
+    }
+
     /// Shows every session, in flight and ended.
     func showHistory() {
-        Self.attached.withLock { $0.router }?.showHistory()
+        router?.showHistory()
     }
 
     /// Reads the lists again, as when a session turns to taking longer.
@@ -67,18 +98,9 @@ final class FundingActivityCenter {
 }
 
 private extension FundingActivityCenter {
-    struct Attached {
-        weak var service: FundingServiceProtocol?
-        weak var router: FundingFlowRouting?
-    }
-
-    nonisolated static let attached = OSAllocatedUnfairLock(initialState: Attached())
-
     func follow() {
-        guard let service = Self.attached.withLock({ $0.service }) else { return }
-
         followingTask?.cancel()
-        followingTask = Task { [weak self, logger] in
+        followingTask = Task { [weak self, service, logger] in
             do {
                 for try await entries in service.subscribeEntries() {
                     self?.show(entries)
