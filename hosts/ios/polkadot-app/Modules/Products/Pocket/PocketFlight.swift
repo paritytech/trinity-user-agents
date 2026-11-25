@@ -122,6 +122,13 @@ final class PocketFlight: NSObject, UIViewControllerAnimatedTransitioning {
         animator.startAnimation()
     }
 
+    static func insertBackdrop(below view: UIView, in container: UIView) -> UIView {
+        let backdrop = UIView(frame: container.bounds)
+        backdrop.backgroundColor = .bgSurfaceMain
+        container.insertSubview(backdrop, belowSubview: view)
+        return backdrop
+    }
+
     /// The animator a fade runs on: the flight's clock, or a short crossfade under Reduce Motion.
     static func fallbackAnimator(reduceMotion: Bool) -> UIViewPropertyAnimator {
         reduceMotion
@@ -212,13 +219,6 @@ extension PocketFlight: BackSwipeScrubbing {
 }
 
 private extension PocketFlight {
-    static func insertBackdrop(below view: UIView, in container: UIView) -> UIView {
-        let backdrop = UIView(frame: container.bounds)
-        backdrop.backgroundColor = .bgSurfaceMain
-        container.insertSubview(backdrop, belowSubview: view)
-        return backdrop
-    }
-
     /// Places both screens for the flight and measures the way from the item's place to its slot, which is nil
     /// when the Pocket cannot place the item.
     func prepare(_ context: UIViewControllerContextTransitioning) -> CGPoint? {
