@@ -6,8 +6,8 @@
 // primitives and byte blobs pass through unchanged.
 
 import {
+  ChatRoomRegistrationStatus,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -25,10 +25,9 @@ import {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
-  HostWorkerBeginOperationResponse,
   RemotePermissionRequest,
 } from "@parity/truapi";
-import type { GenericError } from "@parity/truapi";
+import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
   CoreStorageKey,
@@ -37,6 +36,7 @@ import {
   HostContactLookup,
   HostContactMatches,
   HostContactPick,
+  HostContactUsernames,
   HostScan,
   PermissionDecision,
   ProductContext,
@@ -57,6 +57,7 @@ export interface RawCallbacks {
   chainConnect: ChainConnect;
   createChatRoom?(
     product: Uint8Array,
+    roomId: string,
     request: Uint8Array,
   ): Promise<Uint8Array>;
   registerChatBot?(
@@ -75,6 +76,7 @@ export interface RawCallbacks {
   ): (() => void) | void;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
+  contactUsernames?(product: Uint8Array): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
@@ -109,11 +111,10 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
-  beginOperation(product: Uint8Array, label: string): Promise<Uint8Array>;
-  endOperation(product: Uint8Array, id: number): Promise<void>;
   read(key: string): Promise<Uint8Array | null | undefined>;
   write(key: string, value: Uint8Array): Promise<void>;
   clear(key: string): Promise<void>;
+  clearProduct(productId: ProductId): Promise<void>;
   subscribeStorage(
     key: string,
     sendItem: (item?: Uint8Array) => void,
@@ -144,10 +145,11 @@ export function createWasmRawCallbacks(
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
-          createChatRoom: async (product, request) =>
-            HostChatCreateRoomResponse.enc(
+          createChatRoom: async (product, roomId, request) =>
+            ChatRoomRegistrationStatus.enc(
               await chat.createChatRoom(
                 ProductContext.dec(product),
+                roomId,
                 HostChatCreateRoomRequest.dec(request),
               ),
             ),
@@ -187,6 +189,10 @@ export function createWasmRawCallbacks(
           pickContact: async (product) =>
             HostContactPick.enc(
               await contacts.pickContact(ProductContext.dec(product)),
+            ),
+          contactUsernames: async (product) =>
+            HostContactUsernames.enc(
+              await contacts.contactUsernames(ProductContext.dec(product)),
             ),
         }
       : {}),
@@ -280,22 +286,12 @@ export function createWasmRawCallbacks(
         sendItem,
         sendError,
       ),
-    beginOperation: async (product, label) =>
-      HostWorkerBeginOperationResponse.enc(
-        await callbacks.productOperations.beginOperation(
-          ProductContext.dec(product),
-          label,
-        ),
-      ),
-    endOperation: async (product, id) =>
-      await callbacks.productOperations.endOperation(
-        ProductContext.dec(product),
-        id,
-      ),
     read: async (key) => await callbacks.productStorage.read(key),
     write: async (key, value) =>
       await callbacks.productStorage.write(key, value),
     clear: async (key) => await callbacks.productStorage.clear(key),
+    clearProduct: async (productId) =>
+      await callbacks.productStorage.clearProduct(productId),
     subscribeStorage: (key, sendItem, sendError) =>
       driveResultStream(
         callbacks.productStorage.subscribeStorage(key),

@@ -12,9 +12,10 @@
 
 /// A versioned message envelope.
 ///
-/// The first encoded byte is `version() - 1`, and every version from 1 to
-/// [`LATEST`](Self::LATEST) exists. The dispatcher relies on this to refuse a
-/// request in a newer version.
+/// The first encoded byte is `version() - 1`, and every version from the first
+/// one to [`LATEST`](Self::LATEST) exists. A message that a later protocol
+/// version adds starts at that version. The dispatcher relies on this to refuse
+/// a request in a newer version.
 pub trait Versioned: Sized {
 	/// The newest version's payload. Handlers operate exclusively on this.
 	type Latest;
@@ -73,7 +74,6 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
-pub mod worker;
 
 #[cfg(test)]
 mod tests;

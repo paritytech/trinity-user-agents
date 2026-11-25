@@ -181,10 +181,10 @@ itself:
 
 That script installs the SDK bridge and the shared `js/container` sandbox
 synchronously. Keep it before application scripts, without `async` or `defer`.
-Updated SDKs use the injected `__HOST_API_CLIENT__` across reconnects. Older SDKs
-can still start through the `__HOST_API_PORT__` adapter but require a page reload
-after a disconnect. SDK calls and sandbox permission checks share one host
-WebSocket and its temporary permissions.
+Updated SDKs build their own client over the injected `__HOST_API_TRANSPORT__`
+and keep it across reconnects. Older SDKs use the `__HOST_API_PORT__` adapter,
+which survives a reconnect too. SDK calls and sandbox permission checks share
+one host WebSocket and its temporary permissions.
 `/script` uses the same fetch and WebSocket permission checks in Bun, and the
 XHR wrapper when that API is available. Dev keeps automatic approvals, and the
 app server handles assets and hot reload. `--app-port` names the development
@@ -838,8 +838,10 @@ Scripts under `js/scripts/` include:
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
-  list so `contacts.pick` has someone to return. An empty spec is an empty list,
-  which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
+  list so `contacts.pick` has someone to return. Each name is also the username
+  `contacts.usernames` serves to the game product, so it is a bare dotNS label
+  such as `alice` or `alice.07`, and the core drops any other name. An empty
+  spec is an empty list, which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
   the picker offers; the approval surface asks about it like any other action,
   so a headless run approves it and an interactive one does not.
 
@@ -1033,11 +1035,15 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
 copy was signed with another key (every derived account, or the namespace every
 session is stored under, would change; remove the copy to bundle it on purpose),
-and a built-in network's copy the CLI cannot run on.
+and a built-in network's copy the CLI cannot run on over either chain backend.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
-copy that differs from the one at `--out` only in fields truapi-host does not read
-leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
-has every option.
+copy that differs from the one at `--out` only in fields neither truapi-host nor
+the core reads, and names the same light specs, leaves it in place and reports it
+as current. `--light-specs <file>` also fetches the light specs of the relay,
+People, Asset Hub and Bulletin, checks them against the descriptor and writes
+them to `<file>` by `sha256`; the script passes it for each stack with a
+`stacks/light-specs/<name>.json`, which the binary ships.
+[SPEC.md](SPEC.md#67-top-level-stack) has every option.
 
 ## Statement-store allowance
 
@@ -1137,7 +1143,8 @@ that reports a genesis other than the one it is routed as is an error; for a bui
 it reports that the stack restarted from genesis and which descriptor is in use, after
 fetching the published descriptor once more when it could not be fetched before. A
 `NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
-within 3 seconds is logged and left to fail on first use.
+within 3 seconds is logged and left to fail on first use. On the light client the
+light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
 with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
 Polkadot, whose signed descriptor the binary ships as a reference, with every node the
@@ -1192,9 +1199,12 @@ the CLI creates and cleans up a unique temporary Unix socket.
 `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
-command uses the selected backend. The light client is slower than RPC,
-supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
-claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
+command uses the selected backend. The light client takes its chain specs from
+the stack's descriptor, so it runs every built-in network and any `--stack`. The
+binary ships the specs of the built-in networks, so they need no spec server; a
+`--stack` naming other specs fetches them once and keeps them under the state
+directory. It is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
+run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 

@@ -33,18 +33,18 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
-		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
-		StackStatus,
+		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
+		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,
+		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 };
 
 use truapi::{
 	latest::{
 		AllocatableResource, ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection, FundingQuote,
-		FundingQuoteRefusal, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoomRegistrationStatus, CodeFormat,
+		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
 		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
 		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
@@ -56,8 +56,7 @@ use truapi::{
 		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
 		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
@@ -104,7 +103,8 @@ pub struct SigningHostConfig {
 	pub host: HostIdentity,
 	/// The stack the host runs. Every reserved RFC-0022 identity the wallet
 	/// derives ends in its TLD, which has to equal the People chain's
-	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
+	/// `NetworkSuffix.NetworkSuffix`. For a stack a [`StackRefresh`] handed out
+	/// the core reports a difference in [`StackStatus::mismatches`].
 	pub stack: Stack,
 	/// Whether the host draws materials. Off by default: `new` leaves it off.
 	pub materials_enabled: bool,
@@ -780,12 +780,16 @@ impl ProductStorageKey {
 
 	/// Encode the stable opaque key used by existing host callbacks.
 	pub fn encode(&self) -> String {
-		format!(
-			"{PRODUCT_STORAGE_KEY_PREFIX}{}:{}:{}",
-			self.product_id.as_str().len(),
-			self.product_id,
-			self.key
-		)
+		format!("{}{}", Self::owner_prefix(&self.product_id), self.key)
+	}
+
+	/// The prefix every encoded key `product_id` owns starts with, and no key
+	/// of another product does.
+	///
+	/// The product id is length-prefixed, so one product's prefix never
+	/// matches a key owned by a product whose id merely starts with it.
+	pub fn owner_prefix(product_id: &ProductId) -> String {
+		format!("{PRODUCT_STORAGE_KEY_PREFIX}{}:{product_id}:", product_id.as_str().len())
 	}
 }
 
@@ -823,6 +827,19 @@ pub trait ProductStorage: Send + Sync {
 
 	/// Clear a value at a key.
 	async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError>;
+
+	/// Remove every value `product_id` owns. Idempotent.
+	///
+	/// The core calls this when it clears the product's state. A host that
+	/// keeps one shared store removes every key starting with
+	/// [`ProductStorageKey::owner_prefix`]; a host that separates storage by
+	/// product drops that product's store. Values another product wrote stay.
+	/// Every subscription to a removed key then sees it empty, as after
+	/// [`Self::clear`].
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Emit `key`'s current value, then each later change from any of the
 	/// product's runtimes. `key` is namespaced exactly as [`Self::read`] takes
@@ -1020,12 +1037,19 @@ pub trait CoreAdmin: Send + Sync {
 	/// [`Self::get_session_chat_identity_key`].
 	async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, GenericError>;
 
-	/// Read this device's X25519 encryption secret, for hosts that run device
-	/// sync against the peer's [`SessionUiInfo::device_enc_public_key`].
+	/// Read this device's X25519 encryption secret, for hosts that encrypt
+	/// their own chat and device-sync traffic.
 	///
-	/// Generated and persisted on first read, so the returned key is stable for
-	/// the install and matches the public key peers were told to address.
-	async fn get_device_encryption_key(&self) -> Result<Bytes32, GenericError>;
+	/// The key behind [`SessionUiInfo::device_enc_public_key`]: decrypting with
+	/// anything else misses what contacts send. The account holder decides
+	/// which key that is. A signing host serves its install-wide key,
+	/// generated and persisted on first read. A pairing host serves the key
+	/// the wallet registered for it at pairing, `None` before pairing and
+	/// rotated per login like [`Self::get_device_statement_key`].
+	///
+	/// Deliberately not on [`SessionUiInfo`], for the reason given on
+	/// [`Self::get_session_chat_identity_key`].
+	async fn get_device_encryption_key(&self) -> Result<Option<Bytes32>, GenericError>;
 
 	/// Read `product_id`'s hard-subtree public key, so a host can name the
 	/// account a review will sign with instead of showing a bare derivation
@@ -1590,17 +1614,25 @@ pub struct SessionUiInfo {
 	pub chat_public_key: Option<Bytes32>,
 	/// X25519 public key of the wallet device that answered pairing. Hosts
 	/// running their own encrypted device-sync channel key it against this.
-	pub device_enc_public_key: Option<Bytes32>,
+	/// `None` on a signing host, which has no paired wallet device.
+	pub peer_device_enc_public_key: Option<Bytes32>,
 	/// Statement-store account id the paired wallet signs every session-channel
 	/// statement with. Whether it is scoped to the wallet device or to the
 	/// wallet identity is the wallet's choice, so hosts must not treat it as a
-	/// device discriminator; use [`Self::device_enc_public_key`] for that.
+	/// device discriminator; use [`Self::peer_device_enc_public_key`] for that.
 	pub peer_statement_account_id: Option<Bytes32>,
 	/// Statement-store account id this device advertises in the pairing
 	/// proposal; the paired wallet registers the statement-store allowance for
 	/// it, and peers address this host on topics derived from it. Rotated per
 	/// login. Secret at [`CoreAdmin::get_device_statement_key`].
 	pub device_statement_account_id: Option<Bytes32>,
+	/// X25519 public key of this device, which the user's other devices and
+	/// contacts encrypt to. A signing host's is its install-wide key; a pairing
+	/// host's is the key it advertised next to
+	/// [`Self::device_statement_account_id`], which the wallet registered and
+	/// announces, rotated per login. Secret at
+	/// [`CoreAdmin::get_device_encryption_key`].
+	pub device_enc_public_key: Option<Bytes32>,
 	/// Short username from the dotNS identity record on Asset Hub.
 	pub lite_username: Option<String>,
 	/// Fully qualified username from the dotNS identity record on Asset Hub.
@@ -1995,12 +2027,17 @@ pub trait PreimageHost: Send + Sync {
 /// anything a host derives from product-supplied values remain host-owned.
 #[async_trait::async_trait]
 pub trait ChatPlatform: Send + Sync {
-	/// Create or resolve a product-scoped native chat room.
+	/// Create or resolve a product-scoped native chat room. `room_id` is the id
+	/// that the core derived from the product and `request.room_id_source`, or,
+	/// for a product built against the earlier client, the id that the product
+	/// gave. The host stores the room under this id, and every later call names
+	/// the room with it.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError>;
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError>;
 
 	/// Register or resolve a product-scoped native chat bot. Host-owned in the
 	/// same way rooms are.
@@ -2153,8 +2190,9 @@ pub struct FundingQuoteList {
 }
 
 /// Why an amount cannot go ahead.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingAmountIssue {
 	/// A withdrawal of more than the user can spend.
 	NotEnoughBalance,
@@ -2229,7 +2267,9 @@ pub enum FundingPresentOutcome {
 #[async_trait::async_trait]
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
+	/// host itself when `product` is `None`. A cancel while the overlay is up
+	/// drops this call, and the host takes the overlay down when it is
+	/// dropped.
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,
@@ -2387,10 +2427,26 @@ pub enum ExpandedCardFaceOutcome {
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the card, so the request had no effect.
+	/// The user is moving or turning the card, so the request had no effect.
 	UserMoving,
 	/// The host draws no card face.
 	Unsupported,
+}
+
+/// What the host did with a request to turn the expanded card.
+#[derive(Debug, Clone, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardTurnOutcome {
+	/// The requested side is now up, including when it already was.
+	Applied,
+	/// The Widget is not shown under its card right now.
+	NotPresented,
+	/// The user is moving or turning the card, so the request had no effect.
+	UserMoving,
+	/// The host cannot turn cards at all.
+	Unsupported,
+	/// The card has no back to show right now.
+	NoBack,
 }
 
 /// Host control of the card face drawn under an opened card's Widget.
@@ -2405,34 +2461,13 @@ pub trait ExpandedCardHost: Send + Sync {
 		&self,
 		shown: bool,
 	) -> Result<ExpandedCardFaceOutcome, GenericError>;
-}
 
-/// Host store for a product's pending operations, which the host uses to keep
-/// the product's worker runtime alive. Reached only through the `Worker`
-/// protocol trait, so non-worker products never call these.
-#[async_trait::async_trait]
-pub trait ProductOperations: Send + Sync {
-	/// Record a pending operation. `label` is a host log and UI hint, empty
-	/// when the product gave none.
-	///
-	/// The returned id must be unique among this product's open operations.
-	/// The core keys the worker reference an operation holds by that id, so an
-	/// id already open for the product records nothing the second time, and
-	/// ending it once drops the demand both were holding. Ids may repeat
-	/// across products, and may be reused once an operation has ended.
-	async fn begin_operation(
+	/// Turn the card above the calling Widget so its back (`true`) or its
+	/// front (`false`) is up.
+	async fn set_expanded_card_back_shown(
 		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-	/// Remove a pending operation. Idempotent: an unknown or already-ended id
-	/// returns `Ok`, so a retry after an ambiguous failure is safe.
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), HostWorkerOperationError>;
+		shown: bool,
+	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
 /// Contact handles the core needs turned back into accounts, and the key they
@@ -2440,13 +2475,14 @@ pub trait ProductOperations: Send + Sync {
 ///
 /// A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
 /// being its 32 raw bytes. The host holds the accounts, so it is the one that
-/// can match: hash each contact's account under `handle_key`, or keep that hash
-/// as an indexed column for the session, and look the handles up.
+/// can match: hash each contact's account under `handle_key` and look the
+/// handles up. The key differs per product and per session, so a host that
+/// keeps the hashes keeps them per key.
 #[derive(Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostContactLookup {
-	/// The key every handle here was minted under. Per session, and never
-	/// given to a product.
+	/// The key every handle here was minted under. Per session and product,
+	/// and never given to a product.
 	pub handle_key: Bytes32,
 	/// The handles to resolve, in the order the answer must follow.
 	pub handles: Vec<Bytes32>,
@@ -2486,15 +2522,32 @@ pub enum HostContactPick {
 	Unsupported,
 }
 
+/// The usernames a host lists for the game product.
+#[derive(Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostContactUsernames {
+	/// The dotNS usernames of the unblocked contacts the picker would offer,
+	/// in host order, each the bare label with no top-level domain.
+	Listed {
+		/// One username per contact that has one.
+		usernames: Vec<String>,
+	},
+	/// This host resolves contacts but does not list their usernames. The core
+	/// answers the product `Unsupported`.
+	Unsupported,
+}
+
 /// Host-owned contact picker, drawn from the chat lists the host's chat
 /// extensions hold.
 ///
 /// Optional, and listed on [`OptionalPlatform`] as [`ChatPlatform`] is.
 ///
 /// The host owns the UI and the list. It draws the names, so nothing it renders
-/// reaches the product, and the list never crosses to the core either: the core
-/// asks only about the handles a transaction names. A host omits contacts the
-/// user has blocked, from the picker and from lookups alike.
+/// reaches the product, and the accounts on the list never cross to the core:
+/// the core asks only about the handles a transaction names. Usernames cross
+/// only through [`Self::contact_usernames`], for the game product. A
+/// host omits contacts the user has blocked, from the picker, from lookups and
+/// from usernames alike.
 #[async_trait::async_trait]
 pub trait ContactsPlatform: Send + Sync {
 	/// Resolve `lookup.handles` to the contacts they name.
@@ -2532,6 +2585,22 @@ pub trait ContactsPlatform: Send + Sync {
 		_product: &ProductContext,
 	) -> Result<HostContactPick, GenericError> {
 		Ok(HostContactPick::Unsupported)
+	}
+
+	/// List the dotNS usernames of the unblocked contacts the picker would
+	/// offer.
+	///
+	/// The core calls this only for the game product, so a host does not
+	/// check `product` itself: it says who is asking and is not a filter.
+	/// Answer from the contacts the host already holds, without a prompt.
+	/// Defaults to [`HostContactUsernames::Unsupported`], so a host that lists
+	/// nothing gives its products a truthful answer. A JS host passes it with
+	/// the other two contacts callbacks, or the whole group counts as absent.
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<HostContactUsernames, GenericError> {
+		Ok(HostContactUsernames::Unsupported)
 	}
 }
 
@@ -2594,7 +2663,6 @@ pub trait Platform:
 	+ ThemeHost
 	+ LocaleHost
 	+ PreimageHost
-	+ ProductOperations
 {
 }
 
@@ -2612,7 +2680,6 @@ impl<T> Platform for T where
 		+ ThemeHost
 		+ LocaleHost
 		+ PreimageHost
-		+ ProductOperations
 {
 }
 

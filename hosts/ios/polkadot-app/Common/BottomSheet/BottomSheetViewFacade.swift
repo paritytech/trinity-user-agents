@@ -50,18 +50,22 @@ enum BottomSheetViewFacade {
         controller.preferredContentSize = CGSize(width: 0, height: totalHeight)
     }
 
+    /// A sheet that takes the full height between the safe area insets, for
+    /// a flow with screens of its own rather than one sized to its content.
+    static func setupFullHeightSheet(from controller: UIViewController) {
+        let factory = AutosizedSheetPresentationFactory(configuration: Self.defaultConfiguration(autosized: false))
+
+        controller.modalTransitioningFactory = factory
+        controller.modalPresentationStyle = .custom
+        roundCorners(of: controller)
+    }
+
     static func setupBottomSheet(from controller: UIViewController, preferredHeight: CGFloat? = nil) {
         let factory = AutosizedSheetPresentationFactory(configuration: Self.defaultConfiguration(autosized: true))
 
         controller.modalTransitioningFactory = factory
         controller.modalPresentationStyle = .custom
-
-        if #available(iOS 26, *) {
-            controller.view.cornerConfiguration = .uniformCorners(radius: .fixed(DSRadii.extraLarge))
-        } else {
-            controller.view.layer.masksToBounds = true
-            controller.view.layer.cornerRadius = DSRadii.extraLarge
-        }
+        roundCorners(of: controller)
 
         guard let preferredHeight else {
             return
@@ -69,5 +73,16 @@ enum BottomSheetViewFacade {
         let totalHeight = BottomSheetStyleConstants.backgroundInsets.bottom +
             BottomSheetStyleConstants.backgroundInsets.top + preferredHeight
         controller.preferredContentSize = CGSize(width: 0, height: totalHeight)
+    }
+}
+
+private extension BottomSheetViewFacade {
+    static func roundCorners(of controller: UIViewController) {
+        if #available(iOS 26, *) {
+            controller.view.cornerConfiguration = .uniformCorners(radius: .fixed(DSRadii.extraLarge))
+        } else {
+            controller.view.layer.masksToBounds = true
+            controller.view.layer.cornerRadius = DSRadii.extraLarge
+        }
     }
 }

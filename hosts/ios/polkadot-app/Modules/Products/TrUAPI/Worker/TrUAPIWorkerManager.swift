@@ -8,27 +8,14 @@ import TrUAPIHost
 import UIKitExt
 
 /// Runs product workers for as long as the core's reference ledger wants them.
-///
-/// A handler asks for the worker it needs with ``ensureWorker(for:)``, which
-/// registers the request with the core and returns once the worker it decided
-/// to run is up. The core counts those requests and reports only the
-/// transitions across zero: a `.start` boots the product's worker behind its
-/// one Worker execution, a `.stop` tears it down.
 protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     /// May arrive on any thread, including re-entrantly from inside a request,
     /// so the work is handed off rather than done here.
     func demandChanged(productId: ProductId, transition: WorkerTransition)
 
-    /// Registers a request for `productId`'s worker and returns its execution
-    /// once the core has let the worker start.
-    ///
-    /// The request is the caller's from the moment it asks, including when this
-    /// throws, so it is given back with ``releaseWorker(for:)`` either way.
-    /// A handler can be disposed while it is still waiting here, and a release
-    /// that crossed the answer must not be the one that is lost.
-    func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol
+    func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming
 
-    func releaseWorker(for productId: ProductId)
+    func waitUntilReady(_ productId: ProductId) async throws
 
     /// What `productId`'s worker is built against, for the life of the session
     /// rather than of any one worker.
@@ -87,12 +74,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private final class Boot: Sendable {}
 
     /// What the transition queue applies: the ledger's transitions, the
-    /// reboot of a worker whose engine died, and the reload of one whose
-    /// archive changed. Reboots and reloads share the queue so that neither
+    /// exit of a worker whose engine died, and the reload of one whose
+    /// archive changed. Exits and reloads share the queue so that neither
     /// overtakes a stop the ledger sent before it.
     private enum Command: Sendable {
         case transition(WorkerTransition)
-        case reboot(Boot)
+        case exited(Boot)
         case reload
     }
 
@@ -140,23 +127,17 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         Task { await self.beginFollowing() }
     }
 
-    nonisolated func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
-        try references().acquireWorker(productId: productId)
+    nonisolated func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming {
+        try references().claim(productId)
+    }
 
-        return try await withTimeout(startupWindow) { [self] in
-            for try await execution in executions(of: productId) {
-                if let execution { return execution }
+    nonisolated func waitUntilReady(_ productId: ProductId) async throws {
+        try await withTimeout(startupWindow) { [self] in
+            for try await execution in executions(of: productId) where execution != nil {
+                return
             }
 
             throw TrUAPIWorkerError.noWorker(productId)
-        }
-    }
-
-    nonisolated func releaseWorker(for productId: ProductId) {
-        do {
-            try references().releaseWorker(productId: productId)
-        } catch {
-            logger.error("[truapi] \(productId)'s worker request could not be given back: \(error)")
         }
     }
 
@@ -174,7 +155,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         for await (productId, command) in transitions.stream {
             switch command {
             case let .transition(transition): await apply(transition, to: productId)
-            case let .reboot(boot): await reboot(productId, after: boot)
+            case let .exited(boot): await exited(productId, after: boot)
             case .reload: await restart(productId)
             }
         }
@@ -258,7 +239,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             held[productId] = .running(Running(boot: boot, runtime: runtime))
 
             try await runtime.start { [weak self] in
-                self?.transitions.continuation.yield((productId, .reboot(boot)))
+                self?.transitions.continuation.yield((productId, .exited(boot)))
             }
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
@@ -277,10 +258,11 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
                 issueDiagnostic.recordFailure(for: "\(productId)", error: error, counters: [:])
             }
             logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
-            // A failed boot left in the map would swallow every later start,
-            // while the core keeps counting the reference the holder took and
-            // so never sends another stop to clear it.
+            // A failed boot left in the map would swallow every later start.
+            // The core still counts the reference the holder took, so it is
+            // told, and starts the worker again after its backoff.
             await stop(productId)
+            reportExit(of: productId)
         }
     }
 
@@ -299,12 +281,22 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         start(productId)
     }
 
-    private func reboot(_ productId: ProductId, after boot: Boot) async {
+    /// The core still counts the references that wanted the worker, so it is
+    /// told the worker is gone and sends `.start` again if any remain.
+    private func exited(_ productId: ProductId, after boot: Boot) async {
         guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
-        logger.error("[truapi] \(productId)'s worker engine died, rebooting it")
+        logger.error("[truapi] \(productId)'s worker engine died")
         await stop(productId)
-        start(productId)
+        reportExit(of: productId)
+    }
+
+    private func reportExit(of productId: ProductId) {
+        do {
+            try references().workerExited(productId: productId)
+        } catch {
+            logger.error("[truapi] \(productId)'s worker exit could not be reported: \(error)")
+        }
     }
 
     private func stop(_ productId: ProductId) async {

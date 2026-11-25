@@ -73,6 +73,25 @@ pub struct ApiDefinition {
 	pub framework_types: Vec<TypeDef>,
 }
 
+impl ApiDefinition {
+	/// Resolve protocol types named by platform callbacks.
+	///
+	/// A plain name refers to the latest payload, including when a wire
+	/// envelope has the same name. An explicitly versioned name keeps its type.
+	pub fn platform_types(&self) -> BTreeMap<&str, &TypeDef> {
+		let mut types: BTreeMap<_, _> =
+			self.types.iter().map(|ty| (ty.name.as_str(), ty)).collect();
+		for ty in &self.types {
+			let Some((version, name)) = split_versioned_type_name(&ty.name) else { continue };
+			let previous = types.get(name).and_then(|known| split_versioned_type_name(&known.name));
+			if previous.is_none_or(|(known, _)| version > known) {
+				types.insert(name, ty);
+			}
+		}
+		types
+	}
+}
+
 /// Trait extracted from the rustdoc index: name, methods, and rustdoc.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TraitDef {
@@ -137,6 +156,9 @@ pub struct WireAttrs {
 	pub host_initiated: bool,
 	/// Excluded from the public SDK; available to container and host bindings.
 	pub internal: bool,
+	/// The generated client sends an older request version when the fields
+	/// the newer one added are absent, so hosts that predate it keep serving.
+	pub request_fallback: bool,
 	/// Method frame discriminant.
 	pub id: Option<u8>,
 }
@@ -284,7 +306,7 @@ struct ItemCandidate {
 
 /// This crate's newtypes over a private `String`. rustdoc omits the field, so
 /// codegen supplies their string representation while retaining the name.
-const STRING_NEWTYPES: &[&str] = &["ProductId"];
+pub const STRING_NEWTYPES: &[&str] = &["ProductId"];
 
 /// Maps rustdoc item ids and full paths to the output type names used in
 /// generated code, disambiguated when several types share a simple name.
@@ -960,6 +982,9 @@ fn extract_wire_attrs(docs: &str) -> WireAttrs {
 		}
 		if line.trim_end() == "@wire_internal" {
 			attrs.internal = true;
+		}
+		if line.trim_end() == "@wire_request_fallback" {
+			attrs.request_fallback = true;
 		}
 		const NEEDLE: &str = "@wire_id=";
 		let Some(start) = line.find(NEEDLE).map(|index| index + NEEDLE.len()) else {

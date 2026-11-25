@@ -701,7 +701,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You Sent"
+            "value" : "You sent"
           }
         }
       }
@@ -1215,6 +1215,28 @@
         }
       }
     },
+    "transfer.reclaim.action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaim funds"
+          }
+        }
+      }
+    },
+    "transfer.reclaim.retryAction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try to reclaim again"
+          }
+        }
+      }
+    },
     "transfer.status.amount.differs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1226,13 +1248,35 @@
         }
       }
     },
+    "transfer.status.amount.received" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You received %1$(received)@ of %2$(sent)@"
+          }
+        }
+      }
+    },
+    "transfer.status.amount.receivedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ received %2$(received)@ of %3$(sent)@"
+          }
+        }
+      }
+    },
     "transfer.status.claiming" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claiming"
+            "value" : "Adding to your balance"
           }
         }
       }
@@ -1243,7 +1287,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Detecting"
+            "value" : "Incoming…"
           }
         }
       }
@@ -1253,8 +1297,8 @@
       "localizations" : {
         "en" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Transaction failed"
+            "state" : "translated",
+            "value" : "Payment didn’t arrive"
           }
         }
       }
@@ -1265,7 +1309,84 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claimed"
+            "value" : "Added to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.notSent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not sent"
+          }
+        }
+      }
+    },
+    "transfer.status.receivedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received by %1$(username)@"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaimed"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimedPartially" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaimed %1$(amount)@"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaiming failed"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaiming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaiming funds…"
+          }
+        }
+      }
+    },
+    "transfer.status.returnedToSender" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claim period expired. Sender can reclaim the funds"
           }
         }
       }
@@ -1276,7 +1397,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending"
+            "value" : "Sending…"
           }
         }
       }
@@ -1287,7 +1408,18 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sent, waiting to be claimed"
+            "value" : "Sent · not received yet"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recipient didn't claim it in time"
           }
         }
       }

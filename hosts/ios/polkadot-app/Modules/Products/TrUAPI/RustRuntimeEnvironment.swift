@@ -21,7 +21,7 @@ struct RustRuntimeEnvironment {
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
     let issueDiagnostics: ProductRuntimeIssueDiagnostics
-    let logger: LoggerProtocol
+    let logger: CoreEventLoggerProtocol
 
     /// The rust pieces a runtime needs: the opened execution and its chain
     /// connection pool for lifecycle control.
@@ -139,7 +139,6 @@ private extension RustRuntimeEnvironment {
             productId: productId,
             permissionGuard: ProductPermissionGuard.create(
                 router: routers.productsRouter,
-                fundingProvider: FundingDomainProvider(hostProvider: hostProvider),
                 osAsker: osPermissionAsker
             ),
             osPermissionAsker: osPermissionAsker,

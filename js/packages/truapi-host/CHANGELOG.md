@@ -1,5 +1,281 @@
 # @parity/truapi-host
 
+## 0.33.0
+
+### Major Changes
+
+- 568580c: Add the Chat Extension v2 methods and types to `chat`. A product changes a room with `setRoomMetadata` (name,
+  description, icon and the text of an empty room), `setRoomPreview` (sort time, badge, which can be an image, pinning,
+  the preview line or an activity line such as "Ben is typing"), `deleteRoom` and `updateFeed`, which also deletes a
+  message. The preview line comes from a `ChatPreviewMessage`, a message without reactions that names the message it
+  replies to by id. The host asks a product questions that the product answers through `onMessagesQuery`, `onUserAction`
+  and `onReactionsQuery`. Each handler returns one result, `ok` with the answer or `err` with the failure. A user action
+  can delete a message. A message body can be `Custom`: the product draws it through `Renderer::render`, like a custom
+  message it posts with `postMessage`.
+
+  These methods are new in v0.2, so a v0.1 client cannot call them. Their errors name each failure and have no
+  catch-all: a host failure arrives as `HostFailure`, and a request or an answer that does not pass the core's checks as
+  `MalformedFrame`. A user action in a room that does not keep its messages in the product fails with `NotAvailable`.
+
+  The host makes room ids. `createRoom` version 2 takes `roomIdSource`, the product's own name for the room, and
+  `config`, the parts of the room the product serves (its messages, who reacted and the reports of what the user saw).
+  It answers `roomId`, the blake2b-256 hash of the product and that source. Every later call names the room with that
+  `roomId`, so a product that names a room with its own string must keep the id that `createRoom` returns. A host's
+  `createChatRoom` callback receives the derived `roomId` and answers only the registration status. Each `createRoom`
+  replaces the configuration of the room, also for a room that exists, so a product declares its rooms again each time
+  it starts. A room that `createRoom` version 1 creates keeps the `roomId` that the product gives, because a version 1
+  answer carries no id and the product names the room with that id in its later calls. A host's `createChatRoom`
+  callback then receives that id. `postMessage` and `setRoomFooter` keep their shapes and versions, so a product built
+  against the earlier client calls them the same way through the client a host injects.
+
+- 9522d1b: The mock host reports a chain as supported only when it serves it: `onlyServedChains` (Rust
+  `MockConfig::only_served_chains`) defaults to `true`, so `featureSupported` answers from `servedChains`. The test
+  fixture fills `servedChains` from `networks` and `chain`, and otherwise from the chains in `runtimeConfig.testStack`.
+  An explicit `mock.servedChains` replaces that list. A suite that proxies a chain through `mock.chainProxies` without
+  declaring it lists its genesis in `mock.servedChains`, and `onlyServedChains: false` reports every chain as supported.
+- 2d5fa6f: A contact handle from `contacts.pick` is scoped to the calling product: the same contact has a different
+  handle in every product, and the same one on every host of the user. A handle from another product, or one picked
+  before this release, does not resolve. `HostContactLookup.handle_key` is per session and product, so a host that keeps
+  handle hashes keeps them per key.
+- d6f465b: A `TestStack` needs an `id` and a `generation`: the stack's identity and the run of its chains, which a host
+  with a bundled descriptor takes from the stack's pointer and descriptor. `mockTestStack()` uses `mock` for both. A
+  stack the fixture builds from `networks`, or `liveChain` returns, names its `generation` after its genesis hashes in
+  lowercase, and keeps `mock` while those are the mock chains.
+
+### Minor Changes
+
+- 8f2509f: Native hosts recover NFT purses after a reinstall. While a session is active, the core reads the
+  installations the seed registered in the stack's `AccountDataStore` contract and walks their purses on Asset Hub
+  together: the main purse, then purse ids from 0 until 10 in a row are empty under every earlier installation, each
+  purse until more than 1000 keys in a row hold nothing. Keys that hold an NFT return under their purse, and a purse
+  with no record is recreated, owned by Root and named `Recovered purse <id>`. Creating a purse waits while any
+  registered installation is unfinished. Hosts change nothing.
+- 83afd9e: `notifications.sendPushNotification` takes an optional `title`, shown in place of the product id. Only a
+  trusted product may set one. The core trims whitespace and zero width characters from the title, drops one that is
+  then empty and the title any other product sends, and the call still succeeds. The client sends a request without a
+  title as v0.1, so hosts that predate v0.2 keep serving it; a titled request needs a host that serves v0.2. A domain
+  error comes back tagged `V2` whichever version was sent.
+
+  Hosts receive the title as `HostPushNotificationRequest.title`, which is absent unless the core let it through. The
+  app hosts show the product id when it is absent. The mock host records it as `NotificationLogEntry.title`, and the CLI
+  prints it above the notification text.
+
+- 8f2509f: The `trinity-stack` crate's `Descriptor::contract_address` returns the address of a contract the descriptor
+  names in `contracts`. The core's `Stack` exposes the `AccountDataStore` contract, where each seed registers its
+  installations, as `account_data_store`, or `None` when the stack names none.
+  `truapi-host stack bundle --skip-same-projection` counts `contracts` as read, so a published copy that changes only
+  them is still written.
+
+### Patch Changes
+
+- 15eb4eb: The native durability engine composes transactions: a deferred transaction can wait for other transactions on
+  the same chain, and is built once each has taken effect at a best block. Each dependency either cascades its failure
+  to the dependent or leaves the dependent to its policy, which sees how every dependency ended. A dependent whose
+  attempt fails while a dependency has not taken effect, as after a reorg, waits for it again. The JavaScript API and
+  wire protocol are unchanged.
+- be155df: Rust embedders hold the user's root entropy as `truapi::host_logic::root_entropy::RootEntropy`, built once
+  from the bytes a host hands over. Every derivation is a method on it, and local session activation takes it in place
+  of raw bytes. The wasm and UniFFI entry points still take bytes. Derived keys and addresses are unchanged.
+- 405f7be: Simplify the native durability engine: each domain is registered with its chain, oracle and one policy, a
+  recovery pass asks each oracle once without the domain's history, the builder alone starts and stops one worker per
+  domain, each transaction cools down on its own before a rebuild, groups only label transactions for listing, and a
+  transaction has at most one follower. Transactions of an unregistered domain stay as they are instead of being
+  abandoned. Deferred (formerly scheduled) transactions keep their status names. The JavaScript API and wire protocol
+  are unchanged.
+- Updated dependencies [cc9c407]
+- Updated dependencies [c9bd7c0]
+- Updated dependencies [090d276]
+- Updated dependencies [568580c]
+- Updated dependencies [b59c82d]
+- Updated dependencies [4ad5f6a]
+- Updated dependencies [3b2e486]
+- Updated dependencies [3080698]
+- Updated dependencies [db2a45b]
+- Updated dependencies [9522d1b]
+- Updated dependencies [2d5fa6f]
+- Updated dependencies [83afd9e]
+- Updated dependencies [9f83c66]
+- Updated dependencies [fef6583]
+- Updated dependencies [8f2509f]
+  - @parity/truapi@0.33.0
+
+## 0.32.0
+
+### Major Changes
+
+- 90dbd11: Product account operations on both host roles go through `HostAccounts` over an `AccountHolder`:
+  `WalletAccountHolder` on a signing host, or `RemoteAccountHolder` on a paired host, which sends wallet operations to
+  the phone. `ProductAuthority` is removed. `HostAccounts` binds each call to the calling product and the current wallet
+  activation, confirms signing, transaction, VRF and allocation requests with the user before the account holder acts on
+  them, and keeps the grants it was issued.
+  - A paired host answers `NotAvailable` for an allocated resource whose grant it cannot keep, instead of failing the
+    whole allocation.
+  - A paired host keeps its Bulletin allowance key when a refresh fails, and replaces it once the phone issues a new
+    one.
+  - A signing host keeps the Bulletin allowance key it issued for the current wallet activation, and serves later
+    requests for it from memory.
+  - The VRF signing prompt waits for the user's answer on both roles. The call's deadline bounds only the exchange with
+    the account holder that follows.
+
+- dd86dab: The host runtime gains `clearProductState(productId)`, which forgets one product: its grants, Allow once
+  answers and keys, and the values it wrote to product storage. Stop the product's executions first, since a value
+  written after the clear is kept. Storage is cleared through a new required callback,
+  `productStorage.clearProduct(productId)`, which removes every value the product owns and is idempotent. A subscription
+  to a removed key then sees it empty.
+
+  Every key the core hands a host for a product's values starts with
+  `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`. A host with one shared store removes the keys with
+  that prefix. A host that keeps a store per product drops that product's store.
+
+  The Swift and Kotlin bridges gain `clearProductState(productId:)` on `TrUAPIHostRuntime` and
+  `clearProductStorage(productId:)` on `HostBridge`. The core calls it on the bridge the runtime was built with, since a
+  product that is not running has no bridge of its own. A bridge that does not override it rejects the call, so
+  `clearProductState` fails on that host.
+
+- f73c18e: The game product, Jollity (`dim2` on every network), reads the dotNS usernames of the unblocked chat contacts
+  of the user with `contacts.usernames({})`, which answers `{ usernames }` without a prompt. Any other product, and a
+  host that lists no usernames, gets `Unsupported`. While nobody is signed in, Jollity gets a domain error with the
+  reason `No active session`.
+
+  A JS host serving contacts passes `contactUsernames` beside `contacts` and `pickContact`. The `contacts` host
+  callbacks now require `contactUsernames`, so a TypeScript host that serves contacts fails to compile until it adds it,
+  and one that cannot list usernames returns `{ tag: "Unsupported" }`. Native hosts get `contactUsernames` on
+  `ContactsHostBridge` with a default that answers `Unsupported`.
+
+- 7774baa: `RendererNode::Materials` replaces `Effect`, which is removed with `EffectProps` and `Rainbow`. A `Materials`
+  node names materials by ID with their arguments and holds the content they draw over. Hosts draw it as its children
+  for now, and refuse a tree that still carries `Effect`.
+
+  `system.featureSupported` takes a `Materials` question (format version, features). Products ask it before sending
+  materials. A host answers yes only when it draws them. A host built before this release cannot read the question and
+  answers with an error, which products read as no.
+
+  `renderer.failureSubscribe` reports `Materials` nodes that fell back, on a host that answers yes.
+
+  Native hosts map `RendererNode.materials` and answer `HostFeatureSupportedRequest.materials` in their exhaustive
+  switches.
+
+- 704fb2e: `getDeviceEncryptionKey()` and `SessionUiInfo.deviceEncPublicKey` name this device's own encryption key. On a
+  paired host it is the key from the pairing QR, which the wallet registered: `undefined` before pairing, and new with
+  every login. The paired wallet device's key is `SessionUiInfo.peerDeviceEncPublicKey`.
+- 543ec13: Native hosts consume public profiles through a cancellable finite stream with explicit resolution options.
+  Android avatar views collect cached and refreshed metadata independently of Coil image loading and preserve the
+  displayed image during replacement.
+
+  Breaking for Rust and Kotlin consumers: one-shot public-profile resolution is unavailable. Rust callers use
+  `observe_public_profile(username, options)` and Kotlin callers collect `observePublicProfile(username, options)`.
+  Swift callers use `resolvePublicProfile(username:options:)`, which returns an `AsyncThrowingStream`.
+
+- 47f60df: The wasm core fetches newer copies of its Trinity stack descriptor while it runs. Breaking for a host that
+  uses the raw glue: `WasmPairingHostRuntime`, `WasmSigningHostRuntime` and `WasmProductRuntime` have no constructor.
+  Build each with `await WasmPairingHostRuntime.create(callbacks, hostConfig)` instead, which resolves once the core has
+  read its stack record from the host's core storage, or after a few seconds without it. Hosts built with
+  `createWebWorkerPairingHostRuntime` need no change.
+
+  A host passes two raw callbacks to `create`, typed as `StackCallbacks`: `fetchStackDescriptor` makes the HTTP request,
+  and `stackChanged` receives a `StackStatus` at start and on each change. The core asks for a fetch once its copy is an
+  hour old, which is at start unless its stored copy was fetched less than an hour ago, and on `refreshStack()`, and
+  `stackStatus()` returns the current status. A `WasmProductRuntime` built on its own does not refresh. The core keeps
+  the last copy it verified in core storage under the new `StackRecord` key. A newer copy that changes a genesis hash,
+  the network, the TLD or the generation sets `restartRequired` once it is stored, and applies once the runtime is built
+  again. `StackStatus.generation` names the generation the core runs, for a host to key cached chain data by. Without
+  `fetchStackDescriptor` the core stays on the copy it started from. The `/web` worker runtime does not pass these
+  callbacks yet.
+
+- 4ea389e: The core refuses a stack without an Asset Hub chain, as it does one without People or Bulletin.
+  `TestStack.assetHub` is required, and the native `PublicProfileError` has no `AssetHubNotConfigured` case.
+
+### Minor Changes
+
+- fb1ed6d: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- bdc258a: Native hosts keep materials in the core database. The core reads a material from Bulletin itself, over its
+  own Bulletin connection, and keeps only text that hashes to its ID. Materials a saved Pocket face draws are never
+  evicted, and the rest share 4 MiB. At start-up the core fetches the materials saved faces draw and the database lacks.
+  Hosts change nothing.
+- ec663ec: Native hosts can resolve the materials of any tree: `resolveMaterials` on the runtime and on a product
+  execution reports, for each `Materials` node, whether it is loading, ready with its shaders for the platform (Metal on
+  iOS, GLSL ES elsewhere), or drawn plain and why, and takes the app's reports of shaders or images it could not use.
+  `materialNoise` and `checkMaterialImage` go with it. Products now get `Renderer::failureSubscribe`, and the materials
+  question answers yes when the host sets `HostRuntimeConfig.materialsEnabled`, which is off by default, so hosts change
+  nothing until they turn it on.
+- 56f7a7e: Native hosts keep the Trinity stack descriptor current while the runtime runs. A host installs
+  `NativeStackCallbacks` with `set_stack_callbacks`: `fetch_stack_descriptor` makes the HTTP request and `stack_changed`
+  receives a `StackStatus` at start and on each change. `stack_status()` returns the current status and
+  `refresh_stack()` asks for a fetch now. The core keeps the last copy it verified in its database and starts from it
+  when it is newer than the bundled one. Without the callbacks the core stays on the copy it started from.
+- 8c61cfa: `nftPurse.listCheques` returns every cheque the calling product created on this host, oldest first, exactly
+  as `createCheque` returned it, with the purse its items left, its destination and its creation time. A product that
+  lost a cheque can deliver it again or revoke it.
+- fb1ed6d: The core serves the card back. `expandedCard.setBackShown` reaches the host through the new
+  `HostBridge.setExpandedCardBackShown`, which defaults to `unsupported` and answers with the new
+  `ExpandedCardTurnOutcome`. The core keeps a card's back beside its front, and `pocketCardFace` takes a side that the
+  Kotlin and Swift wrappers default to the front. A product connection receives a press on a back only once it has drawn
+  that back. The core empties the bytes of an inline image a host must not draw, in rendered trees and in face files, so
+  it draws as empty space.
+- fb1ed6d: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+- afa0811: Native hosts observe public profile metadata as a finite stream. Required resolution options let callers
+  force a dotNS lookup and suppress stale stored values independently. Stored metadata arrives first unless suppressed;
+  a changed chain result follows when the record needs refreshing or the caller forces a lookup. An unchanged result
+  renews freshness and is emitted only when no stored value was emitted. The core retains up to 1,000 records by last
+  use, independently of its one-hour freshness policy. Hosts cache verified image bytes separately by CID through the
+  Bulletin image loader. Native observations report completion and typed errors and support cancellation; the Rust WASM
+  stream resolves one profile without a record cache.
+
+### Patch Changes
+
+- 1fa2e92: Every open action subscription of a product connection now hears each action. Before, a new `actionSubscribe`
+  on the same connection silently replaced the previous one, so a product that subscribed more than once only heard
+  actions on its newest subscription. Closed subscriptions are dropped, and with none open, actions are still buffered
+  for the next subscriber. Actions buffered while no subscription was open still go only to the next subscription, not
+  to every one opened after it; a follow-up will handle those. A product that calls `actionSubscribe` again without
+  ending its old stream now gets each action on both streams, where the old stream used to end.
+- 3ba496e: Native hosts keep only materials that pass format version 1, read as Shaderlab's reference parser reads it. A
+  material of a format version or feature the core does not read is reported as unsupported, and a broken one as
+  invalid. Hosts change nothing.
+- 3b6942c: Native hosts build each material's shaders: the GLSL ES 3.00 an OpenGL ES app compiles, the same shaders
+  Shaderlab's own compile step writes, and their Metal translation through naga, with where each uniform and texture
+  goes. Nothing calls this yet, and hosts change nothing.
+- d19447a: A pairing host sends one `ProductSubtreeRequest` to the paired signing host per SSO session and product while
+  one is in flight, and every caller waiting for that subtree takes its answer: `account.get_account`, AutoSigning
+  allocation, and the host's own subtree lookup. A request made after it settles asks again, so a failed fetch is not
+  remembered. A cancelled caller leaves the others waiting, and cancelling the last one withdraws the request from the
+  signing host.
+- b39f728: Shared host operations emit `host_runtime.<method>` trace names on both roles. Rust embedders construct
+  `HostRuntime::<PairingHost>::new(...)` for a paired wallet or `HostRuntime::<SigningHost>::new(...)` for a local
+  wallet.
+- c9f9250: The wire debugger link lives in its own module, so `@parity/truapi-host/worker-runtime` exports only the
+  worker entrypoint.
+- Updated dependencies [b6c9e41]
+- Updated dependencies [f73c18e]
+- Updated dependencies [fb833d9]
+- Updated dependencies [db367fd]
+- Updated dependencies [5710f49]
+- Updated dependencies [12ff192]
+- Updated dependencies [ef6c4de]
+- Updated dependencies [be15021]
+- Updated dependencies [ed0b17b]
+- Updated dependencies [c45e73a]
+- Updated dependencies [0fd13a7]
+- Updated dependencies [18ea313]
+- Updated dependencies [12386cf]
+- Updated dependencies [fb1ed6d]
+- Updated dependencies [0be1fba]
+- Updated dependencies [7443158]
+- Updated dependencies [7774baa]
+- Updated dependencies [95d3229]
+- Updated dependencies [8c61cfa]
+- Updated dependencies [ed0b17b]
+- Updated dependencies [fb1ed6d]
+- Updated dependencies [fb1ed6d]
+- Updated dependencies [d19447a]
+- Updated dependencies [f6dc8f0]
+  - @parity/truapi@0.32.0
+
 ## 0.31.0
 
 ### Major Changes

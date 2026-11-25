@@ -20,14 +20,10 @@ import type {
 import {
   HostChatActionSubscribeItem as HostChatActionSubscribeItemCodec,
   HostRendererActionSubscribeItem as HostRendererActionSubscribeItemCodec,
-  HostWorkerBeginOperationResponse as HostWorkerBeginOperationResponseCodec,
   ProductRendererRenderRequest as ProductRendererRenderRequestCodec,
   RendererNode as RendererNodeCodec,
 } from "@parity/truapi";
-import {
-  PermissionAuthorizationRequest as PermissionAuthorizationRequestCodec,
-  ProductContext as ProductContextCodec,
-} from "../generated/host-callbacks.js";
+import { PermissionAuthorizationRequest as PermissionAuthorizationRequestCodec } from "../generated/host-callbacks.js";
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import { isLoopbackWsUrl } from "../worker-protocol.js";
@@ -124,6 +120,14 @@ export interface WorkerPairingHostRuntime {
    * {@link WorkerPairingHostRuntime.activateStoredSession} does.
    */
   resetSessionState(): Promise<void>;
+  /**
+   * Forget one product: revoke its grants, Allow once answers and keys, and
+   * remove the values it wrote to product storage through
+   * `productStorage.clearProduct`. The session and other products are kept.
+   * Rejects on a disposed runtime, as
+   * {@link WorkerPairingHostRuntime.activateStoredSession} does.
+   */
+  clearProductState(productId: ProductId): Promise<void>;
   getPermissionAuthorizationStatus(
     productId: ProductId,
     request: PermissionAuthorizationRequest,
@@ -139,24 +143,15 @@ export interface WorkerPairingHostRuntime {
   ): Promise<void>;
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
-  getDeviceEncryptionKey(): Promise<Uint8Array>;
+  getDeviceEncryptionKey(): Promise<Uint8Array | undefined>;
   /** Validate and normalize a product identifier through the Rust core. */
   parseProductId(value: string): Promise<ProductId>;
   getProductSubtreePublicKey(
     productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
-  /**
-   * Take one reference on a product's worker for a modality holder that is on
-   * screen or in flight. Pair every call with one
-   * {@link WorkerPairingHostRuntime.releaseWorker}. The core counts; the
-   * resulting level reaches
-   * {@link WorkerPairingHostRuntime.subscribeWorkerDemand} listeners, and the
-   * host runs and stops the worker executable itself.
-   */
-  acquireWorker(productId: ProductId): void;
-  /** Release one reference. Releasing with none held is a no-op. */
-  releaseWorker(productId: ProductId): void;
+  /** Hold one reference until this consumer releases it. Repeated release is safe. */
+  claimWorker(productId: ProductId): { release(): void };
   /**
    * Observe which product workers the host should run. The listener first
    * receives `wanted: true` for every product wanted right now, then each
@@ -203,24 +198,6 @@ interface RuntimeState {
     }
   >;
   subscriptionDisposers: Map<number, () => void>;
-  /**
-   * Open `worker.beginOperation` holds. A non-empty set defers `dispose()`.
-   * Worker-wide rather than per-core, since a `callbackRequest` carries no core
-   * id, so entries are product-scoped: `OperationId` is only unique per product
-   * and two products sharing this worker may be handed the same id.
-   */
-  openOperations: Set<string>;
-  /** A dispose() arrived while operations were open; run it once they drain. */
-  disposePending: boolean;
-  /**
-   * Fires if those operations never drain. A worker that never sends its
-   * `endOperation` would otherwise keep the core running for a product the
-   * user has closed, still free to raise host prompts, with no way for the
-   * caller to force teardown.
-   */
-  disposeGraceTimer: ReturnType<typeof setTimeout> | undefined;
-  /** How long `dispose()` waits for open operations before forcing teardown. */
-  operationGraceMs: number;
   chainConnections: Map<number, ChainConnection>;
   pendingDisconnects: Map<
     number,
@@ -264,7 +241,10 @@ interface RuntimeState {
   >;
   pendingDeviceEncryptionKeys: Map<
     number,
-    { resolve: (key: Uint8Array) => void; reject: (error: Error) => void }
+    {
+      resolve: (key: Uint8Array | undefined) => void;
+      reject: (error: Error) => void;
+    }
   >;
   pendingProductSubtreePublicKeys: Map<
     number,
@@ -533,35 +513,6 @@ interface TrUApiDevConsole {
   getLogLevel(): LogLevel | null;
 }
 
-/**
- * Key one pending-operation hold. `OperationId` is unique per product, not per
- * worker, so the product a `beginOperation`/`endOperation` arrived for has to be
- * part of the key. Returns null if the encoded product will not decode, which
- * drops the hold rather than letting it pin the worker forever.
- */
-/**
- * Read the host-assigned id out of a `beginOperation` response. Returns null if
- * the response will not decode, so a hold that cannot be keyed is dropped
- * rather than escaping and leaving the worker's call unanswered.
- */
-function operationIdFrom(value: unknown): number | null {
-  if (!(value instanceof Uint8Array)) return null;
-  try {
-    return HostWorkerBeginOperationResponseCodec.dec(value).id;
-  } catch {
-    return null;
-  }
-}
-
-function operationHold(encodedProduct: unknown, id: number): string | null {
-  if (!(encodedProduct instanceof Uint8Array)) return null;
-  try {
-    return `${ProductContextCodec.dec(encodedProduct).productId}\u0000${id}`;
-  } catch {
-    return null;
-  }
-}
-
 function handleCallbackRequest(
   state: RuntimeState,
   msg: {
@@ -591,23 +542,6 @@ function handleCallbackRequest(
     .then(() => fn(...msg.args))
     .then(
       (value) => {
-        // Tracked in the success arm only: a rejected begin must not leave a
-        // hold that nothing will ever release.
-        if (msg.name === "beginOperation") {
-          const id = operationIdFrom(value);
-          const hold = id === null ? null : operationHold(msg.args[0], id);
-          if (hold !== null) state.openOperations.add(hold);
-        } else if (msg.name === "endOperation") {
-          const id = msg.args[1];
-          const hold =
-            typeof id === "number" ? operationHold(msg.args[0], id) : null;
-          if (hold !== null) state.openOperations.delete(hold);
-          if (state.openOperations.size === 0 && state.disposePending) {
-            state.disposePending = false;
-            clearDisposeGrace(state);
-            teardown(state, new Error("runtime disposed"), false);
-          }
-        }
         state.worker.postMessage({
           kind: "callbackResponse",
           requestId: msg.requestId,
@@ -890,7 +824,7 @@ function handleProductSubtreePublicKeyResponse(
 function handleDeviceEncryptionKeyResponse(
   state: RuntimeState,
   msg:
-    | { requestId: number; ok: true; key: Uint8Array }
+    | { requestId: number; ok: true; key: Uint8Array | undefined }
     | { requestId: number; ok: false; error: string },
 ): void {
   settlePending(
@@ -973,17 +907,9 @@ function closeCoreState(core: CoreState, error: Error): void {
   core.closeListeners.clear();
 }
 
-/** Drop the ceiling armed by a deferred `dispose()`, if one is pending. */
-function clearDisposeGrace(state: RuntimeState): void {
-  if (state.disposeGraceTimer === undefined) return;
-  clearTimeout(state.disposeGraceTimer);
-  state.disposeGraceTimer = undefined;
-}
-
 function teardown(state: RuntimeState, error: Error, fault: boolean): void {
   if (state.disposed) return;
   state.disposed = true;
-  clearDisposeGrace(state);
   state.closedError = error;
   rejectPendingRuntimeRequests(state, error);
   for (const core of state.cores.values()) {
@@ -1052,11 +978,6 @@ export interface CreateWebWorkerPairingHostRuntimeOptions {
    * one built with a signing host in it.
    */
   role?: HostRole;
-  /**
-   * How long `dispose()` waits for open `worker.beginOperation` holds before
-   * tearing down anyway. Defaults to 30s.
-   */
-  operationGraceMs?: number;
 }
 
 export type WebWorkerHostCallbacks = RequiredHostCallbacks;
@@ -1075,10 +996,6 @@ export function createWebWorkerPairingHostRuntime(
       cores: new Map(),
       pendingCores: new Map(),
       subscriptionDisposers: new Map(),
-      openOperations: new Set(),
-      disposePending: false,
-      disposeGraceTimer: undefined,
-      operationGraceMs: options.operationGraceMs ?? 30_000,
       chainConnections: new Map(),
       pendingDisconnects: new Map(),
       pendingSessionActivations: new Map(),
@@ -1395,6 +1312,7 @@ function handleFrameError(
 }
 
 function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
+  let nextClaimId = 0;
   const runtime: WorkerPairingHostRuntime = {
     coreWireSchemaHash: state.coreWireSchemaHash,
     createProvider(product): Promise<TrUApiProductProvider> {
@@ -1475,18 +1393,12 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         (requestId) => ({ kind: "getDeviceStatementKey", requestId }),
       );
     },
-    getDeviceEncryptionKey(): Promise<Uint8Array> {
-      // A key has no safe empty value: callers encrypt with what they get back,
-      // so a disposed runtime must fail rather than hand out a zero-length one.
-      // The check is synchronous with the send, so the fallback is unreachable.
-      if (state.disposed) {
-        return Promise.reject(new Error("worker host runtime is disposed"));
-      }
-      return sendWorkerRequest<Uint8Array>(
+    getDeviceEncryptionKey(): Promise<Uint8Array | undefined> {
+      return sendWorkerRequest<Uint8Array | undefined>(
         state,
         state.pendingDeviceEncryptionKeys,
         () => ++nextDeviceEncryptionKeyRequestId,
-        new Uint8Array(),
+        undefined,
         (requestId) => ({ kind: "getDeviceEncryptionKey", requestId }),
       );
     },
@@ -1516,11 +1428,17 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
     notifyContactsChanged(): void {
       postUnlessDisposed(state, { kind: "notifyContactsChanged" });
     },
-    acquireWorker(productId: ProductId): void {
-      postUnlessDisposed(state, { kind: "acquireWorker", productId });
-    },
-    releaseWorker(productId: ProductId): void {
-      postUnlessDisposed(state, { kind: "releaseWorker", productId });
+    claimWorker(productId) {
+      const claimId = ++nextClaimId;
+      postUnlessDisposed(state, { kind: "claimWorker", claimId, productId });
+      let released = false;
+      return {
+        release() {
+          if (released) return;
+          postUnlessDisposed(state, { kind: "releaseWorker", claimId });
+          released = true;
+        },
+      };
     },
     subscribeWorkerDemand(listener) {
       // Teardown cleared the listeners, so one added now would only be
@@ -1585,6 +1503,13 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         requestId,
       }));
     },
+    clearProductState(productId: ProductId): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "clearProductState",
+        requestId,
+        productId,
+      }));
+    },
     getPermissionAuthorizationStatus(productId, request) {
       return sendWorkerRequest<PermissionAuthorizationStatus>(
         state,
@@ -1638,18 +1563,6 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
     },
     dispose(): void {
       devGlobalTargets.delete(runtime);
-      // Let a background task (e.g. a funding transaction) finish; the last
-      // endOperation runs the teardown. Fault teardown is never deferred.
-      if (state.openOperations.size > 0) {
-        state.disposePending = true;
-        state.disposeGraceTimer ??= setTimeout(() => {
-          state.disposeGraceTimer = undefined;
-          if (!state.disposePending) return;
-          state.disposePending = false;
-          teardown(state, new Error("runtime disposed"), false);
-        }, state.operationGraceMs);
-        return;
-      }
       teardown(state, new Error("runtime disposed"), false);
     },
   };
@@ -1807,11 +1720,10 @@ function buildProvider(
       if (core.disposed) return undefined;
       return runtime.getDeviceStatementKey();
     },
-    async getDeviceEncryptionKey(): Promise<Bytes32> {
-      if (core.disposed) {
-        throw new Error("product connection is closed");
-      }
-      return bytesToHex(await runtime.getDeviceEncryptionKey());
+    async getDeviceEncryptionKey(): Promise<Bytes32 | undefined> {
+      if (core.disposed) return undefined;
+      const key = await runtime.getDeviceEncryptionKey();
+      return key && bytesToHex(key);
     },
     async getProductSubtreePublicKey(
       productId: ProductId,
@@ -1876,8 +1788,6 @@ function buildProvider(
         return () => {};
       }
       const renderId = nextRenderId++;
-      // No worker reference is taken here: the core holds the one an open
-      // render is worth and requests it through `requestWorkerTransition`.
       state.renders.set(renderId, {
         coreId: core.coreId,
         onUpdate: (node) => sink.onUpdate(node),

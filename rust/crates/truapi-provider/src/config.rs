@@ -37,6 +37,10 @@ pub struct ResolvedChain {
 	/// The relay the chain syncs through.
 	#[cfg(feature = "smoldot")]
 	pub relay: Option<([u8; 32], ChainSource)>,
+	/// The bundled network and service the chain was resolved from, when the
+	/// catalog answered for it.
+	#[cfg(feature = "networks")]
+	pub catalog_service: Option<(&'static str, &'static str)>,
 }
 
 impl ChainSource {

@@ -31,7 +31,9 @@ use crate::{
 use executor::SubmissionExecutor;
 
 pub use recovery::RecoveryError;
-pub use registration::{DurableRequest, DurableSubmission, EmptyRequest, RegistrationError};
+pub use registration::{
+	DeferredSubmission, DurableRequest, DurableSubmission, EmptyRequest, RegistrationError,
+};
 pub use reporting::DurableWorkObserver;
 
 /// What the engine runs on.
@@ -63,7 +65,7 @@ pub struct DurableDeps {
 /// engine never signs or deletes anything itself.
 pub struct DurableTxEngine {
 	db: Db,
-	registry: DurableRegistry,
+	registry: Arc<DurableRegistry>,
 	heads: Arc<dyn ChainHeads>,
 	blocks: Arc<dyn BlockBackend>,
 	validator: Arc<dyn TxValidator>,
@@ -77,15 +79,17 @@ pub struct DurableTxEngine {
 	host_wakes: WakeSignal,
 	pass_lock: futures::lock::Mutex<()>,
 	reporter: Mutex<Option<AbortHandle>>,
-	executor: Arc<SubmissionExecutor>,
+	/// Held for its builder, which stops when the engine is dropped.
+	_executor: SubmissionExecutor,
 }
 
 impl DurableTxEngine {
 	/// An engine over `deps`.
 	pub fn new(deps: DurableDeps) -> Arc<Self> {
-		Arc::new(Self {
+		let (executor, builder) = SubmissionExecutor::new();
+		let engine = Arc::new(Self {
 			db: deps.db,
-			registry: deps.registry,
+			registry: Arc::new(deps.registry),
 			heads: deps.heads,
 			blocks: deps.blocks,
 			validator: deps.validator,
@@ -97,8 +101,10 @@ impl DurableTxEngine {
 			host_wakes: WakeSignal::default(),
 			pass_lock: futures::lock::Mutex::new(()),
 			reporter: Mutex::new(None),
-			executor: Arc::default(),
-		})
+			_executor: executor,
+		});
+		engine.start_builder(builder);
+		engine
 	}
 
 	/// The status of `id`, or `None` when no such transaction exists.
@@ -135,7 +141,7 @@ impl DurableTxEngine {
 
 	/// Genesis hash of the chain `domain` lives on.
 	fn chain_of(&self, domain: &DomainId) -> Option<H256> {
-		self.registry.oracle(domain).map(|oracle| oracle.chain())
+		self.registry.chain(domain)
 	}
 }
 

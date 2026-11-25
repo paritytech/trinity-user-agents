@@ -1,4 +1,7 @@
 import Foundation
+#if SENTRY_ENABLED
+    import Sentry
+#endif
 
 public enum IssueMonitoringFactory {
     /// Returns the reporting service the current build can support. Callers stay
@@ -25,6 +28,7 @@ public enum IssueMonitoringFactory {
     }
 
     /// Log sink for the service `createService(dsn:)` starts, or nil when that service is a no-op.
+    /// The sink writes to the logger of whichever SDK is running when it logs.
     public static func createLogSink(dsn: String) -> HostLogSink? {
         #if SENTRY_ENABLED
             dsn.isEmpty ? nil : SentryHostLogSink()

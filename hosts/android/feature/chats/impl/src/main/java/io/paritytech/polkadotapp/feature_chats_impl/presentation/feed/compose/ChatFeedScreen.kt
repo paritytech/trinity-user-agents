@@ -124,6 +124,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onAttachClick = contract::onAttachClick,
         onAcceptChatRequest = contract::onAcceptChatRequest,
         onDeclineChatRequest = contract::onDeclineChatRequest,
+        onCancelChatRequest = contract::onCancelChatRequestClick,
         onUnblockUserClick = contract::onUnblockUserClick,
         onAllowIdentitySigningClick = contract::onAllowIdentitySigningClick,
         onDeclineIdentitySigningClick = contract::onDeclineIdentitySigningClick,
@@ -141,7 +142,9 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onLeaveChatRequest = contract::onLeaveChatRequest,
         onLeaveChatConfirm = contract::onLeaveChatConfirm,
         onBlockUserRequest = contract::onBlockUserRequest,
-        onBlockUserConfirm = contract::onBlockUserConfirm
+        onBlockUserConfirm = contract::onBlockUserConfirm,
+        onDeclineChatRequestConfirm = contract::onDeclineChatRequestConfirm,
+        onCancelChatRequestConfirm = contract::onCancelChatRequestConfirm
     )
 
     when (popupState) {
@@ -194,6 +197,7 @@ private fun ChatFeedScreenInternal(
     onPrivacyWarningClick: () -> Unit,
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
+    onCancelChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
     onAllowIdentitySigningClick: () -> Unit,
     onDeclineIdentitySigningClick: () -> Unit,
@@ -239,29 +243,30 @@ private fun ChatFeedScreenInternal(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }
             ) {
-                chatMessagesLoadingState.onLoaded {
-                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
-                        ChatFeed(
-                            chatMessagesState = it,
-                            username = username,
-                            headerRenderer = headerRenderer,
-                            footerRenderer = footerRenderer,
-                            showTimestamps = config.showTimestamps,
-                            highlightEvents = highlightEvents,
-                            scrollToPosition = scrollToPosition,
-                            onMessageAction = onMessageAction,
-                            onUnreadMessageVisible = onUnreadMessageVisible,
-                            onMessageLongPress = onMessageLongPress,
-                            isInputEnabled = canReplyToMessages,
-                            customBubbleStyle = customAppearance?.bubbleStyle,
-                            revealingMessageId = revealingMessageId,
-                            onMessageRevealComplete = onMessageRevealComplete,
-                            slideInNewMessages = customAppearance != null,
-                            showNewMessagesSeparator = config.showNewMessagesSeparator,
-                            dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
-                        )
+                Box(modifier = Modifier.shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }) {
+                    chatMessagesLoadingState.onLoaded {
+                        CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
+                            ChatFeed(
+                                chatMessagesState = it,
+                                username = username,
+                                headerRenderer = headerRenderer,
+                                footerRenderer = footerRenderer,
+                                showTimestamps = config.showTimestamps,
+                                highlightEvents = highlightEvents,
+                                scrollToPosition = scrollToPosition,
+                                onMessageAction = onMessageAction,
+                                onUnreadMessageVisible = onUnreadMessageVisible,
+                                onMessageLongPress = onMessageLongPress,
+                                isInputEnabled = canReplyToMessages,
+                                customBubbleStyle = customAppearance?.bubbleStyle,
+                                revealingMessageId = revealingMessageId,
+                                onMessageRevealComplete = onMessageRevealComplete,
+                                slideInNewMessages = customAppearance != null,
+                                showNewMessagesSeparator = config.showNewMessagesSeparator,
+                                dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                            )
+                        }
                     }
                 }
 
@@ -281,9 +286,11 @@ private fun ChatFeedScreenInternal(
                         onAttachClick = onAttachClick,
                         onAcceptChatRequest = onAcceptChatRequest,
                         onDeclineChatRequest = onDeclineChatRequest,
+                        onCancelChatRequest = onCancelChatRequest,
                         onUnblockUserClick = onUnblockUserClick,
                         onAllowIdentitySigningClick = onAllowIdentitySigningClick,
                         onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
+                        dockletHiddenFraction = { barHiddenFraction.value },
                         onHeightChanged = { footerHeight = it },
                     )
                 }
@@ -335,7 +342,7 @@ private fun ChatFeedPreview() {
                                     direction = ChatMessageUiModel.Direction.OUTGOING,
                                     text = "Hi there!",
                                     timestamp = 1625247600000,
-                                    status = ChatMessageUiModel.Status.READ,
+                                    status = ChatMessageUiModel.Status.SEEN,
                                     reactions = persistentListOf(),
                                     origin = ChatMessageOrigin.User,
                                     replyPreview = null,
@@ -374,6 +381,7 @@ private fun ChatFeedPreview() {
                     onPrivacyWarningClick = {},
                     onAcceptChatRequest = {},
                     onDeclineChatRequest = {},
+                    onCancelChatRequest = {},
                     onUnblockUserClick = {},
                     onAllowIdentitySigningClick = {},
                     onDeclineIdentitySigningClick = {},

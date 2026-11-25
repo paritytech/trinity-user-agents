@@ -33,7 +33,6 @@ use truapi::api::{
     StatementStore,
     System,
     Theme,
-    Worker,
 };
 use truapi::versioned::{self, Versioned};
 use crate::platform::ExecutableKind;
@@ -75,8 +74,46 @@ where
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
     register_system(dispatcher, host.clone());
-    register_theme(dispatcher, host.clone());
-    register_worker(dispatcher, host);
+    register_theme(dispatcher, host);
+}
+
+/// Call the product's `chat_messages_query` handler and await its response.
+pub async fn chat_messages_query(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatMessagesQueryRequest,
+) -> Result<versioned::chat::ProductChatMessagesQueryResponse, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.request(
+        wire_table::CHAT_MESSAGES_QUERY,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
+}
+
+/// Call the product's `chat_user_action` handler and await its response.
+pub async fn chat_user_action(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatUserActionRequest,
+) -> Result<versioned::chat::ProductChatUserActionResponse, truapi::CallError<versioned::chat::ProductChatUserActionError>> {
+    subscriptions.request(
+        wire_table::CHAT_USER_ACTION,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
+}
+
+/// Call the product's `chat_reactions_query` handler and await its response.
+pub async fn chat_reactions_query(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatReactionsQueryRequest,
+) -> Result<versioned::chat::ProductChatReactionsQueryResponse, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.request(
+        wire_table::CHAT_REACTIONS_QUERY,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
 }
 
 /// Call the product's `funding_provider_quote` handler and await its response.
@@ -780,7 +817,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_SET_ROOM_FOOTER, move |request_id: String, request: versioned::chat::HostChatSetRoomFooterRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -794,6 +831,106 @@ where
                 let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> =
                     match host.set_room_footer(&cx, request).await {
                         Ok(_) => Ok(<versioned::chat::HostChatSetRoomFooterResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_METADATA, move |request_id: String, request: versioned::chat::HostChatSetRoomMetadataRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomMetadataError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatSetRoomMetadataError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatSetRoomMetadataError>> =
+                    match host.set_room_metadata(&cx, request).await {
+                        Ok(_) => Ok(<versioned::chat::HostChatSetRoomMetadataResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_PREVIEW, move |request_id: String, request: versioned::chat::HostChatSetRoomPreviewRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomPreviewError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatSetRoomPreviewError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatSetRoomPreviewError>> =
+                    match host.set_room_preview(&cx, request).await {
+                        Ok(_) => Ok(<versioned::chat::HostChatSetRoomPreviewResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_DELETE_ROOM, move |request_id: String, request: versioned::chat::HostChatDeleteRoomRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatDeleteRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatDeleteRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatDeleteRoomError>> =
+                    match host.delete_room(&cx, request).await {
+                        Ok(_) => Ok(<versioned::chat::HostChatDeleteRoomResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::CHAT_UPDATE_FEED, move |request_id: String, request: versioned::chat::HostChatUpdateFeedRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatUpdateFeedError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatUpdateFeedResponse, truapi::CallError<versioned::chat::HostChatUpdateFeedError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatUpdateFeedResponse, truapi::CallError<versioned::chat::HostChatUpdateFeedError>> =
+                    match host.update_feed(&cx, request).await {
+                        Ok(_) => Ok(<versioned::chat::HostChatUpdateFeedResponse as truapi::versioned::FromLatest>::from_latest(
                             (),
                             target_version,
                         )),
@@ -1012,7 +1149,7 @@ where
     P: Contacts + Send + Sync + 'static,
 {
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::CONTACTS_PICK, move |request_id: String, request: versioned::contacts::HostContactsPickRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1021,6 +1158,25 @@ where
                 let result: Result<versioned::contacts::HostContactsPickResponse, truapi::CallError<versioned::contacts::HostContactsPickError>> =
                     match host.pick(&cx, request).await {
                         Ok(response) => Ok(<versioned::contacts::HostContactsPickResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::CONTACTS_USERNAMES, move |request_id: String, request: versioned::contacts::HostContactsUsernamesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::contacts::HostContactsUsernamesResponse, truapi::CallError<versioned::contacts::HostContactsUsernamesError>> =
+                    match host.usernames(&cx, request).await {
+                        Ok(response) => Ok(<versioned::contacts::HostContactsUsernamesResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1685,7 +1841,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_PAYMENT_INBOX, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenPaymentInboxRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -1705,6 +1861,25 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::NFT_PURSE_LIST_CHEQUES, move |request_id: String, request: versioned::nft_purse::HostNftPurseListChequesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseListChequesResponse, truapi::CallError<versioned::nft_purse::HostNftPurseListChequesError>> =
+                    match host.list_cheques(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseListChequesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -2047,7 +2222,7 @@ where
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
-                let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::RemotePreimageSubmitError>> =
+                let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::PreimageSubmitError>> =
                     match host.submit(&cx, request).await {
                         Ok(response) => Ok(<versioned::preimage::RemotePreimageSubmitResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -2181,7 +2356,7 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::HostCreateTransactionRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::ProductAccountTxPayload, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
@@ -2200,7 +2375,7 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostCreateTransactionWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::LegacyAccountTxPayload, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
@@ -2546,62 +2721,6 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
-            })
-        });
-    }
-}
-
-fn register_worker<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
-where
-    P: Worker + Send + Sync + 'static,
-{
-    {
-        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host.clone();
-        dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerBeginOperationRequest, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerBeginOperationError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> =
-                    match host.begin_operation(&cx, request).await {
-                        Ok(response) => Ok(<versioned::worker::HostWorkerBeginOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            truapi::versioned::IntoLatest::into_latest(response),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
-            })
-        });
-    }
-    {
-        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
-        dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerEndOperationRequest, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerEndOperationError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> =
-                    match host.end_operation(&cx, request).await {
-                        Ok(_) => Ok(<versioned::worker::HostWorkerEndOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            (),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
             })
         });
     }

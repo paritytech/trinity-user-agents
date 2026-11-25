@@ -4,8 +4,8 @@
 //!
 //! The native side builds a `CallbackPlatform` that adapts every
 //! [`crate::platform::Platform`] trait to a corresponding callback. The
-//! resulting platform is fed into [`SigningHostRuntime`] so the rest of the
-//! dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
+//! resulting platform is fed into [`HostRuntime<SigningHost>`](crate::HostRuntime)
+//! so the dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
 //! A native host therefore owns the signer, so it never pairs itself with a
 //! wallet and the pairing-host entry points are inert. It does answer other
 //! devices pairing with it: the signing host's responder side is exposed here,
@@ -16,7 +16,6 @@
 //! [`NativeTrUApiHostRuntime::set_contacts_callbacks`]. A host that installs
 //! none leaves `contacts.pick` answering `Unsupported`.
 
-mod bundled_products;
 mod callbacks;
 mod config;
 mod engine_follow;
@@ -29,6 +28,8 @@ mod funding_page;
 mod materials;
 mod platform;
 mod pocket;
+mod product_archive;
+mod product_source;
 mod public_profile;
 mod renderer;
 mod runtime;
@@ -42,11 +43,9 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
-	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
-};
-pub use bundled_products::{
-	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_products,
-	product_source,
+	pocket_cards::{
+		PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketEntry,
+	},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
@@ -67,10 +66,13 @@ pub use funding_page::{
 };
 pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
+pub use product_archive::{ArchiveFile, archive_files};
+pub use product_source::{ProductSource, product_source};
 pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	NativeWorkerClaim,
 };
 pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
@@ -79,8 +81,6 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-#[cfg(doc)]
-use crate::SigningHostRuntime;
 use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
@@ -295,8 +295,13 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 
 	// Read back the way a kept face is, so the reader accepts exactly what the
 	// store and the renderer subscription accept.
-	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut node.encode().as_slice())
-		.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })
+	let mut node = latest::RendererNode::decode_all_with_depth_limit(
+		MAX_FACE_DEPTH,
+		&mut node.encode().as_slice(),
+	)
+	.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })?;
+	node.clear_refused_inline_images();
+	Ok(node)
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the

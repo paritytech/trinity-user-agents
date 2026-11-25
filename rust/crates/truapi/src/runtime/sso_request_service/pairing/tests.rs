@@ -2,9 +2,7 @@ use super::*;
 use crate::{
 	host_rpc_client::HostRpcClient,
 	platform::{AuthState, ChainProvider, CoreStorageKey},
-	runtime::{
-		ProductRuntimeHost, connected_session_ui_info, sso_request_service::SsoRequestService,
-	},
+	runtime::{HostRole, ProductRuntimeHost, sso_request_service::SsoRequestService},
 	test_support::{
 		StubPlatform, core_storage_test_key, pairing_device_from_deeplink, peer_statement_keypair,
 		runtime_config, session_info, signed_test_statement, stub_platform, subscribe_ack_frame,
@@ -327,10 +325,10 @@ fn request_login_accepts_valid_pairing_statement_and_persists_session() {
 	assert_eq!(session.identity_chat_private_key, Some([0x77; 32]));
 	// The fixture's device key differs from its SSO channel key, so this
 	// also pins that the two are not conflated.
-	assert_eq!(session.device_enc_public_key, Some(wallet_device_encryption_public_key()));
+	assert_eq!(session.peer_device_enc_public_key, Some(wallet_device_encryption_public_key()));
 
 	// Public values project to host UI; the chat secret deliberately does not.
-	let ui_info = connected_session_ui_info(&session);
+	let ui_info = SsoRequestService::session_ui_info(&session);
 	assert_eq!(
 		ui_info.chat_public_key,
 		Some(X25519PublicKey::from(&X25519SecretKey::from([0x77; 32])).to_bytes()),
@@ -350,7 +348,10 @@ fn request_login_accepts_valid_pairing_statement_and_persists_session() {
 	assert_eq!(auth_states.len(), 3, "states: {auth_states:?}");
 	assert!(matches!(&auth_states[0], AuthState::Pairing { .. }));
 	assert_eq!(auth_states[1], AuthState::Authenticating);
-	assert_eq!(auth_states[2], AuthState::Connected(Box::new(connected_session_ui_info(&session))));
+	assert_eq!(
+		auth_states[2],
+		AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&session)))
+	);
 	drop(auth_states);
 
 	let methods = platform
@@ -365,6 +366,45 @@ fn request_login_accepts_valid_pairing_statement_and_persists_session() {
 	assert!(
 		methods.iter().any(|method| method == "statement_unsubscribeStatement"),
 		"pairing subscription should be cleaned up"
+	);
+}
+
+#[test]
+fn paired_session_serves_the_device_keys_its_proposal_advertised() {
+	let platform = Arc::new(StubPlatform { pairing_success_response: true, ..Default::default() });
+	let (host, pairing) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+	let accounts = pairing.accounts().clone();
+	assert_eq!(futures::executor::block_on(accounts.device_encryption_secret()), Ok(None));
+
+	let cx = CallContext::default();
+	let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
+	futures::executor::block_on(host.request_login(&cx, request)).unwrap();
+
+	let auth_states = platform.auth_states.lock().expect("auth state list mutex poisoned");
+	let (advertised_statement_account_id, advertised_encryption_public_key) = auth_states
+		.iter()
+		.find_map(|state| match state {
+			AuthState::Pairing { deeplink } => Some(pairing_device_from_deeplink(deeplink)),
+			_ => None,
+		})
+		.expect("pairing state should be emitted");
+	let Some(AuthState::Connected(ui_info)) = auth_states.last() else {
+		panic!("pairing should end connected: {auth_states:?}");
+	};
+	// The wallet registers and announces the advertised keys as this device,
+	// so contacts encrypt to that public key: projecting or serving any other
+	// key leaves this host unable to read them.
+	assert_eq!(
+		(ui_info.device_statement_account_id, ui_info.device_enc_public_key),
+		(Some(advertised_statement_account_id), Some(advertised_encryption_public_key))
+	);
+	let secret = futures::executor::block_on(accounts.device_encryption_secret())
+		.unwrap()
+		.expect("a paired session serves its encryption secret");
+	assert_eq!(
+		X25519PublicKey::from(&X25519SecretKey::from(secret)).to_bytes(),
+		advertised_encryption_public_key
 	);
 }
 
@@ -606,11 +646,16 @@ fn dropped_request_login_clears_single_flight_for_next_attempt() {
 		"first login did not enter pairing state"
 	);
 
+	let people = crate::test_support::paseo_test_stack().chains().people;
+	crate::test_support::wait_until(
+		|| platform.chain_connects.lock().unwrap().contains(&people),
+		"the first login dials People",
+	);
 	drop(first_login);
 
 	assert!(
-		platform.pending_connect_dropped.load(std::sync::atomic::Ordering::SeqCst),
-		"dropping the login future should drop the pending statement-store connect"
+		!platform.pending_connect_dropped.load(std::sync::atomic::Ordering::SeqCst),
+		"the statement-store connect runs on in its own task, to close a socket handed over late"
 	);
 
 	cancel_on_pairing(&platform, sso);

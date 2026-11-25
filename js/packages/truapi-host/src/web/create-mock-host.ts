@@ -49,7 +49,7 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import type { ProductRuntimeConfig, ReservedValuesPolicy } from "../runtime.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -77,7 +77,18 @@ function normalizePermissionPolicy(
 }
 
 /** The core's product-storage key prefix, up to and including its version. */
-const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
+const CORE_PRODUCT_STORAGE_PREFIX = "truapi:product-storage:v1:";
+
+/**
+ * The prefix of every key the core hands the host for `productId`'s values,
+ * as `ProductStorageKey::owner_prefix` builds it. The id's length is in UTF-8
+ * bytes, so one product's prefix never matches a product whose id merely
+ * starts with it.
+ */
+function coreProductStorageOwnerPrefix(productId: ProductId): string {
+  const length = new TextEncoder().encode(productId).length;
+  return `${CORE_PRODUCT_STORAGE_PREFIX}${length}:${productId}:`;
+}
 
 /**
  * The product's own key inside a core-namespaced one, or `undefined`.
@@ -93,9 +104,8 @@ const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
  * where the id ends, not the next separator.
  */
 export function coreProductStorageKey(stored: string): string | undefined {
-  const prefix = CORE_PRODUCT_STORAGE_PREFIX.exec(stored);
-  if (!prefix) return undefined;
-  const rest = stored.slice(prefix[0].length);
+  if (!stored.startsWith(CORE_PRODUCT_STORAGE_PREFIX)) return undefined;
+  const rest = stored.slice(CORE_PRODUCT_STORAGE_PREFIX.length);
   const separator = rest.indexOf(":");
   if (separator < 0) return undefined;
   const length = Number(rest.slice(0, separator));
@@ -184,6 +194,8 @@ export type PermissionKind = "device" | "remote";
 export interface NotificationLogEntry {
   /** Host-assigned id, the same one `cancelNotification` takes. */
   id: number;
+  /** Title the core let through, or undefined when the host shows the product id. */
+  title: string | undefined;
   /** Notification text. */
   text: string;
   /** Optional URL to open on tap. */
@@ -269,16 +281,6 @@ function liveSubscription<T>(
     return fail(error);
   };
   return stream;
-}
-
-/** One operation a product began and has not ended. */
-export interface OpenOperation {
-  /** Product that began it. */
-  productId: ProductId;
-  /** Id the mock handed back, unique among this product's open operations. */
-  id: number;
-  /** Label the product gave, empty when it gave none. */
-  label: string;
 }
 
 /**
@@ -406,8 +408,8 @@ export interface MockHostConfig {
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `servedChains`, as a real host
-   * does, so a chain outside that set is unsupported. Default `false`. It
-   * becomes the default in a later breaking release. The Rust
+   * does, so a chain outside that set is unsupported. Default `true`. `false`
+   * reports every chain as supported. The Rust
    * `MockConfig::only_served_chains` is the same option.
    */
   onlyServedChains?: boolean;
@@ -556,8 +558,6 @@ export interface MockHost {
   dispose(): void;
   /** Permission answers the mock gave, in order. */
   getPermissionLog(): PermissionLogEntry[];
-  /** Operations a product began and has not ended, in the order they began. */
-  getOpenOperations(): OpenOperation[];
   /** Permissions with an explicit grant, in key order. */
   getGrantedPermissions(): string[];
   /** Answer `permission` with a grant, whatever the configured policy says. */
@@ -888,7 +888,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
-    onlyServedChains = false,
+    onlyServedChains = true,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -923,8 +923,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const reviews: UserConfirmationReview[] = [];
   const cancelledNotifications: number[] = [];
   const permissionLog: PermissionLogEntry[] = [];
-  const openOperations: OpenOperation[] = [];
-  let nextOperationId = 0;
   const permissionDecisions = new Map<string, boolean>();
   const chatRooms = new Map<string, ChatRoom>();
   const chatBots = new Map<string, HostChatRegisterBotRequest>();
@@ -1116,6 +1114,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         storage.delete(productKey(key));
         publishStorage(key, undefined);
       },
+      async clearProduct(productId) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        const owned = coreProductStorageOwnerPrefix(productId);
+        for (const stored of [...storage.keys()]) {
+          if (stored.startsWith(productKey(owned))) storage.delete(stored);
+        }
+        for (const key of [...storageSubscribers.keys()]) {
+          if (key.startsWith(owned)) publishStorage(key, undefined);
+        }
+      },
       subscribeStorage(key) {
         const current = storage.get(productKey(key));
         return liveSubscription<HostLocalStorageChangeItem>(
@@ -1133,23 +1141,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
             };
           },
         );
-      },
-    },
-
-    productOperations: {
-      async beginOperation(product, label) {
-        const id = nextOperationId++;
-        openOperations.push({ productId: product.productId, id, label });
-        return { id };
-      },
-      async endOperation(product, id) {
-        // Idempotent by contract, so an unknown or already-ended id is fine.
-        // Per product too: another product holding the same id must not drop
-        // this one's demand.
-        const at = openOperations.findIndex(
-          (open) => open.id === id && open.productId === product.productId,
-        );
-        if (at !== -1) openOperations.splice(at, 1);
       },
     },
 
@@ -1181,6 +1172,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const id = nextNotificationId++;
         pushedNotifications.push({
           id,
+          title: notification.title,
           text: notification.text,
           deeplink: notification.deeplink,
           scheduledAt: notification.scheduledAt,
@@ -1359,17 +1351,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     chat: {
-      async createChatRoom(_product, request) {
+      async createChatRoom(_product, roomId) {
         if (faults.chatError) throw new Error(faults.chatError);
-        if (chatRooms.has(request.roomId)) return { status: "Exists" };
-        chatRooms.set(request.roomId, {
-          roomId: request.roomId,
+        if (chatRooms.has(roomId)) return "Exists";
+        chatRooms.set(roomId, {
+          roomId,
           // A product that creates a room hosts it; a product reaching a room
           // as a bot registers the bot instead.
           participatingAs: "RoomHost",
         });
         publishChatRooms();
-        return { status: "New" };
+        return "New";
       },
       async registerChatBot(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
@@ -1596,7 +1588,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     simulateReconnect: () => {
       chainStatus = "Idle";
     },
-    getOpenOperations: () => [...openOperations],
     getChatRooms: () => byKey(chatRooms),
     getChatBots: () => byKey(chatBots),
     getChatMessageLog: () => [...chatMessages],
@@ -1684,8 +1675,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       this.clearStorage();
       this.clearChatState();
       this.clearStatements();
-      openOperations.length = 0;
-      nextOperationId = 0;
       // Through the setter, so a subscribed product is told rather than left
       // believing the theme it last saw while `getTheme` reports the default.
       this.setTheme(theme);
@@ -1734,6 +1723,17 @@ export interface TestStackChain {
  * production bundle takes a {@link ProductRuntimeConfig.stack} only.
  */
 export interface TestStack {
+  /**
+   * Tells this stack apart from others. Any non-empty string; a host with a
+   * bundled descriptor takes the key in the stack's link.
+   */
+  id: string;
+  /**
+   * The run of the stack's chains, which changes when they restart, as after
+   * a wipe. Any non-empty string; a host with a bundled descriptor takes the
+   * descriptor's `generation`.
+   */
+  generation: string;
   /** The network `getChainInfo` reports. */
   network: string;
   /** The dotNS TLD a signing host derives its reserved identities under. */
@@ -1750,10 +1750,10 @@ export interface TestStack {
   /** The relay chain. */
   relay?: TestStackChain;
   /**
-   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
-   * Defaults to `false`, as on a real host.
+   * The host's policy on reserved values. Defaults to refusing the core's, as on
+   * a real host.
    */
-  allowsReservedValues?: boolean;
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */
@@ -1763,15 +1763,41 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
 
 /**
  * The stack a mock host runs by default: network `mock` under the `paseo`
- * TLD, over the {@link MOCK_GENESIS} chains.
+ * TLD, over the {@link MOCK_GENESIS} chains, with `mock` as its `id` and its
+ * `generation`.
  */
 export function mockTestStack(): TestStack {
   return {
+    id: "mock",
+    generation: "mock",
     network: "mock",
     tld: "paseo",
     people: { genesisHash: MOCK_GENESIS.people },
     bulletin: { genesisHash: MOCK_GENESIS.bulletin },
     assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+  };
+}
+
+/**
+ * `stack` with a `generation` named after its genesis hashes in lowercase,
+ * for a stack whose chains were replaced: other chains are another run. A
+ * stack still on the {@link mockTestStack} chains keeps its `mock`
+ * generation.
+ */
+export function withChainsGeneration(stack: TestStack): TestStack {
+  const genesis = (chain?: TestStackChain): string =>
+    chain === undefined
+      ? "none"
+      : typeof chain.genesisHash === "string"
+        ? chain.genesisHash.toLowerCase()
+        : `0x${hex(chain.genesisHash)}`;
+  const chainsOf = ({ relay, assetHub, people, bulletin }: TestStack) =>
+    [relay, assetHub, people, bulletin].map(genesis).join(":");
+  const mock = mockTestStack();
+  const chains = chainsOf(stack);
+  return {
+    ...stack,
+    generation: chains === chainsOf(mock) ? mock.generation : chains,
   };
 }
 

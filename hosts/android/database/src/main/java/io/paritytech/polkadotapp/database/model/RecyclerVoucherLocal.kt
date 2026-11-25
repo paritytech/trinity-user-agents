@@ -24,6 +24,7 @@ class RecyclerVoucherLocal(
      * `current > max` state meaningful.
      */
     val maxRecyclerFungibility: Int?,
+    val recyclerUnloaded: Int?,
 )
 
 /** Must match the `DEFAULT` in `Migration63To64`, or Room's schema validation rejects a migrated database. */

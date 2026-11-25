@@ -13,6 +13,8 @@ public enum CoinageTxError: Error, Equatable {
     case inputAlreadyClaimed(String)
     /// Registration rejected: an input carries a handoff mark.
     case inputHandedOff(String)
+    /// Registration rejected: a reclaimed input is not a coin this wallet has handed off.
+    case reclaimedInputNotHandedOff(String)
     /// Handoff rejected: an asset a live entry still claims cannot also leave the device.
     case handoffOfClaimedAsset(String)
     /// Handoff rejected: the asset already carries a handoff mark, so its keys have left — or are

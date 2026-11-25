@@ -12,7 +12,7 @@ func coinPresence(
 ) -> AnyAsyncSequence<Set<PublicKey>> {
     query
         .subscribeCoinInfos(for: Array(publicKeys))
-        .map { Set($0.keys) }
+        .map { Set($0.claimable.keys) }
         .eraseToAnyAsyncSequence()
 }
 

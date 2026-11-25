@@ -74,8 +74,7 @@ private extension ExpandedPocketCardViewFactory {
         hostProvider: ProductHostProviding
     ) -> SPANavigationDecisionHandling {
         switch configuration.contentSource {
-        case .dotNs,
-             .bundled:
+        case .dotNs:
             DotNsNavigationDecisionHandler(baseHost: configuration.page.host, hostProvider: hostProvider)
         case let .directURL(url):
             DirectURLNavigationDecisionHandler(baseURL: url)

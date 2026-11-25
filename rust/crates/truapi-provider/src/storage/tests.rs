@@ -35,3 +35,35 @@ fn a_blob_without_runtime_code_never_replaces_one_that_has_it() {
 		"a blob with no chain information is worth nothing"
 	);
 }
+
+/// The provider reads back only what it stored for its own stack and
+/// generation, so a store that ignores the stack cannot hand a fork its
+/// source's state. Both are opaque strings, so one holding a line break must
+/// not be able to end the header early.
+#[test]
+fn a_sealed_blob_opens_only_for_its_stack_and_generation() {
+	let blob = r#"{"chain":{"a":1}}"#;
+	let sealed = Header { stack: "stack", generation: "one\ntwo" }.seal(blob);
+
+	let opened = [("stack", "one\ntwo"), ("stack", "one"), ("fork", "one\ntwo")]
+		.map(|(stack, generation)| Header { stack, generation }.unseal(sealed.clone()));
+
+	assert_eq!(opened, [Some(blob.to_owned()), None, None]);
+}
+
+/// A blob stored without the header was not stored by a stack's provider.
+#[test]
+fn a_blob_without_a_header_is_not_opened() {
+	let header = Header { stack: "stack", generation: "one" };
+	assert_eq!(header.unseal(r#"{"chain":{"a":1}}"#.to_owned()), None);
+}
+
+/// A provider without a stack tells a stack's blob from its own by the header,
+/// and its own blob is the light client's database as it is.
+#[test]
+fn only_a_sealed_blob_carries_a_header() {
+	let blob = r#"{"chain":{"a":1}}"#;
+	let sealed = Header { stack: "stack", generation: "one" }.seal(blob);
+
+	assert_eq!([blob, sealed.as_str(), "not json\n{}"].map(carries_header), [false, true, false]);
+}

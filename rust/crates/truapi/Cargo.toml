@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.31.0"
+version = "0.33.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -33,6 +33,7 @@ default = ["runtime", "wasm-signing-host"]
 # Without it the crate is the protocol definitions alone, which is what
 # codegen reads and builds against.
 runtime = [
+    "dep:anyhow",
     "dep:async-lock",
     "dep:truapi-provider",
     "dep:trinity-stack",
@@ -45,7 +46,6 @@ runtime = [
     "dep:url",
     "dep:nanoid",
     "dep:blake2b_simd",
-    "dep:sp-crypto-hashing",
     "dep:alloy-primitives",
     "dep:alloy-sol-types",
     "dep:schnorrkel",
@@ -80,10 +80,12 @@ runtime = [
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
+    "dep:const_format",
     "dep:itertools",
     "dep:binary-merkle-tree",
     "dep:hash-db",
     "dep:imagesize",
+    "dep:mime_guess",
 ]
 wasm-signing-host = ["runtime"]
 # Test-host-only shortcuts a shipping host must not carry, such as answering
@@ -97,7 +99,7 @@ truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true }
 async-lock = { workspace = true, optional = true }
 async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
+derive_more = { workspace = true, features = ["debug", "display", "eq", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
 # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
@@ -105,6 +107,7 @@ hex = { workspace = true }
 parity-scale-codec = { workspace = true, features = ["derive", "serde"] }
 serde = { workspace = true, features = ["derive"] }
 unicode-normalization = { workspace = true }
+sp-crypto-hashing = { workspace = true }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
 trinity-stack = { path = "../trinity-stack", optional = true }
@@ -120,7 +123,6 @@ url = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 blake2b_simd = { workspace = true, optional = true }
-sp-crypto-hashing = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
@@ -141,6 +143,7 @@ imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optio
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uniffi = { workspace = true }
+anyhow = { workspace = true, optional = true }
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
 verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
 truapi-verifiable = { path = "../truapi-verifiable", optional = true }
@@ -156,10 +159,14 @@ naga = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["float_roundtrip"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
+# Builds the durable ledger's SQL from shared fragments at compile time.
+const_format = { workspace = true, optional = true }
 itertools = { workspace = true, optional = true }
 # The clearing root of an NFT operation.
 binary-merkle-tree = { workspace = true, optional = true }
 hash-db = { workspace = true, optional = true }
+# The MIME type a downloaded product archive's files are served with.
+mime_guess = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
