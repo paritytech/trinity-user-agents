@@ -63,17 +63,9 @@ private let chatProduct: ProductId = try! ProductId("test.dot")
 
 private func makeRustRuntime(
     workers: StubWorkerRuntime,
-    context: ProductWorkerContext = ProductWorkerContext(),
-    startupTimeout: Duration = .hangGuard,
-    renderStartupWindow: Duration = .hangGuard
+    context: ProductWorkerContext = ProductWorkerContext()
 ) -> TrUAPIChatHandler {
-    TrUAPIChatHandler(
-        productId: chatProduct,
-        runtime: { workers },
-        context: context,
-        startupTimeout: startupTimeout,
-        renderStartupWindow: renderStartupWindow
-    )
+    TrUAPIChatHandler(productId: chatProduct, runtime: { workers }, context: context)
 }
 
 /// Runs `body` and disposes `runtime` however it ends. A started handler
@@ -214,57 +206,23 @@ struct ChatRuntimeTests {
     /// The bot posts its welcome message the moment `start` returns, so `start`
     /// has to wait for the worker rather than return onto an execution that is
     /// not there yet.
-    @Test func rustRuntimeStartWaitsForTheWorkerToComeUp() async throws {
+    /// The core starts the worker and decides when to give up on it, so start
+    /// asks for it and returns, and the session reaches the worker once it runs.
+    @Test func rustRuntimeStartDoesNotWaitForTheWorker() async throws {
         let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
 
         try await disposing(runtime) {
-            let start = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
             try await withTimeout(.hangGuard) {
-                var checks = workers.readinessChecks.makeAsyncIterator()
-                _ = await checks.next()
+                try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
             }
+            #expect(workers.references.acquired == [chatProduct])
 
             workers.publish([chatProduct: execution])
-            try await withTimeout(.hangGuard) {
-                try await withTaskCancellationHandler { try await start.value } onCancel: { start.cancel() }
-            }
-
             try await runtime.onUserMessage(text: "hi", roomId: "room")
             #expect(execution.publishedChatActions.count == 1)
         }
-    }
-
-    @Test(.timeLimit(.minutes(1))) func rustRuntimeReleasesItsClaimWhileReadinessIsPending() async throws {
-        let workers = StubWorkerRuntime()
-        let runtime = makeRustRuntime(workers: workers)
-
-        var checks = workers.readinessChecks.makeAsyncIterator()
-        let starting = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
-        await checks.next()
-
-        await runtime.dispose()
-        #expect(workers.references.released == [chatProduct])
-        workers.publish([chatProduct: MockProductExecution()])
-        await #expect(throws: CancellationError.self) { try await starting.value }
-
-        #expect(workers.references.log == ["acquire \(chatProduct)", "release \(chatProduct)"])
-    }
-
-    /// A worker that never comes up must not leave the session holding a
-    /// reference: the core would keep counting it and never stop the worker it
-    /// eventually builds.
-    @Test func rustRuntimeGivesTheReferenceBackWhenNoWorkerComes() async throws {
-        let workers = StubWorkerRuntime()
-        let runtime = makeRustRuntime(workers: workers, startupTimeout: .milliseconds(50))
-
-        await #expect(throws: TimeoutError.self) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-        }
-
-        #expect(workers.references.acquired == [chatProduct])
-        #expect(workers.references.released == [chatProduct])
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
@@ -291,25 +249,6 @@ struct ChatRuntimeTests {
             try await runtime.onUserMessage(text: "hi", roomId: "room")
         }
         #expect(execution.publishedChatActions.isEmpty)
-    }
-
-    @Test func rustRuntimeRetriesRenderUntilTheProductAttaches() async throws {
-        let execution = MockProductExecution()
-        execution.renderErrors = [
-            ProductRuntimeError.NotConnected,
-            ProductRuntimeError.NotConnected
-        ]
-        let runtime = makeRustRuntime(workers: workersRunning(execution))
-        try await disposing(runtime) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-
-            let stream = await runtime.renderMessage(
-                roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
-            )
-            for try await _ in stream {}
-
-            #expect(execution.renderRequests.count == 3)
-        }
     }
 
     /// Anything that is not a startup race is terminal: surface it on the first
@@ -379,10 +318,10 @@ struct ChatRuntimeTests {
         }
     }
 
-    /// A cell can decode before the product's worker is up. Without `.notStarted`
-    /// in the transient set the render fails once and the cell is dead for the
-    /// session, because `ProductMessageDecoder` never evicts.
-    @Test func rustRuntimeRetriesRenderIssuedBeforeTheWorkerIsUp() async throws {
+    /// A cell can decode before the product's worker is up. The render waits for
+    /// the worker: failing once would leave the cell dead for the session,
+    /// because `ProductMessageDecoder` never evicts.
+    @Test func rustRuntimeRenderWaitsForTheWorkerToComeUp() async throws {
         let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
@@ -395,8 +334,8 @@ struct ChatRuntimeTests {
                 )
             }
             try await withTimeout(.hangGuard) {
-                var lookups = workers.executionLookups.makeAsyncIterator()
-                _ = await lookups.next()
+                var checks = workers.readinessChecks.makeAsyncIterator()
+                _ = await checks.next()
             }
 
             workers.publish([chatProduct: execution])

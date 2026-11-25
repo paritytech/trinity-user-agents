@@ -121,7 +121,7 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 
 ## Shared product workers
 
-Pass the WebView worker host when constructing the signed-in runtime. For each start, Swift opens the execution through the supplied attempt, loads the module in its WKWebView and calls `attempt.moduleStarted()`. Rust discards late acknowledgements if demand ended or a replacement has started.
+Pass the worker engine when constructing the runtime. A host that runs its workers in WebViews passes its WebView host: for each start, Swift opens the execution through the supplied attempt, loads the module in its WKWebView and calls `attempt.moduleStarted()`. Rust discards late acknowledgements if demand ended or a replacement has started.
 
 Chat and Pocket each hold the result of `claimWorker(productId:)` and observe the ready execution to send Chat actions or render. Each consumer calls `release()` on its own claim. Rust requests disposal of the WKWebView after the final reference ends.
 
@@ -242,7 +242,7 @@ back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. A feature calls
 `runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
 on that claim when its work ends. The runtime delivers the first start and last
-stop to the installed worker host. Two rules the core cannot check are the
+stop to the runtime's worker engine. Two rules the core cannot check are the
 host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.

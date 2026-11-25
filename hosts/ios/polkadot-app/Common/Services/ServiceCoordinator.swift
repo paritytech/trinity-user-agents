@@ -224,21 +224,6 @@ extension ServiceCoordinator {
             logger: logger
         )
 
-        // Single process-wide TrUAPI runtime provider. Registered in the root
-        // locator so the static SPA factory reaches the same instance the
-        // chat bot factory does — one shared runtime across all products.
-        // Host-level core confirmations route through an SSO-style facade whose
-        // presentation view is attached with the main tab bar; until then,
-        // host-level prompts deny.
-        let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            entropyManager: RootEntropyManager.shared,
-            settingsManager: SettingsManager.shared,
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
-            confirmationRouterFacade: ProductRoutersFacade.sso(),
-            remoteConfig: FirebaseFacade.shared,
-            logger: logger
-        )
         let gameReminders = ProductGameReminderCenter.makeDefault()
         RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
         RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
@@ -249,11 +234,14 @@ extension ServiceCoordinator {
             contentHashCache: ContentHashCache.shared
         )
 
-        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak truapiRuntimeProvider] in
-            guard let truapiRuntimeProvider else { throw CancellationError() }
-            return try truapiRuntimeProvider.sharedRuntime()
+        // The worker engine builds its WebViews with the provider's runtime, and the provider is
+        // built with its engine, so the engine reaches the provider through this reference.
+        let runtimeProvider = LateReference<TrUAPIHostRuntimeProvider>()
+        let runtime: @Sendable () throws -> TrUAPIHostRuntime = {
+            guard let provider = runtimeProvider.object else { throw CancellationError() }
+            return try provider.sharedRuntime()
         }
-        let contexts = ProductWorkerContexts { [weak truapiRuntimeProvider] in truapiRuntimeProvider?.presentationView }
+        let contexts = ProductWorkerContexts { runtimeProvider.object?.presentationView }
         let workerBuilder = TrUAPIWorkerBuilder(
             runtime: runtime,
             flowState: spaFlowState,
@@ -269,7 +257,23 @@ extension ServiceCoordinator {
                 attempt: attempt
             )
         }
-        truapiRuntimeProvider.attach(webViewHost: webViewHost)
+        // Single process-wide TrUAPI runtime provider. Registered in the root
+        // locator so the static SPA factory reaches the same instance the
+        // chat bot factory does — one shared runtime across all products.
+        // Host-level core confirmations route through an SSO-style facade whose
+        // presentation view is attached with the main tab bar; until then,
+        // host-level prompts deny.
+        let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
+            chainRegistry: ChainRegistryFacade.sharedRegistry,
+            entropyManager: RootEntropyManager.shared,
+            settingsManager: SettingsManager.shared,
+            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
+            confirmationRouterFacade: ProductRoutersFacade.sso(),
+            workerEngine: webViewHost,
+            remoteConfig: FirebaseFacade.shared,
+            logger: logger
+        )
+        runtimeProvider.object = truapiRuntimeProvider
 
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
         RootDependencyLocator.setDependency(
@@ -628,4 +632,10 @@ private extension ServiceCoordinator {
 
         return providers
     }
+}
+
+/// A reference set once the object it points to exists, for two objects that are each built
+/// with the other. Set during startup, before anything reads it.
+private final class LateReference<Object: AnyObject>: @unchecked Sendable {
+    weak var object: Object?
 }

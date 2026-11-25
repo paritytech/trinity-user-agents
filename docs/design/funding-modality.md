@@ -304,7 +304,7 @@ sequenceDiagram
   C->>W: assign(last update) per session, then unanswered cancels
   W->>W: resume from its saved state
   Note over H,W: a crash later: the attempt reports failed → Start again while a session or the overlay holds it
-  Note over H,W: crashes within a minute of each other back off from the second (1 s, doubling to 5 min); the third calls worker_crashing
+  Note over H,W: crashes in a run back off from the second (1 s, doubling to 5 min); the third calls worker_crashing
 ```
 
 ## Numbers

@@ -35,7 +35,7 @@ fn profile_runtime(
 		local_session_lite_username: None,
 		..native_host_runtime_config()
 	};
-	NativeTrUApiHostRuntime::with_runtime_config(callbacks, config, None).unwrap()
+	NativeTrUApiHostRuntime::with_runtime_config(callbacks, config, no_workers()).unwrap()
 }
 
 #[tokio::test]

@@ -1,9 +1,9 @@
 //! Session-owned product worker startup, cancellation and availability.
 
-use std::{
-	collections::HashMap,
-	sync::{Arc, Weak, atomic::Ordering},
-};
+mod registry;
+
+use core::time::Duration;
+use std::sync::{Arc, Weak};
 
 use futures::{StreamExt, channel::mpsc};
 use parking_lot::{MappedMutexGuard, MutexGuard};
@@ -15,32 +15,32 @@ use super::{
 use crate::{
 	background_task::BackgroundTask,
 	host_logic::worker::WorkerController,
-	native::subscribers::Subscribers,
 	platform::{ExecutableKind, ProductContext, ProductId},
 };
+use registry::{Registry, Removed, Signal};
 
 /// How long an attempt may take to start running.
 ///
 /// An attempt runs once its module has started and its bridge connection is authenticated. The
 /// time counts from the attempt's start, and again each time a running attempt loses its
 /// connection.
-const STARTUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(90);
+const STARTUP_DEADLINE: Duration = Duration::from_secs(90);
 
-/// Starts and disposes the WebView of each worker attempt.
+/// Runs a runtime's workers: starts each attempt and disposes it.
 ///
 /// Calls arrive on whichever thread changed worker demand or reported a failure, which can be the
 /// thread constructing the runtime or one of the core's own. Return without blocking: the starts
 /// and stops of every product wait behind the call. The core holds no lock meanwhile, so an
 /// implementation may call back into the runtime or the attempt.
 #[uniffi::export(rust, foreign)]
-pub trait NativeHostWebViewWorker: Send + Sync {
+pub trait NativeWorkerEngine: Send + Sync {
 	/// Begin booting the product, reporting module start or failure through this attempt.
 	///
 	/// The core fails an attempt that is not running 90 seconds after its start, or after it
 	/// lost its connection.
 	fn start(&self, product_id: ProductId, attempt: Arc<NativeWorkerAttempt>);
 
-	/// Dispose only the specified attempt's WebView, even when startup is incomplete.
+	/// Dispose only the specified attempt, even when startup is incomplete.
 	///
 	/// Arrives once for each started attempt, after its [`Self::start`] call has returned,
 	/// including after a failure the attempt reported. It can follow the start of the product's
@@ -60,11 +60,6 @@ pub enum NativeWorkerExecutionState {
 		/// Consumer operations on this execution.
 		execution: Arc<dyn NativeWorkerExecution>,
 	},
-	/// No attempt will start for the current demand.
-	Failed {
-		/// Why this worker is unavailable.
-		reason: String,
-	},
 }
 
 /// Observes one product without claiming its worker.
@@ -79,114 +74,35 @@ pub trait NativeWorkerExecutionObserver: Send + Sync {
 	fn finished(&self);
 }
 
-impl NativeProductExecution {
-	fn has_live_transport(&self) -> bool {
-		self.product_control
-			.lock()
-			.expect("product control mutex poisoned")
-			.as_ref()
-			.is_some_and(crate::ProductRuntimeControl::is_connected)
-	}
-}
-
-enum Phase {
-	Starting {
-		owner: Option<Arc<NativeProductExecution>>,
-		module_ready: bool,
-		/// Fails the attempt if it is still starting after [`STARTUP_DEADLINE`]. Dropped, and so
-		/// cancelled, with this phase.
-		_timeout: BackgroundTask,
-	},
-	Running(Arc<NativeProductExecution>),
-}
-
-enum Entry {
-	Active { id: u64, phase: Phase, cancel: Box<dyn FnOnce() + Send> },
-	Retrying,
-	Unavailable(String),
-}
-
-impl Entry {
-	fn state(&self) -> NativeWorkerExecutionState {
-		match self {
-			Self::Active { phase: Phase::Starting { .. }, .. } | Self::Retrying => {
-				NativeWorkerExecutionState::Pending
-			},
-			Self::Active { phase: Phase::Running(owner), .. } => {
-				NativeWorkerExecutionState::Running { execution: owner.clone() }
-			},
-			Self::Unavailable(reason) => {
-				NativeWorkerExecutionState::Failed { reason: reason.clone() }
-			},
-		}
-	}
-
-	fn stop(self) {
-		if let Self::Active { phase, cancel, .. } = self {
-			match phase {
-				Phase::Starting { owner: Some(owner), .. } | Phase::Running(owner) => {
-					owner.shutdown()
-				},
-				Phase::Starting { owner: None, .. } => {},
-			}
-			cancel();
-		}
-	}
-}
-
-#[derive(Default)]
-struct Registry {
-	entries: HashMap<ProductId, Entry>,
-	observers: Subscribers<ProductId, NativeWorkerExecutionState>,
-}
-
-impl Registry {
-	fn state(&self, product: &ProductId) -> NativeWorkerExecutionState {
-		self.entries
-			.get(product)
-			.map(Entry::state)
-			.unwrap_or(NativeWorkerExecutionState::Idle)
-	}
-
-	fn changed(&mut self, product: &ProductId) {
-		self.observers.send(product, &self.state(product));
-	}
-
-	fn insert(&mut self, product: &ProductId, entry: Entry) -> Option<Entry> {
-		let pending = |registry: &Self| {
-			matches!(registry.state(product), NativeWorkerExecutionState::Pending)
-		};
-		let was_pending = pending(self);
-		let previous = self.entries.insert(product.clone(), entry);
-		if !(was_pending && pending(self)) {
-			self.changed(product);
-		}
-		previous
-	}
-}
-
-impl Drop for Registry {
-	fn drop(&mut self) {
-		for (_, entry) in self.entries.drain() {
-			entry.stop();
-		}
-	}
-}
-
 /// The session's worker state and the platform services its controller uses.
 pub struct Session {
 	registry: Registry,
-	worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+	worker_engine: Arc<dyn NativeWorkerEngine>,
 	callbacks: Arc<dyn HostCallbacks>,
+	startup_deadline: Duration,
 }
 
 impl Session {
-	/// Keep worker state until shutdown, including failed starts on hosts without a launcher.
+	/// Keep worker state until shutdown.
 	pub fn new(
 		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
+		worker_engine: Arc<dyn NativeWorkerEngine>,
 	) -> Self {
-		Self { registry: Registry::default(), worker_host, callbacks: callbacks.clone() }
+		Self::new_with_startup_deadline(callbacks, worker_engine, STARTUP_DEADLINE)
+	}
+
+	/// [`Self::new`], with `startup_deadline` in place of [`STARTUP_DEADLINE`].
+	pub fn new_with_startup_deadline(
+		callbacks: &Arc<dyn HostCallbacks>,
+		worker_engine: Arc<dyn NativeWorkerEngine>,
+		startup_deadline: Duration,
+	) -> Self {
+		Self {
+			registry: Registry::default(),
+			worker_engine,
+			callbacks: callbacks.clone(),
+			startup_deadline,
+		}
 	}
 }
 
@@ -206,7 +122,7 @@ pub struct NativeWorkerAttempt {
 
 #[uniffi::export]
 impl NativeWorkerAttempt {
-	/// The ID used by the platform to dispose only this WebView.
+	/// The ID [`NativeWorkerEngine::stop`] names this attempt by.
 	pub fn id(&self) -> u64 {
 		self.id
 	}
@@ -221,25 +137,15 @@ impl NativeWorkerAttempt {
 		let stale =
 			|| HostRejection::Rejected { reason: "worker startup is no longer pending".into() };
 		let runtime = self.runtime.upgrade().ok_or_else(stale)?;
-		let mut session = runtime.worker_session().ok_or_else(stale)?;
-		let Some(Entry::Active { id, phase: Phase::Starting { owner, .. }, .. }) =
-			session.registry.entries.get_mut(&self.product)
-		else {
-			return Err(stale());
+		let mut session = self.current(&runtime).ok_or_else(stale)?;
+		let open = || {
+			runtime.open_execution(
+				callbacks,
+				ProductContext::new_with_execution(self.product.clone(), ExecutableKind::Worker),
+				Some(self.clone()),
+			)
 		};
-		if *id != self.id ||
-			owner.is_some() ||
-			!runtime.runtime.worker_ledger().is_current(&self.product, self.id)
-		{
-			return Err(stale());
-		}
-		let execution = runtime.open_execution(
-			callbacks,
-			ProductContext::new_with_execution(self.product.clone(), ExecutableKind::Worker),
-			Some(self.clone()),
-		);
-		*owner = Some(execution.clone());
-		Ok(execution)
+		session.registry.attach(&self.product, open).ok_or_else(stale)
 	}
 
 	/// Acknowledge that the module of this attempt's execution started. Its authenticated
@@ -248,122 +154,109 @@ impl NativeWorkerAttempt {
 	/// Returns false unless this attempt is current, has opened its execution and is still
 	/// starting.
 	pub fn module_started(&self) -> bool {
-		self.update_readiness(true)
+		self.update_readiness(Signal::ModuleStarted)
 	}
 
-	/// Revoke this attempt after startup failure or renderer loss, applying the ledger's retry
-	/// policy.
+	/// Revoke this attempt after its start failed or its worker was lost, applying the ledger's
+	/// retry policy.
 	pub fn failed(&self, reason: String) {
-		self.fail_if(&reason, |_| true);
+		self.fail(&reason, Registry::fail);
 	}
 }
 
 impl NativeWorkerAttempt {
-	fn deadline(self: &Arc<Self>, runtime: &NativeTrUApiHostRuntime) -> BackgroundTask {
+	fn deadline(
+		self: &Arc<Self>,
+		runtime: &NativeTrUApiHostRuntime,
+		after: Duration,
+	) -> BackgroundTask {
 		let attempt = self.clone();
 		BackgroundTask::spawn(&runtime.spawner, async move {
-			tokio::time::sleep(STARTUP_DEADLINE).await;
+			tokio::time::sleep(after).await;
 			attempt.startup_timeout();
 		})
 	}
 
-	fn fail_if(&self, reason: &str, applies: impl FnOnce(&Phase) -> bool) {
+	/// The session, locked, while the ledger counts this attempt as the product's current one.
+	///
+	/// The product's active entry is then this attempt's: an attempt is created in the lock hold
+	/// that enters it, and the ledger's IDs only grow.
+	fn current<'runtime>(
+		&self,
+		runtime: &'runtime NativeTrUApiHostRuntime,
+	) -> Option<MappedMutexGuard<'runtime, Session>> {
+		let session = runtime.worker_session()?;
+		runtime
+			.runtime
+			.worker_ledger()
+			.is_current(&self.product, self.id)
+			.then_some(session)
+	}
+
+	fn fail(
+		&self,
+		reason: &str,
+		remove: impl FnOnce(&mut Registry, &ProductId) -> Option<Removed>,
+	) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
-		let old = {
-			let Some(mut session) = runtime.worker_session() else { return };
-			let registry = &mut session.registry;
-			let Some(Entry::Active { id, phase, .. }) = registry.entries.get(&self.product) else {
-				return;
-			};
-			if *id != self.id ||
-				!applies(phase) ||
-				!runtime.runtime.worker_ledger().is_current(&self.product, self.id)
-			{
-				return;
-			}
-			registry.insert(&self.product, Entry::Retrying).expect("current attempt")
-		};
+		let removed = self
+			.current(&runtime)
+			.and_then(|mut session| remove(&mut session.registry, &self.product));
+		let Some(removed) = removed else { return };
 		tracing::warn!(
 			product = %self.product,
 			reason = %crate::logging::HostText::new(reason),
 			"a worker attempt failed"
 		);
-		old.stop();
+		removed.stop();
 		runtime.runtime.worker_attempt_exited(&self.product, self.id);
 	}
 
 	fn startup_timeout(&self) {
-		self.fail_if("worker startup timed out", |phase| matches!(phase, Phase::Starting { .. }));
+		self.fail("worker startup timed out", Registry::time_out);
 	}
 
 	/// Publish a worker when its authenticated bridge can receive calls.
 	pub fn connected(&self) {
-		self.update_readiness(false);
+		self.update_readiness(Signal::Connected);
 	}
 
-	/// Withdraw a disconnected worker until its WebView authenticates a new connection.
+	/// Withdraw a disconnected worker until it authenticates a new connection.
 	pub fn disconnected(self: &Arc<Self>) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
-		let Some(mut session) = runtime.worker_session() else { return };
-		let registry = &mut session.registry;
-		let Some(Entry::Active { id, phase, .. }) = registry.entries.get_mut(&self.product) else {
-			return;
-		};
-		let Phase::Running(owner) = phase else { return };
-		if self.id != *id || owner.has_live_transport() {
-			return;
+		if let Some(mut session) = self.current(&runtime) {
+			let after = session.startup_deadline;
+			session.registry.lost(&self.product, || self.deadline(&runtime, after));
 		}
-		*phase = Phase::Starting {
-			owner: Some(owner.clone()),
-			module_ready: true,
-			_timeout: self.deadline(&runtime),
-		};
-		registry.changed(&self.product);
 	}
 
-	fn update_readiness(&self, module_started: bool) -> bool {
+	fn update_readiness(&self, signal: Signal) -> bool {
 		let Some(runtime) = self.runtime.upgrade() else { return false };
-		let Some(mut session) = runtime.worker_session() else { return false };
-		let registry = &mut session.registry;
-		let Some(Entry::Active { id, phase, .. }) = registry.entries.get_mut(&self.product) else {
-			return false;
-		};
-		if *id != self.id || !runtime.runtime.worker_ledger().is_current(&self.product, self.id) {
-			return false;
+		let Some(mut session) = self.current(&runtime) else { return false };
+		let used = session.registry.ready(&self.product, signal);
+		if session.registry.is_running(&self.product) {
+			runtime.runtime.worker_ledger().running(&self.product, self.id);
 		}
-		match phase {
-			Phase::Running(owner) if !module_started && owner.has_live_transport() => {},
-			Phase::Starting { owner: Some(owner), module_ready, .. }
-				if !owner.closed.load(Ordering::Acquire) =>
-			{
-				*module_ready |= module_started;
-				if !*module_ready || !owner.has_live_transport() {
-					return true;
-				}
-				*phase = Phase::Running(owner.clone());
-			},
-			_ => return false,
-		}
-		registry.changed(&self.product);
-		true
+		used
 	}
 }
 
-struct WebView {
-	host: Arc<dyn NativeHostWebViewWorker>,
+/// An attempt on its engine, stopped there when the last copy is dropped.
+struct StartedAttempt {
+	engine: Arc<dyn NativeWorkerEngine>,
 	attempt: Arc<NativeWorkerAttempt>,
 }
 
-impl Drop for WebView {
+impl Drop for StartedAttempt {
 	fn drop(&mut self) {
-		self.host.stop(self.attempt.product.clone(), self.attempt.id);
+		self.engine.stop(self.attempt.product.clone(), self.attempt.id);
 	}
 }
 
 /// The worker ledger's controller for a native runtime.
 ///
-/// Turns each start the ledger requests into an attempt on the session's WebView host, or into
-/// a failed state when the session has none, and each stop into the disposal of that attempt.
+/// Turns each start the ledger requests into an attempt on the session's worker engine, and each
+/// stop into the disposal of that attempt.
 /// The runtime owns the ledger that holds this controller, so the reference back is weak.
 struct Controller(Weak<NativeTrUApiHostRuntime>);
 
@@ -380,52 +273,37 @@ pub fn install_controller(runtime: &Arc<NativeTrUApiHostRuntime>) {
 impl WorkerController for Controller {
 	fn start_worker(&self, product_id: &ProductId, id: u64) {
 		let Some(runtime) = self.0.upgrade() else { return };
-		let (previous, webview) = {
+		let (previous, started) = {
 			let Some(mut session) = runtime.worker_session() else { return };
 			if !runtime.runtime.worker_ledger().is_current(product_id, id) {
 				return;
 			}
-			let Some(host) = session.worker_host.clone() else {
-				session
-					.registry
-					.insert(product_id, Entry::Unavailable("no worker host configured".into()));
-				return;
-			};
 			let attempt = Arc::new(NativeWorkerAttempt {
 				product: product_id.clone(),
 				id,
 				runtime: self.0.clone(),
 			});
-			let webview = Arc::new(WebView { host, attempt });
-			// A stop racing startup must reach the native host after its start callback returns.
-			let started = webview.clone();
-			let entry = Entry::Active {
-				id,
-				phase: Phase::Starting {
-					owner: None,
-					module_ready: false,
-					_timeout: webview.attempt.deadline(&runtime),
-				},
-				cancel: Box::new(move || drop(started)),
-			};
-			let previous = session.registry.insert(product_id, entry);
-			(previous, webview)
+			let started =
+				Arc::new(StartedAttempt { engine: session.worker_engine.clone(), attempt });
+			let timeout = started.attempt.deadline(&runtime, session.startup_deadline);
+			// A stop racing startup must reach the engine after its start call returns.
+			let previous = session.registry.begin(product_id, timeout, started.clone());
+			(previous, started)
 		};
 		if let Some(previous) = previous {
 			previous.stop();
 		}
-		webview.host.start(product_id.clone(), webview.attempt.clone());
+		started.engine.start(product_id.clone(), started.attempt.clone());
 	}
 
 	fn stop_worker(&self, product_id: &ProductId) {
 		let Some(runtime) = self.0.upgrade() else { return };
-		let previous = {
-			let Some(mut session) = runtime.worker_session() else { return };
-			let Some(previous) = session.registry.entries.remove(product_id) else { return };
-			session.registry.changed(product_id);
-			previous
-		};
-		previous.stop();
+		let removed = runtime
+			.worker_session()
+			.and_then(|mut session| session.registry.end(product_id));
+		if let Some(removed) = removed {
+			removed.stop();
+		}
 	}
 
 	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
@@ -441,17 +319,6 @@ impl WorkerController for Controller {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
-	/// Borrow the current ready execution without taking another reference.
-	pub fn current_worker_execution(
-		&self,
-		product_id: ProductId,
-	) -> Option<Arc<dyn NativeWorkerExecution>> {
-		match self.worker_session()?.registry.entries.get(&product_id) {
-			Some(Entry::Active { phase: Phase::Running(owner), .. }) => Some(owner.clone()),
-			_ => None,
-		}
-	}
-
 	/// Follow one worker independently of the consumers that keep it running.
 	///
 	/// The first update describes the current attempt. Cancellation or session shutdown ends
@@ -463,11 +330,7 @@ impl NativeTrUApiHostRuntime {
 	) -> Arc<NativeSubscription> {
 		let (sender, mut states) = mpsc::unbounded();
 		if let Some(mut session) = self.worker_session() {
-			let registry = &mut session.registry;
-			sender
-				.unbounded_send(registry.state(&product_id))
-				.expect("worker observation is open");
-			registry.observers.register(product_id, sender);
+			session.registry.observe(product_id, sender);
 		} else {
 			sender
 				.unbounded_send(NativeWorkerExecutionState::Idle)
@@ -489,7 +352,7 @@ impl NativeTrUApiHostRuntime {
 	/// Revoke all worker claims and dispose their executions when the host session ends.
 	///
 	/// The workers are disposed when this returns, except one whose
-	/// [`NativeHostWebViewWorker::start`] or stop call is still running, on this thread or
+	/// [`NativeWorkerEngine::start`] or stop call is still running, on this thread or
 	/// another, which is disposed when that call returns. Observers receive `finished` afterwards.
 	pub fn shutdown_product_workers(&self) {
 		self.runtime.worker_ledger().shutdown();

@@ -29,21 +29,19 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
     private let productId: ProductId
     private let runtime: ProductWorkerRuntimeProvider
-    private let startupTimeout: Duration
     /// The product's own chat surface and routers, which outlive any one worker.
     private let context: ProductWorkerContext
-    private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
-
-    /// How often a cell asks again while the product is still coming up. The
-    /// worker's own refusals are waited out by ``renderWhenConnected``; this
-    /// one covers the window before there is a worker to ask at all.
-    private static let renderRetryInterval = Duration.milliseconds(25)
 
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
     private var workerClaim: NativeWorkerClaim?
+    private var workerFollowingTask: Task<Void, Never>?
     private var roomsForwardingTask: Task<Void, Never>?
+    /// The native room list, told to each execution the worker runs on.
+    private var rooms: [ChatRoom]?
+    /// Renders still waiting for the worker or drawing, ended by dispose.
+    private var renders: [UUID: Task<Void, Never>] = [:]
     private var started = false
     private var disposed = false
 
@@ -51,15 +49,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         productId: ProductId,
         runtime: @escaping ProductWorkerRuntimeProvider,
         context: ProductWorkerContext,
-        startupTimeout: Duration = .workerStartupTimeout,
-        renderStartupWindow: Duration = .seconds(5),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
         self.runtime = runtime
         self.context = context
-        self.startupTimeout = startupTimeout
-        self.renderStartupWindow = renderStartupWindow
         self.logger = logger
     }
 
@@ -89,7 +83,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     func onUserMessage(text: String, roomId: String?) async throws {
         try checkNotDisposed()
         guard let roomId else { throw ChatSeamError.roomlessChat }
-        try requireExecution().publishChatAction(HostChatActionSubscribeItem(
+        try await requireExecution().publishChatAction(HostChatActionSubscribeItem(
             roomId: roomId,
             peer: "native",
             payload: .messagePosted(.text(text: text))
@@ -105,7 +99,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         guard let roomId else {
             return AsyncThrowingStream { $0.finish(throwing: ChatSeamError.roomlessChat) }
         }
-        return await render(
+        return render(
             .chatMessage(roomId: roomId, messageId: messageId, messageType: messageType),
             payload: messageData
         )
@@ -117,7 +111,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         messageType: String,
         payload: Data
     ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
-        await render(.chatRoomFooter(roomId: roomId, messageType: messageType), payload: payload)
+        render(.chatRoomFooter(roomId: roomId, messageType: messageType), payload: payload)
     }
 
     /// A press inside a body the product drew is a renderer action addressed by
@@ -137,7 +131,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
             // would be delivered nowhere. Only this runtime needs the type: the
             // native one addresses by message id.
             guard let messageType else { throw ChatSeamError.untypedBody }
-            try publishRendererAction(
+            try await publishRendererAction(
                 .chatMessage(roomId: roomId, messageId: messageId, messageType: messageType),
                 actionId: actionId,
                 payload: payload
@@ -159,7 +153,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     ) async {
         do {
             try checkNotDisposed()
-            try publishRendererAction(
+            try await publishRendererAction(
                 .chatRoomFooter(roomId: roomId, messageType: messageType),
                 actionId: actionId,
                 payload: payload
@@ -183,8 +177,14 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // point observes it and unwinds.
         disposed = true
 
+        workerFollowingTask?.cancel()
+        workerFollowingTask = nil
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
+        for render in renders.values {
+            render.cancel()
+        }
+        renders = [:]
 
         // The core keeps the bridge, and the bridge keeps the surface: unbinding
         // is what releases the chat context. Only this runtime's own binding,
@@ -201,6 +201,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 }
 
 private extension TrUAPIChatHandler {
+    /// Asks for the worker and returns at once. The core starts it, retries it
+    /// and gives up on a start that hangs, so there is nothing to wait for here.
     func startRuntime(
         messagingSupport: ProductsNativeApi.MessagingSupport
     ) async throws {
@@ -210,9 +212,6 @@ private extension TrUAPIChatHandler {
 
         let host = try runtime()
         workerClaim = host.claimWorker(productId: productId)
-        try await host.waitForWorker(productId, timeout: startupTimeout)
-
-        try checkNotDisposed()
         startRoomsForwarding(host)
 
         logger.debug("Rust chat runtime started for: \(productId)")
@@ -222,88 +221,83 @@ private extension TrUAPIChatHandler {
         guard !disposed else { throw CancellationError() }
     }
 
+    /// A persisted message can decode before the product's worker runs, and
+    /// `ProductMessageDecoder` never evicts, so the render waits for the worker
+    /// instead of failing the cell. Dispose ends the wait.
     func render(
         _ context: RenderContext,
         payload: Data
-    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
-        do {
-            let nodes = try await renderNodesWhenConnected(
-                deadline: ContinuousClock.now + renderStartupWindow,
-                request: ProductRendererRenderRequest(context: context, payload: payload)
-            )
-            return AsyncThrowingStream { continuation in
-                let task = Task {
-                    do {
-                        for try await node in nodes {
-                            continuation.yield(.native(node))
-                        }
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
+    ) -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        let request = ProductRendererRenderRequest(context: context, payload: payload)
+        let id = UUID()
+        return AsyncThrowingStream { continuation in
+            let task = Task { [weak self] in
+                do {
+                    guard let execution = try await self?.executionWhenRunning() else { throw CancellationError() }
+                    for try await node in try execution.render(request) {
+                        continuation.yield(.native(node))
                     }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
-                continuation.onTermination = { _ in task.cancel() }
+                await self?.renderEnded(id)
             }
-        } catch {
-            return AsyncThrowingStream { $0.finish(throwing: error) }
+            renders[id] = task
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    /// A persisted message can decode before the product attaches. `ProductMessageDecoder`
-    /// never evicts, so failing once breaks that cell for the session.
-    func renderNodesWhenConnected(
-        deadline: ContinuousClock.Instant,
-        request: ProductRendererRenderRequest
-    ) async throws -> AsyncThrowingStream<RendererNode, Error> {
-        while true {
-            try checkNotDisposed()
-            do {
-                return try await requireExecution().renderWhenConnected(
-                    request,
-                    until: deadline,
-                    retryEvery: Self.renderRetryInterval
-                )
-            } catch let error where (error as? ChatSeamError) == .notStarted {
-                guard ContinuousClock.now < deadline else {
-                    logger.error("Custom render gave up waiting for the product: \(request.context)")
-                    throw error
-                }
-                try await Task.sleep(for: Self.renderRetryInterval)
-            }
-        }
+    func renderEnded(_ id: UUID) {
+        renders[id] = nil
     }
 
-    func publishRendererAction(_ context: RenderContext, actionId: String, payload: String?) throws {
-        try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+    func executionWhenRunning() async throws -> TrUAPIWorkerOperations? {
+        try checkNotDisposed()
+        return try await runtime().executionWhenRunning(productId)
+    }
+
+    func publishRendererAction(_ context: RenderContext, actionId: String, payload: String?) async throws {
+        try await requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
             context: context,
             actionId: actionId,
             payload: payload.map { Data($0.utf8) } ?? Data()
         ))
     }
 
-    func requireExecution() throws -> TrUAPIWorkerOperations {
-        guard let execution = try? runtime().currentWorkerExecution(productId: productId) else {
+    func requireExecution() async throws -> TrUAPIWorkerOperations {
+        guard let execution = await (try? runtime())?.runningExecution(productId) else {
             throw ChatSeamError.notStarted
         }
         return execution
     }
 
     /// Mirror the native room list into the core so product-side
-    /// `chat.listSubscribe` sees native changes as they happen. The execution is
-    /// read each time rather than captured, so a worker that restarts under this
-    /// session keeps being told.
+    /// `chat.listSubscribe` sees native changes as they happen. Each execution
+    /// the worker runs on is told the list too, so one that starts after the
+    /// list was read, or restarts under this session, does not miss it.
     func startRoomsForwarding(_ host: any ProductWorkerRuntime) {
-        roomsForwardingTask = Task { [logger, productId, chat = context.chat] in
+        roomsForwardingTask = Task { [weak self, logger, chat = context.chat] in
             do {
                 for try await rooms in try await chat.subscribeRooms() {
                     guard !Task.isCancelled else { return }
-                    host.currentWorkerExecution(productId: productId)?
-                        .notifyChatRoomsChanged(rooms: rooms.map { $0.toChatRoom() })
+                    await self?.roomsChanged(to: rooms.map { $0.toChatRoom() }, on: host)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
                 logger.error("Rust chat runtime rooms forwarding ended: \(error)")
             }
         }
+        workerFollowingTask = Task { [weak self, productId] in
+            await host.withRunningWorker(productId) { execution in
+                guard let rooms = await self?.rooms else { return }
+                execution.notifyChatRoomsChanged(rooms: rooms)
+            }
+        }
+    }
+
+    func roomsChanged(to rooms: [ChatRoom], on host: any ProductWorkerRuntime) async {
+        self.rooms = rooms
+        await host.runningExecution(productId)?.notifyChatRoomsChanged(rooms: rooms)
     }
 }

@@ -9,13 +9,11 @@ final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
     private let states = AsyncCurrentValueSubject<[ProductId: NativeWorkerExecutionState]>([:])
     private let entered = AsyncStream<Void>.makeStream()
     private let delivered = AsyncStream<Void>.makeStream()
-    private let lookups = AsyncStream<Void>.makeStream()
 
     let references = StubWorkerReferences()
 
     var readinessChecks: AsyncStream<Void> { entered.stream }
     var executionsDelivered: AsyncStream<Void> { delivered.stream }
-    var executionLookups: AsyncStream<Void> { lookups.stream }
 
     func claimWorker(productId: ProductId) -> NativeWorkerClaim {
         references.claim(productId)
@@ -23,10 +21,6 @@ final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
 
     func publish(_ executions: [ProductId: MockProductExecution]) {
         states.send(executions.mapValues { .running(execution: $0) })
-    }
-
-    func fail(_ productId: ProductId, reason: String) {
-        states.send([productId: .failed(reason: reason)])
     }
 
     func workerExecutionState(productId: ProductId) -> AsyncStream<NativeWorkerExecutionState> {
@@ -38,12 +32,12 @@ final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
             return snapshot[productId] ?? .pending
         })
     }
+}
 
-    func currentWorkerExecution(productId: ProductId) -> NativeWorkerExecution? {
-        lookups.continuation.yield(())
-        guard case let .running(execution)? = states.value[productId] else { return nil }
-        return execution
-    }
+/// A worker engine for a runtime whose test starts no worker.
+final class NoWorkerEngine: NativeWorkerEngine, Sendable {
+    func start(productId _: ProductId, attempt _: NativeWorkerAttempt) {}
+    func stop(productId _: ProductId, attemptId _: UInt64) {}
 }
 
 /// Each observer advances its iterator in the same task that consumes the returned stream.

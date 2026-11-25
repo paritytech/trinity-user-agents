@@ -8,7 +8,8 @@ struct TrUAPIWsBridgeTests {
     func anInvalidUsernameTerminatesTheProfileStreamWithTheCoreDomainError() async throws {
         let runtime = try TrUAPIHostRuntime(
             bridge: StubHostBridge(),
-            runtimeConfig: Self.makeHostRuntimeConfig()
+            runtimeConfig: Self.makeHostRuntimeConfig(),
+            workerEngine: NoWorkers()
         )
         defer { withExtendedLifetime(runtime) {} }
         do {
@@ -40,7 +41,8 @@ struct TrUAPIWsBridgeTests {
             let bridge = StubHostBridge()
             let runtime = try TrUAPIHostRuntime(
                 bridge: bridge,
-                runtimeConfig: Self.makeHostRuntimeConfig()
+                runtimeConfig: Self.makeHostRuntimeConfig(),
+                workerEngine: NoWorkers()
             )
             let seen = withExtendedLifetime(runtime) { bridge.coreLogs }
             if seen.contains(where: { $0.hasPrefix("truapi.core.started") }) {
@@ -56,7 +58,8 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
-            runtimeConfig: Self.makeHostRuntimeConfig()
+            runtimeConfig: Self.makeHostRuntimeConfig(),
+            workerEngine: NoWorkers()
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
@@ -90,7 +93,8 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
-            runtimeConfig: Self.makeHostRuntimeConfig()
+            runtimeConfig: Self.makeHostRuntimeConfig(),
+            workerEngine: NoWorkers()
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
@@ -125,7 +129,8 @@ struct TrUAPIWsBridgeTests {
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig(),
-            notificationCenter: notifications
+            notificationCenter: notifications,
+            workerEngine: NoWorkers()
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
@@ -264,6 +269,12 @@ func temporaryDatabaseDirectory() throws -> String {
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory.path
+}
+
+/// A worker engine for a runtime whose test starts no worker.
+final class NoWorkers: NativeWorkerEngine, Sendable {
+    func start(productId _: ProductId, attempt _: NativeWorkerAttempt) {}
+    func stop(productId _: ProductId, attemptId _: UInt64) {}
 }
 
 final class StubHostBridge: HostBridge, @unchecked Sendable {

@@ -50,7 +50,7 @@ extension CorePocketCardStore: PocketCardStore {
                         logger.warning("[pocket] the collection could not be followed, asking again: \(error)")
                     }
 
-                    try? await Task.sleep(for: pocketReopenDelay(after: attempt))
+                    try? await Task.sleep(for: reopenDelay(after: attempt))
                     attempt += 1
                 }
                 continuation.finish()
