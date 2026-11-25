@@ -17,7 +17,11 @@ interface FundingActivityMixin {
 
     fun onStartNew(direction: FundingDirection)
 
+    /** Opens the history over the sheet on screen. */
     fun onHistory()
+
+    /** The history is on screen as a screen of its own: its ended sessions are acknowledged for as long as the mixin's scope lives. */
+    fun onHistoryShown()
 
     fun onSheetBack()
 

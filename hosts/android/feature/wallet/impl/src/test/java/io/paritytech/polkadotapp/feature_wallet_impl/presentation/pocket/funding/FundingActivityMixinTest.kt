@@ -23,7 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
@@ -48,7 +48,7 @@ class FundingActivityMixinTest {
         coEvery { openFunding(any(), null) } coAnswers {
             CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
         }
-        every { observeActivity() } returns emptyFlow()
+        every { observeActivity() } returns flowOf(FundingActivity(inFlight = emptyList(), history = emptyList()))
         coEvery { acknowledgeShown(any()) } returns Unit
     }
     private val chainAssetProvider = mockk<ChainAssetProvider> {
@@ -166,6 +166,32 @@ class FundingActivityMixinTest {
 
         mixin.onHistory()
         coVerify(timeout = EVENT_TIMEOUT_MS) { hostFunding.acknowledgeShown(listOf("ended")) }
+    }
+
+    @Test
+    fun `a tap before the first list arrives waits for it, and shows the sessions in progress`() = runBlocking<Unit> {
+        val activity = MutableSharedFlow<FundingActivity>()
+        every { hostFunding.observeActivity() } returns activity
+        val mixin = mixin()
+
+        mixin.onStart(FundingDirection.IN)
+        assertNull(mixin.sheet.value)
+        activity.emit(FundingActivity(inFlight = listOf(inProgress(FundingDirection.IN)), history = emptyList()))
+
+        assertEquals(FundingSheet.TOPPING_UP, mixin.sheet.value)
+        coVerify(exactly = 0) { hostFunding.openFunding(any(), any()) }
+    }
+
+    @Test
+    fun `the history as a screen of its own acknowledges its ended sessions without opening a sheet`() = runBlocking<Unit> {
+        val ended = inProgress(FundingDirection.IN).copy(id = "ended", status = FundingActivityStatus.ToppedUp)
+        every { hostFunding.observeActivity() } returns flowOf(FundingActivity(inFlight = emptyList(), history = listOf(ended)))
+        val mixin = mixin()
+
+        mixin.onHistoryShown()
+
+        coVerify(timeout = EVENT_TIMEOUT_MS) { hostFunding.acknowledgeShown(listOf("ended")) }
+        assertNull(mixin.sheet.value)
     }
 
     private fun mixin(): FundingActivityMixin {

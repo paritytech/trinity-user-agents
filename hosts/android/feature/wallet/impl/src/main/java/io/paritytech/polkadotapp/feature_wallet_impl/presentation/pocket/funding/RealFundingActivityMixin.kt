@@ -17,14 +17,17 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -50,11 +53,16 @@ internal class RealFundingActivityMixin(
 
     private val sheets = FundingSheets()
     private val opening = MutableStateFlow(false)
+    private val historyScreen = MutableStateFlow(false)
 
-    override val activity: StateFlow<FundingActivityUiState> =
+    // Never ends: the core's sessions as they change, with the clock.
+    private val observed: SharedFlow<FundingActivityUiState> =
         combine(hostFunding.observeActivity(), timeProvider.ticking(NOW_TICK)) { activity, now ->
             FundingActivityMapper(chainAssetProvider.asset(), tokenAmountMapper).map(activity, now)
-        }.stateIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), empty())
+        }.shareIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), replay = 1)
+
+    override val activity: StateFlow<FundingActivityUiState> =
+        observed.stateIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), empty())
 
     override val sheet: StateFlow<FundingSheet?> = sheets.shown.stateIn(scope, SharingStarted.Eagerly, null)
 
@@ -62,9 +70,11 @@ internal class RealFundingActivityMixin(
         acknowledgeShownHistory()
     }
 
-    override fun onStart(direction: FundingDirection) {
-        val inProgress = if (direction == FundingDirection.IN) activity.value.toppingUp else activity.value.sending
-        if (inProgress.isEmpty()) open(direction) else sheets.open(direction.inProgressSheet())
+    // Waits for the first list, so a tap before it arrives still shows the sessions in progress.
+    override fun onStart(direction: FundingDirection) = whileOpening {
+        val current = observed.first()
+        val inProgress = if (direction == FundingDirection.IN) current.toppingUp else current.sending
+        if (inProgress.isEmpty()) openFunding(direction) else sheets.open(direction.inProgressSheet())
     }
 
     override fun onStartNew(direction: FundingDirection) {
@@ -73,6 +83,10 @@ internal class RealFundingActivityMixin(
     }
 
     override fun onHistory() = sheets.open(FundingSheet.HISTORY)
+
+    override fun onHistoryShown() {
+        historyScreen.value = true
+    }
 
     override fun onSheetBack() = sheets.back()
 
@@ -83,23 +97,30 @@ internal class RealFundingActivityMixin(
         scope.launch { hostFunding.showSession(id) }
     }
 
+    private fun open(direction: FundingDirection) = whileOpening { openFunding(direction) }
+
     // One session at a time: a second tap while the overlay is up is ignored.
-    private fun open(direction: FundingDirection) {
+    private fun whileOpening(action: suspend () -> Unit) {
         if (opening.value) return
         opening.enable()
         scope.launch {
-            hostFunding.isFundingAvailable()
-                .flatMap { available -> if (available) hostFunding.openFunding(direction, amount = null) else Result.failure(NoFundingProvider()) }
-                .onFailure { onFailure(direction.unavailable(it)) }
+            action()
             opening.disable()
         }
     }
 
+    private suspend fun openFunding(direction: FundingDirection) {
+        hostFunding.isFundingAvailable()
+            .flatMap { available -> if (available) hostFunding.openFunding(direction, amount = null) else Result.failure(NoFundingProvider()) }
+            .onFailure { onFailure(direction.unavailable(it)) }
+    }
+
     // The core keeps an ended session owed to the host until the user has seen it in the history.
     private fun acknowledgeShownHistory() = scope.launch {
-        sheet
-            .flatMapLatest { shown ->
-                if (shown == FundingSheet.HISTORY) activity.map { it.completed.map { row -> row.id } } else emptyFlow()
+        combine(sheet, historyScreen) { shown, screen -> shown == FundingSheet.HISTORY || screen }
+            .distinctUntilChanged()
+            .flatMapLatest { onScreen ->
+                if (onScreen) observed.map { it.completed.map { row -> row.id } } else emptyFlow()
             }
             .distinctUntilChanged()
             .filter { it.isNotEmpty() }
