@@ -5,8 +5,6 @@
 //! the product hosts. A delete refuses only a room that the product reaches as
 //! a bot, because the host deletes a room that does not exist without an error.
 
-use std::sync::Arc;
-
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -84,8 +82,6 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				} else {
 					self.connection.product.product_id.chat_room_id(&request.room_id_source)
 				};
-				// One host call: the host keeps the configuration with the
-				// room, or refuses it before it creates anything.
 				let status = platform
 					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
@@ -204,7 +200,6 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				// A docked card is screened as a posted custom message is.
 				if let latest::ChatRoomFooter::Card(card) = request.footer {
 					request.footer = latest::ChatRoomFooter::Card(
 						validate_chat_custom_message(card).map_err(|error| {
@@ -215,7 +210,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 					);
 				}
 				request.room_id = self
-					.hosted_room(&platform, &request.room_id)
+					.hosted_room(&*platform, &request.room_id)
 					.await
 					.map_err(footer_refusal)?
 					.room_id;
@@ -241,7 +236,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.metadata =
 					validate_chat_room_metadata(request.metadata).map_err(room_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?.room_id;
+				request.room_id = self.hosted_room(&*platform, &request.room_id).await?.room_id;
 				room_change(
 					platform.set_chat_room_metadata(&self.connection.product, request).await,
 				)
@@ -260,7 +255,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.preview =
 					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
-				let room = self.hosted_room(&platform, &request.room_id).await?;
+				let room = self.hosted_room(&*platform, &request.room_id).await?;
 				request.room_id = room.room_id;
 				// In a room that the host stores, the host shows the messages and
 				// reactions of the user from its own store.
@@ -281,7 +276,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = match self.hosted_room(&platform, &request.room_id).await {
+				request.room_id = match self.hosted_room(&*platform, &request.room_id).await {
 					Ok(room) => room.room_id,
 					// The host deletes a room that does not exist without an
 					// error, so a product can send a delete again when it lost
@@ -316,7 +311,7 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.update =
 					validate_chat_feed_update(request.update).map_err(feed_field_error)?;
-				let room = self.hosted_room(&platform, &request.room_id).await?;
+				let room = self.hosted_room(&*platform, &request.room_id).await?;
 				request.room_id = room.room_id;
 				let persist = !room.config.product_source;
 				// In a room that the host stores, the user writes and reacts
@@ -352,6 +347,7 @@ fn feed_outcome(
 }
 
 /// Why the core refuses a room-changing call before the host sees it.
+#[must_use]
 enum RoomRefusal {
 	/// The product created no room with this normalized id.
 	UnknownRoom(String),
@@ -525,7 +521,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// same way.
 	async fn hosted_room(
 		&self,
-		platform: &Arc<dyn ChatPlatform>,
+		platform: &dyn ChatPlatform,
 		room_id: &str,
 	) -> Result<HostedRoom, RoomRefusal> {
 		let room_id = normalized_room_id(room_id)?;

@@ -170,10 +170,10 @@ fn host_callbacks_encode_and_decode_the_latest_registration_status() {
 	assert!(bridge.contains("decode_bytes::<latest::ChatRoomRegistrationStatus>"), "{bridge}");
 }
 
-// A host answers an optional codec result with a value or `undefined`. The
-// adapter encodes only a value and the bridge decodes only bytes, so
-// `undefined` reaches the core as `None` and never as bytes that fail to
-// decode.
+// A host answers an optional codec result with a value or `undefined`, and a
+// JavaScript host can answer `null`, which a codec cannot encode. The adapter
+// encodes only a value and the bridge decodes only bytes, so no value reaches
+// the core as `None` and never as bytes that fail to decode.
 #[test]
 fn an_optional_codec_result_crosses_the_bridge_as_bytes_or_nothing() {
 	let response = "HostFeatureSupportedResponse";
@@ -201,7 +201,7 @@ fn an_optional_codec_result_crosses_the_bridge_as_bytes_or_nothing() {
 		.expect("an optional codec result renders");
 	assert!(
 		adapter.contains(
-			"const value = await callbacks.features.featureSupported(); return value === undefined ? undefined : HostFeatureSupportedResponse.enc(value);"
+			"const value = await callbacks.features.featureSupported(); return value == null ? undefined : HostFeatureSupportedResponse.enc(value);"
 		),
 		"{adapter}"
 	);
