@@ -3955,6 +3955,31 @@ fn a_chat_icon_is_screened_as_create_room_screens_it() {
 	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
 }
 
+/// A host builds its room icon from what `createRoom` and `setRoomMetadata`
+/// carry. If it refused a form that the core passes on, the product would
+/// lose a room that the core accepted.
+#[test]
+fn a_room_icon_of_a_chat_callback_is_a_resource_or_an_icon_of_the_earlier_client() {
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+	let accepted = [
+		(cid.as_str(), cid.as_str()),
+		("  ", ""),
+		("data:image/png;base64,iVBORw0KGgo=", "data:image/png;base64,iVBORw0KGgo="),
+		("https://example.invalid", "https://example.invalid/"),
+	];
+	for (icon, screened) in accepted {
+		assert_eq!(screen_chat_room_icon(icon.to_string()).unwrap(), screened, "{icon:?}");
+	}
+	assert!(
+		screen_chat_room_icon("javascript:alert(1)".to_string()).is_err(),
+		"neither rule takes a script URL, so a host must not take one from a callback"
+	);
+	assert!(
+		screen_chat_icon(cid).is_err(),
+		"the icon rule of the earlier client must keep refusing a CID"
+	);
+}
+
 /// Both sides NFC-normalize, so a host that compares raw bytes against what
 /// the core stored would miss a card it holds.
 #[test]

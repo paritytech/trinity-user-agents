@@ -50,7 +50,7 @@ class ProductChatHostBridge(
     ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
         if (config.productSource) throw HostChatCreateRoomException.UnsupportedConfig()
-        val roomIcon = ProductChatIcon.fromString(icon).orReject()
+        val roomIcon = ProductChatIcon.fromCallback(icon).orReject()
         val room = ProductChatIdParameter(roomId)
         val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status
         chatMessaging.setRoomConfig(room, config.toModel()).orReject()
@@ -94,7 +94,7 @@ class ProductChatHostBridge(
 
     override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata): ChatRoomChangeOutcome {
         val room = requireRoom(roomId)
-        val iconChange = metadata.icon?.let { RoomIconChange(ProductChatIcon.fromString(it).orReject()?.value) }
+        val iconChange = metadata.icon?.let { RoomIconChange(ProductChatIcon.fromCallback(it).orReject()?.value) }
         chatMessaging.setRoomMetadata(room, metadata.name, iconChange, metadata.toModel()).orReject()
         return ChatRoomChangeOutcome.APPLIED
     }
