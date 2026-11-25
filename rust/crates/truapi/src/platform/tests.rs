@@ -1373,24 +1373,27 @@ impl ChatPlatform for ChatHostWithoutDeclarations {
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>> {
 		unimplemented!("not used by this test")
 	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+	) -> Result<Option<ChatRoomState>, GenericError> {
+		unimplemented!("not used by this test")
+	}
 }
 
 // The Rust defaults have the same contract as the Swift and Kotlin bridges.
-// A host without the declaration callbacks reads every room as the default
-// configuration, accepts the metadata, which changes nothing, and answers
-// `Unsupported` for every other change, so a product can tell it from a
-// failure. The configuration itself arrives in `create_chat_room`, which has
-// no default.
+// A host without the declaration callbacks answers `Unsupported` for every
+// change, the metadata too, so a product can tell it from a failure. The
+// configuration itself arrives in `create_chat_room` and goes back through
+// `chat_room`, which have no default.
 #[test]
-fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
+fn a_chat_host_without_declarations_answers_unsupported_for_each_change() {
 	let host = ChatHostWithoutDeclarations;
 	let product = ProductContext::new(ProductId::for_test("chat.dot"));
 	let unsupported = Ok(ChatRoomChangeOutcome::Unsupported);
 
-	assert_eq!(
-		futures::executor::block_on(host.read_chat_room_config(&product, "support".to_string())),
-		Ok(ChatRoomConfig::default())
-	);
 	assert_eq!(
 		futures::executor::block_on(host.set_chat_room_metadata(
 			&product,
@@ -1404,7 +1407,7 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 				},
 			},
 		)),
-		Ok(())
+		unsupported
 	);
 	assert_eq!(
 		futures::executor::block_on(host.set_chat_room_preview(

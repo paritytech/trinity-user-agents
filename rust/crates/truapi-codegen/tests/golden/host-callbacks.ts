@@ -9,6 +9,8 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
+  ChatRoomConfig,
+  ChatRoomParticipation,
   CodeFormat,
   ExecutableKind,
   FundingDirection,
@@ -31,7 +33,6 @@ import {
 } from "@parity/truapi";
 
 import type {
-  ChatRoomConfig,
   ChatRoomRegistrationStatus,
   FundingFrameOutcome,
   FundingFrameTarget,
@@ -168,7 +169,8 @@ export type ChatFeedOutcome =
   | "Unsupported";
 
 /**
- * What the host did with a change to a room: a preview or a delete.
+ * What the host did with a change to a room: a metadata change, a preview or
+ * a delete.
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value. A host that does not serve the request answers
@@ -176,6 +178,24 @@ export type ChatFeedOutcome =
  * error that the host returns reaches the product as `HostFailure`.
  */
 export type ChatRoomChangeOutcome = "Applied" | "Unsupported";
+
+/**
+ * What the host keeps for one room of a product.
+ *
+ * `ChatPlatform::chat_room` answers it, so the core reads the room and its
+ * configuration in one host call.
+ */
+export interface ChatRoomState {
+  /**
+   * Whether the product hosts the room or takes part in it as a bot.
+   */
+  participatingAs: ChatRoomParticipation;
+
+  /**
+   * The configuration of the last `create_chat_room` of the room.
+   */
+  config: ChatRoomConfig;
+}
 
 /**
  * Core-owned host-private storage slots. Products never address these slots;
@@ -1128,7 +1148,8 @@ export const ChatFeedOutcome: S.Codec<ChatFeedOutcome> = S.lazy(
 );
 
 /**
- * What the host did with a change to a room: a preview or a delete.
+ * What the host did with a change to a room: a metadata change, a preview or
+ * a delete.
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value. A host that does not serve the request answers
@@ -1137,6 +1158,20 @@ export const ChatFeedOutcome: S.Codec<ChatFeedOutcome> = S.lazy(
  */
 export const ChatRoomChangeOutcome: S.Codec<ChatRoomChangeOutcome> = S.lazy(
   (): S.Codec<ChatRoomChangeOutcome> => S.Status("Applied", "Unsupported"),
+);
+
+/**
+ * What the host keeps for one room of a product.
+ *
+ * `ChatPlatform::chat_room` answers it, so the core reads the room and its
+ * configuration in one host call.
+ */
+export const ChatRoomState: S.Codec<ChatRoomState> = S.lazy(
+  (): S.Codec<ChatRoomState> =>
+    S.Struct({
+      participatingAs: ChatRoomParticipation,
+      config: ChatRoomConfig,
+    }) as S.Codec<ChatRoomState>,
 );
 
 /**
@@ -1805,9 +1840,9 @@ export interface ChainProvider {
  * delivered as the parser resolved it. The one exception is the node of a HOP
  * media item: the core checks only that it is a `wss://` URL of at most
  * `CHAT_HOP_NODE_MAX_CHARS` characters, and passes it on as the product
- * wrote it. The icon of the room metadata and an image badge take no URL at
- * all: inline image data or the CID of a Bulletin preimage, as RFC 0002 names
- * resources.
+ * wrote it. The icon of a v2 `create_chat_room`, the icon of the room
+ * metadata and an image badge take no URL at all: inline image data or the
+ * CID of a Bulletin preimage, as RFC 0002 names resources.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1831,11 +1866,12 @@ export interface ChatPlatform {
    *
    * In the same step the host keeps `request.config` for the room, across
    * restarts, for a new room and for a room that exists: the configuration
-   * replaces the one the host keeps. A change of `product_source` discards
-   * the stored messages or the cached pages of the room. A host that cannot
-   * keep a configuration other than the default answers `UnsupportedConfig`
-   * for it, before it creates or changes anything. A request from a product
-   * built against the earlier client carries the default configuration.
+   * replaces the one the host keeps, and `Self::chat_room` answers it. A
+   * change of `product_source` discards the stored messages or the cached
+   * pages of the room. A host that cannot keep a configuration other than
+   * the default answers `UnsupportedConfig` for it, before it creates or
+   * changes anything. A request from a product built against the earlier
+   * client carries the default configuration.
    */
   createChatRoom(
     product: ProductContext,
@@ -1880,39 +1916,29 @@ export interface ChatPlatform {
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
 
   /**
-   * The current product-scoped room list, read one time.
+   * What the host keeps for one room of the product, read one time.
    *
-   * The core uses it to check that a product hosts a room, before each
-   * change to a room. A host that cannot read its rooms returns an error,
-   * not an empty list. If a Rust host does not implement this method, the
-   * core uses the first item of the room list subscription. A host whose
-   * subscription registers a listener implements it: otherwise each check
-   * leaves a listener behind.
+   * The core calls it once before each change to a room: to check that the
+   * product hosts the room, and to read whether the host stores its
+   * messages. ``undefined`` is a room that the product never created. A host that
+   * cannot read its rooms returns an error, not ``undefined``.
    */
-  listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
-
-  /**
-   * The configuration of the last `create_chat_room` of a room.
-   *
-   * The core reads it to decide whether the host stores the messages of the
-   * room.
-   */
-  readChatRoomConfig?(
+  chatRoom(
     product: ProductContext,
     roomId: string,
-  ): Promise<ChatRoomConfig>;
+  ): Promise<ChatRoomState | undefined>;
 
   /**
    * Replace the name, description, icon and empty-room text of a room.
    *
    * An icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
-   * host does not implement this method, it ignores the metadata. The room
-   * keeps the name and icon of `create_chat_room`.
+   * host does not implement this method, it answers `Unsupported`, and so
+   * does the product's request.
    */
   setChatRoomMetadata?(
     product: ProductContext,
     request: HostChatSetRoomMetadataRequest,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 
   /**
    * Replace how a room shows in the chat list.

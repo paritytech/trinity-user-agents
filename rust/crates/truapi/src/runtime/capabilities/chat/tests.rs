@@ -5,7 +5,7 @@ use truapi::v01;
 
 use super::*;
 use crate::{
-	platform::{ExecutableKind, ProductContext, ProductId},
+	platform::{ChatRoomState, ExecutableKind, ProductContext, ProductId},
 	runtime::{
 		HostRole, PairingHost, RemoteAccountHolder, RuntimeServices, tests::install_pairing_session,
 	},
@@ -22,14 +22,14 @@ struct RecordingHost {
 	feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
 	previews: Mutex<Vec<latest::HostChatSetRoomPreviewRequest>>,
 	calls: Mutex<Vec<String>>,
-	/// The failure reason of `list_chat_rooms`, if any.
-	room_list_failure: Mutex<Option<String>>,
+	/// How many times the core read a room through `chat_room`.
+	room_reads: Mutex<usize>,
+	/// The failure reason of `chat_room`, if any.
+	room_failure: Mutex<Option<String>>,
 	/// The failure reason of `delete_chat_room`, if any.
 	delete_failure: Mutex<Option<String>>,
-	/// The failure reason of `read_chat_room_config`, if any.
-	config_failure: Mutex<Option<String>>,
-	/// The host serves no preview, delete or feed update, as a host that keeps
-	/// the defaults of `ChatPlatform`.
+	/// The host serves no metadata change, preview, delete or feed update, as
+	/// a host that keeps the defaults of `ChatPlatform`.
 	unserved: Mutex<bool>,
 	/// What the host answers to a feed update; `Applied` when unset.
 	feed_outcome: Mutex<Option<ChatFeedOutcome>>,
@@ -140,33 +140,28 @@ impl ChatPlatform for RecordingHost {
 		futures::stream::iter([Ok(self.room_list())]).boxed()
 	}
 
-	async fn list_chat_rooms(
-		&self,
-		_product: &ProductContext,
-	) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
-		match self.room_list_failure.lock().unwrap().clone() {
-			Some(reason) => Err(latest::GenericError { reason }),
-			None => Ok(self.room_list()),
-		}
-	}
-
-	async fn read_chat_room_config(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-	) -> Result<latest::ChatRoomConfig, latest::GenericError> {
-		if let Some(reason) = self.config_failure.lock().unwrap().clone() {
+	) -> Result<Option<ChatRoomState>, latest::GenericError> {
+		*self.room_reads.lock().unwrap() += 1;
+		if let Some(reason) = self.room_failure.lock().unwrap().clone() {
 			return Err(latest::GenericError { reason });
 		}
-		Ok(self.configs.lock().unwrap().get(&room_id).cloned().unwrap_or_default())
+		let Some(participating_as) = self.rooms.lock().unwrap().get(&room_id).copied() else {
+			return Ok(None);
+		};
+		let config = self.configs.lock().unwrap().get(&room_id).cloned().unwrap_or_default();
+		Ok(Some(ChatRoomState { participating_as, config }))
 	}
 
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), latest::GenericError> {
-		self.record("metadata", &request.room_id)
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.change("metadata", &request.room_id)
 	}
 
 	async fn set_chat_room_preview(
@@ -435,27 +430,36 @@ fn a_field_that_fails_the_screen_is_a_malformed_frame() {
 	);
 }
 
-// The core decides from the configuration whether the host stores the update.
-// A configuration it cannot read fails the update: the default would make the
-// host store the messages of a room whose messages the product keeps.
+// The core decides from the configuration of the room whether the host stores
+// an update and whether a preview may show the user. A room it cannot read
+// fails the call: the default would make the host store the messages of a
+// room whose messages the product keeps.
 #[test]
-fn a_feed_update_fails_when_the_host_cannot_read_the_configuration() {
+fn a_feed_update_or_preview_fails_when_the_host_cannot_read_the_room() {
 	let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
 	configure(
 		&chat,
 		"sourced",
 		latest::ChatRoomConfig { product_source: true, ..Default::default() },
 	);
-	*chat.config_failure.lock().unwrap() = Some("store locked".to_string());
+	*chat.room_failure.lock().unwrap() = Some("store locked".to_string());
 	let runtime = chat_runtime(chat.clone());
 
 	assert_eq!(
 		update_feed(&runtime, "sourced", text_message("product")),
 		Err(CallError::HostFailure { reason: "store locked".to_string() })
 	);
+	assert_eq!(
+		set_preview(&runtime, "sourced", empty_preview()),
+		Err(CallError::HostFailure { reason: "store locked".to_string() })
+	);
 	assert!(
 		chat.feed.lock().unwrap().is_empty(),
 		"without the configuration the host cannot know whether to store the update"
+	);
+	assert!(
+		chat.calls().is_empty(),
+		"without the configuration the core cannot know whether the preview may show the user"
 	);
 }
 
@@ -813,6 +817,7 @@ fn a_room_change_the_host_does_not_serve_is_unsupported() {
 	*chat.unserved.lock().unwrap() = true;
 	let runtime = chat_runtime(chat.clone());
 
+	assert_eq!(set_metadata(&runtime, "support", "Support"), Err(CallError::Unsupported));
 	assert_eq!(set_preview(&runtime, "support", empty_preview()), Err(CallError::Unsupported));
 	assert_eq!(
 		update_feed(&runtime, "support", text_message("product")),
@@ -860,12 +865,12 @@ fn a_delete_the_host_refuses_is_a_host_failure() {
 	assert_eq!(deleted, Err(CallError::HostFailure { reason: "not served".to_string() }));
 }
 
-// A room list that the host cannot read is a host failure. If the core
-// reads it as an empty list, a delete succeeds and the room stays.
+// A room that the host cannot read is a host failure. If the core reads it as
+// a room that does not exist, a delete succeeds and the room stays.
 #[test]
-fn a_delete_fails_when_the_host_cannot_list_its_rooms() {
+fn a_delete_fails_when_the_host_cannot_read_the_room() {
 	let chat = RecordingHost::with_rooms(&[hosted("support")]);
-	*chat.room_list_failure.lock().unwrap() = Some("store locked".to_string());
+	*chat.room_failure.lock().unwrap() = Some("store locked".to_string());
 	let runtime = chat_runtime(chat.clone());
 
 	let deleted = block_on(Chat::delete_room(
@@ -878,6 +883,40 @@ fn a_delete_fails_when_the_host_cannot_list_its_rooms() {
 
 	assert_eq!(deleted, Err(CallError::HostFailure { reason: "store locked".to_string() }));
 	assert!(chat.calls().is_empty());
+}
+
+// The host answers the room and its configuration in one call, so the core
+// reads each room once for each change, whatever the change needs to know.
+#[test]
+fn a_room_change_reads_the_room_once() {
+	let chat = RecordingHost::with_rooms(&[hosted("support")]);
+	let runtime = chat_runtime(chat.clone());
+	let reads = |change: &dyn Fn()| {
+		*chat.room_reads.lock().unwrap() = 0;
+		change();
+		*chat.room_reads.lock().unwrap()
+	};
+	let footer = || {
+		block_on(Chat::set_room_footer(
+			&runtime,
+			&CallContext::default(),
+			HostChatSetRoomFooterRequest::V2(latest::HostChatSetRoomFooterRequest {
+				room_id: "support".to_string(),
+				footer: latest::ChatRoomFooter::TextInput,
+			}),
+		))
+		.expect("the footer is set");
+	};
+
+	assert_eq!(reads(&footer), 1);
+	assert_eq!(reads(&|| drop(set_metadata(&runtime, "support", "Support"))), 1);
+	assert_eq!(reads(&|| drop(set_preview(&runtime, "support", empty_preview()))), 1);
+	assert_eq!(reads(&|| drop(update_feed(&runtime, "support", text_message("product")))), 1);
+	assert_eq!(reads(&|| drop(delete_room(&runtime, "support"))), 1);
+	assert_eq!(
+		chat.calls(),
+		["footer support", "metadata support", "preview support", "delete support"]
+	);
 }
 
 // A room keeps the configuration of its last `create_room`, also when the
@@ -990,4 +1029,41 @@ fn a_room_keeps_its_icon_rules() {
 			String::new()
 		]
 	);
+}
+
+// RFC 0002 makes the icon of a v2 room a resource: inline image data or the
+// CID of a preimage. A URL would make the host fetch from where the product
+// points, so it never reaches the host.
+#[test]
+fn a_v2_room_takes_a_resource_as_its_icon() {
+	let chat = RecordingHost::with_rooms(&[]);
+	let runtime = chat_runtime(chat.clone());
+	let create = |icon: &str| {
+		block_on(Chat::create_room(
+			&runtime,
+			&CallContext::default(),
+			HostChatCreateRoomRequest::V2(latest::HostChatCreateRoomRequest {
+				room_id_source: "support".to_string(),
+				name: "Support".to_string(),
+				icon: icon.to_string(),
+				config: latest::ChatRoomConfig::default(),
+			}),
+		))
+	};
+	let inline = "data:image/png;base64,AQID";
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+
+	assert_eq!(
+		create("https://icons.example/support.png"),
+		Err(CallError::Domain(HostChatCreateRoomError::V2(
+			latest::HostChatCreateRoomError::Unknown {
+				reason: ChatFieldError::NotAResource { field: "icon" }.to_string(),
+			}
+		)))
+	);
+	assert!(chat.icons.lock().unwrap().is_empty(), "a refused icon must not reach the host");
+	create(inline).expect("an inline icon is accepted");
+	create(&format!(" {cid} ")).expect("a preimage CID is accepted");
+	create("").expect("no icon is accepted");
+	assert_eq!(*chat.icons.lock().unwrap(), [inline.to_string(), cid, String::new()]);
 }

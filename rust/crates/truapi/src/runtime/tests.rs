@@ -1815,6 +1815,29 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 			.collect();
 		Box::pin(futures::stream::iter([Ok(truapi::latest::HostChatListSubscribeItem { rooms })]))
 	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<Option<crate::platform::ChatRoomState>, truapi::latest::GenericError> {
+		let created = self
+			.created_rooms
+			.lock()
+			.expect("created rooms mutex poisoned")
+			.contains(&room_id);
+		let participating_as = if created {
+			truapi::latest::ChatRoomParticipation::RoomHost
+		} else if self.bot_rooms.contains(&room_id) {
+			truapi::latest::ChatRoomParticipation::Bot
+		} else {
+			return Ok(None);
+		};
+		Ok(Some(crate::platform::ChatRoomState {
+			participating_as,
+			config: truapi::latest::ChatRoomConfig::default(),
+		}))
+	}
 }
 
 /// A request whose statement never went out is not on the channel, so a

@@ -765,14 +765,17 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(
       seeded!._unsafeUnwrap().rooms.map((room: ChatRoom) => room.roomId),
     ).toEqual(["alpha", "mike", "zulu"]);
-    // The core checks a room against the one-time read, so it must list the
-    // same rooms as the subscription.
-    const listed = await host.callbacks.chat!.listChatRooms!(product);
-    expect(listed.rooms.map((room: ChatRoom) => room.roomId)).toEqual([
-      "alpha",
-      "mike",
-      "zulu",
-    ]);
+    // The core reads one room before each change to it, so it must find each
+    // room that the subscription lists, and no other.
+    for (const roomId of ["alpha", "mike", "zulu"]) {
+      expect(await host.callbacks.chat!.chatRoom(product, roomId)).toEqual({
+        participatingAs: "RoomHost",
+        config: { productSource: false, reactionDetails: false },
+      });
+    }
+    expect(
+      await host.callbacks.chat!.chatRoom(product, "missing"),
+    ).toBeUndefined();
   });
 
   it("keeps the declarations of each chat room until the room is deleted", async () => {
@@ -812,9 +815,10 @@ describe("createMockHost TestHostAPI parity", () => {
       config,
     });
     expect(host.chatRoomDeclarations("other")).toBeUndefined();
-    expect(
-      await host.callbacks.chat!.readChatRoomConfig!(product, "main"),
-    ).toEqual(config);
+    expect(await host.callbacks.chat!.chatRoom(product, "main")).toEqual({
+      participatingAs: "RoomHost",
+      config,
+    });
 
     await host.callbacks.chat!.deleteChatRoom!(product, { roomId: "main" });
     expect(host.chatRoomDeclarations("main")).toBeUndefined();
@@ -1176,9 +1180,9 @@ describe("createMockHost TestHostAPI parity", () => {
         payload: { tag: "Text", value: { text: "hi" } },
       }),
     ).rejects.toThrow("chat down");
-    // A failed room read is not an empty room list. If the core gets an empty
-    // list, it accepts the delete of a room that still exists.
-    await expect(chat.callbacks.chat!.listChatRooms!(product)).rejects.toThrow(
+    // A failed room read is not a room that does not exist. If the core gets
+    // `undefined`, it accepts the delete of a room that still exists.
+    await expect(chat.callbacks.chat!.chatRoom(product, "r")).rejects.toThrow(
       "chat down",
     );
     // The subscription reports the same fault rather than opening a stream
