@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::channel::mpsc;
 
-use super::{NativeProductExecution, NativeWorkerExecutionState, WebView};
+use super::{EngineAttempt, NativeProductExecution, NativeWorkerExecutionState};
 use crate::{
 	background_task::BackgroundTask, native::subscribers::Subscribers, platform::ProductId,
 };
@@ -40,7 +40,7 @@ enum Phase {
 }
 
 enum Entry {
-	Active { phase: Phase, webview: Arc<WebView> },
+	Active { phase: Phase, attempt: Arc<EngineAttempt> },
 	Retrying,
 }
 
@@ -59,20 +59,20 @@ impl Entry {
 
 /// An entry the registry no longer holds.
 ///
-/// Stopping it calls out of the core, so the caller does that with the session unlocked.
+/// Stopping it calls the worker engine, so the caller does that with the session unlocked.
 pub struct Removed(Entry);
 
 impl Removed {
-	/// Shut the attempt's execution down, then let go of its WebView.
+	/// Shut the attempt's execution down, then stop it on its engine.
 	pub fn stop(self) {
-		if let Entry::Active { phase, webview } = self.0 {
+		if let Entry::Active { phase, attempt } = self.0 {
 			match phase {
 				Phase::Starting { owner: Some(owner), .. } | Phase::Running(owner) => {
 					owner.shutdown()
 				},
 				Phase::Starting { owner: None, .. } => {},
 			}
-			drop(webview);
+			drop(attempt);
 		}
 	}
 }
@@ -143,10 +143,10 @@ impl Registry {
 		&mut self,
 		product: &ProductId,
 		timeout: BackgroundTask,
-		webview: Arc<WebView>,
+		attempt: Arc<EngineAttempt>,
 	) -> Option<Removed> {
 		let phase = Phase::Starting { owner: None, module_ready: false, _timeout: timeout };
-		self.insert(product, Entry::Active { phase, webview })
+		self.insert(product, Entry::Active { phase, attempt })
 	}
 
 	/// Give the starting attempt the execution `open` builds.

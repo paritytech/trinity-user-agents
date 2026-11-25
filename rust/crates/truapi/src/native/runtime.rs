@@ -3,7 +3,7 @@ mod workers;
 
 pub use worker_execution::NativeWorkerExecution;
 pub use workers::{
-	NativeHostWebViewWorker, NativeWorkerAttempt, NativeWorkerExecutionObserver,
+	NativeWorkerAttempt, NativeWorkerEngine, NativeWorkerExecutionObserver,
 	NativeWorkerExecutionState,
 };
 
@@ -136,7 +136,7 @@ impl NativeTrUApiHostRuntime {
 	fn from_resolved(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: NativeResolvedHostRuntimeConfig,
-		worker_host: Arc<dyn NativeHostWebViewWorker>,
+		worker_engine: Arc<dyn NativeWorkerEngine>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
 		// Installed before the rest of startup, so the warnings raised on the way
@@ -238,7 +238,7 @@ impl NativeTrUApiHostRuntime {
 				reason: err.reason,
 			})?;
 		}
-		let workers = workers::Session::new(&callbacks, worker_host);
+		let workers = workers::Session::new(&callbacks, worker_engine);
 		let host = Arc::new(Self {
 			runtime,
 			events,
@@ -649,9 +649,9 @@ impl NativeTrUApiHostRuntime {
 	pub fn with_runtime_config(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: HostRuntimeConfig,
-		worker_host: Arc<dyn NativeHostWebViewWorker>,
+		worker_engine: Arc<dyn NativeWorkerEngine>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		Self::from_resolved(callbacks, runtime_config.try_into()?, worker_host)
+		Self::from_resolved(callbacks, runtime_config.try_into()?, worker_engine)
 	}
 
 	/// Install the host's contacts adapter, which owns the contact list and
