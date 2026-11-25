@@ -235,6 +235,7 @@ private fun TypographyStyle.toJs(): JsTypographyStyle = when (this) {
     TypographyStyle.BODY_LARGE_REGULAR -> JsTypographyStyle.BODY_LARGE_REGULAR
     TypographyStyle.BODY_MEDIUM_REGULAR -> JsTypographyStyle.BODY_MEDIUM_REGULAR
     TypographyStyle.BODY_SMALL_REGULAR -> JsTypographyStyle.BODY_SMALL_REGULAR
+    TypographyStyle.BODY_MEDIUM_MEDIUM -> JsTypographyStyle.BODY_MEDIUM_REGULAR
 }
 
 private fun ButtonVariant.toJs(): JsButtonVariant = when (this) {

@@ -1,5 +1,5 @@
 import Foundation
-import PolkadotUI
+@testable import PolkadotUI
 import Products
 import SwiftUI
 import Testing
@@ -353,7 +353,7 @@ struct RendererNodeMappingTests {
     @Test func materialsKeepTheirChildren() throws {
         // Given
         let materials = RendererNode.materials(
-            props: MaterialsProps(layers: []),
+            props: MaterialsProps(layers: [], bleed: 0),
             children: [
                 .text(modifiers: [], props: TextProps(style: nil, color: nil), children: [.string(text: "kept")])
             ]
@@ -363,7 +363,7 @@ struct RendererNodeMappingTests {
         let node = try #require(materials.toWidgetNode(resolver: resolver))
 
         // Then
-        guard case let .materials(index, children) = node.content,
+        guard case let .materials(index, _, children) = node.content,
               case let .text(textProps) = children.first?.content
         else {
             Issue.record("a materials node should keep its children")
@@ -379,9 +379,9 @@ struct RendererNodeMappingTests {
         // Given
         func touch(_ drag: DragAxis, _ children: [RendererNode]) -> RendererNode {
             let tap = TouchTrigger(when: .tap(Region(x: 0, y: 0, width: 1_000, height: 1_000)), action: "flip")
-            return .touch(props: TouchProps(drag: drag, trail: nil, triggers: [tap]), children: children)
+            return .touch(props: TouchProps(drag: drag, trail: nil, triggers: [tap], replay: nil), children: children)
         }
-        let materials = RendererNode.materials(props: MaterialsProps(layers: []), children: [])
+        let materials = RendererNode.materials(props: MaterialsProps(layers: [], bleed: 0), children: [])
         let tree = RendererNode.box(
             modifiers: [],
             props: BoxProps(contentAlignment: nil),
@@ -396,7 +396,7 @@ struct RendererNodeMappingTests {
               case let .touch(first, firstChildren) = children.first?.content,
               case let .touch(second, secondChildren) = children.last?.content,
               case let .touch(nested, _) = secondChildren.first?.content,
-              case let .materials(materialsIndex, _) = firstChildren.first?.content
+              case let .materials(materialsIndex, _, _) = firstChildren.first?.content
         else {
             Issue.record("each touch node should keep its children")
             return
@@ -417,7 +417,7 @@ struct RendererNodeMappingTests {
     @Test func materialsAreNumberedDepthFirstLikeTheCore() throws {
         // Given
         func materials(_ children: [RendererNode]) -> RendererNode {
-            .materials(props: MaterialsProps(layers: []), children: children)
+            .materials(props: MaterialsProps(layers: [], bleed: 0), children: children)
         }
         let text = RendererNode.text(
             modifiers: [],
@@ -441,7 +441,7 @@ struct RendererNodeMappingTests {
     @Test func materialsDeepInsideATextOrAButtonStillShiftTheNextIndex() throws {
         // Given
         func materials(_ children: [RendererNode]) -> RendererNode {
-            .materials(props: MaterialsProps(layers: []), children: children)
+            .materials(props: MaterialsProps(layers: [], bleed: 0), children: children)
         }
         let boxed = RendererNode.box(modifiers: [], props: BoxProps(contentAlignment: nil), children: [materials([])])
         let text = RendererNode.text(modifiers: [], props: TextProps(style: nil, color: nil), children: [boxed])
@@ -461,12 +461,69 @@ struct RendererNodeMappingTests {
 
         // Then
         #expect(materialsIndices(column) == [2])
-        #expect(tree.materialsCount == 3)
+        #expect(tree.nodeMaterials.count == 3)
+    }
+
+    /// A new tree draws the last output of a node with the same materials, so each node names its
+    /// layers in the order the core resolves the nodes.
+    @Test func nodeMaterialsNameEachLayerDepthFirst() {
+        // Given
+        func materials(_ ids: [UInt8], _ children: [RendererNode]) -> RendererNode {
+            let layers = ids.map { MaterialInstance(material: Data(repeating: $0, count: 32), args: []) }
+            return .materials(props: MaterialsProps(layers: layers, bleed: 0), children: children)
+        }
+        let tree = RendererNode.column(
+            modifiers: [],
+            props: ColumnProps(horizontalAlignment: nil, verticalArrangement: nil),
+            children: [materials([1, 2], [materials([3], [])]), materials([], [])]
+        )
+
+        // Then
+        let expected = [[1, 2], [3], []].map { $0.map { Data(repeating: $0, count: 32) } }
+        #expect(tree.nodeMaterials == expected)
+    }
+
+    @Test func aMaterialsNodeCarriesItsBleedInPoints() throws {
+        // Given
+        let materials = RendererNode.materials(props: MaterialsProps(layers: [], bleed: 48), children: [])
+
+        // When
+        let node = try #require(materials.toWidgetNode(resolver: resolver))
+
+        // Then
+        guard case let .materials(_, bleed, _) = node.content else {
+            Issue.record("a materials node should stay one")
+            return
+        }
+        #expect(bleed == 48)
+    }
+
+    /// The design's action label is weight 500, which a regular face thickened by the system does not match.
+    @Test func mediumBodyTextDrawsInTheMediumFace() throws {
+        // Given
+        let text = RendererNode.text(
+            modifiers: [],
+            props: TextProps(style: .bodyMediumMedium, color: nil),
+            children: [.string(text: "Set up your member name")]
+        )
+
+        // When
+        let node = try #require(text.toWidgetNode(resolver: resolver))
+
+        // Then
+        guard case let .text(props) = node.content else {
+            Issue.record("a text node should stay one")
+            return
+        }
+        let font = try #require(props.labelStyle.font)
+        #expect([font.fontName, "\(font.pointSize)"] == [UIFont.body14Medium().fontName, "14.0"])
+        #expect(font.fontName != UIFont.body14Regular().fontName)
+        #expect(props.labelStyle.lineHeight == 20)
     }
 
     private func materialsIndices(_ node: CustomMessageWidgetNode) -> [UInt32] {
         switch node.content {
-        case let .materials(index, children):
+        case let .materials(index, _, children):
             [index] + children.flatMap(materialsIndices)
         case let .box(_, children),
              let .column(_, children),

@@ -19,7 +19,7 @@ fun Parameter.imageRef(): ImageRef? = when (this) {
     is Parameter.SamplerVec3 -> v1
     is Parameter.SamplerVec4 -> v1
     is Parameter.Float, is Parameter.Vec2, is Parameter.Vec3, is Parameter.Vec4,
-    Parameter.Elapsed, Parameter.Touch, Parameter.TouchState -> null
+    Parameter.Elapsed, Parameter.Replay, Parameter.Touch, Parameter.TouchState -> null
 }
 
 private fun ReadyLayer.drawsSameAs(other: ReadyLayer): Boolean =

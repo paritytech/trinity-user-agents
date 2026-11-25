@@ -6,6 +6,7 @@ use futures::{
 	future::BoxFuture,
 	task::SpawnExt,
 };
+use parity_scale_codec::Compact;
 use truapi::latest::{BoxProps, MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
 
 use super::{testing::Device, *};
@@ -38,7 +39,7 @@ impl Device {
 			modifiers: Vec::new(),
 			props: BoxProps { content_alignment: None },
 			children: vec![RendererNode::Materials {
-				props: MaterialsProps { layers },
+				props: MaterialsProps { layers, bleed: Compact(0) },
 				children: Vec::new(),
 			}],
 		};
@@ -352,10 +353,10 @@ fn each_materials_node_knows_the_touch_node_around_it() {
 	use truapi::latest::{DragAxis, TouchProps};
 
 	let materials = || RendererNode::Materials {
-		props: MaterialsProps { layers: Vec::new() },
+		props: MaterialsProps { layers: Vec::new(), bleed: Compact(0) },
 		children: Vec::new(),
 	};
-	let props = |drag| TouchProps { drag, trail: None, triggers: Vec::new() };
+	let props = |drag| TouchProps { drag, trail: None, triggers: Vec::new(), replay: None };
 	let tree = RendererNode::Box {
 		modifiers: Vec::new(),
 		props: BoxProps { content_alignment: None },

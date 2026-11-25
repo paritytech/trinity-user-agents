@@ -74,14 +74,15 @@ struct MaterialUniformPackerTests {
             uniforms: [
                 .init(stage: .fragment, offset: 0, kind: .vec4, role: .argument(0)),
                 .init(stage: .fragment, offset: 16, kind: .vec2, role: .argument(1)),
-                .init(stage: .fragment, offset: 24, kind: .float, role: .argument(2))
+                .init(stage: .fragment, offset: 24, kind: .float, role: .argument(2)),
+                .init(stage: .fragment, offset: 28, kind: .float, role: .argument(3))
             ],
             textures: [],
-            arguments: [.touch, .touchState, .elapsed]
+            arguments: [.touch, .touchState, .elapsed, .replay]
         )
         let inputs = MaterialFrameInputs(
             resolution: .zero,
-            touch: WidgetTouchInputs(touch: [0.5, 0.25, 0.1, 0.75], state: [1, 0.5]),
+            touch: WidgetTouchInputs(touch: [0.5, 0.25, 0.1, 0.75], state: [1, 0.5], replay: 0.75),
             elapsed: 2
         )
 
@@ -89,7 +90,7 @@ struct MaterialUniformPackerTests {
         let blocks = MaterialUniformPacker.pack(layer, inputs: inputs)
 
         // Then
-        #expect(floats(blocks.fragment) == [0.5, 0.25, 0.1, 0.75, 1, 0.5, 2, 0])
+        #expect(floats(blocks.fragment) == [0.5, 0.25, 0.1, 0.75, 1, 0.5, 2, 0.75])
         #expect(layer.isAnimated)
     }
 

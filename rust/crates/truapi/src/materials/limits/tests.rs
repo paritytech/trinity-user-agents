@@ -1,7 +1,8 @@
 use parity_scale_codec::Compact;
 use truapi::latest::{
 	BoxProps, DragAxis, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps,
-	Parameter, Region, RendererNode, TouchCondition, TouchProps, TouchTrigger, TrailProps,
+	Parameter, Region, RendererNode, ReplayProps, TouchCondition, TouchProps, TouchTrigger,
+	TrailProps,
 };
 
 use super::*;
@@ -25,7 +26,7 @@ fn layers(count: usize, material: u8) -> Vec<MaterialInstance> {
 }
 
 fn node(layers: Vec<MaterialInstance>, children: Vec<RendererNode>) -> RendererNode {
-	RendererNode::Materials { props: MaterialsProps { layers }, children }
+	RendererNode::Materials { props: MaterialsProps { layers, bleed: Compact(0) }, children }
 }
 
 fn tree(nodes: Vec<RendererNode>) -> RendererNode {
@@ -139,6 +140,7 @@ fn touch(trail: bool, triggers: Vec<TouchCondition>, children: Vec<RendererNode>
 				.into_iter()
 				.map(|when| TouchTrigger { when, action: "revealed".to_string() })
 				.collect(),
+			replay: None,
 		},
 		children,
 	}
@@ -153,6 +155,34 @@ fn a_touch_argument_needs_a_touch_node_around_it() {
 
 	assert_eq!(tree_failures(&tree(vec![finger(), clock])), [INVALID, None]);
 	assert_eq!(tree_failures(&touch(false, Vec::new(), vec![finger()])), [None]);
+}
+
+/// A bleed of 64 covers the design's flash, 60 points past the card. More
+/// would let one card draw over a screen of its neighbours.
+#[test]
+fn a_node_draws_with_a_bleed_of_64_and_falls_back_with_65() {
+	let bleeding = |bleed| RendererNode::Materials {
+		props: MaterialsProps { layers: layers(1, 0), bleed: Compact(bleed) },
+		children: Vec::new(),
+	};
+
+	assert_eq!(tree_failures(&tree(vec![bleeding(64), bleeding(65)])), [None, OVER]);
+}
+
+#[test]
+fn the_replay_clock_needs_a_touch_node_that_keeps_one() {
+	let story = || touch_layer(vec![Parameter::Replay]);
+	let replaying = |children| match touch(false, Vec::new(), children) {
+		RendererNode::Touch { props, children } => RendererNode::Touch {
+			props: TouchProps { replay: Some(ReplayProps { length: 2200 }), ..props },
+			children,
+		},
+		_ => unreachable!(),
+	};
+
+	assert_eq!(tree_failures(&story()), [INVALID]);
+	assert_eq!(tree_failures(&touch(false, Vec::new(), vec![story()])), [INVALID]);
+	assert_eq!(tree_failures(&replaying(vec![story()])), [None]);
 }
 
 #[test]

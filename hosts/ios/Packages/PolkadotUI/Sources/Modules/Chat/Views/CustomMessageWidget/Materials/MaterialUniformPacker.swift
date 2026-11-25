@@ -129,6 +129,7 @@ private extension MaterialUniformPacker {
             [inputs.touch.touch.x, inputs.touch.touch.y, inputs.touch.touch.z, inputs.touch.touch.w].map(\.bitPattern)
         case .touchState: [inputs.touch.state.x, inputs.touch.state.y].map(\.bitPattern)
         case .elapsed: [inputs.elapsed.bitPattern]
+        case .replay: [inputs.touch.replay.bitPattern]
         case .noise,
              .image,
              .trail:

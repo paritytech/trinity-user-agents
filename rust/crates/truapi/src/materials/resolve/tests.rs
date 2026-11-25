@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use futures::{FutureExt, StreamExt};
+use parity_scale_codec::Compact;
 use truapi::latest::{
 	BoxProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Parameter,
 	RenderContext, RendererNode,
@@ -35,7 +36,10 @@ fn layer(text: &[u8], args: Vec<Parameter>) -> MaterialInstance {
 }
 
 fn node(layers: Vec<MaterialInstance>) -> RendererNode {
-	RendererNode::Materials { props: MaterialsProps { layers }, children: Vec::new() }
+	RendererNode::Materials {
+		props: MaterialsProps { layers, bleed: Compact(0) },
+		children: Vec::new(),
+	}
 }
 
 fn tree(nodes: Vec<RendererNode>) -> RendererNode {

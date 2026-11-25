@@ -102,6 +102,9 @@ public struct CustomMessageWidgetView: View {
             .environment(\.widgetActionHandler, onAction)
             .environment(\.widgetImageResolver, resolveImage)
             .environment(\.widgetMaterials, materials)
+            .overlayPreferenceValue(BleedingMaterialsKey.self) { bleeding in
+                BleedingMaterialsView(materials: bleeding)
+            }
     }
 }
 
@@ -129,8 +132,8 @@ private struct WidgetNodeContent: View {
             NodeTextFieldView(props: props, modifiers: node.modifiers)
         case let .image(props):
             NodeImageView(props: props, modifiers: node.modifiers)
-        case let .materials(index, children):
-            MaterialsNodeView(index: index) {
+        case let .materials(index, bleed, children):
+            MaterialsNodeView(index: index, bleed: bleed) {
                 NodeBoxView(props: .init(), children: children, modifiers: node.modifiers)
             }
         case let .touch(touch, children):

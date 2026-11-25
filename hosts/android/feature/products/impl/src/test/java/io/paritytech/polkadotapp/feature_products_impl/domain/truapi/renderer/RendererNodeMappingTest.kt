@@ -111,7 +111,7 @@ class RendererNodeMappingTest {
     // node's layers. The core counts depth first, parents before children, including nodes inside a Text.
     @Test
     fun `materials nodes take the numbers the core gives them`() {
-        fun materials(vararg children: RendererNode) = RendererNode.Materials(MaterialsProps(emptyList()), children.toList())
+        fun materials(vararg children: RendererNode) = RendererNode.Materials(MaterialsProps(emptyList(), 0uL), children.toList())
         val tree = RendererNode.Column(
             modifiers = emptyList(),
             props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),

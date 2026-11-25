@@ -14,6 +14,7 @@ const MAX_TREE_LAYERS: usize = 32;
 const MAX_TREE_MATERIALS: usize = 16;
 const MAX_IMAGE_ARGUMENTS: usize = 13;
 const MAX_TREE_IMAGES: usize = 16;
+const MAX_BLEED: u64 = 64;
 
 /// Why each `Materials` node in `tree` falls back before anything loads, if
 /// it does, depth first. A node that falls back adds nothing to the tree's
@@ -41,12 +42,13 @@ fn check_node(node: &PlacedMaterials<'_>) -> Result<(), MaterialFailure> {
 		.layers
 		.iter()
 		.any(|layer| image_arguments(&layer.args).count() > MAX_IMAGE_ARGUMENTS);
-	if props.layers.len() > MAX_NODE_LAYERS || too_many_images {
+	if props.layers.len() > MAX_NODE_LAYERS || too_many_images || props.bleed.0 > MAX_BLEED {
 		return Err(MaterialFailure::LimitExceeded);
 	}
 	let arguments = props.layers.iter().flat_map(|layer| &layer.args);
 	let touch_fed = |argument: &Parameter| match argument {
 		Parameter::Touch | Parameter::TouchState => node.touch.is_some(),
+		Parameter::Replay => node.touch.is_some_and(|touch| touch.replay.is_some()),
 		Parameter::SamplerFloat(ImageRef::Trail) |
 		Parameter::SamplerVec2(ImageRef::Trail) |
 		Parameter::SamplerVec3(ImageRef::Trail) |
@@ -108,7 +110,8 @@ fn image_arguments(args: &[Parameter]) -> impl Iterator<Item = &ImageRef> {
 		Parameter::Vec4(_) |
 		Parameter::Touch |
 		Parameter::TouchState |
-		Parameter::Elapsed => None,
+		Parameter::Elapsed |
+		Parameter::Replay => None,
 	})
 }
 

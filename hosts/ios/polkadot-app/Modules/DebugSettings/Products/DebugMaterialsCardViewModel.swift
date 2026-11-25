@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import PolkadotUI
 import Products
+import QuartzCore
 import SubstrateSdk
 import TrUAPIHost
 
@@ -80,10 +81,15 @@ private extension DebugMaterialsCardViewModel {
         node = tree.toWidgetNode(resolver: resolver)
         let props = tree.touchProps
         let factory = WidgetTouchFactory(keys: props.map(AnyHashable.init)) { [weak self] index, size in
-            let core = CoreTouchArea(NativeTouchArea(props: props[Int(index)], width: size.width, height: size.height))
+            let core = CoreTouchArea(NativeTouchArea(
+                props: props[Int(index)],
+                width: size.width,
+                height: size.height,
+                atSeconds: CACurrentMediaTime()
+            ))
             return DebugTouchArea(core: core) { self?.fired($0) }
         }
-        materials.startResolution(nodeCount: tree.materialsCount, touch: factory)
+        materials.startResolution(nodeMaterials: tree.nodeMaterials, touch: factory)
         let drawn = [layers.card] + (revealed ? [] : [layers.scratch]) + (confirmed ? [] : [layers.slider])
         materials.update(nodes: drawn.map { .ready([$0]) }, noise: noise)
     }

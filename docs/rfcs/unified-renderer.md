@@ -159,6 +159,8 @@ pub enum TypographyStyle {
     BodyLargeRegular,
     BodyMediumRegular,
     BodySmallRegular,
+    /// Medium body text at medium weight, CSS weight 500.
+    BodyMediumMedium,
 }
 
 /// Button emphasis.

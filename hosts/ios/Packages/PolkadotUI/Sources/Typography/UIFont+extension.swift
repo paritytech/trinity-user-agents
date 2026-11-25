@@ -79,6 +79,10 @@ public extension UIFont {
         customFont(.interRegular, size: 14.0)
     }
 
+    static func body14Medium() -> UIFont {
+        customFont(.interMedium, size: 14.0)
+    }
+
     static func body16Regular() -> UIFont {
         customFont(.interRegular, size: 16.0)
     }

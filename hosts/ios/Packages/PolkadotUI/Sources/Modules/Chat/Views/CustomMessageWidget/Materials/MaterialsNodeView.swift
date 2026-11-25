@@ -4,8 +4,10 @@ import SwiftUI
 
 /// A `Materials` node: its children until its layers are ready and compiled, then the last layer's
 /// output in their place. For good after a failure, the children alone, exactly as a box draws them.
+/// A node that bleeds hands its output to the card root, which draws it over the whole tree.
 struct MaterialsNodeView<Children: View>: View {
     let index: UInt32
+    let bleed: CGFloat
     @ViewBuilder let children: () -> Children
 
     @Environment(\.widgetMaterials) private var materials
@@ -16,22 +18,28 @@ struct MaterialsNodeView<Children: View>: View {
     @Environment(\.widgetImages) private var enclosingImages
     @Environment(\.widgetTouchArea) private var touchArea
     @State private var ownImages = WidgetImageStore()
-    @State private var surface: MaterialSurface?
     @State private var size: CGSize = .zero
 
     var body: some View {
+        let surface = materials?.surface(of: index)
         children()
             .environment(\.widgetImages, images)
             .opacity(surface == nil ? 1 : 0)
             .overlay(alignment: .topLeading) {
-                if let surface {
-                    MaterialSurfaceView(
-                        surface: surface,
-                        touchArea: touchArea,
-                        treeStartedAt: materials?.treeStartedAt ?? CACurrentMediaTime()
-                    )
-                    .allowsHitTesting(false)
+                if let surface, bleed == 0 {
+                    MaterialSurfaceView(surface: surface, touchArea: touchArea)
+                        .allowsHitTesting(false)
                 }
+            }
+            .anchorPreference(key: BleedingMaterialsKey.self, value: .bounds) { bounds in
+                guard let surface, bleed > 0 else { return [] }
+                return [BleedingMaterial(
+                    index: index,
+                    bounds: bounds,
+                    bleed: bleed,
+                    surface: surface,
+                    touchArea: touchArea
+                )]
             }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
             .task(id: preparation) {
@@ -68,33 +76,43 @@ private extension MaterialsNodeView {
 }
 
 private extension MaterialsNodeView {
+    /// A node still loading keeps the surface it draws, which may be one a node of the tree before left.
+    /// The new surface carries the clock of the tree it was made for, so `Elapsed` restarts with the
+    /// arguments that go with it.
     func prepare() async {
-        guard let materials, case let .ready(layers) = materials.state(of: index) else {
-            if materials?.state(of: index) != .loading { surface = nil }
+        guard let materials else { return }
+        let state = materials.state(of: index)
+        guard case let .ready(layers) = state else {
+            if state != .loading { materials.dropSurface(of: index) }
             return
         }
         guard let first = layers.first, size.width > 0, size.height > 0 else { return }
+        let treeStartedAt = materials.treeStartedAt
         guard let gpu = MaterialGPU.shared, let noise = materials.noise, let snapshot = snapshot() else {
-            surface = nil
             materials.fail(node: index, material: first.material, reason: "no Metal device, noise image or snapshot")
             return
         }
         do {
-            let made = try await MaterialSurface.make(layers: layers, gpu: gpu, base: snapshot, noise: noise)
+            let made = try await MaterialSurface.make(
+                layers: layers,
+                gpu: gpu,
+                base: snapshot,
+                noise: noise,
+                treeStartedAt: treeStartedAt
+            )
             guard !Task.isCancelled else { return }
-            surface = made
+            materials.keep(made, for: index)
         } catch let failure as MaterialSurface.Failure {
             guard !Task.isCancelled else { return }
-            surface = nil
             materials.fail(node: index, material: failure.material, reason: "\(failure.reason)")
         } catch {
             guard !Task.isCancelled else { return }
-            surface = nil
             materials.fail(node: index, material: first.material, reason: "\(error)")
         }
     }
 
-    /// The children as the card draws them, at the laid-out size. Nested `Materials` nodes draw plain here.
+    /// The children as the card draws them, at the laid-out size, inside a clear margin as wide as the
+    /// bleed. Nested `Materials` nodes draw plain here.
     func snapshot() -> CGImage? {
         let renderer = ImageRenderer(
             content: children()
@@ -103,8 +121,9 @@ private extension MaterialsNodeView {
                 .environment(\.widgetActionHandler, actionHandler)
                 .environment(\.colorScheme, colorScheme)
                 .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .padding(bleed)
         )
-        renderer.proposedSize = ProposedViewSize(size)
+        renderer.proposedSize = ProposedViewSize(width: size.width + bleed * 2, height: size.height + bleed * 2)
         renderer.scale = displayScale
         renderer.isOpaque = false
         return renderer.cgImage
@@ -119,13 +138,24 @@ final class MaterialSurface {
     let readsMotion: Bool
     let readsTrail: Bool
     let pixelSize: CGSize
+    /// The material of each layer, which a node of a later tree matches to draw this surface while it loads.
+    let materials: [Data]
+    /// When the card was given the tree this surface draws, the zero of `elapsed`.
+    let treeStartedAt: CFTimeInterval
 
-    private init(renderer: MaterialLayerRenderer, layers: [WidgetMaterialLayer], pixelSize: CGSize) {
+    private init(
+        renderer: MaterialLayerRenderer,
+        layers: [WidgetMaterialLayer],
+        pixelSize: CGSize,
+        treeStartedAt: CFTimeInterval
+    ) {
         self.renderer = renderer
         isAnimated = layers.contains(where: \.isAnimated)
         readsMotion = layers.contains(where: \.readsMotion)
         readsTrail = layers.contains(where: \.readsTrail)
         self.pixelSize = pixelSize
+        materials = layers.map(\.material)
+        self.treeStartedAt = treeStartedAt
     }
 
     /// Names the layer that could not be set up.
@@ -144,7 +174,8 @@ final class MaterialSurface {
         layers: [WidgetMaterialLayer],
         gpu: MaterialGPU,
         base: CGImage,
-        noise: WidgetMaterialNoise
+        noise: WidgetMaterialNoise,
+        treeStartedAt: CFTimeInterval
     ) async throws -> MaterialSurface {
         if let unsupported = layers.first(where: { !$0.usesOnlyHostTextures }) {
             throw Failure(material: unsupported.material, reason: SetupError.unsupportedTexture)
@@ -163,15 +194,49 @@ final class MaterialSurface {
         return MaterialSurface(
             renderer: MaterialLayerRenderer(gpu: gpu, layers: compiled, base: baseTexture, noise: noiseTexture),
             layers: layers,
-            pixelSize: CGSize(width: base.width, height: base.height)
+            pixelSize: CGSize(width: base.width, height: base.height),
+            treeStartedAt: treeStartedAt
         )
+    }
+}
+
+/// The output of a node that bleeds, which the card root draws over its bounds and the margin around them.
+struct BleedingMaterial {
+    let index: UInt32
+    let bounds: Anchor<CGRect>
+    let bleed: CGFloat
+    let surface: MaterialSurface
+    let touchArea: WidgetTouchArea?
+}
+
+struct BleedingMaterialsKey: PreferenceKey {
+    static var defaultValue: [BleedingMaterial] { [] }
+
+    static func reduce(value: inout [BleedingMaterial], nextValue: () -> [BleedingMaterial]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+/// Draws over the whole card, past the clip of every node, so a bleeding node's output can leave the card.
+struct BleedingMaterialsView: View {
+    let materials: [BleedingMaterial]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ForEach(materials, id: \.index) { material in
+                let stage = proxy[material.bounds].insetBy(dx: -material.bleed, dy: -material.bleed)
+                MaterialSurfaceView(surface: material.surface, touchArea: material.touchArea)
+                    .frame(width: stage.width, height: stage.height)
+                    .position(x: stage.midX, y: stage.midY)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
 private struct MaterialSurfaceView: UIViewRepresentable {
     let surface: MaterialSurface
     let touchArea: WidgetTouchArea?
-    let treeStartedAt: CFTimeInterval
 
     func makeUIView(context _: Context) -> MaterialMetalView {
         let view = MaterialMetalView(surface: surface)
@@ -185,17 +250,20 @@ private struct MaterialSurfaceView: UIViewRepresentable {
     }
 
     private func configure(_ view: MaterialMetalView) {
-        view.treeStartedAt = treeStartedAt
         view.touchArea = touchArea
     }
 }
 
 /// Draws only while on screen and its scene is active. A still material draws once, and again on each
-/// finger sample of its `Touch` node. Reduced motion draws once with time and tilt zero and elapsed at
-/// an hour. Time counts from zero each time the view comes on screen, elapsed from the card's tree.
+/// finger sample of its `Touch` node. Reduced motion draws once with time and tilt zero, elapsed and
+/// replay at an hour. Time counts from zero each time the view comes on screen, across new surfaces,
+/// and elapsed from the tree of the surface it draws.
 final class MaterialMetalView: MTKView, MTKViewDelegate {
     var surface: MaterialSurface {
-        didSet { restart() }
+        didSet {
+            guard surface !== oldValue else { return }
+            run()
+        }
     }
 
     var touchArea: WidgetTouchArea? {
@@ -205,8 +273,6 @@ final class MaterialMetalView: MTKView, MTKViewDelegate {
             setNeedsDisplay()
         }
     }
-
-    var treeStartedAt = CACurrentMediaTime()
 
     private let motionSource: DeviceAttitudeObservable
     private var motionToken: DeviceMotionToken?
@@ -262,8 +328,12 @@ private extension MaterialMetalView {
     }
 
     func restart() {
-        drawableSize = surface.pixelSize
         startedAt = CACurrentMediaTime()
+        run()
+    }
+
+    func run() {
+        drawableSize = surface.pixelSize
         let continuous = runsContinuously
         isPaused = !continuous
         enableSetNeedsDisplay = !continuous
@@ -289,7 +359,7 @@ private extension MaterialMetalView {
         }
     }
 
-    /// Elapsed reads an hour under reduced motion, so an entry animation shows its end.
+    /// Elapsed and replay read an hour under reduced motion, so an entry animation shows its end.
     static let reducedMotionElapsed: Float = 3_600
 
     /// Until the first reading arrives, and when none does, the motion stays still.
@@ -299,7 +369,11 @@ private extension MaterialMetalView {
             ? MaterialFrameInputs(time: Float(now - startedAt), motion: motion, resolution: .zero)
             : MaterialFrameInputs(resolution: .zero)
         inputs.touch = touchArea?.tracking.inputs(now: now) ?? .none
-        inputs.elapsed = UIAccessibility.isReduceMotionEnabled ? Self.reducedMotionElapsed : Float(now - treeStartedAt)
+        inputs.elapsed = Float(now - surface.treeStartedAt)
+        if UIAccessibility.isReduceMotionEnabled {
+            inputs.elapsed = Self.reducedMotionElapsed
+            inputs.touch.replay = Self.reducedMotionElapsed
+        }
         return inputs
     }
 }

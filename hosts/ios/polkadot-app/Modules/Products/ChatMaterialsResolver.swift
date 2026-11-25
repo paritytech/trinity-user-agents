@@ -1,5 +1,6 @@
 import Foundation
 import PolkadotUI
+import QuartzCore
 import SubstrateSdk
 import TrUAPIHost
 
@@ -49,11 +50,11 @@ final class ChatMaterialsResolver {
         following?.cancel()
         previous?.cancel()
         guard let current else {
-            materials.startResolution(nodeCount: 0, touch: WidgetTouchFactory(tree: tree))
+            materials.startResolution(nodeMaterials: [], touch: WidgetTouchFactory(tree: tree))
             materials.update(nodes: [], noise: nil)
             return
         }
-        materials.startResolution(nodeCount: tree.materialsCount, touch: WidgetTouchFactory(tree: tree))
+        materials.startResolution(nodeMaterials: tree.nodeMaterials, touch: WidgetTouchFactory(tree: tree))
         following = Task { [weak self, noiseCache] in
             for await update in current.resolved {
                 let noise = await noiseCache.noise(for: update)
@@ -65,11 +66,16 @@ final class ChatMaterialsResolver {
 }
 
 extension WidgetTouchFactory {
-    /// Each `Touch` node of `tree` kept by the core, which holds its trail and fired triggers.
+    /// Each `Touch` node of `tree` kept by the core, which holds its trail, fired triggers and replay clock.
     init(tree: RendererNode) {
         let props = tree.touchProps
         self.init(keys: props.map(AnyHashable.init)) { index, size in
-            CoreTouchArea(NativeTouchArea(props: props[Int(index)], width: size.width, height: size.height))
+            CoreTouchArea(NativeTouchArea(
+                props: props[Int(index)],
+                width: size.width,
+                height: size.height,
+                atSeconds: CACurrentMediaTime()
+            ))
         }
     }
 }
@@ -91,7 +97,8 @@ final class CoreTouchArea: WidgetTouchTracking {
         guard inputs.touch.count == 4, inputs.state.count == 2 else { return .none }
         return WidgetTouchInputs(
             touch: SIMD4(inputs.touch[0], inputs.touch[1], inputs.touch[2], inputs.touch[3]),
-            state: SIMD2(inputs.state[0], inputs.state[1])
+            state: SIMD2(inputs.state[0], inputs.state[1]),
+            replay: inputs.replay
         )
     }
 
@@ -257,6 +264,7 @@ private extension Parameter {
         case .touch: .touch
         case .touchState: .touchState
         case .elapsed: .elapsed
+        case .replay: .replay
         }
     }
 }

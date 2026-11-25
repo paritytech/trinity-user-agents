@@ -8,6 +8,13 @@ public extension LabelStyle {
         )
     }
 
+    static func body14Medium() -> LabelStyle {
+        LabelStyle(
+            font: UIFont.body14Medium(),
+            lineHeight: 20.0
+        )
+    }
+
     static func body14SemiBold() -> LabelStyle {
         LabelStyle(
             font: UIFont.semiBold14,

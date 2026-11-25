@@ -196,6 +196,8 @@ The core resolves the `Materials` nodes of a message tree and writes their Metal
 - A node that cannot draw on the device is logged and reported to its resolution, which keeps it plain.
 - `FEATURE_MATERIALS` sets `materialsEnabled` in the runtime config. Without it every node draws plain.
 - `MaterialGPU` holds the device, the samplers and the compiled pipelines for every card, and motion comes from `DeviceMotionSource`.
+- `WidgetMaterials` keeps the surface each node draws across trees of the card. A new tree loads every node, and each node draws the surface a node of the tree before left with the same materials until its own is ready. A surface carries the clock of its tree, so `Elapsed` restarts with the arguments of that tree.
+- A node with a bleed hands its surface to the card root through `BleedingMaterialsKey`, which draws it over the whole card, past the clip of shaped backgrounds.
 
 ## Seams
 

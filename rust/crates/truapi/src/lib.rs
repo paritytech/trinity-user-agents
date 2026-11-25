@@ -94,7 +94,7 @@ pub mod latest {
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
 		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload, Region,
-		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
+		RegisteredRingVrfKey, RemotePermission, RendererNode, ReplayProps, ResourceAllocationError,
 		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,

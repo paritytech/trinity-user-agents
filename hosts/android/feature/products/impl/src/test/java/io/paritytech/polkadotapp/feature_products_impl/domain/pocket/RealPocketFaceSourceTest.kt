@@ -63,7 +63,7 @@ class RealPocketFaceSourceTest {
     private val source = RealPocketFaceSource(store, streams, NoImages())
 
     private fun materialsFace(text: String) =
-        RendererNode.Materials(MaterialsProps(emptyList()), listOf(RendererNode.String(text)))
+        RendererNode.Materials(MaterialsProps(emptyList(), 0uL), listOf(RendererNode.String(text)))
 
     @Test
     fun `shows the kept face first, then every live face`() = runTest {

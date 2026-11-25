@@ -275,12 +275,14 @@ fn touch_arguments_match_only_the_type_the_host_fills() {
 		ParamKind::Vec4,
 		ParamKind::Vec2,
 		ParamKind::Float,
+		ParamKind::Float,
 		ParamKind::SamplerFloat,
 	]);
 	let args = [
 		Parameter::Touch,
 		Parameter::TouchState,
 		Parameter::Elapsed,
+		Parameter::Replay,
 		Parameter::SamplerFloat(ImageRef::Trail),
 	];
 	assert!(material.arguments_match(&args));
@@ -288,6 +290,7 @@ fn touch_arguments_match_only_the_type_the_host_fills() {
 	assert!(!material_taking(&[ParamKind::Vec3]).arguments_match(&[Parameter::Touch]));
 	assert!(!material_taking(&[ParamKind::Vec4]).arguments_match(&[Parameter::TouchState]));
 	assert!(!material_taking(&[ParamKind::Vec2]).arguments_match(&[Parameter::Elapsed]));
+	assert!(!material_taking(&[ParamKind::Vec2]).arguments_match(&[Parameter::Replay]));
 	assert!(
 		!material_taking(&[ParamKind::SamplerVec4])
 			.arguments_match(&[Parameter::SamplerVec4(ImageRef::Trail)])

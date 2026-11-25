@@ -264,10 +264,10 @@ class MaterialsSurface(
         TextureRole.Base -> baseTexture
         TextureRole.Input -> if (index == 0) baseTexture else target(index - 1).texture
         TextureRole.Noise -> noiseTexture()
-        TextureRole.Trail -> NO_TEXTURE
         is TextureRole.Argument -> when (layer.args.getOrNull(role.v1.toInt())?.imageRef()) {
             is ImageRef.Source -> imageTexture(index to role.v1.toInt())
             ImageRef.Noise, null -> noiseTexture()
+            ImageRef.Trail -> NO_TEXTURE
         }
     }
 

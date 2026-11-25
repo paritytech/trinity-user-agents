@@ -33,14 +33,16 @@ public enum WidgetTouchPhase: Sendable {
     case cancel
 }
 
-/// What a `Touch` and a `TouchState` argument read in one frame.
+/// What a `Touch`, a `TouchState` and a `Replay` argument read in one frame.
 public struct WidgetTouchInputs: Equatable, Sendable {
     public var touch: SIMD4<Float>
     public var state: SIMD2<Float>
+    public var replay: Float
 
-    public init(touch: SIMD4<Float>, state: SIMD2<Float>) {
+    public init(touch: SIMD4<Float>, state: SIMD2<Float>, replay: Float = 0) {
         self.touch = touch
         self.state = state
+        self.replay = replay
     }
 
     /// Before any touch, and for a layer outside a `Touch` node.
@@ -63,7 +65,7 @@ public struct WidgetTrailImage: Sendable {
     }
 }
 
-/// The core's state of one `Touch` node: the trail, the fired triggers and the last touch.
+/// The core's state of one `Touch` node: the trail, the fired triggers, the last touch and the replay clock.
 public protocol WidgetTouchTracking: AnyObject {
     /// Takes one finger sample in points from the node's top left, and returns the actions it fires.
     func touch(_ phase: WidgetTouchPhase, at point: CGPoint, time: TimeInterval) -> [String]

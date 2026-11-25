@@ -235,6 +235,7 @@ const OVER_THE_LAYER_LIMIT: RendererNode = {
         material: `0x${"07".repeat(32)}`,
         args: [],
       })),
+      bleed: 0,
     },
     children: [],
   },

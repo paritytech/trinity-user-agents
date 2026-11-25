@@ -269,7 +269,10 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 		.map(|_| truapi::latest::MaterialInstance { material: [7; 32], args: Vec::new() })
 		.collect();
 	let tree = truapi::latest::RendererNode::Materials {
-		props: truapi::latest::MaterialsProps { layers: over_the_layer_limit },
+		props: truapi::latest::MaterialsProps {
+			layers: over_the_layer_limit,
+			bleed: parity_scale_codec::Compact(0),
+		},
 		children: Vec::new(),
 	};
 

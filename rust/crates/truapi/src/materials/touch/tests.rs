@@ -1,5 +1,5 @@
 use parity_scale_codec::Compact;
-use truapi::latest::{DragAxis, TouchTrigger, TrailProps};
+use truapi::latest::{DragAxis, ReplayProps, TouchTrigger, TrailProps};
 
 use super::*;
 
@@ -11,6 +11,7 @@ fn props(trail: Option<u64>, triggers: Vec<(TouchCondition, &str)>) -> TouchProp
 			.into_iter()
 			.map(|(when, action)| TouchTrigger { when, action: action.to_string() })
 			.collect(),
+		replay: None,
 	}
 }
 
@@ -25,7 +26,7 @@ fn marked_per_mille(area: &TouchArea) -> usize {
 #[test]
 fn scratching_fires_revealed_once_at_the_sample_that_covers_600_per_mille() {
 	let mut area =
-		TouchArea::new(props(Some(20), vec![(TouchCondition::TrailCovers(600), "revealed")]), 300.0, 200.0);
+		TouchArea::new(props(Some(20), vec![(TouchCondition::TrailCovers(600), "revealed")]), 300.0, 200.0, 0.0);
 	let mut fired_at = Vec::new();
 	let mut time = 0.0;
 	for (stroke, y) in [20.0, 60.0, 100.0, 140.0, 180.0].into_iter().enumerate() {
@@ -53,7 +54,7 @@ fn scratching_fires_revealed_once_at_the_sample_that_covers_600_per_mille() {
 fn slider() -> TouchArea {
 	let from = Region { x: 0, y: 0, width: 200, height: 1000 };
 	let to = Region { x: 900, y: 0, width: 100, height: 1000 };
-	TouchArea::new(props(None, vec![(TouchCondition::Drag { from, to }, "confirm")]), 300.0, 60.0)
+	TouchArea::new(props(None, vec![(TouchCondition::Drag { from, to }, "confirm")]), 300.0, 60.0, 0.0)
 }
 
 /// Every action each sample of a touch fires, from `down` across to `up` in
@@ -100,7 +101,7 @@ fn a_drag_lifted_halfway_confirms_nothing() {
 #[test]
 fn a_tap_fires_every_time_and_a_touch_that_moved_fires_nothing() {
 	let region = Region { x: 0, y: 0, width: 1000, height: 1000 };
-	let mut area = TouchArea::new(props(None, vec![(TouchCondition::Tap(region), "flip")]), 300.0, 200.0);
+	let mut area = TouchArea::new(props(None, vec![(TouchCondition::Tap(region), "flip")]), 300.0, 200.0, 0.0);
 	let tap = |area: &mut TouchArea, moved: f64| {
 		let mut actions = area.touch(TouchPhase::Down, 100.0, 100.0, 0.0);
 		actions.extend(area.touch(TouchPhase::Move, 100.0 + moved, 100.0, 0.1));
@@ -115,8 +116,12 @@ fn a_tap_fires_every_time_and_a_touch_that_moved_fires_nothing() {
 
 #[test]
 fn the_shader_values_follow_the_finger() {
-	let mut area = TouchArea::new(props(None, Vec::new()), 300.0, 200.0);
-	let inputs = |touch: [f32; 4], state: [f32; 2]| TouchInputs { touch: touch.to_vec(), state: state.to_vec() };
+	let mut area = TouchArea::new(props(None, Vec::new()), 300.0, 200.0, 0.0);
+	let inputs = |touch: [f32; 4], state: [f32; 2]| TouchInputs {
+		touch: touch.to_vec(),
+		state: state.to_vec(),
+		replay: 0.0,
+	};
 
 	assert_eq!(area.inputs(5.0), inputs([0.0; 4], [0.0, -1.0]));
 
@@ -136,9 +141,40 @@ fn the_shader_values_follow_the_finger() {
 	assert_eq!(area.inputs(4.0), inputs([1.0, 0.0, 1.0, 0.0], [1.0, 0.0]));
 }
 
+/// The design's replay clock: the story plays from the first draw, a finger
+/// that goes down while it plays is ignored, and one that goes down after it
+/// played out starts it again at the moment it went down, whenever it lifts.
+#[test]
+fn a_finger_down_replays_the_story_only_once_it_played_out() {
+	let story = TouchProps { replay: Some(ReplayProps { length: 2200 }), ..props(None, Vec::new()) };
+	let mut area = TouchArea::new(story, 300.0, 200.0, 10.0);
+	let replay = |area: &TouchArea, now: f64| area.inputs(now).replay;
+
+	assert_eq!(replay(&area, 11.0), 1.0);
+
+	area.touch(TouchPhase::Down, 100.0, 100.0, 11.5);
+	area.touch(TouchPhase::Up, 100.0, 100.0, 11.6);
+	assert_eq!(replay(&area, 12.0), 2.0, "a tap while the story plays is ignored");
+
+	area.touch(TouchPhase::Down, 100.0, 100.0, 13.0);
+	area.touch(TouchPhase::Up, 100.0, 100.0, 13.75);
+	assert_eq!(replay(&area, 13.75), 0.75, "the replay starts at the finger down");
+
+	area.touch(TouchPhase::Down, 100.0, 100.0, 14.0);
+	assert_eq!(replay(&area, 14.0), 1.0, "a second tap during the replay is ignored");
+}
+
+#[test]
+fn a_node_without_a_replay_clock_reads_zero() {
+	let mut area = TouchArea::new(props(None, Vec::new()), 300.0, 200.0, 10.0);
+	area.touch(TouchPhase::Down, 100.0, 100.0, 20.0);
+
+	assert_eq!(area.inputs(30.0).replay, 0.0);
+}
+
 #[test]
 fn the_trail_is_128_cells_on_its_longer_side_and_marks_within_the_radius() {
-	let mut area = TouchArea::new(props(Some(4), Vec::new()), 100.0, 300.0);
+	let mut area = TouchArea::new(props(Some(4), Vec::new()), 100.0, 300.0, 0.0);
 	let empty = area.trail().unwrap();
 	assert_eq!((empty.width, empty.height, empty.revision), (43, 128, 0));
 

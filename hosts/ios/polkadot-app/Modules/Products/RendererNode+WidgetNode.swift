@@ -11,11 +11,11 @@ extension RendererNode {
         toWidgetNode(resolver: resolver, counter: MaterialsCounter(takesTouch: rendererTouchNodes(tree: self)))
     }
 
-    /// How many entries `ResolvedMaterials.nodes` has for this tree.
-    var materialsCount: Int {
-        let counter = MaterialsCounter(takesTouch: [])
-        counter.skip([self])
-        return counter.count
+    /// The material of each layer of each `Materials` node, one entry per entry of
+    /// `ResolvedMaterials.nodes`.
+    var nodeMaterials: [[Data]] {
+        let own: [[Data]] = if case let .materials(props, _) = self { [props.layers.map(\.material)] } else { [] }
+        return own + children.flatMap(\.nodeMaterials)
     }
 
     /// The props of every `Touch` node, depth first.
@@ -33,8 +33,6 @@ private final class MaterialsCounter {
     init(takesTouch: [Bool]) {
         self.takesTouch = takesTouch
     }
-
-    var count: Int { Int(next) }
 
     func take() -> UInt32 {
         defer { next += 1 }
@@ -93,11 +91,12 @@ private extension RendererNode {
             counter.skip(children)
             return leafWidgetNode(resolver: resolver)
 
-        case let .materials(_, children):
+        case let .materials(props, children):
             let index = counter.take()
             return CustomMessageWidgetNode(
                 content: .materials(
                     index: index,
+                    bleed: CGFloat(props.bleed),
                     children: children.widgetNodes(resolver: resolver, counter: counter)
                 ),
                 modifiers: .empty
@@ -182,7 +181,7 @@ private extension RendererNode {
                 return nil
             }
             .joined()
-            let labelStyle = (props.style?.toScale() ?? .bodyM).toLabelStyle
+            let labelStyle = props.style?.labelStyle ?? ScaleTypographyStyle.bodyM.toLabelStyle
             let color = props.color.map { resolver.color(for: $0.toScale()) } ?? resolver.color(for: .textPrimary)
             return CustomMessageWidgetNode(
                 content: .text(.init(text: text, labelStyle: labelStyle, color: color)),
@@ -376,13 +375,14 @@ private extension ColorToken {
 }
 
 private extension TypographyStyle {
-    func toScale() -> ScaleTypographyStyle {
+    var labelStyle: PolkadotUI.LabelStyle {
         switch self {
-        case .headlineLarge: .titleXL
-        case .titleMediumRegular: .headline
-        case .bodyLargeRegular: .bodyM
-        case .bodyMediumRegular: .bodyS
-        case .bodySmallRegular: .caption
+        case .headlineLarge: ScaleTypographyStyle.titleXL.toLabelStyle
+        case .titleMediumRegular: ScaleTypographyStyle.headline.toLabelStyle
+        case .bodyLargeRegular: ScaleTypographyStyle.bodyM.toLabelStyle
+        case .bodyMediumRegular: ScaleTypographyStyle.bodyS.toLabelStyle
+        case .bodySmallRegular: ScaleTypographyStyle.caption.toLabelStyle
+        case .bodyMediumMedium: .body14Medium()
         }
     }
 }

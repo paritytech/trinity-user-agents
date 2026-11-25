@@ -1,6 +1,7 @@
 import Foundation
 import os
-import PolkadotUI
+import QuartzCore
+@testable import PolkadotUI
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -8,7 +9,7 @@ import TrUAPIHost
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct ChatMaterialsResolverTests {
-    private let tree = RendererNode.materials(props: MaterialsProps(layers: []), children: [])
+    private let tree = RendererNode.materials(props: MaterialsProps(layers: [], bleed: 0), children: [])
 
     @Test func aReadyNodeReachesTheCardWithItsLayers() async throws {
         // Given
@@ -17,7 +18,6 @@ struct ChatMaterialsResolverTests {
         resolver.follow(tree: tree)
 
         // When
-        await change(of: resolver.materials) { resolution.send(ResolvedMaterials(nodes: [.loading], noiseSeed: 3)) }
         await change(of: resolver.materials) {
             resolution.send(ResolvedMaterials(nodes: [.ready(layers: [Self.layer])], noiseSeed: 3))
         }
@@ -84,8 +84,9 @@ struct ChatMaterialsResolverTests {
         #expect(resolver.materials.state(of: 0) == .plain)
     }
 
-    /// Indices name other nodes once the number of nodes changes, so the old layers must not draw.
-    @Test func aTreeWithAnotherNumberOfNodesDrawsPlainUntilItsFirstUpdate() async {
+    /// The old layers must not draw with the new tree's clock, and a node that loads draws the output it
+    /// had, so every node of a new tree loads until its first update, whatever the number of nodes.
+    @Test func aNewTreeLoadsEveryNodeUntilItsFirstUpdate() async {
         // Given
         let resolution = StubMaterialsResolution()
         let resolver = makeResolver { _ in resolution }
@@ -93,13 +94,27 @@ struct ChatMaterialsResolverTests {
         await change(of: resolver.materials) {
             resolution.send(ResolvedMaterials(nodes: [.ready(layers: [Self.layer])], noiseSeed: 3))
         }
-        let twoNodes = RendererNode.materials(props: MaterialsProps(layers: []), children: [tree])
+        let twoNodes = RendererNode.materials(props: MaterialsProps(layers: [], bleed: 0), children: [tree])
 
         // When
         resolver.follow(tree: twoNodes)
 
         // Then
-        #expect([resolver.materials.state(of: 0), resolver.materials.state(of: 1)] == [.plain, .plain])
+        #expect([resolver.materials.state(of: 0), resolver.materials.state(of: 1)] == [.loading, .loading])
+    }
+
+    /// A card redrawn with its nodes moved keeps drawing each node's last output, and never another
+    /// node's: an output goes to a node with the same materials, the one at its own index first.
+    @Test func eachNodeOfANewTreeStartsFromAnOutputWithItsMaterials() {
+        // Given
+        let (glow, ring, coin) = (Data([1]), Data([2]), Data([3]))
+        let kept: [UInt32: [Data]] = [0: [glow], 1: [ring], 2: [glow]]
+
+        // When
+        let carried = WidgetMaterials.carried(kept, materials: { $0 }, into: [[ring], [glow], [coin], [glow]])
+
+        // Then
+        #expect(carried == [0: [ring], 1: [glow], 3: [glow]])
     }
 
     /// Equal layers leave the node's state as it was, so only the generation tells it to draw its
@@ -215,14 +230,30 @@ struct ChatMaterialsResolverTests {
         let ready = ReadyLayer(
             material: Data(repeating: 9, count: 32),
             shader: Self.layer.shader,
-            args: [.touch, .touchState, .elapsed, .samplerFloat(.trail), .samplerFloat(.noise)]
+            args: [.touch, .touchState, .elapsed, .replay, .samplerFloat(.trail), .samplerFloat(.noise)]
         )
 
         // When
         let layer = ready.widgetLayer
 
         // Then
-        #expect(layer.arguments == [.touch, .touchState, .elapsed, .trail, .noise])
+        #expect(layer.arguments == [.touch, .touchState, .elapsed, .replay, .trail, .noise])
+    }
+
+    /// The core runs the replay clock, and the card reads it through the touch inputs every frame.
+    @Test func theReplayClockOfTheCoreReachesTheCard() throws {
+        // Given
+        let story = TouchProps(drag: .any, trail: nil, triggers: [], replay: ReplayProps(length: 2_200))
+        let resolver = makeResolver { _ in StubMaterialsResolution() }
+        resolver.follow(tree: .touch(props: story, children: []))
+        let area = try #require(resolver.materials.touchArea(index: 0, size: CGSize(width: 300, height: 200)))
+        let drawnAt = CACurrentMediaTime()
+
+        // When
+        let replay = area.tracking.inputs(now: drawnAt + 1.5).replay
+
+        // Then
+        #expect(abs(replay - 1.5) < 0.1)
     }
 
     /// A product sends a new tree after each trigger. A `Touch` node whose props stay keeps its trail,
@@ -230,7 +261,10 @@ struct ChatMaterialsResolverTests {
     @Test func aNewTreeKeepsATouchAreaWhosePropsStayAndReplacesOneWhosePropsChanged() throws {
         // Given
         func touch(_ radius: UInt64) -> RendererNode {
-            .touch(props: TouchProps(drag: .any, trail: TrailProps(radius: radius), triggers: []), children: [])
+            .touch(
+                props: TouchProps(drag: .any, trail: TrailProps(radius: radius), triggers: [], replay: nil),
+                children: []
+            )
         }
         let resolver = makeResolver { _ in StubMaterialsResolution() }
         let size = CGSize(width: 300, height: 200)

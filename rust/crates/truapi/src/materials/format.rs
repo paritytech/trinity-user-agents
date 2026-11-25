@@ -121,6 +121,7 @@ impl ParamKind {
 			(Self::Vec4, Parameter::Touch) |
 			(Self::Vec2, Parameter::TouchState) |
 			(Self::Float, Parameter::Elapsed) |
+			(Self::Float, Parameter::Replay) |
 			(Self::SamplerFloat, Parameter::SamplerFloat(_)) => true,
 			(Self::SamplerVec2, Parameter::SamplerVec2(image)) |
 			(Self::SamplerVec3, Parameter::SamplerVec3(image)) |

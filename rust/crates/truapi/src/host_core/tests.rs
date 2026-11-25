@@ -14,7 +14,7 @@ use crate::{
 	test_support::{StubPlatform, runtime_config, wait_until},
 };
 use futures::FutureExt;
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Compact, Encode};
 use std::sync::atomic::Ordering;
 use truapi::{
 	CallContext,
@@ -1898,7 +1898,10 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 	assert_eq!(keep(&runtime, no_entry_point), Err(MaterialFailure::InvalidMaterial));
 
 	let face = RendererNode::Materials {
-		props: MaterialsProps { layers: vec![MaterialInstance { material: id, args: Vec::new() }] },
+		props: MaterialsProps {
+			layers: vec![MaterialInstance { material: id, args: Vec::new() }],
+			bleed: Compact(0),
+		},
 		children: Vec::new(),
 	};
 	let card = truapi::latest::RenderContext::PocketCard { card_id: "card".to_string() };
@@ -1942,7 +1945,7 @@ fn a_resolved_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
 		.map(|_| MaterialInstance { material: [7; 32], args: Vec::new() })
 		.collect();
 	let tree = RendererNode::Materials {
-		props: MaterialsProps { layers: over_the_layer_limit },
+		props: MaterialsProps { layers: over_the_layer_limit, bleed: Compact(0) },
 		children: Vec::new(),
 	};
 	let context = RenderContext::PocketCard { card_id: "stamps".to_string() };

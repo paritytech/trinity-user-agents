@@ -25,7 +25,8 @@ public extension CustomMessageWidgetNode {
         case textField(TextFieldProps)
         case image(ImageProps)
         /// Children drawn under a `Materials` node, numbered as `ResolvedMaterials.nodes` counts them.
-        case materials(index: UInt32, children: [CustomMessageWidgetNode])
+        /// Its layers draw `bleed` points past its bounds on every side.
+        case materials(index: UInt32, bleed: CGFloat, children: [CustomMessageWidgetNode])
         /// Children under a `Touch` node, which takes the finger over them.
         case touch(WidgetTouchNode, children: [CustomMessageWidgetNode])
     }

@@ -58,6 +58,9 @@ pub struct TouchInputs {
 	/// What fills a `TouchState` argument: 1 while down and 0 otherwise, then
 	/// seconds since the finger last went down or lifted.
 	pub state: Vec<f32>,
+	/// What fills a `Replay` argument: seconds since the replay clock last
+	/// started, or 0 for a node that keeps no replay clock.
+	pub replay: f32,
 }
 
 /// The trail as an image: one byte a cell, 255 where marked, row after row
@@ -84,6 +87,13 @@ pub struct TouchArea {
 	fired: Vec<bool>,
 	contact: Option<Contact>,
 	last: Option<Sample>,
+	replay: Option<ReplayClock>,
+}
+
+/// When the story a `Replay` argument plays last started, and how long it plays.
+struct ReplayClock {
+	length: f64,
+	started_at: f64,
 }
 
 /// The touch under way.
@@ -108,13 +118,18 @@ struct Point {
 }
 
 impl TouchArea {
-	/// A node with `props`, `width` by `height` logical pixels, before any touch.
-	pub fn new(props: TouchProps, width: f64, height: f64) -> Self {
+	/// A node with `props`, `width` by `height` logical pixels, before any
+	/// touch, first drawn `at_seconds` on the host's clock.
+	pub fn new(props: TouchProps, width: f64, height: f64, at_seconds: f64) -> Self {
 		let width = width.max(1.0);
 		let height = height.max(1.0);
 		let trail = props.trail.as_ref().map(|trail| Trail::new(width, height, trail.radius.0));
 		let fired = vec![false; props.triggers.len()];
-		Self { props, width, height, trail, fired, contact: None, last: None }
+		let replay = props.replay.as_ref().map(|replay| ReplayClock {
+			length: f64::from(replay.length) / 1000.0,
+			started_at: at_seconds,
+		});
+		Self { props, width, height, trail, fired, contact: None, last: None, replay }
 	}
 
 	/// Takes one finger sample at `x`, `y` logical pixels from the node's top
@@ -125,6 +140,11 @@ impl TouchArea {
 		let mut fired = Vec::new();
 		match phase {
 			TouchPhase::Down => {
+				if let Some(replay) = &mut self.replay &&
+					at_seconds - replay.started_at > replay.length
+				{
+					replay.started_at = at_seconds;
+				}
 				self.contact = Some(Contact { down: point, at: point, moved: 0.0 });
 				self.mark(point, point);
 				self.last =
@@ -166,16 +186,16 @@ impl TouchArea {
 
 	/// The touch arguments at `now_seconds` on the host's clock.
 	pub fn inputs(&self, now_seconds: f64) -> TouchInputs {
+		let since = |at: f64| (now_seconds - at).max(0.0) as f32;
+		let replay = self.replay.as_ref().map_or(0.0, |replay| since(replay.started_at));
 		let Some(last) = &self.last else {
-			return TouchInputs { touch: vec![0.0; 4], state: vec![0.0, -1.0] };
+			return TouchInputs { touch: vec![0.0; 4], state: vec![0.0, -1.0], replay };
 		};
 		let (position, down) = (self.unit(last.position), self.unit(last.down));
 		TouchInputs {
 			touch: vec![position[0], position[1], down[0], down[1]],
-			state: vec![
-				if last.pressed { 1.0 } else { 0.0 },
-				(now_seconds - last.changed_at).max(0.0) as f32,
-			],
+			state: vec![if last.pressed { 1.0 } else { 0.0 }, since(last.changed_at)],
+			replay,
 		}
 	}
 

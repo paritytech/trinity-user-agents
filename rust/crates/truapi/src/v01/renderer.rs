@@ -88,6 +88,8 @@ pub enum TypographyStyle {
 	BodyMediumRegular,
 	/// Small body text, regular weight.
 	BodySmallRegular,
+	/// Medium body text, medium weight.
+	BodyMediumMedium,
 }
 
 /// Button emphasis.
@@ -420,6 +422,16 @@ pub struct ImageProps {
 pub struct MaterialsProps {
 	/// Layers in drawing order.
 	pub layers: Vec<MaterialInstance>,
+	/// How far past the node the layers draw, in logical pixels on every side,
+	/// at most 64. The layers then cover the node's bounds grown by this much,
+	/// over the rest of the tree and past the clip of every node around it.
+	/// Zero when absent from JSON.
+	#[serde(default = "no_bleed")]
+	pub bleed: Size,
+}
+
+fn no_bleed() -> Size {
+	Compact(0)
 }
 
 /// One material applied with its arguments.
@@ -465,6 +477,10 @@ pub enum Parameter {
 	/// A `float` parameter the host fills: seconds since it first drew this
 	/// tree, counting while the body is off screen.
 	Elapsed,
+	/// A `float` parameter the host fills: seconds since the replay clock of
+	/// the enclosing `Touch` node last started, counting while the body is off
+	/// screen.
+	Replay,
 }
 
 /// Where an image argument comes from.
@@ -491,6 +507,8 @@ pub struct TouchProps {
 	pub trail: Option<TrailProps>,
 	/// What the host tells the product, at most 8.
 	pub triggers: Vec<TouchTrigger>,
+	/// The clock a `Replay` argument reads, when the node keeps one.
+	pub replay: Option<ReplayProps>,
 }
 
 /// Which finger movement a `Touch` node keeps from the scroll around it.
@@ -509,6 +527,16 @@ pub enum DragAxis {
 pub struct TrailProps {
 	/// Brush radius in logical pixels.
 	pub radius: Size,
+}
+
+/// The replay clock of a `Touch` node. It starts when the host first draws the
+/// node, and starts again when a finger goes down once it has run `length`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReplayProps {
+	/// How long the story plays, in milliseconds. A finger that goes down
+	/// sooner leaves the clock running.
+	pub length: u32,
 }
 
 /// An action a `Touch` node triggers when its condition holds.

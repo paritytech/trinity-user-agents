@@ -87,6 +87,9 @@ pub enum RendererNode {
 pub struct MaterialsProps {
     /// Layers in drawing order.
     pub layers: Vec<MaterialInstance>,
+    /// How far past the node the layers draw, in logical pixels on every side,
+    /// at most 64. Zero when absent from JSON.
+    pub bleed: Size,
 }
 
 /// One material applied with its arguments.
@@ -131,14 +134,20 @@ behind the node as the backdrop. Layers chain over it as the renderer inputs def
 the node's place, over what is behind it, using its alpha without premultiplication. A node drawn plain shows its
 children without its layers.
 
+A node with a `bleed` draws past its bounds, so an effect can leave the card it sits in. Its stage is the node's bounds
+grown by `bleed` on every side: the base image is that large, with the children at the inset and the margin transparent,
+the shader's `uv` and `sl_resolution` cover the whole stage, and the last layer's output is drawn over the rest of the
+tree, past the clip of every node around it. The layout does not change: the node is as large as its children, and the
+margin covers its neighbours without taking their touch.
+
 Any tree may carry `Materials`. A host draws them only on the surfaces it supports, and elsewhere draws the nodes plain
 and reports `Unsupported`.
 
 Materials amend the Closed requirement of the Unified Renderer to read:
 
 - **Closed.** A product names layouts and tokens from a fixed vocabulary, never markup, stylesheets or URLs. Materials
-  are the one exception: shader code the host runs only inside the node's bounds, with only the inputs the host
-  supplies, never able to fetch, read or act on anything else.
+  are the one exception: shader code the host runs only inside the node's bounds and its bleed, with only the inputs the
+  host supplies, never able to fetch, read or act on anything else.
 
 ### Drawing
 
@@ -150,7 +159,9 @@ into the core.
 
 A node falls back when one of its materials or images fails: it draws plain, so a product chooses its fallback look by
 its children. The rest of the tree draws as usual. While a node's materials or images load, the host draws the node's
-last output if it had one, and draws it plain otherwise.
+last output if it had one, and draws it plain otherwise. A new tree of the same body counts as loading: until a node's
+layers are ready for it, the host goes on drawing the last output of a node of the tree before with the same materials
+in the same order.
 
 For each node that falls back, the host reports why on `Renderer::failure_subscribe`, once per node per tree, and logs
 it on the device with the format's own code where there is one. A product that never subscribes sees no change. Reports
@@ -227,6 +238,7 @@ The limits are the same on every host:
 | Pixels per side of one image argument  | 2048  |
 | Distinct images in one tree, not noise | 16    |
 | `Materials` inside another `Materials` | none  |
+| `bleed` of one `Materials` node        | 64    |
 | `Touch` nodes in one tree              | 4     |
 | `Touch` inside another `Touch`         | none  |
 | Triggers in one `Touch` node           | 8     |
@@ -298,6 +310,8 @@ pub struct TouchProps {
     pub trail: Option<TrailProps>,
     /// What the host tells the product, at most 8.
     pub triggers: Vec<TouchTrigger>,
+    /// The clock a `Replay` argument reads, when the node keeps one.
+    pub replay: Option<ReplayProps>,
 }
 
 pub enum DragAxis {
@@ -310,6 +324,13 @@ pub enum DragAxis {
 pub struct TrailProps {
     /// Brush radius in logical pixels.
     pub radius: Size,
+}
+
+/// The replay clock: it starts when the host first draws the node, and starts
+/// again when a finger goes down once it has run `length`.
+pub struct ReplayProps {
+    /// How long the story plays, in milliseconds.
+    pub length: u32,
 }
 
 pub struct TouchTrigger {
@@ -341,6 +362,9 @@ pub enum Parameter {
     TouchState,
     /// Fills a `float`: seconds since the host first drew this tree.
     Elapsed,
+    /// Fills a `float`: seconds since the replay clock of the enclosing
+    /// `Touch` node last started.
+    Replay,
 }
 
 pub enum ImageRef {
@@ -356,22 +380,29 @@ The values are the same on every host:
   In the usual tree, a `Touch` node around one `Materials` node, this equals the shader's `uv`.
 - Before any touch, `Touch` is `(0, 0, 0, 0)` and `TouchState` is `(0, -1)`. After a lift the last position stays.
 - `Elapsed` keeps counting while the body is off screen, and restarts when the product renders a new tree for the body.
-  With reduced motion on it reads 3600, so an entry animation shows its end.
+  With reduced motion on it reads 3600, so an entry animation shows its end. A host restarts it together with the
+  drawing that carries the new tree's arguments, so no frame shows the new clock over the old arguments.
+- `Replay` plays a story once from the first draw and again on a tap, ignoring taps until the story has played out. The
+  clock starts when the host first draws the `Touch` node. A finger that goes down inside the node more than `length`
+  after the clock last started starts it again at that moment, wherever and whenever it lifts. A finger that goes down
+  sooner leaves it running. With reduced motion on it reads 3600, as `Elapsed` does.
 - The trail has one byte per cell, in row order from the top left. The longer side has 128 cells, the other
   `max(1, round(128 × short / long))`. A cell becomes 255 when its centre lies within `radius` of the segment between
   two consecutive finger samples of one touch, or of the first sample. Cells never clear. The trail samples linearly
   with clamped edges. `TrailCovers(p)` holds when `marked × 1000 >= p × cells`.
-- The trail, the fired triggers and the last touch last as long as the app shows the body and the node's `TouchProps`
-  stay equal across new trees, counting `Touch` nodes depth first. Different props or another node size start them
-  empty. They do not outlive the app, so a product keeps a result by sending the tree that shows it.
-- A layer with a `TouchState` or `Elapsed` argument draws every frame while on screen. A layer with only `Touch` or
-  `Trail` draws when the finger moves.
+- The trail, the fired triggers, the last touch and the replay clock last as long as the app shows the body and the
+  node's `TouchProps` stay equal across new trees, counting `Touch` nodes depth first. A tree resent with equal props
+  therefore does not replay the story. Different props or another node size start them empty. They do not outlive the
+  app, so a product keeps a result by sending the tree that shows it.
+- A layer with a `TouchState`, `Elapsed` or `Replay` argument draws every frame while on screen. A layer with only
+  `Touch` or `Trail` draws when the finger moves.
 - Touch works with reduced motion on.
 
 A `Touch` node that breaks a limit draws its children like a `Box` and takes no touch. A `Materials` node with a
-`Touch`, `TouchState` or `Trail` argument and no `Touch` node around it that takes touch, or with `Trail` where that
-node keeps no trail, falls back with `InvalidStack`. The nearest `Touch` node around it decides. `Trail` in a sampler
-other than `samplerFloat` falls back with `InvalidStack`, as the noise image does.
+`Touch`, `TouchState`, `Replay` or `Trail` argument and no `Touch` node around it that takes touch, with `Trail` where
+that node keeps no trail, or with `Replay` where it keeps no replay clock, falls back with `InvalidStack`. The nearest
+`Touch` node around it decides. `Trail` in a sampler other than `samplerFloat` falls back with `InvalidStack`, as the
+noise image does.
 
 ### Capability
 

@@ -16,10 +16,12 @@ pub struct NativeTouchArea(Mutex<TouchArea>);
 
 #[uniffi::export]
 impl NativeTouchArea {
-	/// A node with `props`, `width` by `height` logical pixels, before any touch.
+	/// A node with `props`, `width` by `height` logical pixels, before any
+	/// touch, first drawn `at_seconds` on the host's clock, where its replay
+	/// clock starts.
 	#[uniffi::constructor]
-	pub fn new(props: TouchProps, width: f64, height: f64) -> Arc<Self> {
-		Arc::new(Self(Mutex::new(TouchArea::new(props, width, height))))
+	pub fn new(props: TouchProps, width: f64, height: f64, at_seconds: f64) -> Arc<Self> {
+		Arc::new(Self(Mutex::new(TouchArea::new(props, width, height, at_seconds))))
 	}
 
 	/// Takes one finger sample at `x`, `y` logical pixels from the node's top
