@@ -76,11 +76,15 @@ Users get the stack with the next release of `@parity/trinity-stack` and the cra
 A host build that sets `reservedValues.allowed`, as a Polkadot build does, pins its stack to the copy it bundles: the
 chain roles and their genesis hashes, `assets`, `contracts`, `dotns`, `coinage` and the `sha256` of the relay's
 `lightSpec`. Refresh the stack's copy in `stacks/` with `scripts/update-stacks.sh` before such a build is released, so
-the copy it bundles has the published values of those fields. A build whose copy predates a change to one of them
-refuses each newer descriptor that carries the change and runs the values it bundles, also on a device that stored the
-newer copy under an earlier build. For the same reason, the operator of a pinned stack cannot change those fields without stranding the
-builds already shipped: each one refuses the new descriptor and stays on the copy it holds until a new build replaces
-it.
+the copy it bundles has the published values of those fields. Run the script with a `truapi-host` built from the same
+tree, `TRUAPI_HOST=target/debug/truapi-host` after `cargo build -p truapi-host-cli`. The script and the daily
+`update-chain-specs.yml` otherwise run the installed release, which can be older than the tree and keep a copy whose
+only change is to a pinned field.
+
+A build whose copy predates a change to one of those fields refuses each newer descriptor that carries the change and
+runs the values it bundles, also on a device that stored the newer copy under an earlier build. For the same reason, the
+operator of a pinned stack cannot change those fields without stranding the builds already shipped: each one refuses the
+new descriptor and stays on the copy it holds until a new build replaces it.
 
 ## What else is here
 
