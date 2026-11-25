@@ -219,7 +219,7 @@ impl StackRefresh {
 			let reported = self.shared.source().status();
 			changed(&reported);
 			let reports = self.shared.clone().report(changed, reported, chain_answers);
-			BackgroundTask::spawn(spawner, reports)
+			spawner.create_task(reports)
 		});
 		started
 	}
