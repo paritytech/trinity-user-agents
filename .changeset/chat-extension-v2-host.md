@@ -8,8 +8,9 @@ the room and keeps it with the room in one step: `createRoom(roomId:name:icon:co
 `createRoom` in Kotlin. The three-argument `createRoom`, `postMessage` and `setRoomFooter` keep their shapes. A host
 that does not implement the new requests yet keeps serving products as before. The four-argument `createRoom` creates a
 room with the default configuration through the three-argument one, and refuses any other configuration with
-`HostChatCreateRoomError.Unknown` (`HostChatCreateRoomException` in Kotlin) before it creates anything.
-`setRoomMetadata`, `setRoomPreview`, `deleteRoom` and `updateFeed` answer `ChatRoomChangeOutcome.unsupported`
-(`UNSUPPORTED` in Kotlin), which the product receives as `Unsupported`. A host that serves one of them answers
-`.applied` (`APPLIED`). A `HostRejection` that `createRoom` or `updateFeed` throws reaches the product with the reason
-that the host wrote.
+`HostChatCreateRoomError.Unknown` (`HostChatCreateRoomException` in Kotlin) before it creates anything. The
+three-argument `createRoom` has a default that refuses the room, so a host that implements the four-argument one need
+not implement it. `setRoomMetadata`, `setRoomPreview`, `deleteRoom` and `updateFeed` answer
+`ChatRoomChangeOutcome.unsupported` (`UNSUPPORTED` in Kotlin), which the product receives as `Unsupported`. A host that
+serves one of them answers `.applied` (`APPLIED`). A `HostRejection` that `createRoom` or `updateFeed` throws reaches
+the product with the reason that the host wrote.

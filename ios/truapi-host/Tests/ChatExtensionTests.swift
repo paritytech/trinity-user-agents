@@ -74,19 +74,31 @@ struct ChatHostBridgeDefaultsTests {
         #expect(declaring.configs == ["room": config])
         #expect(try await bridge.roomConfig(roomId: "room") == config)
     }
+
+    /// A host that keeps configurations implements only the four-argument
+    /// `createRoom`, and a host without rooms implements neither. Each default
+    /// `createRoom` must not call the other for ever: the core reaches the
+    /// four-argument one, and a host that implements neither refuses the room.
+    @Test
+    func aHostImplementsOnlyTheCreateRoomItNeeds() async throws {
+        let declaring = DeclaringChatHostBridge()
+        let bridge: any ChatHostBridge = declaring
+
+        let status = try await bridge.createRoom(roomId: "room", name: "Room", icon: "", config: .hostDefault)
+
+        #expect(status == .new)
+        #expect(declaring.configs == ["room": .hostDefault])
+        let roomless: any ChatHostBridge = RoomlessChatHostBridge()
+        await #expect(throws: HostRejection.self) {
+            _ = try await roomless.createRoom(roomId: "room", name: "Room", icon: "", config: .hostDefault)
+        }
+    }
 }
 
-/// A host that keeps the configuration of each room.
+/// A host that keeps the configuration of each room, and so implements only
+/// the four-argument `createRoom`.
 private final class DeclaringChatHostBridge: ChatHostBridge, @unchecked Sendable {
     private(set) var configs: [String: ChatRoomConfig] = [:]
-
-    func createRoom(
-        roomId _: String,
-        name _: String,
-        icon _: String
-    ) async throws -> ChatRoomRegistrationStatus {
-        throw HostRejection.Rejected(reason: "the core creates rooms with their configuration")
-    }
 
     func createRoom(
         roomId: String,
@@ -130,6 +142,23 @@ private final class FirstVersionChatHostBridge: ChatHostBridge, @unchecked Senda
         return .new
     }
 
+    func registerBot(
+        botId _: String,
+        name _: String,
+        icon _: String
+    ) async throws -> ChatBotRegistrationStatus { .new }
+
+    func postMessage(roomId _: String, content _: ChatMessageContent, alt _: String?) async throws -> String {
+        "message-id"
+    }
+
+    func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
+
+    func listRooms() async throws -> [ChatRoom] { [] }
+}
+
+/// A host that creates no rooms: it implements neither `createRoom`.
+private final class RoomlessChatHostBridge: ChatHostBridge, @unchecked Sendable {
     func registerBot(
         botId _: String,
         name _: String,

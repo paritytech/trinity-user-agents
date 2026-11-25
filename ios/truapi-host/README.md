@@ -125,16 +125,19 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it
 when it opens the product's `.worker` execution. Hosts without it pass nothing
 and Chat calls answer unsupported.
 
-The bridge carries the requests of Chat Extension v2. `createRoom`,
-`registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default.
-The other requests have defaults for a host that does not serve them yet:
+The bridge carries the requests of Chat Extension v2. `registerBot`,
+`postMessage`, `setRoomFooter` and `listRooms` have no default, and a host
+implements one of the two `createRoom` methods: the default
+`createRoom(roomId:name:icon:)` refuses the room. The other requests have
+defaults for a host that does not serve them yet:
 `createRoom(roomId:name:icon:config:)` creates the room only with
-`ChatRoomConfig.hostDefault` and refuses any other configuration before it
-creates anything, `roomConfig` answers `ChatRoomConfig.hostDefault`, and every
-other request answers `ChatRoomChangeOutcome.unsupported`, which the product
-receives as `Unsupported`. A host that serves one of them answers `.applied`. A
-room the product declares nothing for is a room the host stores, with the name
-and icon of `createRoom` and the text input.
+`ChatRoomConfig.hostDefault`, through `createRoom(roomId:name:icon:)`, and
+refuses any other configuration before it creates anything, `roomConfig` answers
+`ChatRoomConfig.hostDefault`, and every other request answers
+`ChatRoomChangeOutcome.unsupported`, which the product receives as
+`Unsupported`. A host that serves one of them answers `.applied`. A room the
+product declares nothing for is a room the host stores, with the name and icon
+of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
@@ -157,12 +160,6 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     private let store: ChatStore
 
     init(store: ChatStore) { self.store = store }
-
-    func createRoom(roomId: String, name: String, icon: String) throws
-        -> ChatRoomRegistrationStatus
-    {
-        try createRoom(roomId: roomId, name: name, icon: icon, config: .hostDefault)
-    }
 
     // The room and its configuration land in one write.
     func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) throws

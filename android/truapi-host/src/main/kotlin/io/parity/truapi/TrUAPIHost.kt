@@ -493,10 +493,14 @@ interface ChatHostBridge {
      * surface that renders them is still the host's job.
      *
      * The default four-argument [createRoom] calls it for a room with
-     * [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG], so a host that keeps only the default
+     * configuration implements this one. A host that implements the
+     * four-argument [createRoom] needs nothing here. The default refuses the
+     * room.
      */
     @Throws(HostRejection::class)
-    suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
+    suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus =
+        throw HostRejection.Rejected("this host does not create chat rooms")
 
     /**
      * Create or resolve a room as the three-argument [createRoom] does, and

@@ -89,7 +89,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG` and refuses any other configuration before it creates anything, `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, and every other request answers `ChatRoomChangeOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `ChatRoomChangeOutcome.APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ExecutableKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default, and a host implements one of the two `createRoom` methods: the default three-argument `createRoom` refuses the room. The other requests have defaults for a host that does not serve them yet: the four-argument `createRoom` creates the room only with `HOST_DEFAULT_CHAT_ROOM_CONFIG`, through the three-argument one, and refuses any other configuration before it creates anything, `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, and every other request answers `ChatRoomChangeOutcome.UNSUPPORTED`, which the product receives as `Unsupported`. A host that serves one of them answers `ChatRoomChangeOutcome.APPLIED`. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
@@ -122,9 +122,6 @@ import uniffi.truapi.ProductId
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override suspend fun createRoom(roomId: String, name: String, icon: String) =
-        createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
-
     // The room and its configuration land in one write.
     override suspend fun createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) =
         if (store.putRoom(roomId, name, icon, config)) ChatRoomRegistrationStatus.NEW

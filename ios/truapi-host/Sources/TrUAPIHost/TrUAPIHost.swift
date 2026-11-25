@@ -278,7 +278,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// for the surface that renders them is still the host's job.
     ///
     /// The default ``createRoom(roomId:name:icon:config:)`` calls it for a
-    /// room with ``ChatRoomConfig/hostDefault``.
+    /// room with ``ChatRoomConfig/hostDefault``, so a host that keeps only the
+    /// default configuration implements this one. A host that implements
+    /// ``createRoom(roomId:name:icon:config:)`` needs nothing here. The default
+    /// refuses the room.
     func createRoom(roomId: String, name: String, icon: String) async throws
         -> ChatRoomRegistrationStatus
 
@@ -359,8 +362,14 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
 /// The product receives `Unsupported` for each request, with one exception:
 /// the host creates a room with the configuration that keeps the behaviour
-/// that it serves, and refuses any other before it creates anything.
+/// that it serves, and refuses any other before it creates anything. The
+/// three-argument `createRoom` refuses the room, so a host implements it or
+/// the four-argument one.
 public extension ChatHostBridge {
+    func createRoom(roomId _: String, name _: String, icon _: String) async throws -> ChatRoomRegistrationStatus {
+        throw HostRejection.Rejected(reason: "this host does not create chat rooms")
+    }
+
     func createRoom(
         roomId: String,
         name: String,
