@@ -491,12 +491,16 @@ impl SessionCatalog {
 	///
 	/// The locks are each removed session's own, so a host provisioning one of
 	/// those sessions cannot write it back after the clear, and the shared
-	/// store's when it holds a record the clear removes. A host provisioning on
-	/// another stack holds the shared lock too, so it refuses only a clear that
-	/// has records there. The store is read without its lock to decide that,
-	/// which is safe since every write renames a whole file into place. Fails
-	/// as [`Self::validate_clear_target`] does, and when another process holds
-	/// one of the locks.
+	/// store's. A clear of every session takes that one whenever the store
+	/// exists, since a host creating this stack's first account holds it before
+	/// it saves a record. A named clear takes it only when the store holds that
+	/// session's record, so a host provisioning on another stack does not
+	/// refuse it. The store is read without its lock to decide that. On Unix
+	/// every write renames a whole file into place, so the read finds the old
+	/// store or the new one; elsewhere a write removes the file first, and a
+	/// read at that moment finds no record. Fails as
+	/// [`Self::validate_clear_target`] does, and when another process holds one
+	/// of the locks.
 	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
 		self.validate_clear_target(target)?;
 		let target = target.clone();
@@ -504,8 +508,12 @@ impl SessionCatalog {
 			SessionClearTarget::Named(name) => vec![name.clone()],
 			SessionClearTarget::All => self.list()?,
 		};
-		let shared_store = accounts::AccountStore::load(&self.base_path)?
-			.has_managed_accounts(&self.network_id, target.lite_username())
+		let needs_shared_store = match &target {
+			SessionClearTarget::Named(name) => accounts::AccountStore::load(&self.base_path)?
+				.has_managed_accounts(&self.network_id, Some(name)),
+			SessionClearTarget::All => accounts::has_account_store(&self.base_path),
+		};
+		let shared_store = needs_shared_store
 			.then(|| accounts::AccountStoreLock::acquire(&self.base_path))
 			.transpose()?;
 		let session_stores = names
