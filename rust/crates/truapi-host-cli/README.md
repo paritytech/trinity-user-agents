@@ -540,7 +540,9 @@ keys, session-local scripts, core/product storage, and permissions. Persistent
 script projects under `<base-path>/scripts` are preserved. `/session --clear-all`
 does the same for every signing-host session on the current network, including
 the network's signing-host bootstrap state, while preserving other networks and
-pairing-host state. Neither command deregisters an on-chain username. The interactive UI
+pairing-host state. Neither command deregisters an on-chain username, or removes
+mnemonics an earlier release kept in `accounts.json` directly under
+`<base-path>/v2`; delete that file by hand once none is needed. The interactive UI
 asks for `[y/N]` confirmation. `exec` treats the explicit one-shot command as
 confirmation and runs it immediately. Clearing an inactive named session keeps
 the host running; clearing the active session or all sessions stops the signing
