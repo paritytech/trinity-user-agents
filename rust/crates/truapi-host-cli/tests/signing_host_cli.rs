@@ -28,6 +28,18 @@ fn accounts_json(template: &str) -> String {
 	template.replace("@stack", state::offline_state_directory())
 }
 
+/// Writes the account store an earlier release shared between stacks, directly under `v2`, with
+/// an attested account named `lite_username` for the stack [`command`] runs on, and returns what
+/// it wrote. Nothing reads or changes that file any more.
+fn seed_earlier_shared_store(base_path: &Path, lite_username: &str) -> String {
+	let store = accounts_json(&format!(
+		r#"{{"version":1,"accounts":[{{"name":"auto-1","network":"@stack","mnemonic":"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about","lite_username":"{lite_username}","public_key_hex":"0x00","address":"5GrwvaEF5zXb26Fz9rcQpDWSKfwVwqNxyvE9uZunJMtBEw2s","created_at_unix":1,"attested":true}}]}}"#
+	));
+	std::fs::create_dir_all(base_path.join("v2")).expect("create the versioned state root");
+	std::fs::write(base_path.join("v2/accounts.json"), &store).expect("seed the earlier store");
+	store
+}
+
 fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
 	let profile = base_path.join(state_directory()).join("alice_signing_host");
 	std::fs::create_dir_all(&profile).expect("create signing-host profile");
@@ -309,6 +321,8 @@ fn exec_clear_removes_the_named_session_without_extra_confirmation() {
 	assert!(!output.stdout.contains(&0x1b));
 }
 
+/// Clearing every session leaves pairing-host state, and the account store an earlier release
+/// shared between stacks, as they are.
 #[test]
 fn exec_clear_all_removes_every_session_for_the_network() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
@@ -322,6 +336,7 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	}
 	let unrelated = network_path.join("pairing-host");
 	std::fs::create_dir_all(&unrelated).expect("seed unrelated host state");
+	let earlier_store = seed_earlier_shared_store(temporary.path(), "alice");
 
 	let output = command()
 		.args(["signing-host", "--frame-listen", "127.0.0.1:0"])
@@ -337,6 +352,10 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	assert!(!alice.exists());
 	assert!(!bob.exists());
 	assert!(unrelated.exists());
+	assert_eq!(
+		std::fs::read_to_string(temporary.path().join("v2/accounts.json")).ok(),
+		Some(earlier_store)
+	);
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let cleared =
 		format!("All sessions cleared for paseo-next-v2 ({})", state::offline_state_directory());
@@ -443,11 +462,13 @@ fn default_session_is_not_user_selectable() {
 }
 
 /// The default session keeps its accounts in the stack's own `signing-host` directory, and a
-/// signer saved there is activated at startup.
+/// signer saved there is activated at startup. The store an earlier release shared between
+/// stacks is neither read nor changed.
 #[test]
 fn existing_local_signer_is_activated_and_cached_at_startup() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
 	let base_path = temporary.path();
+	let earlier_store = seed_earlier_shared_store(base_path, "earlieralice.01");
 	let state_path = base_path.join(state_directory()).join("signing-host");
 	std::fs::create_dir_all(&state_path).expect("create the default session's state");
 	std::fs::write(
@@ -480,7 +501,12 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
 	assert!(output.status.success());
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	assert!(stdout.contains("Signing host ready"));
-	assert!(stdout.contains("User cachedalice.01"));
+	assert!(stdout.contains("User cachedalice.01"), "{stdout}");
+	assert!(!stdout.contains("earlieralice"), "{stdout}");
+	assert_eq!(
+		std::fs::read_to_string(base_path.join("v2/accounts.json")).ok(),
+		Some(earlier_store)
+	);
 	let metadata = std::fs::read_to_string(
 		base_path
 			.join(state_directory())
