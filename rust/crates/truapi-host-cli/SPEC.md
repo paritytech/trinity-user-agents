@@ -1503,8 +1503,9 @@ flag or prompt. Clearing an inactive named session updates completion and keeps
 the current runtime active. Clearing the active session or all sessions first
 ends the command loop, aborts the frame server, drops the runtime, and only then
 deletes the data; the signing host exits afterward. Before it stops anything, a
-clear takes the lock of each cleared session's account store and of the
-compatibility store when there is one (§13.7). When another process holds one,
+clear takes the lock of each cleared session's account store, and of the
+compatibility store when that holds a record the clear removes (§13.7). When
+another process holds one,
 the clear is refused, nothing is removed and the host keeps running. The
 compatibility records go before the directories. Session clearing is
 unavailable in explicit-mnemonic mode.

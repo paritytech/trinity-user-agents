@@ -150,6 +150,17 @@ pub enum SessionClearTarget {
 	All,
 }
 
+impl SessionClearTarget {
+	/// The lite username of the shared store's records the clear removes: the
+	/// session's name, or `None` for every record of the network.
+	fn lite_username(&self) -> Option<&str> {
+		match self {
+			Self::Named(name) => Some(name),
+			Self::All => None,
+		}
+	}
+}
+
 /// A clear whose account store locks are held, made by
 /// [`SessionCatalog::prepare_clear`] and carried out by
 /// [`SessionCatalog::clear`].
@@ -472,19 +483,22 @@ impl SessionCatalog {
 	/// Check `target` and take the account store locks a clear of it needs,
 	/// before anything is removed or a host stops for it.
 	///
-	/// The locks are the shared store's, when there is one, and each removed
-	/// session's own, so a host provisioning one of those sessions cannot write
-	/// it back after the clear. With no shared store there are no records to
-	/// remove, so a host provisioning on another stack does not refuse the
-	/// clear. Fails as [`Self::resolve_clear_target`] does, and when another
-	/// process holds one of the locks.
+	/// The locks are each removed session's own, so a host provisioning one of
+	/// those sessions cannot write it back after the clear, and the shared
+	/// store's when it holds a record the clear removes. A host provisioning on
+	/// another stack holds the shared lock too, so it refuses only a clear that
+	/// has records there. The store is read without its lock to decide that,
+	/// which is safe since every write renames a whole file into place. Fails
+	/// as [`Self::resolve_clear_target`] does, and when another process holds
+	/// one of the locks.
 	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
 		let target = self.resolve_clear_target(target)?;
 		let names = match &target {
 			SessionClearTarget::Named(name) => vec![name.clone()],
 			SessionClearTarget::All => self.list()?,
 		};
-		let shared_store = accounts::has_account_store(&self.base_path)
+		let shared_store = accounts::AccountStore::load(&self.base_path)?
+			.has_managed_accounts(&self.network_id, target.lite_username())
 			.then(|| accounts::AccountStoreLock::acquire(&self.base_path))
 			.transpose()?;
 		let session_stores = names
@@ -504,11 +518,7 @@ impl SessionCatalog {
 	pub fn clear(&self, clear: PreparedClear) -> Result<Vec<String>> {
 		let PreparedClear { target, names, shared_store, _session_stores } = clear;
 		if let Some(store) = &shared_store {
-			let lite_username = match &target {
-				SessionClearTarget::Named(name) => Some(name.as_str()),
-				SessionClearTarget::All => None,
-			};
-			store.remove_managed_accounts(&self.network_id, lite_username)?;
+			store.remove_managed_accounts(&self.network_id, target.lite_username())?;
 		}
 		match &target {
 			SessionClearTarget::Named(name) => {

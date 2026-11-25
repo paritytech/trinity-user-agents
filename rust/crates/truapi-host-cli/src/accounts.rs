@@ -218,10 +218,10 @@ impl AccountStoreLock {
 		}
 		let mut store = AccountStore::load(&self.base_path)?;
 		let before = store.data.accounts.len();
-		store.data.accounts.retain(|record| {
-			record.network != network_id ||
-				lite_username.is_some_and(|username| record.lite_username != username)
-		});
+		store
+			.data
+			.accounts
+			.retain(|record| !record.is_managed(network_id, lite_username));
 		let removed = before - store.data.accounts.len();
 		if removed > 0 {
 			store.save()?;
@@ -349,6 +349,25 @@ impl AccountStore {
 		};
 		record.exhausted_statement_periods.insert(period);
 		self.save()
+	}
+
+	/// Whether the store holds a record that
+	/// [`AccountStoreLock::remove_managed_accounts`] removes for the same
+	/// arguments.
+	pub fn has_managed_accounts(&self, network_id: &str, lite_username: Option<&str>) -> bool {
+		self.data
+			.accounts
+			.iter()
+			.any(|record| record.is_managed(network_id, lite_username))
+	}
+}
+
+impl AccountRecord {
+	/// Whether this is a cached account of `network_id`, and of
+	/// `lite_username` when one is given.
+	fn is_managed(&self, network_id: &str, lite_username: Option<&str>) -> bool {
+		self.network == network_id &&
+			lite_username.is_none_or(|username| self.lite_username == username)
 	}
 }
 

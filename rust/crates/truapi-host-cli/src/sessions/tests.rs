@@ -405,19 +405,40 @@ fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
 }
 
 /// The shared store's lock is held while a host provisions a default session on
-/// any stack. With no shared store there are no records to remove, so that
-/// host does not refuse a clear.
+/// any stack. A clear with no record in that store, because there is no store,
+/// its records are another network's, or they belong to another session, has
+/// nothing to remove there, so that host does not refuse it.
 #[test]
-fn a_clear_with_no_shared_store_is_not_refused_by_its_lock() -> Result<()> {
-	let temporary = tempdir()?;
-	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
-	let alice = catalog.ensure_profile("alice")?;
-	fs::write(alice.path.join("state"), "alice")?;
-	let _provisioning = accounts::AccountStoreLock::acquire(&catalog.base_path)?;
+fn a_clear_with_no_record_in_the_shared_store_is_not_refused_by_its_lock() -> Result<()> {
+	let record = |network: &str, lite_username: &str| {
+		format!(
+			r#"{{"version":1,"accounts":[{{"name":"auto-1","network":"{network}","mnemonic":"m","lite_username":"{lite_username}","public_key_hex":"0x00","address":"a","created_at_unix":1}}]}}"#
+		)
+	};
+	let cases = [
+		(None, SessionClearTarget::All),
+		(Some(record("othernet", "alice")), SessionClearTarget::All),
+		(Some(record("testnet", "bob")), SessionClearTarget::Named("alice".to_string())),
+	];
+	for (stored, target) in cases {
+		let temporary = tempdir()?;
+		let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+		let alice = catalog.ensure_profile("alice")?;
+		fs::write(alice.path.join("state"), "alice")?;
+		let store = catalog.base_path.join("accounts.json");
+		if let Some(stored) = &stored {
+			fs::write(&store, stored)?;
+		}
+		let _provisioning = accounts::AccountStoreLock::acquire(&catalog.base_path)?;
 
-	let cleared = clear(&catalog, SessionClearTarget::All)?;
+		let cleared = clear(&catalog, target.clone()).map_err(|error| error.to_string());
 
-	assert_eq!((cleared, alice.path.exists()), (vec!["alice".to_string()], false));
+		assert_eq!(
+			(cleared, alice.path.exists(), fs::read_to_string(&store).ok()),
+			(Ok(vec!["alice".to_string()]), false, stored),
+			"{target:?}"
+		);
+	}
 	Ok(())
 }
 
