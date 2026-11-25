@@ -13732,6 +13732,34 @@ fn assert_events_carry_none_of(events: &[crate::logging::CoreEvent], secrets: &[
 	}
 }
 
+// A fact names the product that opened the session only when it is
+// first-party, so the tag stays a closed set. `peopl` under a TLD the stack
+// does not serve is whoever registered the name there.
+#[test]
+fn a_funding_fact_names_the_opener_only_when_the_stack_trusts_it() {
+	use crate::runtime::funding_telemetry::read::{text, value};
+	let opener_tag = |product_id: &str| {
+		let services = funding_services();
+		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Dismissed,
+		)));
+		let opener = ProductContext::new(ProductId::for_test(product_id));
+		let shown = futures::executor::block_on(services.show_funding(
+			Some(&opener),
+			new_intent(),
+			v01::FundingDirection::In,
+			None,
+		));
+		assert!(shown.is_ok(), "the overlay opened");
+		value(&services.funding().emitted_facts()[0], "product")
+	};
+
+	assert_eq!(
+		(opener_tag("peopl.dot"), opener_tag("peopl.elsewhere")),
+		(text("peopl"), text("third_party"))
+	);
+}
+
 // A top-up the user starts, hands to a provider, cancels once paid and that
 // ends delivered reports each fact once, when it happens, under one random
 // reference, with its amount bucketed and nothing that names the session.

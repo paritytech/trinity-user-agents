@@ -2095,6 +2095,7 @@ impl FundingRegistry {
 					.as_ref()
 					.is_some_and(|services| services.funding_providers().is_quote_target(provider))
 			},
+			services.as_ref().map(|services| services.stack()),
 			current_unix_millis(),
 		);
 		for fact in facts {
