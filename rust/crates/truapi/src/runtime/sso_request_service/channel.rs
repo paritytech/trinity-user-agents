@@ -12,7 +12,9 @@ use super::{
 			SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
 			statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 		},
-		statement_store_rpc::{self, StatementStoreRpc, StatementSubmitError},
+		statement_store_rpc::{
+			self, StatementStoreRpc, StatementStoreRpcClientError, StatementSubmitError,
+		},
 	},
 	SsoRequestService,
 };
@@ -34,7 +36,7 @@ use crate::{
 
 use futures::{
 	FutureExt,
-	future::{AbortHandle, Abortable},
+	future::{AbortHandle, Abortable, Either, select},
 };
 use tracing::{debug, instrument, warn};
 use truapi::{CallContext, CancellationReason, CancellationToken};
@@ -264,11 +266,11 @@ impl SsoRequestService {
 			RemoteMessage::request(message_id.clone(), request),
 			Some(message_id.clone()),
 		)?;
-		let rpc_client = self
-			.statement_store
-			.client("SSO statement-store")
-			.await
-			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
+		let connect = core::pin::pin!(self.statement_store.client("SSO statement-store"));
+		let rpc_client = match select(connect, cx.cancel().cancelled()).await {
+			Either::Left((connected, _)) => connected.map_err(|err| connect_error(&err))?,
+			Either::Right((reason, _)) => return Err(cancelled(cx, reason, &message_id)),
+		};
 		let own_subscription =
 			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
 				.await
@@ -361,6 +363,26 @@ fn with_caller_request_id(
 	}
 }
 
+/// The error for request `message_id` once the caller gave it up for `reason`.
+fn cancelled(
+	cx: &CallContext,
+	reason: CancellationReason,
+	message_id: &str,
+) -> SsoRemoteResponseError {
+	let cancelled = SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id));
+	with_caller_request_id(cx, cancelled)
+}
+
+/// The error for a People connection that did not open: `ChainUnavailable`
+/// if the chain could not be reached or stayed halted, otherwise `Failure`.
+fn connect_error(err: &StatementStoreRpcClientError) -> SsoRemoteResponseError {
+	if err.is_unreachable() {
+		SsoRemoteResponseError::ChainUnavailable(err.to_string())
+	} else {
+		SsoRemoteResponseError::Failure(err.to_string())
+	}
+}
+
 /// The error for a failed `label` subscribe: `Cancelled` if the caller gave
 /// up, `ChainUnavailable` if the chain stayed halted, otherwise `Failure`.
 fn subscribe_error(
@@ -370,10 +392,7 @@ fn subscribe_error(
 	err: &subxt_rpcs::Error,
 ) -> SsoRemoteResponseError {
 	if let Some(reason) = cx.cancel().reason() {
-		return with_caller_request_id(
-			cx,
-			SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id)),
-		);
+		return cancelled(cx, reason, message_id);
 	}
 	let reason = format!("SSO {label} statement-store subscribe failed: {err}");
 	if says_chain_halted(err) {
