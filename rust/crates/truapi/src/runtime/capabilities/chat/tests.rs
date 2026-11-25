@@ -27,8 +27,8 @@ struct RecordingHost {
 	delete_failure: Mutex<Option<String>>,
 	/// The failure reason of `read_chat_room_config`, if any.
 	config_failure: Mutex<Option<String>>,
-	/// The host serves no preview, delete or feed update, as a host that keeps
-	/// the defaults of `ChatPlatform`.
+	/// The host serves no metadata change, preview, delete or feed update, as
+	/// a host that keeps the defaults of `ChatPlatform`.
 	unserved: Mutex<bool>,
 	/// The host keeps only the default configuration, as a host that does
 	/// not serve the configurations yet.
@@ -164,8 +164,8 @@ impl ChatPlatform for RecordingHost {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), latest::GenericError> {
-		self.record("metadata", &request.room_id)
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.change("metadata", &request.room_id)
 	}
 
 	async fn set_chat_room_preview(
@@ -777,6 +777,7 @@ fn a_room_change_the_host_does_not_serve_is_unsupported() {
 	*chat.unserved.lock().unwrap() = true;
 	let runtime = chat_runtime(chat.clone());
 
+	assert_eq!(set_metadata(&runtime, "support", "Support"), Err(CallError::Unsupported));
 	assert_eq!(set_preview(&runtime, "support", empty_preview()), Err(CallError::Unsupported));
 	assert_eq!(
 		update_feed(&runtime, "support", text_message("product")),

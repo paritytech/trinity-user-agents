@@ -283,8 +283,7 @@ pub struct ChatRoomConfig {
 /// Request to replace the name, description, icon and empty-room text of a
 /// room.
 ///
-/// The metadata is a display hint. A host that does not show it accepts the
-/// request and keeps the name and icon of `create_room`.
+/// A host that does not serve it answers `Unsupported`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomMetadataRequest {
 	/// A room that this product created.

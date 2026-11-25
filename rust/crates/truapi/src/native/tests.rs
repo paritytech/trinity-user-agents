@@ -569,9 +569,9 @@ impl NativeChatCallbacks for EventCallbacks {
 		&self,
 		room_id: String,
 		_metadata: truapi::latest::ChatRoomMetadata,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("metadata", &room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn set_room_preview(
@@ -2029,8 +2029,8 @@ fn native_chat_adapter_forwards_every_declaration() {
 	assert_eq!(ready_rooms(rooms.as_mut(), "the room list").rooms.len(), 1);
 
 	use crate::platform::ChatPlatform as _;
-	let deleted = futures::executor::block_on(async {
-		platform
+	let outcomes = futures::executor::block_on(async {
+		let metadata = platform
 			.set_chat_room_metadata(
 				&product,
 				truapi::latest::HostChatSetRoomMetadataRequest {
@@ -2039,7 +2039,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 				},
 			)
 			.await?;
-		platform
+		let preview = platform
 			.set_chat_room_preview(
 				&product,
 				truapi::latest::HostChatSetRoomPreviewRequest {
@@ -2048,15 +2048,17 @@ fn native_chat_adapter_forwards_every_declaration() {
 				},
 			)
 			.await?;
-		platform
+		let deleted = platform
 			.delete_chat_room(
 				&product,
 				truapi::latest::HostChatDeleteRoomRequest { room_id: room() },
 			)
-			.await
+			.await?;
+		Ok::<_, truapi::latest::GenericError>([metadata, preview, deleted])
 	})
 	.expect("every declaration reaches the host");
-	assert_eq!(deleted, crate::platform::ChatRoomChangeOutcome::Applied);
+	let applied = || crate::platform::ChatRoomChangeOutcome::Applied;
+	assert_eq!(outcomes, [applied(), applied(), applied()]);
 
 	assert_eq!(
 		*callbacks.chat_declared.lock().expect("declared mutex poisoned"),

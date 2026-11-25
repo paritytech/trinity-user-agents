@@ -82,7 +82,10 @@ export interface RawCallbacks {
   ): (() => void) | void;
   listChatRooms?(product: Uint8Array): Promise<Uint8Array>;
   readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
-  setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomMetadata?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
   setChatRoomPreview?(
     product: Uint8Array,
     request: Uint8Array,
@@ -212,9 +215,11 @@ export function createWasmRawCallbacks(
               ),
             ),
           setChatRoomMetadata: async (product, request) =>
-            await chat.setChatRoomMetadata(
-              ProductContext.dec(product),
-              HostChatSetRoomMetadataRequest.dec(request),
+            ChatRoomChangeOutcome.enc(
+              await chat.setChatRoomMetadata(
+                ProductContext.dec(product),
+                HostChatSetRoomMetadataRequest.dec(request),
+              ),
             ),
           setChatRoomPreview: async (product, request) =>
             ChatRoomChangeOutcome.enc(

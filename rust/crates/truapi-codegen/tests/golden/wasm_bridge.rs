@@ -336,8 +336,8 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         &self,
         _product: &crate::platform::ProductContext,
         _request: latest::HostChatSetRoomMetadataRequest,
-    ) -> Result<(), latest::GenericError> {
-        invoke_unit(
+    ) -> Result<crate::platform::ChatRoomChangeOutcome, latest::GenericError> {
+        let bytes = invoke_bytes_return(
             &self.bridge.set_chat_room_metadata,
             vec![
                 Uint8Array::from(_product.encode().as_slice()).into(),
@@ -345,7 +345,10 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             ],
         )
         .await?;
-        Ok(())
+        Ok(decode_bytes::<crate::platform::ChatRoomChangeOutcome>(
+            bytes,
+            "setChatRoomMetadata response did not decode",
+        )?)
     }
 
     async fn set_chat_room_preview(

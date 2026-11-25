@@ -152,8 +152,8 @@ export interface ChainExtensionVersion {
 }
 
 /**
- * What the host did with a change to a room: a preview, a delete or a feed
- * update.
+ * What the host did with a change to a room: a metadata change, a preview, a
+ * delete or a feed update.
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value. A host that does not serve the request answers
@@ -1093,8 +1093,8 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 );
 
 /**
- * What the host did with a change to a room: a preview, a delete or a feed
- * update.
+ * What the host did with a change to a room: a metadata change, a preview, a
+ * delete or a feed update.
  *
  * It is the answer of the host, not an error, so a host returns it as it
  * returns any other value. A host that does not serve the request answers
@@ -1871,13 +1871,13 @@ export interface ChatPlatform {
    * Replace the name, description, icon and empty-room text of a room.
    *
    * An icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
-   * host does not implement this method, it ignores the metadata. The room
-   * keeps the name and icon of `create_chat_room`.
+   * host does not implement this method, it answers `Unsupported`, and so
+   * does the product's request.
    */
   setChatRoomMetadata?(
     product: ProductContext,
     request: HostChatSetRoomMetadataRequest,
-  ): Promise<void>;
+  ): Promise<ChatRoomChangeOutcome>;
 
   /**
    * Replace how a room shows in the chat list.

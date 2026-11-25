@@ -330,11 +330,11 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// reads it before each feed update of the room.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
-    /// Replace the name, description, icon and empty-room text of a room. An
-    /// icon of `nil` keeps the icon, and an empty icon removes it. The default
-    /// ignores the metadata, and the room keeps the name and icon of
-    /// `createRoom`.
-    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
+    /// Replace the name, description, icon and empty-room text of a room, and
+    /// answer ``ChatRoomChangeOutcome/applied``. An icon of `nil` keeps the
+    /// icon, and an empty icon removes it. The default answers
+    /// ``ChatRoomChangeOutcome/unsupported``.
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome
 
     /// Replace how a room shows in the chat list, and answer
     /// ``ChatRoomChangeOutcome/applied``. The default answers
@@ -357,10 +357,9 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
-/// The product receives `Unsupported` for each request, with two exceptions.
-/// The host ignores metadata and keeps the name and icon of `createRoom`. The
-/// host creates a room with the configuration that keeps the behaviour that it
-/// serves, and refuses any other before it creates anything.
+/// The product receives `Unsupported` for each request, with one exception:
+/// the host creates a room with the configuration that keeps the behaviour
+/// that it serves, and refuses any other before it creates anything.
 public extension ChatHostBridge {
     func createRoom(
         roomId: String,
@@ -378,7 +377,9 @@ public extension ChatHostBridge {
         .hostDefault
     }
 
-    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
+        .unsupported
+    }
 
     func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
         .unsupported
@@ -717,7 +718,7 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.roomConfig(roomId: roomId) }
     }
 
-    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
         try await withHostRejection {
             try await bridge.setRoomMetadata(roomId: roomId, metadata: metadata)
         }

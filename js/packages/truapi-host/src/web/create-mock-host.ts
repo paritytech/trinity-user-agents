@@ -1460,6 +1460,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         declareChatRoom(request.roomId, (room) => {
           room.metadata = request.metadata;
         });
+        return "Applied";
       },
       async setChatRoomPreview(_product, request) {
         declareChatRoom(request.roomId, (room) => {

@@ -110,7 +110,7 @@ export function makeHostCallbacks(
               productSource: false,
               reactionDetails: false,
             }),
-            setChatRoomMetadata: async () => {},
+            setChatRoomMetadata: async () => "Applied",
             setChatRoomPreview: async () => "Applied",
             deleteChatRoom: async () => "Applied",
             updateChatFeed: async () => "Applied",

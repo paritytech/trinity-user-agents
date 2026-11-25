@@ -353,12 +353,13 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn room_config(&self, room_id: String) -> Result<latest::ChatRoomConfig, HostRejection>;
 
 	/// Replace the name, description, icon and empty-room text of a room. An
-	/// icon of `None` keeps the icon, and an empty icon removes it.
+	/// icon of `None` keeps the icon, and an empty icon removes it. A host that
+	/// does not serve it answers `Unsupported`.
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
 		metadata: latest::ChatRoomMetadata,
-	) -> Result<(), HostRejection>;
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Replace how a room shows in the chat list. A host that does not serve it
 	/// answers `Unsupported`.

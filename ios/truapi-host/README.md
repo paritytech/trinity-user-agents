@@ -130,12 +130,11 @@ The bridge carries the requests of Chat Extension v2. `createRoom`,
 The other requests have defaults for a host that does not serve them yet:
 `createRoom(roomId:name:icon:config:)` creates the room only with
 `ChatRoomConfig.hostDefault` and refuses any other configuration before it
-creates anything, `roomConfig` answers `ChatRoomConfig.hostDefault`,
-`setRoomMetadata` keeps the name and icon of `createRoom`, and every other
-request answers `ChatRoomChangeOutcome.unsupported`, which the product receives
-as `Unsupported`. A host that serves one of them answers `.applied`. A room the
-product declares nothing for is a room
-the host stores, with the name and icon of `createRoom` and the text input.
+creates anything, `roomConfig` answers `ChatRoomConfig.hostDefault`, and every
+other request answers `ChatRoomChangeOutcome.unsupported`, which the product
+receives as `Unsupported`. A host that serves one of them answers `.applied`. A
+room the product declares nothing for is a room the host stores, with the name
+and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |

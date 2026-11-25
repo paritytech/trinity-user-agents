@@ -239,10 +239,9 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				request.metadata =
 					validate_chat_room_metadata(request.metadata).map_err(room_field_error)?;
 				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
-				platform
-					.set_chat_room_metadata(&self.connection.product, request)
-					.await
-					.map_err(room_host_error)
+				room_change(
+					platform.set_chat_room_metadata(&self.connection.product, request).await,
+				)
 			})
 			.await
 	}

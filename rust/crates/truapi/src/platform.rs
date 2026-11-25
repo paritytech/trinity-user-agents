@@ -2435,14 +2435,14 @@ pub trait ChatPlatform: Send + Sync {
 	/// Replace the name, description, icon and empty-room text of a room.
 	///
 	/// An icon of `None` keeps the icon, and an empty icon removes it. If a Rust
-	/// host does not implement this method, it ignores the metadata. The room
-	/// keeps the name and icon of `create_chat_room`.
+	/// host does not implement this method, it answers `Unsupported`, and so
+	/// does the product's request.
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatSetRoomMetadataRequest,
-	) -> Result<(), GenericError> {
-		Ok(())
+	) -> Result<ChatRoomChangeOutcome, GenericError> {
+		Ok(ChatRoomChangeOutcome::Unsupported)
 	}
 
 	/// Replace how a room shows in the chat list.
@@ -2488,8 +2488,8 @@ pub trait ChatPlatform: Send + Sync {
 	}
 }
 
-/// What the host did with a change to a room: a preview, a delete or a feed
-/// update.
+/// What the host did with a change to a room: a metadata change, a preview, a
+/// delete or a feed update.
 ///
 /// It is the answer of the host, not an error, so a host returns it as it
 /// returns any other value. A host that does not serve the request answers

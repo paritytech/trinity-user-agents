@@ -3,10 +3,10 @@ import Testing
 @testable import TrUAPIHost
 
 struct ChatHostBridgeDefaultsTests {
-    /// A product may declare the configuration and metadata that a host
-    /// without the v2 requests serves anyway, so that host must accept them.
+    /// A product may declare the configuration that a host without the v2
+    /// requests serves anyway, so that host must accept it.
     @Test
-    func defaultsAcceptTheDeclarationsOfANewRoom() async throws {
+    func defaultsAcceptTheConfigurationOfANewRoom() async throws {
         let bridge = FirstVersionChatHostBridge()
 
         let status = try await bridge.createRoom(
@@ -14,10 +14,6 @@ struct ChatHostBridgeDefaultsTests {
             name: "Room",
             icon: "",
             config: .hostDefault
-        )
-        try await bridge.setRoomMetadata(
-            roomId: "room",
-            metadata: ChatRoomMetadata(name: "Room", description: nil, icon: nil, placeholder: nil)
         )
 
         #expect(status == .new)
@@ -40,6 +36,8 @@ struct ChatHostBridgeDefaultsTests {
             _ = try await bridge.createRoom(roomId: "room", name: "Room", icon: "", config: config)
         }
         #expect(bridge.createdRooms.isEmpty)
+        let metadata = ChatRoomMetadata(name: "Room", description: nil, icon: nil, placeholder: nil)
+        #expect(try await bridge.setRoomMetadata(roomId: "room", metadata: metadata) == .unsupported)
         let preview = ChatRoomPreview(
             timestamp: nil,
             badge: nil,

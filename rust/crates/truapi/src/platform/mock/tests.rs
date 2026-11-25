@@ -752,7 +752,8 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 					placeholder: None,
 				},
 			},
-		)),
+		))
+		.map(drop),
 		block_on(p.set_chat_room_preview(
 			&product,
 			latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: empty_preview() },
@@ -1039,11 +1040,13 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		status: latest::ChatMessageStatus::Read,
 	};
 
-	block_on(p.set_chat_room_metadata(
-		&product,
-		latest::HostChatSetRoomMetadataRequest { room_id: room(), metadata: metadata.clone() },
-	))
-	.unwrap();
+	assert_eq!(
+		block_on(p.set_chat_room_metadata(
+			&product,
+			latest::HostChatSetRoomMetadataRequest { room_id: room(), metadata: metadata.clone() },
+		)),
+		Ok(ChatRoomChangeOutcome::Applied)
+	);
 	block_on(p.set_chat_room_preview(
 		&product,
 		latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: preview.clone() },

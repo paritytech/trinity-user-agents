@@ -1481,8 +1481,9 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn set_chat_room_preview(

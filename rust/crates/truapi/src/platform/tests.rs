@@ -1276,12 +1276,11 @@ impl ChatPlatform for ChatHostWithoutDeclarations {
 
 // The Rust defaults have the same contract as the Swift and Kotlin bridges.
 // A host without the declaration callbacks reads every room as the default
-// configuration, accepts the metadata, which changes nothing, and answers
-// `Unsupported` for every other change, so a product can tell it from a
-// failure. The configuration itself arrives in `create_chat_room`, which has
-// no default.
+// configuration and answers `Unsupported` for every change, the metadata
+// too, so a product can tell it from a failure. The configuration itself
+// arrives in `create_chat_room`, which has no default.
 #[test]
-fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
+fn a_chat_host_without_declarations_answers_unsupported_for_each_change() {
 	let host = ChatHostWithoutDeclarations;
 	let product = ProductContext::new(ProductId::for_test("chat.dot"));
 	let unsupported = Ok(ChatRoomChangeOutcome::Unsupported);
@@ -1303,7 +1302,7 @@ fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 				},
 			},
 		)),
-		Ok(())
+		unsupported
 	);
 	assert_eq!(
 		futures::executor::block_on(host.set_chat_room_preview(

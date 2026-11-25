@@ -567,8 +567,7 @@ interface ChatHostBridge {
 
     // The members below have defaults for a host that does not serve the Chat
     // Extension v2 requests yet. The product receives `Unsupported` for each
-    // request, with two exceptions. The host ignores metadata and keeps the
-    // name and icon of `createRoom`. The host creates a room with the
+    // request, with one exception: the host creates a room with the
     // configuration that keeps the behaviour that it serves, and refuses any
     // other before it creates anything.
 
@@ -580,13 +579,14 @@ interface ChatHostBridge {
     suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
 
     /**
-     * Replace the name, description, icon and empty-room text of a room. An
-     * icon of `null` keeps the icon, and an empty icon removes it. The default
-     * ignores the metadata, and the room keeps the name and icon of
-     * `createRoom`.
+     * Replace the name, description, icon and empty-room text of a room, and
+     * answer [ChatRoomChangeOutcome.APPLIED]. An icon of `null` keeps the
+     * icon, and an empty icon removes it. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
-    suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
+    suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
 
     /**
      * Replace how a room shows in the chat list, and answer

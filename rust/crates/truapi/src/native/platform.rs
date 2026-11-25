@@ -772,7 +772,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), truapi::latest::GenericError> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
 		self.chat
 			.set_room_metadata(request.room_id, request.metadata)
 			.await
