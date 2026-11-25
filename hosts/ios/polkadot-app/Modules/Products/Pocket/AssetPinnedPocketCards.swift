@@ -2,18 +2,17 @@ import Foundation
 import Products
 import TrUAPIHost
 
-/// The cards the core pins on the network the app is on, each drawn from a
-/// face bundled with the app until its product streams its own.
+/// The cards the core pins, each drawn from a face bundled with the app until
+/// its product streams its own.
 struct AssetPinnedPocketCards: PinnedPocketCards {
-    private let tld: String
-
-    init(tld: String) {
-        self.tld = tld
-    }
-
-    /// A key already names the product that must back it.
+    /// Read on the network the key's own product names, so it answers without
+    /// knowing the app's network.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
-        let cards = (try? pinnedPocketCards(networkSuffix: tld)) ?? []
+        guard let tld = key.productId.rawValue.split(separator: ".").last,
+              let cards = try? pinnedPocketCards(networkSuffix: String(tld))
+        else {
+            return nil
+        }
 
         return cards
             .first { $0.productId == key.productId && $0.cardId == key.cardId.value }

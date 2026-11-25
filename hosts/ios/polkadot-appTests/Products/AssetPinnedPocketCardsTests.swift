@@ -6,13 +6,15 @@ import TrUAPIHost
 @testable import polkadot_app
 
 struct AssetPinnedPocketCardsTests {
-    let pinned = AssetPinnedPocketCards(tld: "paseo")
+    let pinned = AssetPinnedPocketCards()
 
-    @Test
-    func namesAPinnedCardWithoutAwaiting() {
-        let key = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity"))
+    /// The core pins the card on its stack's network, which the app may not
+    /// have read yet, so the key's own product says which network to look on.
+    @Test(arguments: ["peopl.dot", "peopl.paseo", "peopl.testnet"])
+    func namesAPinnedCardOnTheNetworkItsProductNames(productId: String) throws {
+        let key = try PocketCardKey(productId: ProductId(productId), cardId: PocketCardId(value: "humanity"))
 
-        #expect(pinned.pinned(key)?.privileged == true)
+        #expect(pinned.pinned(key) == PocketCardEntry(key: key, title: "Humanity", privileged: true))
     }
 
     /// The same card id on a product that does not back it is not pinned, so a

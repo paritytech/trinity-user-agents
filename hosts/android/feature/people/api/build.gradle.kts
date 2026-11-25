@@ -17,11 +17,8 @@ dependencies {
     api(project(":feature:transactions:api"))
     api(project(":feature:members:api"))
     api(project(":feature:dotns:api"))
-    implementation(project(":bindings:truapi-host"))
 
     implementation(libs.hilt.android)
 
     testImplementation(project(":test-shared"))
 }
-
-apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))
