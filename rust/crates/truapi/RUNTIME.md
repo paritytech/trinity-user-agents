@@ -225,9 +225,11 @@ the restart. Once the core holds a descriptor that changes a chain, it sets
 `restart_required` and fetches hourly again.
 
 A host learns of a mismatch through its stack callbacks, and can read it from
-`stack_status`. The `/web` worker runtime and a `WasmProductRuntime` built on
-its own have no `stackStatus()`, so a host on them sees a refused chain only as
-failing calls. A browser host that passes `stackChanged` without
+`stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
+(`worker-runtime.ts`), which builds the pairing runtime without the stack
+callbacks and exposes no `stackStatus()` to the host, so a host on them sees a
+refused chain only as failing calls. A `WasmProductRuntime` built on its own
+has no status either. A browser host that passes `stackChanged` without
 `fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
 Without the callbacks the chain is still refused, and nothing is fetched. A host
 shows a listed chain as out of service and keeps its own features off it.
