@@ -5,12 +5,8 @@
 
 mod builder;
 mod claim_extrinsic;
-#[cfg(test)]
-mod live;
 mod params;
 mod policy;
-#[cfg(test)]
-mod testing;
 
 use std::sync::Arc;
 
@@ -19,7 +15,7 @@ use subxt::utils::{AccountId32, H256};
 pub use builder::{ClaimBuildError, PgasClaimBuilder};
 pub use claim_extrinsic::{BuiltClaim, ClaimSlot, build_claim_in_free_slot};
 #[cfg(test)]
-pub use live::LivePerson;
+pub use tests::LivePerson;
 
 use self::{params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{

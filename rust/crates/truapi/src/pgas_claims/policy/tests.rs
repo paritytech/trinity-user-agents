@@ -4,7 +4,7 @@ use subxt::utils::{AccountId32, H256};
 use super::*;
 use crate::{
 	durable::{DomainId, DurableTxStatus, SubmissionPlan, Window, extrinsic},
-	pgas_claims::testing::{BuildCall, FakeClaimBuilder, TEST_DAY, destination},
+	pgas_claims::tests::{BuildCall, FakeClaimBuilder, TEST_DAY, destination},
 };
 
 /// A claim registered just now, waiting for a session for ten minutes.

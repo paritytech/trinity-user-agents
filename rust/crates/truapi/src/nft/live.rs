@@ -15,9 +15,9 @@
 //! rebalance claims PGAS into the item's key and moves it through
 //! `Scarcity::transfer_by_holder`. It needs a person in a People ring, named
 //! by `TRUAPI_LIVE_PERSON_MNEMONIC`, spends one of the person's PGAS slots for
-//! the day, and skips without it.
-//! `LIVE_ASSET_HUB_WS` and `LIVE_ASSET_HUB_GENESIS` point it at another
-//! Asset Hub.
+//! the day, and skips without it. It reads its chains from the bundled
+//! `paseo-next-v2` stack. `LIVE_ASSET_HUB_WS` and `LIVE_ASSET_HUB_GENESIS`
+//! point the first run at another Asset Hub.
 
 use core::time::Duration;
 use std::{collections::HashSet, sync::Arc};
@@ -44,7 +44,7 @@ use crate::{
 	chain::{
 		BlockBackend, ChainHeads, DispatchOutcome, EncodedExtrinsic, ExtrinsicService,
 		FixedExtensionVersions, HashAndNumber, TxSubmitter, WatchEvent, WatchedStorage,
-		live_asset_hub, live_asset_hub_genesis, tokio_spawner,
+		bundled_paseo_next_v2, live_asset_hub, live_asset_hub_genesis, tokio_spawner,
 	},
 	chain_runtime::ChainRuntime,
 	durable::{DurableRegistry, live_engine},
@@ -331,10 +331,10 @@ async fn a_rebalance_without_fee_less_moves_claims_pgas_and_moves_paid() {
 	};
 	let phrase = bip39::Mnemonic::parse(mnemonic.trim()).expect("a BIP-39 phrase");
 	let entropy = RootEntropy::new(phrase.to_entropy());
-	let genesis = live_asset_hub_genesis();
-	let chain = live_asset_hub(genesis);
+	let person = Arc::new(LivePerson::connect(&bundled_paseo_next_v2(), entropy).await);
+	let chain = person.chain.clone();
+	let genesis = person.genesis;
 	let owner = CollectionOwner::from_env(chain.clone(), genesis);
-	let person = Arc::new(LivePerson::connect(&chain, genesis, entropy).await);
 	let claims = with_pgas_claims(DurableRegistry::new(), genesis, person);
 	let no_fee_less_moves = Arc::new(FixedMoveBudget(MoveBudget::new(0)));
 	let live = live_purses_with_budget(&chain, genesis, no_fee_less_moves, claims);

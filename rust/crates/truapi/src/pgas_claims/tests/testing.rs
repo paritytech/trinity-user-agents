@@ -8,18 +8,18 @@ use parking_lot::Mutex;
 use subxt::utils::AccountId32;
 use tempfile::TempDir;
 
-use super::{
-	PgasClaims,
-	builder::{ClaimBuildError, PgasClaimBuilder},
-	claim_extrinsic::{BuiltClaim, ClaimSlot},
-	pgas_domain,
-	policy::PgasClaimPolicy,
-};
 use crate::{
 	chain::{DispatchOutcome, WatchEvent},
 	durable::{
 		DurableRegistry, DurableTxEngine, DurableTxId, DurableTxStatus, FakeChain, GENESIS,
 		Unobservable, block, block_hash, engine_with, extrinsic,
+	},
+	pgas_claims::{
+		PgasClaims,
+		builder::{ClaimBuildError, PgasClaimBuilder},
+		claim_extrinsic::{BuiltClaim, ClaimSlot},
+		pgas_domain,
+		policy::PgasClaimPolicy,
 	},
 	test_support::wait_until,
 };
