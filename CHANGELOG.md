@@ -5,6 +5,44 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.33.0] - 2026-11-24
+
+### Added
+
+- run any stack on the light client (#2012)
+- compose durable transactions through dependencies (#2229)
+- title product push notifications (#2195)
+- funding overlay screens and activity (#1868)
+- let trusted products title their push notifications (#2186)
+- draw Pocket card materials (#2222)
+- funding core integration — FFI bindings, session model, provider listing, worker exits (#1866)
+- core events reach Sentry with their attributes (#2184)
+- recover NFT purses after a reinstall (#2166)
+
+### Changed
+
+- cancel a funding session in any state (#2252)
+- give a stack its identity and generation (#2017)
+- Chat Extension v2 wire (#1723)
+- mock host reports unserved chains as unsupported by default (#2260)
+- scope contact handles per product (#2228)
+- keep databases per stack and expose stacks to JS and native hosts (#2011)
+- keep the root entropy behind one type (#2209)
+- simplify the durability engine (#2083)
+- drop bundled products from the core (#2179)
+- emit only the payload versions the client uses (#2227)
+
+### Fixed
+
+- report a scheduled product notification in Sentry from booking to screen (#1945)
+- honour require_inputs and keep dispatch inputs out of shell (#2236)
+- retry the iOS app launch while SpringBoard restarts (#2259)
+- keep the battery watchdog's sleep off the output pipe (#2251)
+- open the status bar title menu below the title (#2165)
+- run the example editor without Web Workers (#2181)
+- derive catalog genesis hashes from bundled specs (#2232)
+- tuck the Docklet under the keyboard and hide its Edge glow (#2216)
+
 ## [0.32.0] - 2026-11-20
 
 ### Added
@@ -32,6 +70,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.32.0, @parity/truapi-host 0.32.0, @parity/truapi-provider 0.5.1, @parity/trinity-stack 0.3.0 (#2226)
 - encode product frames with the product's own SDK (#2193)
 - name every envelope's latest payload in truapi::latest (#2210)
 - serve contact usernames to the game product (#2067)

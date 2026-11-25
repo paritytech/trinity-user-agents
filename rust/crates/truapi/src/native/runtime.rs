@@ -181,11 +181,11 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
-			pointer,
-			descriptor,
-			*allows_reserved_values,
+			&pointer,
+			&descriptor,
+			reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
@@ -485,9 +485,16 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did. `TooLate` asks the host to tell the user the balance was
-	/// already credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did. While its overlay is up
+	/// the core drops `present_funding`, which the host answers by taking the
+	/// overlay down, and the session is gone (`Cancelled`). Once started, it ends
+	/// when no provider serves it; otherwise the provider is asked
+	/// (`Requested`), and before money moved a second cancel ends it. After
+	/// money moved the provider may answer with an offer, read from the
+	/// session's `cancel` and answered with `confirm_funding_cancel`.
+	/// `TooLate` asks the host to tell the user the balance was already
+	/// credited; an ended session answers `Refused`.
 	pub async fn cancel_funding(
 		&self,
 		intent: String,
@@ -599,7 +606,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Disarm `start_funding_when_quoted` for session `intent`, as the user
-	/// leaves its quotes.
+	/// goes back from its quotes and the session stays open.
+	/// `cancel_funding` disarms it too.
 	pub fn cancel_funding_auto_start(&self, intent: String) {
 		self.runtime.cancel_funding_auto_start(&intent);
 	}

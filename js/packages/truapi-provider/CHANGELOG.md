@@ -1,5 +1,32 @@
 # @parity/truapi-provider
 
+## 0.6.0
+
+### Major Changes
+
+- 37c2aff: A provider can run the chains of a Trinity stack. `builder.setStack(link, descriptorBytes)` takes the stack's
+  link and its descriptor as served, `builder.lightSpecs()` lists where each chain's light spec is published, and
+  `builder.addLightSpec(genesisHash, specBytes)` takes each spec the host fetched. The provider checks every spec
+  against the descriptor's `sha256` and the chain's genesis hash, syncs each parachain through the stack's relay, and
+  runs the statement-store protocol only on the chains the descriptor marks. `provider.addLightSpec` adds a spec after
+  `build`. A stack's provider does not resolve chains from the bundled catalog.
+
+  Breaking: the storage client is called as `load(genesisHash, stack)` and `save(genesisHash, blob, stack)`. `stack`
+  identifies the stack and is `undefined` without one. A store that serves more than one stack must key on `stack` and
+  the genesis hash. A stack's provider starts each blob with a line naming the stack and its `generation` and reads back
+  only its own. A provider without a stack stores what it stored before. The provider never deletes a blob; the README
+  lists the ones no provider reads again. Free the previous provider before building one for a stack's new `generation`;
+  `free()` also keeps a snapshot not yet handed to the client from being stored.
+
+### Patch Changes
+
+- cc9c407: truapi-host ships refreshed stack descriptors for polkadot (sequence 1794915853), previewnet (sequence
+  1795128637). truapi-provider and truapi-host ship refreshed light-client chain specs.
+- c9bd7c0: truapi-provider and truapi-host ship refreshed light-client chain specs.
+- 090d276: truapi-provider and truapi-host ship refreshed light-client chain specs.
+- db2a45b: The bundled network catalog takes each chain's genesis hash from its bundled chain spec, so the catalog
+  resolves a chain restarted from genesis by the hash of its refreshed spec.
+
 ## 0.5.1
 
 ### Patch Changes

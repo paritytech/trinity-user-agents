@@ -16,8 +16,8 @@ use trinity_stack::{FetchRequest, Served};
 use truapi::latest::GenericError;
 
 use super::{
-	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
-	signed_pointer, source::StackSource,
+	ReservedValuesPolicy, Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords,
+	StackStatus, signed_pointer, source::StackSource,
 };
 use crate::{
 	Spawner,
@@ -78,23 +78,27 @@ struct Shared {
 impl StackRefresh {
 	/// Resolves the stack a host build runs. `pointer` is the stack's link
 	/// (`polkadotapp://stack?key=0x…&url=…`), `bundled` the signed copy the
-	/// build ships, and `allows_reserved_values` whether it may use Polkadot's
-	/// genesis hashes and the `dot` TLD.
+	/// build ships, and `reserved_values` the build's policy on reserved
+	/// values. The bundled copy, a stored one and every fetched one are held
+	/// to the same policy, so a newer copy that names a reserved value the
+	/// build does not allow is refused and the core keeps the copy it holds.
 	///
 	/// Starts from the copy `records` holds when it is newer than `bundled`,
 	/// and never waits on the network. Fails with a [`StackError`] naming the
-	/// rule `bundled` breaks. A record that cannot be read, or is not read
-	/// within a few seconds, is logged and ignored.
+	/// rule the policy or `bundled` breaks, the policy's first. A record that
+	/// cannot be read, or is not read within a few seconds, is logged and
+	/// ignored.
 	///
 	/// `clock` tells how old a copy is and `timer` waits for the next fetch.
 	pub async fn load(
 		pointer: &str,
 		bundled: &[u8],
-		allows_reserved_values: bool,
+		reserved_values: ReservedValuesPolicy,
 		records: Box<dyn StackRecords>,
 		timer: Arc<dyn Timer>,
 		clock: Box<dyn Clock>,
 	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
 		let pointer = signed_pointer(pointer)?;
 		let stack_id = pointer.stack_id();
 		let read = records.read_stack_record(&stack_id);
@@ -119,7 +123,7 @@ impl StackRefresh {
 			pointer,
 			bundled,
 			stored.as_deref(),
-			allows_reserved_values,
+			reserved_values,
 			unix_now(clock.as_ref()),
 		)?;
 		Ok(Self {

@@ -47,7 +47,7 @@ mod store {
 }
 
 use std::{
-	collections::{HashMap, HashSet, VecDeque},
+	collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
 	sync::{
 		Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
 		atomic::{AtomicBool, AtomicU64, Ordering},
@@ -58,7 +58,7 @@ use core::{hash::Hash, ops::ControlFlow, time::Duration};
 
 use futures::{
 	channel::{mpsc, oneshot},
-	future::{BoxFuture, Either},
+	future::{self, BoxFuture, Either},
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
@@ -435,6 +435,11 @@ pub struct FundingRegistry {
 	/// The number the next provider frame takes, so a frame that replaced
 	/// another outlives it.
 	next_frame: AtomicU64,
+	/// Each overlay that is up, by session: a cancel closes it by taking its
+	/// sender, and the overlay settles by taking it back. Whoever removes it
+	/// under this lock decides, so a cancel and the host's answer never both
+	/// ask the provider.
+	overlays: Mutex<HashMap<String, CloseOverlay>>,
 	/// What funding telemetry keeps across facts. Taken after `held` when
 	/// both are, never before.
 	telemetry: Mutex<Telemetry>,
@@ -443,6 +448,11 @@ pub struct FundingRegistry {
 	#[cfg(test)]
 	emitted: Mutex<Vec<CoreEvent>>,
 }
+
+/// Closes an overlay that is up for a cancel. The cancel sends the sender
+/// it waits on, which the overlay holds until it started or discarded the
+/// session and drops on return.
+type CloseOverlay = oneshot::Sender<oneshot::Sender<()>>;
 
 /// A session's provider frames, each with its number and the provider
 /// showing it.
@@ -1087,11 +1097,35 @@ impl FundingRegistry {
 		.await
 	}
 
-	/// Cancel session `intent` at the user's request: end it if no provider
-	/// serves it, otherwise ask the provider to stop. A session whose overlay
-	/// is still up is not the host's to cancel yet: the overlay ends it by
-	/// closing.
+	/// Cancel session `intent` at the user's request, by what it went
+	/// through so far. One whose overlay is up never started: the overlay
+	/// closes as though the user dismissed it, and the session is dropped.
+	/// One that started ends if no provider serves it; otherwise its
+	/// provider is asked to stop, and asked again it ends unless money
+	/// moved. An ended or unknown session is `Refused`.
 	pub async fn cancel(
+		&self,
+		now_ms: u64,
+		intent: &str,
+	) -> Result<CancelOutcome, FundingSessionError> {
+		if let Some(settled) = self.close_overlay(intent) {
+			// Resolves, as `Canceled`, once `finish_presenting` started or
+			// discarded the session.
+			let _ = settled.await;
+			if !self.holds(intent) {
+				return Ok(CancelOutcome::Cancelled);
+			}
+			// The session started, by the user or because a provider took
+			// it while the overlay was up, and is cancelled like any started
+			// session.
+		}
+		self.cancel_started(now_ms, intent).await
+	}
+
+	/// Cancel session `intent` as one that started: end it if no provider
+	/// serves it, otherwise ask the provider to stop. One whose overlay is
+	/// still up is `Refused`.
+	async fn cancel_started(
 		&self,
 		now_ms: u64,
 		intent: &str,
@@ -1109,7 +1143,7 @@ impl FundingRegistry {
 				let outcome = session.cancel(now_ms);
 				let provider = session.provider_id.clone();
 				let changed = match outcome {
-					CancelOutcome::Ended | CancelOutcome::Requested => vec![target],
+					CancelOutcome::Cancelled | CancelOutcome::Requested => vec![target],
 					CancelOutcome::Pending | CancelOutcome::TooLate | CancelOutcome::Refused => {
 						Vec::new()
 					},
@@ -1134,6 +1168,53 @@ impl FundingRegistry {
 			);
 		}
 		Ok(outcome)
+	}
+
+	/// Let a cancel close session `intent`'s overlay until
+	/// [`Self::settle_overlay`], returning what hears it. `None` when an
+	/// overlay for `intent` is already up.
+	fn show_overlay(&self, intent: &str) -> Option<oneshot::Receiver<oneshot::Sender<()>>> {
+		let (close, closing) = oneshot::channel();
+		match lock(&self.overlays).entry(intent.to_string()) {
+			Entry::Occupied(_) => None,
+			Entry::Vacant(entry) => {
+				entry.insert(close);
+				Some(closing)
+			},
+		}
+	}
+
+	/// Close session `intent`'s overlay for a cancel. Returns what resolves
+	/// once the overlay started or discarded the session, or `None` when no
+	/// overlay is up to close: it settled already, another cancel closed it,
+	/// or its task is gone.
+	fn close_overlay(&self, intent: &str) -> Option<oneshot::Receiver<()>> {
+		let mut overlays = lock(&self.overlays);
+		let close = overlays.remove(intent)?;
+		let (settled, settling) = oneshot::channel();
+		// Sent under the lock, so an overlay settling that finds itself
+		// removed also finds what this cancel waits on.
+		close.send(settled).ok()?;
+		Some(settling)
+	}
+
+	/// Stop a cancel from closing session `intent`'s overlay, `closing`
+	/// being what [`Self::show_overlay`] returned, and say whether a cancel
+	/// closed it first.
+	fn settle_overlay(&self, intent: &str, closing: &oneshot::Receiver<oneshot::Sender<()>>) -> bool {
+		match lock(&self.overlays).entry(intent.to_string()) {
+			Entry::Occupied(entry) if entry.get().is_connected_to(closing) => {
+				entry.remove();
+				false
+			},
+			_ => true,
+		}
+	}
+
+	/// Whether session `intent` is held, in full or in the pack.
+	fn holds(&self, intent: &str) -> bool {
+		let held = self.lock_held();
+		held.sessions.contains_key(intent) || held.pack.contains_key(intent)
 	}
 
 	/// Answer the provider's cancel offer on session `intent`, and pass the
@@ -2459,8 +2540,11 @@ impl RuntimeServices {
 		self.funding().acknowledge(current_unix_millis(), intent).await
 	}
 
-	/// Cancel session `intent` at the user's request, and say what that did.
+	/// Cancel session `intent` at the user's request, and say what that did;
+	/// see [`FundingRegistry::cancel`]. A session not yet started is no
+	/// longer started on its best quote.
 	pub async fn cancel_funding(&self, intent: &str) -> Result<CancelOutcome, FundingSessionError> {
+		self.cancel_funding_auto_start(intent);
 		self.funding().cancel(current_unix_millis(), intent).await
 	}
 
@@ -2744,15 +2828,22 @@ impl RuntimeServices {
 			amount,
 			now_ms,
 		);
+		// Up before the session is held, so a cancel from the moment the
+		// caller can name the session closes the overlay rather than finding
+		// a session it cannot cancel.
+		let closing =
+			registry.show_overlay(&session.intent).ok_or(OpenFundingError::AlreadyExists)?;
 		// Live while the overlay is up, so the overlay can quote and pick a
 		// provider, but stored only once the user starts it: an overlay the
 		// app is killed under leaves no session behind.
-		let presented = registry
-			.present(now_ms, session.clone())
-			.await
-			.map_err(OpenFundingError::Session)?;
-		if !presented {
-			return Err(OpenFundingError::AlreadyExists);
+		let presented = match registry.present(now_ms, session.clone()).await {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(OpenFundingError::AlreadyExists),
+			Err(error) => Err(OpenFundingError::Session(error)),
+		};
+		if let Err(error) = presented {
+			registry.settle_overlay(&session.intent, &closing);
+			return Err(error);
 		}
 		let opened = CoreEvent::new(markers::FUNDING_OVERLAY_OPENED)
 			.flag("amount_preset", amount.is_some());
@@ -2763,7 +2854,7 @@ impl RuntimeServices {
 		let services = self.clone();
 		let product = product.cloned();
 		self.spawner.spawn(async move {
-			let result = services.finish_presenting(platform, product, session).await;
+			let result = services.finish_presenting(platform, product, session, closing).await;
 			if let Err(error @ (OpenFundingError::Present(_) | OpenFundingError::Session(_))) =
 				&result
 			{
@@ -2806,12 +2897,14 @@ impl RuntimeServices {
 	}
 
 	/// Show the overlay for presented `session`, then start or discard it by
-	/// what the user did.
+	/// what the user did, or by a cancel closing the overlay through
+	/// `closing`.
 	async fn finish_presenting(
 		self: Arc<Self>,
 		platform: Arc<dyn FundingPlatform>,
 		product: Option<ProductContext>,
 		session: FundingSession,
+		mut closing: oneshot::Receiver<oneshot::Sender<()>>,
 	) -> Result<FundingSession, OpenFundingError> {
 		let registry = self.funding();
 		let presentation = FundingPresentation {
@@ -2829,8 +2922,23 @@ impl RuntimeServices {
 			.iter()
 			.map(|provider_id| WorkerHold::acquire(&self, provider_id))
 			.collect();
-		let presented = platform.present_funding(product.as_ref(), presentation).await;
+		let present = platform.present_funding(product.as_ref(), presentation);
+		// The cancel is polled first, so one that came before the overlay
+		// showed never calls the host. It closes the overlay as though the
+		// user dismissed it, and dropping the host's call tells the host to
+		// take it down.
+		let (presented, settled) = match future::select(&mut closing, present).await {
+			Either::Left((settled, _)) => (Ok(FundingPresentOutcome::Dismissed), settled.ok()),
+			Either::Right((presented, _)) => (presented, None),
+		};
+		// Whether a cancel closed the overlay, or came as the host answered:
+		// whichever removed the overlay first decides. A cancel that did
+		// waits until this returns, holding `_settled`, then asks the
+		// provider itself if the session started. A cancel after this finds
+		// no overlay and asks again, as a cancel of a session the user left.
 		self.report_overlay_closed(&session.intent, &presented);
+		let cancelled = registry.settle_overlay(&session.intent, &closing);
+		let _settled = settled.or_else(|| closing.try_recv().ok().flatten());
 		self.funding_quotes().end(&session.intent);
 		// A provider handed the session while the overlay was up keeps its
 		// worker: its hold for the session is taken before the overlay's go.
@@ -2854,15 +2962,18 @@ impl RuntimeServices {
 				}
 				// A provider took the session while the overlay was up, so it
 				// runs as started; unless money already moved, the provider is
-				// asked to stop, as the user left without starting.
+				// asked to stop, as the user left without starting. A cancel
+				// that closed the overlay asks it once the session started.
 				let now_ms = current_unix_millis();
 				registry
 					.start(now_ms, &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
-				if registry.get(&session.intent).is_some_and(|kept| !kept.money_moved()) {
+				if !cancelled &&
+					registry.get(&session.intent).is_some_and(|kept| !kept.money_moved())
+				{
 					registry
-						.cancel(now_ms, &session.intent)
+						.cancel_started(now_ms, &session.intent)
 						.await
 						.map_err(OpenFundingError::Session)?;
 				}
