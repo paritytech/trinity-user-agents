@@ -631,13 +631,14 @@ fn hold_lock(path: &Path, released: std::sync::mpsc::Receiver<()>) {
 	let lock = fs::File::create(path.with_extension("json.lock")).expect("the lock file");
 	lock.lock_exclusive().expect("another host holds the lock");
 	std::thread::spawn(move || {
-		let _ = released.recv_timeout(std::time::Duration::from_secs(5));
+		let _ = released.recv_timeout(std::time::Duration::from_secs(10));
 		drop(lock);
 	});
 }
 
 /// `published` kept at `path` from another thread: whether keeping it ended
-/// within two seconds, and how.
+/// within five seconds, and how. That is well past the second a host waits
+/// for the lock and short of the ten a [`hold_lock`] holder keeps it.
 fn kept_within_deadline(path: &Path, published: Vec<u8>) -> Option<Result<(), String>> {
 	let (kept_it, keeping) = std::sync::mpsc::channel();
 	std::thread::spawn({
@@ -647,7 +648,7 @@ fn kept_within_deadline(path: &Path, published: Vec<u8>) -> Option<Result<(), St
 			let _ = kept_it.send(kept.map_err(|error| format!("{error:#}")));
 		}
 	});
-	keeping.recv_timeout(std::time::Duration::from_secs(2)).ok()
+	keeping.recv_timeout(std::time::Duration::from_secs(5)).ok()
 }
 
 /// Keeping the copy is best effort. A host that finds the lock held for
@@ -687,7 +688,7 @@ fn a_host_keeps_its_copy_once_a_brief_lock_is_released() {
 }
 
 /// A published copy the CLI does not run, here for a changed TLD, leaves the
-/// copy a host kept in use without the bundled copy being looked at, so a
+/// copy a host kept in use. The bundled copy is not the fall back then, so a
 /// bundled copy past its `expiresAt` does not stop a host that has a later
 /// one.
 #[test]

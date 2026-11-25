@@ -495,8 +495,9 @@ struct Copies<'a> {
 /// A `published` copy that [`accept`] does not take over `last_run`, such as
 /// one with a lower `sequence` or one that does not verify, is not used, with
 /// a warning that says why. It and a `published` copy that [`refresh_fetched`]
-/// does not run leave `last_run` in use, without a look at the bundled copy,
-/// and are reported as [`BuiltInCopy::Rejected`].
+/// does not run leave `last_run` in use, and are reported as
+/// [`BuiltInCopy::Rejected`]. The bundled copy is then not the fall back, so
+/// whether it is past `expiresAt` or the CLI can run it goes unchecked.
 fn refresh_from_last_run(
 	id: &str,
 	pointer: &Pointer,
@@ -573,7 +574,9 @@ fn refresh_stack(
 
 /// [`refresh_stack`] up to its fall back to `bundled`: `None`, after the
 /// warning, when `fetched` changes the `tld` or the `id` or is not a stack the
-/// CLI can run on, so the caller picks the copy that stands in for it.
+/// CLI can run on, so the caller picks the copy that stands in for it. When
+/// [`accept`] does not take `fetched` over `bundled`, or there is none, this
+/// is already the bundled copy's stack.
 fn refresh_fetched(
 	id: &str,
 	fetched_name: &str,

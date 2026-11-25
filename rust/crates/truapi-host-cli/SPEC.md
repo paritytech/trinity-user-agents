@@ -1835,7 +1835,7 @@ effort: a failed write is a warning, and a host that still finds the lock held
 after that second, as when another host stopped in a debugger holds it, keeps
 nothing on that run. The kept copy can then be older than the copy that host
 ran on, until a later run keeps one, and an offline start in between runs on
-the older copy.
+the older copy, or else the bundled one.
 While the published descriptor cannot be fetched, and when it is refused or
 older than that copy, the host starts from that copy, under the same rules as a
 fetched one. A kept copy older than the bundled one, as after an update of the
