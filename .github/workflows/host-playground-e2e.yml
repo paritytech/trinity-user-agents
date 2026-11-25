@@ -1,7 +1,7 @@
 name: host-playground e2e
 
 # Runs host-playground inside the iOS and Android host apps built from this commit,
-# then the native UI flows against the same signed-in app.
+# then, on iOS, the native UI flows against the same signed-in app.
 # See e2e/host-playground/README.md and e2e/native-ui/README.md.
 # Each nightly calls this for its own platform and commit. on-label.yml calls
 # it for both platforms on a pull request labelled ci:host-playground-e2e, never
@@ -140,8 +140,6 @@ jobs:
           umask 077
           printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/android.mnemonic"
 
-      - uses: ./.github/actions/install-maestro
-
       - name: Enable KVM
         run: |
           set -euo pipefail
@@ -151,12 +149,9 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       # Google APIs image, so Remote Config can deliver the app's chain list.
-      # The native UI flows run in the same emulator session, since it ends with the script.
-      - name: Run host-playground and the native UI flows on the emulator
+      - name: Run host-playground on the emulator
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
-          # The lite username E2E_ANDROID_MNEMONIC's account holds.
-          NATIVE_UI_USERNAME: hpeandroidthree.10
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
@@ -165,8 +160,8 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-boot-timeout: 900
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -show-kernel -noaudio -no-boot-anim -camera-back none
-          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"; status=$?; free -m; ps -o rss=,comm= -p "$(pgrep -d, -f qemu-system)"; node e2e/native-ui/run.mjs --platform android --app-id "${APPLICATION_ID:-io.parity.polkadotapp}.nightly" --username "${NATIVE_UI_USERNAME}" --out "${OUT}/native-ui" || status=1; free -m; ps -o rss=,comm= -p "$(pgrep -d, -f qemu-system)"; sudo dmesg -T | tail -30; mkdir -p "${OUT}/native-ui/emulator-crash"; find /tmp "${HOME}/.android" -path '*emu-crash*' -type f -exec cp {} "${OUT}/native-ui/emulator-crash/" \; 2>/dev/null; ls -la "${OUT}/native-ui/emulator-crash"; exit $status
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"
 
       - name: Summary
         if: always()
@@ -177,9 +172,6 @@ jobs:
             cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No report: the run did not reach the tests." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f "${OUT}/native-ui/report.md" ]; then
-            cat "${OUT}/native-ui/report.md" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload the results

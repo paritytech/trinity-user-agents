@@ -1027,7 +1027,7 @@ Prerequisites:
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
 (device, APK, product, room, message, username, URL, report path).
 
-The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md). The same workflow then drives the apps' own screens with the Maestro flows in [e2e/native-ui/README.md](e2e/native-ui/README.md).
+The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md). On iOS the same workflow then drives the app's own screens with the Maestro flows in [e2e/native-ui/README.md](e2e/native-ui/README.md).
 
 ## Regenerate the TypeScript client
 
