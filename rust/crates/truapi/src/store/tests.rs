@@ -62,31 +62,46 @@ fn a_failing_write_leaves_nothing_behind() {
 	assert_eq!(notes(&db), Vec::<String>::new());
 }
 
+/// A domain error a hook refuses an interactive write with.
+#[derive(Debug, PartialEq)]
+enum HookRefusal {
+	ItemInUse,
+	Db(String),
+}
+
+impl From<DbError> for HookRefusal {
+	fn from(error: DbError) -> Self {
+		Self::Db(error.to_string())
+	}
+}
+
 #[test]
 fn a_refused_write_leaves_nothing_behind_and_returns_the_refusal() {
 	// A domain hook refuses a registration after the ledger rows are
 	// written; the refusal must undo them and still reach the caller.
 	let db = block_on(Db::open(memory_config())).unwrap();
 
-	let result = block_on(db.write_unless_refused(|tx| {
-		tx.execute("INSERT INTO ledger (note) VALUES ('refused')", [])?;
-		Ok(Err::<(), _>("item in use"))
+	let result = block_on(db.write_interactive(|tx| {
+		tx.execute("INSERT INTO ledger (note) VALUES ('refused')", [])
+			.map_err(DbError::from)?;
+		Err::<(), _>(HookRefusal::ItemInUse)
 	}));
 
-	assert_eq!(result.unwrap(), Err("item in use"));
+	assert_eq!(result, Err(HookRefusal::ItemInUse));
 	assert_eq!(notes(&db), Vec::<String>::new());
 }
 
 #[test]
-fn an_accepted_write_unless_refused_commits() {
+fn an_accepted_interactive_write_commits() {
 	let db = block_on(Db::open(memory_config())).unwrap();
 
-	let result = block_on(db.write_unless_refused(|tx| {
-		tx.execute("INSERT INTO ledger (note) VALUES ('kept')", [])?;
-		Ok(Ok::<_, &str>(()))
+	let result = block_on(db.write_interactive(|tx| {
+		tx.execute("INSERT INTO ledger (note) VALUES ('kept')", [])
+			.map_err(DbError::from)?;
+		Ok::<_, HookRefusal>(())
 	}));
 
-	assert_eq!(result.unwrap(), Ok(()));
+	assert_eq!(result, Ok(()));
 	assert_eq!(notes(&db), vec!["kept".to_owned()]);
 }
 

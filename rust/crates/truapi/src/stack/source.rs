@@ -10,7 +10,7 @@ use core::time::Duration;
 use trinity_stack::{FetchRequest, Pointer, Refresh, Served, StackReader, Status, open};
 
 use super::{
-	ReplaceCheck, Stack, StackError,
+	ReplaceCheck, ReservedValuesPolicy, Stack, StackError,
 	held::{CopyRules, HeldCopy},
 };
 
@@ -126,6 +126,8 @@ pub struct StackSource {
 impl StackSource {
 	/// Starts from the newer of `bundled`, the signed copy the build ships,
 	/// and `stored`, the record the last [`Self::fetched`] returned.
+	/// `reserved_values` is the build's policy, already checked. Every copy,
+	/// bundled, stored or fetched, is held to it.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
 	/// a stack the core can run. A stored record the core would refuse is
@@ -134,10 +136,10 @@ impl StackSource {
 		pointer: Pointer,
 		bundled: &[u8],
 		stored: Option<&[u8]>,
-		allows_reserved_values: bool,
+		reserved_values: ReservedValuesPolicy,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
-		let rules = CopyRules::new(pointer, bundled, allows_reserved_values)?;
+		let rules = CopyRules::new(pointer, bundled, reserved_values)?;
 		let stored = stored.filter(|record| match rules.stored_copy(record) {
 			Ok(copy) => copy.is_some(),
 			Err(error) => {
