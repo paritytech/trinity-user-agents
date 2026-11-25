@@ -18,7 +18,7 @@ use crate::{
 	runtime::{
 		HostRole, LocalActivation, SigningHost, StatementRenewalTarget,
 		services::RuntimeServices,
-		statement_allowance::{StatementAllowanceError, slot::SlotError},
+		statement_allowance::{self, ChainClient, StatementAllowanceError, slot::SlotError},
 	},
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
@@ -1102,7 +1102,7 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 
 	let read = finish(ANSWER_WAIT, async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
-		services.people_network_suffix(people.rpc()).await.ok()
+		services.people_network_suffix(&people).await.ok()
 	});
 
 	assert_eq!(
@@ -1113,6 +1113,27 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 		),
 		(Some(b"testnet".to_vec()), testnet_suffix_listed(), 1)
 	);
+}
+
+/// Asset Hub holds a `NetworkSuffix` too, which a PGAS claim proves with. The
+/// `tld` check is on People's, so a suffix read over a client the host routes
+/// by another chain's genesis hash comes back without the host hearing of it.
+#[test]
+fn a_suffix_read_over_another_chains_client_is_not_reported() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
+
+	let read = finish(ANSWER_WAIT, async {
+		// The fixture's Asset Hub is out of reach, so People's node answers for it.
+		let node = services.chain.rpc_client("test", &TEST_STACK_PEOPLE).await.ok()?;
+		let asset_hub = ChainClient::new(
+			statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(node)),
+			TEST_STACK_ASSET_HUB,
+		);
+		services.people_network_suffix(&asset_hub).await.ok()
+	});
+
+	assert_eq!((read, refresh.status().mismatches), (Some(b"testnet".to_vec()), vec![]));
 }
 
 /// What the host is told once People has given `testnet` as its suffix.
@@ -1137,7 +1158,7 @@ fn read_after_testnet_was_listed(
 
 	let read = finish(ANSWER_WAIT, async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
-		Some(services.people_network_suffix(people.rpc()).await)
+		Some(services.people_network_suffix(&people).await)
 	});
 	(read, refresh.status().mismatches)
 }

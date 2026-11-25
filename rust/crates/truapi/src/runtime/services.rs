@@ -315,19 +315,21 @@ impl RuntimeServices {
 	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
 	///
 	/// The suffix also goes to the stack's checks, which report one that is
-	/// not the stack's `tld`. They take it as People's whatever chain `people`
-	/// reaches, so read another chain's suffix, such as Asset Hub's, with
-	/// `statement_allowance::slot::read_network_suffix`.
+	/// not the stack's `tld`. Over a client the host routes by another chain's
+	/// genesis hash, that chain's suffix is returned and does not go to the
+	/// checks.
 	///
-	/// Fails when the read fails or People holds no suffix of one to sixteen
-	/// bytes. A failed read changes nothing the checks report: a suffix
-	/// reported before stays reported.
+	/// Fails when the read fails or the chain holds no suffix of one to
+	/// sixteen bytes. A failed read changes nothing the checks report: a
+	/// suffix reported before stays reported.
 	pub async fn people_network_suffix(
 		&self,
-		people: &statement_allowance::rpc::RpcClient,
+		people: &statement_allowance::ChainClient,
 	) -> Result<Vec<u8>, statement_allowance::StatementAllowanceError> {
-		let suffix = statement_allowance::slot::read_network_suffix(people).await?;
-		if let Some(checks) = crate::stack::checks(&self.stack) {
+		let suffix = statement_allowance::slot::read_network_suffix(people.rpc()).await?;
+		if people.configured_genesis_hash() == self.stack.chains().people &&
+			let Some(checks) = crate::stack::checks(&self.stack)
+		{
 			checks.people_suffix_answered(&suffix);
 		}
 		Ok(suffix)

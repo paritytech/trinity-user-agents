@@ -352,7 +352,7 @@ impl WalletAccountHolder {
 			.await?;
 		let rpc = client.rpc();
 		let metadata = fetch_metadata(rpc).await?;
-		let network_suffix = self.services.people_network_suffix(rpc).await?;
+		let network_suffix = self.services.people_network_suffix(&client).await?;
 		// Every ring back to index 0, because a membership that stopped being
 		// re-included still proves against the ring that holds it.
 		let memberships =
