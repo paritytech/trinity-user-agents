@@ -939,7 +939,10 @@ fn a_room_read_answers_the_room_and_leaves_no_subscriber() {
 		);
 	}
 	assert_eq!(read("missing"), None);
-	assert!(host.lock().subscribers.is_empty());
+	assert!(
+		host.lock().subscribers.is_empty(),
+		"a read that subscribes would leave one subscriber behind for each room change"
+	);
 }
 
 /// A second product, which names its rooms as the first one does.

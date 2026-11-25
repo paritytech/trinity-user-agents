@@ -511,6 +511,18 @@ interface ChatHostBridge {
      * these arguments and screened the icon scheme; escaping them for the
      * surface that renders them is still the host's job.
      *
+     * A room id is unique only among the rooms of one product, so the host
+     * keeps each room under the product and the id. A product built against
+     * the earlier client chooses its room ids freely. The host never changes a
+     * room that the product does not host: a room of another product with the
+     * same id, or a room that the product takes part in as a bot.
+     *
+     * The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+     * `data:` URL with an image type. Only a product built against the earlier
+     * client sends an `https` URL, and the core has not checked the payload of
+     * its `data:` URL. The `data:` URL of any other product has a Base64
+     * payload that the core decoded.
+     *
      * The default four-argument [createRoom] calls it for a room with
      * [HOST_DEFAULT_CHAT_ROOM_CONFIG], so a host that keeps only the default
      * configuration implements this one. A host that implements the
@@ -525,7 +537,7 @@ interface ChatHostBridge {
      * Create or resolve a room as the three-argument [createRoom] does, and
      * keep [config] for it in the same step, across restarts, for a new room
      * and for a room that exists. A change of `productSource` discards the
-     * stored messages or the cached pages of the room.
+     * stored messages or the cached pages of the room, and its preview.
      *
      * Throw [HostChatCreateRoomException.UnsupportedConfig] for a
      * configuration the host cannot keep, before it creates or changes
@@ -600,9 +612,13 @@ interface ChatHostBridge {
      * last `createRoom`. The core reads it once before each change to a room
      * and before each query of the room. Before a posted message it reads the
      * room the product names, before any check that the product created the
-     * room. Answer `null` for a room that the product never created, and throw
-     * when the host cannot read its rooms. The default finds the room in
-     * [listRooms] and pairs it with [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     * room. The host looks the room up among the rooms of the product only.
+     * Answer `null` for a room that the product never created, and throw when
+     * the host cannot read its rooms. The default finds the room in
+     * [listRooms] and pairs it with [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A host
+     * that serves a Chat Extension v2 request implements [room] with a read of
+     * one room, because the default reads the whole room list for each change
+     * to a room.
      */
     @Throws(HostRejection::class)
     suspend fun room(roomId: String): ChatRoomState? =
@@ -632,7 +648,9 @@ interface ChatHostBridge {
     /**
      * Delete a room with its messages, cache and declarations, close its
      * screen, and answer [ChatRoomChangeOutcome.APPLIED]. A room that does not
-     * exist is not an error. The default answers
+     * exist is not an error. The core has not checked that the product created
+     * the room, so the host deletes only a room that the product hosts, and
+     * does nothing for any other id. The default answers
      * [ChatRoomChangeOutcome.UNSUPPORTED].
      */
     @Throws(HostRejection::class)
@@ -874,6 +892,25 @@ private inline fun <T> withNavigateRejection(operation: () -> T): T =
             .apply { initCause(error) }
     }
 
+/**
+ * Pass a [HostChatCreateRoomException] to the product as it is, and any other
+ * exception as [HostChatCreateRoomException.Unknown]. A [HostRejection] keeps
+ * the reason that the host wrote.
+ */
+private inline fun <T> withRoomRejection(operation: () -> T): T =
+    try {
+        operation()
+    } catch (refusal: HostChatCreateRoomException) {
+        throw refusal
+    } catch (rejection: HostRejection.Rejected) {
+        throw HostChatCreateRoomException.Unknown(rejection.reason).apply { initCause(rejection) }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (error: Throwable) {
+        throw HostChatCreateRoomException.Unknown(hostRejectionReason(error))
+            .apply { initCause(error) }
+    }
+
 private inline fun <T> withStorageException(operation: () -> T): T =
     try {
         operation()
@@ -924,24 +961,6 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatFeedOutcome =
         withHostRejection { bridge.updateFeed(roomId, update, persist) }
-
-    /**
-     * Pass a [HostChatCreateRoomException] to the product as it is, and any
-     * other exception as [HostChatCreateRoomException.Unknown]. A
-     * [HostRejection] keeps the reason that the host wrote.
-     */
-    private suspend fun <T> withRoomRejection(operation: suspend () -> T): T =
-        try {
-            operation()
-        } catch (refusal: HostChatCreateRoomException) {
-            throw refusal
-        } catch (rejection: HostRejection.Rejected) {
-            throw HostChatCreateRoomException.Unknown(rejection.reason).apply { initCause(rejection) }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            throw HostChatCreateRoomException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
-        }
 }
 
 /**
