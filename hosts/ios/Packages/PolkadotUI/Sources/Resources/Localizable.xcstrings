@@ -1215,6 +1215,28 @@
         }
       }
     },
+    "transfer.reclaim.action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaim funds"
+          }
+        }
+      }
+    },
+    "transfer.reclaim.retryAction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try to reclaim again"
+          }
+        }
+      }
+    },
     "transfer.status.amount.differs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1314,6 +1336,61 @@
         }
       }
     },
+    "transfer.status.reclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaimed"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimedPartially" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaimed %1$(amount)@"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaiming failed"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaiming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaiming funds…"
+          }
+        }
+      }
+    },
+    "transfer.status.returnedToSender" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claim period expired. Sender can reclaim the funds"
+          }
+        }
+      }
+    },
     "transfer.status.sending" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1332,6 +1409,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sent · not received yet"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recipient didn't claim it in time"
           }
         }
       }

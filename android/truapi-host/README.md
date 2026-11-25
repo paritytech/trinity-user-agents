@@ -43,9 +43,9 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
-  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
-  `dot` TLD.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
@@ -179,7 +179,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns ret
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `requestWorkerTransition`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. A feature takes a worker reference with `runtime.claimWorker(productId)` when it needs the product and calls `claim.release()` when that work ends. The runtime bridge receives the resulting `requestWorkerTransition` calls. Opening, replacing or closing a render stream leaves the feature's claim intact. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -431,7 +431,7 @@ val runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer = "polkadotapp://stack?key=0x…&url=…",
         descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
-        allowsReservedValues = false,
+        reservedValues = ReservedValuesPolicy(allowed = false),
     ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.

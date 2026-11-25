@@ -192,7 +192,8 @@ class RealFundingSessions @Inject constructor(
     override fun leave(intentId: FundingIntentId) {
         if (!isPresenting(intentId)) return
 
-        quotes.stopStarting(intentId)
+        // The core forgets the start on the best quote itself once the screens are answered dismissed.
+        quotes.disarm(intentId)
         resolve(intentId, FundingPresentOutcome.DISMISSED)
     }
 

@@ -105,6 +105,8 @@ private extension TabFactory {
             depositService: serviceCoordinator.depositService,
             coinageService: serviceCoordinator.coinageService,
             coinageBackupSyncService: serviceCoordinator.coinageBackupSyncService,
+            fundingService: serviceCoordinator.fundingService,
+            fundingActivityCenter: serviceCoordinator.fundingActivityCenter,
             networkStatusService: serviceCoordinator.networkStatusService,
             flowState: spaFlowState
         )

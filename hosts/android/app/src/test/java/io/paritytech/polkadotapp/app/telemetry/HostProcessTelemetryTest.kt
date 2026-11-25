@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.telemetry
 
 import android.content.Intent
+import android.util.Log
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
@@ -10,6 +11,7 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostLogSink
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
 import io.paritytech.polkadotapp.common.data.telemetry.baseTags
@@ -19,9 +21,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
-import io.sentry.SentryLogLevel
-import io.sentry.logger.ILoggerApi
-import io.sentry.logger.SentryLogParameters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
@@ -45,7 +44,7 @@ class HostProcessTelemetryTest {
         appBuild = 42L,
     )
     private val sentryCapture: SentryEventCapture = mock(SentryEventCapture::class.java)
-    private val sentryLogger: ILoggerApi = mock(ILoggerApi::class.java)
+    private val logSink: HostLogSink = mock(HostLogSink::class.java)
 
     @Test
     fun `captures the process event with the shared host tags when the app initializes`() {
@@ -107,7 +106,7 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
-            sentryLogger = Provider { sentryLogger },
+            logSink = Provider { logSink },
         )
 
         capture.capture { error("event metadata must stay lazy") }
@@ -121,7 +120,7 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
-            sentryLogger = Provider { sentryLogger },
+            logSink = Provider { logSink },
         )
 
         capture.capture {
@@ -133,7 +132,7 @@ class HostProcessTelemetryTest {
             )
         }
 
-        verifyNoInteractions(sentryLogger)
+        verifyNoInteractions(logSink)
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
         assertEquals(SentryLevel.WARNING, sentryEvent?.level)
         assertEquals("host.telemetry", sentryEvent?.logger)
@@ -148,24 +147,24 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
-            sentryLogger = Provider { sentryLogger },
+            logSink = Provider { logSink },
         )
 
         capture.capture {
             HostEvent(name = "host.one", level = HostEventLevel.ERROR, tags = emptyMap(), extras = emptyMap())
         }
 
-        verifyNoInteractions(sentryLogger)
+        verifyNoInteractions(logSink)
         assertEquals(SentryLevel.ERROR, sentryEvent?.level)
     }
 
     @Test
-    fun `sends an info host event to Sentry Logs with its tags and extras as attributes`() {
-        val logger = mockk<ILoggerApi>(relaxed = true)
+    fun `sends an info host event to the host log sink with its tags and extras as attributes`() {
+        val sink = mockk<HostLogSink>(relaxed = true)
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = sentryCapture,
-            sentryLogger = Provider { logger },
+            logSink = Provider { sink },
         )
 
         capture.capture {
@@ -178,17 +177,16 @@ class HostProcessTelemetryTest {
         }
 
         verifyNoInteractions(sentryCapture)
-        val parameters = slot<SentryLogParameters>()
-        verify(exactly = 1) { logger.log(SentryLogLevel.INFO, capture(parameters), "host.process.started") }
+        val attributes = slot<Map<String, Any>>()
+        verify(exactly = 1) { sink.log(Log.INFO, "host.telemetry", "host.process.started", capture(attributes)) }
         assertEquals(
             mapOf(
                 "host.platform" to "android",
                 "host.app_build" to 42L,
                 "shared.key" to "extra",
                 "event.name" to "host.process.started",
-                "tag" to "host.telemetry",
             ),
-            parameters.captured.attributes?.attributes?.mapValues { it.value.value },
+            attributes.captured,
         )
     }
 
@@ -198,7 +196,7 @@ class HostProcessTelemetryTest {
         val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { fingerprints += it.fingerprints },
-            sentryLogger = Provider { sentryLogger },
+            logSink = Provider { logSink },
         )
         val otherBuild = origin.copy(appVariant = "debug", nativeAppVersion = "9.9.9", appBuild = 7L)
 
@@ -237,7 +235,7 @@ class HostProcessTelemetryTest {
         val disabledCapture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
-            sentryLogger = Provider { sentryLogger },
+            logSink = Provider { logSink },
         )
         disabledCapture.capture {
             eventBuilt = true
@@ -283,7 +281,7 @@ class HostProcessTelemetryTest {
         HostEvent(name = name, level = HostEventLevel.WARNING, tags = tags, extras = extras)
 
     private fun verifyNothingSentToSentry() {
-        verifyNoInteractions(sentryCapture, sentryLogger)
+        verifyNoInteractions(sentryCapture, logSink)
     }
 
     private fun assertSuccess(result: Result<*>) {

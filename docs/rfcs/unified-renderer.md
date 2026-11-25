@@ -159,6 +159,10 @@ pub enum TypographyStyle {
     BodyLargeRegular,
     BodyMediumRegular,
     BodySmallRegular,
+    HeadlineMedium,
+    HeadlineSmall,
+    TitleExtraLarge,
+    TitleLarge,
 }
 
 /// Button emphasis.
@@ -448,9 +452,6 @@ The host opens a `render` stream when the body comes on screen and closes it whe
 back opens a fresh stream with the same request. Each item replaces the whole tree. A stream that ends cleanly leaves
 the last tree on screen. After an error the host shows the product's identity and no body. A product that cannot draw
 the body ends the stream with an error.
-
-An open `render` stream is one worker reference in [Worker Lifecycle](worker-lifecycle.md) terms, whichever surface
-opened it.
 
 ### Chat
 
