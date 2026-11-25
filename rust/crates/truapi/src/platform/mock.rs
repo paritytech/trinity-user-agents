@@ -168,18 +168,29 @@ pub struct ChatMessageRecord {
 }
 
 /// What the product declared for one chat room through the mock.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// The mock does not tell products apart: it keeps every room by its id alone.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChatRoomDeclarations {
 	/// The configuration of the last `create_chat_room`, or `None` for a room
 	/// the product did not create through the mock.
 	pub config: Option<latest::ChatRoomConfig>,
 	/// The last metadata from `set_chat_room_metadata`.
 	pub metadata: Option<latest::ChatRoomMetadata>,
-	/// The last chat list preview.
+	/// The last chat list preview since the last change of `product_source`.
 	pub preview: Option<latest::ChatRoomPreview>,
-	/// Every feed update since the last change of `product_source`, in order,
-	/// with whether the host had to store it.
-	pub feed: Vec<(latest::ChatFeedUpdate, bool)>,
+	/// Every feed update since the last change of `product_source`, in order.
+	pub feed: Vec<ChatFeedRecord>,
+}
+
+/// One feed update that the product sent through the mock.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChatFeedRecord {
+	/// The update.
+	pub update: latest::ChatFeedUpdate,
+	/// The host had to store the update, because it keeps the messages of the
+	/// room. Otherwise it only shows the update.
+	pub persist: bool,
 }
 
 /// How the mock's chain connection behaves.
@@ -758,8 +769,8 @@ impl MockPlatform {
 	}
 
 	/// Keep `config` as the configuration of `room_id`. A change of
-	/// `product_source` drops the messages and feed updates of the room, as
-	/// the `create_chat_room` contract asks.
+	/// `product_source` drops the messages, the feed updates and the preview
+	/// of the room, as the `create_chat_room` contract asks.
 	fn configure_chat_room(&self, room_id: &str, config: latest::ChatRoomConfig) {
 		let source_changed = {
 			let mut declarations =
@@ -769,6 +780,7 @@ impl MockPlatform {
 			let source_changed = product_source != config.product_source;
 			if source_changed {
 				room.feed.clear();
+				room.preview = None;
 			}
 			room.config = Some(config);
 			source_changed
@@ -1506,20 +1518,18 @@ impl ChatPlatform for MockPlatform {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		self.chat_declarations
-			.lock()
-			.expect("chat declarations poisoned")
-			.remove(&request.room_id);
-		self.chat_messages
-			.lock()
-			.expect("chat messages poisoned")
-			.retain(|message| message.room_id != request.room_id);
-		let removed = self
-			.chat_rooms
-			.lock()
-			.expect("chat rooms poisoned")
-			.remove(&request.room_id)
-			.is_some();
+		let removed = {
+			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
+			self.chat_declarations
+				.lock()
+				.expect("chat declarations poisoned")
+				.remove(&request.room_id);
+			self.chat_messages
+				.lock()
+				.expect("chat messages poisoned")
+				.retain(|message| message.room_id != request.room_id);
+			rooms.remove(&request.room_id).is_some()
+		};
 		if removed {
 			self.publish_chat_rooms();
 		}
@@ -1532,7 +1542,9 @@ impl ChatPlatform for MockPlatform {
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
 	) -> Result<ChatFeedOutcome, latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))?;
+		self.declare_chat_room(request.room_id, |room| {
+			room.feed.push(ChatFeedRecord { update: request.update, persist })
+		})?;
 		Ok(ChatFeedOutcome::Applied)
 	}
 }

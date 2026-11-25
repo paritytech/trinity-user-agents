@@ -60,6 +60,7 @@ import uniffi.truapi.ProductId
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
 private const val BADGE_ICON = "https://example.invalid/badge.png"
+private const val PREIMAGE_ICON = "bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy"
 
 class ProductChatHostBridgeTest {
     private val productId = ProductId.parse("dim2.dot").getOrThrow()
@@ -173,6 +174,17 @@ class ProductChatHostBridgeTest {
         bridge(api).createRoom(ROOM, "Jollity", icon = "https://example.invalid")
 
         assertEquals("https://example.invalid/", registered?.icon?.value)
+    }
+
+    // The core passes the icon of a version 2 room on as the CID of a Bulletin preimage, so the room must exist.
+    @Test
+    fun `a room registers an icon that is the CID of a preimage`() = runTest {
+        var registered: CreateProductRoomRequest? = null
+        val api = FakeChatMessaging(onCreateRoom = { registered = it; Result.success(CreateProductRoomResult(CreateRoomStatus.New)) })
+
+        bridge(api).createRoom(ROOM, "Jollity", icon = PREIMAGE_ICON)
+
+        assertEquals(PREIMAGE_ICON, registered?.icon?.value)
     }
 
     @Test
@@ -338,6 +350,16 @@ class ProductChatHostBridgeTest {
         coVerify {
             messaging.setRoomMetadata(ProductChatIdParameter(ROOM), "Lobby", RoomIconChange("https://example.invalid/"), ChatRoomMetadataModel(null, placeholder = null))
         }
+    }
+
+    @Test
+    fun `a metadata icon that is the CID of a preimage replaces the room icon`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+
+        ProductChatHostBridge(productId, messaging).setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", null, icon = PREIMAGE_ICON, placeholder = null))
+
+        coVerify { messaging.setRoomMetadata(ProductChatIdParameter(ROOM), "Lobby", RoomIconChange(PREIMAGE_ICON), ChatRoomMetadataModel(null, placeholder = null)) }
     }
 
     // An empty icon removes the room icon. It must not reach the binding as "keep the icon".

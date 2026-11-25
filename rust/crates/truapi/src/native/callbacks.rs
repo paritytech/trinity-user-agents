@@ -297,11 +297,23 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// it: the id that the core derived, or, for a product built against the
 	/// earlier client, the id that the product gave.
 	///
+	/// A room id is unique only among the rooms of one product, so the host
+	/// keeps each room under the product and the id. A product built against
+	/// the earlier client chooses its room ids freely. The host never changes a
+	/// room that this product does not host: a room of another product with
+	/// the same id, or a room that this product takes part in as a bot.
+	///
+	/// The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+	/// `data:` URL with an image type. Only a product built against the earlier
+	/// client sends an `https` URL, and the core has not checked the payload of
+	/// its `data:` URL. The `data:` URL of any other product has a Base64
+	/// payload that the core decoded.
+	///
 	/// In the same step the host keeps `config` for the room across restarts,
 	/// for a new room and for a room that exists. A change of `product_source`
-	/// discards the stored messages or the cached pages of the room. A host
-	/// that cannot keep `config` refuses it with `UnsupportedConfig` before it
-	/// creates or changes anything.
+	/// discards the stored messages or the cached pages of the room, and its
+	/// preview. A host that cannot keep `config` refuses it with
+	/// `UnsupportedConfig` before it creates or changes anything.
 	async fn create_room(
 		&self,
 		room_id: String,
@@ -352,8 +364,9 @@ pub trait NativeChatCallbacks: Send + Sync {
 	///
 	/// That is whether the product hosts the room or takes part as a bot, and
 	/// the configuration of its last `create_room`. The core reads it once
-	/// before each change to a room and before each query of the room. `None`
-	/// is a room that the product never created; a host that cannot read its
+	/// before each change to a room and before each query of the room. The
+	/// host looks the room up among the rooms of this product only. `None` is
+	/// a room that the product never created; a host that cannot read its
 	/// rooms returns a rejection, not `None`.
 	async fn room(
 		&self,
@@ -378,8 +391,10 @@ pub trait NativeChatCallbacks: Send + Sync {
 	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen. A room that does not exist is not an error. A host that does not
-	/// serve it answers `Unsupported`.
+	/// screen. A room that does not exist is not an error. The core has not
+	/// checked that this product created the room, so the host deletes only a
+	/// room that this product hosts, and does nothing for any other id. A host
+	/// that does not serve it answers `Unsupported`.
 	async fn delete_room(
 		&self,
 		room_id: String,
