@@ -13,7 +13,8 @@ A signing host refuses a paired host's request when its caller, or a product it 
 stack does not serve. A pairing host on another stack, such as dotli on previewnet paired with a CLI wallet on paseo,
 gets that error on its first relayed request for one of its own `.testnet` products.
 
-`parseProductId` checks syntax only and accepts any TLD. `hasTrustedRemotePermissions(productId)` is a method of the
-pairing and signing host runtimes, answered for the runtime's stack. Native hosts open the bundled stack with
-`Stack.openBundled(stack)` and call `parseNavigate`, `productShareHosts`, `parseProductShareHost` and
-`hasTrustedRemotePermissions` on it.
+`parseProductId` checks syntax only and accepts any TLD. `hasTrustedRemotePermissions` is no longer a free function of
+the wasm module. The wasm pairing and signing host runtimes answer it for their stack, but `@parity/truapi-host` runs
+them in a Worker and does not expose it; a browser host reads `permissionAuthorizationStatus` instead. Native hosts open
+the bundled stack with `Stack.openBundled(stack)` and call `parseNavigate`, `productShareHosts`, `parseProductShareHost`
+and `hasTrustedRemotePermissions` on it.
