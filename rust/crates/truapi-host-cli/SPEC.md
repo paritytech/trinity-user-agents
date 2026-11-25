@@ -1589,6 +1589,11 @@ keys move:
 The previous user's product KV and other core state remain in that user's
 directory. The new user's existing product/core state is loaded.
 
+The storage identity is the username, not the account. The same account under
+another username, as when a lookup after a wipe finds a new one, is another
+user: it starts with no permissions, allowances or product KV, and the old ones
+stay in the old username's directory.
+
 Remembered pairing scripts are scoped to whichever bootstrap/user directory is
 active. Resolving another user loads that directory's `session.json`.
 
