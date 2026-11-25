@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -37,7 +38,7 @@ interface StatementStoreSlotAllocationRepository {
     suspend fun insert(
         chainId: ChainId,
         collection: PeopleCollection,
-        accountId: AccountId,
+        holder: StatementStoreSlotHolder,
         seq: UInt,
         latestRenewedPeriod: UInt,
         since: Instant,
@@ -101,6 +102,11 @@ interface StatementStoreSlotAllocationRepository {
         chainId: ChainId,
         accountIds: Collection<AccountId>,
     ): Map<AccountId, SlotPriority>
+
+    suspend fun signerDerivationPathsFor(
+        chainId: ChainId,
+        accountIds: Collection<AccountId>,
+    ): Map<AccountId, String>
 
     /**
      * Records that the row at [id] just got renewed into a new period at on-chain
