@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import PushKit
 import PolkadotUI
+import TrUAPIHost
 
 final class MainTabBarInteractor {
     weak var presenter: MainTabBarInteractorOutputProtocol?
@@ -24,6 +25,7 @@ final class MainTabBarInteractor {
     private var chainStatusSubscription: Task<Void, Never>?
     private var tabBarLabelsSubscription: Task<Void, Never>?
     private var paymentsSetupSubscription: Task<Void, Never>?
+    private var fundingSubscription: Task<Void, Never>?
     private var restoredBalanceSubscription: Task<Void, Never>?
 
     init(
@@ -60,6 +62,7 @@ final class MainTabBarInteractor {
         chainStatusSubscription?.cancel()
         tabBarLabelsSubscription?.cancel()
         paymentsSetupSubscription?.cancel()
+        fundingSubscription?.cancel()
         restoredBalanceSubscription?.cancel()
     }
 }
@@ -74,11 +77,36 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
         subscribeToChainStatus()
         subscribeToTabBarLabels()
         subscribeToPaymentsSetup()
+        subscribeToFunding()
         subscribeToRestoredBalance()
+    }
+
+    func openProviderFrame(_ request: FundingFrameRequest) {
+        servicesLease.coordinator.fundingService.openProviderFrame(request)
     }
 }
 
 private extension MainTabBarInteractor {
+    /// Hands on what the core asks of the app's screens for as long as the
+    /// tab bar is up, once the runtime is built.
+    func subscribeToFunding() {
+        let fundingService = servicesLease.coordinator.fundingService
+        fundingSubscription = Task { [weak self, fundingService, logger] in
+            // Screens providers asked for before the tab bar was drawn get
+            // their notice again.
+            for request in await fundingService.waitingFrames() {
+                await self?.presenter?.didReceive(fundingEvent: .frameRequested(request))
+            }
+            do {
+                for try await event in fundingService.events {
+                    await self?.presenter?.didReceive(fundingEvent: event)
+                }
+            } catch {
+                logger.error("Funding events stream failed: \(error)")
+            }
+        }
+    }
+
     func subscribeToPaymentsSetup() {
         let coinageService = servicesLease.coordinator.coinageService
         paymentsSetupSubscription = Task { [weak self, coinageService, logger] in
