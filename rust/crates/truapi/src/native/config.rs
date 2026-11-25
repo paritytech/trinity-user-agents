@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{
 	platform::{
 		ExecutableKind, HostIdentity, HostInfo, PlatformInfo, ProductContext, ProductId,
-		RuntimeConfigValidationError, StackError,
+		ReservedValuesPolicy, RuntimeConfigValidationError, StackError,
 	},
 	pocket_cards::PinnedPocketCard,
 };
@@ -56,8 +56,8 @@ pub struct HostRuntimeConfig {
 	pub device_encryption_key: Option<Bytes32>,
 }
 
-/// The stack a host build ships: its pointer, its signed descriptor, and
-/// whether the build lets it use Polkadot's reserved values.
+/// The stack a host build ships: its pointer, its signed descriptor, and the
+/// build's policy on reserved values.
 #[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
@@ -66,9 +66,8 @@ pub struct BundledStack {
 	/// The bundled descriptor's bytes, as served: a signed envelope that
 	/// verifies under the pointer's key.
 	pub descriptor: Vec<u8>,
-	/// Whether this build may run a stack that uses Polkadot's genesis hashes
-	/// or the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it.
-	pub allows_reserved_values: bool,
+	/// The build's policy on reserved values.
+	pub reserved_values: ReservedValuesPolicy,
 }
 
 /// Trusted identity attached by a native host to one executable connection.

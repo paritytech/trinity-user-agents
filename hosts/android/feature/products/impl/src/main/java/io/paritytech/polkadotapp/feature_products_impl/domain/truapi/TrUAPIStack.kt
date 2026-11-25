@@ -4,6 +4,7 @@ import android.content.Context
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import timber.log.Timber
 import uniffi.truapi.BundledStack
+import uniffi.truapi.ReservedValuesPolicy
 import uniffi.truapi.Stack
 
 /**
@@ -28,7 +29,7 @@ enum class TrUAPIStack(
         return BundledStack(
             pointer = read("link").decodeToString().trim(),
             descriptor = read("json"),
-            allowsReservedValues = allowsReservedValues,
+            reservedValues = ReservedValuesPolicy(allowed = allowsReservedValues),
         )
     }
 

@@ -60,7 +60,8 @@ private extension BackgroundTaskBootstrapperTests {
         offrampUrl: nil,
         accountDataStoreContract: nil,
         paymentAsset: nil,
-        appSharingUrl: nil
+        appSharingUrl: nil,
+        coinagePrivacyConfig: nil
     )
 
     func makeBootstrapper(

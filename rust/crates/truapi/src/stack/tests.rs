@@ -13,12 +13,32 @@ const POLKADOT_ASSET_HUB: [u8; 32] = [
 	0x75, 0x26, 0x54, 0xe9, 0x06, 0x14, 0x7f, 0x7e, 0x43, 0xe9, 0xd5, 0x39, 0xd7, 0xc3, 0xde, 0x2f,
 ];
 
+/// A build that reserves two genesis hashes and the `testnet` TLD.
+fn reserving_extras() -> ReservedValuesPolicy {
+	ReservedValuesPolicy {
+		allowed: false,
+		extra_genesis_hashes: vec![[0xe5; 32], [0xd4; 32]],
+		extra_tlds: vec!["testnet".to_string()],
+	}
+}
+
+/// A `paseo` descriptor that also names `genesis_hash` under a role the core
+/// never reads.
+fn with_an_unread_role(genesis_hash: [u8; 32]) -> serde_json::Value {
+	let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.push(test_descriptor_chain("Collectives", genesis_hash, Some(1001)));
+	descriptor
+}
+
 fn bundled(
 	descriptor: &serde_json::Value,
-	allows_reserved_values: bool,
+	reserved_values: &ReservedValuesPolicy,
 ) -> Result<Stack, StackError> {
 	let (pointer, bytes) = sign_test_descriptor(descriptor);
-	Stack::bundled(&pointer, &bytes, allows_reserved_values)
+	Stack::bundled(&pointer, &bytes, reserved_values)
 }
 
 /// A stack on `tld`, allowed reserved values so that it may be on `dot`.
@@ -41,8 +61,11 @@ fn info(
 /// same chains and network for a stack.
 #[test]
 fn a_bundled_stack_answers_get_chain_info_from_its_descriptor() {
-	let stack = bundled(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]), false)
-		.expect("stack is valid");
+	let stack = bundled(
+		&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]),
+		&ReservedValuesPolicy::default(),
+	)
+	.expect("stack is valid");
 
 	let response = |chain, genesis_hash| {
 		Ok(RemoteChainInfoResponse { network: "paseo".to_string(), chain, genesis_hash })
@@ -70,7 +93,8 @@ fn a_pointer_that_is_not_a_stack_link_is_refused() {
 	let (_, bytes) =
 		sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]));
 
-	let refused = Stack::bundled("https://example.invalid", &bytes, false);
+	let refused =
+		Stack::bundled("https://example.invalid", &bytes, &ReservedValuesPolicy::default());
 	assert!(matches!(refused, Err(StackError::Pointer(_))), "{refused:?}");
 }
 
@@ -81,7 +105,10 @@ fn a_pointer_without_a_key_is_refused() {
 	let (_, bytes) =
 		sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]));
 
-	assert_eq!(Stack::bundled(&test_stack_link(None), &bytes, false), Err(StackError::Unsigned));
+	assert_eq!(
+		Stack::bundled(&test_stack_link(None), &bytes, &ReservedValuesPolicy::default()),
+		Err(StackError::Unsigned)
+	);
 }
 
 /// The pointer's key is the trust anchor: a copy signed by any other key does
@@ -92,7 +119,8 @@ fn a_copy_signed_by_another_key_is_refused() {
 		sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]));
 	let other_key = test_stack_link(Some(&[0x42; 32]));
 
-	let refused = Stack::bundled(&other_key, &bytes, false).expect_err("another key's copy");
+	let refused = Stack::bundled(&other_key, &bytes, &ReservedValuesPolicy::default())
+		.expect_err("another key's copy");
 	assert!(
 		matches!(&refused, StackError::Descriptor(error) if error.code() == "bad-signature"),
 		"{refused:?}"
@@ -109,7 +137,7 @@ fn a_stack_without_asset_hub_people_or_bulletin_is_refused() {
 			.as_array_mut()
 			.expect("chains is an array")
 			.retain(|chain| chain["role"] != role);
-		bundled(&descriptor, false)
+		bundled(&descriptor, &ReservedValuesPolicy::default())
 	};
 
 	assert_eq!(
@@ -132,7 +160,13 @@ fn a_tld_that_is_not_a_dns_label_is_refused() {
 	let tlds = ["", ".paseo", "Paseo", "pa.seo", "-paseo"];
 
 	assert_eq!(
-		tlds.map(|tld| Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true)),
+		tlds.map(|tld| Stack::new(
+			identity(),
+			"paseo".into(),
+			tld.into(),
+			chains.clone(),
+			&ReservedValuesPolicy::ALLOWED
+		)),
 		tlds.map(|tld| Err(StackError::InvalidTld { tld: tld.into() })),
 	);
 }
@@ -150,8 +184,17 @@ fn a_tld_whose_names_mean_something_else_is_refused() {
 		bulletin: [0xb2; 32],
 	};
 	let refusal = |tld: &str| {
-		let from_parts = Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true);
-		let bundled = bundled(&test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]), false);
+		let from_parts = Stack::new(
+			identity(),
+			"paseo".into(),
+			tld.into(),
+			chains.clone(),
+			&ReservedValuesPolicy::ALLOWED,
+		);
+		let bundled = bundled(
+			&test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]),
+			&ReservedValuesPolicy::default(),
+		);
 		[from_parts.err(), bundled.err()].map(|error| error.map(|error| error.to_string()))
 	};
 
@@ -224,19 +267,17 @@ fn reserved_values_need_the_builds_permission() {
 	let on_dot = test_descriptor("dot", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 	let on_polkadot_asset_hub =
 		test_descriptor("paseo", [0xa1; 32], [0xb2; 32], POLKADOT_ASSET_HUB);
-	let mut polkadot_people_as_another_role =
-		test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	polkadot_people_as_another_role["chains"]
-		.as_array_mut()
-		.expect("chains is an array")
-		.push(test_descriptor_chain("Collectives", POLKADOT_PEOPLE, Some(1001)));
+	let polkadot_people_as_another_role = with_an_unread_role(POLKADOT_PEOPLE);
 
 	assert_eq!(
 		[&on_dot, &on_polkadot_asset_hub, &polkadot_people_as_another_role].map(|descriptor| {
-			(bundled(descriptor, false).err(), bundled(descriptor, true).is_ok())
+			(
+				bundled(descriptor, &ReservedValuesPolicy::default()).err(),
+				bundled(descriptor, &ReservedValuesPolicy::ALLOWED).is_ok(),
+			)
 		}),
 		[
-			(Some(StackError::ReservedTld), true),
+			(Some(StackError::ReservedTld { tld: "dot".to_string() }), true),
 			(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_ASSET_HUB }), true),
 			(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true),
 		]
@@ -255,10 +296,138 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 
 	assert_eq!(
 		(
-			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains.clone(), false).err(),
-			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains, true).is_ok(),
+			Stack::new(
+				identity(),
+				"polkadot".into(),
+				"paseo".into(),
+				chains.clone(),
+				&ReservedValuesPolicy::default()
+			)
+			.err(),
+			Stack::new(
+				identity(),
+				"polkadot".into(),
+				"paseo".into(),
+				chains,
+				&ReservedValuesPolicy::ALLOWED
+			)
+			.is_ok(),
 		),
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
+	);
+}
+
+/// A build reserves the values of a network it ships so that no other stack
+/// passes for it. They are held to the rule Polkadot's are.
+#[test]
+fn a_builds_extra_reserved_values_are_refused() {
+	let on_extra_tld = test_descriptor("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let on_extra_asset_hub = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xe5; 32]);
+	let extra_hash_as_another_role = with_an_unread_role([0xd4; 32]);
+
+	assert_eq!(
+		[&on_extra_tld, &on_extra_asset_hub, &extra_hash_as_another_role].map(|descriptor| {
+			(
+				bundled(descriptor, &ReservedValuesPolicy::default()).is_ok(),
+				bundled(descriptor, &reserving_extras()).err(),
+			)
+		}),
+		[
+			(true, Some(StackError::ReservedTld { tld: "testnet".to_string() })),
+			(true, Some(StackError::ReservedGenesis { genesis_hash: [0xe5; 32] })),
+			(true, Some(StackError::ReservedGenesis { genesis_hash: [0xd4; 32] })),
+		]
+	);
+}
+
+/// A build can add to the core's reserved values and cannot replace them.
+#[test]
+fn a_builds_extra_reserved_values_leave_the_cores_in_force() {
+	let on_dot = test_descriptor("dot", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let on_polkadot_people = test_descriptor("paseo", POLKADOT_PEOPLE, [0xb2; 32], [0xc3; 32]);
+
+	assert_eq!(
+		[&on_dot, &on_polkadot_people].map(|descriptor| bundled(descriptor, &reserving_extras())),
+		[
+			Err(StackError::ReservedTld { tld: "dot".to_string() }),
+			Err(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }),
+		]
+	);
+}
+
+/// A stack allowed reserved values may name any of them, so extra ones beside
+/// `allowed` would reserve nothing. The build is told instead.
+#[test]
+fn allowed_reserved_values_with_extra_ones_are_refused() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let policies = [
+		ReservedValuesPolicy {
+			extra_tlds: vec!["testnet".to_string()],
+			..ReservedValuesPolicy::ALLOWED
+		},
+		ReservedValuesPolicy {
+			extra_genesis_hashes: vec![[0xe5; 32]],
+			..ReservedValuesPolicy::ALLOWED
+		},
+	];
+
+	assert_eq!(
+		policies.map(|policy| {
+			(
+				bundled(&descriptor, &policy).err(),
+				Stack::new(identity(), "paseo".into(), "paseo".into(), chains.clone(), &policy)
+					.err(),
+			)
+		}),
+		[(); 2]
+			.map(|()| (Some(StackError::AllowedWithExtras), Some(StackError::AllowedWithExtras))),
+	);
+}
+
+/// A reserved TLD is compared with a stack's as written, and a stack's TLD is
+/// one the core serves, so any other entry would reserve nothing. The build is
+/// told instead.
+#[test]
+fn an_extra_tld_no_stack_can_have_is_refused() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let entries = ["kusama", ".testnet", "Testnet", "testnet ", ""];
+	let reserving = |entry: &str| ReservedValuesPolicy {
+		extra_tlds: vec!["testnet".to_string(), entry.to_string()],
+		..ReservedValuesPolicy::default()
+	};
+
+	assert_eq!(
+		entries.map(|entry| bundled(&descriptor, &reserving(entry))),
+		entries.map(|entry| Err(StackError::UnsupportedReservedTld { tld: entry.to_string() })),
+	);
+}
+
+/// The policy is the build's own and stays the same whatever stack it runs, so
+/// a fault in it is reported even while the stack breaks a rule of its own.
+#[test]
+fn a_policy_fault_is_reported_before_the_stacks() {
+	let policy = ReservedValuesPolicy {
+		extra_tlds: vec!["kusama".to_string()],
+		..ReservedValuesPolicy::default()
+	};
+	let on_kusama = test_descriptor("kusama", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let (_, bytes) = sign_test_descriptor(&on_kusama);
+	let zero_asset_hub =
+		StackChains { relay: None, asset_hub: [0; 32], people: [0xa1; 32], bulletin: [0xb2; 32] };
+
+	assert_eq!(
+		[
+			bundled(&on_kusama, &policy),
+			Stack::bundled(&test_stack_link(None), &bytes, &policy),
+			Stack::new(identity(), "paseo".into(), "kusama".into(), zero_asset_hub, &policy),
+		],
+		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })),
 	);
 }
 
@@ -268,7 +437,13 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 fn an_all_zero_relay_or_asset_hub_is_refused() {
 	let stack = |relay, asset_hub| {
 		let chains = StackChains { relay, asset_hub, people: [0xa1; 32], bulletin: [0xb2; 32] };
-		Stack::new(identity(), "paseo".into(), "paseo".into(), chains, true)
+		Stack::new(
+			identity(),
+			"paseo".into(),
+			"paseo".into(),
+			chains,
+			&ReservedValuesPolicy::ALLOWED,
+		)
 	};
 
 	assert_eq!(
@@ -284,7 +459,7 @@ fn an_all_zero_relay_or_asset_hub_is_refused() {
 fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
 	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 	let (link, _) = sign_test_descriptor(&descriptor);
-	let stack = bundled(&descriptor, false).expect("stack is valid");
+	let stack = bundled(&descriptor, &ReservedValuesPolicy::default()).expect("stack is valid");
 
 	assert_eq!(
 		(stack.id(), stack.generation()),
@@ -310,7 +485,14 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	};
 	let stack = |id: &str, generation: &str| {
 		let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
-		Stack::new(identity, "paseo".into(), "paseo".into(), chains.clone(), false).err()
+		Stack::new(
+			identity,
+			"paseo".into(),
+			"paseo".into(),
+			chains.clone(),
+			&ReservedValuesPolicy::default(),
+		)
+		.err()
 	};
 
 	assert_eq!(
@@ -332,7 +514,9 @@ fn the_account_data_store_comes_from_the_descriptor() {
 		if let Some(contracts) = contracts {
 			descriptor["contracts"] = contracts;
 		}
-		bundled(&descriptor, false).expect("stack is valid").account_data_store()
+		bundled(&descriptor, &ReservedValuesPolicy::default())
+			.expect("stack is valid")
+			.account_data_store()
 	};
 	let named = |address: String| Some(serde_json::json!({ "accountDataStore": address }));
 	let other_contract = serde_json::json!({ "other": format!("0x{}", "22".repeat(20)) });
