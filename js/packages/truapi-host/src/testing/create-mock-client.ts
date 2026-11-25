@@ -30,6 +30,7 @@ import {
   type MockHostConfig,
   type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
+import { stackGenesisHashes } from "./networks.js";
 import {
   resolveAccount,
   type DevAccount,
@@ -82,21 +83,23 @@ export async function createMockClient(
     new URL("../../dist/wasm/testing/truapi_server.js", import.meta.url).href;
   const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
     default: () => Promise<unknown>;
-    WasmSigningHostRuntime: new (
-      callbacks: unknown,
-      config: unknown,
-    ) => SigningRuntime;
+    WasmSigningHostRuntime: {
+      create(callbacks: unknown, config: unknown): Promise<SigningRuntime>;
+    };
   };
   await glue.default();
 
   const { createWasmRawCallbacks } =
     await import("../generated/host-callbacks-adapter.js");
 
-  const host = createMockHost(options.mock);
   const { productId, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
-  const runtime = new glue.WasmSigningHostRuntime(
+  const host = createMockHost({
+    servedChains: stackGenesisHashes(hostConfig.testStack),
+    ...options.mock,
+  });
+  const runtime = await glue.WasmSigningHostRuntime.create(
     {
       // Supplied outside the generated adapter, as the worker runtime does.
       ...createWasmRawCallbacks(host.callbacks),

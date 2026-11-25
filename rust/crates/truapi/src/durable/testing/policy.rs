@@ -5,31 +5,34 @@ use std::{
 	sync::atomic::{AtomicU8, Ordering},
 };
 
-use futures::future::{BoxFuture, pending, ready};
+use futures::{
+	channel::oneshot,
+	future::{BoxFuture, pending, ready},
+};
 use parking_lot::Mutex;
 
 use super::{extrinsic, insert_with_plan};
 use crate::{
 	chain::{EncodedExtrinsic, MortalExtrinsic},
 	durable::{
-		engine::DurableSubmission,
+		engine::{DeferredSubmission, DurableSubmission},
 		model::{
-			DomainId, DurableTxEntry, DurableTxId, PolicyId, PolicyParams, ScheduledDurableTx,
-			SubmissionPlan, VerdictFailureKind,
+			DeferredDurableTx, DomainId, DurableTxEntry, DurableTxId, PolicyParams, SubmissionPlan,
+			VerdictFailureKind,
 		},
 		policy::{PolicyError, Preparation, SubmissionPolicy},
 	},
 	store::Db,
 };
 
-/// The id of the policy a test uses unless it needs a second one.
-pub fn test_policy_id() -> PolicyId {
-	PolicyId::new("test-policy")
+/// A plan with `params`.
+pub fn test_plan(params: Vec<u8>) -> SubmissionPlan {
+	SubmissionPlan { params: PolicyParams(params) }
 }
 
-/// A plan of the test policy with `params`.
-pub fn test_plan(params: Vec<u8>) -> SubmissionPlan {
-	SubmissionPlan { policy: test_policy_id(), params: PolicyParams(params) }
+/// A deferred submission built from `params` that waits for nothing.
+pub fn test_submission(params: Vec<u8>) -> DeferredSubmission {
+	DeferredSubmission::independent(PolicyParams(params))
 }
 
 /// What a [`ScriptedPolicy`] answers for one batch.
@@ -49,11 +52,10 @@ enum RetryAnswer {
 /// A policy that answers batches with a script and retries every failure
 /// unless told otherwise, recording every question.
 pub struct ScriptedPolicy {
-	id: PolicyId,
 	retry_answer: RetryAnswer,
 	script: PrepareScript,
 	retry_questions: Mutex<Vec<RetryQuestion>>,
-	batches: Mutex<Vec<Vec<DurableTxId>>>,
+	batches: Mutex<Vec<Vec<DeferredDurableTx>>>,
 }
 
 /// One [`SubmissionPolicy::can_retry`] call.
@@ -68,10 +70,9 @@ pub struct RetryQuestion {
 }
 
 impl ScriptedPolicy {
-	/// The test policy, answering every batch with `script`.
+	/// A policy, answering every batch with `script`.
 	pub fn from_script(script: PrepareScript) -> Self {
 		Self {
-			id: test_policy_id(),
 			retry_answer: RetryAnswer::Retry,
 			script,
 			retry_questions: Mutex::new(Vec::new()),
@@ -79,7 +80,7 @@ impl ScriptedPolicy {
 		}
 	}
 
-	/// The test policy, answering every batch at once with what `answer`
+	/// A policy, answering every batch at once with what `answer`
 	/// gives for its ids.
 	pub fn answering_with(
 		answer: impl Fn(&[DurableTxId]) -> PrepareAnswer + Send + Sync + 'static,
@@ -87,7 +88,7 @@ impl ScriptedPolicy {
 		Self::from_script(Box::new(move |ids| Box::pin(ready(answer(ids)))))
 	}
 
-	/// The test policy, building every row it is asked about into new bytes:
+	/// A policy, building every row it is asked about into new bytes:
 	/// [`extrinsic_for_index`] of each build's index, from 0.
 	pub fn building_everything() -> Self {
 		let builds = AtomicU8::new(0);
@@ -99,25 +100,20 @@ impl ScriptedPolicy {
 		})
 	}
 
-	/// The test policy, with nothing to say about any row yet, so every row
+	/// A policy, with nothing to say about any row yet, so every row
 	/// keeps waiting.
 	pub fn answering_nothing() -> Self {
 		Self::answering_with(|_| Ok(HashMap::new()))
 	}
 
-	/// The test policy, giving up on every row it is asked about.
+	/// A policy, giving up on every row it is asked about.
 	pub fn giving_up() -> Self {
 		Self::answering_with(|ids| answer_all_with(ids, Preparation::GiveUp))
 	}
 
-	/// The test policy, whose builds never finish.
+	/// A policy, whose builds never finish.
 	pub fn never_answering() -> Self {
 		Self::from_script(Box::new(|_| Box::pin(pending())))
-	}
-
-	/// This policy under the id `id`, for a test with a second policy.
-	pub fn named(self, id: PolicyId) -> Self {
-		Self { id, ..self }
 	}
 
 	/// This policy, answering that no failure is worth another attempt.
@@ -132,16 +128,17 @@ impl ScriptedPolicy {
 
 	/// The ids of every batch asked, in order.
 	pub fn batches(&self) -> Vec<Vec<DurableTxId>> {
-		self.batches.lock().clone()
+		self.batches.lock().iter().map(|batch| batch_ids(batch)).collect()
+	}
+
+	/// Every row handed over in any batch, in the order asked.
+	pub fn rows_asked(&self) -> Vec<DeferredDurableTx> {
+		self.batches.lock().iter().flatten().cloned().collect()
 	}
 }
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for ScriptedPolicy {
-	fn id(&self) -> PolicyId {
-		self.id.clone()
-	}
-
 	fn can_retry(
 		&self,
 		entry: &DurableTxEntry,
@@ -153,16 +150,41 @@ impl SubmissionPolicy for ScriptedPolicy {
 		self.retry_answer == RetryAnswer::Retry
 	}
 
-	async fn prepare(&self, batch: &[ScheduledDurableTx]) -> PrepareAnswer {
-		let ids: Vec<DurableTxId> = batch.iter().map(|scheduled| scheduled.id).collect();
-		self.batches.lock().push(ids.clone());
+	async fn prepare(&self, batch: &[DeferredDurableTx]) -> PrepareAnswer {
+		let ids: Vec<DurableTxId> = batch.iter().map(|deferred| deferred.id).collect();
+		self.batches.lock().push(batch.to_vec());
 		(self.script)(&ids).await
 	}
+}
+
+/// The ids of the rows of `batch`, in order.
+fn batch_ids(batch: &[DeferredDurableTx]) -> Vec<DurableTxId> {
+	batch.iter().map(|row| row.id).collect()
 }
 
 /// The same `preparation` for every id of `ids`.
 pub fn answer_all_with(ids: &[DurableTxId], preparation: Preparation) -> PrepareAnswer {
 	Ok(ids.iter().map(|id| (*id, preparation.clone())).collect())
+}
+
+/// A script whose first build waits until the returned sender fires, and
+/// every build answers with new bytes.
+pub fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
+	let (release, released) = oneshot::channel::<()>();
+	let gate = Mutex::new(Some(released));
+	let builds = AtomicU8::new(0);
+	let script: PrepareScript = Box::new(move |ids| {
+		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
+		let answer = answer_all_with(ids, Preparation::Ready { extrinsic: built, params: None });
+		let first_gate = gate.lock().take();
+		Box::pin(async move {
+			if let Some(released) = first_gate {
+				let _ = released.await;
+			}
+			answer
+		})
+	});
+	(release, script)
 }
 
 /// The bytes build `index` of [`ScriptedPolicy::building_everything`]

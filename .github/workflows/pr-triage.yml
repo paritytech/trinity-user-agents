@@ -117,11 +117,11 @@ jobs:
               const lines = files
                 .filter(f => !skipped.some(re => re.test(f.filename)))
                 .reduce((n, f) => n + f.additions + f.deletions, 0);
-              const size = lines < 10 ? 'size:XS'
-                : lines < 30 ? 'size:S'
-                : lines < 100 ? 'size:M'
-                : lines < 500 ? 'size:L'
-                : lines < 1000 ? 'size:XL'
+              const size = lines < 50 ? 'size:XS'
+                : lines < 200 ? 'size:S'
+                : lines < 500 ? 'size:M'
+                : lines < 1000 ? 'size:L'
+                : lines < 2000 ? 'size:XL'
                 : 'size:XXL';
               core.info(`${lines} reviewable lines: ${size}`);
               for (const s of labels.filter(l => sizes.includes(l) && l !== size)) await remove(s);

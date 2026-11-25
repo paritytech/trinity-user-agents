@@ -7,8 +7,8 @@ use truapi::{
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
-		PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
-		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+		PlatformInfo, PreimageHost, ProductContext, ProductStorage, ProviderError, ThemeHost,
+		UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -51,29 +51,17 @@ impl ProductStorage for WireShapePlatform {
 	async fn clear(&self, _key: String) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
+	async fn clear_product(
+		&self,
+		_product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
 	fn subscribe_storage(
 		&self,
 		_key: String,
 	) -> BoxStream<'static, Result<v01::HostLocalStorageChangeItem, v01::GenericError>> {
 		Box::pin(stream::empty())
-	}
-}
-
-#[async_trait::async_trait]
-impl ProductOperations for WireShapePlatform {
-	async fn begin_operation(
-		&self,
-		_product: &ProductContext,
-		_label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		Ok(v01::HostWorkerBeginOperationResponse { id: 1 })
-	}
-	async fn end_operation(
-		&self,
-		_product: &ProductContext,
-		_id: u32,
-	) -> Result<(), v01::HostWorkerOperationError> {
-		Ok(())
 	}
 }
 
@@ -88,9 +76,9 @@ impl Navigation for WireShapePlatform {
 impl Notifications for WireShapePlatform {
 	async fn push_notification(
 		&self,
-		_notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
-		Ok(v01::HostPushNotificationResponse { id: 0 })
+		_notification: truapi::latest::HostPushNotificationRequest,
+	) -> Result<truapi::latest::HostPushNotificationResponse, truapi::latest::GenericError> {
+		Ok(truapi::latest::HostPushNotificationResponse { id: 0 })
 	}
 
 	async fn cancel_notification(&self, _id: u32) -> Result<(), v01::GenericError> {

@@ -3,8 +3,6 @@ package io.paritytech.polkadotapp.app.root.presentation.root.compose
 import android.os.SystemClock
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -16,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
@@ -38,6 +37,7 @@ import io.paritytech.polkadotapp.design.components.docklet.dockletTouch
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.design.utils.rememberTouchExplorationEnabled
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.drop
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -46,7 +46,9 @@ private val TipAnchorWidth = 1.dp
 @Composable
 fun DockletAutoHideEffect(
     hideState: DockletHideState,
+    enabled: Boolean,
     searchOpen: Boolean,
+    keyboardUp: Boolean,
     tipShown: Boolean,
     panelExpanded: Boolean,
     dockletAreas: () -> List<DockletFrame>,
@@ -56,23 +58,28 @@ fun DockletAutoHideEffect(
     val talkBack = rememberTouchExplorationEnabled()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val resumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
-    val ime = WindowInsets.ime
-    val imeUp by remember(ime, density) { derivedStateOf { ime.getBottom(density) > 0 } }
     val shownAtRest by remember(hideState) { derivedStateOf { hideState.isShownAtRest } }
     val scope = rememberCoroutineScope()
     val autoHide = remember(hideState, scope) { DockletAutoHide(scope) { hideState.quietHide() } }
     val currentAreas by rememberUpdatedState(dockletAreas)
 
     val blockers = DockletAutoHideBlockers(
+        enabled = enabled,
         shownAtRest = shownAtRest,
         searchOpen = searchOpen,
-        keyboardUp = imeUp,
+        keyboardUp = keyboardUp,
         tipShown = tipShown,
         panelExpanded = panelExpanded,
         touchExploration = talkBack,
         resumed = resumed,
     )
     SideEffect { autoHide.blocked = blockers.blocked }
+
+    // The tap on the switch is an outside touch that starts a quiet hide on ACTION_DOWN, before the switch flips on ACTION_UP.
+    val currentEnabled by rememberUpdatedState(enabled)
+    LaunchedEffect(hideState) {
+        snapshotFlow { currentEnabled }.drop(1).collect { if (!it) hideState.undoQuietHide() }
+    }
 
     inputs.collectAsEffect { _, input ->
         when (input) {

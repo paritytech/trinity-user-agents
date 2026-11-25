@@ -32,6 +32,11 @@ A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](..
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
 
+A host that uses the raw glue builds each runtime with an async `create`, as in
+`await WasmPairingHostRuntime.create(callbacks, hostConfig)`. Building one reads
+the core's stack record from the host's core storage, which answers
+asynchronously.
+
 `ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
 the host build runs:
 
@@ -45,8 +50,39 @@ The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key and a
 descriptor without an Asset Hub, People or Bulletin chain.
 
-The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+A pairing or signing host runtime keeps the descriptor current when the host
+passes two raw callbacks to `create`, typed as `StackCallbacks`. A
+`WasmProductRuntime` built on its own starts from the stored copy but does not
+refresh it.
+
+- `fetchStackDescriptor(request)`: fetch `request.url` with a `GET`, without
+  following redirects, and answer `document` or `notModified`. Throw for
+  anything else.
+  The core asks once its copy is an hour old, which is at start unless the
+  copy it stored was fetched less than an hour ago, and on `refreshStack()`.
+  A sleeping device can stretch that hour, so call `refreshStack()` when the
+  page becomes visible again.
+- `stackChanged(status)`: the `StackStatus` at start and on each change, also
+  for a host without `fetchStackDescriptor`. The same value comes from
+  `stackStatus()`. `restartRequired` means a newer copy changes a chain, the
+  network or the generation, and applies once the runtime is built again. A
+  copy on another TLD than the bundled descriptor is refused, and `lastRefresh`
+  says so. `generation` changes when the stack restarts its chains: key cached
+  chain data by it.
+
+The core keeps the last copy it verified in core storage, under the
+`StackRecord` key, and starts from it when it is newer than the bundled one.
+`create` waits a few seconds at most for that read, then starts from the
+bundled copy.
+
+Without `fetchStackDescriptor` the core stays on the copy it started from. The
+`/web` worker runtime does not pass these callbacks yet.
+
+The test host has no descriptor, so it passes `testStack` instead: an `id` and
+a `generation`, the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it.
+A runtime built from it does not refresh: it calls neither stack callback, and
+`stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
@@ -203,9 +239,8 @@ render cannot take the surrounding surface with it. Exactly one terminal fires
 per render: `onComplete` means the last tree delivered stands, `onError` means
 it is partial and must not be shown as final. A product that declines the
 render, a tree that fails to decode, a closed connection, and a throwing
-renderer all arrive as `onError`. An open render holds one worker reference for
-the provider's product, released when the stream ends or the disposer runs, so
-the product's worker stays up for as long as something is being drawn.
+renderer all arrive as `onError`. A surface that needs the worker takes a claim and releases it when the surface leaves.
+It can end or replace a render without changing worker demand.
 
 `publishChatAction` is the path for posted messages, commands and host-drawn
 `Actions` buttons. Each action entry point sits behind its own service's access
@@ -280,9 +315,12 @@ A running fixture answers the same address through
 `testHost.getProductAccountAddress(productId?, index?)`, which reads the session
 the host actually holds and so returns `undefined` while it is signed out.
 
-`contacts` needs both callbacks, or the group counts as absent. `pickContact`
-draws the picker and returns the chosen account, or `NoContacts` when there is
-nobody to show. `contacts({ handleKey, handles })` resolves the handles a
+`contacts` needs all three callbacks, `contacts`, `pickContact` and
+`contactUsernames`, or the group counts as absent. `pickContact` draws the
+picker and returns the chosen account, or `NoContacts` when there is nobody to
+show. `contactUsernames` returns the dotNS usernames of the unblocked contacts,
+which the core serves only to the game product, or `{ tag: "Unsupported" }`
+when the host cannot list them. `contacts({ handleKey, handles })` resolves the handles a
 transaction names: one entry per handle, in order, the account or `undefined`.
 A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
 account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
@@ -428,11 +466,17 @@ with `no allowance set for account`.
 | ---------------------------------------- | -------------------------------------- |
 | `SessionUiInfo.deviceStatementAccountId` | On every `AuthState.Connected`         |
 | `getDeviceStatementKey()`                | Runtime method, 64-byte sr25519 secret |
+| `SessionUiInfo.deviceEncPublicKey`       | On every `AuthState.Connected`         |
+| `getDeviceEncryptionKey()`               | Runtime method, 32-byte X25519 secret  |
 
 Peers are told to address that same account, so it is also what a host derives
-its own statement topics from. Both are `undefined` without an active session,
-and the account is rotated per login: read it from the current session rather
-than caching it across sign-ins.
+its own statement topics from. The wallet announces the account and the
+encryption public key together as this device, so contacts encrypt to that key:
+decrypt and encrypt with `getDeviceEncryptionKey()`, not a key of the host's
+own. All four are `undefined` without an active session, and both keys are
+rotated per login: read them from the current session rather than caching them
+across sign-ins. The paired wallet device's own encryption key is
+`SessionUiInfo.peerDeviceEncPublicKey`.
 
 ## Worker lifecycle
 
@@ -442,8 +486,7 @@ leaves. The host runs and stops the worker executable itself; the runtime only t
 
 | Runtime method                    | Use it to                                                        |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `acquireWorker(productId)`        | Take one reference while a holder is on screen or in flight.     |
-| `releaseWorker(productId)`        | Release one reference; with none held it is a no-op.             |
+| `claimWorker(productId)`          | Hold one reference until the returned handle's `release()` runs.  |
 | `subscribeWorkerDemand(listener)` | Learn which workers to run: current set first, then each change. |
 
 ```ts
@@ -452,8 +495,9 @@ const stop = runtime.subscribeWorkerDemand(({ productId, wanted }) => {
   else stopProductWorker(productId);
 });
 
-runtime.acquireWorker("chat-bot.dot"); // a room it serves came on screen
-runtime.releaseWorker("chat-bot.dot"); // the room left the screen
+const productId = await runtime.parseProductId("chat-bot.dot");
+const room = runtime.claimWorker(productId); // the room came on screen
+room.release(); // the room left the screen
 ```
 
 Two holders of one product hold one worker: the listener hears `wanted: true` once, on the first, and `wanted: false`

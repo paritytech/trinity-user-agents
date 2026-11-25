@@ -31,23 +31,15 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
-import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
-import io.paritytech.polkadotapp.design.components.icon.NovaIcon
-import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ShieldOutlined
-import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
-import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
 import kotlinx.collections.immutable.toImmutableList
@@ -55,7 +47,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToInt
-import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
  * The primary operating-mode control of the payment system: how much of what the user receives is held back
@@ -73,7 +64,8 @@ fun PaymentPrivacyModeSelector(
     modifier: Modifier = Modifier,
     shape: Shape,
     selectedMode: RecyclingStrategyType,
-    onModeSelected: (RecyclingStrategyType) -> Unit
+    onModeSelected: (RecyclingStrategyType) -> Unit,
+    onInfoClick: () -> Unit
 ) {
     PolkadotSurface(
         modifier = modifier,
@@ -83,37 +75,19 @@ fun PaymentPrivacyModeSelector(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(PolkadotTheme.spacings.mediumIncreased)
+                .padding(
+                    start = PolkadotTheme.spacings.mediumIncreased,
+                    end = PolkadotTheme.spacings.mediumIncreased,
+                    bottom = PolkadotTheme.spacings.small
+                )
         ) {
-            Header()
-
-            VerticalSpacer { extraMedium }
+            PrivacyModeHeader(onInfoClick = onInfoClick)
 
             ModeSelector(
                 selectedMode = selectedMode,
                 onModeSelected = onModeSelected
             )
         }
-    }
-}
-
-@Composable
-private fun Header() {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        NovaIcon(
-            modifier = Modifier.size(HEADER_ICON_SIZE),
-            imageVector = NovaIcons.ShieldOutlined,
-            tint = PolkadotTheme.colors.fg.secondary
-        )
-
-        HorizontalSpacer { small }
-
-        NovaText(
-            text = stringResource(RCommon.string.payment_privacy_mode_title, LocalPaymentAssetBrand.current.symbol)
-                .withCurrencyTickerStyle(PolkadotTheme.typography.body.large),
-            style = PolkadotTheme.typography.body.large,
-            color = PolkadotTheme.colors.fg.primary
-        )
     }
 }
 
@@ -338,8 +312,6 @@ private const val FAST_DRAG_SPEED = 3f
 private const val FADE_SMOOTHING = 0.4f
 private const val MILLIS_IN_SECOND = 1000f
 
-private val HEADER_ICON_SIZE = 24.dp
-
 @Preview
 @Composable
 private fun PaymentPrivacyModeSelectorPreview() = CompositionLocalProvider(
@@ -354,7 +326,8 @@ private fun PaymentPrivacyModeSelectorPreview() = CompositionLocalProvider(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(PolkadotTheme.radii.large),
                     selectedMode = mode,
-                    onModeSelected = {}
+                    onModeSelected = {},
+                    onInfoClick = {}
                 )
 
                 VerticalSpacer { mediumIncreased }

@@ -4,6 +4,7 @@ import SubstrateSdk
 import NovaCrypto
 import MessageExchangeKit
 import KeyDerivation
+import Individuality
 
 struct LitePersonRegistrationParams {
     let accountId: AccountId
@@ -26,12 +27,20 @@ struct UsernameRegistrationParams {
     let reservation: Reservation
 }
 
+/// The messages the three account signatures cover; the runtime prepends its signing context to each.
+struct LitePersonSigningMessages {
+    let accountIdProof: Data
+    let consumerRegistration: Data
+    let reservation: Data
+}
+
 protocol LitePersonParamsFactoryProtocol {
     func deriveRegistrationParams(
         for usernameBase: String,
         attester: AccountId,
         signedAt: UInt64,
-        reservedUsername: String?
+        reservedUsername: String?,
+        signingContexts: AccountSigningContexts
     ) throws -> UsernameRegistrationParams
 }
 
@@ -55,76 +64,74 @@ final class LitePersonParamsFactory {
         self.liteVrfManager = liteVrfManager
 
         chatEncryptorFactory = try chatEncryptorManager.makeEncryptorFactory(
-            ownEncryptionKeyId: Chat.Contact.Own.main().encryptionKeyId
+            ownEncryptionKeyId: ChatEncryptionDomain.mainChat.rawValue
         )
     }
 }
 
 private extension LitePersonParamsFactory {
-    func prepareLitePersonSignatureData() throws -> Data {
+    func encryptionIdentifier() throws -> Chat.OnChainEncryptionIdentifier {
+        let chatPublicKey = try Chat.PublicKey(rawData: chatEncryptorFactory.localPublicKey)
+
+        return .x25519(chatPublicKey)
+    }
+
+    func accountIdProofMessage() throws -> Data {
         let memberKey = try liteVrfManager.getMemberKey()
 
         return Data(Self.msgPrefix.utf8) + publicKey.rawData() + memberKey
     }
 
-    func prepareResourcesSignatureData(
+    func consumerRegistrationMessage(
         for username: String,
         encryptionIdentifier: Chat.OnChainEncryptionIdentifier,
         verifier: AccountId,
         reservedUsername: String?
     ) throws -> Data {
-        let resourcesSignatureDataCoder = ScaleEncoder()
-        resourcesSignatureDataCoder.appendRaw(data: publicKey.rawData())
-        resourcesSignatureDataCoder.appendRaw(data: verifier)
-        try resourcesSignatureDataCoder.appendRaw(data: encryptionIdentifier.scaleEncoded())
-        try username.encode(scaleEncoder: resourcesSignatureDataCoder)
+        let encoder = ScaleEncoder()
+        encoder.appendRaw(data: publicKey.rawData())
+        encoder.appendRaw(data: verifier)
+        try encoder.appendRaw(data: encryptionIdentifier.scaleEncoded())
+        try username.encode(scaleEncoder: encoder)
+        try ScaleOption(value: reservedUsername).encode(scaleEncoder: encoder)
 
-        try ScaleOption(value: reservedUsername).encode(
-            scaleEncoder: resourcesSignatureDataCoder
-        )
+        return encoder.encode()
+    }
 
-        return resourcesSignatureDataCoder.encode()
+    func signWithAccount(_ message: Data, signingContext: Data?) throws -> Data {
+        let payload = (signingContext ?? Data()) + message
+
+        return try accountIdSigner.sign(payload, context: .rawBytes(publicKey)).rawData()
     }
 }
 
 extension LitePersonParamsFactory {
-    func deriveLitePersonParams(
-        for username: String,
-        verifier: AccountId,
+    func signingMessages(
+        for usernameBase: String,
+        attester: AccountId,
+        signedAt: UInt64,
         reservedUsername: String?
-    ) throws -> LitePersonRegistrationParams {
-        let litePersonSignatureData = try prepareLitePersonSignatureData()
+    ) throws -> LitePersonSigningMessages {
+        let encryptionIdentifier = try encryptionIdentifier()
 
-        let accountIdProofSignature = try accountIdSigner.sign(
-            litePersonSignatureData,
-            context: .rawBytes(publicKey)
-        )
-        .rawData()
-
-        let personSignature = try liteVrfManager.sign(litePersonSignatureData)
-
-        let chatPublicKey = try Chat.PublicKey(rawData: chatEncryptorFactory.localPublicKey)
-        let encryptionIdentifier = Chat.OnChainEncryptionIdentifier.x25519(chatPublicKey)
-
-        let resourcesSignatureData = try prepareResourcesSignatureData(
-            for: username,
-            encryptionIdentifier: encryptionIdentifier,
-            verifier: verifier,
-            reservedUsername: reservedUsername
+        let reservation = UsernameReservationMessage(
+            candidate: publicKey.rawData(),
+            attester: attester,
+            usernameBase: usernameBase,
+            chatKey: encryptionIdentifier,
+            reservedBaseLabel: reservedUsername.map { Data($0.utf8) },
+            signedAt: signedAt
         )
 
-        let resourcesSignature = try accountIdSigner.sign(resourcesSignatureData, context: .rawBytes(publicKey))
-
-        let memberKey = try liteVrfManager.getMemberKey()
-
-        return LitePersonRegistrationParams(
-            accountId: publicKey.rawData(),
-            accountIdProofSignature: accountIdProofSignature,
-            personMemberKey: memberKey,
-            membershipProofSignature: personSignature,
-            encryptionIdentifier: encryptionIdentifier,
-            username: username,
-            resourcesSignature: resourcesSignature.rawData()
+        return try LitePersonSigningMessages(
+            accountIdProof: accountIdProofMessage(),
+            consumerRegistration: consumerRegistrationMessage(
+                for: usernameBase,
+                encryptionIdentifier: encryptionIdentifier,
+                verifier: attester,
+                reservedUsername: reservedUsername
+            ),
+            reservation: reservation.scaleEncoded()
         )
     }
 }
@@ -134,35 +141,39 @@ extension LitePersonParamsFactory: LitePersonParamsFactoryProtocol {
         for usernameBase: String,
         attester: AccountId,
         signedAt: UInt64,
-        reservedUsername: String?
+        reservedUsername: String?,
+        signingContexts: AccountSigningContexts
     ) throws -> UsernameRegistrationParams {
-        let liteParams = try deriveLitePersonParams(
+        let messages = try signingMessages(
             for: usernameBase,
-            verifier: attester,
+            attester: attester,
+            signedAt: signedAt,
             reservedUsername: reservedUsername
         )
 
-        let message = UsernameReservationMessage(
-            candidate: publicKey.rawData(),
-            attester: attester,
-            usernameBase: usernameBase,
-            chatKey: liteParams.encryptionIdentifier,
-            reservedBaseLabel: reservedUsername.map { Data($0.utf8) },
-            signedAt: signedAt
-        )
-
-        let reservationSignature = try accountIdSigner.sign(
-            message.scaleEncoded(),
-            context: .rawBytes(publicKey)
-        )
-
-        return UsernameRegistrationParams(
-            litePerson: liteParams,
-            reservation: UsernameRegistrationParams.Reservation(
-                signature: reservationSignature.rawData(),
-                signedAt: signedAt,
-                reservedUsername: reservedUsername
+        let litePerson = try LitePersonRegistrationParams(
+            accountId: publicKey.rawData(),
+            accountIdProofSignature: signWithAccount(
+                messages.accountIdProof,
+                signingContext: signingContexts.peopleLite
+            ),
+            personMemberKey: liteVrfManager.getMemberKey(),
+            // The ring VRF proof is not an account signature, so the runtime checks it over the bare message.
+            membershipProofSignature: liteVrfManager.sign(messages.accountIdProof),
+            encryptionIdentifier: encryptionIdentifier(),
+            username: usernameBase,
+            resourcesSignature: signWithAccount(
+                messages.consumerRegistration,
+                signingContext: signingContexts.peopleLite
             )
         )
+
+        let reservation = try UsernameRegistrationParams.Reservation(
+            signature: signWithAccount(messages.reservation, signingContext: signingContexts.dotnsGateway),
+            signedAt: signedAt,
+            reservedUsername: reservedUsername
+        )
+
+        return UsernameRegistrationParams(litePerson: litePerson, reservation: reservation)
     }
 }

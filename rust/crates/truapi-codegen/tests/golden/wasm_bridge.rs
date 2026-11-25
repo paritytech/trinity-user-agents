@@ -35,6 +35,7 @@ pub struct JsBridge {
     pub subscribe_chat_rooms: Function,
     pub contacts: Function,
     pub pick_contact: Function,
+    pub contact_usernames: Function,
     pub read_core_storage: Function,
     pub write_core_storage: Function,
     pub clear_core_storage: Function,
@@ -52,11 +53,10 @@ pub struct JsBridge {
     pub subscribe_pocket_cards: Function,
     pub remove_pocket_card: Function,
     pub lookup_preimage: Function,
-    pub begin_operation: Function,
-    pub end_operation: Function,
     pub read: Function,
     pub write: Function,
     pub clear: Function,
+    pub clear_product: Function,
     pub subscribe_storage: Function,
     pub scan_code: Function,
     pub subscribe_theme: Function,
@@ -89,6 +89,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("contacts")),
             pick_contact: get_optional_function(callbacks, "pickContact")?
                 .unwrap_or_else(|| missing_callback("pickContact")),
+            contact_usernames: get_optional_function(callbacks, "contactUsernames")?
+                .unwrap_or_else(|| missing_callback("contactUsernames")),
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
@@ -114,11 +116,10 @@ impl JsBridge {
             remove_pocket_card: get_optional_function(callbacks, "removePocketCard")?
                 .unwrap_or_else(|| missing_callback("removePocketCard")),
             lookup_preimage: get_function(callbacks, "lookupPreimage")?,
-            begin_operation: get_function(callbacks, "beginOperation")?,
-            end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
+            clear_product: get_function(callbacks, "clearProduct")?,
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
             scan_code: get_optional_function(callbacks, "scanCode")?
                 .unwrap_or_else(|| missing_callback("scanCode")),
@@ -131,7 +132,8 @@ impl JsBridge {
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
-                && get_optional_function(callbacks, "pickContact")?.is_some(),
+                && get_optional_function(callbacks, "pickContact")?.is_some()
+                && get_optional_function(callbacks, "contactUsernames")?.is_some(),
             game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
                 && get_optional_function(callbacks, "cancelGameReminder")?.is_some(),
             permission_status_present: get_optional_function(callbacks, "devicePermissionStatus")?
@@ -189,17 +191,19 @@ impl crate::platform::ChatPlatform for WasmPlatform {
     async fn create_chat_room(
         &self,
         product: &crate::platform::ProductContext,
+        room_id: String,
         request: latest::HostChatCreateRoomRequest,
-    ) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+    ) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
         let bytes = invoke_bytes_return(
             &self.bridge.create_chat_room,
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
+                JsValue::from_str(&room_id),
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
         .await?;
-        Ok(decode_bytes::<latest::HostChatCreateRoomResponse>(
+        Ok(decode_bytes::<latest::ChatRoomRegistrationStatus>(
             bytes,
             "createChatRoom response did not decode",
         )?)
@@ -300,6 +304,21 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
         Ok(decode_bytes::<crate::platform::HostContactPick>(
             bytes,
             "pickContact response did not decode",
+        )?)
+    }
+
+    async fn contact_usernames(
+        &self,
+        _product: &crate::platform::ProductContext,
+    ) -> Result<crate::platform::HostContactUsernames, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.contact_usernames,
+            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+        )
+        .await?;
+        Ok(decode_bytes::<crate::platform::HostContactUsernames>(
+            bytes,
+            "contactUsernames response did not decode",
         )?)
     }
 }
@@ -560,44 +579,6 @@ impl crate::platform::PreimageHost for WasmPlatform {
 }
 
 #[async_trait::async_trait]
-impl crate::platform::ProductOperations for WasmPlatform {
-    async fn begin_operation(
-        &self,
-        product: &crate::platform::ProductContext,
-        label: String,
-    ) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.begin_operation,
-            vec![
-                Uint8Array::from(product.encode().as_slice()).into(),
-                JsValue::from_str(&label),
-            ],
-        )
-        .await?;
-        Ok(decode_bytes::<latest::HostWorkerBeginOperationResponse>(
-            bytes,
-            "beginOperation response did not decode",
-        )?)
-    }
-
-    async fn end_operation(
-        &self,
-        product: &crate::platform::ProductContext,
-        id: u32,
-    ) -> Result<(), latest::HostWorkerOperationError> {
-        invoke_unit(
-            &self.bridge.end_operation,
-            vec![
-                Uint8Array::from(product.encode().as_slice()).into(),
-                JsValue::from_f64(f64::from(id)),
-            ],
-        )
-        .await?;
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
 impl crate::platform::ProductStorage for WasmPlatform {
     async fn read(
         &self,
@@ -629,6 +610,18 @@ impl crate::platform::ProductStorage for WasmPlatform {
 
     async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError> {
         invoke_unit(&self.bridge.clear, vec![JsValue::from_str(&key)]).await?;
+        Ok(())
+    }
+
+    async fn clear_product(
+        &self,
+        product_id: truapi::ProductId,
+    ) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+        invoke_unit(
+            &self.bridge.clear_product,
+            vec![JsValue::from_str(product_id.as_str())],
+        )
+        .await?;
         Ok(())
     }
 

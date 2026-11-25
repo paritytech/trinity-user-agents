@@ -4,6 +4,9 @@ import android.content.SharedPreferences
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.DevServerProduct
+import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 
 class PrefsProductRuntimeSettingsTest {
     private val prefs = MapSharedPreferences()
@@ -34,6 +37,17 @@ class PrefsProductRuntimeSettingsTest {
         settings.setTrUAPIRuntimeEnabled(true)
 
         assertFalse(settings.isTrUAPIRuntimeEnabled())
+    }
+
+    // Only the core gives a development server product its id, so the toggle does not apply.
+    @Test
+    fun `a dev server product runs on TrUAPI whatever the toggle`() {
+        val settings = PrefsProductRuntimeSettings(prefs, isDebugBuild = false)
+        val productId = ProductId.parse("provider.dot").getOrThrow()
+        val devServer = ProductSource.DevServer(DevServerProduct(productId, "http://10.0.2.2:3000", "http://10.0.2.2:3000/"))
+
+        assertTrue(settings.isTrUAPIRuntimeEnabledFor(devServer))
+        assertFalse(settings.isTrUAPIRuntimeEnabledFor(null))
     }
 }
 

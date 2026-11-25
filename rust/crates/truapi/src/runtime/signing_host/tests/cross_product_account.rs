@@ -18,8 +18,8 @@ use parity_scale_codec::Encode;
 use truapi::versioned::{
 	account::{HostAccountSignVrfError, HostAccountSignVrfRequest},
 	signing::{
-		HostCreateTransactionRequest, HostSignPayloadError, HostSignPayloadRequest,
-		HostSignPayloadResponse, HostSignRawRequest,
+		HostSignPayloadError, HostSignPayloadRequest, HostSignPayloadResponse, HostSignRawRequest,
+		ProductAccountTxPayload,
 	},
 };
 
@@ -49,7 +49,7 @@ fn sign_as(
 	caller: &str,
 ) -> Result<v01::HostSignPayloadResponse, CallError<HostSignPayloadError>> {
 	let (services, activation) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	let runtime = product_runtime_for(services, activation, caller);
 
@@ -72,8 +72,8 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
-	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-	let owner = derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
+	let owner = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("dim2.paseo"), index_bytes(0))
 		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),
@@ -162,7 +162,7 @@ fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted
 		let platform = Arc::new(StubPlatform::default());
 		cache_grant(&platform, "dim2.paseo", trusted);
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("the local session activates");
 		let runtime = product_runtime_for(services, activation, "stash.paseo");
 
@@ -181,7 +181,7 @@ fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted
 fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost<WalletAccountHolder> {
 	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
 	let (services, activation) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	product_runtime_for(services, activation, "dim2next.paseo")
 }
@@ -200,10 +200,10 @@ fn raw_request(account: v01::ProductAccountId) -> HostSignRawRequest {
 	})
 }
 
-fn transaction_request(account: v01::ProductAccountId) -> HostCreateTransactionRequest {
+fn transaction_request(account: v01::ProductAccountId) -> ProductAccountTxPayload {
 	let mut payload = crate::test_support::product_tx_payload("dim2.paseo");
 	payload.signer = account;
-	HostCreateTransactionRequest::V1(payload)
+	ProductAccountTxPayload::V1(payload)
 }
 
 fn sign_payload_with(
@@ -372,7 +372,7 @@ fn a_product_is_asked_on_its_own_connection() {
 		..StubPlatform::default()
 	});
 	let (services, activation) = signing_runtime_with_platform(runtime_platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	let runtime = ProductRuntimeHost::from_services(
 		services.clone(),
@@ -416,7 +416,7 @@ fn a_cancelled_account_request_stops_waiting_for_the_prompt() {
 		..StubPlatform::default()
 	});
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	let runtime = product_runtime(services, activation);
 	let cancel = truapi::CancellationToken::default();

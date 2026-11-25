@@ -17,24 +17,26 @@ use crate::{
 };
 use futures::StreamExt;
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, v01, versioned::IntoLatest};
+use truapi::{Bytes32, latest, v01, versioned::IntoLatest};
 
 use super::{
-	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
+	pocket::{NativePocketObserver, card_side, keeping_faces, observe_pocket_cards},
 	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
-	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
+	HostRuntime, ImageError, ImageReference, LoadedImage, PairedSsoPeer,
+	PublicProfileResolutionOptions, ResponderExit, SigningHost, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
+	host_logic::root_entropy::RootEntropy,
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -60,13 +62,50 @@ use super::{
 		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
-#[cfg(doc)]
-use crate::WorkerTransition;
+
+/// Carries both kinds of core traffic to one host's callbacks.
+///
+/// The callbacks are held weakly, so a line in flight cannot resurrect a host
+/// being torn down, and a host that has gone simply stops receiving.
+struct CallbackSink {
+	callbacks: std::sync::Weak<dyn HostCallbacks>,
+}
+
+impl crate::logging::HostSink for CallbackSink {
+	fn log(&self, marker: &str, detail: &str) {
+		if let Some(callbacks) = self.callbacks.upgrade() {
+			callbacks.on_core_log(marker.to_string(), detail.to_string());
+		}
+	}
+
+	fn event(&self, marker: &str, attributes: Vec<crate::logging::CoreAttribute>) {
+		if let Some(callbacks) = self.callbacks.upgrade() {
+			callbacks.on_core_event(marker.to_string(), attributes);
+		}
+	}
+}
+
+/// One consumer's reference on a product worker.
+///
+/// Release the claim when its owner finishes. Dropping the last handle also releases it.
+#[derive(uniffi::Object)]
+pub struct NativeWorkerClaim {
+	reference: Mutex<Option<crate::WorkerHold>>,
+}
+
+#[uniffi::export]
+impl NativeWorkerClaim {
+	/// Release this claim once, even if several owners of this handle call concurrently.
+	pub fn release(&self) {
+		let reference = self.reference.lock().expect("worker claim mutex poisoned").take();
+		drop(reference);
+	}
+}
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
@@ -107,11 +146,8 @@ impl NativeTrUApiHostRuntime {
 		// regardless of the trace level, which defaults to ERROR and so drops
 		// everything the core would otherwise say about itself. The callbacks are
 		// held weakly so a line in flight cannot resurrect a host being torn down.
-		let log_callbacks = Arc::downgrade(&callbacks);
-		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
-			if let Some(callbacks) = log_callbacks.upgrade() {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
-			}
+		let host_sink = crate::logging::set_host_sink(Arc::new(CallbackSink {
+			callbacks: Arc::downgrade(&callbacks),
 		}));
 		// Raised through tracing rather than called directly, so a host log
 		// carries proof that the layer forwarding to this sink is alive. A host
@@ -147,7 +183,11 @@ impl NativeTrUApiHostRuntime {
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
 		))?;
-		let signing = SigningHostConfig { host: runtime_config.host, stack: stack_refresh.stack() };
+		let signing = SigningHostConfig {
+			host: runtime_config.host,
+			stack: stack_refresh.stack(),
+			materials_enabled: runtime_config.materials_enabled,
+		};
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -155,7 +195,8 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
+		let runtime =
+			Arc::new(HostRuntime::<SigningHost>::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -181,9 +222,14 @@ impl NativeTrUApiHostRuntime {
 			"a freshly built runtime installs its encrypted storage once"
 		);
 		runtime.start_core_services();
+		if let Some(secret) = runtime_config.device_encryption_key {
+			futures::executor::block_on(runtime.adopt_device_encryption_key(secret)).map_err(
+				|err| NativeRuntimeConfigError::DeviceEncryptionKeyAdoption { reason: err.reason },
+			)?;
+		}
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
-				secret,
+				RootEntropy::new(secret),
 				runtime_config.local_session_lite_username,
 			))
 			.map_err(|err| NativeRuntimeConfigError::LocalSessionActivation {
@@ -250,6 +296,7 @@ impl NativeTrUApiHostRuntime {
 			closed: AtomicBool::new(false),
 			chat_connection: Arc::new(crate::runtime::ActionChannel::chat()),
 			renderer_connection: Arc::new(crate::runtime::ActionChannel::renderer()),
+			renderer_failures: Arc::new(crate::runtime::ActionChannel::renderer_failures()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
 			product_control: Arc::new(Mutex::new(None)),
@@ -346,7 +393,7 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Funding session `intent` as the core holds it in full; see
-	/// [`SigningHostRuntime::funding_session`].
+	/// [`HostRuntime::funding_session`].
 	pub fn funding_session(
 		&self,
 		intent: String,
@@ -417,12 +464,9 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Offer the funding providers the remote configuration names; see
-	/// [`SigningHostRuntime::set_funding_provider_config`].
-	pub fn set_funding_provider_config(
-		&self,
-		published_names: Vec<String>,
-	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names)?)
+	/// [`HostRuntime::set_funding_provider_config`].
+	pub fn set_funding_provider_config(&self, published_names: Vec<String>) {
+		self.runtime.set_funding_provider_config(published_names);
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
@@ -447,9 +491,16 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did. `TooLate` asks the host to tell the user the balance was
-	/// already credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did. While its overlay is up
+	/// the core drops `present_funding`, which the host answers by taking the
+	/// overlay down, and the session is gone (`Cancelled`). Once started, it ends
+	/// when no provider serves it; otherwise the provider is asked
+	/// (`Requested`), and before money moved a second cancel ends it. After
+	/// money moved the provider may answer with an offer, read from the
+	/// session's `cancel` and answered with `confirm_funding_cancel`.
+	/// `TooLate` asks the host to tell the user the balance was already
+	/// credited; an ended session answers `Refused`.
 	pub async fn cancel_funding(
 		&self,
 		intent: String,
@@ -561,7 +612,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Disarm `start_funding_when_quoted` for session `intent`, as the user
-	/// leaves its quotes.
+	/// goes back from its quotes and the session stays open.
+	/// `cancel_funding` disarms it too.
 	pub fn cancel_funding_auto_start(&self, intent: String) {
 		self.runtime.cancel_funding_auto_start(&intent);
 	}
@@ -692,11 +744,13 @@ impl NativeTrUApiHostRuntime {
 		))
 	}
 
-	/// Take one reference on the product's worker for a modality holder. The
-	/// first one requests [`WorkerTransition::Start`]; pair every call with
-	/// one [`Self::release_worker`].
-	pub fn acquire_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().acquire(&product_id);
+	/// Claim a product's worker while this consumer needs it.
+	///
+	/// Each call returns a separate claim on the worker.
+	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
+		Arc::new(NativeWorkerClaim {
+			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
+		})
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -707,10 +761,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.worker_exited(&product_id);
 	}
 
-	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
-	/// Releasing with none held is a no-op.
-	pub fn release_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().release(&product_id);
+	/// Forget one product: revoke its grants and Allow once answers, then
+	/// remove its values from product storage through
+	/// [`HostCallbacks::clear_product_storage`]. The wallet session and
+	/// other products are kept.
+	///
+	/// Stop the product's executions first: a value a running execution
+	/// writes after the clear is kept.
+	pub async fn clear_product_state(&self, product_id: ProductId) -> Result<(), HostRejection> {
+		self.runtime
+			.clear_product_state(&product_id)
+			.await
+			.map_err(|error| HostRejection::Rejected { reason: error.reason })
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -854,6 +916,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.statement_renewal_owner_key().map_err(HostRejection::from)
 	}
 
+	/// Read this device's X25519 encryption secret, the key behind
+	/// `SessionUiInfo.deviceEncPublicKey` that the host's own chat and device
+	/// sync encrypt with.
+	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
+		Ok(futures::executor::block_on(self.runtime.device_encryption_key())?)
+	}
+
 	/// Stop renewing one fixed statement account, returning whether the ledger
 	/// held it.
 	///
@@ -928,7 +997,8 @@ impl NativeTrUApiHostRuntime {
 		lite_username: Option<String>,
 	) -> Result<(), HostRejection> {
 		futures::executor::block_on(
-			self.runtime.activate_local_session_with_identity(secret, lite_username),
+			self.runtime
+				.activate_local_session_with_identity(RootEntropy::new(secret), lite_username),
 		)
 		.map_err(Into::into)
 	}
@@ -939,18 +1009,6 @@ impl NativeTrUApiHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, NativeCoreDatabaseError> {
 		self.runtime.core_database_status().await.map_err(Into::into)
-	}
-
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Records expire after one hour; `force` skips the cache. Invalid usernames and
-	/// lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: String,
-		force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		self.runtime.resolve_public_profile(&username, force).await
 	}
 
 	/// Observes public profile metadata until resolution completes or fails.
@@ -979,6 +1037,29 @@ impl NativeTrUApiHostRuntime {
 	/// checked against its CID and the image policy. Dropping the future stops the load.
 	pub async fn load_image(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		self.runtime.load_image(reference).await
+	}
+
+	/// Follow the resolved materials of `tree` in `context`, a saved face or a preview:
+	/// `observer` gets it now and after each change, until cancelled. A node
+	/// that falls back is logged. Unless `float_filterable`, the shaders filter
+	/// 32-bit float images themselves.
+	pub fn resolve_materials(
+		&self,
+		tree: truapi::latest::RendererNode,
+		context: truapi::latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		let failures = Box::new(|_| {});
+		resolve_materials(
+			&self.runtime,
+			tree,
+			context,
+			float_filterable,
+			observer.into(),
+			failures,
+			&self.spawner,
+		)
 	}
 
 	/// Follow the Pocket collection: `observer` gets every card now and
@@ -1011,13 +1092,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.pocket.remove(product_id, card_id).await?)
 	}
 
-	/// The newest face kept for a card, if one is.
+	/// The newest face kept for one side of a card, if one is.
 	pub async fn pocket_card_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
-		Ok(self.pocket.face(product_id, card_id).await?)
+		Ok(self.pocket.face(product_id, card_id, side).await?)
 	}
 
 	/// Decides durable transactions from the chain until none is live, then
@@ -1068,7 +1150,7 @@ impl NativeTrUApiHostRuntime {
 /// One native executable connection opened from a process-owned host runtime.
 #[derive(uniffi::Object)]
 pub struct NativeProductExecution {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	product: ProductContext,
 	platform: Arc<dyn crate::platform::Platform>,
 	chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
@@ -1097,6 +1179,13 @@ pub struct NativeProductExecution {
 	renderer_connection: Arc<
 		crate::runtime::ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>,
 	>,
+	/// The `Materials` nodes that fell back in this execution's bodies, shared
+	/// with every product connection it opens.
+	renderer_failures: Arc<
+		crate::runtime::ActionChannel<
+			truapi::versioned::renderer::HostRendererFailureSubscribeItem,
+		>,
+	>,
 	closed: AtomicBool,
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
@@ -1112,6 +1201,7 @@ impl NativeProductExecution {
 			permission_grants: self.permission_grants.clone(),
 			chat: self.chat_connection.clone(),
 			renderer: self.renderer_connection.clone(),
+			renderer_failures: self.renderer_failures.clone(),
 			pocket_platform: Some(Arc::new(self.pocket.clone())),
 			expanded_card: Some(self.expanded_card.clone()),
 			game_platform: self.game.clone(),
@@ -1234,12 +1324,6 @@ impl NativeProductExecution {
 		Ok(futures::executor::block_on(self.admin().get_session_chat_identity_key())?)
 	}
 
-	/// Read this device's X25519 encryption secret, for device sync against a
-	/// peer's `deviceEncPublicKey`. Generated and persisted on first read.
-	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
-		Ok(futures::executor::block_on(self.admin().get_device_encryption_key())?)
-	}
-
 	/// Resolve a product's hard-subtree public key for hosts naming the account
 	/// a review will sign with. Answers from the cache, the persisted slot, or
 	/// the Account Holder, and `timeout_ms` bounds that wait. Exceeding it is
@@ -1328,22 +1412,51 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
-		let card_id = match &request.context {
-			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
-			_ => None,
-		};
+		let card = card_side(&request.context);
 		let stream = control.render(request)?;
-		let observer = match card_id {
-			Some(card_id) => keeping_faces(
+		let observer = match card {
+			Some((card_id, side)) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
+				side,
 				observer,
 				&self.spawner,
 			),
 			None => observer,
 		};
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
+	}
+
+	/// Follow the resolved materials of `tree`, a body this execution's product rendered in
+	/// `context`: `observer` gets it now and after each change, until
+	/// cancelled. A node that falls back is logged and reported to the product
+	/// through `Renderer::failure_subscribe`. Unless `float_filterable`, the
+	/// shaders filter 32-bit float images themselves.
+	pub fn resolve_materials(
+		&self,
+		tree: latest::RendererNode,
+		context: latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		let channel = self.renderer_failures.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			let item = failure.report(reported.clone());
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = channel.publish(item.into());
+		});
+		resolve_materials(
+			&self.runtime,
+			tree,
+			context,
+			float_filterable,
+			observer.into(),
+			failures,
+			&self.spawner,
+		)
 	}
 
 	/// Publish one action triggered inside a product-rendered body, buffering
@@ -1369,6 +1482,7 @@ impl NativeProductExecution {
 		self.permission_grants.clear();
 		self.chat_connection.close();
 		self.renderer_connection.close();
+		self.renderer_failures.close();
 	}
 }
 

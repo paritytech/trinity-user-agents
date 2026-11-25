@@ -48,7 +48,7 @@ use truapi::latest;
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+	Permissions, PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey,
 	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 
@@ -127,17 +127,6 @@ pub enum PermissionKind {
 	Device,
 	/// A remote-capability prompt ([`Permissions::remote_permission`]).
 	Remote,
-}
-
-/// One operation a product began and has not ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenOperation {
-	/// Product that began it.
-	pub product_id: ProductId,
-	/// Id the mock handed back, unique among this product's open operations.
-	pub id: u32,
-	/// Label the product gave, empty when it gave none.
-	pub label: String,
 }
 
 /// One permission answer the mock gave, recorded for assertions.
@@ -230,9 +219,9 @@ pub struct MockConfig {
 	/// Whether `feature_supported` reports support.
 	pub feature_supported: bool,
 	/// When set, `feature_supported` answers from `served_chains`, as a real
-	/// host does, so a chain outside that set is unsupported. It becomes the
-	/// default in a later breaking release. The JS mock's `onlyServedChains` is
-	/// the same option.
+	/// host does, so a chain outside that set is unsupported. Set by default;
+	/// unset reports every chain as supported. The JS mock's `onlyServedChains`
+	/// is the same option.
 	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
@@ -260,7 +249,7 @@ impl Default for MockConfig {
 			device_permissions: PermissionPolicy::AllowAll,
 			remote_permissions: PermissionPolicy::AllowAll,
 			feature_supported: true,
-			only_served_chains: false,
+			only_served_chains: true,
 			theme: latest::ThemeVariant::Dark,
 			language_tag: "en".to_string(),
 			confirm_user_actions: true,
@@ -345,8 +334,6 @@ pub struct MockPlatform {
 	chat_room_subscribers:
 		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
 	next_chat_message_id: Arc<AtomicU32>,
-	next_operation_id: Arc<AtomicU32>,
-	open_operations: Arc<Mutex<Vec<OpenOperation>>>,
 	/// Current theme. Seeded from the config and replaced by `set_theme`.
 	theme: Arc<Mutex<latest::ThemeVariant>>,
 	theme_subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostThemeSubscribeItem>>>>,
@@ -397,8 +384,6 @@ impl MockPlatform {
 			chat_messages: Arc::new(Mutex::new(Vec::new())),
 			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
 			next_chat_message_id: Arc::new(AtomicU32::new(0)),
-			next_operation_id: Arc::new(AtomicU32::new(0)),
-			open_operations: Arc::new(Mutex::new(Vec::new())),
 			theme: Arc::new(Mutex::new(theme)),
 			theme_subscribers: Arc::new(Mutex::new(Vec::new())),
 			scan_answer: Arc::new(Mutex::new(HostScan::Dismissed)),
@@ -519,11 +504,6 @@ impl MockPlatform {
 			.expect("permission log poisoned")
 			.push(PermissionLogEntry { tag: permission, approved: granted, kind });
 		granted
-	}
-
-	/// Operations a product began and has not ended, in the order they began.
-	pub fn open_operations(&self) -> Vec<OpenOperation> {
-		self.open_operations.lock().expect("open operations poisoned").clone()
 	}
 
 	/// Auth state transitions the core emitted, in order.
@@ -784,8 +764,6 @@ impl MockPlatform {
 		self.set_confirm_user_actions(self.config.confirm_user_actions);
 		self.next_notification_id.store(1, Ordering::SeqCst);
 		self.next_chat_message_id.store(0, Ordering::SeqCst);
-		self.open_operations.lock().expect("open operations poisoned").clear();
-		self.next_operation_id.store(0, Ordering::SeqCst);
 	}
 }
 
@@ -847,6 +825,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
+		CoreStorageKey::StackRecord { stack_id } => format!("core:stack-record:{stack_id}"),
 	}
 }
 
@@ -894,6 +873,32 @@ impl ProductStorage for MockPlatform {
 		}
 		self.storage.lock().expect("storage poisoned").remove(&product_key(&key));
 		self.publish_storage(&key, None);
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+		if let Some(reason) = &self.config.faults.storage_error {
+			return Err(truapi::v01::HostLocalStorageReadError::Unknown { reason: reason.clone() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.storage
+			.lock()
+			.expect("storage poisoned")
+			.retain(|key, _| !key.starts_with(&product_key(&owned)));
+		let subscribed: Vec<String> = self
+			.storage_subscribers
+			.lock()
+			.expect("storage subscribers poisoned")
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in subscribed {
+			self.publish_storage(&key, None);
+		}
 		Ok(())
 	}
 
@@ -995,8 +1000,10 @@ pub fn mock_stack(
 	bulletin: truapi::Bytes32,
 	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
+	let identity =
+		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, false)
+	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
 		.expect("a mock stack names no reserved value")
 }
 
@@ -1082,6 +1089,7 @@ impl Features for MockPlatform {
 						.iter()
 						.any(|served| served.as_slice() == genesis_hash.as_slice())
 			},
+			// The core answers the materials question, never a platform.
 			latest::HostFeatureSupportedRequest::Materials { .. } => false,
 		};
 		Ok(latest::HostFeatureSupportedResponse {
@@ -1235,35 +1243,6 @@ impl PreimageHost for MockPlatform {
 }
 
 #[async_trait::async_trait]
-impl ProductOperations for MockPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-		let id = self.next_operation_id.fetch_add(1, Ordering::SeqCst);
-		self.open_operations
-			.lock()
-			.expect("open operations poisoned")
-			.push(OpenOperation { product_id: product.product_id.clone(), id, label });
-		Ok(latest::HostWorkerBeginOperationResponse { id })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), latest::HostWorkerOperationError> {
-		// Idempotent by contract, so an unknown or already-ended id is `Ok`.
-		self.open_operations
-			.lock()
-			.expect("open operations poisoned")
-			.retain(|open| open.id != id || open.product_id != product.product_id);
-		Ok(())
-	}
-}
-
-#[async_trait::async_trait]
 impl ScannerPlatform for MockPlatform {
 	async fn scan_code(
 		&self,
@@ -1279,20 +1258,21 @@ impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: latest::HostChatCreateRoomRequest,
-	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+		room_id: String,
+		_request: latest::HostChatCreateRoomRequest,
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&request.room_id) {
+			if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
-					request.room_id.clone(),
+					room_id.clone(),
 					latest::ChatRoom {
-						room_id: request.room_id.clone(),
+						room_id,
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
@@ -1304,7 +1284,7 @@ impl ChatPlatform for MockPlatform {
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
 		}
-		Ok(latest::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(

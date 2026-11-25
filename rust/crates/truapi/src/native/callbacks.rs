@@ -37,6 +37,20 @@ pub trait HostCallbacks: Send + Sync {
 	/// Lifecycle logger. Marker is a stable slug, detail is free-form.
 	fn on_core_log(&self, marker: String, detail: String);
 
+	/// Structured lifecycle fact. Marker is the same stable slug
+	/// [`Self::on_core_log`] carries, and each attribute is a key the core's
+	/// own source names with a label, a count or a condition under it.
+	///
+	/// Hand these to the host's reporter as attributes, so a marker can be
+	/// grouped and filtered by what it carries. Every marker here is listed in
+	/// the table [`core_markers`] returns, and its class decides what the host
+	/// may do with it, exactly as for a log line.
+	///
+	/// Runs inline on the dispatcher thread: return promptly.
+	///
+	/// [`core_markers`]: super::core_markers
+	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>);
+
 	/// Open a URL in the system browser.
 	async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError>;
 
@@ -73,16 +87,26 @@ pub trait HostCallbacks: Send + Sync {
 		request: latest::HostDevicePermissionRequest,
 	) -> Result<DevicePermissionStatus, HostRejection>;
 
-	/// Show (`true`) or hide (`false`) the face above this execution's
-	/// expanded card.
+	/// Uncover (`true`) or cover (`false`) the face under this execution's
+	/// page.
 	///
 	/// Answer `NotPresented` when the execution is not under its card and
-	/// `UserMoving` while the user drags it. Return without waiting for the
-	/// animation to finish.
+	/// `UserMoving` while the user moves the card.
 	async fn set_expanded_card_face_shown(
 		&self,
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
+	/// Turn this execution's expanded card so its back (`true`) or its front
+	/// (`false`) is up.
+	///
+	/// Answer `NoBack` when asked for a back the card does not have to show,
+	/// and `NotPresented` and `UserMoving` as for the face. Return without
+	/// waiting for the animation to finish.
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection>;
 
 	/// Prompt the user for a remote permission `product` requested.
 	async fn remote_permission(
@@ -118,6 +142,7 @@ pub trait HostCallbacks: Send + Sync {
 	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
 
 	/// Send one JSON-RPC request over a previously opened chain connection.
+	/// A rejection loses the request, so the core closes the connection.
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection>;
 
 	/// Close a previously opened chain connection.
@@ -160,21 +185,10 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
 
-	/// Request a product worker transition. `Start` means the host runs the
-	/// worker now; `Stop` means it is no longer needed and may stop. Every
-	/// transition arrives here, in ledger order: the ones the host asks for
-	/// through [`NativeTrUApiHostRuntime::acquire_worker`] and
-	/// [`NativeTrUApiHostRuntime::release_worker`], and the ones the core
-	/// causes on a product's behalf, such as an open render stream.
+	/// Report a product's first claim (`Start`) or final release (`Stop`) in ledger order.
 	///
-	/// Demand is runtime-wide, so this is invoked only on the callbacks the
-	/// runtime was built with, never on the per-execution callbacks passed to
-	/// [`NativeTrUApiHostRuntime::open_product_execution`]. Can arrive on any
-	/// thread, including synchronously on the calling thread during
-	/// [`NativeTrUApiHostRuntime::acquire_worker`] and
-	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
-	/// thread and re-entrantly: hand the transition off rather than blocking
-	/// on another thread from inside it.
+	/// The callback belongs to the host runtime and can run synchronously on the thread that
+	/// acquires or releases a claim. Dispatch work to the appropriate thread without blocking.
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// The product's worker crashed `crashes` times in a row while it was
@@ -258,17 +272,16 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		key: String,
 	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
-
-	/// Record a pending operation, whose id keeps the product's worker alive
-	/// until it ends.
-	async fn begin_operation(
+	/// Remove every value `product_id` owns from the host's scoped key-value
+	/// store. Idempotent.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with, from [`NativeTrUApiHostRuntime::clear_product_state`]: a product
+	/// that is not running has no callbacks of its own.
+	async fn clear_product_storage(
 		&self,
 		product_id: ProductId,
-		label: String,
-	) -> Result<u32, HostRejection>;
-	/// End a pending operation. Idempotent: an unknown or already-ended id
-	/// succeeds, so a retry after an ambiguous failure is safe.
-	async fn end_operation(&self, product_id: ProductId, id: u32) -> Result<(), HostRejection>;
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 }
 
 /// Native Chat storage and UI adapter. Hosts that support the Chat modality
@@ -279,7 +292,10 @@ pub trait HostCallbacks: Send + Sync {
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeChatCallbacks: Send + Sync {
-	/// Create or resolve a native product Chat room.
+	/// Create or resolve a native product Chat room. `room_id` is the id that
+	/// the core resolved for the room, and every later call names the room with
+	/// it: the id that the core derived, or, for a product built against the
+	/// earlier client, the id that the product gave.
 	async fn create_room(
 		&self,
 		room_id: String,
@@ -349,12 +365,14 @@ pub trait NativeGameCallbacks: Send + Sync {
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.
 ///
-/// The lookup runs inline, because it is a store read the host already has in
-/// hand. Presenting the picker is async, because it is the user.
+/// The lookup and the usernames run inline, because each is a store read the
+/// host already has in hand. Presenting the picker is async, because it is the
+/// user.
 ///
-/// Nothing here reaches a product, and the list never reaches the core: it asks
-/// only about the handles a transaction names, and the picker returns the one
-/// person the user chose.
+/// No account reaches a product, and the accounts on the list never reach the
+/// core: it asks only about the handles a transaction names, and the picker
+/// returns the one person the user chose. Usernames reach the core only
+/// through [`Self::contact_usernames`], for the game product.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeContactsCallbacks: Send + Sync {
@@ -373,6 +391,16 @@ pub trait NativeContactsCallbacks: Send + Sync {
 		&self,
 		product_id: ProductId,
 	) -> Result<crate::platform::HostContactPick, HostRejection>;
+
+	/// List the dotNS usernames of the unblocked contacts the picker would
+	/// offer, asked on behalf of `product_id`.
+	///
+	/// The core asks only for the game product. A host that does not list
+	/// usernames answers `Unsupported`.
+	fn contact_usernames(
+		&self,
+		product_id: ProductId,
+	) -> Result<crate::platform::HostContactUsernames, HostRejection>;
 }
 
 /// Native payment engine, which pays from the user's balance to an account.
@@ -506,7 +534,10 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// Show the funding overlay for session `intent`, which `product_id`
 	/// opened, or the host itself when `None`, on the screen `direction`
 	/// names, and report whether the user started or dismissed it. `amount`
-	/// is a decimal string of CASH units.
+	/// is a decimal string of CASH units. A `cancel_funding` while the
+	/// overlay is up drops this call, which cancels the Swift `Task` or the
+	/// Kotlin coroutine running it: take the overlay down on cancellation
+	/// (`withTaskCancellationHandler`, `invokeOnCancellation`).
 	async fn present_funding(
 		&self,
 		product_id: Option<ProductId>,

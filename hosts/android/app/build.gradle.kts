@@ -225,9 +225,17 @@ sentry {
     }
 }
 
-// The iOS host turns no log line into a Sentry event, and SentryLogTree covers the truapi lines.
+// The iOS host turns no log line into a Sentry event, and HostLogSinkTree already matches the truapi lines.
 configurations.configureEach {
     exclude(group = "io.sentry", module = "sentry-android-timber")
 }
 
 apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))
+
+// The SDK bundle :bindings:truapi-host builds for instrumentation test pages.
+android.sourceSets.getByName("androidTest").assets.srcDir(
+    project(":bindings:truapi-host").layout.buildDirectory.dir("generated/truapi-test-assets"),
+)
+tasks.matching { it.name.endsWith("AndroidTestAssets") }.configureEach {
+    dependsOn(":bindings:truapi-host:copyTrUAPITestSdk")
+}

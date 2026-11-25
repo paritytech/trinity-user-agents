@@ -29,6 +29,7 @@ const hostCallbacks = {
     },
     async write() {},
     async clear() {},
+    async clearProduct() {},
     subscribeStorage(): AsyncIterable<never> {
       return {
         [Symbol.asyncIterator]: () => ({

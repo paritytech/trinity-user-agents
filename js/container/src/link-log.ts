@@ -1,4 +1,4 @@
-import type { HostConnection } from '@parity/truapi/internal';
+import type { HostConnection } from './host-connection.js';
 
 interface TimedWindow {
   performance: { now(): number };

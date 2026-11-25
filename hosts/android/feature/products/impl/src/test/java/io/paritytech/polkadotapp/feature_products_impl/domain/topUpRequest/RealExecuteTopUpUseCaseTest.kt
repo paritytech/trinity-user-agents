@@ -276,10 +276,10 @@ private class FakeClaimReceivedCoinsUseCase : ClaimReceivedCoinsUseCase {
         coinKeys: List<CoinPrivateKey>,
         groupId: CoinageOperationGroupId,
         retryUntil: Instant,
-    ): Flow<CoinageTransferDetection> {
+    ): Flow<Result<CoinageTransferDetection>> {
         this.groupId = groupId
 
-        return flow { states.forEach { emit(it) } }
+        return flow { states.forEach { emit(Result.success(it)) } }
     }
 }
 

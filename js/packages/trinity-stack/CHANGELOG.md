@@ -1,5 +1,33 @@
 # @parity/trinity-stack
 
+## 0.4.0
+
+### Minor Changes
+
+- 8f2509f: The `trinity-stack` crate's `Descriptor::contract_address` returns the address of a contract the descriptor
+  names in `contracts`. The core's `Stack` exposes the `AccountDataStore` contract, where each seed registers its
+  installations, as `account_data_store`, or `None` when the stack names none.
+  `truapi-host stack bundle --skip-same-projection` counts `contracts` as read, so a published copy that changes only
+  them is still written.
+
+## 0.3.0
+
+### Minor Changes
+
+- e48f5b7: The package and the crate list the links, signed or unsigned, of the known Trinity stacks: paseo-next-v2,
+  pcf-devnet, polkadot, previewnet and westend. `knownStacks` maps each name to its link, and the crate's `known_stack`
+  and `known_stack_links` return the same. `trinity-stack add <name>` without a link adds the signed known stack of that
+  name, and `trinity-stack known` prints each name and link and marks the unsigned ones, which are listed for their link
+  only.
+
+### Patch Changes
+
+- c0a94d4: A reader on a `maxAge` policy ignores a request time that is ahead of the clock, as it already ignored such a
+  fetch time. A clock that is corrected backwards no longer delays the next fetch by the size of the correction. The
+  `trinity-stack` crate's `StackReader` also has `due_in`, the seconds until its refresh policy makes a stack's fetch
+  due, so a caller sleeps that long instead of polling `get`.
+- 4b23681: A descriptor in which two chains share a genesis hash is refused with `duplicate-genesis-hash`.
+
 ## 0.2.1
 
 ### Patch Changes
