@@ -354,7 +354,8 @@ async function runRoomDeclarationProbe(): Promise<void> {
       diagnosis.fail(id, error);
     }
   } finally {
-    // A failed run removes its room, so no diagnosis room stays in the chat list.
+    // On a host that serves `deleteRoom`, a failed run removes its room, so no
+    // diagnosis room stays in the chat list.
     if (roomId) await chat.deleteRoom({ roomId });
   }
 }
