@@ -20,6 +20,7 @@ struct RecordingHost {
 	configs: Mutex<BTreeMap<String, latest::ChatRoomConfig>>,
 	icons: Mutex<Vec<String>>,
 	feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
+	previews: Mutex<Vec<latest::HostChatSetRoomPreviewRequest>>,
 	calls: Mutex<Vec<String>>,
 	/// The failure reason of `list_chat_rooms`, if any.
 	room_list_failure: Mutex<Option<String>>,
@@ -173,7 +174,11 @@ impl ChatPlatform for RecordingHost {
 		_product: &ProductContext,
 		request: latest::HostChatSetRoomPreviewRequest,
 	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
-		self.change("preview", &request.room_id)
+		let outcome = self.change("preview", &request.room_id)?;
+		if outcome == ChatRoomChangeOutcome::Applied {
+			self.previews.lock().unwrap().push(request);
+		}
+		Ok(outcome)
 	}
 
 	async fn delete_chat_room(
@@ -560,11 +565,12 @@ fn previews_of_the_user() -> [latest::ChatRoomPreview; 3] {
 	]
 }
 
-// The host draws a contact event, a call and a payment with its own strings,
-// so a product could show a payment or a call that did not happen. The core
-// does not serve them yet, in any room, and the host never sees one.
+// The iOS and Android hosts draw a contact event, a call and a payment with
+// their own strings. The core passes these bodies to the host as it screens
+// them, in a message, a reply quote, an edit and a preview, in a room the host
+// stores and in one the product keeps. A refusal leaves them out of the chat.
 #[test]
-fn a_contact_event_call_or_payment_is_unsupported() {
+fn a_contact_event_call_or_payment_reaches_the_host() {
 	let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
 	configure(
 		&chat,
@@ -582,7 +588,9 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 		latest::ChatMessageBody::Payment(latest::ChatPaymentRecord { amount: 1, legacy: false }),
 	];
 
-	for room_id in ["stored", "sourced"] {
+	let mut sent_updates = Vec::new();
+	let mut sent_previews = Vec::new();
+	for (room_id, persist) in [("stored", true), ("sourced", false)] {
 		for body in &bodies {
 			let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
 				unreachable!("text_message builds a new message")
@@ -600,7 +608,10 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 			for update in
 				[latest::ChatFeedUpdate::New(message), latest::ChatFeedUpdate::New(quote), edit]
 			{
-				assert_eq!(update_feed(&runtime, room_id, update), Err(CallError::Unsupported));
+				update_feed(&runtime, room_id, update.clone()).expect("a host-drawn body");
+				let request =
+					latest::HostChatUpdateFeedRequest { room_id: room_id.to_string(), update };
+				sent_updates.push((request, persist));
 			}
 
 			let preview = latest::ChatRoomPreview {
@@ -616,13 +627,17 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 				}),
 				..empty_preview()
 			};
-			assert_eq!(set_preview(&runtime, room_id, preview), Err(CallError::Unsupported));
+			set_preview(&runtime, room_id, preview.clone())
+				.expect("a preview of a host-drawn body");
+			sent_previews.push(latest::HostChatSetRoomPreviewRequest {
+				room_id: room_id.to_string(),
+				preview,
+			});
 		}
 	}
-	assert!(
-		chat.feed.lock().unwrap().is_empty() && chat.calls().is_empty(),
-		"a host that draws these with its own strings would show what the product claims"
-	);
+
+	assert_eq!(*chat.feed.lock().unwrap(), sent_updates);
+	assert_eq!(*chat.previews.lock().unwrap(), sent_previews);
 }
 
 // In a room that the host stores, the user writes and reacts only through

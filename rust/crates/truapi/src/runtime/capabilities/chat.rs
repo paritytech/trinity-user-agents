@@ -254,9 +254,6 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.preview =
 					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
-				if preview_has_host_drawn_body(&request.preview) {
-					return Err(CallError::Unsupported);
-				}
 				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
@@ -316,9 +313,6 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				let platform = self.connection.chat_platform()?;
 				request.update =
 					validate_chat_feed_update(request.update).map_err(feed_field_error)?;
-				if feed_has_host_drawn_body(&request.update) {
-					return Err(CallError::Unsupported);
-				}
 				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
@@ -415,42 +409,6 @@ fn footer_refusal(refusal: RoomRefusal) -> CallError<latest::HostChatSetRoomFoot
 			latest::HostChatSetRoomFooterError::Unknown { reason }
 		},
 	})
-}
-
-/// Whether `body` is a contact event, a call or a payment. The host draws these
-/// with its own strings, and the core does not serve them yet: a product could
-/// show a payment or a call that did not happen.
-fn is_host_drawn(body: &latest::ChatMessageBody) -> bool {
-	matches!(
-		body,
-		latest::ChatMessageBody::Event(_) |
-			latest::ChatMessageBody::Call(_) |
-			latest::ChatMessageBody::Payment(_)
-	)
-}
-
-/// Whether `update` carries a body that the host draws itself: in the message,
-/// in the message that a reply quotes, or in an edit.
-fn feed_has_host_drawn_body(update: &latest::ChatFeedUpdate) -> bool {
-	match update {
-		latest::ChatFeedUpdate::New(message) | latest::ChatFeedUpdate::Replaced(message) => {
-			let quoted = message.reply.as_ref().and_then(|reply| reply.preview.as_ref());
-			is_host_drawn(&message.body) ||
-				quoted.is_some_and(|preview| is_host_drawn(&preview.body))
-		},
-		latest::ChatFeedUpdate::Edited { body, .. } => is_host_drawn(body),
-		latest::ChatFeedUpdate::ReactionPlaced { .. } |
-		latest::ChatFeedUpdate::ReactionRemoved { .. } |
-		latest::ChatFeedUpdate::StatusChanged { .. } |
-		latest::ChatFeedUpdate::Deleted { .. } => false,
-	}
-}
-
-/// Whether `preview` shows a body that the host draws itself.
-fn preview_has_host_drawn_body(preview: &latest::ChatRoomPreview) -> bool {
-	let host_drawn = |message: &latest::ChatPreviewMessage| is_host_drawn(&message.body);
-	let reacted_to = preview.last_reaction.as_ref().and_then(|reaction| reaction.message.as_ref());
-	preview.last_message.as_ref().is_some_and(host_drawn) || reacted_to.is_some_and(host_drawn)
 }
 
 /// Whether `update` names the host's user as the author of a message, of the
