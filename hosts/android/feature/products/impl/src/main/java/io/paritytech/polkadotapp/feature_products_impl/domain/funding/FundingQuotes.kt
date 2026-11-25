@@ -89,9 +89,11 @@ class RealFundingQuotes @Inject constructor(
 
     /** The user left the screen that started the session on its best quote: the core no longer starts it. */
     fun stopStarting(intentId: FundingIntentId) {
-        val wasStarting = synchronized(lock) { asks[intentId]?.stopStarting() ?: false }
-        if (wasStarting) calls.launch { core.cancelAutoStart(intentId).logFailure("Funding auto-start cancel failed") }
+        if (disarm(intentId)) calls.launch { core.cancelAutoStart(intentId).logFailure("Funding auto-start cancel failed") }
     }
+
+    /** Forgets, on this side only, that session [intentId] starts on its best quote. Returns whether it did. */
+    fun disarm(intentId: FundingIntentId): Boolean = synchronized(lock) { asks[intentId]?.stopStarting() ?: false }
 
     /** Runs on the call queue. */
     private suspend fun startWhenQuoted(intentId: FundingIntentId) {
