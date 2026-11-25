@@ -29,9 +29,9 @@ class ProductWebChromeClientTest {
         Timber.uprootAll()
     }
 
-    /** Console output stays on the device, so every level keeps its priority and no line carries a tag. */
+    /** Console output keeps its priority and carries no tag, so none of it reaches Sentry. */
     @Test
-    fun `console lines stay on the device at their own level`() {
+    fun `console lines keep their own level and carry no tag`() {
         client.onConsoleMessage(consoleMessage(ConsoleMessage.MessageLevel.LOG, "rendered"))
         client.onConsoleMessage(consoleMessage(ConsoleMessage.MessageLevel.WARNING, "slow follow"))
         client.onConsoleMessage(consoleMessage(ConsoleMessage.MessageLevel.ERROR, "No answer within 45000 ms"))

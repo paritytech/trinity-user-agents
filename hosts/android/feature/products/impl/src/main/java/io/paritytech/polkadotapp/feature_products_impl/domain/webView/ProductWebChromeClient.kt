@@ -133,8 +133,9 @@ private fun String.toDeviceCapability(): DeviceCapabilityType? = when (this) {
     else -> null
 }
 
-// Console output stays on the device at its own level and carries no `truapi.` tag, so none of it
-// reaches Sentry. A product reports to its own Sentry project.
+// Console output keeps its own level and carries no `truapi.` tag, so none of it reaches Sentry. Only a
+// build with the debug menu keeps it on the device, and a release build drops it. A product reports to
+// its own Sentry project.
 private fun ConsoleMessage.MessageLevel?.priority(): Int = when (this) {
     ConsoleMessage.MessageLevel.TIP -> Log.VERBOSE
     ConsoleMessage.MessageLevel.WARNING -> Log.WARN
