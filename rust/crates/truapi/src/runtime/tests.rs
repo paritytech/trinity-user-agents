@@ -4105,6 +4105,160 @@ fn provider_workers_run_while_the_overlay_is_up() {
 	);
 }
 
+// A provider the host lists under a TLD the stack does not serve can never
+// open a worker, and until its manifest read has run it is offered from the
+// manifest the host shipped. The overlay must not have the host start a
+// worker that would be refused each time it connects.
+#[test]
+fn the_overlay_starts_no_worker_for_a_provider_the_stack_does_not_serve() {
+	use crate::host_logic::worker::WorkerTransition::{Start, Stop};
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
+		product_id: ProductId::for_test(provider_id),
+		worker_manifest: Some(RAMP_MANIFEST.to_string()),
+	};
+	services.set_funding_providers(vec![entry("ramp.dot"), entry("ramp.elsewhere")]);
+	// The manifest reads never run, so both providers stay offered as shipped.
+	drop(tasks.take());
+	let offered = services.funding_providers().quote_targets();
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Dismissed,
+	)));
+
+	let shown = futures::executor::block_on(services.show_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	));
+	futures::executor::block_on(tasks.run());
+
+	assert!(shown.is_ok(), "the overlay opened");
+	assert_eq!(
+		(offered, workers.seen()),
+		(
+			vec![ProductId::for_test("ramp.dot"), ProductId::for_test("ramp.elsewhere")],
+			vec![("ramp.dot".to_string(), Start), ("ramp.dot".to_string(), Stop)]
+		)
+	);
+}
+
+// A quote asked of such a provider before its manifest read has run has no
+// worker to start either. Its row times out like that of any provider that
+// stays silent.
+#[test]
+fn a_quote_starts_no_worker_for_a_provider_the_stack_does_not_serve() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	offer_provider(&services, "ramp.elsewhere", RAMP_MANIFEST);
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = new_intent();
+	// The manifest read never runs, so the provider stays offered as shipped.
+	drop(tasks.take());
+	let shown = futures::executor::block_on(services.show_funding(
+		None,
+		intent.clone(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	));
+	futures::executor::block_on(tasks.run());
+	drop(tasks.take());
+
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_millis(20),
+		Duration::from_secs(600),
+	);
+	futures::executor::block_on(tasks.run());
+
+	assert!(shown.is_ok(), "the overlay opened");
+	let rows = services
+		.funding_quotes()
+		.shown(&intent)
+		.map(|rows| rows.into_iter().map(|row| row.state).collect::<Vec<_>>());
+	assert_eq!(
+		(rows, workers.seen()),
+		(
+			Some(vec![crate::platform::FundingQuoteState::Unavailable {
+				reason: crate::platform::FundingQuoteUnavailable::Timeout,
+			}]),
+			vec![]
+		)
+	);
+}
+
+// A session stored while the stack served its provider is restored on a
+// stack that does not, as after a host's stack moved to another TLD. The
+// provider's worker can never open there, so the session takes no hold and
+// the host is not asked to start it, while a provider still served is held.
+#[test]
+fn a_restored_session_starts_no_worker_for_a_provider_the_stack_does_not_serve() {
+	use crate::host_logic::worker::WorkerTransition::Start;
+	let db = crate::store::open_memory_core_db();
+	let (host_config, _) = runtime_config("funding.dot");
+	let before = RuntimeServices::new(
+		stub_platform(),
+		host_config.host.host_info.clone(),
+		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], [0xcc; 32]),
+		Spawner::for_test(),
+	);
+	assert!(before.install_core_db(db.clone()).is_some());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
+		product_id: ProductId::for_test(provider_id),
+		worker_manifest: Some(RAMP_MANIFEST.to_string()),
+	};
+	before.set_funding_providers(vec![entry("ramp.dot"), entry("ramp.testnet")]);
+	let assigned_to = |provider_id: &str| {
+		let intent = futures::executor::block_on(before.open_funding(
+			None,
+			new_intent(),
+			v01::FundingDirection::In,
+			Some(1_000),
+		))
+		.expect("opened")
+		.intent;
+		assert!(
+			futures::executor::block_on(before.select_funding_provider(
+				&intent,
+				&ProductId::for_test(provider_id),
+				&offer_test_quote(&before, &intent, provider_id)
+			))
+			.expect("selected")
+		);
+		intent
+	};
+	assigned_to("ramp.dot");
+	let unserved = assigned_to("ramp.testnet");
+
+	let tasks = HeldTasks::default();
+	let after = funding_services_on(&db, tasks.spawner());
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(after.worker_ledger.install_worker_controller(workers.clone()));
+	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	// The resume loads the sessions, then the reconciler it wakes takes
+	// their holds.
+	futures::executor::block_on(tasks.run());
+	futures::executor::block_on(tasks.run());
+
+	assert_eq!(
+		(after.funding().get(&unserved).and_then(|session| session.provider_id), workers.seen()),
+		(Some(ProductId::for_test("ramp.testnet")), vec![("ramp.dot".to_string(), Start)])
+	);
+}
+
 // The overlay is handed its options before it shows, and again for each
 // selection the user makes while it is up; a selection after it closed
 // changes nothing.

@@ -330,13 +330,9 @@ impl<Role> HostRuntime<Role> {
 	/// A product the stack does not serve is logged and gets no hold, since its
 	/// worker can never open.
 	pub fn hold_worker(&self, product_id: &ProductId) -> Option<crate::WorkerHold> {
-		match self.services.stack().require_served(product_id) {
-			Ok(()) => Some(crate::WorkerHold::acquire(&self.services, product_id)),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an unserved product");
-				None
-			},
-		}
+		crate::WorkerHold::acquire(&self.services, product_id)
+			.inspect_err(|error| tracing::warn!(%error, "worker reference for an unserved product"))
+			.ok()
 	}
 
 	/// Report that the product's worker stopped without being asked to:

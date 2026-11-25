@@ -919,7 +919,8 @@ fn render_lifetime_is_independent_of_the_features_worker_claim() {
 	let (runtime, sink) = render_runtime();
 	let services = runtime.admin.product_runtime().connection().services();
 	let product = ProductId::for_test("worker.dot");
-	let owner = crate::WorkerHold::acquire(services, &product);
+	let owner =
+		crate::WorkerHold::acquire(services, &product).expect("the test stack serves the product");
 	let mut render = start_render(&runtime, "loyalty");
 	assert_eq!(services.worker_ledger.count(&product), 1);
 

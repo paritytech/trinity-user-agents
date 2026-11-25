@@ -604,7 +604,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it
   is up before the first quote; a provider handed the session keeps its
-  worker after that. A quote already asked keeps its provider's worker
+  worker after that. A provider under a TLD the stack does not serve has no
+  worker to hold, so none is started for it and a quote asked of it times
+  out. A quote already asked keeps its provider's worker
   until it is answered or times out, overlay closed or not, unless the
   session is handed to another provider: then every quote still waiting
   ends at once and lets its worker go. The manifest names no backend: a provider signs in to its own API
@@ -754,7 +756,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the
-  provider's worker while a session is assigned and open, and stores an
+  provider's worker while a session is assigned and open, unless the stack does
+  not serve the provider, and stores an
   assigned session from then on, even while its overlay is up. It records each
   top-up (inbound) or payment request (outbound) the worker starts while
   serving a session, and a `Crediting` or `Collecting` report must name one of
