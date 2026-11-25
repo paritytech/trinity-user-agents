@@ -79,7 +79,8 @@ fn namespace_of(id: &str) -> &str {
 pub struct NetworkSource {
 	chain_access: ChainAccess,
 	network: NetworkChoice,
-	/// Where the published descriptor a built-in network last ran on is kept.
+	/// Where a host keeps the published descriptor it takes for a built-in
+	/// network.
 	stack_copies: Option<std::path::PathBuf>,
 }
 

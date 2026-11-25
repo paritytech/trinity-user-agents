@@ -18,8 +18,8 @@ impl NetworkSource {
 	/// `--chain-backend` with `--network` or the stack. Fails for `--network`
 	/// with a stack, in a message that names where the stack came from.
 	///
-	/// `stack_copies` is a directory to keep the published descriptor a
-	/// built-in network last ran on, which it then starts from while the
+	/// `stack_copies` is a directory to keep the published descriptor a host
+	/// takes for a built-in network, which it then starts from while the
 	/// published one is unreachable. Without one it starts from the bundled
 	/// copy.
 	pub fn new(
@@ -43,7 +43,7 @@ impl NetworkSource {
 	/// [`verify_chains`] do, for an unreachable or expired `--stack`, and when
 	/// the light client is asked for a chain the stack names no light spec
 	/// for. A built-in network whose published descriptor is unreachable runs
-	/// on the copy the host last ran on, or else its bundled copy; when that
+	/// on the copy a host kept, or else its bundled copy; when that
 	/// copy fails a check, the descriptor is fetched once more and the checks
 	/// repeat only when the published copy is then in use.
 	pub async fn resolve_checked(&self) -> Result<Stack> {

@@ -429,7 +429,7 @@ fn a_built_in_stack_named_by_its_url_keeps_its_key() {
 /// and neither a published copy older than the kept one nor one the CLI
 /// refuses, here for a changed TLD, replaces it.
 #[test]
-fn an_unreachable_built_in_starts_from_the_descriptor_it_last_ran_on() {
+fn an_unreachable_built_in_starts_from_the_descriptor_a_host_kept() {
 	let bundled = sign_copy(10, "g1");
 	let (after_wipe, republished, outdated) =
 		(sign_copy(11, "g2"), sign_copy(12, "g2"), sign_copy(9, "g0"));
@@ -550,28 +550,100 @@ fn a_corrupt_kept_copy_is_passed_over_and_replaced() {
 	);
 }
 
-/// A kept copy that cannot be read may be the descriptor of the chains after
-/// a wipe, so the command stops instead of going back to the bundled copy,
-/// whose chains may be gone.
+/// Log lines written into a shared buffer.
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl io::Write for Captured {
+	fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+		self.0.lock().unwrap().extend_from_slice(bytes);
+		Ok(bytes.len())
+	}
+
+	fn flush(&mut self) -> io::Result<()> {
+		Ok(())
+	}
+}
+
+/// A kept copy too large to be a descriptor is reported once in a start, not
+/// again when the host keeps the published copy over it.
+#[test]
+fn an_oversized_kept_copy_is_reported_once() {
+	let lines = std::sync::Arc::<std::sync::Mutex<Vec<u8>>>::default();
+	let subscriber = tracing_subscriber::fmt()
+		.with_writer({
+			let lines = std::sync::Arc::clone(&lines);
+			move || Captured(lines.clone())
+		})
+		.with_ansi(false)
+		.finish();
+	let (published, oversized) = (sign_copy(11, "g2"), vec![b' '; MAX_FETCH_BYTES + 1]);
+
+	let run = tracing::subscriber::with_default(subscriber, || {
+		run_and_keep(Some(&published), Some(&oversized))
+	});
+
+	let logged = String::from_utf8(lines.lock().unwrap().clone()).expect("log lines are text");
+	assert_eq!(
+		(run, logged.matches("is larger than").count()),
+		((11, BuiltInCopy::Published, Some(published.clone())), 1)
+	);
+}
+
+/// A kept copy that cannot be read stops the command, also when the published
+/// copy arrives and would be taken: the kept copy is what tells a published
+/// copy served stale from a current one, so without it the host could go back
+/// to chains a wipe replaced. The error names the file and how to recover.
 #[test]
 fn a_kept_copy_that_cannot_be_read_stops_the_command() {
 	let (_base, path) = copies_directory(None);
 	fs::create_dir_all(&path).expect("a directory where the copy goes");
-
-	let refreshed = refresh_with_kept_copy(
-		"test",
-		&test_pointer(),
-		&sign_copy(10, "g1"),
-		None,
-		Some(&path),
-		NOW,
-		&ChainAccess::Rpc,
+	let published = sign_copy(11, "g2");
+	let stopped_with = |published: Option<&[u8]>| {
+		let bundled = sign_copy(10, "g1");
+		refresh_with_kept_copy(
+			"test",
+			&test_pointer(),
+			&bundled,
+			published,
+			Some(&path),
+			NOW,
+			&ChainAccess::Rpc,
+		)
+		.err()
+		.map(|error| error.to_string())
+	};
+	let recovery = format!(
+		"could not read the stack descriptor kept at {}; fix its permissions, or remove it to \
+		 start from the published or the bundled copy",
+		path.display()
 	);
 
 	assert_eq!(
-		refreshed.err().map(|error| error.to_string()),
-		Some(format!("could not read the stack descriptor kept at {}", path.display()))
+		[stopped_with(None), stopped_with(Some(&published))],
+		[Some(recovery.clone()), Some(recovery)]
 	);
+}
+
+/// Keeping the copy is best effort. A host that finds the lock held, as by
+/// another host stopped in a debugger, starts without keeping its copy
+/// instead of waiting for the lock.
+#[test]
+fn a_host_does_not_wait_for_a_held_lock_to_keep_its_copy() {
+	let kept = sign_copy(11, "g2");
+	let (_base, path) = copies_directory(Some(&kept));
+	let lock = fs::File::create(path.with_extension("json.lock")).expect("the lock file");
+	lock.lock_exclusive().expect("another host holds the lock");
+	let (kept_it, keeping) = std::sync::mpsc::channel();
+	std::thread::spawn({
+		let path = path.clone();
+		move || {
+			keep_copy(&path, &test_pointer(), &sign_copy(12, "g2"), NOW);
+			let _ = kept_it.send(());
+		}
+	});
+	let returned = keeping.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
+
+	assert_eq!((returned, read_back(&path)), (true, Some(kept)));
 }
 
 /// A CLI update can ship a later descriptor than the one the host kept. That

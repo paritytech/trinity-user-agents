@@ -614,7 +614,7 @@ async fn main() -> Result<()> {
 		},
 	};
 	// Only a host keeps state between runs, so only a host keeps the
-	// descriptor it ran on.
+	// descriptor it takes.
 	let is_host =
 		matches!(cli.command, Command::PairingHost(_) | Command::Dev(_) | Command::SigningHost(_));
 	let stack_copies = is_host.then(|| command_base_path(&cli.command).join("stacks"));

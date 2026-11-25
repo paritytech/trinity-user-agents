@@ -1517,7 +1517,7 @@ The layout may contain compatibility paths as well as identity-owned paths:
   accounts.json.lock
   log-level
   stacks/
-    <network>.json                    # published descriptor a host last took
+    <network>.json                    # latest published descriptor the hosts took
     <network>.json.lock
 
   <network>/
@@ -1805,9 +1805,10 @@ stderr with both sequences, saying it is in use and that a later release ships
 it; the line says the stack restarted from genesis when its `generation`
 changed. A newer copy that changes none of them is used without a line. A
 published copy that changes the `tld` or the `id`, or that the CLI cannot run on
-(for instance one without a `dub` service), is not used: the shipped copy stays
-in use with a warning that names the published URL, since every account derives
-under the TLD and is stored under the namespace. A refused, rolled-back or
+(for instance one without a `dub` service), is not used: the copy a host command
+kept (below), or else the shipped copy, stays in use with a warning that names
+the published URL, since every account derives under the TLD and is stored
+under the namespace. A refused, rolled-back or
 conflicting published copy is not used, with a warning; an unreachable one is
 passed over without a message. The copy in use is then the one a host command
 kept (below), or else the shipped copy. A result past `expiresAt` is an
@@ -1825,16 +1826,22 @@ on over either chain backend.
 A host command (`pairing-host`, `signing-host`, `dev`) keeps the published
 descriptor it takes for a built-in network in
 `<base-path>/<version>/stacks/<network>.json`, before the chain checks below.
-It leaves a copy kept there that is the same or later, such as one another
-host starting at the same time kept, and holds `<network>.json.lock` from its
-read of the copy to its write.
+To write it, the host takes `<network>.json.lock` and reads the kept copy again
+under it, and leaves a copy that is the same or later, such as one another host
+starting at the same time kept. The read that chooses the stack at start is not
+under the lock. Keeping the copy is best effort: a failed write is a warning,
+and a host that finds the lock held, as by another host stopped in a debugger,
+does not wait and keeps nothing on that run.
 While the published descriptor cannot be fetched, and when it is refused or
 older than that copy, the host starts from that copy, under the same rules as a
 fetched one. A kept copy older than the bundled one, as after an update of the
-CLI, is not used, nor is one larger than any descriptor the CLI fetches. A kept
-copy that cannot be read stops the command. A host that ran on a stack after a
-wipe therefore does not go back to the bundled copy's chains, which the core
-would take for another wipe.
+CLI, is not used, nor is one larger than any descriptor the CLI fetches, which
+is reported with a warning. A kept copy that cannot be read stops the command,
+also when the published copy arrives, since the kept copy is what tells a
+published copy served stale from a current one; the error names the file and
+says to fix its permissions or remove it. Other commands neither keep nor read
+a copy. A host that ran on a stack after a wipe therefore does not go back to
+the bundled copy's chains, which the core would take for another wipe.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
