@@ -1,4 +1,5 @@
 import BigInt
+import DesignSystem
 import TrUAPIHost
 import PolkadotUI
 import Products
@@ -83,7 +84,7 @@ private extension RendererNode {
                 return nil
             }
             .joined()
-            let labelStyle = (props.style?.toScale() ?? .bodyM).toLabelStyle
+            let labelStyle = props.style?.labelStyle ?? ScaleTypographyStyle.bodyM.toLabelStyle
             let color = props.color.map { resolver.color(for: $0.toScale()) } ?? resolver.color(for: .textPrimary)
             return CustomMessageWidgetNode(
                 content: .text(.init(text: text, labelStyle: labelStyle, color: color)),
@@ -262,14 +263,18 @@ private extension ColorToken {
     }
 }
 
-private extension TypographyStyle {
-    func toScale() -> ScaleTypographyStyle {
+private extension TrUAPIHostTypographyStyle {
+    var labelStyle: PolkadotUI.LabelStyle {
         switch self {
-        case .headlineLarge: .titleXL
-        case .titleMediumRegular: .headline
-        case .bodyLargeRegular: .bodyM
-        case .bodyMediumRegular: .bodyS
-        case .bodySmallRegular: .caption
+        case .headlineLarge: .init(typography: .headlineLarge)
+        case .headlineMedium: .init(typography: .headlineMedium)
+        case .headlineSmall: .init(typography: .headlineSmall)
+        case .titleExtraLarge: .init(typography: .titleExtraLarge)
+        case .titleLarge: .init(typography: .titleLarge)
+        case .titleMediumRegular: .init(typography: .titleMedium)
+        case .bodyLargeRegular: ScaleTypographyStyle.bodyM.toLabelStyle
+        case .bodyMediumRegular: ScaleTypographyStyle.bodyS.toLabelStyle
+        case .bodySmallRegular: ScaleTypographyStyle.caption.toLabelStyle
         }
     }
 }

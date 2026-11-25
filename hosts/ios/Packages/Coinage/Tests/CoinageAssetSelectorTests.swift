@@ -55,12 +55,19 @@ struct CoinageAssetSelectorTests {
 
     @Test(arguments: [RecyclingStrategyType.balanced, .maxPrivacy])
     func maturityMakesVouchersSpendableWithoutConfirmation(_ type: RecyclingStrategyType) {
-        let minimumMembers: UInt32 = 32
+        let anonymityMembers = type == .balanced
+            ? CoinagePrivacyConfig.bundled.balanced.anonymityMembers
+            : CoinagePrivacyConfig.bundled.maxPrivacy.anonymityMembers
         let tenMinutes: TimeInterval = 10 * 60
         let ringCapacity = 767
         let enteredAt = Date(timeIntervalSince1970: 1_000)
         let voucher = gainingPrivacyVoucher.voucher.adjusting(
-            state: .inRecycler(.init(index: 1, membersCount: minimumMembers, enteredAt: enteredAt))
+            state: .inRecycler(.init(
+                index: 1,
+                membersCount: anonymityMembers,
+                enteredAt: enteredAt,
+                unloadedCount: 0
+            ))
         )
         let tracked = TrackedVoucher(voucher: voucher, state: free)
         let policy = strategy(type)
@@ -157,7 +164,9 @@ private extension CoinageAssetSelectorTests {
     }
 
     func strategy(_ type: RecyclingStrategyType) -> ParametricRecyclingStrategy {
-        ParametricRecyclingStrategy(params: type.params(forcedRecyclingAge: CoinageConstants.recycleAtAge))
+        ParametricRecyclingStrategy(
+            params: type.params(forcedRecyclingAge: CoinageConstants.recycleAtAge, privacyConfig: .bundled)
+        )
     }
 
     func indices(_ coins: [TrackedCoin]) -> [CoinageKeyIndex] {

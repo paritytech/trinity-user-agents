@@ -327,6 +327,10 @@ private fun JsTextRenderer(
         JsTypographyStyle.BODY_LARGE_REGULAR -> PolkadotTheme.typography.body.large
         JsTypographyStyle.BODY_MEDIUM_REGULAR -> PolkadotTheme.typography.body.medium
         JsTypographyStyle.BODY_SMALL_REGULAR -> PolkadotTheme.typography.body.small
+        JsTypographyStyle.HEADLINE_MEDIUM -> PolkadotTheme.typography.headline.medium
+        JsTypographyStyle.HEADLINE_SMALL -> PolkadotTheme.typography.headline.small
+        JsTypographyStyle.TITLE_EXTRA_LARGE -> PolkadotTheme.typography.title.extraLarge
+        JsTypographyStyle.TITLE_LARGE -> PolkadotTheme.typography.title.large
     }
 
     val textColor = widget.color?.toComposeColor() ?: PolkadotTheme.colors.fg.primary
