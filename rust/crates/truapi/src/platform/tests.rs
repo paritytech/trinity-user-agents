@@ -989,7 +989,8 @@ fn a_message_carries_at_most_the_media_budget() {
 		text: None,
 		media: (0..count).map(|_| image_item(hop("wss://hop.example", 1))).collect(),
 	};
-	assert!(validate_chat_message_body(many(CHAT_MEDIA_MAX)).is_ok());
+	validate_chat_message_body(many(CHAT_MEDIA_MAX))
+		.expect("a message carries as many media items as the budget allows");
 	assert_eq!(
 		validate_chat_message_body(many(CHAT_MEDIA_MAX + 1)),
 		Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
@@ -1036,7 +1037,8 @@ fn a_custom_body_is_screened_like_a_posted_custom_message() {
 #[test]
 fn a_message_body_is_bounded_in_text() {
 	let text = |len| ChatMessageBody::Text { text: "x".repeat(len) };
-	assert!(validate_chat_message_body(text(CHAT_BODY_MAX_BYTES)).is_ok());
+	validate_chat_message_body(text(CHAT_BODY_MAX_BYTES))
+		.expect("a text as long as the budget allows is a message");
 	assert_eq!(
 		validate_chat_message_body(text(CHAT_BODY_MAX_BYTES + 1)),
 		Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
@@ -1090,7 +1092,8 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 		icon: None,
 		placeholder: None,
 	};
-	assert!(validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES)).is_ok());
+	validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES))
+		.expect("a description as long as a message body is a description");
 	assert_eq!(
 		validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES + 1)),
 		Err(ChatFieldError::TooLong { field: "description", limit: CHAT_BODY_MAX_BYTES })
@@ -1122,7 +1125,8 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 
 	// The core bounds the empty-room text as it bounds a description.
 	let placeholder = |text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
-	assert!(validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES))).is_ok());
+	validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES)))
+		.expect("an empty-room text as long as a message body is an empty-room text");
 	assert_eq!(
 		validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES + 1))),
 		Err(ChatFieldError::TooLong { field: "placeholder", limit: CHAT_BODY_MAX_BYTES })
@@ -1195,7 +1199,8 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 		pinned: false,
 		activity: None,
 	};
-	assert!(validate_chat_room_preview(preview(preview_message("m1", Some("m0")))).is_ok());
+	validate_chat_room_preview(preview(preview_message("m1", Some("m0"))))
+		.expect("a reaction preview names a message that replies to another");
 	assert_eq!(
 		validate_chat_room_preview(preview(preview_message("m\u{202e}1", None))),
 		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
@@ -1203,6 +1208,86 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 	assert_eq!(
 		validate_chat_room_preview(preview(preview_message("m1", Some("m\u{202e}0")))),
 		Err(ChatFieldError::UnsafeCharacter { field: "reply" })
+	);
+}
+
+// RFC 0002 names a resource by inline Base64 data or by the CID of a preimage.
+// A host puts a resource where it draws an image, so any other text could make
+// it read a URL or a path that the product chose.
+#[test]
+fn a_resource_is_inline_base64_image_data_or_a_preimage_cid() {
+	let resource = |text: &str| validate_chat_resource("icon", text);
+	let inline = "data:image/png;base64,AQID";
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+
+	assert_eq!(resource(""), Ok(String::new()), "an empty resource is no resource");
+	assert_eq!(resource(inline), Ok(inline.to_string()), "an inline image arrives as it came");
+	assert_eq!(
+		resource(&format!(" {inline} ")),
+		Ok(inline.to_string()),
+		"the spaces around a resource are not part of it"
+	);
+	assert_eq!(
+		resource("DATA:IMAGE/PNG;BASE64,AQID"),
+		Ok(inline.to_string()),
+		"a host reads the header of an inline image in one spelling"
+	);
+	for media_type in ALLOWED_ICON_DATA_TYPES {
+		let image = format!("data:{media_type};base64,AQID");
+		assert_eq!(resource(&image), Ok(image.clone()), "a host draws {media_type}");
+	}
+	assert_eq!(
+		resource(&format!(" {cid} ")),
+		Ok(cid.clone()),
+		"a host looks a preimage up by the one text form of its CID"
+	);
+
+	let upper_case_cid = cid.to_uppercase();
+	let refused = [
+		("da ta:image/png,/../../admin?x=1", "a URL parser resolves it as a path on the host"),
+		("d a t a : image/png , x", "spaces inside the header are not the header"),
+		("data:image/png", "it carries no image"),
+		("data:image/png;base64,", "it carries no image"),
+		("data:image/png,%89PNG", "an inline image carries Base64 data"),
+		("data:image/png;base64,@@@@", "the data is not Base64"),
+		("data:image/png;base64,AQI", "Base64 data without its padding has a second spelling"),
+		("data:image/png;base64,AQ==AQID", "padding ends the data"),
+		("data:image/png;charset=utf-8;base64,AQID", "an image has no parameters"),
+		("data:image/svg+xml;base64,AQID", "an SVG image can carry script"),
+		("data:text/html;base64,AQID", "a document is not an image"),
+		(
+			"https://icons.example/room.png",
+			"a URL makes the host fetch from where the product points",
+		),
+		(upper_case_cid.as_str(), "a CID has one text form"),
+		(
+			"bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+			"a CID of another codec names no Bulletin preimage",
+		),
+	];
+	for (text, reason) in refused {
+		assert_eq!(
+			resource(text),
+			Err(ChatFieldError::NotAResource { field: "icon" }),
+			"{text}: {reason}"
+		);
+	}
+
+	// Padded Base64 is a multiple of four characters long, so no inline image
+	// is one byte over the budget: these are the largest image within it and
+	// the smallest image past it.
+	let largest = format!("data:image/jpeg;base64,{}", "AQID".repeat(16_378));
+	let smallest_past = format!("data:image/png;base64,{}", "AQID".repeat(16_379));
+	assert_eq!(
+		(largest.len(), smallest_past.len()),
+		(CHAT_ICON_MAX_BYTES - 1, CHAT_ICON_MAX_BYTES + 2),
+		"the two images sit next to the budget"
+	);
+	assert_eq!(resource(&largest), Ok(largest.clone()), "an image within the budget arrives");
+	assert_eq!(
+		resource(&smallest_past),
+		Err(ChatFieldError::TooLong { field: "icon", limit: CHAT_ICON_MAX_BYTES }),
+		"an image past the budget is refused for its size"
 	);
 }
 

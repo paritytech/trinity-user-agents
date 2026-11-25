@@ -19,15 +19,16 @@ pub struct HostChatCreateRoomRequest {
 	/// Room display name.
 	pub name: String,
 	/// Room icon: an inline PNG, JPEG, GIF, WebP or AVIF image as a `data:`
-	/// URL, or the CID of a Bulletin preimage. A URL that names where to fetch
-	/// the image is refused. An empty string means no icon.
+	/// URL with a Base64 payload, or the CID of a Bulletin preimage. A URL that
+	/// names where to fetch the image is refused. An empty string means no
+	/// icon.
 	pub icon: String,
 	/// The parts of the room that the product serves. It replaces the
 	/// configuration that the host keeps for the room, also when the room
 	/// exists. The host keeps it across restarts. A change of
-	/// `product_source` discards the messages that the host stores for the
-	/// room, or the pages that it caches. A host that cannot keep this
-	/// configuration refuses the request and creates and changes nothing.
+	/// `product_source` discards the stored messages or the cached pages of
+	/// the room, and its preview. A host that cannot keep this configuration
+	/// refuses the request and creates and changes nothing.
 	pub config: ChatRoomConfig,
 }
 
@@ -162,9 +163,10 @@ pub struct ChatRoomMetadata {
 	/// One or more lines the host shows in the room header.
 	pub description: Option<String>,
 	/// An icon that replaces the icon of `create_room`: an inline PNG, JPEG,
-	/// GIF, WebP or AVIF image as a `data:` URL, or the CID of a Bulletin
-	/// preimage. A URL that names where to fetch the image is refused. An
-	/// empty string removes the icon. `None` keeps the current icon.
+	/// GIF, WebP or AVIF image as a `data:` URL with a Base64 payload, or the
+	/// CID of a Bulletin preimage. A URL that names where to fetch the image is
+	/// refused. An empty string removes the icon. `None` keeps the current
+	/// icon.
 	pub icon: Option<String>,
 	/// The text that the room shows while it has no messages. `None` shows
 	/// nothing.
@@ -180,8 +182,8 @@ pub enum ChatRoomBadge {
 		/// The number the host shows.
 		count: u32,
 	},
-	/// An image, with the rules of the icon of `ChatRoomMetadata`: inline image
-	/// data or the CID of a Bulletin preimage, never a URL to fetch.
+	/// An image: an inline image as a `data:` URL with a Base64 payload or the
+	/// CID of a Bulletin preimage, never a URL to fetch, and never empty.
 	Image {
 		/// The image the host shows.
 		icon: String,
@@ -274,7 +276,7 @@ pub struct ChatRoomConfig {
 	/// `Seen` user action when the user sees the newest message.
 	/// `false`: the host stores the messages.
 	/// A `create_room` that changes it discards the stored messages or the
-	/// cached pages of the room.
+	/// cached pages of the room, and its preview.
 	pub product_source: bool,
 	/// `true`: the host shows who reacted, and asks `reactions_query`.
 	pub reaction_details: bool,

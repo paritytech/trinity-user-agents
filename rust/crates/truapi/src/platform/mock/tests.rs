@@ -1009,7 +1009,10 @@ fn a_room_read_answers_the_room_without_a_subscriber() {
 		})
 	);
 	assert_eq!(read("missing"), None);
-	assert!(p.chat_room_subscribers.lock().expect("chat subscribers poisoned").is_empty());
+	assert!(
+		p.chat_room_subscribers.lock().expect("chat subscribers poisoned").is_empty(),
+		"a read that subscribes would leave one sender behind for each room change"
+	);
 }
 
 // Every declaration that a product makes through the core lands where a
@@ -1082,19 +1085,23 @@ fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 			config: Some(config),
 			metadata: Some(metadata),
 			preview: Some(preview),
-			feed: vec![(update, true)],
+			feed: vec![ChatFeedRecord { update, persist: true }],
 		})
 	);
 
 	block_on(p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }))
 		.unwrap();
 	assert_eq!(p.chat_room_declarations("lobby"), None);
-	assert!(p.chat_rooms().is_empty());
+	assert!(
+		p.chat_rooms().is_empty(),
+		"the room list would still show a room that the product deleted"
+	);
 }
 
 // A room whose messages move between the host and the product starts empty
 // on its new side: the stored messages would show next to pages that the
-// product answers.
+// product answers, and a preview set while the product kept the messages can
+// show the user in a room that the host stores.
 #[test]
 fn a_change_of_product_source_drops_what_the_room_holds() {
 	let p = MockPlatform::new();
@@ -1118,17 +1125,31 @@ fn a_change_of_product_source_drops_what_the_room_holds() {
 		))
 		.expect("the mock applies the update")
 	};
+	let preview = |room_id: &str| {
+		block_on(p.set_chat_room_preview(
+			&product,
+			latest::HostChatSetRoomPreviewRequest {
+				room_id: room_id.to_string(),
+				preview: empty_preview(),
+			},
+		))
+		.expect("the mock keeps the preview")
+	};
 	let sourced = latest::ChatRoomConfig { product_source: true, ..Default::default() };
 	for room_id in ["lobby", "other"] {
 		create(room_id, latest::ChatRoomConfig::default());
 		post_text(&p, room_id, "hi").expect("the mock stores the message");
 		feed(room_id);
+		preview(room_id);
 	}
 
 	// Another configuration with the same source keeps what the room holds.
 	let details = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
 	assert_eq!(create("lobby", details), latest::ChatRoomRegistrationStatus::Exists);
-	assert_eq!(p.chat_room_declarations("lobby").map(|room| room.feed.len()), Some(1));
+	assert_eq!(
+		p.chat_room_declarations("lobby").map(|room| (room.feed.len(), room.preview)),
+		Some((1, Some(empty_preview())))
+	);
 
 	assert_eq!(create("lobby", sourced.clone()), latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(
@@ -1138,7 +1159,20 @@ fn a_change_of_product_source_drops_what_the_room_holds() {
 	let posted = p.posted_chat_messages();
 	let posted_rooms: Vec<&str> = posted.iter().map(|message| message.room_id.as_str()).collect();
 	assert_eq!(posted_rooms, ["other"]);
-	assert_eq!(p.chat_room_declarations("other").map(|room| room.feed.len()), Some(1));
+	assert_eq!(
+		p.chat_room_declarations("other").map(|room| (room.feed.len(), room.preview)),
+		Some((1, Some(empty_preview())))
+	);
+
+	// The room starts empty again when the host takes the messages back.
+	feed("lobby");
+	preview("lobby");
+	let stored = latest::ChatRoomConfig::default();
+	assert_eq!(create("lobby", stored.clone()), latest::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(
+		p.chat_room_declarations("lobby"),
+		Some(ChatRoomDeclarations { config: Some(stored), ..Default::default() })
+	);
 }
 
 // A call that reaches the mock after the room is gone, as one sent while the

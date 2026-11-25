@@ -133,7 +133,10 @@ fn a_room_read_answers_the_room_and_leaves_no_subscriber() {
 		);
 	}
 	assert_eq!(read("missing"), None);
-	assert!(host.lock().subscribers.is_empty());
+	assert!(
+		host.lock().subscribers.is_empty(),
+		"a read that subscribes would leave one subscriber behind for each room change"
+	);
 }
 
 // This host keeps only the default configuration. It refuses another one in
@@ -157,5 +160,8 @@ fn a_room_with_a_configuration_this_host_cannot_keep_is_not_created() {
 			reason: "this host keeps only the default room configuration".to_string(),
 		})
 	);
-	assert!(host.lock().rooms.is_empty());
+	assert!(
+		host.lock().rooms.is_empty(),
+		"a room left behind would have a behaviour that the product did not ask for"
+	);
 }

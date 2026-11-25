@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+	collections::BTreeMap,
+	sync::{Arc, Mutex},
+};
 
 use futures::{executor::block_on, stream::BoxStream};
 use truapi::v01;
@@ -425,6 +428,35 @@ fn a_field_that_fails_the_screen_is_a_malformed_frame() {
 	);
 }
 
+// The core screens the room id of each room change before it reads the room,
+// so a room id that fails the screen reaches the host in no call, a read
+// included, and the product reads why.
+#[test]
+fn a_room_id_that_fails_the_screen_is_a_malformed_frame() {
+	let chat = RecordingHost::with_rooms(&[hosted("support")]);
+	let runtime = chat_runtime(chat.clone());
+	let room_id = "sup\u{202e}port";
+	fn malformed<E>() -> CallError<E> {
+		CallError::MalformedFrame {
+			reason: ChatFieldError::UnsafeCharacter { field: "roomId" }.to_string(),
+		}
+	}
+
+	assert_eq!(set_metadata(&runtime, room_id, "Support"), Err(malformed()));
+	assert_eq!(set_preview(&runtime, room_id, empty_preview()), Err(malformed()));
+	assert_eq!(update_feed(&runtime, room_id, text_message("product")), Err(malformed()));
+	assert_eq!(delete_room(&runtime, room_id), Err(malformed()));
+	assert_eq!(
+		*chat.room_reads.lock().unwrap(),
+		0,
+		"a read would hand the host an id that the core did not screen"
+	);
+	assert!(
+		chat.calls().is_empty() && chat.feed.lock().unwrap().is_empty(),
+		"the host would match an id that the core did not screen"
+	);
+}
+
 // The core decides from the configuration of the room whether the host stores
 // an update and whether a preview may show the user. A room it cannot read
 // fails the call: the default would make the host store the messages of a
@@ -607,20 +639,28 @@ fn a_contact_event_call_or_payment_is_unsupported() {
 				assert_eq!(update_feed(&runtime, room_id, update), Err(CallError::Unsupported));
 			}
 
-			let preview = latest::ChatRoomPreview {
-				last_message: Some(latest::ChatPreviewMessage {
-					message_id: "m1".to_string(),
-					origin: latest::ChatMessageOrigin { participant_id: "product".to_string() },
-					timestamp: 1,
-					body: body.clone(),
-					status: latest::ChatMessageStatus::Sent,
-					reply_to: None,
-					edited_at: None,
-					request: false,
-				}),
-				..empty_preview()
+			let message = latest::ChatPreviewMessage {
+				message_id: "m1".to_string(),
+				origin: latest::ChatMessageOrigin { participant_id: "product".to_string() },
+				timestamp: 1,
+				body: body.clone(),
+				status: latest::ChatMessageStatus::Sent,
+				reply_to: None,
+				edited_at: None,
+				request: false,
 			};
-			assert_eq!(set_preview(&runtime, room_id, preview), Err(CallError::Unsupported));
+			let reaction = latest::ChatPreviewReaction {
+				emoji: "👍".to_string(),
+				by_user: false,
+				message: Some(message.clone()),
+				removed: false,
+			};
+			for preview in [
+				latest::ChatRoomPreview { last_message: Some(message), ..empty_preview() },
+				latest::ChatRoomPreview { last_reaction: Some(reaction), ..empty_preview() },
+			] {
+				assert_eq!(set_preview(&runtime, room_id, preview), Err(CallError::Unsupported));
+			}
 		}
 	}
 	assert!(
@@ -846,7 +886,7 @@ fn a_delete_fails_when_the_host_cannot_read_the_room() {
 	));
 
 	assert_eq!(deleted, Err(CallError::HostFailure { reason: "store locked".to_string() }));
-	assert!(chat.calls().is_empty());
+	assert!(chat.calls().is_empty(), "a room that the host cannot read must not be deleted");
 }
 
 // The host answers the room and its configuration in one call, so the core
@@ -953,8 +993,14 @@ fn a_host_that_cannot_keep_a_configuration_creates_no_room() {
 			}
 		)))
 	);
-	assert!(chat.rooms.lock().unwrap().is_empty());
-	assert!(chat.calls().is_empty());
+	assert!(
+		chat.rooms.lock().unwrap().is_empty(),
+		"a room left behind would have a behaviour that the product did not ask for"
+	);
+	assert!(
+		chat.calls().is_empty(),
+		"the host refuses before it changes anything, so the product can declare the room again"
+	);
 
 	create(latest::ChatRoomConfig::default()).expect("the default configuration");
 	assert_eq!(chat.rooms.lock().unwrap().len(), 1);
@@ -981,12 +1027,14 @@ fn a_room_keeps_its_icon_rules() {
 	create("https://icons.example/support.png").expect("an https icon is accepted");
 	create("data:image/png;base64,AQID").expect("an inline icon is accepted");
 	create("").expect("no icon is accepted");
-	assert!(matches!(
+	assert_eq!(
 		create("javascript:alert(1)"),
 		Err(CallError::Domain(HostChatCreateRoomError::V1(
-			v01::HostChatCreateRoomError::Unknown { .. }
+			v01::HostChatCreateRoomError::Unknown {
+				reason: ChatFieldError::RejectedScheme { field: "icon" }.to_string(),
+			}
 		)))
-	));
+	);
 	assert_eq!(
 		*chat.icons.lock().unwrap(),
 		[
