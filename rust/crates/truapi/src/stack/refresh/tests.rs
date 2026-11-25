@@ -22,7 +22,7 @@ use crate::{
 	},
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
-		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet,
+		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, finish, on_testnet,
 		published_test_descriptor, published_test_descriptor_at, recorded_rpc_method_count,
 		refused_for_its_tld, sign_test_descriptor, stack_status, stored_test_record, wait_until,
 		without_bulletin,
@@ -1002,16 +1002,6 @@ fn dropping_the_refresh_stops_the_reports() {
 	assert_eq!(statuses.recv_timeout(ANSWER_WAIT), Err(RecvTimeoutError::Disconnected));
 }
 
-/// Runs `work` to the end, failing the test instead of hanging when it has not
-/// finished within [`ANSWER_WAIT`].
-fn within_answer_wait<T>(work: impl Future<Output = T>) -> T {
-	let work = core::pin::pin!(work);
-	match futures::executor::block_on(select(work, futures_timer::Delay::new(ANSWER_WAIT))) {
-		Either::Left((done, _)) => done,
-		Either::Right(_) => panic!("not finished within {}s", ANSWER_WAIT.as_secs()),
-	}
-}
-
 /// The People metadata an allowance reads before People's suffix.
 const PEOPLE_METADATA: &[u8] =
 	include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
@@ -1096,7 +1086,7 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, _node) = runtime_on(&refresh, TEST_STACK_WIPED_PEOPLE, Some("paseo"));
 
-	let people = within_answer_wait(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
+	let people = finish(ANSWER_WAIT, services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
 
 	assert!(people.is_err(), "the restarted chain is not handed out");
 	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));
@@ -1110,7 +1100,7 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
 
-	let read = within_answer_wait(async {
+	let read = finish(ANSWER_WAIT, async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
 		services.people_network_suffix(people.rpc()).await.ok()
 	});
@@ -1121,14 +1111,7 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 			refresh.status().mismatches,
 			recorded_rpc_method_count(&node.sent_rpc, "state_getStorage"),
 		),
-		(
-			Some(b"testnet".to_vec()),
-			vec![StackMismatch::NetworkSuffix {
-				named: "paseo".to_string(),
-				answered: "testnet".to_string(),
-			}],
-			1,
-		)
+		(Some(b"testnet".to_vec()), testnet_suffix_listed(), 1)
 	);
 }
 
@@ -1152,7 +1135,7 @@ fn read_after_testnet_was_listed(
 	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
 	checks.people_suffix_answered(b"testnet");
 
-	let read = within_answer_wait(async {
+	let read = finish(ANSWER_WAIT, async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
 		Some(services.people_network_suffix(people.rpc()).await)
 	});
@@ -1199,7 +1182,7 @@ fn signing_host_over_a_testnet_suffix() -> (StackRefresh, Arc<SigningHost>) {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
 	let signing_host = SigningHost::new(services);
-	within_answer_wait(signing_host.activate_local_session(RootEntropy::new([0xab; 16])))
+	finish(ANSWER_WAIT, signing_host.activate_local_session(RootEntropy::new([0xab; 16])))
 		.expect("activation succeeds");
 	(refresh, signing_host)
 }
@@ -1217,11 +1200,10 @@ fn a_statement_store_allowance_reports_a_people_suffix_that_is_not_the_tld() {
 	let accounts = signing_host.accounts();
 	let session = accounts.current_session().expect("a session is active");
 
-	let allocated = within_answer_wait(accounts.statement_store_allowance_key(
-		&CallContext::default(),
-		&session,
-		&test_product(),
-	));
+	let allocated = finish(
+		ANSWER_WAIT,
+		accounts.statement_store_allowance_key(&CallContext::default(), &session, &test_product()),
+	);
 
 	assert_eq!((allocated.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
 }
@@ -1234,11 +1216,10 @@ fn a_bulletin_allowance_reports_a_people_suffix_that_is_not_the_tld() {
 	let accounts = signing_host.accounts();
 	let session = accounts.current_session().expect("a session is active");
 
-	let allocated = within_answer_wait(accounts.bulletin_allowance_key(
-		&CallContext::default(),
-		&session,
-		&test_product(),
-	));
+	let allocated = finish(
+		ANSWER_WAIT,
+		accounts.bulletin_allowance_key(&CallContext::default(), &session, &test_product()),
+	);
 
 	assert_eq!((allocated.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
 }
@@ -1248,12 +1229,13 @@ fn a_bulletin_allowance_reports_a_people_suffix_that_is_not_the_tld() {
 #[test]
 fn a_statement_store_renewal_reports_a_people_suffix_that_is_not_the_tld() {
 	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
-	within_answer_wait(
+	finish(
+		ANSWER_WAIT,
 		signing_host.track_statement_renewal_targets(vec![StatementRenewalTarget::WalletSso]),
 	)
 	.expect("the wallet's own statement account is tracked");
 
-	let renewed = within_answer_wait(signing_host.renew_statement_allowances());
+	let renewed = finish(ANSWER_WAIT, signing_host.renew_statement_allowances());
 
 	assert_eq!((renewed.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
 }
@@ -1270,13 +1252,7 @@ fn the_host_is_told_of_a_people_suffix_that_is_not_the_tld() {
 
 	checks.people_suffix_answered(b"testnet");
 
-	assert_eq!(
-		started.next_status().mismatches,
-		vec![StackMismatch::NetworkSuffix {
-			named: "paseo".to_string(),
-			answered: "testnet".to_string(),
-		}]
-	);
+	assert_eq!(started.next_status().mismatches, testnet_suffix_listed());
 }
 
 /// Which stack a host runs is its chains, network and TLD. Whether a refresh

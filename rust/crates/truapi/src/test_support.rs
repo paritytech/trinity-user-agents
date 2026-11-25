@@ -90,15 +90,20 @@ pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
 	}
 }
 
-/// The output of `future`, failing the test rather than hanging when it does
-/// not finish within two seconds.
+/// The wait [`finish`] is given for work that ends once a scripted node has
+/// answered.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn finish<F: core::future::Future>(future: F) -> F::Output {
-	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+pub const ANSWER_WAIT: Duration = Duration::from_secs(2);
+
+/// The output of `future`, failing the test rather than hanging when it does
+/// not finish within `wait`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn finish<F: core::future::Future>(wait: Duration, future: F) -> F::Output {
+	let timeout = futures_timer::Delay::new(wait);
 	let future = core::pin::pin!(future);
 	match futures::executor::block_on(futures::future::select(future, timeout)) {
 		futures::future::Either::Left((output, _)) => output,
-		futures::future::Either::Right(_) => panic!("the future did not finish"),
+		futures::future::Either::Right(_) => panic!("the future did not finish within {wait:?}"),
 	}
 }
 
