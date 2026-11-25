@@ -18,8 +18,7 @@ use super::{
 	vrf,
 };
 use crate::{
-	Spawner,
-	background_task::BackgroundTask,
+	BackgroundTask, Spawner,
 	chain_runtime::ChainRuntime,
 	host_logic::{
 		session::{
@@ -290,7 +289,7 @@ impl SsoRequestService {
 	fn look_up_usernames_in_background(&self, installed: SessionInfo, stored: Option<Vec<u8>>) {
 		let (ending, ended) = oneshot::channel();
 		let lookup = self.look_up_usernames(installed, stored);
-		let task = BackgroundTask::spawn(&self.spawner, async move {
+		let task = self.spawner.create_task(async move {
 			lookup.await;
 			drop(ending);
 		});
