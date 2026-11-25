@@ -254,14 +254,14 @@ impl<'a> SsoPairingFlow<'a> {
 			root_entropy_source: Some(response.success.root_entropy_source),
 			identity_account_id: Some(response.success.identity_account_id),
 			identity_chat_private_key: Some(response.success.identity_chat_private_key),
-			device_enc_public_key: Some(response.success.device_enc_pub_key),
+			peer_device_enc_public_key: Some(response.success.device_enc_pub_key),
 			lite_username: None,
 			full_username: None,
 		};
 		let resolve_session = resolve_session_identity_with_chain(
 			&self.host.dotns_reads,
 			&self.host.chain,
-			self.host.host_config.asset_hub_chain_genesis_hash,
+			self.host.host_config.stack.chains().asset_hub,
 			session,
 		)
 		.fuse();

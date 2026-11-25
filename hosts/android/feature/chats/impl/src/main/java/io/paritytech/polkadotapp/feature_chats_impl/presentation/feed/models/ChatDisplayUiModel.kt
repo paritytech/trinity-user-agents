@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models
 
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
-import io.paritytech.polkadotapp.feature_chats_api.domain.profile.isPublicProfileAvatarUri
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 
@@ -11,20 +10,24 @@ class ChatDisplayUiModel(
     val avatarModel: AvatarUiModel
 )
 
-fun ChatDisplay.toUi(refreshAvatar: Boolean = false): ChatDisplayUiModel {
+fun ChatDisplay.toUi(forceFresh: Boolean): ChatDisplayUiModel {
     return ChatDisplayUiModel(
         username = name,
-        avatarModel = avatar.toUi(refresh = refreshAvatar)
+        avatarModel = avatar.toUi(forceFresh = forceFresh)
     )
 }
 
-fun ChatAvatar.toUi(refresh: Boolean = false): AvatarUiModel {
+fun ChatAvatar.toUi(forceFresh: Boolean): AvatarUiModel {
     return when (this) {
         is ChatAvatar.Account -> toNameUi()
         is ChatAvatar.Url -> AvatarUiModel.Image(
             url,
-            placeholder = placeholder?.toNameUi(),
-            refresh = refresh && isPublicProfileAvatarUri(url)
+            placeholder = placeholder?.toNameUi()
+        )
+        is ChatAvatar.PublicProfile -> AvatarUiModel.PublicProfile(
+            username = username,
+            placeholder = placeholder.toNameUi(),
+            forceFresh = forceFresh
         )
     }
 }

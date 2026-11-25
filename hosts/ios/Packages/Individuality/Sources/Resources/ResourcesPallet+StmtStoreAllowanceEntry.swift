@@ -2,9 +2,14 @@ import Foundation
 import SubstrateSdk
 
 public extension ResourcesPallet {
-    struct StatementAllowance: Decodable {
+    struct StatementAllowance: Decodable, Equatable {
         @StringCodable public var maxCount: UInt32
         @StringCodable public var maxSize: UInt32
+
+        public init(maxCount: UInt32, maxSize: UInt32) {
+            _maxCount = StringCodable(wrappedValue: maxCount)
+            _maxSize = StringCodable(wrappedValue: maxSize)
+        }
     }
 
     struct StmtStoreAllowanceEntry: Decodable {

@@ -30,6 +30,8 @@ final class TabBarBottomChromeController: UIViewController {
     var centerPanelContent: UIViewController?
     /// The first settled layout places the bar. Animating it would spring the bar in from its unplaced frame at launch.
     private var hasPerformedInitialLayout = false
+    /// Set while `apply(_:)` runs, so the state it commits does not fire `onDockletStateCommitted`.
+    private var isApplyingContext = false
     /// The last keyboard frame in screen coordinates, kept so the lift can be re-derived when the scan panel changes.
     var keyboardFrame: CGRect?
 
@@ -60,6 +62,9 @@ final class TabBarBottomChromeController: UIViewController {
                     self?.tipController.dockletTuckEnded()
                 }
                 self?.applyAccessibility(for: state)
+                if self?.isApplyingContext == false {
+                    self?.onDockletStateCommitted?()
+                }
             },
             contentFade: { [weak self] target in
                 // Some targets are emitted inside UIKit's update cycle (layout, transition coordinator). An
@@ -146,23 +151,14 @@ final class TabBarBottomChromeController: UIViewController {
     /// recompute when that changes.
     var onBottomClearanceInvalidated: (() -> Void)?
 
+    /// Fires for each Docklet state committed outside navigation, such as a drag release, a tap on a tucked Docklet,
+    /// an auto-hide tuck or a panel opening it. A context applied through `apply(_:)` does not fire it, because the
+    /// host lays out for that context itself.
+    var onDockletStateCommitted: (() -> Void)?
+
     /// The chain-status strip is installed by `MainTabBarViewController`, not by the chrome,
     /// so its tip anchor is handed down rather than reached for.
     var statusStripAnchorProvider: (() -> (any UIPopoverPresentationControllerSourceItem)?)?
-
-    /// Height the bar occupies at the bottom edge once it has settled. Folding and panel
-    /// animations move the chrome without changing it, so the host can lay out against it.
-    var restingBarHeight: CGFloat {
-        guard foldController.isTabRoot else {
-            return view.safeAreaInsets.bottom
-        }
-        return DSTabBarStyle.restingHeight(bottomSafeAreaInset: view.safeAreaInsets.bottom)
-    }
-
-    /// The part of `restingBarHeight` the safe area does not already cover.
-    var restingBottomClearance: CGFloat {
-        max(0, restingBarHeight - view.safeAreaInsets.bottom)
-    }
 
     deinit {
         MainActor.assumeIsolated {
@@ -254,6 +250,10 @@ final class TabBarBottomChromeController: UIViewController {
         }
     #endif
 
+    func setSettingsAttention(_ isVisible: Bool) {
+        barModel.showsSettingsAttention = isVisible
+    }
+
     func setSPATabs(_ chips: [TabBarShelfChip], selected: UUID?) {
         if spaTabCount != chips.count {
             spaTabCount = chips.count
@@ -318,6 +318,8 @@ final class TabBarBottomChromeController: UIViewController {
     }
 
     func apply(_ context: TabBarChromeContext) {
+        isApplyingContext = true
+        defer { isApplyingContext = false }
         foldController.update(context: context)
         foldController.refresh()
         tipController.setBarShown(foldController.state == .shown)

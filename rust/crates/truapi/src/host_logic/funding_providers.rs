@@ -20,7 +20,6 @@ use crate::{
 
 /// A provider the host offers, as the host supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
 	pub product_id: ProductId,
@@ -28,42 +27,24 @@ pub struct FundingProviderEntry {
 	/// has read the live one. `None` waits for that read: until dotNS answers,
 	/// the provider is neither asked for quotes nor offered for a session.
 	pub worker_manifest: Option<String>,
-	/// The root manifest JSON the host shipped for it, which its name and
-	/// icon are read from until the core has read the live one.
-	pub root_manifest: Option<String>,
-	/// Where the provider's manifests come from.
-	pub origin: FundingProviderOrigin,
-	/// Whether the provider ships an App, as the host knows for one it
-	/// bundles.
-	pub app: FundingProviderApp,
-}
-
-/// Whether a funding provider ships an App, so an App route of its can be
-/// shown.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum FundingProviderApp {
-	/// The host does not know: the core looks the App up on dotNS when an
-	/// App route is shown.
-	#[default]
-	Unknown,
-	/// It ships one.
-	Shipped,
-	/// It ships none, so it shows only external pages.
-	Absent,
 }
 
 /// The providers the host offers from its remote configuration's
-/// `published_names`, in order and each once, then the `bundled` ones the
-/// configuration does not name, with the names that are not product ids.
+/// `published_names`, in order and each once, with the names that are not
+/// product ids. A name carries no TLD: the core reads it on the network it is
+/// connected to, as `<name>.<tld>`, so one configuration serves every network.
+/// A name that names a TLD would pin one network, so it is skipped.
 pub fn provider_config(
 	published_names: &[String],
-	bundled: Vec<FundingProviderEntry>,
+	tld: &str,
 ) -> (Vec<FundingProviderEntry>, Vec<String>) {
 	let mut entries: Vec<FundingProviderEntry> = Vec::new();
 	let mut invalid = Vec::new();
 	for name in published_names {
-		let Ok(product_id) = name.trim().parse::<ProductId>() else {
+		let label = name.trim();
+		let product_id =
+			if label.contains('.') { None } else { ProductId::from_name(label, tld).ok() };
+		let Some(product_id) = product_id else {
 			invalid.push(name.clone());
 			continue;
 		};
@@ -71,31 +52,10 @@ pub fn provider_config(
 			entries.push(FundingProviderEntry {
 				product_id,
 				worker_manifest: None,
-				root_manifest: None,
-				origin: FundingProviderOrigin::Published,
-				app: FundingProviderApp::Unknown,
 			});
 		}
 	}
-	for entry in bundled {
-		if entries.iter().all(|known| known.product_id != entry.product_id) {
-			entries.push(entry);
-		}
-	}
 	(entries, invalid)
-}
-
-/// Where the core reads a provider's manifests.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum FundingProviderOrigin {
-	/// Published on dotNS: the core reads the live manifests, and goes by the
-	/// host's snapshots until it has.
-	#[default]
-	Published,
-	/// Shipped inside the host: its `worker_manifest` and `root_manifest` are
-	/// what the core goes by, and dotNS is never read for it.
-	Bundled,
 }
 
 /// How long what a quote answer showed about a provider is trusted over its
@@ -203,7 +163,7 @@ impl LearnedSupport {
 /// A rail, asset and country a provider recently refused, so the host can
 /// leave it out for a user there.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingUnsupported {
 	/// The rail.
 	pub rail: FundingRail,
@@ -217,7 +177,7 @@ pub struct FundingUnsupported {
 /// its quote refusals showed them, so the host can show the limits before
 /// quoting.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingLimit {
 	/// The rail.
 	pub rail: FundingRail,
@@ -236,7 +196,7 @@ pub struct FundingLimit {
 /// A provider a session can be handed to, with only the routes that serve the
 /// session's direction.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingCandidate {
 	/// The provider's product id.
 	pub provider_id: ProductId,
@@ -367,7 +327,7 @@ pub const FUNDING_MIN_AMOUNT: u128 = 10_000_000;
 /// may take any amount, so a bound is only known once every provider showed
 /// one. The minimum is never below [`FUNDING_MIN_AMOUNT`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingAmountLimits {
 	/// The smallest amount the session takes, in balance units: the smallest
 	/// minimum across providers when every provider showed one, and never
@@ -446,7 +406,7 @@ pub fn amount_limits(
 /// What the core knows about funding from one country, for the host's
 /// country picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingCountry {
 	/// ISO 3166-1 alpha-2 code.
 	pub country: String,
@@ -456,7 +416,7 @@ pub struct FundingCountry {
 
 /// Whether a provider serves a country.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingCountrySupport {
 	/// A provider serves it, by its manifest or a recent quote answer.
 	Supported {
@@ -472,7 +432,7 @@ pub enum FundingCountrySupport {
 /// What the user has picked so far in a session's overlay, which the
 /// countries and amount limits in [`FundingOptions`] go by.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingSelection {
 	/// How the user pays or is paid.
 	pub rail: FundingRail,
@@ -492,7 +452,7 @@ pub struct FundingSelection {
 /// for the user's selection, what each country supports and the amounts it
 /// takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingOptions {
 	/// The providers the session can be handed to.
 	pub candidates: Vec<FundingCandidate>,
@@ -525,7 +485,7 @@ pub struct FundingOptions {
 
 /// The amounts one network takes for a crypto selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingNetworkLimits {
 	/// The network, as routes declare it.
 	pub network: String,

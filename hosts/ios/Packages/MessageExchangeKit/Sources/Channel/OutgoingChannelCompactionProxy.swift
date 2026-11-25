@@ -15,6 +15,7 @@ final class OutgoingChannelCompactionProxy<M: MessageExchange.CodableMessage>: @
 
     private let channel: AnyOutgoingMessageChannel<M>
     private let compacter: AnyMessageCompactor<M>
+    private let coalescer: AnyMessageCoalescer<M>
     private let routeSelector: PeerSessionRouteSelector<M>
     private let sizeValidator: OutgoingRequestSizeValidating
     private let statementDataCoder: StatementDataCoding
@@ -32,6 +33,7 @@ final class OutgoingChannelCompactionProxy<M: MessageExchange.CodableMessage>: @
     init(
         channel: AnyOutgoingMessageChannel<M>,
         compacter: AnyMessageCompactor<M>,
+        coalescer: AnyMessageCoalescer<M>,
         routeSelector: PeerSessionRouteSelector<M>,
         sizeValidator: OutgoingRequestSizeValidating,
         statementDataCoder: StatementDataCoding,
@@ -40,6 +42,7 @@ final class OutgoingChannelCompactionProxy<M: MessageExchange.CodableMessage>: @
     ) {
         self.channel = channel
         self.compacter = compacter
+        self.coalescer = coalescer
         self.routeSelector = routeSelector
         self.sizeValidator = sizeValidator
         self.statementDataCoder = statementDataCoder
@@ -84,12 +87,18 @@ extension OutgoingChannelCompactionProxy: OutgoingMessageChanneling {
         var newMessages = [Message]()
 
         for message in messages {
-            if checkNotDuplicate(message: message) {
+            let outcome = checkNotDuplicate(message: message) ? coalescingOutcome(for: message) : .ignore
+
+            switch outcome {
+            case .append:
                 newMessages.append(message)
-            } else {
-                // mirror the queue's .ignored outcome so duplicates always
-                // produce a success callback regardless of which layer drops them
-                logger?.debug("Ignoring duplicate message already tracked by compaction proxy")
+            case let .replace(replacedMessage):
+                removeTrackedMessage(replacedMessage)
+                newMessages.append(message)
+            case .ignore:
+                // duplicates AND messages the coalescer ignores always produce a success callback
+                // regardless of which layer drops them
+                logger?.debug("Ignoring message already tracked or coalesced by compaction proxy")
                 delegate?.messageChannel(self, didFinishAddingMessageToQueue: message, withError: nil)
             }
         }
@@ -250,16 +259,26 @@ private extension OutgoingChannelCompactionProxy {
 
         let currentInChannel = inChannelMessages[route] ?? []
         let currentPending = pendingMessages[route] ?? []
-        let messagesToCompact = currentInChannel + currentPending
+        let allMessages = currentInChannel + currentPending
 
-        logger?.debug("Starting compaction for \(messagesToCompact.count) messages on route \(route)")
+        logger?.debug("Starting compaction for \(allMessages.count) messages on route \(route)")
 
         channel.reset(route: route)
         pendingMessages[route] = []
-        inChannelMessages[route] = []
+
+        let messagesToCompact = holdBackCoalescableMessages(allMessages, on: route)
+
+        guard !messagesToCompact.isEmpty else {
+            compactingRoutes.remove(route)
+            return
+        }
 
         compactionTasks[route]?.cancel()
-        compactionTasks[route] = Task { [compacter, weak self] in
+        compactionTasks[route] = makeCompactionTask(for: messagesToCompact, route: route)
+    }
+
+    func makeCompactionTask(for messagesToCompact: [Message], route: PeerSessionRoute) -> Task<Void, Never> {
+        Task { [compacter, weak self] in
             do {
                 let compactedMessage = try await compacter.compact(messages: messagesToCompact)
 
@@ -287,6 +306,18 @@ private extension OutgoingChannelCompactionProxy {
                 }
             }
         }
+    }
+
+    // Coalescable messages stay in-channel so later duplicates can still replace or ignore them.
+    func holdBackCoalescableMessages(_ messages: [Message], on route: PeerSessionRoute) -> [Message] {
+        let heldBack = messages.filter { coalescer.canCoalesce($0) }
+
+        inChannelMessages[route] = heldBack
+        if !heldBack.isEmpty {
+            channel.addMessagesToQueue(heldBack)
+        }
+
+        return messages.filter { !coalescer.canCoalesce($0) }
     }
 
     func handleCompactionSuccess(
@@ -368,5 +399,19 @@ private extension OutgoingChannelCompactionProxy {
         let isInChannel = inChannelMessages.values.contains { $0.contains(message) }
 
         return !isPending && !isInChannel
+    }
+
+    func removeTrackedMessage(_ replacedMessage: Message) {
+        for route in pendingMessages.keys {
+            pendingMessages[route]?.removeAll { $0 == replacedMessage }
+        }
+        removeFromInChannelMessages([replacedMessage])
+        optimisticallyAcknowledged.removeAll { $0 == replacedMessage }
+    }
+
+    func coalescingOutcome(for message: Message) -> MessageCoalescingOutcome<Message> {
+        let route = routeSelector.route(for: message)
+        let routeMessages = (pendingMessages[route] ?? []) + (inChannelMessages[route] ?? [])
+        return coalescer.outcome(for: message, pendingMessages: routeMessages)
     }
 }

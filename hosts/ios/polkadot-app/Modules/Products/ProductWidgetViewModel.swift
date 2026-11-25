@@ -7,7 +7,7 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
     @MainActor private(set) var node: CustomMessageWidgetNode?
 
     private let messageId: String
-    private let runtime: ChatRuntimeProtocol
+    private let render: () async -> AsyncThrowingStream<ChatRendererOutput, Error>
     private let tokenResolver: any WidgetDesignTokenResolving
     private let logger: LoggerProtocol
     /// Not private: tests await this instead of a wall clock. Under a loaded
@@ -26,7 +26,7 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
     /// render, and each has to be opened again however many the cell has seen.
     private static let renderAttempts = 3
 
-    init(
+    convenience init(
         roomId: String?,
         messageId: String,
         messageType: String,
@@ -36,8 +36,32 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
         logger: LoggerProtocol,
         retryDelay: Duration = .seconds(1)
     ) {
+        self.init(
+            messageId: messageId,
+            render: {
+                await runtime.renderMessage(
+                    roomId: roomId,
+                    messageId: messageId,
+                    messageType: messageType,
+                    messageData: messageData
+                )
+            },
+            tokenResolver: tokenResolver,
+            logger: logger,
+            retryDelay: retryDelay
+        )
+    }
+
+    /// Draws whatever `render` streams, under `messageId` in the logs.
+    init(
+        messageId: String,
+        render: @escaping () async -> AsyncThrowingStream<ChatRendererOutput, Error>,
+        tokenResolver: any WidgetDesignTokenResolving,
+        logger: LoggerProtocol,
+        retryDelay: Duration = .seconds(1)
+    ) {
         self.messageId = messageId
-        self.runtime = runtime
+        self.render = render
         self.tokenResolver = tokenResolver
         self.logger = logger
         self.retryDelay = retryDelay
@@ -49,12 +73,7 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
             while true {
                 // Republishing `node` from this same instance is what reaches the
                 // cell: it is observed, so nothing has to reconfigure it.
-                let outcome = await draw(
-                    roomId: roomId,
-                    messageId: messageId,
-                    messageType: messageType,
-                    messageData: messageData
-                )
+                let outcome = await draw()
                 switch outcome {
                 case .cancelled,
                      .ended(drew: true):
@@ -96,18 +115,8 @@ private extension ProductWidgetViewModel {
     }
 
     /// One render, from a fresh stream.
-    func draw(
-        roomId: String?,
-        messageId: String,
-        messageType: String,
-        messageData: Data
-    ) async -> RenderOutcome {
-        let stream = await runtime.renderMessage(
-            roomId: roomId,
-            messageId: messageId,
-            messageType: messageType,
-            messageData: messageData
-        )
+    func draw() async -> RenderOutcome {
+        let stream = await render()
 
         var drew = false
         do {
@@ -133,6 +142,8 @@ private extension ProductWidgetViewModel {
             logger.error("Widget render stream failed for \(messageId): \(error)")
             return .failed(error, drew: drew)
         }
+        // Cancelling ends the stream without an error, which would otherwise read as a stream that drew nothing.
+        guard !Task.isCancelled else { return .cancelled }
         return .ended(drew: drew)
     }
 }

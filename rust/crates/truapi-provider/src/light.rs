@@ -140,6 +140,9 @@ const STATEMENT_AFFINITY_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 /// here instead, by [`MAX_UNDELIVERED_FRAMES`].
 const MAX_PENDING_REQUESTS: u32 = 1024;
 const MAX_SUBSCRIPTIONS: u32 = 1024;
+/// Transactions a chain holds from submission until they are finalized or
+/// dropped, matching smoldot's own default.
+const MAX_PENDING_TRANSACTIONS: u32 = 64;
 
 /// How many response frames may be waiting for the consumer before further
 /// requests are refused, mirroring the bounded outbound buffer the WebSocket
@@ -273,7 +276,7 @@ impl LightState {
 		&self,
 		genesis_hash: [u8; 32],
 		source: &ChainSource,
-		relay: Option<([u8; 32], ChainSource)>,
+		relay: Option<&([u8; 32], ChainSource)>,
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		let (specification, database_content, statement_protocol) = match source {
 			ChainSource::LightClient { specification, database_content, statement_protocol } => {
@@ -300,9 +303,8 @@ impl LightState {
 			return Err(ProviderError::TooManyConnections { limit: MAX_CONNECTIONS });
 		}
 
-		let relay_genesis = relay.as_ref().map(|(genesis, _)| *genesis);
+		let relay_genesis = relay.map(|(genesis, _)| *genesis);
 		let relay_id = relay
-			.as_ref()
 			.map(|(genesis, relay_source)| add_relay(&mut guard, *genesis, relay_source))
 			.transpose()?;
 
@@ -313,7 +315,7 @@ impl LightState {
 				&specification,
 				database_content.as_deref(),
 				*statement_protocol,
-				relay.as_ref(),
+				relay,
 			)
 		} else {
 			Ok(())
@@ -332,6 +334,8 @@ impl LightState {
 						max_subscriptions: MAX_SUBSCRIPTIONS,
 					},
 					statement_protocol_config: statement_protocol.then(statement_protocol_config),
+					max_pending_transactions: NonZero::new(MAX_PENDING_TRANSACTIONS)
+						.expect("budget is non-zero"),
 				})
 				.map_err(|err| ProviderError::AddChain { reason: err.to_string() })
 		});
@@ -481,6 +485,8 @@ fn add_implicit(
 			potential_relay_chains: relay.into_iter(),
 			json_rpc: AddChainConfigJsonRpc::Disabled,
 			statement_protocol_config: statement_protocol.then(statement_protocol_config),
+			max_pending_transactions: NonZero::new(MAX_PENDING_TRANSACTIONS)
+				.expect("budget is non-zero"),
 		})
 		.map_err(|err| ProviderError::AddChain { reason: err.to_string() })?;
 

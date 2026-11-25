@@ -4,7 +4,7 @@ This file is intentionally **thin**. Detailed architecture and code rules are in
 
 ## Build prerequisites
 
-The build needs the TrUAPI Rust core, because `:feature:products:impl` depends on `:bindings:truapi-host` in every variant. Inside `trinity-user-agents` the core is the enclosing repository and nothing has to be fetched. Outside it, run `scripts/setup-truapi.py` once: it clones `paritytech/trinity-user-agents` at the `truapi_ref` pin from `.github/actions/install/action.yaml` and writes `truapi.dir` to `local.properties`. Re-run it after the pin moves. A `truapi.dir` that is set but does not resolve still fails at configuration time rather than falling back.
+The build needs the TrUAPI Rust core, because `:feature:products:impl` depends on `:bindings:truapi-host` in every variant. The core is the enclosing `trinity-user-agents` repository, two levels up, so nothing has to be fetched.
 
 `FIRESTORE_DATABASE_ID` must also be in `local.properties`, or configuration fails before anything compiles. It is a CI secret, so ask for the value.
 
@@ -19,6 +19,8 @@ JDK 21. `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Content
 3. **Review** with `/reviewer` (optionally `/reviewer <PR#>`). Loads `.claude/docs/review/*.md` plus the architecture+code docs that match the touched files; outputs a comment list tagged blocking / major / minor.
 
 Index of all docs: `.claude/docs/README.md`.
+
+Known centralised dependencies (such as Firebase Remote Config) and their tracking issues are listed in `README.md` › Centralised dependencies.
 
 For PR reviews from CI or against a branch:
 - `/reviewer` with no arg — review the current branch's diff against `master`.

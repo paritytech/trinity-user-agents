@@ -4,11 +4,13 @@ import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.hasMaterials
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
@@ -38,6 +40,8 @@ import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
+import uniffi.truapi.RendererNode
+import kotlin.time.Duration.Companion.seconds
 
 class TrUAPIChatWorker(
     private val productId: ProductId,
@@ -48,10 +52,10 @@ class TrUAPIChatWorker(
 ) : ProductWorker {
     init {
         val workerJob = scope.coroutineContext.job
-        runtime.acquireWorker(productId)
+        val claim = runtime.claimWorker(productId)
         workerJob.invokeOnCompletion {
-            runCatching { runtime.releaseWorker(productId) }
-                .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
+            runCatching { claim.release() }
+                .onFailure { Timber.w(it, "TrUAPI worker claim release failed for %s", productId.value) }
         }
         scope.launch {
             workers.executionState(productId)
@@ -80,7 +84,6 @@ class TrUAPIChatWorker(
         return outcome.logFailure("truapi.chat.action for ${productId.value}")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,
@@ -88,8 +91,24 @@ class TrUAPIChatWorker(
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>> {
         if (roomId == null) return flowOf(roomlessFailure("render"))
-        val context = RenderContext.ChatMessage(roomId = roomId.value, messageId = messageId, messageType = messageType)
-        return workers.executionState(productId)
+        return render(
+            RenderContext.ChatMessage(roomId = roomId.value, messageId = messageId, messageType = messageType),
+            messageData.value,
+            "${productId.value}/$messageId",
+        )
+    }
+
+    /** Draws the card the product docked in the footer of [roomId]. */
+    override fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> =
+        render(
+            RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = messageType),
+            payload.value,
+            "${productId.value} footer of ${roomId.value}",
+        )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun render(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
+        workers.executionState(productId)
             .distinctUntilChanged()
             .flatMapLatest { state ->
                 when (state) {
@@ -97,11 +116,10 @@ class TrUAPIChatWorker(
                     is WorkerExecutionState.Failed ->
                         flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
                     null -> emptyFlow()
-                    is WorkerExecutionState.Running -> state.execution.chatRender(context, messageData.value)
+                    is WorkerExecutionState.Running -> state.execution.chatRender(context, payload, label)
                 }
             }
             .conflate()
-    }
 
     override fun dispatchEvent(event: JsUiEvent) {
         val roomId = event.roomId
@@ -115,11 +133,23 @@ class TrUAPIChatWorker(
             return
         }
         val context = RenderContext.ChatMessage(roomId = roomId.value, messageId = event.messageId, messageType = event.messageType)
+        execution.publishRendererAction(context, event.actionId, event.eventType)
+    }
+
+    /** A press inside the card the product docked in the footer of [roomId]. */
+    override fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
+        val execution = workers.currentExecution(productId)
+        if (execution == null) {
+            Timber.w("TrUAPI chat footer event for %s/%s dropped: no running execution", productId.value, roomId.value)
+            return
+        }
+        execution.publishRendererAction(RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = messageType), actionId, eventType)
+    }
+
+    private fun TrUAPIProductExecution.publishRendererAction(context: RenderContext, actionId: String, eventType: JsUiEvent.Type) {
         runCatching {
-            execution.publishRendererAction(
-                HostRendererActionSubscribeItem(context, event.actionId, event.eventType.toActionPayload()),
-            )
-        }.logFailure("truapi.renderer.action '${event.actionId}' for ${productId.value}")
+            publishRendererAction(HostRendererActionSubscribeItem(context, actionId, eventType.toActionPayload()))
+        }.logFailure("truapi.renderer.action '$actionId' for ${productId.value}")
     }
 
     private fun <T> roomlessFailure(what: String): Result<T> {
@@ -143,7 +173,7 @@ class TrUAPIChatWorker(
     // Reopened under flatMapLatest, not above it: a stop or a replacement execution then cancels
     // the backoff wait, and a failure cannot overtake the node drawn just before it by cancelling
     // the scope that drains flatMapLatest's channel.
-    private fun TrUAPIProductExecution.chatRender(context: RenderContext.ChatMessage, payload: ByteArray): Flow<Result<JsWidget>> =
+    private fun TrUAPIProductExecution.chatRender(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
         flow {
             var drew = false
             render(ProductRendererRenderRequest(context, payload))
@@ -151,6 +181,7 @@ class TrUAPIChatWorker(
                 .collect { node ->
                     drew = true
                     emit(Result.success(node.toJsWidget()))
+                    if (node.hasMaterials()) scope.launch { reportMaterialsUnsupported(node, context, label) }
                 }
             // A stream closed before its first tree would otherwise leave the cell loading for the
             // execution's whole life; a card keeps its last face, a cell has none.
@@ -158,7 +189,16 @@ class TrUAPIChatWorker(
         }
             // The execution went away, not the render: end quietly and let the replacement draw.
             .catch { cause -> if (cause !is CancellationException) throw cause }
-            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}")
+            .reopenAfterFailure("TrUAPI chat render for $label")
+
+    // A chat-context resolution settles every node `Unsupported` and reports it before its first value.
+    private suspend fun TrUAPIProductExecution.reportMaterialsUnsupported(tree: RendererNode, context: RenderContext, label: String) {
+        runCancellableCatching {
+            resolveMaterials(tree, context, floatFilterable = false).use { resolution ->
+                withTimeoutOrNull(MATERIALS_REPORT_TIMEOUT) { resolution.resolved.first { it != null } }
+            }
+        }.logFailure("TrUAPI chat materials report for $label")
+    }
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")
 
@@ -171,5 +211,6 @@ class TrUAPIChatWorker(
 
     private companion object {
         const val NATIVE_PEER = "native"
+        val MATERIALS_REPORT_TIMEOUT = 1.seconds
     }
 }

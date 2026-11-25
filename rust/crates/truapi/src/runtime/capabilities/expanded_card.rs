@@ -4,7 +4,10 @@ use tracing::instrument;
 use truapi::{
 	CallContext, CallError,
 	api::ExpandedCard,
-	latest::HostExpandedCardSetFaceShownError as FaceShownError,
+	latest::{
+		HostExpandedCardSetBackShownError as BackShownError,
+		HostExpandedCardSetFaceShownError as FaceShownError,
+	},
 	versioned::expanded_card::{
 		HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
 		HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
@@ -13,12 +16,12 @@ use truapi::{
 };
 
 use crate::{
-	platform::{ExecutableKind, ExpandedCardFaceOutcome},
-	runtime::{ProductRuntimeHost, versioning::version},
+	platform::{ExecutableKind, ExpandedCardFaceOutcome, ExpandedCardTurnOutcome},
+	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
 
 #[async_trait::async_trait]
-impl ExpandedCard for ProductRuntimeHost {
+impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
 	async fn set_face_shown(
 		&self,
@@ -49,8 +52,6 @@ impl ExpandedCard for ProductRuntimeHost {
 			.await
 	}
 
-	// This runtime has no way to turn a card, so a Widget reads "not supported" rather than a
-	// failure.
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_back_shown"))]
 	async fn set_back_shown(
 		&self,
@@ -59,15 +60,33 @@ impl ExpandedCard for ProductRuntimeHost {
 	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
 	{
 		version(request)
-			.exec(|_request| async move {
+			.exec(|request| async move {
 				self.require_widget()?;
-				Err(CallError::Unsupported)
+				let Some(card) = &self.connection.expanded_card else {
+					return Err(CallError::Unsupported);
+				};
+				match card.set_expanded_card_back_shown(request.shown).await {
+					Ok(ExpandedCardTurnOutcome::Applied) => Ok(()),
+					Ok(ExpandedCardTurnOutcome::NotPresented) => {
+						Err(CallError::Domain(BackShownError::NotPresented))
+					},
+					Ok(ExpandedCardTurnOutcome::UserMoving) => {
+						Err(CallError::Domain(BackShownError::UserMoving))
+					},
+					Ok(ExpandedCardTurnOutcome::NoBack) => {
+						Err(CallError::Domain(BackShownError::NoBack))
+					},
+					Ok(ExpandedCardTurnOutcome::Unsupported) => Err(CallError::Unsupported),
+					Err(error) => {
+						Err(CallError::Domain(BackShownError::Unknown { reason: error.reason }))
+					},
+				}
 			})
 			.await
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	// Admin connections call the trait without the dispatcher's kind filter.
 	fn require_widget<E>(&self) -> Result<(), CallError<E>> {
 		if self.connection.product.execution_kind != ExecutableKind::Widget {

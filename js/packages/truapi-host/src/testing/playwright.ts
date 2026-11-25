@@ -17,6 +17,7 @@ import {
   type ChainStatus,
   type ChatMessageRecord,
   type MockHostConfig,
+  type MockRuntimeConfig,
   type NotificationLogEntry,
   type PermissionLogEntry,
   type PermissionPolicy,
@@ -98,10 +99,10 @@ export interface TestHostFixtureOptions {
   /**
    * Chains to serve, in `@parity/host-api-test-sdk`'s `NetworkConfig` shape.
    *
-   * A convenience over spelling out `mock.chainProxies`, `mock.supportedChains`
-   * and `runtimeConfig` separately, which have to agree. The chain's role is
-   * read from the `id` suffix (`-asset-hub`, `-people`, `-bulletin`, else the
-   * relay) and the rest of the id is the network name.
+   * A convenience over spelling out `mock.chainProxies`, `mock.servedChains`
+   * and `runtimeConfig.testStack` separately, which have to agree. The chain's
+   * role is read from the `id` suffix (`-asset-hub`, `-people`, `-bulletin`,
+   * else the relay) and the rest of the id is the network name.
    *
    * Explicit `mock` or `runtimeConfig` values win, so a suite can start here
    * and override one piece.
@@ -137,7 +138,7 @@ export interface TestHostFixtureOptions {
    * hash the config declares, so that hash has to be the real one rather than
    * a {@link MOCK_GENESIS} placeholder.
    */
-  runtimeConfig?: Record<string, unknown>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Accounts the host can sign as. Defaults to `["alice"]`.
    *

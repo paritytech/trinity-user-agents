@@ -168,6 +168,9 @@ private extension OutgoingStatementRenewer {
             diagnostics.logger.debug("Statement \(input.statementId) renewal stopped: \(error)")
             try? await dependencies.store.markFailed(input, failure: .terminal(error))
             return false
+        } catch is OutgoingStatementRetiredError {
+            diagnostics.logger.debug("Statement \(input.statementId) renewal held while retired")
+            return false
         } catch {
             diagnostics.logger.error("Statement \(input.statementId) renewal into \(period) failed: \(error)")
             diagnostics.issues.renewalPublishFailed.recordFailure(

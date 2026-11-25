@@ -1,10 +1,15 @@
 import Foundation
 import UIKit
 import SwiftUI
+import DesignSystem
 
 extension ChatRequestedBannerView.ViewModel: @preconcurrency ChatInputViewConfigurationProtocol {
     public var activateOnAppear: Bool {
         false
+    }
+
+    public var safeAreaFillColor: UIColor? {
+        UIColor.bgSurfaceContainer
     }
 
     @MainActor
@@ -12,7 +17,7 @@ extension ChatRequestedBannerView.ViewModel: @preconcurrency ChatInputViewConfig
         UIHostingConfiguration {
             ChatRequestedBannerView(viewModel: self)
         }
-        .margins(.vertical, 0)
+        .margins(.all, 0)
         .makeContentView()
     }
 

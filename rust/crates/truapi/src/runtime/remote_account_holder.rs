@@ -1,5 +1,7 @@
 //! Canonical account operations translated to the existing paired SSO protocol.
 
+mod subtree_requests;
+
 use super::{
 	HostSession,
 	allowances::AllowanceResource,
@@ -7,10 +9,11 @@ use super::{
 		AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 		AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, require_current_session,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
+		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
-	sso_remote::SsoRemoteResponseError,
+	sso_remote::{SsoRemoteResponseError, SsoSessionKey},
 	sso_request_service::SsoRequestService,
 };
 use crate::{
@@ -25,21 +28,30 @@ use crate::{
 		},
 		sso_wire::SsoRequest,
 	},
-	host_logic::entropy::derive_product_entropy_from_source,
+	host_logic::{
+		entropy::derive_product_entropy_from_source,
+		session::{SessionInfo, SessionState},
+	},
 	platform::ProductId,
 };
 use futures::{
-	StreamExt,
+	FutureExt, StreamExt,
 	stream::{self, BoxStream},
 };
-use std::sync::Arc;
-use truapi::{CallContext, latest};
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+};
+use subtree_requests::{InFlightProductSubtree, ProductSubtreeCaller};
+use truapi::{CallContext, CancellationToken, latest};
 
 /// Account-holder requests over one runtime's selected SSO channel.
 pub struct RemoteAccountHolder {
 	service: Arc<SsoRequestService>,
 	registry: Arc<RingVrfRegistryStore>,
 	spawner: Spawner,
+	/// `ProductSubtreeRequest`s in flight, which concurrent callers join.
+	product_subtree_requests: Mutex<HashMap<(SsoSessionKey, ProductId), Arc<InFlightProductSubtree>>>,
 }
 
 impl RemoteAccountHolder {
@@ -50,7 +62,42 @@ impl RemoteAccountHolder {
 		registry: Arc<RingVrfRegistryStore>,
 		spawner: Spawner,
 	) -> Self {
-		Self { service, registry, spawner }
+		Self { service, registry, spawner, product_subtree_requests: Mutex::new(HashMap::new()) }
+	}
+
+	/// Join the `ProductSubtreeRequest` in flight for `product_id` in `session`,
+	/// or start one.
+	///
+	/// Concurrent callers share one request and each takes its answer. A
+	/// settled request is never joined, so a failure is not remembered.
+	fn join_product_subtree_request(
+		&self,
+		cx: &CallContext,
+		session: SessionInfo,
+		sso_session: SsoSessionKey,
+		product_id: &ProductId,
+	) -> ProductSubtreeCaller {
+		let request_key = (sso_session, product_id.clone());
+		let mut requests = self
+			.product_subtree_requests
+			.lock()
+			.expect("product subtree request mutex poisoned");
+		if let Some(caller) = requests.get(&request_key).and_then(InFlightProductSubtree::join) {
+			return caller;
+		}
+		let service = self.service.clone();
+		// Others may join, so this caller's cancel must not reach the request.
+		let cancel = CancellationToken::default();
+		let request_cx = CallContext::with_parts(cx.request_id().to_string(), cancel.clone());
+		let request = ProductSubtreeRequest { product_id: product_id.clone() };
+		let fetch = async move {
+			service.call(&request_cx, &session, request).await?.map_err(remote_authority_error)
+		}
+		.boxed();
+		let (in_flight, caller) = InFlightProductSubtree::start(fetch, cancel);
+		requests.retain(|_, in_flight| in_flight.has_callers());
+		requests.insert(request_key, in_flight);
+		caller
 	}
 
 	async fn remember_registration(
@@ -152,21 +199,34 @@ impl AccountHolder for RemoteAccountHolder {
 		self.service.current_session()
 	}
 
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
-		require_current_session(&self.service.session_state(), session).map(|_| ())
+	fn session_state(&self) -> Arc<SessionState> {
+		self.service.session_state()
 	}
 
-	async fn product_subtree_public_key(
+	fn require_current_session(
 		&self,
-		invocation: AccountInvocation<'_>,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError> {
+		require_current_session(&self.service.session_state(), session)
+	}
+
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		Ok(self.service.device_encryption_secret())
+	}
+
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
-		let request = ProductSubtreeRequest { product_id: product_id.clone() };
-		self.service
-			.call(invocation.call, &session, request)
-			.await?
-			.map_err(remote_authority_error)
+		let sso_session =
+			SsoSessionKey::from_session(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?);
+		Ok(SubtreeResolution::Ask(Box::pin(async move {
+			self.join_product_subtree_request(invocation.call, session, sso_session, product_id)
+				.answer(invocation.call)
+				.await
+		})))
 	}
 
 	async fn sign_vrf(
@@ -222,7 +282,10 @@ impl AccountHolder for RemoteAccountHolder {
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
 			SignRawAuthorityRequest::Product(request) => request,
-			SignRawAuthorityRequest::LegacyAccount { account, request } => {
+			SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+				latest::HostSignRawRequest { account: product_account, payload: request.payload }
+			},
+			SignRawAuthorityRequest::IdentityAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
 				if !watermarked {
 					return self
@@ -392,15 +455,16 @@ impl AccountHolder for RemoteAccountHolder {
 			.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })
 	}
 
-	fn contact_handles(
+	fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<crate::runtime::contacts::ContactHandles, AuthorityError> {
+		product_id: &ProductId,
+	) -> Result<crate::runtime::contacts::ContactHandleKey, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), session)?;
 		let source = session.root_entropy_source.ok_or_else(|| AuthorityError::Unavailable {
 			reason: "Session secret missing".to_string(),
 		})?;
-		Ok(crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source))
+		Ok(crate::runtime::contacts::ContactHandleKey::from_root_entropy_source(&source, product_id))
 	}
 
 	async fn allocate_grants<'a>(
@@ -419,29 +483,20 @@ impl AccountHolder for RemoteAccountHolder {
 			resources: request.resources,
 			on_existing: policy,
 		};
-		Ok(stream::once(async move {
-			self.service
-				.call(invocation.call, &session, request)
-				.await?
-				.map_err(remote_authority_error)
-		})
-		.flat_map(|result| {
-			stream::iter(match result {
-				Ok(outcomes) => outcomes
-					.into_iter()
-					.map(|outcome| match outcome {
-						SsoAllocationOutcome::Allocated(resource) => {
-							decode_grant(resource).map(AccountGrantOutcome::Allocated)
-						},
-						SsoAllocationOutcome::Rejected => Ok(AccountGrantOutcome::Rejected),
-						SsoAllocationOutcome::NotAvailable => {
-							Ok(AccountGrantOutcome::NotAvailable { reason: None })
-						},
-					})
-					.collect::<Vec<_>>(),
-				Err(error) => vec![Err(error)],
-			})
-		})
+		let outcomes = self
+			.service
+			.call(invocation.call, &session, request)
+			.await?
+			.map_err(remote_authority_error)?;
+		Ok(stream::iter(outcomes.into_iter().map(|outcome| match outcome {
+			SsoAllocationOutcome::Allocated(resource) => {
+				decode_grant(resource).map(AccountGrantOutcome::Allocated)
+			},
+			SsoAllocationOutcome::Rejected => Ok(AccountGrantOutcome::Rejected),
+			SsoAllocationOutcome::NotAvailable => {
+				Ok(AccountGrantOutcome::NotAvailable { reason: None })
+			},
+		}))
 		.boxed())
 	}
 
@@ -531,7 +586,7 @@ fn remote_authority_error(reason: String) -> AuthorityError {
 /// only the kind so no key material reaches logs.
 fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> AuthorityError {
 	AuthorityError::Unknown {
-		reason: format!("Unexpected {label} response resource: {}", resource.kind()),
+		reason: format!("Unexpected {label} response resource: {}", <&str>::from(resource)),
 	}
 }
 

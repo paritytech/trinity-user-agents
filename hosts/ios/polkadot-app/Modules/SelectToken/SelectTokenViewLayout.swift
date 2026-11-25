@@ -39,7 +39,7 @@ private extension SelectTokenViewLayout.TokenRow {
 
 private extension SelectTokenViewLayout {
     struct TokenRow: View {
-        let icon: (any ImageViewModelProtocol)?
+        let icon: AnyImageViewModel?
         let label: String
 
         var body: some View {

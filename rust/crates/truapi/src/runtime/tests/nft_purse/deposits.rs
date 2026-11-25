@@ -25,7 +25,9 @@ const SENDER_PURSE: u32 = 2;
 
 /// Purses of [`PRODUCT`], the receiver, and [`SENDER_PURSE`] of
 /// the other product, the sender, which holds `count` items.
-fn sender_and_receiver(count: u32) -> (Purses, ProductRuntimeHost, Vec<v01::NftPurseItemKey>) {
+fn sender_and_receiver(
+	count: u32,
+) -> (Purses, ProductRuntimeHost<RemoteAccountHolder>, Vec<v01::NftPurseItemKey>) {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
 	let sender = purses.other_product();
 	create(&sender, "Sender").unwrap();
@@ -35,7 +37,7 @@ fn sender_and_receiver(count: u32) -> (Purses, ProductRuntimeHost, Vec<v01::NftP
 
 /// A cheque of `items` the sender makes for `to`.
 fn sent_cheque(
-	sender: &ProductRuntimeHost,
+	sender: &ProductRuntimeHost<RemoteAccountHolder>,
 	to: v01::NftPurseChequeDestination,
 	items: Vec<v01::NftPurseItemKey>,
 ) -> v01::NftPurseCheque {
@@ -61,7 +63,7 @@ fn to_static_key(cheque_id: [u8; 32]) -> v01::NftPurseChequeDestination {
 }
 
 fn deposit(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	cheque: v01::NftPurseCheque,
 	to: u32,
 ) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
@@ -74,7 +76,10 @@ fn deposit_refusal(error: v01::NftPurseDepositError) -> CallError<HostNftPurseDe
 }
 
 /// The first status `host` sees for the operation it registered under `cheque`'s id.
-fn first_status_of(host: &ProductRuntimeHost, cheque: &v01::NftPurseCheque) -> v01::NftPurseStatus {
+fn first_status_of(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+	cheque: &v01::NftPurseCheque,
+) -> v01::NftPurseStatus {
 	let idempotency_key = v01::NftPurseIdempotencyKey(cheque.id.0);
 	let request = v01::HostNftPurseObserveOperationStatusRequest { idempotency_key };
 	let request = HostNftPurseObserveOperationStatusRequest::V1(request);
@@ -228,7 +233,7 @@ fn a_static_cheque_sealed_to_another_key_answers_corrupted_cheque() {
 }
 
 fn static_receive_key(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<v01::X25519PublicKey, CallError<HostNftPurseStaticReceiveKeyError>> {
 	let request =
 		HostNftPurseStaticReceiveKeyRequest::V1(v01::HostNftPurseStaticReceiveKeyRequest {});
@@ -274,7 +279,7 @@ fn the_static_receive_key_is_denied_without_a_session() {
 }
 
 fn refund(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	cheque: &v01::NftPurseCheque,
 ) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
 	let request = v01::HostNftPurseRefundRequest { cheque_id: cheque.id };

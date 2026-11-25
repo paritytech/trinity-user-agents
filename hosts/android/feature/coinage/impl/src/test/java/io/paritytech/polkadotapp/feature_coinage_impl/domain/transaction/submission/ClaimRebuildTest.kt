@@ -13,6 +13,8 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.deriveKeypair
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.CoinageInstanceIdProvider
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.ConfiguredInstanceCoins
 import io.paritytech.polkadotapp.feature_coinage_impl.data.model.OnChainCoinInfo
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.transaction.CoinageAssetKind
@@ -59,8 +61,9 @@ class ClaimRebuildTest {
     private val chainAssetProvider: ChainAssetProvider = mockk()
     private val coinRepository: CoinRepository = mockk()
     private val claimExtrinsicBuilder: ClaimExtrinsicBuilder = mockk()
+    private val coinageInstanceIdProvider: CoinageInstanceIdProvider = mockk()
 
-    private val rebuild = ClaimRebuild(chainAssetProvider, coinRepository, claimExtrinsicBuilder)
+    private val rebuild = ClaimRebuild(chainAssetProvider, coinRepository, claimExtrinsicBuilder, ConfiguredInstanceCoins(coinageInstanceIdProvider))
 
     @Before
     fun setUp() {
@@ -117,7 +120,8 @@ class ClaimRebuildTest {
     fun `presence reports the peer's coins the chain holds`() = runTest {
         val present = claimOf(1).source
         val absent = claimOf(2).source
-        givenChainReads(listOf(Result.success(setOf(present))))
+        givenConfiguredInstance(0u)
+        givenChainReads(listOf(Result.success(mapOf(present to 0))))
 
         val looks = rebuild.presence(setOf(present, absent)).take(1).toList()
 
@@ -127,11 +131,24 @@ class ClaimRebuildTest {
     @Test
     fun `a failed chain read is not reported as a look`() = runTest {
         val coin = claimOf(1).source
-        givenChainReads(listOf(Result.failure(IllegalStateException("node unreachable")), Result.success(emptySet())))
+        givenConfiguredInstance(0u)
+        givenChainReads(listOf(Result.failure(IllegalStateException("node unreachable")), Result.success(emptyMap())))
 
         val looks = rebuild.presence(setOf(coin)).take(1).toList()
 
         assertEquals(listOf(emptySet<AccountId>()), looks)
+    }
+
+    @Test
+    fun `presence reports only the coins of the configured instance`() = runTest {
+        val home = claimOf(1).source
+        val foreign = claimOf(2).source
+        givenConfiguredInstance(7u)
+        givenChainReads(listOf(Result.success(mapOf(home to 7, foreign to 0))))
+
+        val looks = rebuild.presence(setOf(home, foreign)).take(1).toList()
+
+        assertEquals(listOf(setOf(home)), looks)
     }
 
     // ---- how long it is retried ----
@@ -185,12 +202,16 @@ class ClaimRebuildTest {
 
     // ---- harness ----
 
+    private fun givenConfiguredInstance(instance: UInt) {
+        coEvery { coinageInstanceIdProvider.instanceId() } returns Result.success(instance)
+    }
+
     private fun givenBuildsSucceed() {
         coEvery { claimExtrinsicBuilder.build(any(), any(), any()) } returns Result.success(mockk<EnrichedSendableExtrinsic>())
     }
 
     /** One emission per read, and a subscription that stays open after the last one. */
-    private fun givenChainReads(reads: List<Result<Set<AccountId>>>) {
+    private fun givenChainReads(reads: List<Result<Map<AccountId, Int>>>) {
         coEvery { coinRepository.subscribeCoinsInfoFor(any(), any()) } answers {
             val requested = secondArg<List<AccountId>>()
 
@@ -198,7 +219,9 @@ class ClaimRebuildTest {
                 reads.forEach { read ->
                     emit(
                         read.map { present ->
-                            requested.associateWith { OnChainCoinInfo(instanceId = 0, value = 3, age = 0).takeIf { _ -> it in present } }
+                            requested.associateWith { accountId ->
+                                present[accountId]?.let { instance -> OnChainCoinInfo(instanceId = instance, value = 3, age = 0) }
+                            }
                         }
                     )
                 }

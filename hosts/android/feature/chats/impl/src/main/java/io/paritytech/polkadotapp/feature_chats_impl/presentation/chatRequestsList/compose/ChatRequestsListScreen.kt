@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.tabbar.ShowTabBarTucked
 import io.paritytech.polkadotapp.common.utils.randomBytes
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
@@ -43,6 +44,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 fun ChatRequestsListScreen(contract: ChatRequestsListContract) {
+    ShowTabBarTucked()
+
     val state by contract.state.collectAsStateWithLifecycle()
     val declineConfirmation by contract.declineConfirmationState.collectAsStateWithLifecycle()
 

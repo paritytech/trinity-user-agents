@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
-	runtime::{ProductAuthority, ProductRuntimeHost, allowances},
+	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{StubPlatform, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};
@@ -83,7 +83,9 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		] {
 			block_on(storage.write_core_storage(key, blob.clone())).unwrap();
 		}
-		pairing.cache_product_subtree_for_test(&session, &product_id, [0xAB; 32]);
+		pairing
+			.accounts()
+			.cache_product_subtree_for_test(&session, &product_id, [0xAB; 32]);
 		let (release, pause) = oneshot::channel();
 		*storage.pause.lock().unwrap() = Some((CoreStorageKey::AutoSigningKeys, pause));
 		*storage.failure.lock().unwrap() = Some(CoreStorageKey::AutoSigningKeys);
@@ -151,7 +153,7 @@ fn clearing_the_old_session_during_login_keeps_the_new_one_connected() {
 		(host.session_state.current(), states.lock().unwrap().last().cloned()),
 		(
 			Some(next.clone()),
-			Some(AuthState::Connected(Box::new(connected_session_ui_info(&next))))
+			Some(AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&next))))
 		)
 	);
 }

@@ -36,7 +36,12 @@ extension PolkadotSignInPresenter: PolkadotSignInPresenterProtocol {
         guard case let .loaded(input) = state else {
             return
         }
-        interactor.approve(with: input)
+        wireframe.authorize(animated: true, retriable: false) { [weak self] isAuthorized in
+            guard isAuthorized else {
+                return
+            }
+            self?.interactor.approve(with: input)
+        }
     }
 
     func cancel() {
@@ -89,11 +94,11 @@ private extension PolkadotSignInPresenter {
         }
 
         switch allowanceError {
-        case .noEvictableSlots:
+        case .noEvictableSlots,
+             .noSlotsAvailable:
             return String(localized: .polkadotSignInNoSlots)
-        case let .noSlotsAvailable(secsToWait):
-            let timeString = secsToWait.localizedDaysHoursOrFallbackMinutes()
-            return String(localized: .polkadotSignInNoSlotsAvailable(time: timeString))
+        case .replacementRejected:
+            return nil
         }
     }
 

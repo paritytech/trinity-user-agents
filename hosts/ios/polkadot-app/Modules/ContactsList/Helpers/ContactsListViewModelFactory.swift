@@ -15,7 +15,7 @@ protocol ContactsListViewModelMaking {
 final class ContactsListViewModelFactory {
     let messageTimestampFormatter: TimestampFormatting
     let chatMessageDecoderFactory: ChatMessageDecoderMaking
-    let productIconViewModelFactory: ProductIconViewModelMaking
+    let iconViewModelFactory: ChatIconViewModelFactory
     let chain: ChainModel
     let tokenFormatter: (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     private var _tokenFormatter: TransferAmountViewModelFactoryProtocol?
@@ -23,13 +23,13 @@ final class ContactsListViewModelFactory {
     init(
         messageTimestampFormatter: TimestampFormatting = ContactTimestampFormatter(),
         chatMessageDecoderFactory: ChatMessageDecoderMaking,
-        productIconViewModelFactory: ProductIconViewModelMaking,
+        iconViewModelFactory: ChatIconViewModelFactory,
         chain: ChainModel,
         tokenFormatter: @escaping (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     ) {
         self.messageTimestampFormatter = messageTimestampFormatter
         self.chatMessageDecoderFactory = chatMessageDecoderFactory
-        self.productIconViewModelFactory = productIconViewModelFactory
+        self.iconViewModelFactory = iconViewModelFactory
         self.chain = chain
         self.tokenFormatter = tokenFormatter
     }
@@ -68,7 +68,7 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             let configuration = DSChatListItemConfiguration(
                 dateFormatter: messageTimestampFormatter,
                 avatarViewModel: avatarViewModel,
-                icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
+                icon: iconViewModelFactory.createViewModel(from: peerMetadata.icon),
                 sender: peerMetadata.name,
                 message: lastMessage,
                 messageKind: messageKind(for: chat.message),
@@ -221,7 +221,8 @@ private extension ContactsListViewModelFactory {
                 for: content.totalValue,
                 tokenFormatter: _tokenFormatter!,
                 messageStatus: message.status,
-                peerName: peerMetadata.name
+                peerName: peerMetadata.name,
+                transferState: content.state
             )
 
         case .contactAdded:
@@ -324,8 +325,8 @@ private extension ContactsListViewModelFactory {
                 .active
             case let .finished(duration):
                 .finished(duration: formatCallDuration(duration))
-            case let .cancelled(duration):
-                .cancelled(ringDuration: formatCallDuration(duration))
+            case .cancelled:
+                .cancelled
             case .missed:
                 .missed
             }
@@ -346,17 +347,34 @@ private extension ContactsListViewModelFactory {
         for amount: Balance,
         tokenFormatter: TransferAmountViewModelFactoryProtocol,
         messageStatus: Chat.LocalMessage.Status,
-        peerName: String
+        peerName: String,
+        transferState: Chat.LocalMessage.Content.Transfer.State? = nil
     ) -> String {
         let formattedAmount = tokenFormatter.amount(from: amount)
+        let reclaimedAmount = transferState?.reclaimedValue.map { tokenFormatter.amount(from: $0) }
         let message =
             switch messageStatus {
+            case .incoming where transferState?.isReturnedToSender == true:
+                String(localized: .chatTransferReturnedToSender(username: peerName, amount: formattedAmount))
             case .incoming:
                 String(localized: .chatTransferReceived(contact: peerName, amount: formattedAmount))
             case .outgoing:
-                String(localized: .chatTransferSent(amount: formattedAmount))
+                reclaimedAmount.map { String(localized: .chatTransferReclaimed(amount: $0)) }
+                    ?? String(localized: .chatTransferSent(amount: formattedAmount))
             }
 
         return message
+    }
+}
+
+private extension Chat.LocalMessage.Content.Transfer.State {
+    var isReturnedToSender: Bool {
+        guard case let .incoming(incoming) = self else { return false }
+        return incoming.status == .returnedToSender
+    }
+
+    var reclaimedValue: Balance? {
+        guard case let .outgoing(outgoing) = self, outgoing.status.isReclaimed else { return nil }
+        return outgoing.actualValue
     }
 }

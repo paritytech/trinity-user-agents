@@ -1,0 +1,92 @@
+{
+  "format": "shaderlab-conformance-core",
+  "version": 1,
+  "subject": "r_noise body seed: 32-bit FNV-1a over the UTF-8 bytes of the RenderContext body ID (card_id, message_id or candidate_id), then noise chunk 0 for that seed",
+  "notes": [
+    "Recipe from RFC1840 at f394725 (open; not adopted). Computed independently with a Python FNV-1a (offset 0x811c9dc5, prime 0x01000193, xor then multiply mod 2^32) and hashlib.blake2b(pack('<II', seed, 0), digest_size=32).",
+    "The ID is hashed exactly as given: no Unicode normalization, trimming or case folding. utf8Hex pins the exact input bytes.",
+    "Reference derivation only: these vectors do not show that a renderer or host supplies this seed today."
+  ],
+  "cases": [
+    {
+      "name": "empty id",
+      "id": "",
+      "utf8Hex": "",
+      "expectSeed": 2166136261,
+      "expectSeedHex": "811c9dc5",
+      "expectChunk0Hex": "17459f4c84b9a9f16a576b634c1cd71030d21db0322ec3eee2e68be090b6448e"
+    },
+    {
+      "name": "FNV reference \"a\"",
+      "id": "a",
+      "utf8Hex": "61",
+      "expectSeed": 3826002220,
+      "expectSeedHex": "e40c292c",
+      "expectChunk0Hex": "eae5a30f13c799f62205b0cf0e07a23c7d775580678eb8a3ef71f9e9fcf4c0da"
+    },
+    {
+      "name": "FNV reference \"foobar\"",
+      "id": "foobar",
+      "utf8Hex": "666f6f626172",
+      "expectSeed": 3214735720,
+      "expectSeedHex": "bf9cf968",
+      "expectChunk0Hex": "96011c3dcac153b1efcf9e5d9b39878c77ac18d5c5cb9a1e54ec042d3b3e6245"
+    },
+    {
+      "name": "ASCII card id",
+      "id": "card-1",
+      "utf8Hex": "636172642d31",
+      "expectSeed": 145209797,
+      "expectSeedHex": "08a7b9c5",
+      "expectChunk0Hex": "b60010d0c04fc1f81dbe6a8826f10e88e1ebca9a56fd62264816e0a79bbf7b60"
+    },
+    {
+      "name": "ASCII UUID message id",
+      "id": "7f3a9c2e-4b1d-4e8a-9f60-2d5c8b1a0e37",
+      "utf8Hex": "37663361396332652d346231642d346538612d396636302d326435633862316130653337",
+      "expectSeed": 3618791564,
+      "expectSeedHex": "d7b2608c",
+      "expectChunk0Hex": "ee007932fa30b32c47da62dd6ad3a13b05c803a7fe1228ab1e52b7f5cd0cc483"
+    },
+    {
+      "name": "two-byte UTF-8, composed",
+      "id": "caf\u00e9",
+      "utf8Hex": "636166c3a9",
+      "expectSeed": 2821410889,
+      "expectSeedHex": "a82b5049",
+      "expectChunk0Hex": "1dfd4cb6d852e58d11df4d130e3722c6feff4c939f7095b2794942faa387fc7a"
+    },
+    {
+      "name": "combining accent, decomposed",
+      "id": "cafe\u0301",
+      "utf8Hex": "63616665cc81",
+      "expectSeed": 3604845623,
+      "expectSeedHex": "d6dd9437",
+      "expectChunk0Hex": "0134cc8765036e753e8f3709ddd5754873e723ea4915fdeda2a7753d3a0953eb"
+    },
+    {
+      "name": "three-byte UTF-8",
+      "id": "\u30ab\u30fc\u30c9-42",
+      "utf8Hex": "e382abe383bce383892d3432",
+      "expectSeed": 3169198163,
+      "expectSeedHex": "bce62053",
+      "expectChunk0Hex": "fb8dde28e8c7d60c80dc67ae5aec60a335054971b614c4455fc619e214e99724"
+    },
+    {
+      "name": "four-byte UTF-8 (surrogate pair in UTF-16)",
+      "id": "\ud83c\udccf joker",
+      "utf8Hex": "f09f838f206a6f6b6572",
+      "expectSeed": 2702893705,
+      "expectSeedHex": "a11ae289",
+      "expectChunk0Hex": "9d22121a75f1ed03c0f15f727e38b14ce534839b7482d88bb6bee43160e582a6"
+    },
+    {
+      "name": "long candidate id",
+      "id": "candidate/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "utf8Hex": "63616e6469646174652f30313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566303132333435363738396162636465663031323334353637383961626364656630313233343536373839616263646566",
+      "expectSeed": 2531343023,
+      "expectSeedHex": "96e13aaf",
+      "expectChunk0Hex": "4257b9914709c0752db84476d487c9af897a25ecb61e9ef1db873c82a44c2d76"
+    }
+  ]
+}

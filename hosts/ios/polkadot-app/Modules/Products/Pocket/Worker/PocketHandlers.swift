@@ -120,7 +120,7 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
         let wanted = offered
         let unanswered = unread
 
-        let (started, stopped) = running.withLock { running -> ([ProductId], [TrUAPIPocketHandler]) in
+        let (started, stopped) = running.withLock { running -> ([TrUAPIPocketHandler], [TrUAPIPocketHandler]) in
             guard !running.stopped else { return ([], []) }
 
             // A read that did not land is not the product saying its card is
@@ -133,25 +133,24 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
                 running.handlers[productId] = nil
             }
 
-            let started = wanted.filter { running.handlers[$0] == nil }
-            for productId in started {
-                running.handlers[productId] = TrUAPIPocketHandler(
-                    productId: productId,
-                    workers: workers,
-                    logger: logger
-                )
+            let started = wanted.compactMap { productId -> TrUAPIPocketHandler? in
+                guard running.handlers[productId] == nil else { return nil }
+
+                let handler = TrUAPIPocketHandler(productId: productId, workers: workers, logger: logger)
+                running.handlers[productId] = handler
+                return handler
             }
 
             announced.send(running.handlers)
-            return (Array(started), Array(stopped.values))
+            return (started, Array(stopped.values))
         }
 
         for handler in stopped {
             handler.dispose()
         }
 
-        for productId in started {
-            await start(productId)
+        for handler in started {
+            await start(handler)
         }
 
         return unanswered.isEmpty
@@ -165,22 +164,21 @@ private extension PocketHandlers {
         .seconds(min(1 << min(attempt, 5), 30))
     }
 
-    func start(_ productId: ProductId) async {
-        guard let handler = handler(of: productId) else { return }
-
+    func start(_ handler: TrUAPIPocketHandler) async {
         do {
             try await handler.start()
         } catch {
-            logger.error("[pocket] \(productId)'s cards have no worker to draw them: \(error)")
+            let productId = handler.productId
+            let removed = running.withLock { running in
+                guard running.handlers[productId] === handler else { return false }
 
-            // Dropped rather than left in place, so the next change is free to
-            // ask for the worker again.
-            let dropped = running.withLock { running -> TrUAPIPocketHandler? in
-                let dropped = running.handlers.removeValue(forKey: productId)
+                running.handlers.removeValue(forKey: productId)
                 announced.send(running.handlers)
-                return dropped
+                return true
             }
-            dropped?.dispose()
+            if removed {
+                logger.error("[pocket] \(productId)'s cards have no worker to draw them: \(error)")
+            }
         }
     }
 

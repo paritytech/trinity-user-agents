@@ -73,7 +73,7 @@ Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostR
 
 For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
 
-The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
+The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, and feature support. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
 
 ## Integrating in an iOS app
 
@@ -94,20 +94,23 @@ manifest PR to keep `main` current. SPM pins the resolved revision in the app's
 `Package.resolved`; update it with File > Packages > Update in Xcode or
 `xcodebuild -resolvePackageDependencies` after the tag is published.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
-embedding app's package upgrade.
+`HostRuntimeConfig.stack` is required. It is the Trinity stack the build runs,
+as a `BundledStack`:
 
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
+- `pointer` is the stack's link, `polkadotapp://stack?key=0x…&url=…`. It must
+  carry a key.
+- `descriptor` is the signed descriptor the build bundles, byte for byte as
+  served. The core verifies it under the pointer's key.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
+
+The core takes every chain it uses from the descriptor, and answers products'
+chain info queries from its `chains` and `network`. The descriptor's TLD is the
+one the wallet's reserved identities derive under. An invalid stack makes
+`TrUAPIHostRuntime(bridge:runtimeConfig:)` throw
+`NativeRuntimeConfigError.Invalid(reason:)`. Include this configuration update
+in the embedding app's package upgrade.
 
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
 
@@ -163,10 +166,7 @@ let runtime = try TrUAPIHostRuntime(
     bridge: bridge,
     runtimeConfig: HostRuntimeConfig(
         hostName: "My Chat Host",
-        peopleChainGenesisHash: peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash: bulletinChainGenesisHash,
-        assetHubChainGenesisHash: assetHubChainGenesisHash,
-        networkSuffix: "dot"
+        stack: bundledStack
     )
 )
 // Chat needs an active session; without one every Chat call answers denied.
@@ -221,15 +221,37 @@ let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loya
 The core keeps the newest face of a card from every Pocket card render, so a
 card has one to show while its worker is down and at cold start.
 
+## Materials
+
+With `HostRuntimeConfig.materialsEnabled`, the core resolves the `Materials`
+nodes of any tree: for each, in order, whether it loads, draws its layers (each with
+its Metal shaders and where each value and texture goes) or draws plain and
+why. Resolve a saved face or a preview on the runtime, and a body a product
+rendered on its execution, which also reports what falls back to the product.
+
+```swift
+let resolution = execution.resolveMaterials(tree: face, context: .pocketCard(cardId: "loyalty"), floatFilterable: false)
+for await materials in resolution.resolved { draw(materials) }
+
+// A shader that did not compile, or an image argument that could not be used.
+resolution.report(node: 0, material: id, reason: .unsupported)
+let reason = checkMaterialImage(bytes: image)
+let noise = materialNoise(seed: materials.noiseSeed)
+```
+
+Start resolving a new tree before cancelling the old one, so the materials
+they share keep their fetch.
+
 On the execution: `publishChatAction` delivers a user's action back to the
 product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
 for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
-render stream is one worker reference the core holds on the product's behalf;
-the transition it causes arrives on the runtime bridge's
-`requestWorkerTransition`, never on the execution's. Two rules the core
+chat identity private key, which must not be logged or persisted. A feature calls
+`runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
+on that claim when its work ends. Starting, replacing or ending a render stream
+leaves the reference count unchanged. The first claim and final release reach
+the runtime bridge through `requestWorkerTransition`. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
@@ -340,6 +362,61 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Funding
+
+A host with a funding overlay implements `FundingHostBridge` and installs it
+once with `runtime.setFunding(_:)`, before opening any product execution.
+Without it, Funding calls answer unsupported. Products and the host's own
+Balance card reach the same overlay: the card opens a session with
+`openFunding(direction:amount:)`, a product with its own Funding request, and
+either way the core calls `presentFunding`.
+
+The core owns the sessions and keeps what the host draws. It calls
+`fundingChanged(intent:kind:)` whenever something changes, and the host reads
+the new state back: `fundingSession(intent:)` and `fundingProgress(intent:)`
+for `.session`, `fundingOptions(intent:)` for `.options` and
+`fundingQuotes(intent:)` for `.quotes`. Before `presentFunding` is called, the
+session's options name its providers and the rails, asset and tokens a
+selection can use. While `presentFunding` waits, the session is live:
+report the user's rail, asset, network, country and currency with
+`selectFundingOptions(intent:selection:)` whenever one changes, price it
+with `getFundingQuote(intent:amount:)` on that selection (the quote list carries the request id the
+call returned, `pending` rows first, and once every provider answered without
+a quote, the reason they gave and what it says about the amount; the core asks
+again every minute, each row keeping its answer until the provider answers
+again, until the session is handed over or the overlay closes, and a new
+`getFundingQuote` replaces the ask), hand it to the chosen provider with
+`selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
+`.started`. Answering `.dismissed` discards the session. A provider that needs
+one of its own screens asks first through `providerFrameRequested`; the core
+calls `presentProviderFrame` only once the host opened it with
+`openProviderFrame(intent:)`, at once while the user looks at the session or
+after a tap on a notice, and `fundingFrameWaiting(intent:)` says whether one
+still waits, so the notice can be shown again after redrawing. Whether the session
+waits on a transfer the user makes outside the frame is on its progress
+(`awaitsUserTransfer`). It is answered `.closed` when the screen closed itself or the core
+closed it because the payment moved, `.dismissed` when the user closed it and
+`.returned(url:)` when the page navigated to the request's `return_url`.
+
+`startFundingWhenQuoted(intent:requestId:)` hands the session to the best quote
+once every provider answered, until `cancelFundingAutoStart(intent:)`, a new ask
+or another selection. `fundingAmountIssue(intent:amount:spendable:)` says what
+is wrong with an amount for the selection, and `fundingAvailable()` whether any
+provider is offered, read again on `.providers`.
+
+`fundingEntries()` lists every session the core announced with its progress,
+`fundingHistory()` the ended ones as summaries, each with how it ended in
+`ended`, and `fundingSummary(intent:)` one of them. `fundingSessionOpen(intent:)`
+says whether a session's overlay can be shown again. Ended sessions keep being
+handed over on each resume until the host records each with
+`acknowledgeFundingSession(intent:)`, which it calls only while the history is
+on screen. `setFundingProviderConfig(publishedNames:)` lists the providers the
+remote configuration names, without a TLD, on every refresh; amounts cross as decimal strings of CASH units. Free functions hold
+the rules both apps share: the `fundingPage*` checks
+for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
+product runs from and which file answers a request, and
+`fundingResumePending(databaseDirectory:)` for starting the core at launch.
+
 ## Payments
 
 A host with a wallet serves top-ups, payments and the spendable balance by
@@ -389,7 +466,7 @@ has a final status.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes a frame channel over it through `window.__HOST_API_TRANSPORT__`. The product's SDK builds its own client over that channel, so frames are encoded by the `@parity/truapi` the product ships. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -432,6 +509,12 @@ The generated `SsoRequestOutcome` distinguishes these results:
 Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
 
 `runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
+
+## Device encryption key
+
+The core keeps this device's X25519 encryption key. Chat and device sync encrypt with `deviceEncryptionKey()`, and `SessionUiInfo.deviceEncPublicKey` carries its public key on every `AuthState.connected`. The core generates the key on first read.
+
+A host that announced a key of its own before the core kept one passes it as `HostRuntimeConfig.deviceEncryptionKey`. The core adopts it before the local session activates, so contacts addressing that key stay reachable, and the host can delete its own copy once the runtime is built.
 
 ## Statement-store allowance renewal
 
@@ -610,16 +693,16 @@ final class MyBridge: HostBridge, @unchecked Sendable {
 }
 
 let bridge = MyBridge()
+let descriptorURL = Bundle.main.url(forResource: "trinity-stack", withExtension: "json")!
 let runtimeConfig = HostRuntimeConfig(
     hostName: "My Host",
     hostIcon: "https://host.example/icon.png",
-    peopleChainGenesisHash: Data(repeating: 0, count: 32),
-    bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-    networkSuffix: "dot"
+    stack: BundledStack(
+        // The link the bundled descriptor was published under.
+        pointer: "polkadotapp://stack?key=0x…&url=…",
+        descriptor: try Data(contentsOf: descriptorURL),
+        reservedValues: ReservedValuesPolicy(allowed: false)
+    )
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
@@ -668,7 +751,7 @@ execution.close()
 runtime.disconnect()
 ```
 
-The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket. Operations the host may have started fail with `ConnectionResetError`. A call not yet sent goes out on the replacement once its handshake completes, or fails the same way when the SDK stops redialing. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+The updated `@parity/truapi` SDK keeps the same client across connection loss. The container replaces the socket. Operations the host may have started fail with `ConnectionResetError`. A call not yet sent goes out on the replacement once its handshake completes, or fails the same way when the container stops redialing. Recreate read/watch subscriptions in the provider that owns them. SDKs that predate the injected transport encode their frames over the minimal `__HOST_API_PORT__` adapter. It survives connection loss too, and ends what the lost connection carried with a `HostFailure` error.
 
 The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and handles native permission prompts; it does not relay individual network permission messages. An upfront permission request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation rather than persisted.
 

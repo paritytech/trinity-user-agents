@@ -105,8 +105,8 @@ export const test = base.extend<{ testHost: TestHost }>(
 - **Old boot options.** `executionKind`, `initialState` and most of `behaviors` are gone and are type errors:
   - `initialState.productStorage` is the `productStorage` option (0.30 and later), keyed by the product's own keys.
   - `initialState.theme` and `initialState.locale` are `mock: { theme, languageTag }`, and `initialState.features` is
-    `mock: { featureSupported }`, one answer for every feature. `initialState.supportedChains` is
-    `mock: { supportedChains }`.
+    `mock: { featureSupported }`, one answer for every feature. `initialState.supportedChains` is `networks`, which sets
+    both the chains the host serves and what `getChainInfo` reports.
   - `initialState.grantedPermissions` is a `testHost.grantPermission(...)` call per permission.
   - `behaviors.permission` is `testHost.setPermissionBehavior(...)` (see step 5), and
     `behaviors.userConfirmation: "reject-all"` is `mock: { confirmUserActions: false }`.
@@ -181,7 +181,7 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   statement entries also carry `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement` also takes.
 - **Removed methods.** These old methods have no equivalent, so skip or rewrite specs that use them: `clearChat`,
   `clearOperationLog`, `clearProductStorage`, `clearResourceAllocationLog`, `clearUserConfirmationLog`,
-  `getDevicePermissionStatuses`, `getFeatureSupport`, `getLocale`, `getOpenOperations`, `getOperationLog`,
+  `getDevicePermissionStatuses`, `getFeatureSupport`, `getLocale`, `getOperationLog`,
   `getProductStorageEntries`, `getResourceAllocationLog`, `getSupportedChains`, `getUserConfirmationLog`, `seedChatBot`,
   `seedChatRoom`, `setDevicePermissionStatus`, `setFeatureSupport`, `setLocale`, `setNavigationBehavior`,
   `setNotificationBehavior`, `setResourceAllocationBehavior`, `setSupportedChains` and `setUserConfirmationBehavior`.

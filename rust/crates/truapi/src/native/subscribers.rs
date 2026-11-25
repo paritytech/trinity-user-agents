@@ -1,5 +1,6 @@
 //! Streams following values the host pushes.
 
+use core::borrow::Borrow;
 use std::collections::HashMap;
 
 use futures::channel::mpsc;
@@ -27,9 +28,23 @@ impl<K: Eq + core::hash::Hash, S: Clone> Subscribers<K, S> {
 	}
 
 	/// Send `value` to every stream following `key`.
-	pub fn send(&mut self, key: &K, value: &S) {
+	pub fn send<Q>(&mut self, key: &Q, value: &S)
+	where
+		K: Borrow<Q>,
+		Q: Eq + core::hash::Hash + ?Sized,
+	{
 		if let Some(subscribers) = self.by_key.get_mut(key) {
 			subscribers.retain(|sender| sender.unbounded_send(value.clone()).is_ok());
+		}
+		self.prune();
+	}
+
+	/// Send `value` to every stream following a key `matches` accepts.
+	pub fn send_matching(&mut self, matches: impl Fn(&K) -> bool, value: &S) {
+		for (key, subscribers) in &mut self.by_key {
+			if matches(key) {
+				subscribers.retain(|sender| sender.unbounded_send(value.clone()).is_ok());
+			}
 		}
 		self.prune();
 	}

@@ -6,8 +6,8 @@
 //! path. On the cold path they come from its pending claim on the controller,
 //! covering gateway-minted names before the user settles their store.
 //!
-//! All reads run over one `chainHead_v1` follow via `ReviveApi_call` dry-runs.
-//! No chain metadata is needed.
+//! All reads run at one best block over the core's legacy JSON-RPC connection,
+//! with views as `ReviveApi_call` dry-runs. No chain metadata is needed.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -23,7 +23,7 @@ use crate::{
 		session::SessionInfo,
 	},
 	runtime::{
-		dotns_lookup::{DotnsLookup, DotnsLookupKind},
+		dotns_lookup::DotnsLookup,
 		services::DotnsReads,
 	},
 	session_usernames::SessionUsernames,
@@ -38,8 +38,7 @@ use tracing::{debug, instrument, warn};
 const LOOKUP_BUDGET: Duration = Duration::from_secs(45);
 
 /// Fills in missing usernames by querying the dotNS contracts on Asset Hub.
-/// Returns the session unchanged when it already carries a username. Also
-/// returns it unchanged when no Asset Hub is configured.
+/// Returns the session unchanged when it already carries a username.
 #[instrument(skip_all, fields(runtime.method = "session.identity.resolve_with_chain"))]
 pub async fn resolve_session_identity_with_chain(
 	reads: &DotnsReads,
@@ -61,19 +60,14 @@ pub async fn resolve_session_identity_with_chain(
 
 /// Reads `session`'s usernames from the dotNS contracts on Asset Hub, whatever
 /// usernames it already carries. The identity account is tried first, then the
-/// root key when the identity account holds no username. Returns `None` when no
-/// Asset Hub is configured, neither account holds a username, or the lookup
-/// fails.
+/// root key when the identity account holds no username. Returns `None` when
+/// neither account holds a username or the lookup fails.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup_session"))]
 async fn read_session_identity(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	session: &SessionInfo,
 ) -> Option<DotnsIdentity> {
-	if asset_hub_chain_genesis_hash == [0; 32] {
-		return None;
-	}
-
 	let budget = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
 	pin_mut!(budget);
 	let lookup = async {
@@ -218,12 +212,7 @@ async fn lookup_dotns_identity(
 	account_id: [u8; 32],
 ) -> Result<Option<DotnsIdentity>, DotnsError> {
 	let lookup = async {
-		let mut lookup = DotnsLookup::pinned_to_best_block(
-			chain,
-			asset_hub_chain_genesis_hash,
-			DotnsLookupKind::Identity,
-		)
-		.await?;
+		let mut lookup = DotnsLookup::at_best_block(chain, asset_hub_chain_genesis_hash).await?;
 		let Some(controller) = discover_pop_controller(&mut lookup).await? else {
 			return Ok(None);
 		};

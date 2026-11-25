@@ -14,10 +14,11 @@ fn test_network() -> crate::network::Stack {
 /// registration and both create-transaction variants, and `AssetHub` for the
 /// other seventeen.
 ///
-/// `feature_supported` answers from the same set `supported_chains` serves, so
-/// the two cannot disagree. The negatives are the malformed inputs, a well-formed
-/// hash the host serves no role for, and the all-zero SSO sentinel — which the
-/// provider does route, to the People fallback, yet is still not a served role.
+/// `feature_supported` answers from the roles the stack serves, the same roles
+/// the core's `get_chain_info` answers for, so the two cannot disagree. The
+/// negatives are the malformed inputs, a well-formed hash the host serves no
+/// role for, and the all-zero SSO sentinel, which the provider does route, to
+/// the People fallback, yet is still not a served role.
 #[test]
 fn feature_supported_resolves_against_the_served_chain_set() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
@@ -34,11 +35,10 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 
 	// Every role the host serves answers supported. The reverse direction is the
 	// `unserved` assertion below, since every served role is now a real chain.
-	for entry in stack.host_chain_set().chains {
+	for (identifier, genesis_hash) in stack.served_roles() {
 		assert!(
-			supported(entry.genesis_hash.to_vec()),
-			"{:?} is served but reported unsupported",
-			entry.identifier
+			supported(genesis_hash.to_vec()),
+			"{identifier:?} is served but reported unsupported"
 		);
 	}
 
@@ -47,7 +47,7 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 	// bytes" and only the all-zero sentinel would notice.
 	let unserved = [0xab; 32];
 	assert!(
-		!stack.host_chain_set().chains.iter().any(|entry| entry.genesis_hash == unserved),
+		!stack.served_roles().iter().any(|(_, genesis_hash)| *genesis_hash == unserved),
 		"the stand-in must not be a served role"
 	);
 	assert!(!supported(unserved.to_vec()));
@@ -59,28 +59,6 @@ fn feature_supported_resolves_against_the_served_chain_set() {
 	assert!(!supported(vec![0u8; 32]));
 }
 
-#[test]
-fn supported_chains_answers_the_configured_network() {
-	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
-	let set = futures::executor::block_on(platform.supported_chains())
-		.expect("the CLI host serves the preset's chains");
-
-	let stack = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
-	assert_eq!(set.network, stack.namespace());
-	let mut served = set
-		.chains
-		.iter()
-		.map(|entry| (entry.identifier, hex::encode(entry.genesis_hash)))
-		.collect::<Vec<_>>();
-	served.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
-	let mut expected = vec![
-		(api::ChainIdentifier::People, hex::encode(stack.genesis().people)),
-		(api::ChainIdentifier::Bulletin, hex::encode(stack.genesis().bulletin)),
-		(api::ChainIdentifier::AssetHub, hex::encode(stack.genesis().asset_hub)),
-	];
-	expected.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
-	assert_eq!(served, expected);
-}
 use tempfile::tempdir;
 
 #[test]
@@ -600,6 +578,7 @@ fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
 	let first =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: None,
 			scheduled_at: None,
@@ -607,6 +586,7 @@ fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
 		.expect("immediate notification");
 	let second =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
+			title: None,
 			text: "Again".to_string(),
 			deeplink: Some("polkadot://example".to_string()),
 			scheduled_at: None,
@@ -674,6 +654,52 @@ fn product_storage_uses_safe_per_product_files() {
 	});
 	assert_eq!(first_value, Some(b"dark".to_vec()));
 	assert_eq!(localhost_value, Some(b"light".to_vec()));
+}
+
+// Clearing removes the product's file rather than leaving an empty one, and
+// writes none for a product that never stored anything.
+#[test]
+fn a_cleared_product_stays_cleared_after_a_restart() {
+	let temporary = tempdir().expect("create product storage root");
+	let cleared = ProductStorageKey::new(ProductId::for_test("cleared.dot"), "theme");
+	let kept = ProductStorageKey::new(ProductId::for_test("kept.dot"), "theme");
+	let open = || {
+		CliPlatform::new(
+			&test_network(),
+			Some(test_storage_paths(temporary.path(), "test")),
+			ApprovalPolicy::AutoAccept,
+			None,
+		)
+	};
+	let platform = open();
+	futures::executor::block_on(async {
+		platform.write(cleared.encode(), b"dark".to_vec()).await.expect("write cleared");
+		platform.write(kept.encode(), b"light".to_vec()).await.expect("write kept");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clear product");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clearing again is Ok");
+		platform
+			.clear_product(ProductId::for_test("never.dot"))
+			.await
+			.expect("clearing a product that never stored is Ok");
+	});
+
+	let directory = temporary.path().join("storage").join("test");
+	assert_eq!(fs::read_dir(&directory).expect("list product storage").count(), 1);
+	drop(platform);
+	let restored = open();
+	let values = futures::executor::block_on(async {
+		(
+			restored.read(cleared.encode()).await.expect("read cleared"),
+			restored.read(kept.encode()).await.expect("read kept"),
+		)
+	});
+	assert_eq!(values, (None, Some(b"light".to_vec())));
 }
 
 #[test]

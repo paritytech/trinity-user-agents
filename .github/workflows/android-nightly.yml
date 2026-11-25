@@ -21,7 +21,15 @@ on:
     # Every day. A night with nothing new since the last successful build is
     # skipped by the first job rather than by the calendar.
     - cron: "0 22 * * *"
+  # A dispatch with deliver off only builds and checks the signatures, which is
+  # how a branch exercises this build: the identity is bound to main, and a
+  # branch run would otherwise cut a real prerelease.
   workflow_dispatch:
+    inputs:
+      deliver:
+        description: "Distribute, publish and announce the build"
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}
@@ -66,6 +74,7 @@ jobs:
     if: >-
       !cancelled()
       && (github.event_name != 'schedule' || needs.changed.outputs.changed != 'false')
+      && (github.event_name != 'workflow_dispatch' || inputs.deliver)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -88,10 +97,15 @@ jobs:
   nightly:
     name: Build and publish
     needs: preflight
+    # Preflight is skipped only by a night with nothing new, which skips this
+    # too, or by a dispatch with deliver off, which builds without it.
+    if: ${{ !cancelled() && (needs.preflight.result == 'success' || (github.event_name == 'workflow_dispatch' && !inputs.deliver)) }}
     runs-on: ubuntu-latest
     # Two flavours of the same build, the second reusing most of what the first
     # compiled.
     timeout-minutes: 75
+    env:
+      DELIVER: ${{ github.event_name != 'workflow_dispatch' || inputs.deliver }}
     outputs:
       build_id: ${{ steps.setup.outputs.build_id }}
       version_name: ${{ steps.version.outputs.name }}
@@ -168,10 +182,25 @@ jobs:
         # the flavour without Google Play services, can never hold it back.
         # Vanilla reuses most of what gp compiled; when it fails the night
         # ships gp alone and the announcement says so.
+        #
+        # gradle.properties gives Gradle and the Kotlin daemon 8 GB each, which
+        # would fill this runner's 16 GB before Cargo and KSP. Capped here so
+        # local builds keep their settings. Memory is printed every 30 seconds
+        # so a runner that still dies leaves its last reading in this log.
         run: |
           set -euo pipefail
-          ./gradlew assembleGpNightly --no-daemon
-          if ./gradlew assembleVanillaNightly --no-daemon; then
+          free -m
+          while sleep 30; do
+            free -m | awk '/^Mem:/ { m = "used=" $3 "M available=" $7 "M" }
+              /^Swap:/ { print "memory: " m " swap=" $3 "M" }'
+          done &
+          sampler=$!
+          trap 'kill "${sampler}" 2>/dev/null || true' EXIT
+          caps=(--no-daemon
+            "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+            "-Pkotlin.daemon.jvmargs=-Xmx4g")
+          ./gradlew assembleGpNightly "${caps[@]}"
+          if ./gradlew assembleVanillaNightly "${caps[@]}"; then
             echo "vanilla=built" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::The vanilla APK did not build, so tonight ships gp alone"
@@ -232,7 +261,8 @@ jobs:
       # writes it where Application Default Credentials will find it. Neither
       # input is sensitive; they are secrets because the project layout is not
       # something a public repository should advertise.
-      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+      - if: env.DELIVER == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
@@ -242,6 +272,7 @@ jobs:
       # CLI resolves it through the standard credential chain instead of
       # parsing the file itself.
       - name: Distribute to testers
+        if: env.DELIVER == 'true'
         working-directory: hosts/android
         env:
           APP_ID: ${{ secrets.ANDROID_FIREBASE_NIGHTLY_APP_ID }}
@@ -344,6 +375,7 @@ jobs:
       # about, so the notes list everything since that announcement, including
       # what a dispatched build in between already carried.
       - name: Find the last announced Android nightly
+        if: env.DELIVER == 'true'
         id: previous
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -363,6 +395,7 @@ jobs:
             core.setOutput('tag', previous ? previous.tag_name : '');
 
       - name: Publish GitHub Release
+        if: env.DELIVER == 'true'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.release-tag.outputs.tag }}
@@ -380,6 +413,7 @@ jobs:
       # leaving a tag that looks published and a consumer that gets a 404.
       # Read the asset back rather than trusting that it uploaded.
       - name: Confirm the published assets are present and not empty
+        if: env.DELIVER == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release-tag.outputs.tag }}
@@ -417,7 +451,7 @@ jobs:
       # `android-*` prerelease never see it. Only main updates it, so a build
       # dispatched from another branch cannot replace what testers download.
       - name: Refresh the fixed nightly-android release
-        if: github.ref == 'refs/heads/main'
+        if: env.DELIVER == 'true' && github.ref == 'refs/heads/main'
         working-directory: hosts/android
         env:
           GH_TOKEN: ${{ github.token }}
@@ -454,7 +488,7 @@ jobs:
       # Downloading through the fixed URLs is the only proof they serve
       # tonight's files rather than a stale or half-replaced asset.
       - name: Confirm the fixed links serve tonight's APKs
-        if: github.ref == 'refs/heads/main'
+        if: env.DELIVER == 'true' && github.ref == 'refs/heads/main'
         working-directory: hosts/android
         env:
           ASSETS: ${{ steps.release-asset.outputs.assets }}
@@ -480,6 +514,8 @@ jobs:
   e2e:
     name: host-playground e2e
     needs: nightly
+    # It reads the APKs from the prerelease, which a build-only run never cuts.
+    if: github.event_name != 'workflow_dispatch' || inputs.deliver
     uses: ./.github/workflows/host-playground-e2e.yml
     with:
       platform: android
@@ -509,7 +545,9 @@ jobs:
     # one on main builds exactly what a scheduled night would. Re-running a
     # run keeps its original event, so a re-run after a failed night still
     # announces.
-    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'schedule' || github.ref == 'refs/heads/main')
+      && (github.event_name != 'workflow_dispatch' || inputs.deliver)
     # The build shipped to App Distribution and the prerelease is live before
     # this runs. A relay that is briefly unreachable should not turn that into
     # a failed night.

@@ -2,8 +2,8 @@ import Foundation
 import SubstrateSdk
 
 public enum CoinageTransferStatus: Equatable, Sendable {
-    /// Present on chain: the peer has not taken it yet.
-    case awaitingClaim
+    /// Present on chain: the peer has not taken it yet. `finalized` once the finalized chain holds it too.
+    case awaitingClaim(finalized: Bool)
 
     /// Absent, and its minter has not resolved: it may simply not exist yet.
     case detecting
@@ -17,6 +17,15 @@ public enum CoinageTransferStatus: Equatable, Sendable {
     /// is absent from the finalized chain. Until then it is inferred from the best head, where a fork
     /// can put the coin back.
     case claimed(finalized: Bool)
+
+    /// Our own reclaim of the handed-off coin is in flight.
+    case reclaiming
+
+    /// Absent after our reclaim landed. `finalized` as for ``claimed(finalized:)``.
+    case reclaimed(finalized: Bool)
+
+    /// Still on chain, and our last reclaim of it failed with no later attempt.
+    case reclaimFailed
 }
 
 public extension CoinageTransferStatus {
@@ -24,8 +33,11 @@ public extension CoinageTransferStatus {
         switch self {
         case .failed: true
         case let .claimed(finalized): finalized
+        case let .reclaimed(finalized): finalized
         case .awaitingClaim,
-             .detecting: false
+             .detecting,
+             .reclaiming,
+             .reclaimFailed: false
         }
     }
 }

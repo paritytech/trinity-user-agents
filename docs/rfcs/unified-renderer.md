@@ -45,7 +45,7 @@ The design has three parts:
 ### Service
 
 `Renderer` is a worker service beside `Chat` in the canonical `truapi` crate, at `api/renderer.rs`. Its types live in
-`v01::renderer` and are re-exported through `truapi::latest`.
+`v02::renderer` and are re-exported through `truapi::latest`.
 
 ```rust
 /// Where a product-rendered body lives, and the id that names it there.
@@ -73,6 +73,13 @@ pub enum RenderContext {
     PocketCardBack {
         /// Card id, as declared in the product's worker manifest.
         card_id: String,
+    },
+    /// The card a product docked under the messages of a room it created.
+    ChatRoomFooter {
+        /// Room the card is docked in.
+        room_id: String,
+        /// The `message_type` of the `ChatCustomMessage` the product set through `Chat::set_room_footer`.
+        message_type: String,
     },
 }
 
@@ -121,8 +128,9 @@ pub trait Renderer: Send + Sync {
 
 `RenderContext` has one variant per surface, or per body a surface draws apart, such as a Pocket card's back, holding
 the ids that surface uses to name a body. The host scopes an id to the product that minted it, and for `InputWidget`
-also to the query the candidate answered. A render request and the actions inside it carry the same context verbatim, so
-a product correlates by equality. A new surface, or a new kind of body on one, is a new variant.
+also to the query the candidate answered. For `ChatRoomFooter` the host scopes `room_id` to the product that created the
+room. A render request and the actions inside it carry the same context verbatim, so a product correlates by equality. A
+new surface, or a new kind of body on one, is a new variant.
 
 A product registers one `render` handler, and the host calls it for every context of a surface the product's manifest
 `includes`. A product that draws on more than one surface matches on `context`. Contexts for surfaces the product does
@@ -151,6 +159,10 @@ pub enum TypographyStyle {
     BodyLargeRegular,
     BodyMediumRegular,
     BodySmallRegular,
+    HeadlineMedium,
+    HeadlineSmall,
+    TitleExtraLarge,
+    TitleLarge,
 }
 
 /// Button emphasis.
@@ -440,9 +452,6 @@ The host opens a `render` stream when the body comes on screen and closes it whe
 back opens a fresh stream with the same request. Each item replaces the whole tree. A stream that ends cleanly leaves
 the last tree on screen. After an error the host shows the product's identity and no body. A product that cannot draw
 the body ends the stream with an error.
-
-An open `render` stream is one worker reference in [Worker Lifecycle](worker-lifecycle.md) terms, whichever surface
-opened it.
 
 ### Chat
 

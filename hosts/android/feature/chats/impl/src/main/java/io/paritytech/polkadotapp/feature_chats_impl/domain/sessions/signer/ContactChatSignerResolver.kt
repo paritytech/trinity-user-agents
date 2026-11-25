@@ -4,7 +4,6 @@ import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypai
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionRefCounter
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.withConnectionEnabled
-import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.flatRecover
@@ -19,6 +18,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocato
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocationError
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import javax.inject.Inject
 
@@ -54,24 +54,27 @@ class ContactChatSignerResolver @Inject constructor(
         chatKeypair: Sr25519Keypair,
         period: UInt,
     ): Result<ContactChatSigner> {
-        val chatAccountId = chatKeypair.publicKey.toDataByteArray()
-        val privateSigner = ensureSlot(chatAccountId).map { ContactChatSigner(chatKeypair, ChatSignerKind.PRIVATE, period) }
+        val holder = StatementStoreSlotHolder.Local(
+            accountId = chatKeypair.publicKey.toDataByteArray(),
+            derivationPath = accountDerivation.derivationPath(contact.accountId),
+        )
+        val privateSigner = ensureSlot(holder).map { ContactChatSigner(chatKeypair, ChatSignerKind.PRIVATE, period) }
         return privateSigner.flatRecover { error -> usernameSignerIfNoSlot(contact, period, error) }
     }
 
-    private suspend fun ensureSlot(chatAccountId: AccountId): Result<Unit> {
-        return slotAllocator.hasCurrentAllocation(chatAccountId).flatMap { hasCurrent ->
+    private suspend fun ensureSlot(holder: StatementStoreSlotHolder): Result<Unit> {
+        return slotAllocator.hasCurrentAllocation(holder.accountId).flatMap { hasCurrent ->
             if (hasCurrent) return@flatMap Result.success(Unit)
 
-            allocateSlot(chatAccountId)
+            allocateSlot(holder)
         }
     }
 
-    private suspend fun allocateSlot(chatAccountId: AccountId): Result<Unit> {
+    private suspend fun allocateSlot(holder: StatementStoreSlotHolder): Result<Unit> {
         return chainConnectionRefCounter.withConnectionEnabled(knownChains.people, SIGNER_CONNECTION_TAG) {
             with(StalenessReportCollector.NoOp) {
                 slotAllocator.allocate(
-                    target = chatAccountId,
+                    holder = holder,
                     strategy = OnExistingAllocationStrategy.IGNORE,
                     priority = SlotPriority.Critical,
                     tag = CHAT_SIGNER_SLOT_TAG,

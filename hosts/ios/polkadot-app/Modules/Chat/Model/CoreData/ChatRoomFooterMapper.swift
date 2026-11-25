@@ -36,7 +36,7 @@ extension ChatRoomFooterMapper: CoreDataMapperProtocol {
             throw MappingError.missingChat
         }
 
-        entity.footer = model.footer.rawValue
+        entity.footer = try model.footer.storedValue
     }
 }
 

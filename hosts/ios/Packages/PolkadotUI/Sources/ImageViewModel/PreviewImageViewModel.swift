@@ -21,7 +21,9 @@ extension PreviewImageViewModel: Hashable {
     }
 }
 
-extension PreviewImageViewModel: ImageViewModelProtocol {
+extension PreviewImageViewModel: IdentifiableImageViewModelProtocol {
+    public var identifier: String { "preview:\(url.absoluteString)" }
+
     public func loadImage(
         on imageView: UIImageView,
         settings: ImageViewModelSettings,

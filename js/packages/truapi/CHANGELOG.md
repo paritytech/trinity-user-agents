@@ -1,5 +1,346 @@
 # @parity/truapi
 
+## 0.33.0
+
+### Major Changes
+
+- 568580c: Add the Chat Extension v2 methods and types to `chat`. A product changes a room with `setRoomMetadata` (name,
+  description, icon and the text of an empty room), `setRoomPreview` (sort time, badge, which can be an image, pinning,
+  the preview line or an activity line such as "Ben is typing"), `deleteRoom` and `updateFeed`, which also deletes a
+  message. The preview line comes from a `ChatPreviewMessage`, a message without reactions that names the message it
+  replies to by id. The host asks a product questions that the product answers through `onMessagesQuery`, `onUserAction`
+  and `onReactionsQuery`. Each handler returns one result, `ok` with the answer or `err` with the failure. A user action
+  can delete a message. A message body can be `Custom`: the product draws it through `Renderer::render`, like a custom
+  message it posts with `postMessage`.
+
+  These methods are new in v0.2, so a v0.1 client cannot call them. Their errors name each failure and have no
+  catch-all: a host failure arrives as `HostFailure`, and a request or an answer that does not pass the core's checks as
+  `MalformedFrame`. A user action in a room that does not keep its messages in the product fails with `NotAvailable`.
+
+  The host makes room ids. `createRoom` version 2 takes `roomIdSource`, the product's own name for the room, and
+  `config`, the parts of the room the product serves (its messages, who reacted and the reports of what the user saw).
+  It answers `roomId`, the blake2b-256 hash of the product and that source. Every later call names the room with that
+  `roomId`, so a product that names a room with its own string must keep the id that `createRoom` returns. A host's
+  `createChatRoom` callback receives the derived `roomId` and answers only the registration status. Each `createRoom`
+  replaces the configuration of the room, also for a room that exists, so a product declares its rooms again each time
+  it starts. A room that `createRoom` version 1 creates keeps the `roomId` that the product gives, because a version 1
+  answer carries no id and the product names the room with that id in its later calls. A host's `createChatRoom`
+  callback then receives that id. `postMessage` and `setRoomFooter` keep their shapes and versions, so a product built
+  against the earlier client calls them the same way through the client a host injects.
+
+- 4ad5f6a: Native hosts run only published and dev-server products. `bundled_products` and `BundleEntry` are gone,
+  `ProductSource` has no `Bundled` case, and `product_source` takes no `bundle`. Archive serving stays, without a
+  callback: `archive_files` returns the `ArchiveFile`s that may answer a request, in order, and the host serves the
+  first it has; `BundleReader` is gone with no replacement. MIME types come from `mime_guess`, so `mjs` is
+  `application/javascript`, `map` `text/plain`, `xml` `text/xml`, `woff` `application/font-woff` and `otf`
+  `application/font-sfnt`. On the Rust runtime, `FundingProviderEntry` carries only `product_id` and `worker_manifest`;
+  `FundingProviderOrigin` and `FundingProviderApp` are gone, and whether a provider has an App is always read from
+  dotNS.
+- fef6583: The generated SDK drops historical payload types and SCALE codecs that none of its methods use. This removes
+  exports such as `V01HostChatPostMessageRequest` and `V01ChatRoomFooter`. If you import one of these for a product
+  call, use the request or result type of the generated method. Methods that still use V1 and subscriptions that receive
+  older host frames keep their codecs.
+
+### Minor Changes
+
+- 3b2e486: Funding sessions emit telemetry facts as core events under exported `truapi.funding.*` markers: the overlay
+  opening and closing, quotes settling, the provider chosen and taking the session, milestones, warning states, the
+  ending, cancels and provider screens. Each carries typed attributes, a random per-session `funding.ref` and closed
+  values only: labels, conditions and counts, amounts and fees as buckets, a country as its region, never an intent, id,
+  address, exact amount, provider text or URL. An ending that is a fault goes out as `truapi.funding.ended_unexpectedly`
+  at error. Funding's warnings no longer name the session's intent or a quote id.
+- 3080698: `cancel_funding` now cancels a funding session in any state, so a host needs no other call to stop one. While
+  the session's overlay is up, the core stops starting it on its best quote, drops its `present_funding` call (the host
+  takes the overlay down) and drops the session, answering `Cancelled`; when the user already chose a provider there,
+  the session runs as started and the provider is asked to stop (`Requested`). Started sessions are cancelled as before,
+  and an ended or unknown session answers `Refused`.
+
+  `CancelOutcome::Ended` is renamed `Cancelled` (`.cancelled` in Swift, `CANCELLED` in Kotlin), and the `result` tag on
+  `truapi.funding.cancel_requested` reads `cancelled` instead of `ended`. Hosts matching on the old case have to rename
+  it.
+
+- 83afd9e: `notifications.sendPushNotification` takes an optional `title`, shown in place of the product id. Only a
+  trusted product may set one. The core trims whitespace and zero width characters from the title, drops one that is
+  then empty and the title any other product sends, and the call still succeeds. The client sends a request without a
+  title as v0.1, so hosts that predate v0.2 keep serving it; a titled request needs a host that serves v0.2. A domain
+  error comes back tagged `V2` whichever version was sent.
+
+  Hosts receive the title as `HostPushNotificationRequest.title`, which is absent unless the core let it through. The
+  app hosts show the product id when it is absent. The mock host records it as `NotificationLogEntry.title`, and the CLI
+  prints it above the notification text.
+
+- 9f83c66: Adds `ringCollectionId(name)`, which encodes a ring collection name such as
+  `"pop:polkadot.network/people-lite"` as the 32-byte `CollectionId` junction of a `RingLocation`, padded with spaces
+  the way the People chain stores it.
+
+### Patch Changes
+
+- cc9c407: truapi-host ships refreshed stack descriptors for polkadot (sequence 1794915853), previewnet (sequence
+  1795128637). truapi-provider and truapi-host ship refreshed light-client chain specs.
+- c9bd7c0: truapi-provider and truapi-host ship refreshed light-client chain specs.
+- 090d276: truapi-provider and truapi-host ship refreshed light-client chain specs.
+- b59c82d: `truapi-host --chain-backend light-client` runs every built-in network, including `pcf-devnet`, and any
+  `--stack`. It takes the light specs the stack's descriptor names and checks them against the descriptor. The binary
+  ships the specs of the built-in networks, so they start without the spec servers; other specs are fetched once and
+  kept under the state directory. A stack whose descriptor names no `lightSpec` for the relay, People, Asset Hub or
+  Bulletin is refused at start, and so is one whose relay spec cannot be fetched.
+  `truapi-host stack bundle --light-specs <file>` writes the light specs a descriptor names, checked against it.
+- db2a45b: `truapi-host --chain-backend light-client` rejects a stack whose relay restarted from genesis after the
+  bundled chain specs, as it already did for People, Asset Hub and Bulletin.
+- 9522d1b: The mock host reports a chain as supported only when it serves it: `onlyServedChains` (Rust
+  `MockConfig::only_served_chains`) defaults to `true`, so `featureSupported` answers from `servedChains`. The test
+  fixture fills `servedChains` from `networks` and `chain`, and otherwise from the chains in `runtimeConfig.testStack`.
+  An explicit `mock.servedChains` replaces that list. A suite that proxies a chain through `mock.chainProxies` without
+  declaring it lists its genesis in `mock.servedChains`, and `onlyServedChains: false` reports every chain as supported.
+- 2d5fa6f: A contact handle from `contacts.pick` is scoped to the calling product: the same contact has a different
+  handle in every product, and the same one on every host of the user. A handle from another product, or one picked
+  before this release, does not resolve. `HostContactLookup.handle_key` is per session and product, so a host that keeps
+  handle hashes keeps them per key.
+- 8f2509f: The `trinity-stack` crate's `Descriptor::contract_address` returns the address of a contract the descriptor
+  names in `contracts`. The core's `Stack` exposes the `AccountDataStore` contract, where each seed registers its
+  installations, as `account_data_store`, or `None` when the stack names none.
+  `truapi-host stack bundle --skip-same-projection` counts `contracts` as read, so a published copy that changes only
+  them is still written.
+
+## 0.32.0
+
+### Major Changes
+
+- f73c18e: The game product, Jollity (`dim2` on every network), reads the dotNS usernames of the unblocked chat contacts
+  of the user with `contacts.usernames({})`, which answers `{ usernames }` without a prompt. Any other product, and a
+  host that lists no usernames, gets `Unsupported`. While nobody is signed in, Jollity gets a domain error with the
+  reason `No active session`.
+
+  A JS host serving contacts passes `contactUsernames` beside `contacts` and `pickContact`. The `contacts` host
+  callbacks now require `contactUsernames`, so a TypeScript host that serves contacts fails to compile until it adds it,
+  and one that cannot list usernames returns `{ tag: "Unsupported" }`. Native hosts get `contactUsernames` on
+  `ContactsHostBridge` with a default that answers `Unsupported`.
+
+- 5710f49: Three envelope codecs take the name of the payload they carry: `VersionedHostCreateTransactionRequest` is now
+  `VersionedProductAccountTxPayload`, `VersionedHostCreateTransactionWithLegacyAccountRequest` is
+  `VersionedLegacyAccountTxPayload`, and `VersionedRemotePreimageSubmitError` is `VersionedPreimageSubmitError`. Code
+  that names one of these types, such as the error of `preimage.submit`, uses the new name. The bytes on the wire are
+  unchanged. `TRUAPI_WIRE_SCHEMA_HASH` changes with the names, so a debugger built before this release does not decode
+  frames from a host built after it.
+- ed0b17b: A funding provider's screen opens only when the host opens it, never on the worker's own call.
+
+  Breaking for native hosts:
+  - `NativeFundingCallbacks` gains `provider_frame_requested(provider_id, intent)`. The core holds the provider's
+    `presentFrame` until the host calls `open_provider_frame(intent)`: at once while the user looks at the session,
+    otherwise once the user taps a notice. `present_provider_frame` is called only after that.
+  - `funding_frame_waiting(intent)` tells whether a screen still waits, so a host can show the notice again after
+    redrawing.
+
+- 12386cf: A product inside a native host encodes its own frames. The host's container injects
+  `window.__HOST_API_TRANSPORT__`, a frame channel over the host's connection, and the SDK builds its own client over
+  it. A product therefore speaks the protocol version it was built against, whatever version of `@parity/truapi` the
+  host was built with.
+  - `@parity/truapi/sandbox` exports the `HostTransport` interface a host implements. The SDK only knows the interface.
+  - The SDK does not read `window.__HOST_API_CLIENT__`, and hosts do not publish it. SDKs from 0.19.0 that looked for it
+    use `window.__HOST_API_PORT__` instead, which also carries frames they encode themselves.
+  - `window.__HOST_API_PORT__` survives a replaced host connection. A frame sent with no connection waits for the next
+    one. A call or subscription the lost connection carried ends with a `HostFailure` error, and a stream the host
+    started is stopped. SDKs on the port see no connection status change.
+  - `@parity/truapi/internal` exports `createWebSocketProviderFactory`. `createHostConnection` and `HostConnection` are
+    not exported: the connection is the host's and lives in the host's container.
+  - A call the host lost fails with the `ConnectionResetError` of the product's own SDK, and the client stays usable
+    across reconnects. A protocol error frame the SDK cannot decode fails the calls in flight the same way.
+
+- 7774baa: `RendererNode::Materials` replaces `Effect`, which is removed with `EffectProps` and `Rainbow`. A `Materials`
+  node names materials by ID with their arguments and holds the content they draw over. Hosts draw it as its children
+  for now, and refuse a tree that still carries `Effect`.
+
+  `system.featureSupported` takes a `Materials` question (format version, features). Products ask it before sending
+  materials. A host answers yes only when it draws them. A host built before this release cannot read the question and
+  answers with an error, which products read as no.
+
+  `renderer.failureSubscribe` reports `Materials` nodes that fell back, on a host that answers yes.
+
+  Native hosts map `RendererNode.materials` and answer `HostFeatureSupportedRequest.materials` in their exhaustive
+  switches.
+
+- ed0b17b: Native hosts offer only published funding providers: `set_funding_provider_config` takes the published names
+  alone, and `bundled_funding_providers` is gone. Each name carries no TLD (`fundtest-provider`, not
+  `fundtest-provider.paseo`): the core reads it on the network it is connected to, so one remote configuration serves
+  every network, and a name that names a TLD is skipped. `FundingProviderEntry`, `FundingProviderApp` and
+  `FundingProviderOrigin` stay on the Rust runtime, where `set_funding_providers` takes them.
+
+### Minor Changes
+
+- fb833d9: The core hands a host a structured fact as well as a log line. `CoreEvent` builds one from a marker and typed
+  attributes and `HostCallbacks::on_core_event` carries it over, so a host gives its reporter attributes it can group
+  and filter by instead of prose it can only store. A key is written in the core's own source and a value is a label, a
+  count or a condition, each bounded on the way out. One marker table gates both ways out of the core, and `HostBridge`
+  defaults the new callback to nothing on iOS and Android.
+- 12ff192: `@parity/truapi` exports `ExecutableKind` and its codec. `@parity/truapi-host` re-exports both, so imports
+  from either package work.
+- fb1ed6d: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- 7443158: With `--execution-kind worker` and `TRUAPI_POCKET_CARDS`, the `truapi-host` signing host answers yes to the
+  materials question. It opens a render stream for each card as the product connects, resolves the materials of every
+  face the product draws as a phone does, reports each fallback through `Renderer::failureSubscribe`, and records each
+  result in `TRUAPI_POCKET_LOG`.
+- 95d3229: `truapi-host materials resolve <face.json>` prints what a card face's materials resolve to, with the same
+  core a phone uses: each `Materials` node loading, ready with its shaders, or drawn plain and why. `--materials <dir>`
+  keeps local material files first, `--metal` builds iOS shaders instead of Android's, and `--out <dir>` writes the
+  shaders.
+- 8c61cfa: `nftPurse.listCheques` returns every cheque the calling product created on this host, oldest first, exactly
+  as `createCheque` returned it, with the purse its items left, its destination and its creation time. A product that
+  lost a cheque can deliver it again or revoke it.
+- fb1ed6d: The core serves the card back. `expandedCard.setBackShown` reaches the host through the new
+  `HostBridge.setExpandedCardBackShown`, which defaults to `unsupported` and answers with the new
+  `ExpandedCardTurnOutcome`. The core keeps a card's back beside its front, and `pocketCardFace` takes a side that the
+  Kotlin and Swift wrappers default to the front. A product connection receives a press on a back only once it has drawn
+  that back. The core empties the bytes of an inline image a host must not draw, in rendered trees and in face files, so
+  it draws as empty space.
+- fb1ed6d: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+
+### Patch Changes
+
+- b6c9e41: truapi-host ships refreshed stack descriptors for paseo-next-v2 (sequence 1794499750). truapi-provider and
+  truapi-host ship refreshed light-client chain specs.
+- db367fd: dotNS reads open no chain follow. Manifest, username and public profile lookups read Asset Hub over JSON-RPC
+  at its best block, so however many run at once the core's connection keeps its follow for the transaction client.
+- ef6c4de: `expandedCard.setFaceShown` is documented as covering the face of the card under the calling Widget rather
+  than moving it away: with `shown: false` the face stays drawn and touches over it go to the Widget, and neither state
+  moves the face or resizes the Widget. `UserMoving` on `setFaceShown` and `setBackShown` means the user is moving or
+  turning the card. The wire format is unchanged.
+- be15021: A funding session the core starts on its best quote while the overlay is still up is announced to the host,
+  so the host no longer treats it as one the user left unstarted.
+- c45e73a: Funding warnings and errors no longer carry the session's intent, so it does not leave the device with
+  exported core logs.
+- 0fd13a7: A funding provider republished on dotNS is offered as it now publishes on the next launch: after showing its
+  cached Worker manifest, the core reads dotNS again instead of honouring the cached copy for up to a day.
+- 18ea313: A funding provider whose shipped Worker manifest does not parse, or a bundled one shipped without it, is
+  logged and left out; `set_funding_providers` still offers the rest instead of refusing the whole list. Since nothing
+  in either call can fail any more, `set_funding_providers` and `set_funding_provider_config` no longer return a
+  `Result` (natively `setFundingProviderConfig` no longer throws; an existing `try` or `runCatching` around it still
+  compiles). Bundled product archives also serve the usual web media, document and font types (mp4, webm, mp3, ogg, wav,
+  pdf, avif, xml, csv, eot, webmanifest) with their MIME type rather than `application/octet-stream`.
+- 0be1fba: The core sends at most 512 reads at a time on each chain connection and holds the rest until earlier ones are
+  answered, so a burst of core reads waits instead of failing every request on the connection. A chain send the host
+  rejects closes the connection, so its callers fail instead of hanging.
+- d19447a: A pairing host sends one `ProductSubtreeRequest` to the paired signing host per SSO session and product while
+  one is in flight, and every caller waiting for that subtree takes its answer: `account.get_account`, AutoSigning
+  allocation, and the host's own subtree lookup. A request made after it settles asks again, so a failed fetch is not
+  remembered. A cancelled caller leaves the others waiting, and cancelling the last one withdraws the request from the
+  signing host.
+- f6dc8f0: `sign_vrf` with another product's account follows the rules of the other signing methods: it needs that
+  product's `context` grant, and answers `Rejected` without a prompt otherwise. A first-party product holding the grant
+  signs without a prompt.
+
+## 0.31.0
+
+### Major Changes
+
+- a0db061: A product can dock one of its own cards in the footer of a room it created by setting the footer to `Card`
+  with a `ChatCustomMessage`, and replaces or clears it by setting another footer. The host draws the card through the
+  product's renderer with a new `ChatRoomFooter` render context, and a press inside it reaches the product's
+  `rendererActionSubscribe` with that context.
+
+  A TypeScript caller of `setRoomFooter` passes the footer as a tagged value, for example `{ tag: "TextInput" }`. The
+  plain strings `"TextInput"` and `"Empty"` stay accepted and go out as those tagged values, so a published worker keeps
+  working. Decoded footers are always tagged.
+
+  The exported `RenderContext` and `ChatRoomFooter` types are the v0.2 ones, with the `ChatRoomFooter` render context
+  and the `Card` footer, and the v0.1 ones are exported as `V01RenderContext` and `V01ChatRoomFooter`.
+
+  A host serving chat reads `footer` in `setChatRoomFooter` as a tagged value, and native hosts handle the `Card` case
+  of `ChatRoomFooter`.
+
+- 939ef4b: The core holds the funding rules and state both native apps share, as facts each host presents its own way.
+
+  Breaking for native hosts:
+  - `NativeFundingCallbacks` loses `funding_session_changed`, `funding_in_progress_changed`, `funding_options_changed`,
+    `funding_quotes_changed` and `provider_has_app`, and gains `funding_changed(intent, kind)`, after which the host
+    reads `funding_session`, `funding_progress`, `funding_options`, `funding_quotes`, `funding_entries`,
+    `funding_summary` and `funding_session_open` back.
+  - `get_funding_quote(intent, amount)` replaces `get_funding_quote(intent, ask)`: the core builds the ask from the last
+    `select_funding_options` and returns `None` while there is nothing to price.
+  - `NativePaymentCallbacks::payment_status`, `NativeTopUpCallbacks::top_up_status` and
+    `NativeBalanceCallbacks::balance` become `follow_payment`, `follow_top_up` and `follow_balance`; `notify_balance`
+    takes no purse.
+  - `FundingProviderEntry` gains `root_manifest`, and `has_app` becomes `app: FundingProviderApp`.
+  - Native hosts list providers with `set_funding_provider_config` only; `set_funding_providers` stays on the Rust
+    runtime.
+
+  The rest:
+  - `FundingOptions` carries the routed `rails`, the resolved `asset`, the crypto `tokens` and the `detected_country`,
+    and each `FundingCandidate` its `brand`. `FundingQuoteList` carries the `amount` it prices, the shared `refusal`,
+    the amount `issue` and whether it is `complete`; `funding_quotes` answers only the current request's list.
+  - `FundingProgress` carries `cancel` and `awaits_user_transfer`; `FundingSessionSummary.ended` holds how a session
+    ended, its steps and where a pending payout waits. `funding_amount_issue(intent, amount, spendable)` reads the
+    session's limits and quotes itself; `funding_status_in_flight` and `funding_network_name` share the rules. A cancel
+    that moved no money is left out of `funding_history`.
+  - `start_funding_when_quoted` starts on the best quote once every provider answered; `funding_available` says whether
+    any provider is offered.
+  - The core follows payment, top-up and balance streams: pending after 250 ms, the last 512 final statuses kept, an
+    engine that stops early ending the stream with the abandoned status.
+  - An App route is checked against the provider's `app` subname on dotNS. A Worker manifest needs an `entrypoint`, an
+    `appVersion` and a surface; a brand needs a name, a description and an icon.
+  - `product_source`, `bundled_products`, `bundled_funding_providers` and `archive_file` decide where a product is
+    served from and which file answers a request; the `funding_page_*` functions hold the provider page rules, and
+    `funding_resume_pending` says at launch whether funding should resume.
+
+- be0f333: The identity account is the personhood product's account 0, `//product//peopl.<tld>/index_bytes(0)`
+  (RFC-0028), and owns the person's lite and membership usernames. The `uid.<tld>` reserved product is retired. The same
+  seed therefore derives a different identity account than before: local activation, pairing attestation, the SSO
+  statement key, username lookup and the CLI's `attest`, `register-name` and `identity-check` all use the new account,
+  and a name reserved under `uid.<tld>` does not resolve for it. Hosts that derive the main account natively (iOS,
+  Android) move with it.
+
+### Minor Changes
+
+- d504e3b: The signing-host CLI resolves public avatar metadata with `/profile` and `/profile <username>`.
+  `/profile upload <image>` publishes the active identity's avatar through its Humanity product's TrUAPI allowance and
+  preimage calls, with the normal permission and confirmation flow.
+- 7679e5f: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- 5ba5669: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+
+### Patch Changes
+
+- 9646fa5: truapi-host ships refreshed stack descriptors for previewnet (sequence 1794171056). truapi-provider and
+  truapi-host ship refreshed light-client chain specs.
+- bc8f528: `truapi-host register-name` reads the label's reservation queue on `DotnsPopController` before signing. It
+  stops when another account holds the first active reservation, naming that account. On dotNS 1.1.0 and later, when
+  more expired or emptied reservations stand in front of the claim than one gateway call clears, it first clears them
+  with `DotnsPopController.expireReservation(label)`, signed by the account. It claims PGAS into the account first when
+  the account holds less than one claim's worth, or when the dry-run fails because the account cannot fund the storage
+  deposit. Without that, the gateway call reverts and the command ends in an `AccountAlias` timeout.
+- 1038b44: dotNS reads for the same thing that overlap share one read and one Asset Hub follow: root and Worker manifest
+  lookups of one product, and username lookups of one session, such as a host activating the same session twice in a
+  row. A burst of them no longer fills a connection's follow budget. Nothing is kept once a read settles, so a failed
+  read is retried by the next caller.
+- 95ee87f: The follow budget marker names every follow holding a slot, each with how long it has been open, when it last
+  saw an event, how many calls it has taken and when it last took one, and saying `dropped` where its receiver has gone.
+  Nothing is cut when the line fits the room the host sink forwards. When it does not, the longest entries share what is
+  left and lose the end of their names, marked, while every follow keeps its activity, so the line reaches a host whole
+  and still says which follows are stale or gone.
+- 0d63024: truapi-provider bundles the `paseo` network: the Paseo relay with Asset Hub Paseo, People Paseo and Bulletin
+  Paseo. A host starts any of them on the light client from its genesis hash alone, or registers all four with
+  `addNetwork("paseo")`. The statement store runs on People Paseo. The Paseo relay is shared with `paseo-next-v2`, and a
+  lookup by the relay's genesis hash still resolves to `paseo-next-v2`; each parachain resolves to its own network.
+  truapi-host compiles the catalog in, so it ships the new specs too.
+- 52a7335: A paired signing host keeps serving when its connection to the People chain drops. It retries an
+  acknowledgement, a pairing answer or a disconnect notice for about 15 seconds. If an acknowledgement still fails, it
+  ends the session and answers the request once it reconnects. It retries a response until the People chain takes it,
+  because the request has already run. A response the People chain refuses is published again when the request is
+  delivered again, without running the request a second time. A light client that finds no peer to take a statement
+  counts as an unreachable People chain.
+
+  `truapi-host signing-host exec '/pair <link>'` restarts the responder after a failure and exits only when the paired
+  host disconnects. It waits 1 second before the first restart, doubling up to 30 seconds. A session it cannot serve at
+  all, such as one without an active local session, ends `/pair` with an error instead of restarting.
+
 ## 0.30.0
 
 ### Major Changes

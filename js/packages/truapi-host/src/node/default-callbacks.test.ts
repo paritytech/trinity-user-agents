@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 
-import type { HostChainSet } from "../generated/host-callbacks.js";
 import { ok } from "neverthrow";
 
 import { createHeadlessHostCallbacks } from "./default-callbacks.js";
@@ -9,11 +8,6 @@ const PEOPLE =
   "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48";
 const OTHER =
   "0x1111111111111111111111111111111111111111111111111111111111111111";
-
-const supportedChains: HostChainSet = {
-  network: "paseo",
-  chains: [{ identifier: "People", genesisHash: PEOPLE }],
-};
 
 const hostCallbacks = {
   coreStorage: {
@@ -35,6 +29,7 @@ const hostCallbacks = {
     },
     async write() {},
     async clear() {},
+    async clearProduct() {},
     subscribeStorage(): AsyncIterable<never> {
       return {
         [Symbol.asyncIterator]: () => ({
@@ -43,7 +38,7 @@ const hostCallbacks = {
       };
     },
   },
-  supportedChains,
+  servedChains: [PEOPLE],
   userConfirmation: {
     async confirmUserAction() {
       return true;

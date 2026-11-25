@@ -12,6 +12,7 @@ protocol ModuleNavigating: AnyObject {
     func presentProduct(page: ProductPage)
     func openPocket()
     func openScanPanel()
+    func openBackupSettings()
 }
 
 extension ModuleNavigating {
@@ -66,7 +67,7 @@ extension ModuleNavigator: ModuleNavigating {
     /// An open card stays open, as the Pocket shows it.
     func openPocket() {
         openWallet { wallet, _ in
-            guard !(wallet.topViewController is PocketCardScreenViewController) else { return }
+            guard !(wallet.topViewController is ExpandedPocketCardViewController) else { return }
 
             wallet.popToRootViewController(animated: true)
         }
@@ -74,6 +75,10 @@ extension ModuleNavigator: ModuleNavigating {
 
     func openScanPanel() {
         UIApplication.shared.mainTabBarController?.openScanPanel()
+    }
+
+    func openBackupSettings() {
+        UIApplication.shared.mainTabBarController?.openBackupSettings()
     }
 }
 

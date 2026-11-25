@@ -1,14 +1,21 @@
 package io.paritytech.polkadotapp.feature_statement_store_impl.data.repository
 
+import io.novasama.substrate_sdk_android.runtime.metadata.moduleOrNull
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchAlias
 import io.paritytech.polkadotapp.chains.call.MultiChainViewFunctionsApi
 import io.paritytech.polkadotapp.chains.di.RemoteSourceQualifier
+import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
+import io.paritytech.polkadotapp.chains.multiNetwork.getRuntime
 import io.paritytech.polkadotapp.chains.storage.source.StorageDataSource
+import io.paritytech.polkadotapp.chains.util.Modules
+import io.paritytech.polkadotapp.chains.util.hasCall
 import io.paritytech.polkadotapp.common.data.memory.SingleValueCache
 import io.paritytech.polkadotapp.common.data.memory.getCatching
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.common.utils.scale.BigEndianU32Scale
+import io.paritytech.polkadotapp.feature_chain_resources_api.data.api.REPLACE_STATEMENT_STORE_ACCOUNT_CALL
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.getLiteStmtStoreSlotsPerPeriod
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.getStmtStoreReplacementCooldown
@@ -24,6 +31,7 @@ class RealStatementStoreSlotRepository @Inject constructor(
     @RemoteSourceQualifier private val storageDataSource: StorageDataSource,
     private val viewFunctionsApi: MultiChainViewFunctionsApi,
     private val knownChains: KnownChains,
+    private val chainRegistry: ChainRegistry,
 ) : StatementStoreSlotRepository {
     // The runtime exposes these as view functions, so they are read once per session rather than per call.
     // Unwrapping inside the compute keeps a failed read out of the cache; getCatching re-wraps the throw.
@@ -48,6 +56,12 @@ class RealStatementStoreSlotRepository @Inject constructor(
 
     override suspend fun replacementCooldown(): Result<Duration> {
         return replacementCooldownCache.getCatching()
+    }
+
+    override suspend fun supportsSlotReplacement(): Result<Boolean> = runCancellableCatching {
+        chainRegistry.getRuntime(knownChains.people).metadata
+            .moduleOrNull(Modules.RESOURCES)
+            ?.hasCall(REPLACE_STATEMENT_STORE_ACCOUNT_CALL) == true
     }
 
     override suspend fun allowanceEntries(

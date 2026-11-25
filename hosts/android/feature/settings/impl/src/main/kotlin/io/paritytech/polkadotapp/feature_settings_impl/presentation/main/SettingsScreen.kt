@@ -14,6 +14,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -26,6 +29,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.BlockOutlined
 import io.paritytech.polkadotapp.design.components.icon.vectors.FileOutlined
 import io.paritytech.polkadotapp.design.components.icon.vectors.GridOutlined
+import io.paritytech.polkadotapp.design.components.icon.vectors.HideDocklet
 import io.paritytech.polkadotapp.design.components.icon.vectors.Language
 import io.paritytech.polkadotapp.design.components.icon.vectors.LaptopOutlined
 import io.paritytech.polkadotapp.design.components.icon.vectors.NotificationsBellOutlined
@@ -43,7 +47,9 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingS
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.BackupSettingsMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.PaymentsBackupSettingsMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.SettingsMenuItem
+import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.SettingsSwitchMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.main.components.AppDeviceInfoSection
+import io.paritytech.polkadotapp.feature_settings_impl.presentation.main.components.privacyMode.CoinQualityInfoBottomSheet
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.main.components.privacyMode.PaymentPrivacyModeSelector
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -51,19 +57,27 @@ import io.paritytech.polkadotapp.common.R as RCommon
 fun SettingsScreen() {
     val viewModel = hiltViewModel<SettingsViewModel>()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var isCoinQualityInfoVisible by remember { mutableStateOf(false) }
 
     SettingsScreenInternal(
         state = state,
         onNotificationsClick = viewModel::onNotificationsClick,
         onLanguageClick = viewModel::onLanguageClick,
         onThemeClick = viewModel::onThemeClick,
+        onDockletAutoHideChange = viewModel::onDockletAutoHideChange,
         onPrivacyModeSelected = viewModel::onPrivacyModeSelected,
+        onPrivacyModeInfoClick = { isCoinQualityInfoVisible = true },
         onBackupClick = viewModel::onBackupClick,
         onProductsClick = viewModel::onProductsClick,
         onBlockedUsersClick = viewModel::onBlockedUsersClick,
         onConnectedDevicesClick = viewModel::onLinkedDevicesClick,
         onLegalAndSupportClick = viewModel::onLegalAndSupportClick,
         onDebugMenuClick = viewModel::onDebugMenuClick
+    )
+
+    CoinQualityInfoBottomSheet(
+        isVisible = isCoinQualityInfoVisible,
+        onDismissRequest = { isCoinQualityInfoVisible = false }
     )
 }
 
@@ -73,7 +87,9 @@ private fun SettingsScreenInternal(
     onNotificationsClick: () -> Unit,
     onLanguageClick: () -> Unit,
     onThemeClick: () -> Unit,
+    onDockletAutoHideChange: (Boolean) -> Unit,
     onPrivacyModeSelected: (RecyclingStrategyType) -> Unit,
+    onPrivacyModeInfoClick: () -> Unit,
     onBackupClick: () -> Unit,
     onProductsClick: () -> Unit,
     onBlockedUsersClick: () -> Unit,
@@ -104,6 +120,12 @@ private fun SettingsScreenInternal(
                     label = state.selectedTheme.id,
                     onClick = onThemeClick
                 )
+                SettingsSwitchMenuItem(
+                    icon = NovaIcons.HideDocklet,
+                    title = stringResource(RCommon.string.settings_auto_hide_docklet),
+                    checked = state.dockletAutoHideEnabled,
+                    onCheckedChange = onDockletAutoHideChange
+                )
                 SettingsMenuItem(
                     icon = NovaIcons.NotificationsBellOutlined,
                     title = stringResource(RCommon.string.settings_notifications),
@@ -129,7 +151,8 @@ private fun SettingsScreenInternal(
                             modifier = Modifier.fillMaxWidth(),
                             shape = shape,
                             selectedMode = privacyMode,
-                            onModeSelected = onPrivacyModeSelected
+                            onModeSelected = onPrivacyModeSelected,
+                            onInfoClick = onPrivacyModeInfoClick
                         )
                     }
                 }
@@ -206,6 +229,7 @@ private fun SettingsScreenPreview() = CompositionLocalProvider(
                 linkedDevicesEnabled = true,
                 productSettingsEnabled = true,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
+                dockletAutoHideEnabled = true,
                 privacyMode = RecyclingStrategyType.BALANCED,
                 paymentsBackupStatus = CoinageAccountBackupStatus.Delayed,
                 isLanguageSettingsAvailable = true,
@@ -215,7 +239,9 @@ private fun SettingsScreenPreview() = CompositionLocalProvider(
             onNotificationsClick = {},
             onLanguageClick = {},
             onThemeClick = {},
+            onDockletAutoHideChange = {},
             onPrivacyModeSelected = {},
+            onPrivacyModeInfoClick = {},
             onBackupClick = {},
             onProductsClick = {},
             onBlockedUsersClick = {},

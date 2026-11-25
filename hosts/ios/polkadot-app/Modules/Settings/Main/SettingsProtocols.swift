@@ -11,6 +11,7 @@ protocol SettingsPresenterProtocol: AnyObject {
     func setup()
     func didTapCell(_ cell: SettingsViewModel.CellType)
     func didSelectPrivacyStrategy(_ strategy: RecyclingStrategyType)
+    func didTapPrivacyInfo()
 }
 
 protocol SettingsInteractorInputProtocol: AnyObject {
@@ -28,6 +29,7 @@ protocol SettingsInteractorOutputProtocol: AnyObject {
     func didReceivePrivacyStrategy(_ strategy: RecyclingStrategyType)
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceivePaymentsBackupStatus(_ status: CoinageAccountBackupStatus)
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool)
 }
 
 @MainActor
@@ -39,4 +41,5 @@ protocol SettingsWireframeProtocol: AnyObject, WebPresentable, AlertPresentable 
     func showBlockedUsers(from view: SettingsViewProtocol?)
     func showApps(from view: SettingsViewProtocol?)
     func showThemeSelection(from view: SettingsViewProtocol?, onFinish: @escaping () -> Void)
+    func showPrivacyModeInfo(from view: SettingsViewProtocol?)
 }

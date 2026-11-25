@@ -138,17 +138,26 @@ struct CoinageBalanceTests {
 
     @Test(arguments: [RecyclingStrategyType.balanced, .maxPrivacy])
     func maturityMovesVoucherBalanceToAvailable(_ type: RecyclingStrategyType) {
-        let minimumMembers: UInt32 = 32
+        let thresholds = type == .balanced
+            ? CoinagePrivacyConfig.bundled.balanced
+            : CoinagePrivacyConfig.bundled.maxPrivacy
+        let unloadedCount: UInt32 = 2
+        let membersCount = thresholds.anonymityMembers + unloadedCount
         let tenMinutes: TimeInterval = 10 * 60
         let ringCapacity = 767
         let exponent: Int16 = 1
         let enteredAt = Date(timeIntervalSince1970: 1_000)
         let trackedVoucher = tracked(voucher(
             exponent: exponent,
-            state: .inRecycler(.init(index: 1, membersCount: minimumMembers, enteredAt: enteredAt))
+            state: .inRecycler(.init(
+                index: 1,
+                membersCount: membersCount,
+                enteredAt: enteredAt,
+                unloadedCount: unloadedCount
+            ))
         ))
         let strategy = ParametricRecyclingStrategy(
-            params: type.params(forcedRecyclingAge: CoinageConstants.recycleAtAge)
+            params: type.params(forcedRecyclingAge: CoinageConstants.recycleAtAge, privacyConfig: .bundled)
         )
         let preClassificator = CoinageAssetPreClassificator()
         let balances = [tenMinutes - 1, tenMinutes].map { elapsed in
@@ -261,7 +270,7 @@ private extension CoinageBalanceTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
         let voucherStrategy = ParametricRecyclingStrategy(
-            params: strategy.params(forcedRecyclingAge: CoinageConstants.recycleAtAge)
+            params: strategy.params(forcedRecyclingAge: CoinageConstants.recycleAtAge, privacyConfig: .bundled)
         )
         let usability = VoucherUsabilityContext(ringCapacities: capacities, now: Date())
         let preClassificator = CoinageAssetPreClassificator()

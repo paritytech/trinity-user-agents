@@ -37,7 +37,7 @@ fn every_severity_a_marker_carries_is_in_the_union() {
 		.expect("the file declares the severity union");
 	for marker in MARKERS {
 		if let MarkerClass::Export { severity } = marker.class {
-			let name = format!("\"{}\"", severity_name(severity));
+			let name = format!("\"{}\"", <&str>::from(severity));
 			assert!(union.contains(&name), "{name} is missing from {union}");
 		}
 	}

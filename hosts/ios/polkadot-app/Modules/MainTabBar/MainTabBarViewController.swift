@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import UIKit
 import SwiftUI
 import PolkadotUI
@@ -14,7 +15,10 @@ final class MainTabBarViewController: UIViewController {
     let chromeController = TabBarBottomChromeController()
 
     lazy var widgetController = TabBarWidgetController { [weak self] in
-        self?.updateWidgetLayout()
+        guard let self else {
+            return
+        }
+        updateWidgetLayout(for: chromeContext(for: container.selectedController))
     }
 
     private lazy var statusBarHost = UIHostingController(rootView: ChainConnectionStatusBarView(models: []))
@@ -32,6 +36,7 @@ final class MainTabBarViewController: UIViewController {
     private var statusTitleCenterY: Constraint?
 
     private let statusBarTitleButton = StatusBarTitleButton()
+    private let statusStripContainer = StatusStripContainerView()
 
     lazy var container = TabBarContainer(hostController: self)
 
@@ -47,6 +52,8 @@ final class MainTabBarViewController: UIViewController {
     private var isSearchSwipePending = false
     /// Set while the landing focuses search, so the bar's hide plays no feedback.
     private var isFocusingFromSwipe = false
+    /// The Tab index the user tapped while an outgoing navigation transition was running.
+    private var pendingSelectionIndex: Int?
 
     init(
         presenter: MainTabBarPresenterProtocol,
@@ -130,6 +137,7 @@ final class MainTabBarViewController: UIViewController {
                 return
             }
             applyWidgetLayout(for: chromeContext(for: container.selectedController))
+            bindScrollEdgeInteraction()
         }
 
         chromeController.onBottomClearanceInvalidated = { [weak self] in
@@ -137,6 +145,10 @@ final class MainTabBarViewController: UIViewController {
                 return
             }
             applyWidgetLayout(for: chromeContext(for: container.selectedController))
+        }
+
+        chromeController.onDockletStateCommitted = { [weak self] in
+            self?.applyDockletStateCommitted()
         }
 
         presenter.setup()
@@ -174,9 +186,15 @@ private extension MainTabBarViewController {
     func installStatusBar() {
         additionalSafeAreaInsets.top = ChainConnectionStatusBarView.preferredHeight
 
+        view.addSubview(statusStripContainer)
+        statusStripContainer.snp.makeConstraints { make in
+            make.leading.trailing.top.equalToSuperview()
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
+        }
+
         addChild(statusBarHost)
         statusBarHost.view.backgroundColor = .clear
-        view.addSubview(statusBarHost.view)
+        statusStripContainer.addSubview(statusBarHost.view)
         statusBarHost.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
@@ -189,7 +207,7 @@ private extension MainTabBarViewController {
             chainStatusAnchorWidth = make.width.equalTo(1).constraint
         }
 
-        view.addSubview(statusBarTitleButton)
+        statusStripContainer.addSubview(statusBarTitleButton)
         statusBarTitleButton.snp.makeConstraints { make in
             statusTitleLeading = make.leading.equalTo(statusBarHost.view)
                 .offset(ChainConnectionStatusBarView.horizontalPadding).constraint
@@ -260,12 +278,34 @@ private extension MainTabBarViewController {
             return TabBarChromeContext(
                 tabController: controller,
                 contentController: controller,
-                isTabRoot: true,
                 foldDerived: .none,
                 screen: controller
             )
         }
         return chromeContext(tabController: navigation, stack: navigation.viewControllers, showing: top)
+    }
+
+    /// Animates the widgets and the Clearance together for a Docklet state committed in place. A main scroll view
+    /// keeps its distance from the bottom edge when the Clearance moves that edge, so its last row moves with it.
+    func applyDockletStateCommitted() {
+        let mainScrollView = container.selectedController?.viewIfLoaded?.mainScrollView
+        let positionBefore = mainScrollView?.bottomPosition
+
+        DSTabBarStyle.animateCenterChange(in: view) {
+            self.applyWidgetLayout(for: self.chromeContext(for: self.container.selectedController))
+            self.view.layoutIfNeeded()
+            guard
+                let mainScrollView,
+                let positionBefore,
+                let positionAfter = mainScrollView.bottomPosition
+            else {
+                return
+            }
+            let bottomShift = abs(positionAfter.bottomOffset - positionBefore.bottomOffset)
+            if bottomShift > 0, positionBefore.distanceToBottom <= bottomShift {
+                mainScrollView.keepDistanceToBottom(positionBefore.distanceToBottom)
+            }
+        }
     }
 
     func handleReselection() {
@@ -280,14 +320,11 @@ private extension MainTabBarViewController {
     }
 
     func scrollToTop(in target: UIViewController) {
-        guard
-            let root = target.viewIfLoaded,
-            let scrollView = TabBarScrollToTopLocator.scrollView(in: root)
-        else {
+        guard let scrollView = target.viewIfLoaded?.mainScrollView else {
             return
         }
 
-        TabBarScrollToTopLocator.scrollToTop(scrollView)
+        scrollView.scrollToTopIfNeeded()
     }
 }
 
@@ -304,8 +341,30 @@ extension MainTabBarViewController {
             return
         }
 
-        container.select(index: index)
-        refreshChrome()
+        selectWhenOutgoingTransitionEnds(index: index)
+    }
+}
+
+private extension MainTabBarViewController {
+    /// Applies a Tab switch once the outgoing tab's navigation transition has finished.
+    /// A transition must not finish off screen: UIKit then skips `didMove(toParent:)` on the
+    /// popped screen, so that screen never clears its state.
+    func selectWhenOutgoingTransitionEnds(index: Int) {
+        guard let coordinator = (container.selectedController as? UINavigationController)?.transitionCoordinator else {
+            container.select(index: index)
+            refreshChrome()
+            return
+        }
+
+        let wasPending = pendingSelectionIndex != nil
+        pendingSelectionIndex = index
+        guard !wasPending else { return }
+
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self, let pendingIndex = pendingSelectionIndex else { return }
+            pendingSelectionIndex = nil
+            selectWhenOutgoingTransitionEnds(index: pendingIndex)
+        }
     }
 }
 
@@ -368,6 +427,10 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         productGamePill = viewModel
         applyProductGamePill()
     }
+
+    func showSettingsAttention(_ isVisible: Bool) {
+        chromeController.setSettingsAttention(isVisible)
+    }
 }
 
 // MARK: - Scan panel
@@ -375,6 +438,15 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 extension MainTabBarViewController {
     func openScanPanel() {
         chromeController.openPanelShowingDocklet(.content(.scan))
+    }
+
+    func openBackupSettings() {
+        chromeController.setPanel(nil)
+        presenter.didRequestBackupSettings()
+    }
+
+    func closeScanPanel() {
+        chromeController.closeCenterPanel(duration: nil)
     }
 
     func makeScanPanel() -> UIViewController? {
@@ -424,13 +496,11 @@ private extension MainTabBarViewController {
     }
 }
 
-extension MainTabBarViewController: TopmostChildProviding {
-    var topmostChild: UIViewController? {
-        container.selectedController
-    }
-}
-
 extension MainTabBarViewController {
+    func bindScrollEdgeInteraction() {
+        statusStripContainer.bindScrollEdge(toContentOf: container.selectedController)
+    }
+
     func refreshChrome() {
         applyChrome(chromeContext(for: container.selectedController))
         applyChips()
@@ -448,12 +518,139 @@ extension MainTabBarViewController {
     func refreshStatusBarTitle() {
         statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
     }
+}
 
-    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
-        widgetController.attach(configuration, for: id)
+// MARK: - Main Scroll View
+
+private extension UIView {
+    /// The scroll view a tab reselection or a Clearance change acts on.
+    var mainScrollView: UIScrollView? {
+        var candidates: [MainScrollViewCandidate] = []
+        collectMainScrollViewCandidates(root: self, depth: 0, into: &candidates)
+
+        guard let largestArea = candidates.map(\.visibleArea).max() else {
+            return nil
+        }
+
+        return candidates
+            .filter { $0.visibleArea >= largestArea * MainScrollViewCandidate.dominanceRatio }
+            .min(by: MainScrollViewCandidate.isOrderedBefore)?
+            .scrollView
     }
 
-    func detachWidget(for id: AppWidgetID) {
-        widgetController.detach(for: id)
+    func collectMainScrollViewCandidates(
+        root: UIView,
+        depth: Int,
+        into candidates: inout [MainScrollViewCandidate]
+    ) {
+        guard !isHidden, alpha > MainScrollViewCandidate.minimumAlpha else {
+            return
+        }
+
+        if let scrollView = self as? UIScrollView,
+           let candidate = scrollView.mainScrollViewCandidate(in: root, depth: depth) {
+            candidates.append(candidate)
+        }
+
+        for subview in subviews {
+            subview.collectMainScrollViewCandidates(root: root, depth: depth + 1, into: &candidates)
+        }
+    }
+}
+
+private extension UIScrollView {
+    static var positionTolerance: CGFloat { 0.5 }
+
+    var bottomOffset: CGFloat {
+        contentSize.height - bounds.height + adjustedContentInset.bottom
+    }
+
+    func scrollToTopIfNeeded() {
+        let top = -adjustedContentInset.top
+
+        guard contentOffset.y > top + Self.positionTolerance else {
+            return
+        }
+
+        setContentOffset(CGPoint(x: contentOffset.x, y: top), animated: true)
+    }
+
+    /// The offset that rests a scroll view at its bottom edge, and how far it sits above that offset. Nil when its
+    /// content fits in the visible height.
+    var bottomPosition: (bottomOffset: CGFloat, distanceToBottom: CGFloat)? {
+        let top = -adjustedContentInset.top
+        let bottom = bottomOffset
+
+        guard bottom > top + Self.positionTolerance else {
+            return nil
+        }
+
+        return (bottom, max(0, bottom - contentOffset.y))
+    }
+
+    /// Scrolls a view to sit `distance` above its bottom edge, without animation, so the caller's animation carries
+    /// it there.
+    func keepDistanceToBottom(_ distance: CGFloat) {
+        let top = -adjustedContentInset.top
+        let offsetY = max(top, bottomOffset - distance)
+        contentOffset = CGPoint(x: contentOffset.x, y: offsetY)
+    }
+
+    func mainScrollViewCandidate(in root: UIView, depth: Int) -> MainScrollViewCandidate? {
+        guard scrollsToTop, let area = visibleArea(in: root) else {
+            return nil
+        }
+
+        let inset = adjustedContentInset
+        let tolerance = Self.positionTolerance
+        let scrollsVertically = contentSize.height > bounds.height - inset.top - inset.bottom + tolerance
+        let scrollsHorizontally = contentSize.width > bounds.width - inset.left - inset.right + tolerance
+
+        guard scrollsVertically || !scrollsHorizontally else {
+            return nil
+        }
+
+        return MainScrollViewCandidate(
+            scrollView: self,
+            visibleArea: area,
+            scrollsVertically: scrollsVertically,
+            depth: depth
+        )
+    }
+
+    func visibleArea(in root: UIView) -> CGFloat? {
+        let visible = convert(bounds, to: root).intersection(root.bounds)
+
+        guard
+            !visible.isNull,
+            visible.width > Self.positionTolerance,
+            visible.height > Self.positionTolerance
+        else {
+            return nil
+        }
+
+        return visible.width * visible.height
+    }
+}
+
+private struct MainScrollViewCandidate {
+    static var dominanceRatio: CGFloat { 0.5 }
+    static var minimumAlpha: CGFloat { 0.01 }
+
+    let scrollView: UIScrollView
+    let visibleArea: CGFloat
+    let scrollsVertically: Bool
+    let depth: Int
+
+    static func isOrderedBefore(_ lhs: Self, _ rhs: Self) -> Bool {
+        if lhs.scrollsVertically != rhs.scrollsVertically {
+            return lhs.scrollsVertically
+        }
+
+        if lhs.visibleArea != rhs.visibleArea {
+            return lhs.visibleArea > rhs.visibleArea
+        }
+
+        return lhs.depth < rhs.depth
     }
 }

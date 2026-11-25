@@ -21,18 +21,19 @@ use crate::{
 	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
-		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, TopUpPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
 		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
-		statement_store_rpc::StatementStoreRpc,
+		statement_allowance, statement_store_rpc::StatementStoreRpc,
 	},
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
+	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
@@ -46,9 +47,8 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
-/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
-/// until it settles, so callers asking for the same thing while one runs wait
-/// for its answer, and a burst of them holds one follow slot, not one each.
+/// dotNS reads running now. Callers asking for the same thing while one runs
+/// wait for its answer, so a burst of them reads Asset Hub once, not once each.
 #[derive(Clone)]
 pub struct DotnsReads {
 	/// Root manifest reads, by product label.
@@ -105,9 +105,11 @@ pub struct RuntimeServices {
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
-	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+	pub contact_handle_cache: crate::runtime::contacts::ContactHandleCache,
 	/// dotNS reads running now, shared by the callers that overlap them.
 	pub dotns_reads: DotnsReads,
+	/// Public profile resolution and native cache retention shared by host callers.
+	pub public_profiles: Arc<crate::public_profile::PublicProfilesService>,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -132,6 +134,11 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
+	/// The materials on the device, over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	materials: OnceLock<Materials>,
+	/// Whether the host draws materials, from its configuration.
+	materials_enabled: AtomicBool,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -149,9 +156,8 @@ pub struct RuntimeServices {
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
-	/// Asset Hub the dotNS contracts are deployed on. All-zero says this host
-	/// has none, which leaves every manifest unresolvable.
-	asset_hub_chain_genesis_hash: [u8; 32],
+	/// The stack the host runs, fixed for the life of the runtime.
+	stack: Stack,
 	/// Reference counts per product worker.
 	pub worker_ledger: WorkerLedger,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
@@ -178,10 +184,6 @@ pub struct RuntimeServices {
 	statement_cache: Mutex<StatementCache>,
 	/// Task spawner for background runtime work.
 	pub spawner: Spawner,
-	/// Serializes the read-or-create of the persisted device encryption key.
-	/// Concurrent first-time readers would otherwise each generate a secret and
-	/// persist it, leaving peers addressing an overwritten key.
-	device_encryption_key: futures::lock::Mutex<()>,
 	next_core_instance: AtomicU64,
 }
 
@@ -205,53 +207,46 @@ impl RuntimeServices {
 	}
 
 	/// Build role-neutral runtime services from the platform, the host
-	/// identity reported to products, the People-chain genesis hash used by
-	/// statement-store backed protocols, the Bulletin-chain genesis hash used
-	/// for in-core preimage submission, and the Asset Hub genesis hash product
-	/// manifests are resolved from.
-	///
-	/// The three genesis hashes are adjacent and same-typed, so a transposition
-	/// compiles. Each call site is pinned by its own test.
+	/// identity reported to products, and the stack whose People chain backs
+	/// the statement store, whose Bulletin chain takes in-core preimage
+	/// submissions, and whose Asset Hub product manifests resolve from.
 	pub fn new(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
+		stack: Stack,
 		spawner: Spawner,
 	) -> Arc<Self> {
-		Self::with_chat_platform(
-			platform,
-			host_info,
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			spawner,
-			None,
-		)
+		Self::with_platforms(platform, host_info, stack, spawner, None, None)
 	}
 
-	/// Same as [`Self::new`], with the host's chat adapter installed.
-	pub fn with_chat_platform(
+	/// Same as [`Self::new`], with the host's optional chat and contacts adapters.
+	pub fn with_platforms(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
+		stack: Stack,
 		spawner: Spawner,
 		chat_platform: Option<Arc<dyn ChatPlatform>>,
+		contacts_platform: Option<Arc<dyn ContactsPlatform>>,
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let chain = match crate::stack::checks(&stack) {
+			Some(checks) => chain.checking_genesis(checks.genesis_check()),
+			None => chain,
+		};
+		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
+			chain.clone(),
+			stack.chains().asset_hub,
+			spawner.clone(),
+		));
 		let statement_store = StatementStoreRpc::new(
 			platform.clone(),
 			chain.clone(),
-			people_chain_genesis_hash,
+			stack.chains().people,
 			spawner.clone(),
 		);
 		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
-		let bulletin =
-			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
+		let bulletin = BulletinRpc::new(chain.clone(), extrinsics.clone(), stack.chains().bulletin);
 		// The funding registry follows sessions through the services it
 		// belongs to, so it is built holding them.
 		Arc::new_cyclic(|services| Self {
@@ -266,9 +261,10 @@ impl RuntimeServices {
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
-			contacts_platform: OnceLock::new(),
-			contact_handles: Default::default(),
+			contacts_platform: contacts_platform.map(OnceLock::from).unwrap_or_default(),
+			contact_handle_cache: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
+			public_profiles,
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
@@ -280,6 +276,9 @@ impl RuntimeServices {
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
+			materials: OnceLock::new(),
+			materials_enabled: AtomicBool::new(false),
+			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			holding_tracker: OnceLock::new(),
@@ -289,7 +288,7 @@ impl RuntimeServices {
 			encrypted_storage: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
-			asset_hub_chain_genesis_hash,
+			stack,
 			worker_ledger: WorkerLedger::default(),
 			chain,
 			extrinsics,
@@ -301,7 +300,6 @@ impl RuntimeServices {
 			local_preimages: Mutex::new(std::collections::HashMap::new()),
 			statement_cache: Mutex::new(StatementCache::default()),
 			spawner,
-			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
 		})
 	}
@@ -314,20 +312,40 @@ impl RuntimeServices {
 		self.permission_status.set(host).is_ok()
 	}
 
-	/// The Asset Hub dotNS reads run against, when one is configured.
+	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
 	///
-	/// Taken by construction, so the chain a grant is adjudicated against
-	/// cannot move under a running product. It is deliberately not sourced from
-	/// `supported_chains()`, which is an uncached per-call host syscall
-	/// answering a different question, "which chains do I serve RPC for?", the
-	/// product-facing `get_chain_info` advertisement, rather than "which Asset
-	/// Hub is dotNS deployed on?". Taking it from there would let the anchor
-	/// change between two calls, at host discretion, with nothing recording it.
+	/// The suffix also goes to the stack's checks, which report one that is
+	/// not the stack's `tld`. Over a client the host routes by another chain's
+	/// genesis hash, that chain's suffix is returned and does not go to the
+	/// checks.
 	///
-	/// An all-zero hash is how a host says it has no Asset Hub. `None` fails
-	/// every manifest lookup closed: grants are refused rather than assumed.
-	pub fn asset_hub_chain_genesis_hash(&self) -> Option<[u8; 32]> {
-		Some(self.asset_hub_chain_genesis_hash).filter(|hash| *hash != [0u8; 32])
+	/// Fails when the read fails or the chain holds no suffix of one to
+	/// sixteen bytes. A failed read changes nothing the checks report: a
+	/// suffix reported before stays reported.
+	pub async fn people_network_suffix(
+		&self,
+		people: &statement_allowance::ChainClient,
+	) -> Result<Vec<u8>, statement_allowance::StatementAllowanceError> {
+		let suffix = statement_allowance::slot::read_network_suffix(people.rpc()).await?;
+		if people.configured_genesis_hash() == self.stack.chains().people &&
+			let Some(checks) = crate::stack::checks(&self.stack)
+		{
+			checks.people_suffix_answered(&suffix);
+		}
+		Ok(suffix)
+	}
+
+	/// The stack the host runs.
+	pub fn stack(&self) -> &Stack {
+		&self.stack
+	}
+
+	/// The Asset Hub dotNS reads run against.
+	///
+	/// Fixed by construction, so the chain a grant is adjudicated against
+	/// cannot move under a running product.
+	pub fn asset_hub_chain_genesis_hash(&self) -> [u8; 32] {
+		self.stack.chains().asset_hub
 	}
 
 	/// The host's live OS permission-status adapter, when one is installed.
@@ -467,10 +485,12 @@ impl RuntimeServices {
 	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it.
+	/// consumer. Returns `None` if a database was already installed.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub(crate) fn install_core_db(&self, db: Db) -> bool {
-		self.core_db.set(db.clone()).is_ok() && self.funding.install_db(db)
+	pub(crate) fn install_core_db(&self, db: Db) -> Option<()> {
+		self.core_db.set(db.clone()).ok()?;
+		self.public_profiles.install_db(db.clone())?;
+		self.funding.install_db(db).then_some(())
 	}
 
 	/// The core database.
@@ -490,6 +510,65 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the materials on the device. Set-once, like the database they
+	/// are kept in. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_materials(&self, materials: Materials) -> bool {
+		self.materials.set(materials).is_ok()
+	}
+
+	/// The materials on the device, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn materials(&self) -> Option<Materials> {
+		self.materials.get().cloned()
+	}
+
+	/// Let the host draw materials, as its configuration asks.
+	pub fn enable_materials(&self) {
+		self.materials_enabled.store(true, Ordering::Relaxed);
+	}
+
+	/// Whether the host draws materials at all.
+	pub fn materials_enabled(&self) -> bool {
+		self.materials_enabled.load(Ordering::Relaxed)
+	}
+
+	/// Whether the host draws materials of format `version` requiring
+	/// `features`.
+	pub fn draws_materials(&self, version: u32, features: &[String]) -> bool {
+		#[cfg(not(target_arch = "wasm32"))]
+		{
+			crate::materials::draws(self.materials_enabled(), version, features)
+		}
+		#[cfg(target_arch = "wasm32")]
+		{
+			let _ = (version, features);
+			false
+		}
+	}
+
+	/// The resolved materials of `tree` in `context`, its shaders in
+	/// `language`, filtering 32-bit float images themselves unless
+	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the materials
+	/// are installed over a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &latest::RendererNode,
+		context: &latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		let Some(materials) = self.materials() else {
+			tracing::warn!("no core database, so every material node draws plain");
+			return crate::MaterialsResolution::plain(tree, context, failures);
+		};
+		let enabled = self.materials_enabled();
+		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
+		materials.resolve(tree, context, settings, failures)
 	}
 
 	/// Install the NFT ledger. Set-once, like the database it runs on.
@@ -562,19 +641,6 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
 		self.durable_work_observer.get().cloned()
-	}
-
-	/// This device's persisted X25519 encryption secret, created on first use.
-	///
-	/// The only supported way to reach the key: it bundles the serialization
-	/// guard with the read, so no caller can race another into generating a
-	/// second secret and overwriting the one peers were told to address.
-	pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
-		let _guard = self.device_encryption_key.lock().await;
-		crate::host_logic::device_key::read_or_create_device_encryption_secret(
-			self.platform.as_ref(),
-		)
-		.await
 	}
 
 	/// Allocate the next per-product-runtime id, used to scope chain follow

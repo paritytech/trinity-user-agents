@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_statement_store_impl.data
 
 import com.google.gson.Gson
 import io.novasama.substrate_sdk_android.extensions.fromHex
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.wsrpc.SocketService
 import io.novasama.substrate_sdk_android.wsrpc.executeAsync
@@ -10,12 +11,16 @@ import io.novasama.substrate_sdk_android.wsrpc.subscription.response.Subscriptio
 import io.novasama.substrate_sdk_android.wsrpc.subscriptionFlow
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.getSocket
+import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_statement_store_api.data.Statement
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementStoreService
+import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementSubmitError
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementsPage
 import io.paritytech.polkadotapp.feature_statement_store_api.data.TopicFilter
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.models.requests.SubmitStatementRequest
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.models.requests.SubscribeStatementRequest
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.models.response.RejectionReason
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.models.response.StatementSubscriptionResponse
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.models.response.SubmitStatementOutcome
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.models.response.SubmitStatementResult
@@ -69,18 +74,25 @@ class RealStatementStoreService @Inject constructor(
         error("Statement submit failed after $MAX_RETRIES attempts! Last result: $lastResult")
     }
 
-    override suspend fun submitStatementOnce(statement: Statement): Result<Unit> = runCatching {
-        val submitResult = attemptSubmit(statement.toRequest())
+    override suspend fun submitStatementOnce(statement: Statement): Result<Unit> {
+        return runCancellableCatching { attemptSubmit(statement.toRequest()) }
+            .flatMap { submitResult -> submitResult.toSingleAttemptResult() }
+    }
 
-        when (submitResult.determineOutcome()) {
-            SubmitStatementOutcome.ACCEPTED -> Unit
-            else -> error("Single-attempt statement submit failed: $submitResult")
+    private fun SubmitStatementResult.toSingleAttemptResult(): Result<Unit> {
+        if (determineOutcome() == SubmitStatementOutcome.ACCEPTED) return Result.success(Unit)
+
+        val error = when ((this as? SubmitStatementResult.Rejected)?.reason) {
+            RejectionReason.NoAllowance -> StatementSubmitError.NoAllowance()
+            is RejectionReason.ChannelPriorityTooLow -> StatementSubmitError.ChannelPriorityTooLow()
+            else -> StatementSubmitError.Rejected(toString())
         }
+        return Result.failure(error)
     }
 
     private fun Statement.toRequest(): SubmitStatementRequest {
         val remote = toRemote()
-        val encoded = BinaryScale.encodeToByteArray(remote).toHexString()
+        val encoded = BinaryScale.encodeToByteArray(remote).toHexString(withPrefix = true)
         return SubmitStatementRequest(encoded)
     }
 

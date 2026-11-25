@@ -36,20 +36,22 @@ The package is public, so any authenticated GitHub identity can read it. In GitH
 
 The consuming app must declare `android.permission.INTERNET` — the localhost WebSocket bridge binds a `127.0.0.1` TCP socket, which requires it even for loopback.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
-embedding app's package upgrade.
+`HostRuntimeConfig.stack` is required. It is the Trinity stack the build runs,
+as a `BundledStack`:
 
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
+- `pointer` is the stack's link, `polkadotapp://stack?key=0x…&url=…`. It must
+  carry a key.
+- `descriptor` is the signed descriptor the build bundles, byte for byte as
+  served. The core verifies it under the pointer's key.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
+
+The core takes every chain it uses from the descriptor, and answers products'
+chain info queries from its `chains` and `network`. The descriptor's TLD is the
+one the wallet's reserved identities derive under. An invalid stack makes the
+`TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
+Include this configuration update in the embedding app's package upgrade.
 
 ### Compatibility
 
@@ -81,6 +83,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 - `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - Pocket - the core keeps the collection in its database: the cards in the Pocket and the newest face of each. The host lists the cards it pins in `HostRuntimeConfig.pinnedPocketCards`, follows the collection with `pocketCards()` (pinned first, after every change), and calls `addPocketCard`, `removePocketCard` (returning `PocketCardRemoval.REMOVED`, `ABSENT` or `PRIVILEGED`) and `pocketCardFace` on the runtime. The core keeps the newest face from every Pocket card render. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`.
+- Materials - with `HostRuntimeConfig.materialsEnabled`, `resolveMaterials(tree, context, floatFilterable)` on the runtime (a saved face or a preview) or on an execution (a body its product rendered, whose failures also reach the product) returns `MaterialsResolution`: the newest materials as a `StateFlow` (`resolved`), with each `Materials` node loading, ready with its GLSL ES shaders, or plain with a reason, and `report(node, material, reason)` for a shader that did not compile or an image argument `checkMaterialImage` refused. `materialNoise(seed)` makes the body's noise image. Start resolving a new tree before closing the old one, so shared materials keep their fetch.
 - `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
 - `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It calls `followTopUp`, `followPayment` and `followBalance` for what it follows, and the host pushes what its engine reports through `notifyTopUpStatus`, `notifyPaymentStatus` and `notifyBalance` until the call returns or is cancelled. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
 
@@ -130,10 +133,7 @@ val runtime = TrUAPIHostRuntime(
     bridge = bridge,
     runtimeConfig = HostRuntimeConfig(
         hostName = "My Chat Host",
-        peopleChainGenesisHash = peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash = bulletinChainGenesisHash,
-        assetHubChainGenesisHash = assetHubChainGenesisHash,
-        networkSuffix = "dot",
+        stack = bundledStack,
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -178,7 +178,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns ret
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `requestWorkerTransition`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. A feature takes a worker reference with `runtime.claimWorker(productId)` when it needs the product and calls `claim.release()` when that work ends. The runtime bridge receives the resulting `requestWorkerTransition` calls. Opening, replacing or closing a render stream leaves the feature's claim intact. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -194,13 +194,13 @@ TrUAPIProductExecution.startWsBridge()
   → Rust dispatcher
 ```
 
-The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The updated SDK adopts the injected `window.__HOST_API_CLIENT__` client and keeps it across socket replacement. Calls and subscriptions the host may have started fail without replay. Calls not yet sent go out on the replacement socket. Older SDKs use a small `window.__HOST_API_PORT__` adapter and require a page reload after a disconnect.
+The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The container publishes `window.__HOST_API_TRANSPORT__`, a frame channel over that connection. The product's SDK builds its own client over it, so frames are encoded by the `@parity/truapi` the product ships, and keeps that client across socket replacement. Calls and subscriptions the host may have started fail without replay. Calls not yet sent go out on the replacement socket. SDKs that predate the injected transport encode their frames over a small `window.__HOST_API_PORT__` adapter. It survives socket replacement too, and ends what the lost socket carried with a `HostFailure` error.
 
 Android intercepts HTTP requests natively, including scripts and images, and calls `execution.authorizeRemotePermission` on the same Rust permission service used by the SDK. This shares grants and consumes “Allow once” only once. Approval covers the initial URL and any redirects it follows; redirect destinations are intentionally not checked separately. The container uses `nativeHttp: true` to avoid checking fetch and XHR again in JavaScript. Both product pages and hidden worker WebViews use this path.
 
 The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or storage. New products should use the SDK's container detection.
 
-The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
+The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
 
 ## Permissions split
 
@@ -220,6 +220,12 @@ To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remo
 The vendored Android host retains its native HTTP checks for fetch, XHR and subresources. Its installer adds `nativeHttp: true` to the private bootstrap configuration in every frame before the container runs, disabling duplicate JavaScript HTTP checks. Embedders without native HTTP enforcement must leave this flag unset.
 
 Identity and account access reviews use `confirmPermission(review)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `ALLOW_ALWAYS`; signing and other single-action reviews continue to use that Boolean callback.
+
+## Device encryption key
+
+The core keeps this device's X25519 encryption key. Chat and device sync encrypt with `deviceEncryptionKey()`, and `SessionUiInfo.deviceEncPublicKey` carries its public key on every `AuthState.Connected`. The core generates the key on first read.
+
+A host that announced a key of its own before the core kept one passes it as `HostRuntimeConfig.deviceEncryptionKey`. The core adopts it before the local session activates, so contacts addressing that key stay reachable, and the host can delete its own copy once the runtime is built.
 
 ## Statement-store allowance renewal
 
@@ -307,6 +313,7 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import uniffi.truapi.BundledStack
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ExecutableKind
@@ -419,13 +426,12 @@ val bridge = MyBridge(webView)
 val runtimeConfig = HostRuntimeConfig(
     hostName = "My Host",
     hostIcon = "https://host.example/icon.png",
-    peopleChainGenesisHash = ByteArray(32),
-    bulletinChainGenesisHash = ByteArray(32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
-    networkSuffix = "dot",
+    stack = BundledStack(
+        // The link the bundled descriptor was published under.
+        pointer = "polkadotapp://stack?key=0x…&url=…",
+        descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
+        reservedValues = ReservedValuesPolicy(allowed = false),
+    ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.
     localSessionSecret = null,

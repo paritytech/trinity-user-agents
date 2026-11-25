@@ -4,7 +4,6 @@ import UIKit
 import Coinage
 import UIKitExt
 import ChainRegistry
-import Products
 
 protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didSetCards(viewModels: [WalletCardCreateViewModel])
@@ -12,8 +11,7 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceive(readyAmount: BalanceViewModelProtocol?)
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
     func didReceive(isRecoveryInProgress: Bool)
-    func didShowBackupNotification()
-    func didHideBackupNotification()
+    func didReceive(showsRestoredBalanceHint: Bool)
 
     func didReceive(topUpLoading: Bool)
 
@@ -28,9 +26,7 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func setup()
     func onSendMoney()
     func onAddMoney()
-    func onBackupSync()
-    func onBackupCancel()
-    func onBackupWhyUpdate()
+    func onOpenBackupSettings()
     func onTopUp()
 
     #if TESTNET_FEATURE
@@ -40,10 +36,8 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
 
 protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func setup()
-    func triggerSync()
-    func cancelBackupNotification()
 
-    func openTopUpProduct()
+    func openTopUp()
 
     #if TESTNET_FEATURE
         func topUp()
@@ -58,7 +52,8 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(isRecoveryInProgress: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
-    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)
+    /// The session the user started, or `nil` when they closed the overlay.
+    func didOpenTopUp(_ result: Result<String?, Error>)
 
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous
@@ -74,10 +69,10 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
 }
 
 @MainActor
-protocol AssetDetailsWireframeProtocol: AlertPresentable, ErrorPresentable, BackupSyncPresentable {
+protocol AssetDetailsWireframeProtocol: AlertPresentable, ErrorPresentable {
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset)
 
     func showAddTokens(from view: ControllerBackedProtocol?)
 
-    func showProduct(page: ProductPage)
+    func showBackupSettings()
 }

@@ -14,85 +14,43 @@ protocol API into a working host. It owns:
 - the auto-generated dispatcher/wire-table tables shipped under
   [`crate::generated`]
 - the host embedding surface: one long-lived role handle
-  (`PairingHostRuntime` or `SigningHostRuntime`) per host application, exposing
+  (`HostRuntime<PairingHost>` or `HostRuntime<SigningHost>`) per host application, exposing
   shared [`RuntimeServices`] plus one [`ProductRuntime`] per product connection
 
 ## Architecture
 
-Two ownership bands. A **per-product-connection** band (byte frames →
-dispatcher → role-neutral product runtime) is minted once per host↔product
-connection by the role handle and lives for that product's whole session; a
-**shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
-and the role object (`PairingHost` or `SigningHost`), which is itself the
-`ProductAuthority` and the `HostSession`. Pure `host_logic` is a no-I/O library
-both bands call, not a stage in the frame path; the host's `Platform` impl is
-the syscall floor.
+Each product connection has its own `ProductRuntime`, `ProductRuntimeHost` and `ProductConnection`, which hold that product's adapters, permissions, action streams and its own chain connection, and a `ProductAccounts` that gives it the shared `HostAccounts` bound to that product. Everything else is shared per host: `HostAccounts` with its `AccountHolder`, the `HostSession`, and `RuntimeServices`. `host_logic` is a pure library both call, and the host's `Platform` implementation performs all I/O.
 
 ```text
-   ┌───────────────────────────────────────────────────────┐
-   │ product      sandboxed iframe · native WebView        │
-   └───────────────────────────────────────────────────────┘
-                              │  ▲
-          SCALE frames        │  │  MessageChannel · loopback
-          both directions     ▼  │  WS
-   ┌───────────────────────────────────────────────────────┐
-   │ binding layer :  host shell / transport adapter       │
-   │ thin byte bridge  ·  no protocol logic                │
-   └───────────────────────────────────────────────────────┘
+Per product connection
+┌─────────────────────────────────────────────────────────────┐
+│ ProductRuntime: frames → Dispatcher                         │
+│ ProductRuntimeHost<H>: validation and protocol adapters     │
+│ ProductConnection: permissions, platform adapters, demand   │
+│ ProductAccounts<H>: HostAccounts bound to this product      │
+└────────────────────┬──────────────────────┬─────────────────┘
+                     │ account operations   │ login / identity
+Shared per host      ▼                      ▼
+┌──────────────────────────────┐  ┌────────────────────────────┐
+│ HostAccounts<H>              │  │ HostSession                │
+│ acquire, retain, use grants  │  │ SigningHost                │
+│ HostGrantStore + registry    │  │ or SsoRequestService       │
+└──────────────────┬───────────┘  └────────────────────────────┘
+                   │ AccountHolder
+         ┌─────────┴─────────────────────┐
+         ▼                               ▼
+ WalletAccountHolder              RemoteAccountHolder
+ wallet secrets and issuance      canonical calls ↔ SSO messages
+         ▲                               │
+         │                               ▼
+ SsoAccountHolderService           SsoRequestService
+ confirms peer requests           selected channel and transport
 
- ══ per host→product connection ( one per connected product ) ══
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntime           frame endpoint               │
-   │ decode each SCALE frame → dispatch one typed call     │
-   └───────────────────────────────────────────────────────┘
-                              │  typed method call
-                              ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntimeHost       role-neutral                 │
-   │ validate · permission-gate · confirm                  │
-   └───────────────────────────────────────────────────────┘
-                              │  wallet-authority tail :
-                              │  sign · alias · entropy · alloc
-                              │  via  ProductAccounts, the role
-                              │  bound to this product
-                              ▼
-
- ══ shared per host app ( one per host, all connections ) ══════
-     the PairingHostRuntime | SigningHostRuntime handle owns both:
-   ┌─────────────────────────────┐   ┌────────────────────────┐
-   │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │          + HostSession      │   │ platform · chain · RPC │
-   │ PairingHost | SigningHost   │   │                        │
-   └─────────────────────────────┘   └────────────────────────┘
-              │
-              │  PairingHost only : encrypted SSO channel
-              ▼
-       ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-       ╎ remote signing host   ( external wallet ) ╎
-       └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
-   both bands call host_logic for pure work, never traverse it :
-   ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-   ╎ host_logic       pure library ( no I/O )              ╎
-   ╎ crypto · codecs · derivation · policy                 ╎
-   └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
- ══ host-owned floor · where every I/O above bottoms out ═══════
-   ┌───────────────────────────────────────────────────────┐
-   │ Platform impl  ( TS / Swift / Kotlin )                │
-   │ storage · prompts · chain RPC · navigation            │
-   └───────────────────────────────────────────────────────┘
+Shared RuntimeServices: platform, chain access and RPC clients
+Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`ProductRuntimeHost` handles everything role-neutral (id normalization,
-permission gating, confirmation, soft product-key derivation), then delegates
-the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through a
-`ProductAccounts` handle bound to its product, with an `AuthoritySession`
-snapshot the role revalidates before touching key material. Its
-per-connection state (adapters, permissions, action channels, open operations
-and its own chain connection) lives in a `ProductConnection`, and login, logout
-and connection state go through the role's `HostSession`.
+`HostAccounts` binds each call to the calling product and the current wallet activation, keeps the grants it was issued, and signs with delegated keys itself. It confirms signing, transaction, VRF and allocation requests with the user before the `AccountHolder` acts on them; allowances it allocates in the background need no confirmation. The `AccountHolder` owns wallet secrets and grant issuance and records ring-VRF registrations; `HostAccounts` records the provider the user selects, and `RingVrfRegistryStore` serializes both writes.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -199,28 +157,165 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
-The embedder builds a role handle, `PairingHostRuntime::new(...)` or
-`SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
+The embedder builds a role handle, `HostRuntime::<PairingHost>::new(...)` or
+`HostRuntime::<SigningHost>::new(...)`, then calls `product_runtime(product, sink)` for
 each product connection. Role-specific operations live only on the matching handle:
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
 `activate_local_session` on the signing handle. Both handles expose
-`clear_product_state` to revoke one product's capability material without
-touching the session or other products, and `notify_contacts_changed` to drop
+`clear_product_state` to revoke one product's capability material and remove
+the values it wrote to product storage, through `ProductStorage::clear_product`,
+without touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
-a compile error, not a runtime `Unavailable`.
+a compile error, not a runtime `Unavailable`. Stop a product's executions
+before clearing its state, since a value written after the clear is kept.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
 
-`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
-`paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
-from the same network configuration used by wallet onboarding. It must match
-the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `peopl.<suffix>`, while the chain uses that suffix for
-proof contexts. Configuration keeps local activation and key derivation
-available offline. The core validates supported suffixes but does not
-automatically check that the configured suffix matches the chain.
+### Stack
+
+Both host configs carry a `Stack`, the core's only chain configuration. Its
+doc in `src/stack.rs` lists what it holds.
+
+A native or browser shell puts three things in its runtime config: the stack's
+pointer, the signed descriptor its build bundles, and the build's
+[`ReservedValuesPolicy`](src/stack.rs), whose doc says what the core reserves
+and which policies it refuses. The core resolves the `Stack` from them with
+`StackRefresh::load`.
+
+A Rust host that resolves its chains itself, such as the CLI, uses
+`Stack::new`, and a test-host browser bundle passes `runtimeConfig.testStack`.
+The core does not refresh a stack built either of those ways. Each constructor
+documents what it refuses.
+
+Reserved identities derive under `peopl.<tld>`, and the People
+chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
+to be equal. Taking the TLD from the stack keeps local activation and key
+derivation working offline. The core reads the chain's suffix later and
+reports a difference, as the next section describes.
+
+#### Checks against the chains
+
+When an operator restarts a stack's chains from genesis, the same endpoints
+serve new chains with new genesis hashes. A build that still runs the old
+descriptor would read them as the old chains. So the core asks every chain
+connection for its genesis hash before anything else uses the connection. This
+covers the core's own connections, each product's, and the statement
+subscriptions on People.
+
+- If the hash is the one the connection was opened for, the core hands the
+  connection out.
+- If the hash is different, the call fails with a host failure. For a chain of
+  the stack, `StackStatus::mismatches` lists it until a connection reaches the
+  chain the descriptor names. Without delaying that failure, the core also
+  asks the connections it handed out earlier for that chain again, apart from
+  the statement subscriptions, because a host may have redialled underneath
+  them. It closes those that give a different hash or say the chain is halted,
+  as dotli does while it redials. Those that give the right hash, fail another
+  way, or say nothing for 30 seconds stay open, since one endpoint can front
+  several nodes.
+- If the chain cannot be reached, or says nothing for 30 seconds, the call fails
+  as unavailable and the next connection asks again. A chain that dotli reports
+  as halted is asked again for up to 47 seconds, as a halted follow is, and is
+  unavailable after that. Any other error fails the call with a host failure.
+  None of these is a mismatch.
+
+While a chain is listed, the core fetches the descriptor every five minutes
+instead of every hour, since the operator publishes the new genesis hashes with
+the restart. Once the core holds a descriptor that changes a chain, it sets
+`restart_required` and fetches hourly again.
+
+A host learns of a mismatch through its stack callbacks, and can read it from
+`stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
+(`worker-runtime.ts`), which builds the pairing runtime without the stack
+callbacks and exposes no `stackStatus()` to the host, so a host on them sees a
+refused chain only as failing calls. A `WasmProductRuntime` built on its own
+has no status either. A browser host that passes `stackChanged` without
+`fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
+Without the callbacks the chain is still refused, and nothing is fetched. A host
+shows a listed chain as out of service and keeps its own features off it. A
+`StackMismatch::NetworkSuffix` entry, described below, names no chain to keep
+off: the core keeps using People, so a host keeps People in service as well and
+shows the entry as a fault in the stack. The operator corrects it by setting
+People's suffix to the `tld`. A corrected descriptor on another TLD does not
+help a running build, and the entry stays listed. A host that fetches the
+descriptor sees that copy refused in `last_refresh`. Only a new host build that
+bundles that descriptor runs on its TLD.
+
+The check has three limits:
+
+- It runs only when the core opens a connection. If a host redials underneath
+  one, as dotli does, the core notices when it opens the next connection for
+  that chain, in any scope.
+- A light client answers from its chain spec, so a chain that restarted is out
+  of its reach and never listed. Only the hourly fetch brings it the new
+  descriptor.
+- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
+  is not checked.
+
+The core also checks People's `NetworkSuffix.NetworkSuffix` against the
+descriptor's `tld`. It makes no request for this. A signing host already reads
+People's suffix when it builds statement store and Bulletin allowance proofs,
+and when it renews a statement store allowance, and the core compares that
+value. Only People's suffix is compared: a PGAS claim reads Asset Hub's
+`NetworkSuffix`, which the core does not check. If People's suffix differs,
+`StackStatus::mismatches` lists it until a later read gives the `tld` or the
+runtime ends. The core keeps the suffix in memory only, so a runtime built
+again, after a relaunch or after `restart_required`, lists no suffix until its
+own allowance work reads one. A suffix that is not listed may not have been
+read yet.
+
+This is only a report. The core keeps using People and does not fetch the
+descriptor any sooner. It matters because the core derives its identities under
+the `tld` but builds proof contexts with People's suffix. If the two differ, an
+identity derived under one does not match the other.
+
+A failed read changes nothing, and neither does a suffix that is not one to
+sixteen bytes long: a suffix listed before stays listed, and the allowance work
+fails with that error. A pairing host does no allowance work, so it never lists
+a suffix.
+
+#### Descriptor refresh
+
+The core starts from the bundled descriptor or the last one it verified,
+whichever has the higher `sequence`. The bundled descriptor has to be one the
+core can run under the build's policy even when the stored one is newer, so a
+build that refuses its own bundle fails on every device, not only on fresh
+installs. It never waits on the network to start,
+and waits a few seconds at most for the stored copy before it starts from the
+bundled one.
+
+The core has no HTTP client. A native host installs `NativeStackCallbacks` with
+`set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,
+and the core keeps the last descriptor it verified in its database. A browser
+host passes the `fetchStackDescriptor` and `stackChanged` raw callbacks, and the
+core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
+Without the callbacks the core stays on the descriptor it started from.
+
+The core fetches once the callbacks are installed, unless the last fetch was
+under an hour ago, then once an hour and whenever the host calls
+`refresh_stack`. A sleeping device can stretch that hour, so a host calls it
+when its app returns to the foreground. `StackFetchRequest` says how to make
+the request.
+
+`trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
+a failed fetch, a refused descriptor or a lower `sequence` keeps the current
+one. The core also refuses a descriptor it could not start from, such as one
+without a People chain, and one on another TLD than the bundled copy, since
+accounts derive under the TLD. A stored descriptor it would refuse is ignored
+until the next one the core takes replaces it, whatever its `sequence`. After
+a refused or failed fetch, `last_refresh` reports that fetch even if writing
+the record fails.
+
+A newer descriptor that changes a genesis hash, the network or the
+`generation` applies from the next start. Once the core has stored it,
+`StackStatus` has `restart_required` set, and the host builds the runtime
+again. Any other change needs no restart. `StackStatus` carries it once the
+core has stored the descriptor or its store has failed, at most 30 seconds
+after the fetch, and shows the copy from before the fetch until then. It
+documents the rest, including the `generation` a host keys cached chain data
+by.
 
 ### Core database
 
@@ -230,7 +325,7 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+it on iOS and Android, and `HostRuntime::<SigningHost>::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
 `EncryptedStorage` that keeps NFT receive key and deposited item secrets with
@@ -239,20 +334,50 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each. The host lists the cards it
+cards in the Pocket and the newest face of each side. The host lists the cards it
 pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
 approves with `add_pocket_card`, and follows the collection with
 `observe_pocket_cards`. A card no longer pinned stays only if the user added
 it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, at most every two seconds and once more
-when the render stops, so a card has a face offline and at cold start.
+`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+render, at most every two seconds and once more when the render stops, so a
+card has both sides offline and at cold start. `pocket_card_face` reads a side.
+A product connection's renderer actions leave out a press on a back that
+connection has not drawn: a product whose SDK predates `PocketCardBack` cannot
+decode one and would lose its whole action stream.
+
+It also keeps materials (`materials` module), the text behind each material
+ID a renderer tree names. The core reads a material it lacks from Bulletin
+itself, with `bitswap_v1_get` over the Bulletin connection it holds for
+preimage submission, not through the host's preimage lookup. Only text that
+hashes to the ID and passes format version 1, as Shaderlab's reference parser
+reads it, is kept. A node that answers with bytes that do not hash to the ID
+ends the fetch, and the material falls back as `Integrity`. A material a saved
+Pocket face draws is never
+evicted, and the others share 4 MiB, oldest out first. At start-up the core
+fetches what the saved faces draw and the database lacks. From a material's
+text the core builds the shaders an app compiles: the GLSL ES 3.00 that
+Shaderlab's own compile step writes, for OpenGL ES, and naga's Metal
+translation of it, with where each uniform and texture goes.
+
+A host that draws materials (`materials_enabled` in its startup config) asks
+the core to resolve a tree's materials: for each `Materials` node, depth first,
+whether it is loading, ready with its built layers, or drawn plain and why.
+The resolution follows the shared fetch, checks the tree's limits and each layer's
+arguments, builds the shaders for the platform (Metal on iOS, GLSL ES
+elsewhere), and changes as materials arrive or fail and as the app reports a
+shader it could not compile or an image it could not use. A node that falls
+back is logged on the device, and when the resolution runs on a product's execution,
+reported to that product through `Renderer::failure_subscribe`, once. The
+capability answer to the materials question is yes only with materials on, for
+the format version and features the core reads.
 
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
-embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+embedder calls `HostRuntime::<SigningHost>::set_encrypted_storage`. Web hosts do not
 compile it.
 
 ### Durable transactions
@@ -263,19 +388,21 @@ mortal extrinsics (`DurableRequest::presigned`, then `execute` or
 transaction); the engine broadcasts them once committed and follows each with
 a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
-the shared chain capabilities and the domain's `CompletionOracle`. Every
+the shared chain capabilities and the domain's `CompletionOracle`, which a
+pass asks once per domain about its undecided rows. Every
 verdict is a compare-and-set against the status and attempt it was derived
 from, and rows are never deleted.
 
-A domain can also schedule transactions it cannot sign yet
-(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
-`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
-policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
-submission executor builds them: one task per domain, policy and group asks the
+Each domain is registered in the `DurableRegistry` with the genesis hash of
+its chain, its `CompletionOracle` and its one `SubmissionPolicy`. A domain can
+also defer transactions it cannot sign yet (`DurableRequest::deferred`),
+each with a `SubmissionPlan`: the `PolicyParams` its domain's policy builds it
+from. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain and group asks the
 policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
 and fails each `GiveUp`, backing off after rounds that decide nothing. A
 presigned submission may carry a plan as well. When a verdict proves a
-transaction with a policy failed, the verdict writer asks the policy's
+transaction with a plan failed, the verdict writer asks the domain policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
 records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
@@ -288,21 +415,8 @@ is live.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** and **`HostSession`**
-traits; each owns its role-specific lifecycle, so no method exists on a role
-that can't mean it:
-
-- **`PairingHost`** (seedless): the user's keys live in an external wallet, so
-  signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
-  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's grants and
-  sends each wallet operation through `RemoteAccountHolder`;
-  [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
-  pairing and login state, persisted auth-session reload, remote signing-host
-  liveness monitoring and the request channel, and reports session changes to
-  `PairingHost` through `PairedSessionOwner`, holding back its grant writes
-  until each change and the cleanup it leaves are done.
-- **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
+- **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>`, which keeps the paired session's grants, and owns logout. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). It reports session changes to the grant store `HostAccounts` keeps its grants in through `PairedSessionOwner`, holding back grant writes until each change and the cleanup it leaves are done. The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
+- **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock and product reset through `HostAccounts`. It signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0028
   `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
@@ -319,7 +433,7 @@ that can't mean it:
   call.
 - `WalletAccountHolder`: owns the active wallet on a signing host. Only its `with_keys` reads the root entropy, after checking that the call's session is still the installed wallet activation, so a lock or a wallet switch fails signing, issuance and pairing answers that began under the previous wallet.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
-- `HostGrantStore`: holds the keys and public subtrees a host keeps for its products, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
+- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -327,7 +441,7 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`, and the host
+bindings expose it as `claim_worker`, one reference per claim, and the host
 reports a worker that stopped without being asked, because it crashed, failed
 to boot or the system killed it, with `worker_exited`: while references remain
 the ledger requests `Start` again, and the core hands the restarted worker its
@@ -363,7 +477,7 @@ a withdrawn request posts no response. See the
 
 When a device finishes pairing, the signing host reports it to the embedder's
 [`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
-once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
+once through `HostRuntime::<SigningHost>::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and
 `disconnect_paired_host` take.
@@ -538,19 +652,17 @@ for raw bytes signed inside the `<Bytes>` watermark.
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
-  The host lists its providers with `set_funding_provider_config` (Rust hosts
-  with `set_funding_providers`), each with the
-  Worker manifest it ships for it. Before the overlay shows, the core
-  announces the session's options, which `funding_options(intent)` works out
+  The host lists its providers by their published names with
+  `set_funding_provider_config`; a Rust host can instead hand
+  `set_funding_providers` the Worker manifest it ships for each. Before the
+  overlay shows, the core announces the session's options, which `funding_options(intent)` works out
   as it is read: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider whose `origin` is `Bundled` ships inside
-  the host: its shipped manifest is what the core goes by, and dotNS is never
-  read for it.
+  Funding drops out.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -627,7 +739,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   who continues before every row answered: once every row of that request
   answered, the core selects `best` as `select_funding_provider` would, at
   once when they already have. A new ask, `select_funding_options`,
-  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  `cancel_funding_auto_start` (the user going back from the quotes),
+  `cancel_funding` or a list with
   no usable quote disarms it. `funding_available` says whether the host
   offers any provider, announced with `Providers` when
   `set_funding_provider_config` changes the list.
@@ -699,9 +812,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`), and
-  `closeFrame`
+  when the provider publishes an `app` subname on dotNS, read within ten
+  seconds; otherwise `NoApp`). The
+  core never shows it on its own: it holds the call, tells the host through
+  `provider_frame_requested`, and presents it once the host calls
+  `open_provider_frame`, at once while the user looks at the session or when
+  the user taps a notice. One waits per session: a newer call replaces it
+  (`Dismissed`), and `closeFrame`, the payment moving or the session ending
+  drops it (`Closed`). `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the
@@ -719,18 +837,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session, named or not, or saw the user's payment; from then on only the
   provider ends the session, and it cannot fail it once funds started.
   Before that, an unassigned session expires 24 hours after it opened and an
-  assigned one 7 days after its provider last reported. `cancel_funding`
-  answers what a cancel did: it ends an unassigned session; before money
+  assigned one 7 days after its provider last reported. `cancel_funding` is
+  the host's one cancel, whatever the session went through, and answers
+  what it did: while the overlay is up it drops `present_funding`, which
+  the host answers by taking the overlay down, and drops the session, or,
+  when the user already chose a provider, keeps it as started and asks the
+  provider to stop; it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
   it asks the provider, who answers `Refused` or `Offer`, one offer per
   cancel, and the host answers the offer with
   `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
   showed (`None` declines), which the provider hears through `settleCancel`;
-  terms other than the offer's answer `NoOffer`, and an inbound session whose
-  credit started answers `TooLate`. A provider asked before money moved
-  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  terms other than the offer's answer `NoOffer`, an inbound session whose
+  credit started answers `TooLate`, and an ended or unknown one `Refused`.
+  A provider asked before money moved answers `Stopped`, and the core ends
+  the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
-  money moved.
+  money moved; a cancel after that asks again.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
@@ -764,15 +887,24 @@ for raw bytes signed inside the `<Bytes>` watermark.
   persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
   `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
-  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  Widget, and turn that card to its back or front. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
+- `ContactsPlatform`: resolve the handles a transaction names to contacts,
+  render the picker that selects one, and list the dotNS usernames of the
+  contacts the picker would offer. `contacts` is the only required method.
+  `pick_contact` defaults to `Unsupported`, so a host serving no picker says so
+  rather than looking like a user who declined, and `contact_usernames`
+  defaults to `Unsupported` the same way. The host owns the UI, so no account
+  on the list reaches the product. A product gets a handle for the selection,
+  and the game product may also read the usernames. The core caches resolved
+  handles. A host calls `notify_contacts_changed` on its runtime when a contact
+  is removed or blocked.
+  The core serves `contacts.usernames` only to the game product, `dim2` on
+  every network, and answers `Unsupported` to any other product without
+  calling the host. While nobody is signed in it answers a domain error
+  with the reason `No active session`, also without calling the host. Each
+  username is the bare dotNS label with no top-level domain, and the core
+  drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host

@@ -19,16 +19,15 @@ use tracing::warn;
 
 use super::{
 	funding::lock,
-	product_manifest::{product_brand, worker_manifest},
+	product_manifest::{DotnsRead, CachePolicy, product_brand, read_worker_manifest},
 	services::RuntimeServices,
 };
 use crate::{
 	host_internal::product_manifest::ProductBrand,
 	host_logic::{
-		funding::FundingSessionError,
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
-			FundingOptions, FundingProviderApp, FundingProviderEntry, FundingProviderOrigin,
+			FundingOptions, FundingProviderEntry,
 			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
 			provider_config,
 		},
@@ -46,28 +45,20 @@ use crate::{
 struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
-	origin: FundingProviderOrigin,
-	/// Whether it ships an App, as the host said.
-	app: FundingProviderApp,
 	/// What dotNS last said the provider publishes: its Worker manifest, or
 	/// `None` for nothing usable. `None` until dotNS has answered.
 	live: Option<Option<WorkerManifest>>,
 	/// Whether its manifest is being read.
 	reading: bool,
-	/// The name and icon its root manifest gives it: the host's for a
-	/// bundled provider, dotNS's once read for a published one.
+	/// The name and icon its root manifest gives it, once dotNS has been read.
 	brand: Option<ProductBrand>,
 }
 
 impl OfferedProvider {
-	/// The manifest the core goes by: the host's for a bundled provider;
-	/// otherwise dotNS's answer once it has one, the host's snapshot until
-	/// then.
+	/// The manifest the core goes by: dotNS's answer once it has one, the
+	/// host's snapshot until then.
 	fn manifest(&self) -> Option<WorkerManifest> {
-		match (&self.live, self.origin) {
-			(Some(live), FundingProviderOrigin::Published) => live.clone(),
-			_ => self.snapshot.clone(),
-		}
+		self.live.clone().unwrap_or_else(|| self.snapshot.clone())
 	}
 }
 
@@ -170,9 +161,7 @@ impl FundingProviders {
 			if let Some(known) = entries.iter().find(|known| known.product_id == entry.product_id) {
 				entry.live = known.live.clone();
 				entry.reading = known.reading;
-				if entry.origin == FundingProviderOrigin::Published && known.brand.is_some() {
-					entry.brand = known.brand.clone();
-				}
+				entry.brand = known.brand.clone();
 			}
 		}
 		*entries = offered;
@@ -215,12 +204,12 @@ impl FundingProviders {
 			.and_then(|entry| entry.brand.clone())
 	}
 
-	/// Mark every published provider whose manifest is not being read as
-	/// being read, and return them.
+	/// Mark every provider whose manifest is not being read as being read, and
+	/// return them.
 	fn start_reads(&self) -> Vec<ProductId> {
 		lock(&self.entries)
 			.iter_mut()
-			.filter(|entry| entry.origin == FundingProviderOrigin::Published && !entry.reading)
+			.filter(|entry| !entry.reading)
 			.map(|entry| {
 				entry.reading = true;
 				entry.product_id.clone()
@@ -262,14 +251,6 @@ impl FundingProviders {
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
-	/// Whether `provider_id` ships an App, as the host said.
-	pub fn app(&self, provider_id: &ProductId) -> FundingProviderApp {
-		lock(&self.entries)
-			.iter()
-			.find(|entry| entry.product_id == *provider_id)
-			.map_or(FundingProviderApp::Unknown, |entry| entry.app)
-	}
-
 	/// Whether the host offers no funding provider.
 	pub fn is_empty(&self) -> bool {
 		lock(&self.entries).is_empty()
@@ -308,12 +289,13 @@ impl Drop for ManifestRead {
 impl RuntimeServices {
 	/// Replace the funding providers the host offers, and start reading their
 	/// manifests, telling the feed when the providers listed changed. A
-	/// shipped manifest that does not parse is refused, and nothing changes.
+	/// provider whose shipped manifest does not parse is left out; the rest
+	/// are still offered.
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
-	) -> Result<(), FundingSessionError> {
-		let offered = self.funding_providers().offer(offered_providers(entries)?);
+	) {
+		let offered = self.funding_providers().offer(offered_providers(entries));
 		if offered.manifests_changed {
 			self.funding_providers_changed();
 		}
@@ -323,24 +305,22 @@ impl RuntimeServices {
 			feed.funding_providers_changed();
 		}
 		self.refresh_funding_providers();
-		Ok(())
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
-	/// then the `bundled` ones it does not name, telling the feed when the
-	/// list changed. A name that is not a product id is skipped and logged.
-	/// A call listing what the last one did changes nothing the host sees,
-	/// so the host can call it on every refresh.
+	/// without a TLD, read on the network the stack is on, telling the feed
+	/// when the list changed. A name that is not a product id, or that names
+	/// a TLD, is skipped and logged. A call listing what the last one did changes
+	/// nothing the host sees, so the host can call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
-		bundled: Vec<FundingProviderEntry>,
-	) -> Result<(), FundingSessionError> {
-		let (entries, invalid) = provider_config(&published_names, bundled);
+	) {
+		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
-		self.set_funding_providers(entries)
+		self.set_funding_providers(entries);
 	}
 
 	/// Record what the user picked in session `intent`'s overlay, and send
@@ -520,7 +500,10 @@ impl RuntimeServices {
 				.write_core_storage(CoreStorageKey::FundingSupport, records.encode())
 				.await
 			{
-				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
+				tracing::warn!(
+					reason = %crate::logging::HostText::new(&error.reason),
+					"storing what funding providers serve failed"
+				);
 			}
 		});
 	}
@@ -542,7 +525,10 @@ impl RuntimeServices {
 			},
 			Ok(None) => Vec::new(),
 			Err(error) => {
-				tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
+				tracing::warn!(
+					reason = %crate::logging::HostText::new(&error.reason),
+					"reading what funding providers serve failed"
+				);
 				return false;
 			},
 		};
@@ -560,13 +546,25 @@ impl RuntimeServices {
 	/// Read `product_id`'s Worker manifest and brand into what the core goes
 	/// by.
 	async fn read_provider_manifest(self: &Arc<Self>, product_id: &ProductId) {
-		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-		let mut changed =
-			read.is_ok_and(|manifest| self.funding_providers().answered(product_id, manifest));
-		if let Ok(Some(brand)) = product_brand(self, self.platform.as_ref(), product_id).await {
+		let platform = self.platform.as_ref();
+		let read = read_worker_manifest(self, platform, product_id, CachePolicy::UseCache).await;
+		let cached = matches!(read, Ok((_, DotnsRead::Cached { .. })));
+		let mut changed = read
+			.is_ok_and(|(manifest, _)| self.funding_providers().answered(product_id, manifest));
+		if let Ok(Some(brand)) = product_brand(self, platform, product_id).await {
 			changed |= self.funding_providers().branded(product_id, brand);
 		}
 		if changed {
+			self.funding_providers_changed();
+		}
+		// A cached copy can predate a redeploy, and the cache lives a day: the
+		// cached routes show at once, then dotNS is read again so a provider
+		// that now serves more, or less, is offered as it publishes.
+		if cached &&
+			let Ok((manifest, _)) =
+				read_worker_manifest(self, platform, product_id, CachePolicy::Refresh).await &&
+			self.funding_providers().answered(product_id, manifest)
+		{
 			self.funding_providers_changed();
 		}
 	}
@@ -592,46 +590,31 @@ struct Offered {
 }
 
 /// The host's `entries` with their shipped manifests read, in its order,
-/// each product once.
-fn offered_providers(
-	entries: Vec<FundingProviderEntry>,
-) -> Result<Vec<OfferedProvider>, FundingSessionError> {
+/// each product once. An entry whose shipped manifest does not parse is the
+/// host's mistake for that provider alone: it is logged and left out, and
+/// the rest are still offered.
+fn offered_providers(entries: Vec<FundingProviderEntry>) -> Vec<OfferedProvider> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
 		let product_id = entry.product_id;
-		let snapshot = entry
-			.worker_manifest
-			.as_deref()
-			.map(WorkerManifest::parse)
-			.transpose()
-			.map_err(|reason| FundingSessionError::InvalidProvider {
-				reason: format!("{product_id}: {reason}"),
-			})?;
-		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
-			return Err(FundingSessionError::InvalidProvider {
-				reason: format!("{product_id}: a bundled provider needs its manifest"),
-			});
-		}
+		let snapshot = match entry.worker_manifest.as_deref().map(WorkerManifest::parse).transpose() {
+			Ok(snapshot) => snapshot,
+			Err(reason) => {
+				warn!(%product_id, %reason, "shipped worker manifest does not parse; provider left out");
+				continue;
+			},
+		};
 		if offered.iter().all(|kept| kept.product_id != product_id) {
-			let brand = entry.root_manifest.as_deref().and_then(|json| {
-				ProductBrand::parse(json)
-					.inspect_err(
-						|reason| tracing::warn!(%product_id, %reason, "shipped root manifest gives no brand"),
-					)
-					.ok()
-			});
 			offered.push(OfferedProvider {
 				product_id,
 				snapshot,
-				origin: entry.origin,
-				app: entry.app,
 				live: None,
 				reading: false,
-				brand,
+				brand: None,
 			});
 		}
 	}
-	Ok(offered)
+	offered
 }
 
 /// The networks `candidates`' crypto routes declare in `direction`, each

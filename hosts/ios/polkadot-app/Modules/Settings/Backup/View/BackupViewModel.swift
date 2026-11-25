@@ -7,5 +7,6 @@ struct BackupViewModel {
         case cloudIsOff
     }
 
-    let statusType: BackupStatusType
+    let statusType: BackupStatusType?
+    let restoredBalance: BackupRestoredBalanceViewModel?
 }

@@ -168,16 +168,24 @@ private extension ChatRequestFactory {
         peerEncryptionPubKey: Data,
         ownEncryptionKeyId: String
     ) throws {
-        guard case let .v2(content) = message.content else { return }
+        guard let identityProof = message.content.identityProof else { return }
 
         let encryptor = try encryptionManager
             .makeEncryptorFactory(ownEncryptionKeyId: ownEncryptionKeyId)
             .makeEncryptor(remotePublicKey: peerEncryptionPubKey)
 
-        try IdentityProofFactory.verifyProof(
-            content.identityProof,
-            deviceAccountId: deviceAccountId,
-            sharedSecret: encryptor.sharedSecret
-        )
+        if message.content.isCancel {
+            try IdentityProofFactory.verifyCancelProof(
+                identityProof,
+                requestId: message.messageId,
+                sharedSecret: encryptor.sharedSecret
+            )
+        } else {
+            try IdentityProofFactory.verifyProof(
+                identityProof,
+                deviceAccountId: deviceAccountId,
+                sharedSecret: encryptor.sharedSecret
+            )
+        }
     }
 }

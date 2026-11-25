@@ -20,7 +20,7 @@ If you experience problems with any product or service that was built on or depl
 
 </div>
 
-The app uses the in-tree TrUAPIHost SDK in this repository. A standalone host checkout requires a published SDK with `ProductId` support. Its version is pinned in `AppDependencies`, `Products`, `KeyDerivation`, and `Coinage`; update all four pins together.
+The app uses the in-tree TrUAPIHost SDK in this repository.
 
 ## Features
 
@@ -112,6 +112,10 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
 - It does **not** route your chats and calls through any 1st or 3rd party messaging servers — messages travel through the public chain, voice and video calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
+
+### Centralised dependencies
+
+- **Runtime configuration (Firebase Remote Config).** The chain list and RPC nodes, the identity-backend URL, DotNS and other contract addresses, the IPFS gateway and the on/off-ramp URLs are fetched from Firebase Remote Config. This repository ships no defaults: the first start needs a successful fetch, and later starts use the last fetched values while a new fetch runs in the background. So the owner of the Firebase project can change these values without an app update, and a fresh install cannot start without Firebase. Forks point the same build at their own project ([docs/PUBLISHING.md §3](./docs/PUBLISHING.md#remote-config-parameters)). This is a known trade-off, tracked in [#414](https://github.com/paritytech/polkadot-ios-community/issues/414).
 
 ### Under the hood
 

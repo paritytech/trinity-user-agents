@@ -7,6 +7,7 @@ import Coinage
 struct SettingsContentInput {
     let visibleCells: Set<SettingsViewModel.CellType>
     let attentionItems: Set<SettingsViewModel.CellType>
+    let isRestoredBalanceWaiting: Bool
     let selectedCurrencyCode: String?
     let selectedThemeName: String?
     let selectedPrivacyStrategy: RecyclingStrategyType?
@@ -15,6 +16,7 @@ struct SettingsContentInput {
     let isTabBarLabelsEnabled: Bool
     let onSelect: (SettingsViewModel.CellType) -> Void
     let onSelectPrivacyStrategy: (RecyclingStrategyType) -> Void
+    let onShowPrivacyInfo: () -> Void
     let onToggleTabBarLabels: (Bool) -> Void
 }
 
@@ -48,7 +50,11 @@ private extension SettingsViewModelFactory {
     ) -> AnyView? {
         guard section == .security, let selectedStrategy = input.selectedPrivacyStrategy else { return nil }
         return AnyView(
-            PaymentPrivacyModeCard(selected: selectedStrategy, onSelect: input.onSelectPrivacyStrategy)
+            PaymentPrivacyModeCard(
+                selected: selectedStrategy,
+                onSelect: input.onSelectPrivacyStrategy,
+                onShowInfo: input.onShowPrivacyInfo
+            )
         )
     }
 
@@ -56,18 +62,31 @@ private extension SettingsViewModelFactory {
         cellType: SettingsViewModel.CellType,
         input: SettingsContentInput
     ) -> DSMenuListItem {
-        let needsAttention = input.attentionItems.contains(cellType)
+        let attention = attention(for: cellType, input: input)
         let isStatic = cellType == .tabBarLabels || cellType == .paymentsBackup
         return DSMenuListItem(
             id: cellType,
             title: cellType.title,
-            description: needsAttention ? cellType.attentionDetails?.message : nil,
-            style: needsAttention ? .attention : .default,
+            description: attention?.message,
+            style: attention?.style ?? .default,
             icon: icon(for: cellType),
             rightSlot: rightSlot(for: cellType, input: input),
             accessibilityId: AccessibilityID.Settings.menuItem(for: cellType),
             action: isStatic ? nil : { input.onSelect(cellType) }
         )
+    }
+
+    func attention(
+        for cellType: SettingsViewModel.CellType,
+        input: SettingsContentInput
+    ) -> (message: String, style: DSMenuListItemStyle)? {
+        if cellType == .backup, input.isRestoredBalanceWaiting {
+            return (String(localized: .BalanceSync.settingsRowDescription), .attentionDot)
+        }
+        guard input.attentionItems.contains(cellType), let details = cellType.attentionDetails else {
+            return nil
+        }
+        return (details.message, .attention)
     }
 
     func statusText(for status: CoinageAccountBackupStatus) -> String {

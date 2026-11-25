@@ -20,7 +20,7 @@ use std::{
 };
 
 use truapi::{
-	SigningHostRuntime, current_unix_millis,
+	HostRuntime, SigningHost, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
 	platform::{FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext},
@@ -63,13 +63,13 @@ fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
 pub struct CliFundingHost {
 	outcomes: Mutex<VecDeque<Outcome>>,
 	transcript: Transcript,
-	runtime: Weak<SigningHostRuntime>,
+	runtime: Weak<HostRuntime<SigningHost>>,
 }
 
 impl CliFundingHost {
 	/// Install a scripted funding host on `runtime` when
 	/// `TRUAPI_FUNDING_OUTCOMES` is set, recording to `TRUAPI_FUNDING_LOG`.
-	pub fn install_from_env(runtime: &Arc<SigningHostRuntime>) {
+	pub fn install_from_env(runtime: &Arc<HostRuntime<SigningHost>>) {
 		let Ok(spec) = std::env::var("TRUAPI_FUNDING_OUTCOMES") else {
 			return;
 		};
@@ -160,6 +160,14 @@ impl FundingPlatform for CliFundingHost {
 	}
 
 	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
+	// The scripted user always looks at the session, so a provider's screen
+	// opens as soon as it is asked for.
+	fn provider_frame_requested(&self, _provider: &ProductContext, intent: String) {
+		if let Some(runtime) = self.runtime.upgrade() {
+			runtime.open_provider_frame(&intent);
+		}
+	}
 
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
