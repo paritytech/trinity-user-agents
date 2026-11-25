@@ -247,6 +247,12 @@ pub struct StubPlatform {
 	pub chain_connect_pending: bool,
 	/// Set when a `chain_connect_pending` connect future is dropped.
 	pub pending_connect_dropped: Arc<AtomicBool>,
+	/// When set, a chain connect hands its connection over only once this
+	/// fires, as a browser host's `chainConnect` settles after it dialled.
+	pub chain_connect_handover:
+		Option<futures::future::Shared<futures::channel::oneshot::Receiver<()>>>,
+	/// How many chain connections were closed.
+	pub chain_closes: Arc<AtomicUsize>,
 	/// Value returned by `lookup_preimage`, if any. Tests set this to a
 	/// forged value to exercise the in-core integrity check.
 	pub preimage_lookup_value: Option<Vec<u8>>,
@@ -1560,6 +1566,7 @@ struct RecordingConnection {
 	pairing_success_via_query: bool,
 	pairing_silent_after_subscribe: bool,
 	chain_responses_end: bool,
+	closes: Arc<AtomicUsize>,
 }
 
 async fn wait_for_statement_subscribe_id(sent: Arc<Mutex<Vec<String>>>, index: usize) -> String {
@@ -1938,7 +1945,9 @@ impl JsonRpcConnection for RecordingConnection {
 		}
 	}
 
-	fn close(&self) {}
+	fn close(&self) {
+		self.closes.fetch_add(1, Ordering::SeqCst);
+	}
 }
 
 /// The scripting key for one request: a `state_call` is keyed by the runtime API
@@ -2084,6 +2093,9 @@ impl ChainProvider for StubPlatform {
 			let _guard = DropFlagGuard(self.pending_connect_dropped.clone());
 			futures::future::pending::<()>().await;
 		}
+		if let Some(handover) = &self.chain_connect_handover {
+			let _ = handover.clone().await;
+		}
 		Ok(Box::new(RecordingConnection {
 			sent: Arc::default(),
 			all_sent: self.sent_rpc.clone(),
@@ -2100,6 +2112,7 @@ impl ChainProvider for StubPlatform {
 			pairing_success_via_query: self.pairing_success_via_query,
 			pairing_silent_after_subscribe: self.pairing_silent_after_subscribe,
 			chain_responses_end: self.chain_responses_end,
+			closes: self.chain_closes.clone(),
 		}))
 	}
 }

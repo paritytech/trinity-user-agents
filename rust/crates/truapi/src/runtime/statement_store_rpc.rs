@@ -12,7 +12,10 @@
 use std::sync::Arc;
 
 use core::{future::Future, time::Duration};
-use futures::stream::{self, BoxStream, Stream, StreamExt};
+use futures::{
+	channel::oneshot,
+	stream::{self, BoxStream, Stream, StreamExt},
+};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -211,13 +214,27 @@ impl StatementStoreRpc {
 		self.chain.rpc_client(label, &self.people_chain_genesis_hash).await
 	}
 
+	/// Dials People through the host, in a task of its own. A caller that gives
+	/// up while the host dials leaves nobody to take the connection, so the
+	/// task closes one that arrives after its caller went. A dial the host
+	/// never answers keeps that task.
 	async fn connect(
 		&self,
 		label: &'static str,
 	) -> Result<Arc<dyn JsonRpcConnection>, StatementStoreRpcClientError> {
-		self.platform
-			.connect(self.people_chain_genesis_hash)
-			.await
+		let (hand_over, handed_over) = oneshot::channel();
+		let platform = self.platform.clone();
+		let genesis_hash = self.people_chain_genesis_hash;
+		self.spawner.spawn(async move {
+			let connected = platform.connect(genesis_hash).await;
+			if let Err(Ok(connection)) = hand_over.send(connected) {
+				connection.close();
+			}
+		});
+		let connected = handed_over.await.unwrap_or_else(|_| {
+			Err(ProviderError::Host { reason: "the dial ended without an answer".to_string() })
+		});
+		connected
 			.map(Arc::from)
 			.map_err(|error| StatementStoreRpcClientError::Connect { label, error })
 	}
