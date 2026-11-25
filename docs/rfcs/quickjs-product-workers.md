@@ -1,5 +1,5 @@
 ---
-title: "QuickJS product workers"
+title: "QuickJS product workers on Mobile"
 owner: "Ruslan Rezin"
 status: draft
 ---
@@ -47,7 +47,7 @@ The worker's entry module and everything it imports load as ES modules from the 
 specifier resolves only to a file inside that directory, and a bare specifier fails, so a product bundles its
 dependencies. The global object offers timers, `queueMicrotask`, `console`, `performance.now`, `crypto.getRandomValues`,
 `TextEncoder` and `TextDecoder`, `fetch`, and the transport. The DOM, Web Storage, IndexedDB, `WebSocket`,
-`XMLHttpRequest`, `EventSource` and `WebAssembly` are absent; each named global exists and throws `ApiUnavailableError`
+`XMLHttpRequest`, `EventSource` and `WebAssembly` are absent but each named global exists and throws `ApiUnavailableError`
 when used, so feature detection still works. State that must survive a stop goes through host storage, as
 [Worker Lifecycle](worker-lifecycle.md) requires.
 
@@ -62,7 +62,7 @@ looks for it when there is no window.
 On iOS and Android, QuickJS-NG and the environment code are compiled to `wasm32`, translated to C by wasm2c with an
 explicit bounds check on every load and store, and compiled into the core with every core build. Only the engine is
 built in. A product's worker code is data the host loads at run time; QuickJS compiles it to its own bytecode and
-interprets it inside the sandbox, so nothing is compiled to native code at run time, which iOS does not allow. Each
+interprets it inside the sandbox, so nothing is compiled to native code at run time. Each
 worker is a new instance of the same module, with its own linear memory, in the app's own process. Hosts without a
 phone's constraints, such as desktop tools and tests, may run the same environment code on natively compiled QuickJS
 behind the same engine interface in the core.
@@ -93,7 +93,7 @@ flowchart TB
 | Time               | The interrupt handler checks the turn budget and stops the script   | None                                                                                      |
 | A fault in QuickJS | Not contained                                                       | Reads and writes only the worker's own memory; a trap ends the worker and the app runs on |
 
-The guest declares a maximum memory of 32 MiB, and the host may give a worker a lower limit. The runtime reserves the
+The compiled worker module declares a maximum memory (for example, 128 MiB), and the host may give a worker a lower limit, for example, based on insights how much memory a product needs from the manifest. The runtime reserves the
 worker's maximum as address space when it creates the instance and grows in place; physical memory is used only as the
 worker touches it. A turn is the work one inbound frame, one timer or one job queue drain causes. Each turn has a CPU
 time budget, measured on the worker's thread so a suspended app does not spend it. On a trap or a budget overrun the
@@ -125,21 +125,6 @@ Inside an Android app on a Galaxy A26 (Exynos 1380), Android 16, with the WebVie
 | Memory per worker           | 2.0 MiB          | 2.45 MiB               | 2.4 MiB                | about 7.8 MiB                | 6.3 MiB        | 3.6 MiB        |
 | Out-of-bounds read          | reads app memory | traps, the app runs on | traps, the app runs on | renderer process             | not testable   | not run        |
 
-On an Apple M5 Pro Mac, with the engines the phone runs did not cover:
-
-| Mac                         | WKWebView      | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | Cranelift      | wasmi          | Boa            |
-| --------------------------- | -------------- | -------------- | ------------------- | --------------------- | -------------- | -------------- | -------------- |
-| Render round trip p50 / p95 | 0.18 / 0.28 ms | 0.15 / 0.16 ms | 0.19 / 0.20 ms      | 0.31 / 0.38 ms        | 0.39 / 0.41 ms | 4.43 / 4.81 ms | 0.65 / 1.27 ms |
-| Start to idle               | 54 to 115 ms   | 7.0 ms         | 7.8 ms              | 11 to 12 ms           | 13.8 ms        | 98 ms          | 55 to 69 ms    |
-| Memory per worker           | 17.2 MiB       | 2.1 MiB        | 2.5 MiB             | 2.5 MiB               | 2.5 MiB        | 3.7 MiB        | 5.6 MiB        |
-
-The harnesses, raw results and the iOS and Android bench apps are on the `spike/qjs-bench` branch under
-`spikes/qjs-bench/`: `scripts/compare-wasm2c.sh` reruns the Mac table, `scripts/build-ios.sh` with
-`scripts/run-ios-device.sh` the iPhone table, `scripts/measure-ios-webcontent.py` its WKWebView memory, and
-`scripts/build-android-app.sh` with `scripts/run-android-app.py` the Galaxy A26 table.
-
-## Trade-offs
-
 - Both phones pay about twice native QuickJS in CPU for the boundary, and about 0.5 to 0.6 MiB more per worker.
 - The turn budget is enforced inside the sandbox, so a worker that first exploits an engine fault can disable it and
   keep a thread busy; the host can then only abandon the thread and count a crash.
@@ -148,7 +133,7 @@ The harnesses, raw results and the iOS and Android bench apps are on the `spike/
 - Guard pages run at about 1.3 times native but reserve 8 GiB of address space per worker. An iPhone XS grants no such
   reservation without the Extended Virtual Addressing entitlement; 64-bit Android grants it, and guard pages work there
   inside the app.
-- Native QuickJS inside the app is the fastest option and has no boundary.
+- Native QuickJS inside the app is the fastest option and has no boundary, but any memory bug inside QuickJS allows malicious product access host's memory.
 - A web view renders slightly faster than wasm2c on the iPhone XS, because its content process has a JIT, but starts a
   worker three times slower and costs about five times the memory.
 - Boa prevents most engine faults by being written in Rust, but renders at four to seven times and starts at eight to
@@ -159,7 +144,3 @@ The harnesses, raw results and the iOS and Android bench apps are on the `spike/
 - Cranelift compiles wasm close to native speed, but needs a JIT, which iOS forbids, and takes 2.3 s to compile the
   module on an Android phone.
 - The iOS and Android core builds need wasi-sdk and WABT and compile about 13 MB of generated C.
-
-## Open questions
-
-- Which origins a worker's `fetch` may reach: any HTTPS origin, or only origins its manifest declares.
