@@ -12,6 +12,8 @@ public extension ChatViewLayout {
         let footerConfiguration: (any HashableContentConfiguration)?
         /// The text that the screen shows while the room has no messages. Nil shows nothing.
         let placeholder: String?
+        /// The state of each end of the window. A product-source room pages, other rooms hold every message.
+        public var paging: Paging = .complete
 
         public init(
             headerConfiguration: ChatHeaderConfiguration,
@@ -64,8 +66,8 @@ public extension ChatViewLayout.ViewModel {
 
 public extension ChatViewLayout {
     struct Section {
-        let identifier: String
-        let dateText: String
+        public let identifier: String
+        public let dateText: String
         public let messages: [IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType>]
 
         public init(

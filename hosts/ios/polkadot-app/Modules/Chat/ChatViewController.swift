@@ -143,6 +143,10 @@ extension ChatViewController: ChatViewProtocol {
         rootView.setFooter(footer)
     }
 
+    func scrollToMessage(_ messageId: String) {
+        rootView.scrollToMessage(messageId)
+    }
+
     func didReceive(callActions: [ChatCallType]) {
         navigationBarController.apply(callActions: callActions)
     }
@@ -186,6 +190,18 @@ private extension ChatViewController {
 
         rootView.onScrollToReactionTap = { [weak presenter] in
             presenter?.onScrollToReaction()
+        }
+
+        rootView.onLoadOlder = { [weak presenter] in
+            presenter?.loadOlderMessages()
+        }
+
+        rootView.onLoadNewer = { [weak presenter] in
+            presenter?.loadNewerMessages()
+        }
+
+        rootView.onJumpToMessage = { [weak presenter] messageId in
+            presenter?.jumpToMessage(messageId)
         }
     }
 }

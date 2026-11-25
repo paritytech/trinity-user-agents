@@ -647,6 +647,9 @@ enum PaginationAnchor {
     NextPage(Option<PaginationCursor>),
     // Fetch the previous page. If cursor is None, fetches from the end.
     PreviousPage(Option<PaginationCursor>),
+    // Fetch a page around a message, for a jump to a quoted message or to
+    // the first unread one.
+    Around(MessageId),
 }
 
 type UpdateUnreadCountFn = fn(u32);
