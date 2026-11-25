@@ -1772,7 +1772,12 @@ async fn start_signing_host(
 		{
 			ui.session(profile.name.clone(), catalog.list()?);
 		}
-		if signer.is_some() || normalized(args.session.clone()).is_none() || args.action.is_some() {
+		// An `--account` that did not resolve leaves the remembered session in
+		// place, so a later run without it does not start on the default one.
+		if signer.is_some() ||
+			(default_account.is_none() &&
+				(normalized(args.session.clone()).is_none() || args.action.is_some()))
+		{
 			catalog.set_current(&profile.name)?;
 		}
 	}

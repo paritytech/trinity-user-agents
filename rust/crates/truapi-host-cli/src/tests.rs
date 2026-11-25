@@ -87,6 +87,29 @@ async fn a_clear_by_the_name_the_running_session_was_created_under_includes_it()
 	Ok(())
 }
 
+/// An `--account` name from the store an earlier release shared between stacks
+/// no longer resolves. Such a run leaves the remembered session in place, so
+/// the next run without `--account` restores that session and its pairings
+/// rather than provisioning the default one.
+#[tokio::test]
+async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
+	let temporary = tempfile::tempdir()?;
+	let network = Network::default().bundled_stack(ChainBackend::Rpc);
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), network.state_directory())?;
+	catalog.set_current("headless.01")?;
+	let args =
+		SigningHostArgs { account: Some("auto-1".to_string()), ..SigningHostArgs::default() };
+
+	let session =
+		start_signing_host(&args, catalog, DEFAULT_SESSION_NAME.to_string(), network, None).await?;
+
+	assert_eq!(
+		(session.signer.is_none(), session.catalog.current_session()?),
+		(true, CurrentSession::Pointed("headless.01".to_string()))
+	);
+	Ok(())
+}
+
 #[tokio::test]
 async fn session_selection_activates_a_finished_account_without_reprovisioning() -> Result<()> {
 	let temporary = tempfile::tempdir()?;
