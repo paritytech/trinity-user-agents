@@ -495,7 +495,9 @@ The Product notifies the Host when the message feed changes. This is the **prima
 
 ```rust
 enum MessageFeedUpdate {
-    NewMessage(Message),
+    // With the page cursor of the message, so that a Host that does not
+    // hold the newest page can place it.
+    NewMessage(Message, Option<PaginationCursor>),
     MessageEdit(MessageId, MessageContent, Timestamp),
     ReactionPlaced(MessageId, MessageReaction),
     ReactionRemoved(MessageId, MessageReaction),

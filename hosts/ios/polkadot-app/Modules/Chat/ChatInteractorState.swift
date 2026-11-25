@@ -14,12 +14,18 @@ actor ChatInteractorState {
     private var pendingReactionTargetMessageId: Chat.MessageId?
     var model: MessageListModel?
 
-    /// The model of a window. The paging state and the readiness come from the snapshot.
+    /// The model of a window. The paging state, the readiness and the edits of a product-source room come
+    /// from the snapshot.
     func onSnapshot(_ snapshot: MessageListSnapshot) -> MessageListModel {
         // The "New messages" marker waits for the first page of a room that pages.
         var model = onMessagesUpdate(snapshot.messages, fixesInitialUnread: snapshot.readiness != .loading)
         model.paging = snapshot.paging
         model.readiness = snapshot.readiness
+
+        if !snapshot.editedAt.isEmpty {
+            model = model.addingEdits(snapshot.editedAt)
+        }
+        model.replyPreviews = snapshot.replyPreviews
 
         self.model = model
         return model

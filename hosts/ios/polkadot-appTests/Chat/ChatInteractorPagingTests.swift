@@ -34,6 +34,17 @@ struct ChatInteractorPagingTests {
         #expect(ready.initiallyUnreadMessage == "m1")
         #expect(ready.paging == .complete)
     }
+
+    @Test func theEditsOfAProductMarkItsMessagesAsEdited() async throws {
+        let model = await ChatInteractorState().onSnapshot(MessageListSnapshot(
+            messages: [message("m1", status: .incoming(.seen))],
+            editedAt: ["m1": 2_000]
+        ))
+
+        #expect(model.isEdited("m1"))
+        #expect(model.getLatestEdit(for: "m1")?.newText == "m1")
+        #expect(model.paging == .complete)
+    }
 }
 
 private extension ChatInteractorPagingTests {
