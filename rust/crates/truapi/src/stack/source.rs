@@ -94,12 +94,12 @@ pub struct StackStatus {
 	/// The newest copy was past `expiresAt` when the core last looked, at
 	/// start and after each fetch: the stack has shut down.
 	pub expired: bool,
-	/// The core stored a newer copy that changes a genesis hash the core uses,
-	/// the network, the generation or the `accountDataStore` contract. It
-	/// runs that copy from its next start, so build the runtime again to
-	/// follow it. A copy that changes a field the bundled
-	/// descriptor pins, such as the TLD, never sets it: the core refuses that
-	/// copy.
+	/// The core stored a newer copy that changes the genesis hash of the
+	/// relay, Asset Hub, People or Bulletin chain, the network, the generation
+	/// or the `accountDataStore` contract. It runs that copy from its next
+	/// start, so build the runtime again to follow it. A copy that changes a
+	/// field the bundled descriptor pins, such as the TLD, never sets it: the
+	/// core refuses that copy.
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,

@@ -66,12 +66,13 @@ refresh it.
   page becomes visible again.
 - `stackChanged(status)`: the `StackStatus` at start and on each change, also
   for a host without `fetchStackDescriptor`. The same value comes from
-  `stackStatus()`. `restartRequired` means a newer copy changes a genesis
-  hash the core uses, the network, the generation or the `accountDataStore`
-  contract, and applies once the runtime is built again. A copy on another TLD
-  than the bundled descriptor is refused, and so is one that changes a field a
-  stack allowed reserved values pins. `lastRefresh` says so. `generation`
-  changes when the stack restarts its chains: key cached chain data by it.
+  `stackStatus()`. `restartRequired` means a newer copy changes the genesis
+  hash of the relay, Asset Hub, People or Bulletin chain, the network, the
+  generation or the `accountDataStore` contract, and applies once the runtime
+  is built again. A copy on another TLD than the bundled descriptor is
+  refused, and so is one that changes a field a stack allowed reserved values
+  pins. `lastRefresh` says so. `generation` changes when the stack restarts
+  its chains: key cached chain data by it.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key. It starts from that copy when it is newer than the bundled

@@ -244,11 +244,11 @@ starts from the pinned relay light spec, and that protects the relay alone: a
 parachain's `paraId` and `lightSpec` are not pinned. A host that reads over RPC
 has no such protection.
 
-A newer descriptor the core takes that changes a genesis hash the core uses,
-the network, the `generation` or the `accountDataStore` contract applies from
-the next start. Once the core has stored it,
-`StackStatus` has `restart_required` set, and the host builds the runtime
-again. Any other change applies at once. `StackStatus` documents the rest,
+A newer descriptor the core takes that changes the genesis hash of the relay,
+Asset Hub, People or Bulletin chain, the network, the `generation` or the
+`accountDataStore` contract applies from the next start. Once the core has
+stored it, `StackStatus` has `restart_required` set, and the host builds the
+runtime again. Any other change applies at once. `StackStatus` documents the rest,
 including the `generation` a host keys cached chain data by.
 
 ### Core database

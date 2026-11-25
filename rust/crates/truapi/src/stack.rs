@@ -190,8 +190,9 @@ pub struct StackIdentity {
 /// preimage submission over them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackChains {
-	/// The relay chain, which the core never reads itself. `None` for a host
-	/// that serves none, such as the CLI.
+	/// The relay chain. The core reads nothing from it itself, but reports its
+	/// genesis hash through `get_chain_info`, so a new one also asks for a
+	/// restart. `None` for a host that serves none, such as the CLI.
 	pub relay: Option<[u8; 32]>,
 	/// Asset Hub, where the dotNS contracts are deployed. Product manifests and
 	/// session usernames resolve from it.
