@@ -90,7 +90,7 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 ## What this does not touch
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:30-31`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:16,28`).
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay, the one in `HostLogSinkTree` and the one in `HostLogSinkDestination` beside its info `minLevel`.
 
 Each tag sends at most 60 lines a minute, and each `truapi.core` marker 60 of its own, so one noisy tag or marker cannot hide the others. A tagged line, core marker or host event name stuck in a loop therefore costs at most 60 lines a minute per device.
 
