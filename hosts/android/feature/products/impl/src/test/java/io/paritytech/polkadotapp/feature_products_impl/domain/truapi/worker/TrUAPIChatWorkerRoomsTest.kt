@@ -30,6 +30,7 @@ import org.junit.Test
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.ChatUserAction
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.ProductChatMessagesQueryResponse
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
@@ -44,8 +45,11 @@ class TrUAPIChatWorkerRoomsTest {
     private val execution: TrUAPIProductExecution = mockk(relaxed = true)
     private val runtime: TrUAPIHostRuntime = mockk(relaxed = true)
     private val workers: TrUAPIWorkerSupervisor = mockk()
+    private val chatClaim: NativeWorkerClaim = mockk(relaxed = true)
+    private val roomClaim: NativeWorkerClaim = mockk(relaxed = true)
 
     private fun TestScope.worker(scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler))): TrUAPIChatWorker {
+        every { runtime.claimWorker(productId) } returnsMany listOf(chatClaim, roomClaim)
         justRun { workers.restartIfFailed(productId) }
         every { workers.executionState(productId) } returns flowOf(WorkerExecutionState.Running(execution))
         every { workers.currentExecution(productId) } returns execution
@@ -61,8 +65,9 @@ class TrUAPIChatWorkerRoomsTest {
         advanceUntilIdle()
         worker.closeRoom(room)
 
-        verify(exactly = 2) { runtime.acquireWorker(productId) }
-        verify(exactly = 1) { runtime.releaseWorker(productId) }
+        verify(exactly = 2) { runtime.claimWorker(productId) }
+        verify(exactly = 1) { roomClaim.release() }
+        verify(exactly = 0) { chatClaim.release() }
     }
 
     @Test
@@ -76,13 +81,14 @@ class TrUAPIChatWorkerRoomsTest {
     fun `closing a room that never opened releases nothing`() = runTest {
         worker().closeRoom(room)
 
-        verify(exactly = 0) { runtime.releaseWorker(any()) }
+        verify(exactly = 1) { runtime.claimWorker(productId) }
+        verify(exactly = 0) { chatClaim.release() }
     }
 
     @Test
     fun `a worker that cannot be held fails the open`() = runTest {
         val worker = worker()
-        every { runtime.acquireWorker(productId) } throws IllegalStateException("runtime closed")
+        every { runtime.claimWorker(productId) } throws IllegalStateException("runtime closed")
 
         assertTrue(worker.openRoom(room).isFailure)
         verify(exactly = 0) { workers.restartIfFailed(any()) }
@@ -97,7 +103,8 @@ class TrUAPIChatWorkerRoomsTest {
         scope.cancel()
         advanceUntilIdle()
 
-        verify(exactly = 2) { runtime.releaseWorker(productId) }
+        verify(exactly = 1) { chatClaim.release() }
+        verify(exactly = 1) { roomClaim.release() }
     }
 
     @Test

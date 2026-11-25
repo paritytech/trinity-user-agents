@@ -41,9 +41,9 @@ enum ProductOutboxEvent: Equatable {
 
 /// Keeps the worker of the product while the outbox sends, and tells when the worker starts.
 protocol ProductOutboxWorkers: Sendable {
-    /// Keeps the worker of the product while the host sends, also after the room screen closes.
-    func holdWorker(productId: String) async
-    func releaseWorker(productId: String)
+    /// Keeps the worker of the product while the host sends, also after the room screen closes. The send releases
+    /// the claim when it ends. Nil holds nothing.
+    func holdWorker(productId: String) async -> (any TrUAPIWorkerClaiming)?
     /// Each start of the worker of the product, from now. The outbox sends its waiting messages again.
     func workerStarts(productId: String) -> AsyncStream<Void>
 }
@@ -308,8 +308,8 @@ private extension ProductOutbox {
         var message = message
         emit(.changed(message))
 
-        await workers.holdWorker(productId: message.productId)
-        defer { workers.releaseWorker(productId: message.productId) }
+        let claim = await workers.holdWorker(productId: message.productId)
+        defer { claim?.release() }
 
         do {
             let created = try await delivery.deliver(message, body: message.body)

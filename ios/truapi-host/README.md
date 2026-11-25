@@ -131,9 +131,12 @@ The other requests have defaults for a host that does not serve them yet:
 `createRoom(roomId:name:icon:config:)` creates the room only with
 `ChatRoomConfig.hostDefault` and refuses any other configuration before it
 creates anything, `roomConfig` answers `ChatRoomConfig.hostDefault`,
-`setRoomMetadata` keeps the name and icon of `createRoom`, and every other
-request answers a rejection. A room the product declares nothing for is a room
-the host stores, with the name and icon of `createRoom` and the text input.
+`setRoomMetadata` keeps the name and icon of `createRoom`, `setRoomPreview` and
+`deleteRoom` answer `ChatRoomChangeOutcome.unsupported`, and `updateFeed`
+answers `ChatFeedOutcome.unsupported`, which the product receives as
+`Unsupported`. A host that serves one of them answers `.applied`. A room the
+product declares nothing for is a room the host stores, with the name and icon
+of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
@@ -145,9 +148,11 @@ the host stores, with the name and icon of `createRoom` and the text input.
 | `setRoomFooter` | Shows the text input, or nothing |
 
 The core checks that the product created the room before it calls any of
-these, except `createRoom` and `roomConfig`, and bounds and screens every
-field. Before a posted message, the core reads `roomConfig` for the room that
-the product names, so a room the host does not know answers the default
+these, except `createRoom`, `roomConfig` and `deleteRoom`, and bounds and
+screens every field. It calls `deleteRoom` for every room except one that the
+product takes part in as a bot, so a room that does not exist is not an error.
+Before a posted message, the core reads `roomConfig` for the room that the
+product names, so a room the host does not know answers the default
 configuration, not an error.
 
 ```swift
@@ -310,10 +315,11 @@ product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
 for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
-render stream is one worker reference the core holds on the product's behalf;
-the transition it causes arrives on the runtime bridge's
-`requestWorkerTransition`, never on the execution's. Two rules the core
+chat identity private key, which must not be logged or persisted. A feature calls
+`runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
+on that claim when its work ends. Starting, replacing or ending a render stream
+leaves the reference count unchanged. The first claim and final release reach
+the runtime bridge through `requestWorkerTransition`. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.

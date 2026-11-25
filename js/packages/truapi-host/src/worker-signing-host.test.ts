@@ -143,6 +143,39 @@ suite("worker serving a signing host", () => {
     }
   });
 
+  it("stores a feed update only in a room the host keeps", async () => {
+    // The core reads the configuration of the room and tells the host, across
+    // the wasm bridge, whether to store each update: a room whose messages the
+    // product keeps only shows it.
+    const { runtime, host, productId } = await signingHost();
+    const provider = await runtime.createProvider({
+      productId,
+      executionKind: "Worker",
+    });
+    try {
+      const client = createClient(createTransport(provider));
+      const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
+      for (const productSource of [false, true]) {
+        const created = await client.chat.createRoom({
+          roomIdSource: `feed-${productSource}`,
+          name: "Feed",
+          icon: "",
+          config: { productSource, reactionDetails: false },
+        });
+        const { roomId } = created._unsafeUnwrap();
+        (await client.chat.updateFeed({ roomId, update }))._unsafeUnwrap();
+        expect(host.chatRoomDeclarations(roomId)?.feed).toEqual([
+          [update, !productSource],
+        ]);
+
+        (await client.chat.deleteRoom({ roomId }))._unsafeUnwrap();
+        expect(host.chatRoomDeclarations(roomId)).toBeUndefined();
+      }
+    } finally {
+      provider.dispose();
+    }
+  });
+
   it("refuses a pairing-only request by name", async () => {
     const { runtime } = await signingHost();
     await expect(runtime.getSessionChatIdentityKey()).rejects.toThrow(

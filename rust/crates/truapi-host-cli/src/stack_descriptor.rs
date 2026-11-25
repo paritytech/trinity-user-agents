@@ -8,13 +8,15 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
-use trinity_stack::{Descriptor, Fetched, Pointer, accept};
+use trinity_stack::{Chain, Descriptor, Fetched, Pointer, accept};
 
-/// A local file has no URL of its own; the pointer only carries the key to check.
+/// A local file has no URL of its own; the pointer only carries the key to check. Every local
+/// file is read under it, so its `stack_id` does not tell one file's stack from another's.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
-/// The largest descriptor `fetch` reads; a descriptor is a few kilobytes.
-const MAX_DESCRIPTOR_BYTES: usize = 1024 * 1024;
+/// The largest body `fetch` reads. A descriptor is a few kilobytes, and the
+/// largest light spec, a relay's with its checkpoint, is under 300 KiB.
+const MAX_FETCH_BYTES: usize = 1024 * 1024;
 
 pub fn refused(error: trinity_stack::Error) -> anyhow::Error {
 	anyhow!("refused ({}): {error}", error.code())
@@ -36,28 +38,42 @@ pub fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
 	Ok(Some(keyed))
 }
 
-/// The pointer a stack value carries and the bytes it serves: a link or a URL, fetched, or a local
-/// file, read under a pointer with no URL of its own and `key`. Fails when it is unreachable.
-pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>)> {
+/// Where a stack value's bytes were read from.
+pub enum StackSource {
+	/// A link or a URL, fetched.
+	Fetched,
+	/// A local descriptor file.
+	LocalFile,
+}
+
+/// The pointer a stack value carries, the bytes it serves and where they were read from: a link
+/// or a URL, fetched, or a local file, read under a pointer with no URL of its own and `key`.
+/// Fails when it is unreachable.
+pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>, StackSource)> {
 	match pointer_of(stack, key)? {
 		Some(pointer) => {
 			let bytes = fetch(pointer.url().as_str(), FETCH_TIMEOUT)
 				.await
 				.map_err(|cause| anyhow!("{stack} is unreachable: {cause}"))?;
-			Ok((pointer, bytes))
+			Ok((pointer, bytes, StackSource::Fetched))
 		},
 		None => Ok((
 			Pointer::new(LOCAL_FILE_URL, key).map_err(refused)?,
 			fs::read(stack).with_context(|| format!("cannot read {stack}"))?,
+			StackSource::LocalFile,
 		)),
 	}
 }
 
-/// The descriptor a `--stack` value points to: a link or a URL, fetched and checked against the
-/// key a link carries, or a local descriptor file, signed or not. Fails when it is unreachable,
-/// breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
-pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
-	let (pointer, bytes) = read_stack(stack, None).await?;
+/// The descriptor a `--stack` value points to, with the stack's id: a link or a URL, fetched and
+/// checked against the key a link carries or `key`, or a local descriptor file, signed or not.
+/// Fails when it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past
+/// `validUntil`.
+///
+/// The id is the pointer's. A local file has no pointer of its own, so its id is `file:` followed
+/// by its canonical path: two files are two stacks, and a file that moves becomes another stack.
+pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
+	let (pointer, bytes, source) = read_stack(stack, key).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
 	if accepted.expired {
@@ -66,7 +82,16 @@ pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	Ok(accepted.stack.descriptor)
+	let stack_id = match source {
+		StackSource::Fetched => pointer.stack_id(),
+		StackSource::LocalFile => local_file_id(stack)?,
+	};
+	Ok((stack_id, accepted.stack.descriptor))
+}
+
+fn local_file_id(path: &str) -> Result<String> {
+	let canonical = fs::canonicalize(path).with_context(|| format!("cannot resolve {path}"))?;
+	Ok(format!("file:{}", canonical.display()))
 }
 
 /// One value for each chain role a host routes.
@@ -101,12 +126,21 @@ impl<T> Roles<T> {
 	}
 }
 
-/// Whether `stack` and `other` agree in every field the CLI or the core reads:
-/// `id`, which is the product namespace, the TLD, `generation`, the `dub`
-/// service, `dotns.popController`, `contracts`, and the genesis hash and full
-/// `rpc` list of People, Asset Hub and Bulletin. The full lists are compared
-/// because the Polkadot fork check contacts every node the reference lists for
-/// a chain.
+/// The chains of `descriptor` the light client runs: the relay, then People,
+/// Asset Hub and Bulletin. One the descriptor does not have is left out.
+pub fn light_client_chains(descriptor: &Descriptor) -> impl Iterator<Item = &Chain> {
+	let roles = ROLE_NAMES.iter().filter_map(|role| descriptor.chain(role));
+	descriptor.relay().into_iter().chain(roles)
+}
+
+/// Whether `stack` and `other` agree in every field the CLI or the core reads
+/// apart from the light specs: `id`, which is the product namespace, the TLD,
+/// `generation`, the `dub` service, `dotns.popController`, `contracts`, and the
+/// genesis hash and full `rpc` list of People, Asset Hub and Bulletin. The full
+/// lists are compared because the Polkadot fork check contacts every node the
+/// reference lists for a chain. A light spec is left out because a relay's
+/// rotates with every fresh checkpoint and the light client fetches the one
+/// the descriptor names itself.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
@@ -118,6 +152,17 @@ pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 		stack.dotns_address("popController") == other.dotns_address("popController") &&
 		stack.contracts == other.contracts &&
 		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
+}
+
+/// Whether a bundled copy of `stack` can stay in place of `other`: they
+/// [read the same](reads_same) and name the same `lightSpec.sha256` for the
+/// relay, People, Asset Hub and Bulletin, whose specs the binary ships.
+pub fn bundles_same(stack: &Descriptor, other: &Descriptor) -> bool {
+	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
+		light_client_chains(descriptor)
+			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
+	}
+	reads_same(stack, other) && light_specs(stack).eq(light_specs(other))
 }
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
@@ -150,10 +195,14 @@ pub enum FetchError {
 	/// No answer, or a body that cannot be a descriptor.
 	#[display("{_0}")]
 	Transport(String),
+	/// The body is larger than `fetch` reads.
+	#[display("larger than {MAX_FETCH_BYTES} bytes")]
+	TooLarge,
 }
 
-/// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
-/// rules hold for the URL the pointer names, and a redirect could lead to plain http.
+/// The bytes a descriptor or light spec URL serves, or why it is unreachable. Redirects are
+/// refused: the URL rules hold for the URL the pointer names, and a redirect could lead to plain
+/// http.
 pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> {
 	let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
 	let client = reqwest::Client::builder()
@@ -176,19 +225,15 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> 
 	if !status.is_success() {
 		return Err(FetchError::Http(format!("HTTP {status}")));
 	}
-	let too_large = || FetchError::Transport(format!("larger than {MAX_DESCRIPTOR_BYTES} bytes"));
-	if response
-		.content_length()
-		.is_some_and(|length| length > MAX_DESCRIPTOR_BYTES as u64)
-	{
-		return Err(too_large());
+	if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES as u64) {
+		return Err(FetchError::TooLarge);
 	}
 	let mut response = response;
 	let mut body = Vec::new();
 	while let Some(chunk) = response.chunk().await.map_err(transport)? {
 		body.extend_from_slice(&chunk);
-		if body.len() > MAX_DESCRIPTOR_BYTES {
-			return Err(too_large());
+		if body.len() > MAX_FETCH_BYTES {
+			return Err(FetchError::TooLarge);
 		}
 	}
 	Ok(body)

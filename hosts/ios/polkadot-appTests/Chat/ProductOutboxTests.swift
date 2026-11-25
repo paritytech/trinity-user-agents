@@ -105,9 +105,9 @@ private final class ScriptedDelivery: ProductOutboxDelivering, @unchecked Sendab
 private final class StubWorkers: ProductOutboxWorkers, @unchecked Sendable {
     private let starts = OSAllocatedUnfairLock<[AsyncStream<Void>.Continuation]>(initialState: [])
 
-    func holdWorker(productId _: String) async {}
-
-    func releaseWorker(productId _: String) {}
+    func holdWorker(productId _: String) async -> (any TrUAPIWorkerClaiming)? {
+        nil
+    }
 
     func workerStarts(productId _: String) -> AsyncStream<Void> {
         let (stream, continuation) = AsyncStream<Void>.makeStream()

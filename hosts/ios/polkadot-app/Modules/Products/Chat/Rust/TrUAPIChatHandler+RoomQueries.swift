@@ -10,14 +10,11 @@ extension TrUAPIChatHandler {
     ) async throws -> Answer {
         guard !disposed else { throw CancellationError() }
 
-        let execution: TrUAPIProductExecutionProtocol
-        do {
-            execution = try await workers.ensureWorker(for: productId)
-        } catch {
-            workers.releaseWorker(for: productId)
-            throw error
-        }
-        defer { workers.releaseWorker(for: productId) }
+        let claim = try workers.claim(productId)
+        defer { claim.release() }
+
+        try await workers.waitUntilReady(productId)
+        guard let execution = workers.currentExecution(of: productId) else { throw ChatSeamError.notStarted }
 
         return try await body(execution)
     }
