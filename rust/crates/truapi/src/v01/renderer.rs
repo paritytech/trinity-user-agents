@@ -1316,8 +1316,9 @@ pub enum MaskBrushTip {
 /// 4000. Stamps are never closer than [`MASK_STAMP_SPACING_MIN`], and a line
 /// is never stamped more than [`MASK_STAMPS_MAX`] times: a line longer than
 /// that many spacings has its spacing stretched to its length over
-/// `MASK_STAMPS_MAX - 1`, and no stamp past the limit is placed. A host that cannot stamp draws the
-/// line as a round stroke of the same width, and counts it so.
+/// `MASK_STAMPS_MAX - 1`, and no stamp past the limit is placed. A host that
+/// cannot stamp draws the line as a round stroke of the same width, and
+/// counts it so.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
