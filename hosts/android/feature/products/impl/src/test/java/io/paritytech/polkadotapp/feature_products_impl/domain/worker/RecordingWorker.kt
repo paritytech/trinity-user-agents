@@ -12,6 +12,16 @@ class RecordingWorker : ProductWorker {
     val delivered = mutableListOf<Pair<ProductChatIdParameter?, String>>()
     val renderedRooms = mutableListOf<ProductChatIdParameter?>()
     val events = mutableListOf<JsUiEvent>()
+    val roomCalls = mutableListOf<Pair<String, ProductChatIdParameter>>()
+
+    override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {
+        roomCalls += "open" to roomId
+        return Result.success(Unit)
+    }
+
+    override suspend fun closeRoom(roomId: ProductChatIdParameter) {
+        roomCalls += "close" to roomId
+    }
 
     override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> {
         delivered += roomId to text

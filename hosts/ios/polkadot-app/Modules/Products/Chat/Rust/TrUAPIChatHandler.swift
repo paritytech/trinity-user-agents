@@ -10,7 +10,8 @@ import UIKitExt
 /// ``TrUAPIWorkerManager`` for its worker. The core keeps one Worker execution
 /// per product and decides when it runs, so this asks for one rather than
 /// opening an execution of its own. The same worker also draws the product's
-/// Pocket cards.
+/// Pocket cards. Each open room screen and each query claims the worker too, and
+/// releases the claim when it ends.
 ///
 /// Chat-environment context route through that execution: user messages and
 /// events publish chat actions, widget rendering streams typed renderer nodes,
@@ -20,7 +21,7 @@ import UIKitExt
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
 /// `dispose` flips `disposed` before its first await and `start` re-checks it
 /// after every await, releasing anything it took in the gap.
-actor TrUAPIChatHandler: ChatRuntimeProtocol {
+actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifecycle {
     enum ChatSeamError: Error, Equatable {
         case notStarted
         /// The core normalizes room ids on the way back and rejects an empty one, so a
@@ -31,8 +32,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         case untypedBody
     }
 
-    private let productId: ProductId
-    private let workers: any TrUAPIWorkerManaging
+    let productId: ProductId
+    let workers: any TrUAPIWorkerManaging
     /// The product's own chat surface and routers, which outlive any one worker.
     private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
@@ -46,9 +47,12 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
     private var workerClaim: (any TrUAPIWorkerClaiming)?
+    /// The worker claims of the open room screens, by room. Each open that does not throw adds one, and each
+    /// close releases one.
+    private var openRooms: [String: [any TrUAPIWorkerClaiming]] = [:]
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
-    private var disposed = false
+    private(set) var disposed = false
 
     init(
         productId: ProductId,
@@ -83,6 +87,51 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
             // half-started session would hold its worker reference forever.
             await dispose()
             throw error
+        }
+    }
+
+    // MARK: - ChatRoomLifecycle
+
+    /// Holds the worker for the open room screen. Throws when the worker does not start in the startup
+    /// window of the worker manager. Then the room holds nothing.
+    func open(roomId: String) async throws {
+        try checkNotDisposed()
+
+        let claim = try workers.claim(productId)
+        do {
+            try await workers.waitUntilReady(productId)
+        } catch {
+            claim.release()
+            throw error
+        }
+
+        guard !disposed else {
+            claim.release()
+            throw CancellationError()
+        }
+
+        openRooms[roomId, default: []].append(claim)
+    }
+
+    /// Releases the worker claim of the open.
+    func close(roomId: String) async {
+        guard var claims = openRooms[roomId], let claim = claims.popLast() else { return }
+
+        openRooms[roomId] = claims.isEmpty ? nil : claims
+        claim.release()
+    }
+
+    // MARK: - ProductChatQuerying
+
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse {
+        try await withWorker { execution in
+            try await execution.chatMessagesQuery(request, timeout: ChatQueryTimeout.messages)
+        }
+    }
+
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse {
+        try await withWorker { execution in
+            try await execution.chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
         }
     }
 
@@ -195,6 +244,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // the same worker, and the core stops it once the last request goes.
         workerClaim?.release()
         workerClaim = nil
+        for claim in openRooms.values.joined() {
+            claim.release()
+        }
+        openRooms = [:]
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }

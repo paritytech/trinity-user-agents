@@ -58,6 +58,10 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
     func reclaimTransfer(messageId: Chat.MessageId, coinKeys: [Data])
+    /// The room screen shows the room: a product room holds its product.
+    func openRoom()
+    /// The room screen does not show the room anymore: a product room releases its product.
+    func closeRoom()
 }
 
 @MainActor
@@ -76,6 +80,7 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     func didFailReclaim(messageId: Chat.MessageId, error: Error)
 
+    /// The chat of the screen went away, for example because its product deleted the room.
     func didRemoveChat()
 }
 

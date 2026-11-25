@@ -37,6 +37,16 @@ class DeferredProductWorker : ProductWorker {
             onFailure = { Result.failure(it) },
         )
 
+    override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> =
+        awaitWorker().fold(
+            onSuccess = { it.openRoom(roomId) },
+            onFailure = { Result.failure(it) },
+        )
+
+    override suspend fun closeRoom(roomId: ProductChatIdParameter) {
+        awaitWorker().getOrNull()?.closeRoom(roomId)
+    }
+
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,

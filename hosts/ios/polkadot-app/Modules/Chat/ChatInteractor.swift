@@ -19,6 +19,8 @@ final class ChatInteractor {
     private var messagesTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var footerTask: Task<Void, Never>?
+    /// The last open or close of the room. Each one waits for the one before it.
+    var roomTask: Task<Void, Never>?
     private let state = ChatInteractorState()
     private let feedPolicy = OSAllocatedUnfairLock(initialState: ChatFeedPolicy())
 
