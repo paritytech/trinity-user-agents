@@ -6,24 +6,45 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.DurationUnit
 
 class PillGestureTest {
     @Test
-    fun `drag does not start when the finger moved 9 9 dp up`() {
-        assertFalse(DockletGestures.swipeUpStarted(DpOffset(0.dp, (-9.9f).dp)))
+    fun `direction is undecided when the finger moved 9 dp`() {
+        assertEquals(DockletDirection.Undecided, DockletGestures.direction(DpOffset(0.dp, (-9f).dp), settling = false))
     }
 
     @Test
-    fun `drag starts when the finger moved 10 1 dp up`() {
-        assertTrue(DockletGestures.swipeUpStarted(DpOffset(0.dp, (-10.1f).dp)))
+    fun `direction is decided when the finger moved 11 dp`() {
+        assertEquals(DockletDirection.Vertical, DockletGestures.direction(DpOffset(0.dp, (-11f).dp), settling = false))
     }
 
     @Test
-    fun `drag does not start when the finger moved 30 dp sideways`() {
-        assertFalse(DockletGestures.swipeUpStarted(DpOffset(30.dp, 0.dp)))
+    fun `a swipe 31 degrees up is vertical and 29 degrees up is sideways on a resting bar`() {
+        assertEquals(DockletDirection.Vertical, DockletGestures.direction(atAngle(31f), settling = false))
+        assertEquals(DockletDirection.Sideways, DockletGestures.direction(atAngle(29f), settling = false))
+    }
+
+    @Test
+    fun `a swipe 46 degrees down is vertical and 44 degrees down is sideways on a resting bar`() {
+        assertEquals(DockletDirection.Vertical, DockletGestures.direction(atAngle(-46f), settling = false))
+        assertEquals(DockletDirection.Sideways, DockletGestures.direction(atAngle(-44f), settling = false))
+    }
+
+    @Test
+    fun `a bar caught mid-flight takes 59 degrees as sideways and 61 degrees as vertical`() {
+        assertEquals(DockletDirection.Sideways, DockletGestures.direction(atAngle(59f), settling = true))
+        assertEquals(DockletDirection.Vertical, DockletGestures.direction(atAngle(61f), settling = true))
+        assertEquals(DockletDirection.Sideways, DockletGestures.direction(atAngle(-59f), settling = true))
+    }
+
+    @Test
+    fun `a swipe to the left is sideways too`() {
+        assertEquals(DockletDirection.Sideways, DockletGestures.direction(DpOffset((-30f).dp, 0.dp), settling = false))
     }
 
     @Test
@@ -195,6 +216,11 @@ class PillGestureTest {
 
     private fun assertMillis(expected: Double, actual: Duration) =
         assertEquals(expected, actual.toDouble(DurationUnit.MILLISECONDS), MILLIS_EPS)
+
+    private fun atAngle(degrees: Float): DpOffset {
+        val radians = Math.toRadians(degrees.toDouble())
+        return DpOffset((20 * cos(radians)).toFloat().dp, (-20 * sin(radians)).toFloat().dp)
+    }
 
     private companion object {
         const val EPS = 1e-3f

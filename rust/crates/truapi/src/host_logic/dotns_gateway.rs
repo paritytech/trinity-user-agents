@@ -8,8 +8,8 @@
 //!
 //! Username resolution ([`discover_pop_controller`], [`resolve_labels`]) is
 //! written once against the [`DotnsTransport`] trait. The headless CLI's
-//! plain-RPC reader and the in-core `chainHead_v1` lookup therefore walk the
-//! same contract chain.
+//! plain-RPC reader and the in-core lookup therefore walk the same contract
+//! chain.
 //!
 //! Byte layouts mirror `pallets/dotns-gateway` in `paritytech/individuality`
 //! and the dotNS contracts (`paritytech/dotns`).
@@ -23,13 +23,16 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	chain_runtime::RuntimeFailure,
 	chain::{
 		EvmContractError, ExtensionError, InheritedImplication, SubstrateSigner,
 		TransactionExtension,
 	},
-	dotns_views::{network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, tld_node},
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
+
+pub use crate::dotns_views::read_view;
 
 alloy_sol_types::sol!("src/host_logic/dotns_gateway/contracts.sol");
 
@@ -340,9 +343,26 @@ pub enum DotnsError {
 	#[error("{0}")]
 	#[from(String)]
 	Storage(String),
-	/// The chain follow the lookup reads through gave no best block to pin.
-	#[error("{0}")]
-	Follow(String),
+	/// The core's Asset Hub connection could not be opened.
+	#[error("Asset Hub connection")]
+	Connection(#[source] RuntimeFailure),
+	/// A legacy JSON-RPC read of Asset Hub failed.
+	#[error("{method}")]
+	Rpc {
+		/// JSON-RPC method that failed.
+		method: &'static str,
+		/// Failure the node or connection reported.
+		source: subxt_rpcs::Error,
+	},
+	/// The node answered `chain_getBlockHash` with no block.
+	#[error("chain_getBlockHash returned no best block")]
+	NoBestBlock,
+	/// A lookup step ran past its budget.
+	#[error("{step} timed out")]
+	TimedOut {
+		/// Step that ran out of time.
+		step: &'static str,
+	},
 	/// The controller's protocol registry could not be read.
 	#[error("DotnsPopController.protocolRegistry()")]
 	ProtocolRegistry(#[source] DotnsCallError),
@@ -399,9 +419,9 @@ pub enum DotnsError {
 	/// A name's content resolver could not be located.
 	#[error("DotnsRegistry.resolver()")]
 	Resolver(#[source] DotnsCallError),
-	/// A product's manifest record could not be read.
+	/// A text record could not be read.
 	#[error("ContentResolver.text()")]
-	ManifestText(#[source] DotnsCallError),
+	TextRecord(#[source] DotnsCallError),
 	/// The stored dispatcher address has the wrong width.
 	#[error("DotnsGateway.DispatcherAddress is {actual} bytes")]
 	DispatcherAddressLength {
@@ -448,11 +468,12 @@ pub enum DotnsCallError {
 
 /// How a caller reaches Asset Hub for dotNS reads.
 ///
-/// The surface is one storage read plus one contract view. The headless CLI
-/// implements it over plain RPC. The in-core runtime implements it over a
-/// `chainHead_v1` follow. The resolution steps below are written once.
+/// The surface is storage reads and single or batched contract views. The headless CLI
+/// implements it over plain RPC. The in-core runtime implements it over the
+/// core's legacy JSON-RPC connection at one best block. The resolution steps
+/// below are written once.
 #[async_trait::async_trait]
-pub trait DotnsTransport {
+pub trait DotnsTransport: Send {
 	/// Reads one storage value. `None` when the entry is absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError>;
 
@@ -461,6 +482,16 @@ pub trait DotnsTransport {
 	/// [`EvmContractError::Reverted`] is an answer from the contract; any other
 	/// error leaves the view's result unknown.
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError>;
+
+	/// Reads independent contract views for the same destination.
+	///
+	/// Returns one result per input in input order, retaining individual failures.
+	/// The transport controls concurrency and the block context.
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>>;
 }
 
 /// Resolves the `DotnsPopController` address from `DotnsGateway.DispatcherAddress`.

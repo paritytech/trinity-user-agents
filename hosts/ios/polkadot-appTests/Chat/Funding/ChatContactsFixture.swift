@@ -22,7 +22,7 @@ struct ChatContactsFixture {
             if hasPendingRequest {
                 let request = CDChatRequest(context: context)
                 request.identifier = UUID().uuidString
-                request.status = Chat.RequestStatus.outgoing.rawValue
+                request.status = Chat.RequestStatus.outgoing(.pending).rawValue
                 request.contact = contact
             }
         }

@@ -95,8 +95,16 @@ final class SPASimplifiedViewLayout: UIView {
         setNeedsLayout()
     }
 
-    /// The strip sits in the top safe area, with the web view edge to edge below it.
+    /// The strip floats over the top of the edge-to-edge web view, whose content is inset below it.
     func setupFullScreenLayout(chainStatusView: UIView) {
+        addSubview(webView)
+        webView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        webView.scrollView.contentInset.top = ChainConnectionStatusBarView.preferredHeight
+        webView.scrollView.verticalScrollIndicatorInsets.top = ChainConnectionStatusBarView.preferredHeight
+
         addSubview(statusStrip)
         statusStrip.snp.makeConstraints { make in
             make.top.equalTo(safeAreaLayoutGuide.snp.top)
@@ -124,15 +132,15 @@ final class SPASimplifiedViewLayout: UIView {
             make.trailing.lessThanOrEqualTo(chainStatusAnchorGuide.snp.leading).offset(-DSSpacings.small)
         }
 
-        addSubview(webView)
-        webView.snp.makeConstraints { make in
-            make.top.equalTo(statusStrip.snp.bottom)
-            make.leading.trailing.bottom.equalToSuperview()
-        }
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
-
         setupActivityIndicatorLayout()
         setupLoadProgressLayout(top: statusStrip.snp.bottom)
+
+        if #available(iOS 26.0, *) {
+            let interaction = UIScrollEdgeElementContainerInteraction()
+            interaction.edge = .top
+            interaction.scrollView = webView.scrollView
+            statusStrip.addInteraction(interaction)
+        }
     }
 
     /// Sizes the space the status title leaves for the rings, `ringsWidth` wide at the trailing end.

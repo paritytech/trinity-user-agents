@@ -8,12 +8,7 @@ import SubstrateSdk
 /// Funds statement accounts from anonymous notification slots: each claim lets its account keep one
 /// statement until the current period ends plus the runtime's grace window. An account holds one live
 /// binding, so callers pass a fresh account per period.
-public protocol NotificationStatementAccountAllocating: Sendable {
-    /// The period slots are claimed in right now.
-    func currentPeriod() async throws -> UInt32
-
-    func maxStatementSize() async throws -> Int
-
+public protocol NotificationStatementAccountAllocating: NotificationParametersProviding {
     /// Reserves a free slot of the current period for each target and schedules its durable claim, in order
     /// of preference: when fewer slots are free than targets, only the leading ones are scheduled. A target
     /// whose claim is already live is left as is. Returns once the claims are recorded, not when they land:

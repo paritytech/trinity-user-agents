@@ -6,7 +6,3 @@ import UIKit
 protocol TabBarChromeVisibilityCustomizing {
     var tabBarChromeIsVisible: Bool { get }
 }
-
-/// A screen pushed over a tab's root that the tab bar treats as the root itself: the bar stays shown, cannot fold,
-/// and keeps the root's clearance.
-protocol TabBarRootStandIn {}

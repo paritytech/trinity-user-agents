@@ -11,7 +11,9 @@ extension Chat {
         case inputField(InputField)
         case incomingRequest
         case outgoingRequest
+        case cancelledRequest
         case blockedUser
+        case productCard(messageType: String, payload: Data)
         case empty
 
         var isInputField: Bool {
@@ -67,5 +69,11 @@ extension Chat.PeerMetadata {
         case bot
         /// The icon the product's manifest declares, loaded on demand.
         case product(domain: ProductId)
+        case publicProfile(username: String)
+
+        /// A person's shared image, else the avatar their public profile names.
+        static func person(username: String, imageData: Data?) -> Self {
+            imageData != nil || username.isEmpty ? .image(imageData) : .publicProfile(username: username)
+        }
     }
 }

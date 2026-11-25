@@ -54,8 +54,10 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func unblockUser()
     func acceptChatRequest()
     func declineChatRequest()
+    func cancelChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
+    func reclaimTransfer(messageId: Chat.MessageId, coinKeys: [Data])
 }
 
 @MainActor
@@ -71,10 +73,14 @@ protocol ChatInteractorOutputProtocol: AnyObject {
     func didBlockUser()
 
     func didDeclineChatRequest()
+
+    func didFailReclaim(messageId: Chat.MessageId, error: Error)
+
+    func didRemoveChat()
 }
 
 @MainActor
-protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
+protocol ChatWireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable, AuthorizationPresentable {
     func showSendAsset(
         from view: ControllerBackedProtocol?,
         chatMetadata: ChatMetadata
@@ -101,6 +107,12 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
     )
 
     func dismissChat(from view: ControllerBackedProtocol?)
+
+    func showChatRequestConfirmation(
+        from view: ControllerBackedProtocol?,
+        viewModel: ChatRequestConfirmationViewModel,
+        onConfirm: @escaping () -> Void
+    )
 
     func showDocument(at url: URL)
 

@@ -18,6 +18,7 @@ final class SettingsPresenter {
     private var selectedPrivacyStrategy: RecyclingStrategyType?
     private var paymentsBackupStatus: CoinageAccountBackupStatus?
     private var isTabBarLabelsEnabled = false
+    private var isRestoredBalanceWaiting = false
 
     init(
         interactor: SettingsInteractorInputProtocol,
@@ -48,6 +49,7 @@ private extension SettingsPresenter {
         let input = SettingsContentInput(
             visibleCells: visibleCells(),
             attentionItems: attentionItems,
+            isRestoredBalanceWaiting: isRestoredBalanceWaiting,
             selectedCurrencyCode: selectedCurrencyCode,
             selectedThemeName: selectedThemeName,
             selectedPrivacyStrategy: selectedPrivacyStrategy,
@@ -59,6 +61,9 @@ private extension SettingsPresenter {
             },
             onSelectPrivacyStrategy: { [weak self] strategy in
                 self?.didSelectPrivacyStrategy(strategy)
+            },
+            onShowPrivacyInfo: { [weak self] in
+                self?.didTapPrivacyInfo()
             },
             onToggleTabBarLabels: { [weak self] isEnabled in
                 self?.didToggleTabBarLabels(isEnabled)
@@ -85,6 +90,10 @@ extension SettingsPresenter: SettingsPresenterProtocol {
         selectedPrivacyStrategy = strategy
         refreshContent()
         interactor.savePrivacyStrategy(strategy)
+    }
+
+    func didTapPrivacyInfo() {
+        wireframe.showPrivacyModeInfo(from: view)
     }
 
     func didTapCell(_ cell: SettingsViewModel.CellType) {
@@ -153,6 +162,12 @@ extension SettingsPresenter: SettingsInteractorOutputProtocol {
     func didReceivePaymentsBackupStatus(_ status: CoinageAccountBackupStatus) {
         guard status != paymentsBackupStatus else { return }
         paymentsBackupStatus = status
+        refreshContent()
+    }
+
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool) {
+        guard isWaiting != isRestoredBalanceWaiting else { return }
+        isRestoredBalanceWaiting = isWaiting
         refreshContent()
     }
 }

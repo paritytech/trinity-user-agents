@@ -1,17 +1,18 @@
 import Foundation
 import Individuality
+import SubstrateSdk
 
 public final class AllowanceSupport: @unchecked Sendable {
     public let allowancePromptRouter: AllowancePromptRouting
-    public let sssManager: AllowanceManaging
-    public let bulletInManager: AllowanceManaging
-    public let smartContractManager: AllowanceManaging
+    public let sssManager: any AllowanceManaging<StatementStoreAllowanceHolder>
+    public let bulletInManager: any AllowanceManaging<AccountId>
+    public let smartContractManager: any AllowanceManaging<AccountId>
 
     public init(
         allowancePromptRouter: AllowancePromptRouting,
-        sssManager: AllowanceManaging,
-        bulletInManager: AllowanceManaging,
-        smartContractManager: AllowanceManaging
+        sssManager: any AllowanceManaging<StatementStoreAllowanceHolder>,
+        bulletInManager: any AllowanceManaging<AccountId>,
+        smartContractManager: any AllowanceManaging<AccountId>
     ) {
         self.allowancePromptRouter = allowancePromptRouter
         self.sssManager = sssManager

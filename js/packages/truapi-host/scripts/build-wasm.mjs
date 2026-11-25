@@ -207,6 +207,14 @@ async function build(crate, outName, target, subdir, features = [], env = {}) {
   // wasm-pack writes a nested `.gitignore: *`; the repo-level ignore already
   // owns generated WASM outputs.
   await rm(resolve(outDir, ".gitignore"), { force: true });
+  // The `package.json` wasm-pack writes declares no module type, so Node would
+  // read the ES module glue beside it as CommonJS.
+  const manifestPath = resolve(outDir, "package.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify({ ...manifest, type: "module" }, null, 2)}\n`,
+  );
   const wasmPath = resolve(outDir, `${outName}_bg.wasm`);
   await Promise.all([
     rm(`${wasmPath}.br`, { force: true }),

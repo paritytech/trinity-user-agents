@@ -49,6 +49,18 @@ class DeferredProductWorker : ProductWorker {
         )
     }
 
+    override fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> =
+        flow {
+            awaitWorker().fold(
+                onSuccess = { emitAll(it.renderRoomFooter(roomId, messageType, payload)) },
+                onFailure = { emit(Result.failure(it)) },
+            )
+        }
+
+    override fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
+        delegate.value?.getOrNull()?.dispatchRoomFooterEvent(roomId, messageType, actionId, eventType)
+    }
+
     // UI events only originate from already-rendered widgets, so the worker is attached by then.
     override fun dispatchEvent(event: JsUiEvent) {
         delegate.value?.getOrNull()?.dispatchEvent(event)

@@ -5,7 +5,7 @@ import { readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 
-export function isLoopback(url) {
+function isLoopback(url) {
   return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
 }
 

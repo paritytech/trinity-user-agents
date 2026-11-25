@@ -38,8 +38,8 @@ use tracing::{debug, warn};
 
 use crate::bootstrap;
 use truapi::{
-	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime,
+	ChannelId, DebugSink, FrameSink, HostRuntime, PairingHost, ProductContext, ProductRuntime,
+	ProductRuntimeError, SigningHost,
 	platform::{ExecutableKind, ProductId},
 };
 
@@ -130,15 +130,15 @@ impl ConnectionRuntime for ProductRuntime {
 	}
 }
 
-impl ProductRuntimeFactory for PairingHostRuntime {
+impl ProductRuntimeFactory for HostRuntime<PairingHost> {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		PairingHostRuntime::product_runtime(self, product, sink)
+		HostRuntime::product_runtime(self, product, sink)
 	}
 }
 
-impl ProductRuntimeFactory for SigningHostRuntime {
+impl ProductRuntimeFactory for HostRuntime<SigningHost> {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		SigningHostRuntime::product_runtime(self, product, sink)
+		HostRuntime::product_runtime(self, product, sink)
 	}
 }
 
@@ -188,18 +188,18 @@ impl ProductRuntimeFactory for DebugTappedRuntime {
 /// Signing runtime factory whose active session can be replaced without
 /// restarting the frame listener.
 pub struct SwitchableSigningRuntime {
-	current: RwLock<Arc<SigningHostRuntime>>,
+	current: RwLock<Arc<HostRuntime<SigningHost>>>,
 	generation: watch::Sender<u64>,
 }
 
 impl SwitchableSigningRuntime {
-	pub fn new(runtime: Arc<SigningHostRuntime>) -> Arc<Self> {
+	pub fn new(runtime: Arc<HostRuntime<SigningHost>>) -> Arc<Self> {
 		let (generation, _) = watch::channel(0);
 		Arc::new(Self { current: RwLock::new(runtime), generation })
 	}
 
 	/// Replace the runtime and disconnect every product using the old one.
-	pub fn replace(&self, runtime: Arc<SigningHostRuntime>) {
+	pub fn replace(&self, runtime: Arc<HostRuntime<SigningHost>>) {
 		*self.current.write().expect("runtime lock poisoned") = runtime;
 		self.reset_connections();
 	}

@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 
@@ -52,7 +54,9 @@ abstract class ChatBot : ChatExtension {
     final override fun customGlobalOverlayRenderer(): CustomChatOverlayRenderer? = customGlobalOverlayRenderer
     final override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*>? = customChatPreviewDelegate
     final override fun animatesMessageReveal(chatId: ChatId): Boolean = animatesMessageReveal
-    final override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = observeUserInputAllowed()
+    final override fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> = observeUserInputAllowed().map { allowed ->
+        if (allowed) ChatExtensionInputSlot.TextInput else ChatExtensionInputSlot.Hidden
+    }
     final override fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = observeChatConfig()
 
     // --- Bot-specific API (existing bots override these) ---

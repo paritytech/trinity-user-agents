@@ -9,19 +9,99 @@ lane :upload_testflight do |options|
   # Only pass groups if distributing externally
   groups = distribute_external ? options[:groups] : nil
 
-  # Without this the Appfile default wins and every post-upload step (changelog, external
-  # group) runs against the production App Store Connect record. Safetynet is a separate
-  # app with its own build-number sequence, so those steps silently find no build.
-  app_identifier = ENV["IOS_BUNDLE_ID"]
-  app_identifier = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier) if app_identifier.to_s.empty?
-
   upload_to_testflight(
-    app_identifier: app_identifier,
+    app_identifier: testflight_app_identifier,
     skip_waiting_for_build_processing: skip_waiting,
     changelog: changelog,
     distribute_external: distribute_external,
     groups: groups
   )
+end
+
+desc "Upload a build to TestFlight and return without waiting for Apple to process it"
+desc "finish_testflight then distributes it, so a failure while Apple processes the"
+desc "build is retried without uploading again."
+lane :upload_testflight_binary do
+  upload_to_testflight(
+    app_identifier: testflight_app_identifier,
+    skip_waiting_for_build_processing: true
+  )
+end
+
+desc "Wait for an uploaded build to finish processing, then set its changelog and, with EXTERNAL_GROUP_NAME, hand it to that group"
+desc "Reads BUILD_NUMBER, MARKETING_VERSION, RELEASE_NOTES and optionally EXTERNAL_GROUP_NAME."
+desc "Example usage: BUILD_NUMBER=42 MARKETING_VERSION=1.0 EXTERNAL_GROUP_NAME='Group' fastlane finish_testflight"
+lane :finish_testflight do
+  build_number = ENV["BUILD_NUMBER"].to_s
+  app_version = ENV["MARKETING_VERSION"].to_s
+  external_group = ENV["EXTERNAL_GROUP_NAME"].to_s
+  UI.user_error!("BUILD_NUMBER env var is required") if build_number.empty?
+  UI.user_error!("MARKETING_VERSION env var is required") if app_version.empty?
+  distribute_external = !external_group.empty?
+
+  load_asc_api_key
+
+  # App Store Connect answers the processing poll with an occasional 5xx, and
+  # one bad answer ends the whole wait. The build is already uploaded, so each
+  # attempt picks up where the last one stopped. Three attempts ride out a
+  # passing error; more than that is an outage, and failing says so. A fastlane
+  # error (bad input, a build Apple will not process, the wait timing out) is
+  # not passing, so it fails at once.
+  attempts = 3
+  attempts.times do |index|
+    begin
+      upload_to_testflight(
+        app_identifier: testflight_app_identifier,
+        app_platform: "ios",
+        distribute_only: true,
+        app_version: app_version,
+        build_number: build_number,
+        changelog: ENV["RELEASE_NOTES"].to_s,
+        distribute_external: distribute_external,
+        groups: distribute_external ? [external_group] : nil,
+        wait_processing_timeout_duration: 1800
+      )
+      break
+    rescue FastlaneCore::Interface::FastlaneException
+      raise
+    rescue StandardError => error
+      raise if index == attempts - 1
+      UI.important("Distributing build #{build_number} failed on attempt #{index + 1} of #{attempts}: #{error.message}")
+      sleep(60)
+    end
+  end
+end
+
+desc "Report whether this build is already in App Store Connect, processed or not"
+desc "Matches BUILD_NUMBER under MARKETING_VERSION and prints 'TestFlight build <n> uploaded: true|false' for the workflow to read."
+desc "Example usage: BUILD_NUMBER=42 MARKETING_VERSION=1.0 fastlane testflight_build_uploaded"
+lane :testflight_build_uploaded do
+  build_number = ENV["BUILD_NUMBER"].to_s
+  app_version = ENV["MARKETING_VERSION"].to_s
+  UI.user_error!("BUILD_NUMBER env var is required") if build_number.empty?
+  UI.user_error!("MARKETING_VERSION env var is required") if app_version.empty?
+
+  load_asc_api_key
+  app = Spaceship::ConnectAPI::App.find(testflight_app_identifier)
+  UI.user_error!("App not found for bundle id '#{testflight_app_identifier}'") if app.nil?
+
+  builds = Spaceship::ConnectAPI::Build.all(app_id: app.id, version: app_version, build_number: build_number)
+  if builds.any? { |build| build.processing_state == Spaceship::ConnectAPI::Build::ProcessingState::INVALID }
+    UI.user_error!("Apple marked build #{build_number} invalid. Use \"Re-run all jobs\" so the run picks a new build number.")
+  end
+  uploaded = builds.any?
+
+  UI.message("TestFlight build #{build_number} uploaded: #{uploaded}")
+  uploaded
+end
+
+# Without this the Appfile default wins and every post-upload step (changelog, external
+# group) runs against the production App Store Connect record. Safetynet is a separate
+# app with its own build-number sequence, so those steps silently find no build.
+def testflight_app_identifier
+  app_identifier = ENV["IOS_BUNDLE_ID"]
+  app_identifier = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier) if app_identifier.to_s.empty?
+  app_identifier
 end
 
 desc "Load ASC API Key information to use in subsequent lanes"

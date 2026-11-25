@@ -4,7 +4,6 @@ import SubstrateSdk
 import PolkadotUI
 import Coinage
 import ChainRegistry
-import Products
 
 @MainActor
 final class AssetDetailsPresenter {
@@ -85,18 +84,8 @@ final class AssetDetailsPresenter {
 }
 
 extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
-    func onBackupSync() {
-        interactor?.triggerSync()
-    }
-
-    func onBackupCancel() {
-        wireframe.showCancelBackupConfirmation(from: view) { [weak self] in
-            self?.interactor?.cancelBackupNotification()
-        }
-    }
-
-    func onBackupWhyUpdate() {
-        wireframe.showWhyBackupUpdate(from: view)
+    func onOpenBackupSettings() {
+        wireframe.showBackupSettings()
     }
 
     func setup() {
@@ -117,7 +106,7 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     func onTopUp() {
         view?.didReceive(topUpLoading: true)
 
-        interactor?.openTopUpProduct()
+        interactor?.openTopUp()
     }
 
     #if TESTNET_FEATURE
@@ -130,16 +119,12 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>) {
+    func didOpenTopUp(_ result: Result<String?, Error>) {
         view?.didReceive(topUpLoading: false)
 
-        switch result {
-        case let .success(page):
-            wireframe.showProduct(page: page)
-        case let .failure(error):
-            guard !(error is CancellationError) else { return }
-            wireframe.present(error: RampAction.topUp.errorContent(for: error), from: view)
-        }
+        guard case let .failed(error) = FundingOpened(result) else { return }
+
+        wireframe.present(error: error, from: view)
     }
 
     func didReceive(
@@ -184,11 +169,7 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
     }
 
     func didReceive(showsRecoveredBalance: Bool) {
-        if showsRecoveredBalance {
-            view?.didShowBackupNotification()
-        } else {
-            view?.didHideBackupNotification()
-        }
+        view?.didReceive(showsRestoredBalanceHint: showsRecoveredBalance)
     }
 }
 

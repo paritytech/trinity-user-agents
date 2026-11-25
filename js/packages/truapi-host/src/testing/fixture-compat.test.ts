@@ -11,6 +11,8 @@ import {
 import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 import { PASEO_ASSET_HUB, LIVE_CHAINS } from "./dev-accounts.js";
+import { MOCK_GENESIS, mockTestStack } from "../web/create-mock-host.js";
+import { stackGenesisHashes } from "./networks.js";
 
 const SAMPLE_CHAIN = {
   id: "paseo-asset-hub",
@@ -49,29 +51,65 @@ async function hostPageUrlFor(
 }
 
 describe("host-api-test-sdk option compatibility", () => {
-  it("expands `networks` into the three settings that must agree", () => {
-    const { mock, runtimeConfig } = fromNetworks([SAMPLE_CHAIN]);
-    expect(mock.supportedChains).toEqual({
-      network: "paseo",
-      chains: [{ identifier: "AssetHub", genesisHash: "0x23e730eb" }],
-    });
+  it("expands `networks` into the settings that must agree", () => {
     // Unhashed on purpose: an unhashed proxy takes every request, so routing
-    // survives a chain reset even when the declared hash goes stale.
-    expect(mock.chainProxies).toEqual([{ rpcUrl: SAMPLE_CHAIN.rpcUrl }]);
-    expect(runtimeConfig).toEqual({ assetHub: { genesisHash: "0x23e730eb" } });
+    // survives a chain reset even when the declared hash goes stale. The test
+    // stack keeps the mock People and Bulletin, which the core needs to start,
+    // and its generation names the chains it runs, so it is not the mock's.
+    expect(fromNetworks([SAMPLE_CHAIN])).toEqual({
+      mock: {
+        chainProxies: [{ rpcUrl: SAMPLE_CHAIN.rpcUrl }],
+        servedChains: ["0x23e730eb"],
+      },
+      runtimeConfig: {
+        testStack: {
+          ...mockTestStack(),
+          generation: `none:0x23e730eb:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`,
+          network: "paseo",
+          assetHub: { genesisHash: "0x23e730eb" },
+        },
+      },
+    });
   });
 
   it("reads the chain's role from the id suffix", () => {
-    expect(
-      fromNetworks([{ ...SAMPLE_CHAIN, id: "paseo-people" }]).runtimeConfig,
-    ).toEqual({ people: { genesisHash: "0x23e730eb" } });
-    const relay = fromNetworks([{ ...SAMPLE_CHAIN, id: "previewnet" }]);
-    expect(relay.mock.supportedChains).toEqual({
-      network: "previewnet",
-      chains: [{ identifier: "Relay", genesisHash: "0x23e730eb" }],
-    });
-    // The runtime config has no relay slot, so there is nothing to declare.
-    expect(relay.runtimeConfig).toEqual({});
+    const stackOf = (id: string) =>
+      fromNetworks([{ ...SAMPLE_CHAIN, id }]).runtimeConfig.testStack;
+    expect([stackOf("paseo-people"), stackOf("previewnet")]).toEqual([
+      {
+        ...mockTestStack(),
+        generation: `none:${MOCK_GENESIS.assetHub}:0x23e730eb:${MOCK_GENESIS.bulletin}`,
+        network: "paseo",
+        people: { genesisHash: "0x23e730eb" },
+      },
+      {
+        ...mockTestStack(),
+        generation: `0x23e730eb:${MOCK_GENESIS.assetHub}:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`,
+        network: "previewnet",
+        relay: { genesisHash: "0x23e730eb" },
+      },
+    ]);
+  });
+
+  it("names a stack's generation after its chains, in one case", () => {
+    // The generation tells one run of the chains from another, so the case a
+    // suite spells a hash in must not make it another run, and a suite on the
+    // mock chains runs the mock stack's generation.
+    const generationOf = (chains: (typeof SAMPLE_CHAIN)[]) =>
+      fromNetworks(chains).runtimeConfig.testStack.generation;
+    const hub = (genesisHash: string) => ({ ...SAMPLE_CHAIN, genesisHash });
+    const mockPeople = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-people",
+      genesisHash: MOCK_GENESIS.people,
+    };
+    const live = `none:0xabcd:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`;
+    expect([
+      generationOf([hub("0xABCD")]),
+      generationOf([hub("0xabcd")]),
+      generationOf([]),
+      generationOf([mockPeople]),
+    ]).toEqual([live, live, "mock", "mock"]);
   });
 
   it("rejects a pinned product account, and says why", () => {
@@ -104,8 +142,8 @@ describe("host-api-test-sdk option compatibility", () => {
   it("exports PASEO_ASSET_HUB, carrying the hash we actually proxy to", () => {
     expect(PASEO_ASSET_HUB.id).toBe("paseo-asset-hub");
     const expanded = fromNetworks([PASEO_ASSET_HUB]);
-    expect(expanded.runtimeConfig).toEqual({
-      assetHub: { genesisHash: LIVE_CHAINS.paseoAssetHub.genesisHash },
+    expect(expanded.runtimeConfig.testStack.assetHub).toEqual({
+      genesisHash: LIVE_CHAINS.paseoAssetHub.genesisHash,
     });
   });
 
@@ -550,5 +588,25 @@ describe("withholding one resource while the rest stay granted", () => {
   it("sets nothing when the option is absent", async () => {
     const url = new URL(await hostPageUrlFor({}));
     expect(url.searchParams.has("withheld")).toBe(false);
+  });
+});
+
+describe("the chains a test host serves by default", () => {
+  it("are every chain in its test stack", () => {
+    // A suite that writes its own stack without naming servedChains is
+    // answering for those chains, so featureSupported has to agree.
+    const relay = new Uint8Array(32).fill(0xab);
+    expect(
+      stackGenesisHashes({
+        ...mockTestStack(),
+        assetHub: { genesisHash: "0xCAFE" },
+        relay: { genesisHash: relay },
+      }),
+    ).toEqual([
+      mockTestStack().people.genesisHash,
+      mockTestStack().bulletin.genesisHash,
+      "0xcafe",
+      `0x${"ab".repeat(32)}`,
+    ]);
   });
 });

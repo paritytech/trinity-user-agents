@@ -88,7 +88,7 @@ Shared rust infrastructure lives in `TrUAPI/`: `RustRuntimeEnvironment` +
 `RustRuntimeSessionParams` (per-runtime core assembly), `RustRuntimeBridge`
 (HostCallbacks), `TrUAPIConfirmationPresenter`, `Connection/` (per-lease raw socket pool
 `TrUAPIV2SpecConnectionPool` + the `TrUAPIChainConnecting` seam), `Storage/` (`TrUAPILocalStorage`), and `Preimage/`
-(`TrUAPIPreimageCache`). The rust core itself is the remote `TrUAPIHost` SPM package. The
+(`TrUAPIPreimageCache`). The rust core itself is the `TrUAPIHost` SPM package from the enclosing trinity-user-agents tree. The
 debug playground lives in `Modules/DebugSettings/` (`TrUAPIPlaygroundViewFactory`,
 presented by `DebugSettingsWireframe.showTrUAPIPlayground(from:)`), and assembles its SPA
 view via `SPAViewFactory.createRustView`; it runs the production session (root entropy +
@@ -191,7 +191,8 @@ Rules:
 | Seam                          | Where                                    | When to touch                        |
 |-------------------------------|------------------------------------------|--------------------------------------|
 | Product container bridge      | `Packages/Products/`                     | Adding new JS↔Swift bridge methods   |
-| Payment approval              | `Modules/Products/PaymentRequest/`       | Changing who sees the payment sheet (allowlist lives in `ProductAutoAllowList`) |
+| Payment approval              | `Modules/Products/PaymentRequest/`       | Changing who sees the payment sheet |
+| Funding overlay and history   | `Modules/Funding/`                       | The Add/Withdraw sheet the core's funding sessions start from, provider frames, the CASH card's funding history (read from the core with `fundingHistory()`) |
 | Product module sub-modules    | `polkadot-app/Modules/Products/`         | Adding new product screens           |
 | Deep link handlers            | `AppConfig/AppConfig.swift`              | Adding product deep links            |
 | SPA module                    | `polkadot-app/Modules/SPA/`             | Smart Proposal Agent changes         |

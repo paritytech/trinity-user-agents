@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.shareIn
 import timber.log.Timber
 import javax.inject.Inject
 
+// Critical runtime config has no bundled defaults; see README, "Centralised dependencies" (#306).
 class FirebaseRemoteConfigDataSource @Inject constructor(
     coroutineDispatchers: CoroutineDispatchers,
     private val testnetEnvironment: TestnetEnvironment,

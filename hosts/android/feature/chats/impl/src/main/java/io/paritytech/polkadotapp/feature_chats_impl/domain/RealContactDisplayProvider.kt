@@ -23,6 +23,9 @@ class RealContactDisplayProvider @Inject constructor(
 }
 
 private fun ChatAvatar.toContactAvatar(): ContactAvatar = when (this) {
-    is ChatAvatar.Account -> ContactAvatar.Account(name, themeSeed)
-    is ChatAvatar.Url -> ContactAvatar.Url(url)
+    is ChatAvatar.Account -> toContactAccount()
+    is ChatAvatar.Url -> ContactAvatar.Url(url, placeholder = placeholder?.toContactAccount())
+    is ChatAvatar.PublicProfile -> ContactAvatar.PublicProfile(username, placeholder.toContactAccount())
 }
+
+private fun ChatAvatar.Account.toContactAccount() = ContactAvatar.Account(name, themeSeed)

@@ -17,7 +17,7 @@ public final class DSAvatarView: UIView {
     }
 
     /// Loaded over ``viewModel``, which shows until it arrives.
-    public var icon: (any ImageViewModelProtocol)? {
+    public var icon: AnyImageViewModel? {
         get { model.icon }
         set { model.icon = newValue }
     }
@@ -82,7 +82,7 @@ private extension DSAvatarView {
     @Observable
     final class Model {
         var viewModel: AvatarViewModel
-        var icon: (any ImageViewModelProtocol)?
+        var icon: AnyImageViewModel?
         var size: DSLetterAvatar.Size
 
         init(viewModel: AvatarViewModel, size: DSLetterAvatar.Size) {

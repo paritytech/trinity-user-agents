@@ -29,7 +29,7 @@ private extension ChatMessageFileCell {
         HStack(alignment: .center, spacing: 12) {
             if let preview = viewModel.preview {
                 AsyncImageView(
-                    viewModel: preview,
+                    viewModel: AnyImageViewModel(preview),
                     settings: ImageViewModelSettings(
                         targetSize: CGSize(width: 64, height: 64)
                     )

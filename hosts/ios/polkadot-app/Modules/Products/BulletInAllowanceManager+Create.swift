@@ -39,7 +39,8 @@ extension BulletInAllowanceManager {
             wallet: wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            networkSuffixProvider: tldProvider
+            networkSuffixProvider: tldProvider,
+            signerResolver: DerivationPathSignerResolver(entropyManager: entropyManager)
         )
 
         let extrinsicFacade = ExtrinsicSubmissionMonitorFacade(

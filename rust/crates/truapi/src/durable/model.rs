@@ -24,20 +24,61 @@ impl DomainId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurableTxId(pub i64);
 
-/// A submission policy's name, as the ledger stores it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PolicyId(String);
+/// A transaction a deferred one waits for, and what its failure does to it.
+pub struct TransactionDependency {
+	/// A transaction already registered, on the dependent's chain.
+	pub id: DurableTxId,
+	/// What a failure for good of `id` does to the dependent.
+	pub on_failure: OnDependencyFailure,
+}
 
-impl PolicyId {
-	/// A policy with this name.
-	pub fn new(name: impl Into<String>) -> Self {
-		Self(name.into())
+impl TransactionDependency {
+	/// A dependency on `id` whose failure leaves the dependent to its
+	/// policy, which is the default.
+	pub fn new(id: DurableTxId) -> Self {
+		Self { id, on_failure: OnDependencyFailure::Ignore }
 	}
+}
 
-	/// The name stored in the ledger.
-	pub fn as_str(&self) -> &str {
-		&self.0
-	}
+/// What a dependency's failure for good does to its dependent.
+///
+/// `Ignore` is always safe, so it is the default. It can be slow on an
+/// unhealthy chain: when the dependency took effect in a block that was then
+/// retracted, a dependent already submitted fails only once its own mortality
+/// runs out. `Cascade` fails the dependent at once, but it is correct only
+/// when the dependent cannot take effect without the dependency. Used
+/// otherwise, it fails a dependent that was already submitted or seen
+/// succeeding in a best block.
+pub enum OnDependencyFailure {
+	/// The dependent is released to its policy, which decides from the chain
+	/// whether it can still be built.
+	Ignore,
+	/// The consumer is sure the dependent cannot take effect without it. The
+	/// dependent fails as [`DurableTxFailureKind::Abandoned`] at the end of a
+	/// recovery pass unless it is already final, even when it is submitted or
+	/// took effect at a block that is not finalized, and so do the
+	/// dependents that cascade from it.
+	Cascade,
+}
+
+/// One dependency of a transaction its policy is asked to build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyStatusRecord {
+	/// The dependency.
+	pub id: DurableTxId,
+	/// How it released its dependent.
+	pub status: DependencyStatus,
+}
+
+/// How a dependency released its dependent. A dependency that has not taken
+/// effect yet, or failed with [`OnDependencyFailure::Cascade`], never
+/// reaches the policy: its dependent is not built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DependencyStatus {
+	/// It took effect, at a best or a finalized block.
+	Success,
+	/// It failed for good, and its dependent ignores that.
+	IgnoredFailure,
 }
 
 /// What a policy stores with each transaction it builds. Opaque to the
@@ -45,17 +86,16 @@ impl PolicyId {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyParams(pub Vec<u8>);
 
-/// How a transaction gets built: the policy that builds it, and that
-/// policy's params for it.
+/// How a transaction gets built: the params its domain's policy builds it
+/// from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmissionPlan {
-	/// The registered policy that builds it.
-	pub policy: PolicyId,
 	/// Handed back to the policy on every call.
 	pub params: PolicyParams,
 }
 
-/// A caller-chosen operation that several transactions belong to.
+/// A caller-chosen operation that several transactions belong to: a label to
+/// list and observe them by. It does not affect how they are built.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroupId(String);
 
@@ -71,8 +111,10 @@ impl GroupId {
 	}
 }
 
-/// Where a transaction stands, with the evidence for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where a transaction stands, with the evidence for it. Its `&'static str`
+/// form is the `status` column value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum DurableTxStatus {
 	/// Waiting for its policy to build an attempt. Live, but nothing on chain
 	/// can decide it.
@@ -134,7 +176,8 @@ pub enum DurableTxFailureKind {
 	DispatchFailed,
 	/// The node refused it before it reached the pool.
 	Rejected,
-	/// It waited to be built and its policy will never build it.
+	/// It will never take effect: its policy gave up building it, or a
+	/// dependency it cascades from failed.
 	Abandoned,
 }
 
@@ -148,9 +191,10 @@ impl From<VerdictFailureKind> for DurableTxFailureKind {
 	}
 }
 
-/// What a verdict decides about a submitted attempt. A verdict never
-/// schedules a transaction or abandons one: only the submission executor
-/// does.
+/// What a verdict decides about a submitted attempt. It is never waiting
+/// to be built or abandoned: a failure the policy retries becomes waiting
+/// to be built when it is written, and only the submission executor
+/// abandons a transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VerdictStatus {
 	/// No evidence either way yet.
@@ -190,6 +234,31 @@ pub enum HeadKind {
 	Best,
 }
 
+/// The blocks that can include an attempt, as the ledger keeps them: from
+/// the birth block up to, but not including, the death block. The birth
+/// block's hash matters only to the signature, which is complete before the
+/// engine sees the attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+	/// The birth block's number.
+	pub birth: u64,
+	/// How many blocks, from the birth block, can include the attempt.
+	pub period: u64,
+}
+
+impl Window {
+	/// The first block that can no longer include the attempt.
+	pub fn death(&self) -> u64 {
+		self.birth + self.period
+	}
+}
+
+impl From<&Mortality> for Window {
+	fn from(mortality: &Mortality) -> Self {
+		Self { birth: mortality.birth().number, period: mortality.period() }
+	}
+}
+
 /// One ledger row with a submitted attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DurableTxEntry {
@@ -201,8 +270,8 @@ pub struct DurableTxEntry {
 	pub group: Option<GroupId>,
 	/// Hash of the extrinsic of the current attempt.
 	pub tx_hash: H256,
-	/// The era it was signed with.
-	pub mortality: Mortality,
+	/// The window of the era it was signed with.
+	pub window: Window,
 	/// Where it stands.
 	pub status: DurableTxStatus,
 	/// Every block from birth through this one was searched and does not
@@ -216,7 +285,7 @@ pub struct DurableTxEntry {
 
 /// A transaction waiting for its policy to build an attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScheduledDurableTx {
+pub struct DeferredDurableTx {
 	/// Ledger id.
 	pub id: DurableTxId,
 	/// The domain that registered it.
@@ -228,6 +297,8 @@ pub struct ScheduledDurableTx {
 	/// How many attempts its policy already built it into, which sets how
 	/// long the next build waits.
 	pub attempts: u32,
+	/// Each transaction it depended on, all of which released it.
+	pub dependencies: Vec<DependencyStatusRecord>,
 }
 
 /// A transaction as a group lists it: where it stands, its latest attempt,

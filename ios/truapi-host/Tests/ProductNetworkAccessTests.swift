@@ -22,7 +22,7 @@ struct ProductNetworkAccessTests {
                 return socket;
               }
             });
-            """])
+            """, productSdk()])
         defer { product.close() }
         try product.execution.setPermissionAuthorizationStatus(
             request: .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))),
@@ -31,10 +31,9 @@ struct ProductNetworkAccessTests {
         let remote = product.server.url(host: "127.0.0.1", path: "/allowed")
         let result = try await withNetworkTestTimeout("retained client recovery") {
             try await product.webView.callAsyncJavaScript("""
-                const host = window.__HOST_API_CLIENT__;
-                const client = host.client;
+                const client = truapiTestSdk.getClientSync();
                 const statuses = [];
-                host.subscribeConnectionStatus(status => statuses.push(status));
+                truapiTestSdk.subscribeConnectionStatus(status => statuses.push(status));
                 (await client.system.handshake())._unsafeUnwrap();
                 const results = [];
                 let interrupted = 0;
@@ -46,7 +45,7 @@ struct ProductNetworkAccessTests {
                     client.theme.subscribe().subscribe({ next: live, error() { interrupted++; } });
                   });
                   const disconnected = new Promise(resolve => {
-                    const unsubscribe = host.subscribeConnectionStatus(status => {
+                    const unsubscribe = truapiTestSdk.subscribeConnectionStatus(status => {
                       if (status === 'disconnected') { unsubscribe(); resolve(); }
                     });
                   });
@@ -56,7 +55,7 @@ struct ProductNetworkAccessTests {
                   results.push(await (await fetch(url)).text());
                 }
                 return JSON.stringify({
-                  sameClient: host.client === client,
+                  sameClient: truapiTestSdk.getClientSync() === client,
                   interrupted,
                   resets: statuses.filter(status => status === 'disconnected').length,
                   results,
@@ -196,6 +195,14 @@ struct ProductNetworkAccessTests {
         #expect(product.server.requests(path: "/font.woff2") == 1)
     }
 
+    /// The SDK a product would ship, built from `js/container/src/test-sdk.ts`.
+    private func productSdk() throws -> String {
+        let bundle = Bundle(for: ProductPageReady.self)
+        return try String(
+            contentsOf: #require(bundle.url(forResource: "truapi-test-sdk", withExtension: "js")), encoding: .utf8
+        )
+    }
+
     private func fetch(_ webView: WKWebView, _ url: URL) async throws -> String {
         try await withNetworkTestTimeout("fetch \(url.absoluteString)") {
             try await webView.callAsyncJavaScript(
@@ -275,9 +282,7 @@ private struct NetworkTestProduct {
         let server = try await NetworkTestServer.start()
         do {
             let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
-                hostName: "network-tests", peopleChainGenesisHash: Data(repeating: 0, count: 32),
-                bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-                assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo",
+                hostName: "network-tests", stack: previewnetStack(),
                 databaseDirectory: temporaryDatabaseDirectory()
             ))
             let execution = try runtime.openProductExecution(

@@ -142,6 +142,27 @@ export function TaggedUnion<O extends TaggedUnionCodecs>(
   return Enum(inner) as unknown as Codec<TaggedUnionValue<O>>;
 }
 
+/**
+ * Lets a tagged union also encode plain strings naming its unit variants.
+ *
+ * A plain string encodes as the tagged value of the same name. Decoding always
+ * yields the tagged value. A string outside `plainVariants` throws.
+ */
+export function withPlainVariants<
+  T extends { tag: string },
+  const P extends string,
+>(codec: Codec<T>, plainVariants: readonly P[]): Codec<T | P> {
+  return createCodec<T | P>((value) => {
+    if (typeof value !== "string") {
+      return codec.enc(value);
+    }
+    if (!plainVariants.includes(value)) {
+      throw new Error(`Unknown enum variant: ${value}`);
+    }
+    return codec.enc({ tag: value } as unknown as T);
+  }, codec.dec);
+}
+
 /** Public TS value for Rust's derived `CallError<D>` enum. */
 export type CallErrorValue<D> =
   | { tag: "Domain"; value: D }

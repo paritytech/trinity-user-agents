@@ -439,6 +439,13 @@ refresh_spec "paseo-next-v2-asset-hub.json"   false "https://paseo-asset-hub-nex
 refresh_spec "paseo-next-v2-bulletin.json"    false "https://paseo-bulletin-next-rpc.polkadot.io" || true
 refresh_spec "paseo-next-v2-people.json"      false "https://paseo-people-next-system-rpc.polkadot.io" || true
 
+# Paseo system parachains, on the relay spec refreshed above.
+refresh_spec "paseo-asset-hub.json"           false "https://asset-hub-paseo-rpc.n.dwellir.com" \
+                                                    "https://sys.turboflakes.io/asset-hub-paseo" || true
+refresh_spec "paseo-bulletin.json"            false "https://bulletin-paseo.tservices.es:8443" || true
+refresh_spec "paseo-people.json"              false "https://people-paseo.gatotech.network" \
+                                                    "https://people-paseo.rotko.net" || true
+
 # Previewnet.
 refresh_spec "previewnet.json"                true  "https://previewnet.substrate.dev/relay/alice" \
                                                     "https://previewnet.substrate.dev/relay/bob" \

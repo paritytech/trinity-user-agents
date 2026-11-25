@@ -9,7 +9,7 @@ use core::{
 use futures::StreamExt as _;
 
 use super::{
-	PERMISSION_DENIED_REASON, ProductRuntimeHost,
+	AccountHolder, PERMISSION_DENIED_REASON, ProductRuntimeHost,
 	authority::{AuthorityError, StatementStoreAllowanceKey},
 	remote_authority_call, remote_authority_context,
 	statement_store_rpc::{self, StatementStoreRpc},
@@ -21,9 +21,7 @@ use crate::host_logic::statement_store::{
 	unsigned_statement_signing_payload, validated_topic_filter,
 };
 
-use crate::platform::{
-	CrossProductSignatureKind, ProductId, StatementStoreProductSignReview, UserConfirmationReview,
-};
+use crate::platform::ProductId;
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::instrument;
@@ -43,7 +41,7 @@ use truapi::{
 };
 
 #[async_trait::async_trait]
-impl StatementStore for ProductRuntimeHost {
+impl<H: AccountHolder> StatementStore for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "statement_store.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -214,7 +212,7 @@ impl futures::Stream for StatementStoreSubscriptionStream {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Open the remote statement-store subscription, reporting a failure
 	/// before its first item as the interrupt the subscription ends with.
 	async fn open_statement_subscription(
@@ -285,40 +283,22 @@ impl ProductRuntimeHost {
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
 		let product_account_id =
-			latest::ProductAccountId { dot_ns_identifier: owner.clone(), derivation_index };
+			latest::ProductAccountId { dot_ns_identifier: owner, derivation_index };
 		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
-			.product_account_public_key(cx, &session, &owner, &product_account_id.derivation_index)
+			.accounts
+			.product_account_public_key(cx, &session, &product_account_id)
 			.await
 			.map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
 		let fields = statement_fields_from_v01(statement)
 			.map_err(StatementProofFailure::InvalidStatement)?;
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
-		if &owner != self.connection.product_id() {
-			let review = UserConfirmationReview::StatementStoreProductSign(
-				StatementStoreProductSignReview {
-					calling_product_id: Some(self.connection.product_id().clone()),
-					account: product_account_id.clone(),
-					payload: payload.clone(),
-				},
-			);
-			self.confirm_signature(cx, CrossProductSignatureKind::StatementProof, &owner, review)
-				.await
-				.map_err(statement_authority_failure)?;
-		}
-		let cx = remote_authority_context(cx);
-		let signature = remote_authority_call(
-			&cx,
-			self.accounts.sign_statement_store_product_payload(
-				&session,
-				&cx,
-				product_account_id,
-				payload,
-			),
-		)
-		.await
-		.map_err(statement_authority_failure)?;
+		let signature = self
+			.accounts
+			.sign_statement_store_product_payload(&session, cx, product_account_id, payload)
+			.await
+			.map_err(statement_authority_failure)?;
 		Ok(latest::StatementProof::Sr25519 { signature, signer })
 	}
 

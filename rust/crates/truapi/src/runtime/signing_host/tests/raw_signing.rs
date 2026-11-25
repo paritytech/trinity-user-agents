@@ -7,7 +7,7 @@ use crate::{
 		RemoteMessage, RemoteMessageData, SignRawWithLegacyAccountRequest, SignRequest, v1,
 	},
 	platform::{LegacySigningAccount, SignRawReview},
-	runtime::{signing_host::sso_service::SigningHostSsoService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::versioned::signing::{
@@ -18,11 +18,13 @@ use truapi::versioned::signing::{
 fn raw_signing_review_matches_the_signed_bytes() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
-	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let product =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let entropy = RootEntropy::new(ENTROPY);
+	let identity = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+	let product = entropy
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let runtime = product_runtime(services, activation);
 	let cx = CallContext::default();
 	for (legacy, watermarked) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -85,14 +87,16 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 			let platform =
 				Arc::new(StubPlatform { sign_raw_confirmed: confirmed, ..Default::default() });
 			let (_, activation) = signing_runtime_with_platform(platform.clone());
-			futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+			futures::executor::block_on(
+				activation.activate_local_session(RootEntropy::new(ENTROPY)),
+			)
+			.unwrap();
+			let service = sso_service(&activation);
+			let entropy = RootEntropy::new(ENTROPY);
+			let identity = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+			let product = entropy
+				.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
 				.unwrap();
-			let service = SigningHostSsoService::new(activation);
-			let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-			let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-			let product =
-				derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
-					.unwrap();
 			let payload = v01::RawPayload::Bytes { bytes: vec![0x11; 32] };
 			let message = if legacy && watermarked {
 				RemoteMessage::request(
@@ -132,7 +136,8 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 				let request = SignRequest::decode(&mut encoded.as_slice()).unwrap();
 				RemoteMessage::request("proof".into(), request)
 			};
-			let Dispatch::Response(answer) = futures::executor::block_on(service.answer(message))
+			let Ok(Dispatch::Response(answer)) =
+				futures::executor::block_on(service.answer(message))
 			else {
 				panic!("expected signing response")
 			};

@@ -16,7 +16,6 @@ use super::{StatementAllowanceError, extension::Metadata, rpc::RpcClient, view};
 /// `PgasCollection`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
-#[display("{}", self.metadata_variant())]
 pub enum PersonhoodCollection {
 	/// Full personhood, established by proof-of-personhood registration.
 	People,
@@ -41,15 +40,6 @@ impl PersonhoodCollection {
 		match self {
 			Self::People => PEOPLE_IDENTIFIER,
 			Self::LitePeople => LITE_PEOPLE_IDENTIFIER,
-		}
-	}
-
-	/// The `MembershipCollection` / `PgasCollection` variant naming this
-	/// collection inside a transaction extension.
-	pub fn metadata_variant(self) -> &'static str {
-		match self {
-			Self::People => "People",
-			Self::LitePeople => "LitePeople",
 		}
 	}
 

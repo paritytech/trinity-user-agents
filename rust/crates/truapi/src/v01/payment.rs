@@ -26,7 +26,7 @@ pub struct HostPaymentBalanceSubscribeItem {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum PaymentTopUpSource {
 	/// Fund from one of the calling product's scoped accounts.
 	ProductAccount {
@@ -87,7 +87,7 @@ pub struct HostPaymentRequest {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostPaymentStatusSubscribeItem {
 	/// Payment is being processed.
 	Processing,
@@ -111,7 +111,7 @@ pub enum HostPaymentStatusSubscribeItem {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostPaymentBalanceSubscribeError {
 	/// User denied the balance disclosure request.
 	#[display("balance not shared")]
@@ -183,11 +183,14 @@ pub enum HostPaymentError {
 /// See [RFC 0006].
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostPaymentStatusSubscribeError {
 	/// Payment ID was not found or does not belong to the current product.
+	#[display("no such payment")]
 	PaymentNotFound,
 	/// Catch-all.
+	#[display("{reason}")]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
@@ -211,7 +214,7 @@ pub struct HostPaymentTopUpStatusSubscribeRequest {
 /// Progress of a top-up. `Claimed { finalized: true }`, `ClaimedPartially` and
 /// `NotClaimed` are terminal, and stay readable after the top-up ends.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostPaymentTopUpStatusSubscribeItem {
 	/// Waiting for the source's funds to be seen.
 	Detecting,
@@ -233,11 +236,14 @@ pub enum HostPaymentTopUpStatusSubscribeItem {
 }
 
 /// Error from [`crate::api::Payment::top_up_status_subscribe`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostPaymentTopUpStatusSubscribeError {
 	/// No top-up with this id for the calling product.
+	#[display("no such top-up")]
 	TopUpNotFound,
 	/// Catch-all.
+	#[display("{reason}")]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,

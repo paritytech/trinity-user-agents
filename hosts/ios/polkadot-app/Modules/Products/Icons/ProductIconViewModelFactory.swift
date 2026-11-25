@@ -6,7 +6,7 @@ import Products
 protocol ProductIconViewModelMaking {
     /// An icon for `domain` that resolves itself when a view loads it. The same domain always
     /// produces the same cache key, so browser tabs, chat previews and Settings share one download.
-    func createViewModel(for domain: ProductId) -> any ImageViewModelProtocol
+    func createViewModel(for domain: ProductId) -> any IdentifiableImageViewModelProtocol
 }
 
 final class ProductIconViewModelFactory {
@@ -26,7 +26,7 @@ final class ProductIconViewModelFactory {
 }
 
 extension ProductIconViewModelFactory: ProductIconViewModelMaking {
-    func createViewModel(for domain: ProductId) -> any ImageViewModelProtocol {
+    func createViewModel(for domain: ProductId) -> any IdentifiableImageViewModelProtocol {
         ProductIconImageViewModel(
             provider: ProductIconImageDataProvider(
                 domain: domain,

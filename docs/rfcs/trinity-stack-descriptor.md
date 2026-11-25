@@ -213,8 +213,8 @@ schemes.
   ignored members included. Readers MUST refuse one that is not. Two parsers that resolve a duplicate differently would
   read one signed descriptor two ways.
 - Each chain `role`, each service `kind` and each `Asset.role` MUST appear at most once. A descriptor MUST have exactly
-  one `Relay` chain, and `paraId` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name a role present in
-  `chains`, and a descriptor with `dotns` MUST have an `AssetHub` chain. Chain roles are those of
+  one `Relay` chain, and `paraId` and `genesisHash` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name
+  a role present in `chains`, and a descriptor with `dotns` MUST have an `AssetHub` chain. Chain roles are those of
   [RFC 0026](0026-supported-chains.md), plus others such as `Web3Storage`.
 - Every number MUST be an integer written without a fraction or exponent (`42`, never `42.0` or `4.2e1`), from 0 to
   2^32 - 1: `sequence`, ids, block numbers and times. That range holds a publish time in seconds until 2106 and is exact
@@ -424,8 +424,10 @@ format rules.
 A pointer travels as a link, which is also what a QR code carries:
 
 ```
-polkadotapp://stack?key=0x3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json
+polkadotapp://stack?key=0x1111111111111111111111111111111111111111111111111111111111111111&url=https%3A%2F%2Fstack.example.com%2F.well-known%2Ftrinity-stack.json
 ```
+
+The links of the known stacks are in the trinity-stack crate's `known-stacks.json`.
 
 - The query has a `url` parameter, percent-encoded, and a `key` parameter when the descriptor is signed. Readers MUST
   ignore other parameters.

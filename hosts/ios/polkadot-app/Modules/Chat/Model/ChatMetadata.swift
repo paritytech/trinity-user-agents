@@ -9,4 +9,5 @@ struct ChatMetadata: Equatable {
     let chatId: Chat.Id
     let peerMetadata: Chat.PeerMetadata
     let state: State
+    let peerSeenOrder: UInt64
 }

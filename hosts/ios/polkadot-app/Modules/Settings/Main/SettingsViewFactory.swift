@@ -12,7 +12,8 @@ enum SettingsViewFactory {
         let interactor = SettingsInteractor(
             logger: Logger.shared,
             mnemonicBackupHelper: MnemonicBackupHelper(),
-            coinageService: serviceCoordinator.coinageService
+            coinageService: serviceCoordinator.coinageService,
+            coinageBackupSyncService: serviceCoordinator.coinageBackupSyncService
         )
 
         let wireframe = SettingsWireframe(

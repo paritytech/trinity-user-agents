@@ -93,11 +93,14 @@ sealed interface JsWidget {
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget
 
-    /** Applies a host-drawn effect to its children. */
+    /**
+     * Shader layers over [children]. [node] is its place among the tree's `Materials` nodes, depth
+     * first, as the core numbers them. A surface without a materials renderer draws the children plain.
+     */
     @Serializable
-    @SerialName("effect")
-    data class Effect(
-        val effect: JsEffect,
-        val children: List<JsWidget> = emptyList(),
+    @SerialName("materials")
+    data class Materials(
+        val node: Int,
+        val children: List<JsWidget>,
     ) : JsWidget
 }

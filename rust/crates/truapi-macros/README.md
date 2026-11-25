@@ -10,7 +10,7 @@ the thin public entry points, which Rust requires at the proc-macro crate root.
 | --- | --- | --- |
 | [`service`](src/service.rs) | TrUAPI service trait | Required middleware metadata for codegen |
 | [`wire`](src/wire.rs) | TrUAPI method | Wire IDs and flags for codegen |
-| [`versioned_type!`](src/versioned_type.rs) | Versioned envelope declarations | SCALE enums and version conversion traits |
+| [`versioned_type!`](src/versioned_type.rs) | Versioned envelope declarations | SCALE enums, version conversion traits, and a `latest` module aliasing each newest payload |
 | [`sso_service`](src/sso_service.rs) | Dedicated inherent impl of SSO handlers | Request/response conversions, exhaustive dispatch, and message naming/correlation helpers |
 
 ## Handler contract
@@ -23,7 +23,7 @@ the response's `Result` payload:
 pub type GetAccountAliasResponse = Result<HostAccountGetAliasResponse, RingVrfError>;
 
 #[truapi_macros::sso_service]
-impl SigningHostSsoService {
+impl SsoAccountHolderService {
     async fn get_account_alias(
         &self,
         cx: &SsoRequestContext,

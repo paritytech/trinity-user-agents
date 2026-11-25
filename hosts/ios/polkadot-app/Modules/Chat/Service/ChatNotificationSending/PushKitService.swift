@@ -11,6 +11,7 @@ final class PushKitService: NSObject {
     static let shared = PushKitService()
 
     private let voipCallManager: VoIPCallKitManaging
+    private let interactiveServices: InteractiveServicesRequesting
     private let pushRegistry: PKPushRegistry
     private let logger: LoggerProtocol
     private let tokenSubject = AsyncPassthroughSubject<PushKitToken>()
@@ -18,10 +19,12 @@ final class PushKitService: NSObject {
 
     init(
         voipCallManager: VoIPCallKitManaging = VoIPCallKitManager.shared,
+        interactiveServices: InteractiveServicesRequesting = DashboardInteractiveServicesRequester(),
         queue: DispatchQueue = PushKitQueueProvider.queue,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.voipCallManager = voipCallManager
+        self.interactiveServices = interactiveServices
         self.logger = logger
         pushRegistry = PKPushRegistry(queue: queue)
         super.init()
@@ -78,6 +81,8 @@ extension PushKitService: PKPushRegistryDelegate {
             fromPushPayload: payload.dictionaryPayload,
             completion: completion
         )
+
+        interactiveServices.requestInteractiveStart()
     }
 }
 

@@ -8,9 +8,8 @@ import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
-import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
-import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
+import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -20,6 +19,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigMaterialsSwitch
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
@@ -42,8 +42,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.CoreAttribute
 import uniffi.truapi.ExtensionVersionMap
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocalStorageReadException
@@ -67,8 +67,7 @@ import javax.inject.Singleton
 @Singleton
 class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val chainRegistry: ChainRegistry,
-    private val knownChains: KnownChains,
+    private val environment: TestnetEnvironment,
     private val chainDirectory: TrUAPIChainDirectory,
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
@@ -84,6 +83,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
     private val pinnedPocketCards: PinnedPocketCards,
+    private val coreEventLogger: CoreEventLogger,
+    private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
+    private val materialsSwitch: RemoteConfigMaterialsSwitch,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -123,9 +125,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
-        val config = buildRuntimeConfig()
+        val handedOverKey = deviceKeyHandOver.keyToHandOver()
+        val config = buildRuntimeConfig(handedOverKey)
         cachedChains.set(chainDirectory.resolve())
-        TrUAPIHostRuntime(HostRuntimeBridge(), config)
+        TrUAPIHostRuntime(HostRuntimeBridge(), config).also {
+            if (handedOverKey != null) deviceKeyHandOver.forgetHandedOverKey()
+        }
     }
 
     private fun wire(runtime: TrUAPIHostRuntime) {
@@ -144,22 +149,16 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         observeWalletAccount(runtime)
     }
 
-    private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
-        val peopleGenesis = chainRegistry.getChain(knownChains.people).genesisHash.value
-        val bulletinGenesis = chainRegistry.getChain(knownChains.bulletIn).genesisHash.value
-        val assetHubGenesis = chainRegistry.getChain(knownChains.assetHub).genesisHash.value
+    private suspend fun buildRuntimeConfig(deviceEncryptionKey: ByteArray?): HostRuntimeConfig {
         // Booting without a session is the pre-session behaviour: products load
         // and every signing call fails. Worth degrading to rather than refusing
         // every product outright.
         val localSession = localSessionSource.resolve()
             .logFailure("TrUAPI local session unavailable; booting the host runtime without one")
             .getOrNull()
-        // The core derives the wallet's reserved identities under this TLD, so it has
-        // to be the one the app's own built-in accounts derive from. A wrong suffix
-        // mints key material that belongs to no network, so this takes the one an
-        // earlier run read from the chain, else reads it, and fails the boot when
-        // neither answers. A saved suffix is not a guess: a build has one network.
-        // Failing releases the memoised boot so the next caller tries again.
+        // The pinned cards are backed by products named under this TLD, so it has to
+        // be the network's own. A saved one is safe to reuse because a build has one
+        // network. Throwing releases the memoised boot so the next caller tries again.
         val tld = dotNsTldProvider.currentTldOrNull()
             ?: withTimeoutOrNull(TLD_RESOLVE_TIMEOUT_MS) { dotNsTldProvider.getTldRetrying() }
             ?: error("dotNS TLD unresolved after ${TLD_RESOLVE_TIMEOUT_MS}ms")
@@ -167,14 +166,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         return HostRuntimeConfig(
             hostName = HOST_NAME,
             hostVersion = hostVersion(),
-            peopleChainGenesisHash = peopleGenesis,
-            bulletinChainGenesisHash = bulletinGenesis,
-            assetHubChainGenesisHash = assetHubGenesis,
-            networkSuffix = tld.value,
+            stack = TrUAPIStack.of(environment).bundled(context),
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
+            deviceEncryptionKey = deviceEncryptionKey,
+            materialsEnabled = materialsSwitch.isOn(),
         )
     }
 
@@ -234,6 +232,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             logCoreLine(marker, detail)
         }
 
+        override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+            coreEventLogger.log(marker, attributes)
+        }
+
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
         override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
             val demand = when (transition) {
@@ -281,9 +283,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
+                is HostFeatureSupportedRequest.Materials -> false
             }
-
-        override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
@@ -297,7 +298,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing
-         * sheet needs a core-driven session, and `PairingHostRuntime` is not
+         * sheet needs a core-driven session, and `HostRuntime<PairingHost>` is not
          * reachable from a native host yet (truapi#334, "Move SSO to the shared
          * Rust core"), so the core never reaches a state worth showing. iOS
          * stubs this the same way. Surfaced as state rather than a log line so

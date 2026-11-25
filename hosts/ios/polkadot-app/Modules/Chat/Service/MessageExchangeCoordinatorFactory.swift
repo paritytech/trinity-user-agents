@@ -9,6 +9,7 @@ import Keystore_iOS
 import Operation_iOS
 import Products
 import Individuality
+import StatementStore
 
 protocol MessageExchangeCoordinatorMaking {
     func makeChatCoordinator() throws -> MessageExchangeChatCoordinating
@@ -24,7 +25,7 @@ protocol MessageExchangeCoordinatorMaking {
 final class MessageExchangeCoordinatorFactory {
     private let entropyManager: RootEntropyManaging
     private let storageFacade: StorageFacadeProtocol
-    private let bulletInManager: AllowanceManaging
+    private let bulletInManager: any AllowanceManaging<AccountId>
     private let statementAccountFunding: StatementAccountFunding
     private let identitySigningFallback: NonPrivateSigningFallbacking
     private let statementStoreMonitor: StatementStoreActivityMonitoring
@@ -34,7 +35,7 @@ final class MessageExchangeCoordinatorFactory {
     init(
         entropyManager: RootEntropyManaging = RootEntropyManager.shared,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
-        bulletInManager: AllowanceManaging,
+        bulletInManager: any AllowanceManaging<AccountId>,
         statementAccountFunding: StatementAccountFunding,
         identitySigningFallback: NonPrivateSigningFallbacking,
         statementStoreMonitor: StatementStoreActivityMonitoring,
@@ -115,11 +116,32 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
     func makeTrUAPIHostCoordinator(
         runtimeProvider: TrUAPIHostRuntimeProviding
     ) throws -> MessageExchangeSignInHostCoordinating {
-        try SSOTruAPICoordinator(
-            ownKeyId: Chat.Contact.Own.sso(),
-            serviceFactory: makeSSOServiceFactory(),
-            signerResolver: IdentitySignerResolver(signManager: ChatSignerManager(entropyManager: entropyManager)),
-            runtimeProvider: runtimeProvider
+        let ownKeyId = try Chat.Contact.Own.sso()
+        let signer = try ChatSignerManager(entropyManager: entropyManager)
+            .makeSigner(for: ownKeyId.signKeyId)
+        let encryptor = try ChatEncryptionManager(entropyManager: entropyManager)
+            .makeEncryptorFactory(ownEncryptionKeyId: ownKeyId.encryptionKeyId)
+        let signManager = ClosureSignerManager { _ in signer }
+
+        return SSOTruAPICoordinator(
+            ownKeyId: ownKeyId,
+            serviceFactory: MessageExchangeServiceFactory(
+                messageExchangeModeProvider: FixedMessageExchangeModeProvider(mode: .identity),
+                signManager: signManager,
+                encryptionManager: ClosureEncryptionManager { _ in encryptor },
+                deviceEncryptionKeyFactory: nil,
+                maxStatementSize: Constants.maxSSOStatementSize,
+                operationQueue: operationQueue,
+                logger: logger
+            ),
+            signerResolver: IdentitySignerResolver(signManager: signManager),
+            runtimeProvider: runtimeProvider,
+            makeAccountHolderService: {
+                try runtimeProvider.sharedRuntime().openSsoService(
+                    ownStatementAccountId: signer.accountId,
+                    ownEncryptionPublicKey: encryptor.localPublicKey
+                )
+            }
         )
     }
 

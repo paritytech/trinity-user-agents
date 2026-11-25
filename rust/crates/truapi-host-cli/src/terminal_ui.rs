@@ -245,11 +245,13 @@ pub enum SystemEvent {
 	},
 	NotificationDelivered {
 		id: u32,
+		title: Option<String>,
 		text: String,
 		deeplink: Option<String>,
 	},
 	NotificationScheduled {
 		id: u32,
+		title: Option<String>,
 		text: String,
 		scheduled_at: u64,
 	},
@@ -370,6 +372,11 @@ pub fn is_interactive_terminal() -> bool {
 	io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
+/// One line per notification part that is present, title first.
+fn notification_detail(lines: impl IntoIterator<Item = Option<String>>) -> String {
+	lines.into_iter().flatten().collect::<Vec<_>>().join("\n")
+}
+
 /// Emit a lifecycle event using the same human copy in every presentation.
 pub fn output_event(event: SystemEvent) {
 	if !send_to_active(UiEvent::System(event.clone())) {
@@ -380,31 +387,26 @@ pub fn output_event(event: SystemEvent) {
 	}
 }
 
+/// Emit a command result through the active transcript or standard output.
+pub fn output_info(text: impl Into<String>) {
+	output_notice(NoticeTone::Info, text.into(), None, write_human_stdout);
+}
+
 /// Emit a success notice through the active transcript or streaming renderer.
 pub fn output_success(title: impl Into<String>, detail: Option<String>) {
-	let title = title.into();
-	if !send_to_active(UiEvent::Notice {
-		tone: NoticeTone::Success,
-		title: title.clone(),
-		detail: detail.clone(),
-	}) {
-		let mut app = App::transcript();
-		app.notice(NoticeTone::Success, title, detail);
-		write_human_stdout(&app.transcript_text());
-	}
+	output_notice(NoticeTone::Success, title.into(), detail, write_human_stdout);
 }
 
 /// Emit a warning through the active transcript or standard error.
 pub fn output_warning(title: impl Into<String>, detail: Option<String>) {
-	let title = title.into();
-	if !send_to_active(UiEvent::Notice {
-		tone: NoticeTone::Warning,
-		title: title.clone(),
-		detail: detail.clone(),
-	}) {
+	output_notice(NoticeTone::Warning, title.into(), detail, write_human_stderr);
+}
+
+fn output_notice(tone: NoticeTone, title: String, detail: Option<String>, write: fn(&str)) {
+	if !send_to_active(UiEvent::Notice { tone, title: title.clone(), detail: detail.clone() }) {
 		let mut app = App::transcript();
-		app.notice(NoticeTone::Warning, title, detail);
-		write_human_stderr(&app.transcript_text());
+		app.notice(tone, title, detail);
+		write(&app.transcript_text());
 	}
 }
 
@@ -1750,22 +1752,29 @@ impl App {
                     );
                 }
             }
-            SystemEvent::NotificationDelivered { id, text, deeplink } => self.notice(
+            SystemEvent::NotificationDelivered {
+                id,
+                title,
+                text,
+                deeplink,
+            } => self.notice(
                 NoticeTone::Info,
                 format!("Notification #{id}"),
-                Some(match deeplink {
-                    Some(deeplink) => format!("{text}\n{deeplink}"),
-                    None => text,
-                }),
+                Some(notification_detail([title, Some(text), deeplink])),
             ),
             SystemEvent::NotificationScheduled {
                 id,
+                title,
                 text,
                 scheduled_at,
             } => self.notice(
                 NoticeTone::Info,
                 format!("Notification #{id} scheduled"),
-                Some(format!("{text}\nUnix time {scheduled_at} ms")),
+                Some(notification_detail([
+                    title,
+                    Some(text),
+                    Some(format!("Unix time {scheduled_at} ms")),
+                ])),
             ),
             SystemEvent::NotificationCancelled { id } => self.notice(
                 NoticeTone::Info,

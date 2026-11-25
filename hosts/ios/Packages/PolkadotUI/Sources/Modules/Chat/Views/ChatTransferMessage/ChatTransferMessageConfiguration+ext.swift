@@ -3,7 +3,6 @@ import UIKit
 
 public extension ChatTransferMessageConfiguration {
     static func inbox(
-        currencySymbol: String,
         amount: String,
         tokenSymbol: String,
         originalAmount: String? = nil,
@@ -15,7 +14,6 @@ public extension ChatTransferMessageConfiguration {
     ) -> ChatMessageContainerConfiguration {
         let configuration = ChatTransferMessageConfiguration(
             title: state.inboxTitle(username: username),
-            currencySymbol: currencySymbol,
             amountText: amount,
             tokenSymbol: tokenSymbol,
             originalAmountText: originalAmount,
@@ -42,18 +40,18 @@ public extension ChatTransferMessageConfiguration {
     }
 
     static func outbox(
-        currencySymbol: String,
         amount: String,
         tokenSymbol: String,
         originalAmount: String? = nil,
+        to username: String? = nil,
         state: ChatTransferMessageConfiguration.OutgoingState,
         statusConfiguration: ChatMessageStatusViewConfiguration,
         addReaction: ChatMessageContainerConfiguration.AddReactionViewModel? = nil,
-        messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel? = nil
+        messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel? = nil,
+        reclaimAction: ChatTransferMessageConfiguration.ReclaimAction? = nil
     ) -> ChatMessageContainerConfiguration {
-        let configuration = ChatTransferMessageConfiguration(
+        var configuration = ChatTransferMessageConfiguration(
             title: String(localized: .chatTransferOutbox),
-            currencySymbol: currencySymbol,
             amountText: amount,
             tokenSymbol: tokenSymbol,
             originalAmountText: originalAmount,
@@ -65,8 +63,10 @@ public extension ChatTransferMessageConfiguration {
             amountTextColor: .fgPrimaryInverted,
             tokenSymbolColor: .fgSecondaryInverted,
             originalAmountTextColor: .fgSecondaryInverted,
-            side: .trailing
+            side: .trailing,
+            peerName: username
         )
+        configuration.reclaimAction = reclaimAction
 
         return ChatMessageContainerConfiguration(
             innerContent: configuration,
@@ -84,7 +84,8 @@ private extension ChatTransferMessageConfiguration.IncomingState {
     func inboxTitle(username: String) -> String {
         switch self {
         case .claimed,
-             .failed:
+             .failed,
+             .returnedToSender:
             String(localized: .chatTransferInbox(username: username))
         case .detecting,
              .claiming:

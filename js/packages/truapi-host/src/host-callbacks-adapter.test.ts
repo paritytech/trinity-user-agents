@@ -3,8 +3,9 @@ import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import {
+  ChatRoomRegistrationStatus,
+  ExecutableKind,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -26,7 +27,6 @@ import {
   CoreStorageKey,
   PermissionDecision,
   ProductContext,
-  ExecutableKind,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
@@ -453,9 +453,9 @@ describe("createWasmRawCallbacks", () => {
     const raw = createWasmRawCallbacks(
       makeHostCallbacks({
         chat: {
-          createChatRoom: async (product, request) => {
-            seen.push(`${product.productId}:${request.roomId}`);
-            return { status: "Exists" };
+          createChatRoom: async (product, roomId, request) => {
+            seen.push(`${product.productId}:${roomId}:${request.roomIdSource}`);
+            return "Exists";
           },
         },
       }),
@@ -466,16 +466,19 @@ describe("createWasmRawCallbacks", () => {
       executionKind: "Worker",
     });
     const request = HostChatCreateRoomRequest.enc({
-      roomId: "room",
+      roomIdSource: "support",
       name: "Support",
       icon: "",
+      config: {
+        productSource: false,
+        reactionDetails: false,
+        reportSeen: false,
+      },
     });
-    const response = await raw.createChatRoom!(product, request);
+    const response = await raw.createChatRoom!(product, "0x01", request);
 
-    expect(seen).toEqual(["chat.dot:room"]);
-    expect(HostChatCreateRoomResponse.dec(response)).toEqual({
-      status: "Exists",
-    });
+    expect(seen).toEqual(["chat.dot:0x01:support"]);
+    expect(ChatRoomRegistrationStatus.dec(response)).toEqual("Exists");
   });
 
   it("adapts typed result subscriptions", async () => {

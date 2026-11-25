@@ -20,6 +20,7 @@ import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIStack
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebViewProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -127,21 +128,18 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
         private const val PAGE_URL = "$ORIGIN/"
         private val CONFIG = HostRuntimeConfig(
             hostName = "Renderer loss test",
-            peopleChainGenesisHash = ByteArray(32),
-            bulletinChainGenesisHash = ByteArray(32),
-            assetHubChainGenesisHash = ByteArray(32),
-            networkSuffix = "paseo",
+            stack = TrUAPIStack.PREVIEWNET.bundled(InstrumentationRegistry.getInstrumentation().targetContext),
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
-        // Reading the client is what dials the host, so each fresh page reports its own connection.
+        // Subscribing to frames is what dials the host, so each fresh page reports its own connection.
         private const val PAGE = """
             <!doctype html><html><script>
-            const host = window.__HOST_API_CLIENT__;
+            const host = window.__HOST_API_TRANSPORT__;
             host.subscribeConnectionStatus(status => {
               if (status === 'connected') report.status(status + ' ' + location.pathname);
             });
-            host.client;
+            host.subscribe(() => {});
             </script></html>
         """
     }

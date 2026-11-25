@@ -92,9 +92,10 @@ struct CoinageSubmissionParamsTests {
         #expect(try CoinageSubmissionParams.splitPolicy(transfer).id == CoinageSubmissionParams.splitPolicyId)
         #expect(try CoinageSubmissionParams.unloadPolicy(transfer).id == CoinageSubmissionParams.unloadPolicyId)
         #expect(try CoinageSubmissionParams.claimPolicy(claim).id == CoinageSubmissionParams.claimPolicyId)
+        #expect(try CoinageSubmissionParams.reclaimPolicy(transfer).id == CoinageSubmissionParams.reclaimPolicyId)
     }
 
-    @Test("split and unload share one encoding, so a row of either reads back the same")
+    @Test("split, unload and reclaim share one encoding, so a row of any reads back the same")
     func transferEncodingIsShared() throws {
         let params = TransferSubmissionParams(
             buildUntil: Date(timeIntervalSince1970: 1_700_000_000),
@@ -103,8 +104,10 @@ struct CoinageSubmissionParamsTests {
 
         let split = try CoinageSubmissionParams.splitPolicy(params).params
         let unload = try CoinageSubmissionParams.unloadPolicy(params).params
+        let reclaim = try CoinageSubmissionParams.reclaimPolicy(params).params
 
         #expect(split == unload)
+        #expect(split == reclaim)
     }
 
     @Test("params that cannot be read throw rather than yielding a wrong deadline")
@@ -117,14 +120,14 @@ struct CoinageSubmissionParamsTests {
         }
     }
 
-    @Test("a retried transfer's window is the claim's, so neither side gives up first")
-    func retriedTransferMatchesClaimWindow() {
+    @Test("a retried transfer is rebuilt for the chat payment window")
+    func retriedTransferUsesChatPaymentWindow() {
         let start = Date(timeIntervalSince1970: 1_700_000_000)
 
         let params = TransferSubmissionParams.retriedTransfer(from: start)
 
         #expect(params.retryFailures)
-        #expect(params.buildUntil == start.addingTimeInterval(CoinageConstants.claimRetryWindow))
+        #expect(params.buildUntil == start.addingTimeInterval(CoinageConstants.chatPaymentRetryWindow))
     }
 
     @Test("an attempt that never landed is always worth rebuilding, however late")

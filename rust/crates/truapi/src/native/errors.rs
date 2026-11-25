@@ -63,6 +63,8 @@ from_undeclared_host_error! {
 	crate::latest::HostPaymentError => Unknown,
 	crate::latest::HostPaymentTopUpError => Unknown,
 	crate::latest::HostPaymentBalanceSubscribeError => Unknown,
+	crate::latest::HostPaymentStatusSubscribeError => Unknown,
+	crate::latest::HostPaymentTopUpStatusSubscribeError => Unknown,
 	crate::latest::HostNavigateToError => Unknown,
 }
 
