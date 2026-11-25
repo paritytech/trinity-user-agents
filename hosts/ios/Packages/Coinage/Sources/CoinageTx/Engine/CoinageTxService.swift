@@ -28,6 +28,14 @@ public protocol CoinageTxServicing: Sendable {
         joining scope: any DurableTxRegistrationScope
     ) throws -> [CoinageTxId]
 
+    /// Registers transactions that their policies build and submit afterwards, atomically under one `groupId`,
+    /// in a write of its own. Inputs are locked once this returns. For a caller with no transport write to join.
+    @discardableResult
+    func scheduleTransactions(
+        _ requests: [CoinageScheduledTxRequest],
+        groupId: CoinageTxGroupId
+    ) async throws -> [CoinageTxId]
+
     /// A stream of a submitted entry's status: the current value, then every change. Lets a caller that
     /// must not report success until the chain has — offboarding an external payment — await a terminal
     /// outcome after a fire-and-forget submission.
@@ -98,17 +106,14 @@ public final class CoinageTxService: CoinageTxServicing {
 
         logger?.debug("Submitting \(requests.count) coinage request(s) groupId: \(String(describing: groupId))")
 
-        do {
-            return try await engine.submitTransactions(
+        return try await Self.mappingDurableErrors {
+            try await engine.submitTransactions(
                 domain: .coinage,
                 requests: requests.map { DurableTxRequest(builder: $0.builder, origin: $0.origin) },
                 groupId: groupId,
-                policies: requests.map(\.policy)
-            ) { [ledger] scope, ids in
-                try ledger.registerAssets(assets, for: ids, in: scope)
-            }
-        } catch let error as DurableTxError {
-            throw CoinageTxError(durableTxError: error) ?? error
+                policies: requests.map(\.policy),
+                onRegister: registerAssetsHook(assets)
+            )
         }
     }
 
@@ -118,24 +123,37 @@ public final class CoinageTxService: CoinageTxServicing {
         groupId: CoinageTxGroupId,
         joining scope: any DurableTxRegistrationScope
     ) throws -> [CoinageTxId] {
-        let assets = requests.map { CoinageAssetRegistration(inputs: $0.inputs, outputs: $0.outputs) }
-        guard assets.allSatisfy({ !$0.isEmpty }) else {
-            throw CoinageTxError.emptyEntry
-        }
+        let assets = try Self.scheduledAssets(requests)
 
         logger?.debug("Scheduling \(requests.count) coinage request(s) groupId: \(groupId)")
 
-        do {
-            return try engine.schedule(
+        return try Self.mappingDurableErrors {
+            try engine.schedule(
                 domain: .coinage,
                 groupId: groupId,
                 policies: requests.map(\.policy),
-                joining: scope
-            ) { [ledger] scope, ids in
-                try ledger.registerAssets(assets, for: ids, in: scope)
-            }
-        } catch let error as DurableTxError {
-            throw CoinageTxError(durableTxError: error) ?? error
+                joining: scope,
+                onRegister: registerAssetsHook(assets)
+            )
+        }
+    }
+
+    @discardableResult
+    public func scheduleTransactions(
+        _ requests: [CoinageScheduledTxRequest],
+        groupId: CoinageTxGroupId
+    ) async throws -> [CoinageTxId] {
+        let assets = try Self.scheduledAssets(requests)
+
+        logger?.debug("Scheduling \(requests.count) coinage request(s) groupId: \(groupId)")
+
+        return try await Self.mappingDurableErrors {
+            try await engine.schedule(
+                domain: .coinage,
+                groupId: groupId,
+                policies: requests.map(\.policy),
+                onRegister: registerAssetsHook(assets)
+            )
         }
     }
 
@@ -173,5 +191,35 @@ public final class CoinageTxService: CoinageTxServicing {
 
     public func releaseUncommittedHandoffs() async throws {
         try await ledger.releaseUncommittedHandoffs()
+    }
+}
+
+private extension CoinageTxService {
+    func registerAssetsHook(_ assets: [CoinageAssetRegistration]) -> DurableTxRegistrationHook {
+        { [ledger] scope, ids in try ledger.registerAssets(assets, for: ids, in: scope) }
+    }
+
+    static func mappingDurableErrors<T>(_ body: () throws -> T) throws -> T {
+        do {
+            return try body()
+        } catch let error as DurableTxError {
+            throw CoinageTxError(durableTxError: error) ?? error
+        }
+    }
+
+    static func mappingDurableErrors<T>(_ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch let error as DurableTxError {
+            throw CoinageTxError(durableTxError: error) ?? error
+        }
+    }
+
+    static func scheduledAssets(_ requests: [CoinageScheduledTxRequest]) throws -> [CoinageAssetRegistration] {
+        let assets = requests.map { CoinageAssetRegistration(inputs: $0.inputs, outputs: $0.outputs) }
+        guard assets.allSatisfy({ !$0.isEmpty }) else {
+            throw CoinageTxError.emptyEntry
+        }
+        return assets
     }
 }

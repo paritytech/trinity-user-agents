@@ -4,20 +4,20 @@ import Operation_iOS
 import Testing
 @testable import polkadot_app
 
-/// `UserDataModel59` adds the declarations of a product room to `CDChatRoomMetadata`: the configuration and its
+/// `UserDataModel60` adds the declarations of a product room to `CDChatRoomMetadata`: the configuration and its
 /// generation, the badge, the chat-list preview and the placeholder. A lightweight migration keeps every room and
 /// gives the new attributes their defaults.
-final class UserDataModel59MigrationTests {
-    private let directory = URL.temporaryDirectory.appending(path: "model59-\(UUID().uuidString)")
+final class UserDataModel60MigrationTests {
+    private let directory = URL.temporaryDirectory.appending(path: "model60-\(UUID().uuidString)")
     private let roomChatId = Chat.Id.chatExtension("product.dot", roomId: "lobby")
 
     deinit {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    @Test func aStoreOfModel58KeepsItsRoomsAndReadsNoDeclarations() throws {
+    @Test func aStoreOfModel59KeepsItsRoomsAndReadsNoDeclarations() throws {
         let storeURL = try makeStoreURL()
-        try writeV58Data(to: storeURL)
+        try writeV59Data(to: storeURL)
 
         let migrator = migrator(storeURL: storeURL)
         #expect(migrator.requiresMigration())
@@ -44,9 +44,9 @@ final class UserDataModel59MigrationTests {
 
     /// The facade opens the current model, so the app reads the declarations of a room through their mappers.
     @Test func theCurrentModelKeepsTheDeclarationsOfARoom() async throws {
-        #expect(UserStorageParams.modelVersion == .version59)
-        #expect(UserStorageVersion.version58.nextVersion() == .version59)
-        #expect(UserStorageVersion.version59.nextVersion() == nil)
+        #expect(UserStorageParams.modelVersion == .version60)
+        #expect(UserStorageVersion.version59.nextVersion() == .version60)
+        #expect(UserStorageVersion.version60.nextVersion() == nil)
 
         let facade = UserDataStorageTestFacade()
         let config = Chat.RoomConfig(productSource: true, reactionDetails: true)
@@ -88,7 +88,7 @@ final class UserDataModel59MigrationTests {
     }
 }
 
-private extension UserDataModel59MigrationTests {
+private extension UserDataModel60MigrationTests {
     func makeStoreURL() throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: UserStorageParams.databaseName)
@@ -158,9 +158,9 @@ private extension UserDataModel59MigrationTests {
         }
     }
 
-    /// A room with a message of model 58.
-    func writeV58Data(to storeURL: URL) throws {
-        try write(.version58, to: storeURL) { context in
+    /// A room with a message of model 59.
+    func writeV59Data(to storeURL: URL) throws {
+        try write(.version59, to: storeURL) { context in
             let chat = NSEntityDescription.insertNewObject(forEntityName: "CDChat", into: context)
             chat.setValue(self.roomChatId.rawRepresentation, forKey: "identifier")
             chat.setValue(Int16(1), forKey: "chatType")

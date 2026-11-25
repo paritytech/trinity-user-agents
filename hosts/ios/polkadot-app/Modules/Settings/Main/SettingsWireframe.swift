@@ -86,4 +86,9 @@ final class SettingsWireframe: SettingsWireframeProtocol {
 
         view.controller.navigationController?.pushViewController(controller, animated: true)
     }
+
+    func showPrivacyModeInfo(from view: (any SettingsViewProtocol)?) {
+        let controller = PaymentPrivacyInfoViewFactory.createView()
+        view?.controller.present(controller, animated: true)
+    }
 }

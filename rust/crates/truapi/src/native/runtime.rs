@@ -174,11 +174,11 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
-			pointer,
-			descriptor,
-			*allows_reserved_values,
+			&pointer,
+			&descriptor,
+			reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
@@ -701,17 +701,17 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// The stack the runtime runs: its verified descriptor, whether it is
-	/// stale or has shut down, and whether a newer copy waits for the next
-	/// start.
+	/// stale or has shut down, whether a newer copy waits for the next
+	/// start, and where its chains answered differently from the descriptor.
 	pub fn stack_status(&self) -> StackStatus {
 		self.stack_refresh.status()
 	}
 
 	/// Fetch the stack's descriptor now instead of when the copy is an hour
-	/// old, as when the app returns to the foreground or a chain answers with
-	/// another genesis hash. Returns at once; the result arrives through
-	/// [`NativeStackCallbacks::stack_changed`]. Nothing is fetched until
-	/// [`Self::set_stack_callbacks`] installed the callbacks.
+	/// old, as when the app returns to the foreground. Returns at once; the
+	/// result arrives through [`NativeStackCallbacks::stack_changed`].
+	/// Nothing is fetched until [`Self::set_stack_callbacks`] installed the
+	/// callbacks.
 	pub fn refresh_stack(&self) {
 		self.stack_refresh.refresh_now();
 	}
