@@ -81,7 +81,7 @@ impl Tracking {
 	/// keys that changed. A failure is logged and skipped, because the watch
 	/// starts again or reports the same keys again.
 	fn watch_batch(&self, batch: Vec<ItemKey>) -> BoxStream<'static, HoldingChanges> {
-		let owners = batch.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners = batch.iter().map(|key| (AccountId32::from(*key),)).collect();
 		let storage = self.storage.clone();
 		storage
 			.watch_entry_changes(self.genesis, WatchedHead::Best, nfts_by_owner(), owners)

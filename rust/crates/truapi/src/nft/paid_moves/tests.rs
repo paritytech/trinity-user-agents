@@ -138,7 +138,7 @@ fn an_exhausted_item_moves_paid_after_a_claim_into_its_key() {
 #[test]
 fn a_paid_move_waits_for_the_claim_already_active_in_its_key() {
 	let purses = purses_with_used_moves(&[TEST_MAXIMUM_MOVES]);
-	let active = block_on(purses.claims.claim(AccountId32(purses.held[0].0))).unwrap();
+	let active = block_on(purses.claims.claim(purses.held[0].into())).unwrap();
 
 	rebalance(&purses, &purses.held).unwrap();
 

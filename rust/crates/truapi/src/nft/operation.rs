@@ -15,7 +15,7 @@ use super::{
 	keys::{ItemKey, ItemKeyDeriver},
 	paid_moves::{MovePayments, PaidMoveError, UnplannedSource},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
@@ -162,40 +162,39 @@ pub fn plan_transfers(
 	keys: DestinationKeys<'_>,
 	payments: &MovePayments,
 ) -> Result<Vec<DeferredSubmission>, StartOperationError> {
-	validate_operation_unused(tx, &request.operation)?;
-	let sources = idle_items::<StartOperationError>(tx, request.from, &request.transfer.inputs())?;
+	let sources = validated_transfer_sources(tx, request)?;
 	let destinations = match request.transfer {
 		TransferType::Local { into, .. } => allocate_destinations(tx, into, sources.len(), keys)?,
 		TransferType::Foreign { into, .. } => vec![into],
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	let submission = |(source, destination): (IdleItem, ItemKey)| {
-		payments.derived_move(source.key, source.slot, destination, give_up_after)
-	};
-	let submissions = sources.into_iter().zip(destinations).map(submission);
-	Ok(submissions.collect::<Result<_, UnplannedSource>>()?)
+	sources
+		.into_iter()
+		.zip(destinations)
+		.map(|(IdleItem { key: source, slot, .. }, destination)| {
+			let payment = payments.payment_of(&source)?;
+			let params = TransferParams {
+				source,
+				signer: TransferSigner::Derived(slot),
+				destination,
+				submitted_attempt: None,
+				give_up_after,
+				mode: payment.transfer_mode(),
+			};
+			let depends_on = payment.transaction_dependencies();
+			Ok(DeferredSubmission { params: params.into(), depends_on })
+		})
+		.collect()
 }
 
-/// Each item of `request` with the fee-less moves its NFT used, read before
-/// the registration write, or the refusal [`validate_can_start`] answers.
-pub fn read_source_moves(
+/// The items `request` moves, idle in its purse, or a refusal: its operation
+/// is already registered or one of its items is not idle in its purse.
+pub fn validated_transfer_sources(
 	conn: &Connection,
 	request: &TransferRequest,
-) -> Result<Vec<(ItemKey, Option<u16>)>, StartOperationError> {
+) -> Result<Vec<IdleItem>, StartOperationError> {
 	validate_operation_unused(conn, &request.operation)?;
-	let sources =
-		idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs())?;
-	Ok(sources.into_iter().map(|source| (source.key, source.moves)).collect())
-}
-
-/// Refuses `request` when its operation is already registered or one of its
-/// items is not idle in its purse.
-pub fn validate_can_start(
-	conn: &Connection,
-	request: &TransferRequest,
-) -> Result<(), StartOperationError> {
-	validate_operation_unused(conn, &request.operation)?;
-	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs()).map(|_| ())
+	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs())
 }
 
 /// Refuses `operation` when it is already registered.

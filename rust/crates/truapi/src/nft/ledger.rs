@@ -17,16 +17,15 @@ use super::{
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
-		latest_per_source, nft_domain, plan_transfers, progress_of, read_source_moves,
-		record_inputs, validate_can_start,
+		latest_per_source, nft_domain, plan_transfers, progress_of, record_inputs,
+		validated_transfer_sources,
 	},
-	paid_moves::{MovePayments, PaidMoveError, claim_paid_sources, transfer_modes},
+	paid_moves::{MovePayments, PaidMoveError, fund_paid_transfers_senders, transfer_modes},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims, record_reclaim_inputs},
 	recovery::NftRecovery,
 	returns::{
-		ReturnRequest, StartedReturn, plan_returns, read_return_items, read_returned_moves,
-		validated_return_items,
+		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
 	},
 	scarcity::{DestinationKind, MoveBudget, MoveBudgetSource},
 };
@@ -170,7 +169,7 @@ impl NftLedger {
 			return Err(RegistrationError::Hook(StartOperationError::NoItems));
 		}
 		let payments =
-			self.plan_transfer_payments(&request).await.map_err(RegistrationError::Hook)?;
+			self.prepare_transfer_fee_payment(&request).await.map_err(RegistrationError::Hook)?;
 		let installation = self.current_installation().await?;
 		let planned = self.planned_transfers(request, installation, payments);
 		self.durable
@@ -187,7 +186,9 @@ impl NftLedger {
 		request: &TransferRequest,
 	) -> Result<(), StartOperationError> {
 		let request = request.clone();
-		self.db.read(move |conn| Ok(validate_can_start(conn, &request))).await?
+		self.db
+			.read(move |conn| Ok(validated_transfer_sources(conn, &request).map(|_| ())))
+			.await?
 	}
 
 	/// The installation new keys are allocated under now.
@@ -214,39 +215,43 @@ impl NftLedger {
 	}
 
 	/// How each item of `request` pays for its move, with the PGAS claims of
-	/// the paid ones registered.
-	async fn plan_transfer_payments(
+	/// the paid ones registered. Refuses, before registering any claim, a
+	/// request that [`Self::check_transfers_can_start`] refuses.
+	async fn prepare_transfer_fee_payment(
 		&self,
 		request: &TransferRequest,
 	) -> Result<MovePayments, StartOperationError> {
 		let read_request = request.clone();
-		let sources =
-			self.db.read(move |conn| Ok(read_source_moves(conn, &read_request))).await??;
-		self.plan_move_payments(sources, DestinationKind::Holder).await
+		let items =
+			self.db.read(move |conn| Ok(validated_transfer_sources(conn, &read_request))).await??;
+		let sources = items.iter().map(|item| (item.key, item.moves)).collect();
+		self.prepare_fee_payment(sources, DestinationKind::Holder).await
 	}
 
 	/// How each item a return of `request` moves pays for its move back to
 	/// its cheque key, with the PGAS claims of the paid ones registered.
-	async fn plan_return_payments(
+	/// Refuses, before registering any claim, a return that may not start.
+	async fn prepare_return_fee_payment(
 		&self,
 		request: &ReturnRequest,
 	) -> Result<MovePayments, StartOperationError> {
 		let read_request = request.clone();
-		let sources =
-			self.db.read(move |conn| Ok(read_returned_moves(conn, &read_request))).await??;
-		self.plan_move_payments(sources, DestinationKind::ChequeKey).await
+		let items =
+			self.db.read(move |conn| Ok(validated_return_items(conn, &read_request))).await??;
+		let sources = items.available.iter().map(|item| (item.key, item.moves)).collect();
+		self.prepare_fee_payment(sources, DestinationKind::ChequeKey).await
 	}
 
 	/// How each of `sources` pays for its move to a `destination`, with the
 	/// PGAS claims of the paid ones registered, each in its own write.
-	async fn plan_move_payments(
+	async fn prepare_fee_payment(
 		&self,
 		sources: Vec<(ItemKey, Option<u16>)>,
 		destination: DestinationKind,
 	) -> Result<MovePayments, StartOperationError> {
 		let budget = self.budget.current_budget().await.map_err(PaidMoveError::Budget)?;
 		let modes = transfer_modes(&budget, &sources, destination)?;
-		Ok(claim_paid_sources(&self.claims, modes).await?)
+		Ok(fund_paid_transfers_senders(&self.claims, modes).await?)
 	}
 
 	/// A durable request of the operation `group` whose transfers `plan` works
@@ -326,7 +331,7 @@ impl NftLedger {
 		request: ReturnRequest,
 	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
 		let payments =
-			self.plan_return_payments(&request).await.map_err(RegistrationError::Hook)?;
+			self.prepare_return_fee_payment(&request).await.map_err(RegistrationError::Hook)?;
 		let group = request.operation.group().clone();
 		let import = request.import.clone();
 		let planned = DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {

@@ -5,6 +5,7 @@ use std::sync::Weak;
 
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::Keypair;
+use subxt::utils::AccountId32;
 use zeroize::Zeroizing;
 
 use super::purse::PurseId;
@@ -27,6 +28,12 @@ pub struct ItemIndex(pub u32);
 /// Public key of one item. Its secret is derived again when it is needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct ItemKey(pub [u8; 32]);
+
+impl From<ItemKey> for AccountId32 {
+	fn from(key: ItemKey) -> Self {
+		Self(key.0)
+	}
+}
 
 /// Where an item key sits in the derivation tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]

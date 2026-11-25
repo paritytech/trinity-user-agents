@@ -241,7 +241,7 @@ impl CollectionOwner {
 	}
 
 	async fn instances_held_by(&self, keys: &[ItemKey]) -> Vec<u64> {
-		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners: Vec<_> = keys.iter().map(|key| (AccountId32::from(*key),)).collect();
 		let address = subxt::dynamic::storage::<(AccountId32,), Value>("Scarcity", "NftsByOwner");
 		let best = self.chain.heads(self.genesis).await.expect("heads").best.hash;
 		let storage: &dyn WatchedStorage = &self.chain;

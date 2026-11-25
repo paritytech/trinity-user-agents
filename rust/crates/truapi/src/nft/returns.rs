@@ -11,7 +11,7 @@ use super::{
 	operation::{
 		OperationKey, StartOperationError, TransferProgress, TransferState, nft_domain, progress_of,
 	},
-	paid_moves::{MovePayments, UnplannedSource},
+	paid_moves::MovePayments,
 	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 };
 use crate::{
@@ -100,21 +100,23 @@ pub fn plan_returns(
 ) -> Result<Vec<DeferredSubmission>, StartOperationError> {
 	let items = validated_return_items(tx, request)?;
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	let submission = |item: &ReturnableItem| {
-		payments.derived_move(item.key, item.slot, item.origin, give_up_after)
-	};
-	Ok(items.available.iter().map(submission).collect::<Result<_, UnplannedSource>>()?)
-}
-
-/// Each item a return of `request` would move, with the fee-less moves its
-/// NFT used, read before the registration write, or the refusal
-/// [`plan_returns`] answers.
-pub fn read_returned_moves(
-	conn: &Connection,
-	request: &ReturnRequest,
-) -> Result<Vec<(ItemKey, Option<u16>)>, StartOperationError> {
-	let items = validated_return_items(conn, request)?;
-	Ok(items.available.iter().map(|item| (item.key, item.moves)).collect())
+	items
+		.available
+		.iter()
+		.map(|item| {
+			let payment = payments.payment_of(&item.key)?;
+			let params = TransferParams {
+				source: item.key,
+				signer: TransferSigner::Derived(item.slot),
+				destination: item.origin,
+				submitted_attempt: None,
+				give_up_after,
+				mode: payment.transfer_mode(),
+			};
+			let depends_on = payment.transaction_dependencies();
+			Ok(DeferredSubmission { params: params.into(), depends_on })
+		})
+		.collect()
 }
 
 /// Reads the items of `request` and checks that the return may start, as

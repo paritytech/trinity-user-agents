@@ -139,12 +139,12 @@ impl ScarcityChain for ScarcityStorage {
 		at: H256,
 		keys: &[ItemKey],
 	) -> Result<Vec<Option<ScarcityNft>>, StorageWatchError> {
-		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners: Vec<_> = keys.iter().map(|key| (AccountId32::from(*key),)).collect();
 		self.storage.read_entries_at(self.genesis, at, &nfts_by_owner(), &owners).await
 	}
 
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
-		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners: Vec<_> = keys.iter().map(|key| (AccountId32::from(*key),)).collect();
 		let (locks_entry, time_entry) = (locked_entry(), timestamp_now_entry());
 		let read_locks = self.storage.read_entries_at(self.genesis, at, &locks_entry, &owners);
 		let read_now = self.storage.read_entries_at(self.genesis, at, &time_entry, &[()]);

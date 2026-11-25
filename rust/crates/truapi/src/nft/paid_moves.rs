@@ -4,16 +4,14 @@
 
 use std::collections::HashMap;
 
-use subxt::utils::AccountId32;
-
 use super::{
-	keys::{ItemKey, ItemSlot},
+	keys::ItemKey,
 	operation::StartOperationError,
-	scarcity::{DestinationKind, MoveBudget, TransferMode, TransferParams, TransferSigner},
+	scarcity::{DestinationKind, MoveBudget, TransferMode},
 };
 use crate::{
 	chain::StorageWatchError,
-	durable::{DeferredSubmission, DurableTxId, RegistrationError, TransactionDependency},
+	durable::{DurableTxId, RegistrationError, TransactionDependency},
 	pgas_claims::{PgasClaimError, PgasClaims},
 };
 
@@ -27,28 +25,6 @@ impl MovePayments {
 	/// which a concurrent spend can cause when the write picks its sources.
 	pub fn payment_of(&self, source: &ItemKey) -> Result<&MovePayment, UnplannedSource> {
 		self.by_source.get(source).ok_or(UnplannedSource(*source))
-	}
-
-	/// The move of whatever `source`, a key we derive at `slot`, holds to
-	/// `destination`, given up at `give_up_after`, and paid as planned for
-	/// `source`.
-	pub fn derived_move(
-		&self,
-		source: ItemKey,
-		slot: ItemSlot,
-		destination: ItemKey,
-		give_up_after: u64,
-	) -> Result<DeferredSubmission, UnplannedSource> {
-		let payment = self.payment_of(&source)?;
-		let params = TransferParams {
-			source,
-			signer: TransferSigner::Derived(slot),
-			destination,
-			submitted_attempt: None,
-			give_up_after,
-			mode: payment.transfer_mode(),
-		};
-		Ok(payment.submission(params))
 	}
 }
 
@@ -72,20 +48,20 @@ impl MovePayment {
 		}
 	}
 
-	/// The move `params` describes, waiting for its claim when it is paid. A
-	/// failed claim releases it all the same, and its policy gives up.
-	pub fn submission(&self, params: TransferParams) -> DeferredSubmission {
-		let depends_on = match self {
+	/// The transactions the move waits for: none when it is fee-less, its
+	/// PGAS claim when it is paid. A failed claim releases the move all the
+	/// same, and its policy gives up.
+	pub fn transaction_dependencies(&self) -> Vec<TransactionDependency> {
+		match self {
 			Self::FeeLess => vec![],
 			Self::PaidByClaim { claim } => vec![TransactionDependency::new(*claim)],
-		};
-		DeferredSubmission { params: params.into(), depends_on }
+		}
 	}
 }
 
 /// A source the registration write picked that was not planned before it.
 #[derive(Debug, thiserror::Error)]
-#[error("item {} was not planned before its registration", hex::encode(.0.0))]
+#[error("an item was not planned before its registration")]
 pub struct UnplannedSource(pub ItemKey);
 
 /// Why the moves of a registration could not be paid for. Nothing of the
@@ -108,16 +84,18 @@ pub fn transfer_modes(
 	sources: &[(ItemKey, Option<u16>)],
 	destination: DestinationKind,
 ) -> Result<Vec<(ItemKey, TransferMode)>, StartOperationError> {
-	let mode_of = |&(source, moves): &(ItemKey, Option<u16>)| {
-		let moves = moves.ok_or(StartOperationError::ItemUnavailable(source))?;
-		Ok((source, budget.transfer_mode(moves, destination)))
-	};
-	sources.iter().map(mode_of).collect()
+	sources
+		.iter()
+		.map(|&(source, moves)| {
+			let moves = moves.ok_or(StartOperationError::ItemUnavailable(source))?;
+			Ok((source, budget.transfer_mode(moves, destination)))
+		})
+		.collect()
 }
 
 /// Registers a PGAS claim into each source `modes` makes paid, or reuses the
 /// claim already active there, and returns how every source pays.
-pub async fn claim_paid_sources(
+pub async fn fund_paid_transfers_senders(
 	claims: &PgasClaims,
 	modes: Vec<(ItemKey, TransferMode)>,
 ) -> Result<MovePayments, PaidMoveError> {
@@ -140,7 +118,7 @@ async fn new_or_active_claim(
 	claims: &PgasClaims,
 	source: ItemKey,
 ) -> Result<DurableTxId, PaidMoveError> {
-	match claims.claim(AccountId32(source.0)).await {
+	match claims.claim(source.into()).await {
 		Ok(claim) | Err(RegistrationError::Hook(PgasClaimError::AlreadyClaiming(claim))) => {
 			Ok(claim)
 		},

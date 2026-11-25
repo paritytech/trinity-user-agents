@@ -344,6 +344,20 @@ fn a_settled_deposit_is_refunded_under_its_refund_key() {
 	);
 }
 
+/// Until the tracker sees what the deposited keys hold, the host cannot tell
+/// whether moving them back is fee-less or paid, so the refund answers that
+/// the items are unavailable for now rather than failing as the host's error.
+#[test]
+fn a_refund_before_the_tracker_sees_the_deposited_items_answers_item_unavailable() {
+	let (purses, cheque) = ephemeral_cheque(1);
+	deposit(&purses.host, cheque.clone(), TICKETS).unwrap();
+	finalize_waiting_moves(&purses);
+
+	let refused = refund(&purses.host, &cheque);
+
+	assert_eq!(refused, Err(refund_refusal(v01::NftPurseRefundError::ItemUnavailable)));
+}
+
 /// A refund must not race the deposit's own moves, which could still land.
 #[test]
 fn a_refund_while_the_deposit_runs_answers_deposit_in_progress() {

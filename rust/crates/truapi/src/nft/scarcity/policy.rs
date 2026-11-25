@@ -137,9 +137,9 @@ struct PlannedTransfer {
 impl PlannedTransfer {
 	/// Whether a transaction it waited for, its PGAS claim, failed for good.
 	fn has_failed_dependency(&self) -> bool {
-		let failed =
-			|record: &DependencyStatusRecord| record.status == DependencyStatus::IgnoredFailure;
-		self.dependencies.iter().any(failed)
+		self.dependencies
+			.iter()
+			.any(|record| record.status == DependencyStatus::IgnoredFailure)
 	}
 }
 
