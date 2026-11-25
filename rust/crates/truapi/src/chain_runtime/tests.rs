@@ -3149,12 +3149,24 @@ fn a_connection_no_caller_waits_for_is_handed_to_the_next_caller() {
 	let given_up = runtime.rpc_client("test", &named).now_or_never();
 	crate::test_support::wait_until(|| timer.sleeps() == 1, "the check pauses for the halt");
 	timer.advance(chain_halt::halt_schedule()[0]);
-	crate::test_support::wait_until(|| !heard.heard().is_empty(), "the chain names itself");
+	let ready = || {
+		let scopes = runtime.connections.lock().unwrap();
+		matches!(
+			scopes[&ConnectionScope::Core].get(&encode_hex(&named)),
+			Some(ConnectionEntry::Ready(_))
+		)
+	};
+	crate::test_support::wait_until(ready, "the abandoned setup leaves its connection ready");
 	let next = finish(runtime.rpc_client("test", &named));
 
 	assert_eq!(
-		(given_up.is_none(), next.is_ok(), provider.connect_calls.load(Ordering::SeqCst)),
-		(true, true, 1)
+		(
+			given_up.is_none(),
+			next.is_ok(),
+			heard.heard().len(),
+			provider.connect_calls.load(Ordering::SeqCst),
+		),
+		(true, true, 1, 1)
 	);
 }
 
