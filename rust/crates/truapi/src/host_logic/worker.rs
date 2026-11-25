@@ -73,8 +73,8 @@ struct Demand {
 	/// take their own, so the first one starts the worker and dropping the
 	/// last one stops it.
 	count: usize,
-	/// The latest attempt started for these holds, which tells its reports
-	/// from those of an attempt it replaced.
+	/// ID of the latest attempt started for these holds. Reports from older
+	/// attempts are ignored.
 	attempt_id: u64,
 }
 
