@@ -31,7 +31,6 @@ const BOT_ID = "truapi-diagnosis-bot";
 const HOST_STORED_ROOM: ChatRoomConfig = {
   productSource: false,
   reactionDetails: false,
-  reportSeen: false,
 };
 // A one-pixel PNG: the icon rules of `createRoom` accept an inline image.
 const DIAGNOSIS_ROOM_ICON =
@@ -240,12 +239,11 @@ async function runRoomDeclarationProbe(): Promise<void> {
   // Set while the room exists, so a failed run can remove it.
   let roomId: string | undefined;
   try {
-    // These values are not the defaults, so a host that ignores the
-    // declaration keeps other values. No call reads the config back.
+    // The default configuration, which every host keeps, so a host that
+    // refuses other configurations still runs the calls of the probe.
     roomId = await ensureRoom(
       `${diagnosticRoomSource}-v2`,
       `TrUAPI Diagnosis v2 ${runId}`,
-      { productSource: false, reactionDetails: true, reportSeen: true },
     );
 
     const metadata = await chat.setRoomMetadata({
@@ -356,7 +354,8 @@ async function runRoomDeclarationProbe(): Promise<void> {
       diagnosis.fail(id, error);
     }
   } finally {
-    // A failed run removes its room, so no diagnosis room stays in the chat list.
+    // On a host that serves `deleteRoom`, a failed run removes its room, so no
+    // diagnosis room stays in the chat list.
     if (roomId) await chat.deleteRoom({ roomId });
   }
 }
@@ -393,12 +392,13 @@ async function runBotRegistrationProbe(): Promise<void> {
   }
 }
 
-async function ensureRoom(
-  roomIdSource: string,
-  name: string,
-  config: ChatRoomConfig = HOST_STORED_ROOM,
-): Promise<string> {
-  const result = await chat.createRoom({ roomIdSource, name, icon: "", config });
+async function ensureRoom(roomIdSource: string, name: string): Promise<string> {
+  const result = await chat.createRoom({
+    roomIdSource,
+    name,
+    icon: "",
+    config: HOST_STORED_ROOM,
+  });
   if (result.isErr()) {
     throw new Error(
       `Unable to create the room ${roomIdSource}: ${JSON.stringify(result.error)}`,

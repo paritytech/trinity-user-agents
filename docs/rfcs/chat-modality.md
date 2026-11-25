@@ -189,7 +189,8 @@ This is the core of v2. The Product can either rely on the Host's built-in messa
 #### 4.1 Types
 
 ```rust
-MessageId = UUID
+// Unique in the room.
+MessageId = String
 ChatParticipantId = String
 Timestamp = u64
 
@@ -236,6 +237,9 @@ struct MessageReaction {
 struct AggregatedReaction {
     count: u32,
     reacted_by_me: bool,
+    // Another participant reacted with this emoji and the user has not seen
+    // that reaction yet.
+    unseen: bool,
 }
 
 enum MessageStatus {

@@ -86,12 +86,13 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
     func listRooms() async throws -> [ChatRoom] {
         logger.debug("[truapi:chat-bridge] listRooms")
-        // An empty result matches what the core publishes on failure anyway
-        // (`list_rooms().unwrap_or_default()`).
+        // The core checks the room of each room change against this list, so a
+        // stream that ends before it lists the rooms is a failure: an empty list
+        // would make the core answer `UnknownRoom` for a room that exists.
         for try await rooms in try await chatMessaging.subscribeRooms() {
             return rooms.map { $0.toChatRoom() }
         }
-        return []
+        throw HostRejection.Rejected(reason: "the chat room list ended before it listed the rooms")
     }
 }
 

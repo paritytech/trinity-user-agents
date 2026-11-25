@@ -28,7 +28,11 @@ import { scale } from "@parity/truapi";
 
 import type {
   ChatMessageContent,
+  ChatFeedUpdate,
   ChatRoom,
+  ChatRoomConfig,
+  ChatRoomMetadata,
+  ChatRoomPreview,
   GenericError,
   HostChatListSubscribeItem,
   HostChatPostMessageResponse,
@@ -363,6 +367,36 @@ export interface ChatMessageRecord {
   payload: ChatMessageContent;
 }
 
+/** One feed update that the product sent through the mock. */
+export interface ChatFeedRecord {
+  /** The update. */
+  update: ChatFeedUpdate;
+  /**
+   * The host had to store the update, because it keeps the messages of the
+   * room. Otherwise it only shows the update.
+   */
+  persist: boolean;
+}
+
+/**
+ * What the product declared for one chat room, as the Rust mock keeps it.
+ *
+ * The mock does not tell products apart: it keeps every room by its id alone.
+ */
+export interface ChatRoomDeclarations {
+  /**
+   * The configuration of the last `createChatRoom`, or undefined for a room
+   * the product did not create through the mock.
+   */
+  config?: ChatRoomConfig;
+  /** The last metadata from `setChatRoomMetadata`. */
+  metadata?: ChatRoomMetadata;
+  /** The last chat list preview since the last change of `productSource`. */
+  preview?: ChatRoomPreview;
+  /** Every feed update since the last change of `productSource`, in order. */
+  feed: ChatFeedRecord[];
+}
+
 /** State of the mock's chain connection, as the host sees it. */
 export type ChainStatus = "Idle" | "Connected" | "Disconnected";
 
@@ -595,6 +629,11 @@ export interface MockHost {
   getChatBots(): HostChatRegisterBotRequest[];
   /** Messages the product posted, with the ids the mock assigned. */
   getChatMessageLog(): ChatMessageRecord[];
+  /**
+   * What the product declared for `roomId`, or undefined for a room it
+   * declared nothing for or deleted.
+   */
+  chatRoomDeclarations(roomId: string): ChatRoomDeclarations | undefined;
   /**
    * Product-scoped storage the core has written, keyed without the internal
    * namespace prefix.
@@ -925,8 +964,25 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const permissionLog: PermissionLogEntry[] = [];
   const permissionDecisions = new Map<string, boolean>();
   const chatRooms = new Map<string, ChatRoom>();
+  const chatDeclarations = new Map<string, ChatRoomDeclarations>();
+  // A room that is not in the room list, for example one deleted while the
+  // call was on its way, keeps no declarations.
+  const declareChatRoom = (
+    roomId: string,
+    change: (room: ChatRoomDeclarations) => void,
+  ): void => {
+    if (faults.chatError) throw new Error(faults.chatError);
+    if (!chatRooms.has(roomId)) return;
+    const room = chatDeclarations.get(roomId) ?? { feed: [] };
+    change(room);
+    chatDeclarations.set(roomId, room);
+  };
   const chatBots = new Map<string, HostChatRegisterBotRequest>();
   const chatMessages: ChatMessageRecord[] = [];
+  const dropChatMessages = (roomId: string): void => {
+    const kept = chatMessages.filter((message) => message.roomId !== roomId);
+    chatMessages.splice(0, chatMessages.length, ...kept);
+  };
   // Ids start at 1, not 0: the id is what the product cancels by, and a
   // product that treats 0 as "no id" cannot cancel the first notification it
   // ever schedules.
@@ -1351,17 +1407,31 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     chat: {
-      async createChatRoom(_product, roomId) {
+      async createChatRoom(_product, roomId, request) {
         if (faults.chatError) throw new Error(faults.chatError);
-        if (chatRooms.has(roomId)) return "Exists";
-        chatRooms.set(roomId, {
-          roomId,
-          // A product that creates a room hosts it; a product reaching a room
-          // as a bot registers the bot instead.
-          participatingAs: "RoomHost",
-        });
-        publishChatRooms();
-        return "New";
+        const status = chatRooms.has(roomId) ? "Exists" : "New";
+        if (status === "New") {
+          chatRooms.set(roomId, {
+            roomId,
+            // A product that creates a room hosts it; a product reaching a room
+            // as a bot registers the bot instead.
+            participatingAs: "RoomHost",
+          });
+        }
+        // The mock keeps every configuration, in the same call that creates
+        // the room, for a new room and for a room that exists. A change of
+        // `productSource` drops what the room holds, as on the Rust mock.
+        const room = chatDeclarations.get(roomId) ?? { feed: [] };
+        const productSource = room.config?.productSource ?? false;
+        if (productSource !== request.config.productSource) {
+          room.feed = [];
+          delete room.preview;
+          dropChatMessages(roomId);
+        }
+        room.config = structuredClone(request.config);
+        chatDeclarations.set(roomId, room);
+        if (status === "New") publishChatRooms();
+        return status;
       },
       async registerChatBot(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
@@ -1390,6 +1460,31 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async setChatRoomFooter() {
         if (faults.chatError) throw new Error(faults.chatError);
       },
+      async setChatRoomMetadata(_product, request) {
+        declareChatRoom(request.roomId, (room) => {
+          room.metadata = structuredClone(request.metadata);
+        });
+        return "Applied";
+      },
+      async setChatRoomPreview(_product, request) {
+        declareChatRoom(request.roomId, (room) => {
+          room.preview = structuredClone(request.preview);
+        });
+        return "Applied";
+      },
+      async deleteChatRoom(_product, request) {
+        if (faults.chatError) throw new Error(faults.chatError);
+        chatDeclarations.delete(request.roomId);
+        dropChatMessages(request.roomId);
+        if (chatRooms.delete(request.roomId)) publishChatRooms();
+        return "Applied";
+      },
+      async updateChatFeed(_product, request, persist) {
+        declareChatRoom(request.roomId, (room) => {
+          room.feed.push({ update: structuredClone(request.update), persist });
+        });
+        return "Applied";
+      },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
         // reports it too rather than handing back a stream that looks healthy
@@ -1407,6 +1502,18 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
             return () => chatRoomSubscribers.delete(push);
           },
         );
+      },
+      async chatRoom(_product, roomId) {
+        if (faults.chatError) throw new Error(faults.chatError);
+        const room = chatRooms.get(roomId);
+        if (!room) return undefined;
+        return {
+          participatingAs: room.participatingAs,
+          config: structuredClone(chatDeclarations.get(roomId)?.config) ?? {
+            productSource: false,
+            reactionDetails: false,
+          },
+        };
       },
     },
 
@@ -1591,6 +1698,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getChatRooms: () => byKey(chatRooms),
     getChatBots: () => byKey(chatBots),
     getChatMessageLog: () => [...chatMessages],
+    // A copy, as the Rust mock clones: a test that keeps it does not see
+    // later calls, and cannot change the mock through it.
+    chatRoomDeclarations: (roomId) =>
+      structuredClone(chatDeclarations.get(roomId)),
     seedPreimage(value) {
       const key = preimageKey(value);
       const id = hex(key);
@@ -1658,6 +1769,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     clearStorage: () => storage.clear(),
     clearChatState: () => {
       chatRooms.clear();
+      chatDeclarations.clear();
       chatBots.clear();
       chatMessages.length = 0;
       // Live subscriptions stay open and see the emptied list, as on Rust.

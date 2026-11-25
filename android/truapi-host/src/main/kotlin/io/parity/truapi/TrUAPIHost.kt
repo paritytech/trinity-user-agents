@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
 import uniffi.truapi.NativeMaterialsObserver
@@ -44,8 +45,14 @@ import uniffi.truapi.NativeMaterialsResolution
 import uniffi.truapi.ResolvedMaterials
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomChangeOutcome
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
+import uniffi.truapi.ChatRoomPreview
+import uniffi.truapi.ChatRoomState
 import uniffi.truapi.HostChatActionSubscribeItem
+import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
@@ -485,9 +492,52 @@ interface ChatHostBridge {
      * client, the id that the product gave. The core has bounded and normalized
      * these arguments and screened the icon scheme; escaping them for the
      * surface that renders them is still the host's job.
+     *
+     * A room id is unique only among the rooms of one product, so the host
+     * keeps each room under the product and the id. A product built against
+     * the earlier client chooses its room ids freely. The host never changes a
+     * room that the product does not host: a room of another product with the
+     * same id, or a room that the product takes part in as a bot.
+     *
+     * The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+     * `data:` URL with an image type. Only a product built against the earlier
+     * client sends an `https` URL, and the core has not checked the payload of
+     * its `data:` URL. The `data:` URL of any other product has a Base64
+     * payload that the core decoded.
+     *
+     * The default four-argument [createRoom] calls it for a room with
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG], so a host that keeps only the default
+     * configuration implements this one. A host that implements the
+     * four-argument [createRoom] needs nothing here. The default refuses the
+     * room.
      */
     @Throws(HostRejection::class)
-    suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
+    suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus =
+        throw HostRejection.Rejected("this host does not create chat rooms")
+
+    /**
+     * Create or resolve a room as the three-argument [createRoom] does, and
+     * keep [config] for it in the same step, across restarts, for a new room
+     * and for a room that exists. A change of `productSource` discards the
+     * stored messages or the cached pages of the room, and its preview.
+     *
+     * Throw [HostChatCreateRoomException.Unknown] for a configuration the
+     * host cannot keep, before it creates or changes anything. The default
+     * keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A host that keeps other
+     * configurations also overrides [room] to answer them.
+     */
+    @Throws(HostChatCreateRoomException::class)
+    suspend fun createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus {
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) {
+            throw HostChatCreateRoomException.Unknown("this host keeps only the default room configuration")
+        }
+        return createRoom(roomId, name, icon)
+    }
 
     /**
      * Register or resolve a native product Chat bot. The core has bounded and
@@ -518,15 +568,95 @@ interface ChatHostBridge {
 
     /**
      * Set what a product's native Chat room shows below its messages, and keep
-     * it until the product sets another.
+     * it until the product sets another. A room without a footer shows the
+     * text input.
      */
     @Throws(HostRejection::class)
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
-    /** Return the current product-scoped native Chat rooms. */
+    /**
+     * Return the current product-scoped native Chat rooms. The default [room]
+     * reads the room of each change to a room from this list, so a host that
+     * cannot read its rooms throws: an empty list makes the core answer
+     * `UnknownRoom` for a room that exists.
+     */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
+
+    // The members below have defaults for a host that does not serve the Chat
+    // Extension v2 requests yet. The product receives `Unsupported` for each
+    // request, with one exception: the host creates a room with the
+    // configuration that keeps the behaviour that it serves, and refuses any
+    // other before it creates anything.
+
+    /**
+     * Return what the host keeps for one room of the product: whether the
+     * product hosts it or takes part as a bot, and the configuration of its
+     * last `createRoom`. The core reads it once before each change to a room.
+     * The host looks the room up among the rooms of the product only. Answer
+     * `null` for a room that the product never created, and throw when the
+     * host cannot read its rooms. The default finds the room in [listRooms]
+     * and pairs it with [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A host that serves a
+     * Chat Extension v2 request implements [room] with a read of one room,
+     * because the default reads the whole room list for each change to a
+     * room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun room(roomId: String): ChatRoomState? =
+        listRooms()
+            .firstOrNull { it.roomId == roomId }
+            ?.let { ChatRoomState(it.participatingAs, HOST_DEFAULT_CHAT_ROOM_CONFIG) }
+
+    /**
+     * Replace the name, description, icon and empty-room text of a room, and
+     * answer [ChatRoomChangeOutcome.APPLIED]. An icon of `null` keeps the
+     * icon, and an empty icon removes it. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
+
+    /**
+     * Replace how a room shows in the chat list, and answer
+     * [ChatRoomChangeOutcome.APPLIED]. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
+
+    /**
+     * Delete a room with its messages, cache and declarations, close its
+     * screen, and answer [ChatRoomChangeOutcome.APPLIED]. A room that does not
+     * exist is not an error. The core has not checked that the product created
+     * the room, so the host deletes only a room that the product hosts, and
+     * does nothing for any other id. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     */
+    @Throws(HostRejection::class)
+    suspend fun deleteRoom(roomId: String): ChatRoomChangeOutcome = ChatRoomChangeOutcome.UNSUPPORTED
+
+    /**
+     * Apply one change to the messages of a room, and answer
+     * [ChatRoomChangeOutcome.APPLIED]. With [persist] the host stores the
+     * change. Without it the host applies the change only to an open room
+     * screen and to the chat list preview. An exception that it throws
+     * reaches the product as `HostFailure`. The default answers
+     * [ChatRoomChangeOutcome.UNSUPPORTED].
+     */
+    @Throws(HostRejection::class)
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): ChatRoomChangeOutcome =
+        ChatRoomChangeOutcome.UNSUPPORTED
 }
+
+/**
+ * The configuration of a room that declares nothing: the host stores the
+ * messages and serves every part of the room itself. Each read builds a new
+ * value, because the generated record is mutable.
+ */
+val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig
+    get() = ChatRoomConfig(productSource = false, reactionDetails = false)
 
 /**
  * Native game-reminder surface. Implement and pass to
@@ -741,6 +871,25 @@ private inline fun <T> withNavigateRejection(operation: () -> T): T =
             .apply { initCause(error) }
     }
 
+/**
+ * Pass a [HostChatCreateRoomException] to the product as it is, and any other
+ * exception as [HostChatCreateRoomException.Unknown]. A [HostRejection] keeps
+ * the reason that the host wrote.
+ */
+private inline fun <T> withRoomRejection(operation: () -> T): T =
+    try {
+        operation()
+    } catch (refusal: HostChatCreateRoomException) {
+        throw refusal
+    } catch (rejection: HostRejection.Rejected) {
+        throw HostChatCreateRoomException.Unknown(rejection.reason).apply { initCause(rejection) }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (error: Throwable) {
+        throw HostChatCreateRoomException.Unknown(hostRejectionReason(error))
+            .apply { initCause(error) }
+    }
+
 private inline fun <T> withStorageException(operation: () -> T): T =
     try {
         operation()
@@ -762,7 +911,8 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         roomId: String,
         name: String,
         icon: String,
-    ): ChatRoomRegistrationStatus = withHostRejection { bridge.createRoom(roomId, name, icon) }
+        config: ChatRoomConfig,
+    ): ChatRoomRegistrationStatus = withRoomRejection { bridge.createRoom(roomId, name, icon, config) }
 
     override suspend fun registerBot(
         botId: String,
@@ -777,6 +927,19 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
+
+    override suspend fun room(roomId: String): ChatRoomState? = withHostRejection { bridge.room(roomId) }
+
+    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) =
+        withHostRejection { bridge.setRoomMetadata(roomId, metadata) }
+
+    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) =
+        withHostRejection { bridge.setRoomPreview(roomId, preview) }
+
+    override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
+
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
+        withHostRejection { bridge.updateFeed(roomId, update, persist) }
 }
 
 /**

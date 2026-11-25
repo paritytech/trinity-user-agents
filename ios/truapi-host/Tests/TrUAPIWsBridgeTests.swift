@@ -371,13 +371,20 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
     func localStorageClear(key: String) throws { try storage.clear(key: key) }
 }
 
-// Conforms to `ChatHostBridge` so a new requirement there fails this job.
-// Every member is written out: the protocol supplies no defaults.
+// Conforms to `ChatHostBridge`, so a new requirement without a default fails
+// this job. The stub writes each member, also the members that have a default.
 final class StubChatHostBridge: ChatHostBridge {
     func createRoom(
         roomId _: String,
         name _: String,
         icon _: String
+    ) async throws -> ChatRoomRegistrationStatus { .new }
+
+    func createRoom(
+        roomId _: String,
+        name _: String,
+        icon _: String,
+        config _: ChatRoomConfig
     ) async throws -> ChatRoomRegistrationStatus { .new }
 
     func registerBot(
@@ -393,4 +400,22 @@ final class StubChatHostBridge: ChatHostBridge {
     func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
 
     func listRooms() async throws -> [ChatRoom] { [] }
+
+    func room(roomId _: String) async throws -> ChatRoomState? { nil }
+
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws -> ChatRoomChangeOutcome {
+        .applied
+    }
+
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws -> ChatRoomChangeOutcome {
+        .applied
+    }
+
+    func deleteRoom(roomId _: String) async throws -> ChatRoomChangeOutcome { .applied }
+
+    func updateFeed(
+        roomId _: String,
+        update _: ChatFeedUpdate,
+        persist _: Bool
+    ) async throws -> ChatRoomChangeOutcome { .applied }
 }

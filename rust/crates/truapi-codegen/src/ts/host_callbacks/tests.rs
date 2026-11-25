@@ -109,7 +109,7 @@ fn wasm_adapter_rejects_compound_codec_return_shapes() {
 		"return value",
 	);
 	assert_rejects_compound_codec(
-		method_with_return(TypeRef::Option(Box::new(codec.clone()))),
+		method_with_return(TypeRef::Option(Box::new(TypeRef::Vec(Box::new(codec.clone()))))),
 		"return value",
 	);
 	assert_rejects_compound_codec(method_with_return(TypeRef::Tuple(vec![codec])), "return value");
@@ -168,4 +168,47 @@ fn host_callbacks_encode_and_decode_the_latest_registration_status() {
 	assert!(adapter.contains("ChatRoomRegistrationStatus.enc(await "), "{adapter}");
 	let bridge = crate::rust::generate_wasm_bridge(&platform, &api).unwrap();
 	assert!(bridge.contains("decode_bytes::<latest::ChatRoomRegistrationStatus>"), "{bridge}");
+}
+
+// A host answers an optional codec result with a value or `undefined`, and a
+// JavaScript host can answer `null`, which a codec cannot encode. The adapter
+// encodes only a value and the bridge decodes only bytes, so no value reaches
+// the core as `None` and never as bytes that fail to decode.
+#[test]
+fn an_optional_codec_result_crosses_the_bridge_as_bytes_or_nothing() {
+	let response = "HostFeatureSupportedResponse";
+	let api = ApiDefinition {
+		types: vec![TypeDef {
+			name: response.into(),
+			module_path: vec!["truapi".into(), "v01".into(), "features".into()],
+			generic_params: Vec::new(),
+			kind: TypeDefKind::Struct(vec![FieldDef {
+				name: "supported".into(),
+				type_ref: TypeRef::Primitive("bool".into()),
+				docs: None,
+			}]),
+			docs: None,
+		}],
+		traits: Vec::new(),
+		public_trait_order: Vec::new(),
+		framework_types: Vec::new(),
+	};
+	let mut method = method_with_return(TypeRef::Option(Box::new(named(response))));
+	method.params.clear();
+	let platform = platform_with_method(method);
+
+	let adapter = emit_wasm_adapter(&platform, &codec_types(), &BTreeSet::new())
+		.expect("an optional codec result renders");
+	assert!(
+		adapter.contains(
+			"const value = await callbacks.features.featureSupported(); return value == null ? undefined : HostFeatureSupportedResponse.enc(value);"
+		),
+		"{adapter}"
+	);
+	let bridge = crate::rust::generate_wasm_bridge(&platform, &api).unwrap();
+	assert!(bridge.contains("invoke_optional_bytes_return("), "{bridge}");
+	assert!(
+		bridge.contains(".map(|bytes| decode_bytes::<latest::HostFeatureSupportedResponse>("),
+		"{bridge}"
+	);
 }

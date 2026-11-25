@@ -103,6 +103,12 @@ export function makeHostCallbacks(
             postChatMessage: async () => ({ messageId: "message" }),
             setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
+            // No room exists until a fixture overrides this.
+            chatRoom: async () => undefined,
+            setChatRoomMetadata: async () => "Applied",
+            setChatRoomPreview: async () => "Applied",
+            deleteChatRoom: async () => "Applied",
+            updateChatFeed: async () => "Applied",
             ...overrides.chat,
           },
         }

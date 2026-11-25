@@ -16,8 +16,8 @@ use crate::{
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
-		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
+		Account, Chain, Chat, Entropy, ExpandedCard, Game, LocalStorage, Notifications,
+		Permissions, Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
 	},
 	v02,
 	versioned::{
@@ -35,6 +35,12 @@ use truapi::{
 			RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
 			RemoteChainTransactionBroadcastResponse,
+		},
+		chat::{
+			HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+			HostChatPostMessageError, HostChatPostMessageRequest, HostChatRegisterBotError,
+			HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterError,
+			HostChatSetRoomFooterRequest,
 		},
 		contacts::{
 			HostContactsUsernamesError, HostContactsUsernamesRequest, HostContactsUsernamesResponse,
@@ -1808,6 +1814,29 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 			.chain(bot_rooms)
 			.collect();
 		Box::pin(futures::stream::iter([Ok(truapi::latest::HostChatListSubscribeItem { rooms })]))
+	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<Option<crate::platform::ChatRoomState>, truapi::latest::GenericError> {
+		let created = self
+			.created_rooms
+			.lock()
+			.expect("created rooms mutex poisoned")
+			.contains(&room_id);
+		let participating_as = if created {
+			truapi::latest::ChatRoomParticipation::RoomHost
+		} else if self.bot_rooms.contains(&room_id) {
+			truapi::latest::ChatRoomParticipation::Bot
+		} else {
+			return Ok(None);
+		};
+		Ok(Some(crate::platform::ChatRoomState {
+			participating_as,
+			config: truapi::latest::ChatRoomConfig::default(),
+		}))
 	}
 }
 

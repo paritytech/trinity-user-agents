@@ -8,12 +8,16 @@
 import {
   ChatRoomRegistrationStatus,
   HostChatCreateRoomRequest,
+  HostChatDeleteRoomRequest,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
   HostChatSetRoomFooterRequest,
+  HostChatSetRoomMetadataRequest,
+  HostChatSetRoomPreviewRequest,
+  HostChatUpdateFeedRequest,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -30,6 +34,8 @@ import {
 import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
+  ChatRoomChangeOutcome,
+  ChatRoomState,
   CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
@@ -74,6 +80,27 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  chatRoom?(
+    product: Uint8Array,
+    roomId: string,
+  ): Promise<Uint8Array | null | undefined>;
+  setChatRoomMetadata?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
+  setChatRoomPreview?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
+  deleteChatRoom?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<Uint8Array>;
+  updateChatFeed?(
+    product: Uint8Array,
+    request: Uint8Array,
+    persist: boolean,
+  ): Promise<Uint8Array>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   contactUsernames?(product: Uint8Array): Promise<Uint8Array>;
@@ -177,6 +204,42 @@ export function createWasmRawCallbacks(
               chat.subscribeChatRooms(ProductContext.dec(product)),
               (item) => sendItem(HostChatListSubscribeItem.enc(item)),
               sendError,
+            ),
+          chatRoom: async (product, roomId) => {
+            const value = await chat.chatRoom(
+              ProductContext.dec(product),
+              roomId,
+            );
+            return value == null ? undefined : ChatRoomState.enc(value);
+          },
+          setChatRoomMetadata: async (product, request) =>
+            ChatRoomChangeOutcome.enc(
+              await chat.setChatRoomMetadata(
+                ProductContext.dec(product),
+                HostChatSetRoomMetadataRequest.dec(request),
+              ),
+            ),
+          setChatRoomPreview: async (product, request) =>
+            ChatRoomChangeOutcome.enc(
+              await chat.setChatRoomPreview(
+                ProductContext.dec(product),
+                HostChatSetRoomPreviewRequest.dec(request),
+              ),
+            ),
+          deleteChatRoom: async (product, request) =>
+            ChatRoomChangeOutcome.enc(
+              await chat.deleteChatRoom(
+                ProductContext.dec(product),
+                HostChatDeleteRoomRequest.dec(request),
+              ),
+            ),
+          updateChatFeed: async (product, request, persist) =>
+            ChatRoomChangeOutcome.enc(
+              await chat.updateChatFeed(
+                ProductContext.dec(product),
+                HostChatUpdateFeedRequest.dec(request),
+                persist,
+              ),
             ),
         }
       : {}),

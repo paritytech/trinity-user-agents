@@ -33,6 +33,10 @@ use truapi::{
 	versioned::chat as versioned,
 };
 
+/// A one-pixel PNG as inline image data: RFC 0002 makes a room icon and an
+/// image badge a resource, never a URL to fetch.
+const INLINE_ICON: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
 /// One line of the snapshot: a name, then the hex of the whole frame. The
 /// value is the type of its leg, and the frame must decode back to it.
 fn line<T: Encode + Decode + PartialEq + Debug>(
@@ -137,7 +141,7 @@ fn custom() -> v02::ChatMessage {
 }
 
 fn config() -> v02::ChatRoomConfig {
-	v02::ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true }
+	v02::ChatRoomConfig { product_source: true, reaction_details: true }
 }
 
 /// Every leg of the methods, at the versions a v2 client encodes.
@@ -147,7 +151,7 @@ fn frames() -> Vec<String> {
 	let metadata = v02::ChatRoomMetadata {
 		name: "Room".into(),
 		description: Some("About".into()),
-		icon: Some("https://icons.example/renamed.png".into()),
+		icon: Some(INLINE_ICON.into()),
 		placeholder: Some("No games yet".into()),
 	};
 	let preview = v02::ChatRoomPreview {
@@ -181,7 +185,7 @@ fn frames() -> Vec<String> {
 			HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
 				room_id_source: "support".into(),
 				name: "Room".into(),
-				icon: "https://icons.example/room.png".into(),
+				icon: INLINE_ICON.into(),
 				config: config(),
 			}),
 		),
@@ -373,9 +377,7 @@ fn frames() -> Vec<String> {
 			HostChatSetRoomPreviewRequest::V2(v02::HostChatSetRoomPreviewRequest {
 				room_id: room(),
 				preview: v02::ChatRoomPreview {
-					badge: Some(v02::ChatRoomBadge::Image {
-						icon: "https://icons.example/live.png".into(),
-					}),
+					badge: Some(v02::ChatRoomBadge::Image { icon: INLINE_ICON.into() }),
 					pinned: false,
 					activity: None,
 					..preview

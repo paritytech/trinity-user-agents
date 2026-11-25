@@ -121,9 +121,37 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ExecutableKind.worker`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving the Chat modality implements `ChatHostBridge` and passes it
+when it opens the product's `.worker` execution. Hosts without it pass nothing
+and Chat calls answer unsupported.
+
+The bridge carries the requests of Chat Extension v2. `registerBot`,
+`postMessage`, `setRoomFooter` and `listRooms` have no default, and a host
+implements one of the two `createRoom` methods: the default
+`createRoom(roomId:name:icon:)` refuses the room. The other requests have
+defaults for a host that does not serve them yet:
+`createRoom(roomId:name:icon:config:)` creates the room only with
+`ChatRoomConfig.hostDefault`, through `createRoom(roomId:name:icon:)`, and
+refuses any other configuration before it creates anything, `room(roomId:)`
+finds the room in `listRooms()` and pairs it with `ChatRoomConfig.hostDefault`,
+and every other request answers `ChatRoomChangeOutcome.unsupported`, which the
+product receives as `Unsupported`. A host that serves one of them answers
+`.applied`. A room the product declares nothing for is a room the host stores,
+with the name and icon of `createRoom` and the text input.
+
+| Request | What the host does |
+| --- | --- |
+| `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. A room id is unique only among the rooms of one product, so the host keeps each room under the product and the id, and never changes a room that the product does not host: a room of another product with the same id, or a room that the product takes part in as a bot. The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a `data:` URL with an image type. Only a product built against the earlier client sends an `https` URL, and the core has not checked the payload of its `data:` URL; the `data:` URL of any other product has a Base64 payload that the core decoded. Throw `HostChatCreateRoomError.Unknown` for a configuration the host cannot keep, before it creates anything |
+| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The host looks the room up among the rooms of the product only. The core reads it once before each change to a room |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen. The core has not checked that the product created the room, so the host deletes only a room that the product hosts, and does nothing for any other id |
+| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
+| `setRoomFooter` | Shows the text input, nothing, or a card that the product draws |
+
+The core checks that the product created the room before it calls any of
+these, except `createRoom` and `deleteRoom`, and bounds and screens every
+field. It calls `deleteRoom` for every room except one that the product takes
+part in as a bot, so a room that does not exist is not an error.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -133,10 +161,11 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
 
     init(store: ChatStore) { self.store = store }
 
-    func createRoom(roomId: String, name: String, icon: String) throws
+    // The room and its configuration land in one write.
+    func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) throws
         -> ChatRoomRegistrationStatus
     {
-        store.putRoom(roomId, name: name, icon: icon) ? .new : .exists
+        store.putRoom(roomId, name: name, icon: icon, config: config) ? .new : .exists
     }
 
     func registerBot(botId: String, name: String, icon: String) throws
@@ -160,6 +189,14 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
+
+    // The room and its configuration in one read.
+    func room(roomId: String) throws -> ChatRoomState? { store.room(roomId) }
+
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatRoomChangeOutcome {
+        store.apply(update, to: roomId, persist: persist)
+        return .applied
+    }
 }
 
 let runtime = try TrUAPIHostRuntime(
@@ -174,7 +211,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .worker),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()

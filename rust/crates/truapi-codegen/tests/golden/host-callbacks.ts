@@ -9,6 +9,8 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
+  ChatRoomConfig,
+  ChatRoomParticipation,
   CodeFormat,
   ExecutableKind,
   FundingDirection,
@@ -36,12 +38,16 @@ import type {
   FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
+  HostChatDeleteRoomRequest,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
   HostChatSetRoomFooterRequest,
+  HostChatSetRoomMetadataRequest,
+  HostChatSetRoomPreviewRequest,
+  HostChatUpdateFeedRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostFundingStatusSubscribeItem,
@@ -144,6 +150,35 @@ export interface ChainExtensionVersion {
    * The pipeline's number in the chain's metadata.
    */
   extensionVersion: number;
+}
+
+/**
+ * What the host did with a change to a room: a metadata change, a preview, a
+ * delete or a feed update.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value. A host that does not serve the request answers
+ * `Unsupported`, and the product receives the `Unsupported` call error. An
+ * error that the host returns reaches the product as `HostFailure`.
+ */
+export type ChatRoomChangeOutcome = "Applied" | "Unsupported";
+
+/**
+ * What the host keeps for one room of a product.
+ *
+ * `ChatPlatform::chat_room` answers it, so the core reads the room and its
+ * configuration in one host call.
+ */
+export interface ChatRoomState {
+  /**
+   * Whether the product hosts the room or takes part in it as a bot.
+   */
+  participatingAs: ChatRoomParticipation;
+
+  /**
+   * The configuration of the last `create_chat_room` of the room.
+   */
+  config: ChatRoomConfig;
 }
 
 /**
@@ -1077,6 +1112,33 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
 );
 
 /**
+ * What the host did with a change to a room: a metadata change, a preview, a
+ * delete or a feed update.
+ *
+ * It is the answer of the host, not an error, so a host returns it as it
+ * returns any other value. A host that does not serve the request answers
+ * `Unsupported`, and the product receives the `Unsupported` call error. An
+ * error that the host returns reaches the product as `HostFailure`.
+ */
+export const ChatRoomChangeOutcome: S.Codec<ChatRoomChangeOutcome> = S.lazy(
+  (): S.Codec<ChatRoomChangeOutcome> => S.Status("Applied", "Unsupported"),
+);
+
+/**
+ * What the host keeps for one room of a product.
+ *
+ * `ChatPlatform::chat_room` answers it, so the core reads the room and its
+ * configuration in one host call.
+ */
+export const ChatRoomState: S.Codec<ChatRoomState> = S.lazy(
+  (): S.Codec<ChatRoomState> =>
+    S.Struct({
+      participatingAs: ChatRoomParticipation,
+      config: ChatRoomConfig,
+    }) as S.Codec<ChatRoomState>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1739,7 +1801,11 @@ export interface ChainProvider {
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
- * delivered as the parser resolved it.
+ * delivered as the parser resolved it. The one exception is the node of a HOP
+ * media item: the core screens it only as a name, and does not check that it
+ * is a `wss` URL. The icon of a v2 `create_chat_room`, the icon of the room
+ * metadata and an image badge take no URL to fetch: an inline Base64 image or
+ * the CID of a Bulletin preimage, as RFC 0002 names resources.
  *
  * The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
  * `https://[::1]`, a private range and `https://169.254.169.254` (the cloud
@@ -1760,6 +1826,27 @@ export interface ChatPlatform {
    * for a product built against the earlier client, the id that the product
    * gave. The host stores the room under this id, and every later call names
    * the room with it.
+   *
+   * A room id is unique only among the rooms of one product, so the host
+   * keeps each room under the product and the id. A product built against
+   * the earlier client chooses its room ids freely. The host never changes a
+   * room that the product does not host: a room of another product with the
+   * same id, or a room that the product takes part in as a bot.
+   *
+   * The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+   * `data:` URL with an image type. Only a product built against the earlier
+   * client sends an `https` URL, and the core has not checked the payload of
+   * its `data:` URL. The `data:` URL of any other product has a Base64
+   * payload that the core decoded.
+   *
+   * In the same step the host keeps `request.config` for the room, across
+   * restarts, for a new room and for a room that exists: the configuration
+   * replaces the one the host keeps, and `Self::chat_room` answers it. A
+   * change of `product_source` discards the stored messages or the cached
+   * pages of the room, and its preview. A host that cannot keep a
+   * configuration other than the default refuses it with `Unknown`, before
+   * it creates or changes anything. A request from a product built against
+   * the earlier client carries the default configuration.
    */
   createChatRoom(
     product: ProductContext,
@@ -1802,6 +1889,80 @@ export interface ChatPlatform {
   subscribeChatRooms(
     product: ProductContext,
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
+
+  /**
+   * What the host keeps for one room of the product, read one time.
+   *
+   * The core calls it once before each change to a room: to check that the
+   * product hosts the room, and to read whether the host stores its
+   * messages. The host looks the room up among the rooms of the product
+   * only. ``undefined`` is a room that the product never created. A host that
+   * cannot read its rooms returns an error, not ``undefined``.
+   */
+  chatRoom(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<ChatRoomState | undefined>;
+
+  /**
+   * Replace the name, description, icon and empty-room text of a room.
+   *
+   * An icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
+   * host does not implement this method, it answers `Unsupported`, and so
+   * does the product's request.
+   */
+  setChatRoomMetadata?(
+    product: ProductContext,
+    request: HostChatSetRoomMetadataRequest,
+  ): Promise<ChatRoomChangeOutcome>;
+
+  /**
+   * Replace how a room shows in the chat list.
+   *
+   * If a Rust host does not implement this method, it answers
+   * `Unsupported`, and so does the product's request.
+   */
+  setChatRoomPreview?(
+    product: ProductContext,
+    request: HostChatSetRoomPreviewRequest,
+  ): Promise<ChatRoomChangeOutcome>;
+
+  /**
+   * Delete a room with its messages, cache and declarations, and close its
+   * screen.
+   *
+   * The core calls it for every room except one that the product takes
+   * part in as a bot, so a room that does not exist is not an error. The
+   * core has not checked that the product created the room, so the host
+   * deletes only a room that the product hosts, and does nothing for any
+   * other id. If a Rust host does not implement this method, it answers
+   * `Unsupported`.
+   */
+  deleteChatRoom?(
+    product: ProductContext,
+    request: HostChatDeleteRoomRequest,
+  ): Promise<ChatRoomChangeOutcome>;
+
+  /**
+   * Apply one change to the messages of a room.
+   *
+   * With `persist` the host stores the change, because it keeps the
+   * messages of the room. Without it the host applies the change only to an
+   * open room screen and the chat list preview. A failure of the host
+   * reaches the product as `HostFailure`. If a Rust host does not implement
+   * this method, it answers `Unsupported`.
+   *
+   * The core decides `persist` from the room it read just before this call.
+   * A product that changes the `product_source` of a room with
+   * `create_chat_room` while it sends updates to that room can have an
+   * update applied with the configuration the room had before. Only that
+   * product's own room is affected.
+   */
+  updateChatFeed?(
+    product: ProductContext,
+    request: HostChatUpdateFeedRequest,
+    persist: boolean,
+  ): Promise<ChatRoomChangeOutcome>;
 }
 
 /**

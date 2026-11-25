@@ -102,10 +102,14 @@ const snapshot = new Map(
         }),
 );
 
+// A one-pixel PNG as inline image data: RFC 0002 makes a room icon and an
+// image badge a resource, never a URL to fetch.
+const INLINE_ICON =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
 const config: T.ChatRoomConfig = {
     productSource: true,
     reactionDetails: true,
-    reportSeen: true,
 };
 
 const message: T.ChatMessage = {
@@ -263,7 +267,7 @@ describe("chat extension v2 frames", () => {
                         value: {
                             roomIdSource: "support",
                             name: "Room",
-                            icon: "https://icons.example/room.png",
+                            icon: INLINE_ICON,
                             config,
                         },
                     }),
@@ -377,7 +381,7 @@ describe("chat extension v2 frames", () => {
                                 ...preview,
                                 badge: {
                                     tag: "Image",
-                                    value: { icon: "https://icons.example/live.png" },
+                                    value: { icon: INLINE_ICON },
                                 },
                                 pinned: false,
                                 activity: undefined,
@@ -461,7 +465,7 @@ describe("chat extension v2 frames", () => {
         const room = created.client.chat.createRoom({
             roomIdSource: "support",
             name: "Room",
-            icon: "https://icons.example/room.png",
+            icon: INLINE_ICON,
             config,
         });
         expect(created.sent).toEqual([snapshot.get("0.create_room.request")]);
@@ -493,7 +497,7 @@ describe("chat extension v2 frames", () => {
         const metadata = {
             name: "Room",
             description: "About",
-            icon: "https://icons.example/renamed.png",
+            icon: INLINE_ICON,
             placeholder: "No games yet",
         };
         const notRoomHost: CallErrorValue<T.VersionedHostChatSetRoomMetadataError> = {

@@ -12,7 +12,9 @@ export {
 } from "./web/create-mock-host.js";
 export type {
   ChainStatus,
+  ChatFeedRecord,
   ChatMessageRecord,
+  ChatRoomDeclarations,
   MockFaults,
   MockHost,
   MockHostConfig,

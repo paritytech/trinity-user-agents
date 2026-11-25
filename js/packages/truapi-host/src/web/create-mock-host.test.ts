@@ -2,7 +2,7 @@ import { asProductId, type ProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
-import type { ChatRoom } from "@parity/truapi";
+import type { ChatRoom, ChatRoomConfig } from "@parity/truapi";
 import type {
   CoreStorageKey,
   ProductContext,
@@ -751,6 +751,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: roomId,
         name: roomId,
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       });
     }
 
@@ -764,6 +765,230 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(
       seeded!._unsafeUnwrap().rooms.map((room: ChatRoom) => room.roomId),
     ).toEqual(["alpha", "mike", "zulu"]);
+    // The core reads one room before each change to it, so it must find each
+    // room that the subscription lists, and no other.
+    for (const roomId of ["alpha", "mike", "zulu"]) {
+      expect(await host.callbacks.chat!.chatRoom(product, roomId)).toEqual({
+        participatingAs: "RoomHost",
+        config: { productSource: false, reactionDetails: false },
+      });
+    }
+    expect(
+      await host.callbacks.chat!.chatRoom(product, "missing"),
+    ).toBeUndefined();
+  });
+
+  it("keeps the declarations of each chat room until the room is deleted", async () => {
+    // The Rust `MockPlatform::chat_room_declarations` gives the same view, so
+    // a test reads the declarations of a room on either host.
+    const host = createMockHost();
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    const config = {
+      productSource: true,
+      reactionDetails: false,
+    };
+    // The configuration arrives with the room, in one call.
+    await host.callbacks.chat!.createChatRoom(product, "main", {
+      roomIdSource: "main",
+      name: "Main",
+      icon: "",
+      config,
+    });
+    const update = {
+      tag: "Deleted",
+      value: { messageId: "m1" },
+    } as const;
+    await host.callbacks.chat!.updateChatFeed(
+      product,
+      { roomId: "main", update },
+      false,
+    );
+
+    expect(host.chatRoomDeclarations("main")).toEqual({
+      feed: [{ update, persist: false }],
+      config,
+    });
+    expect(host.chatRoomDeclarations("other")).toBeUndefined();
+    expect(await host.callbacks.chat!.chatRoom(product, "main")).toEqual({
+      participatingAs: "RoomHost",
+      config,
+    });
+
+    await host.callbacks.chat!.deleteChatRoom(product, { roomId: "main" });
+    expect(host.chatRoomDeclarations("main")).toBeUndefined();
+  });
+
+  it("deletes the messages of a deleted chat room", async () => {
+    // The Rust `MockPlatform::delete_chat_room` also removes them, so a test
+    // reads the same message log on the two hosts.
+    const host = createMockHost();
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    for (const roomId of ["main", "other"]) {
+      await host.callbacks.chat!.createChatRoom(product, roomId, {
+        roomIdSource: roomId,
+        name: roomId,
+        icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
+      });
+      await host.callbacks.chat!.postChatMessage(product, {
+        roomId,
+        payload: { tag: "Text", value: { text: "hi" } },
+      });
+    }
+
+    await host.callbacks.chat!.deleteChatRoom(product, { roomId: "main" });
+
+    expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
+      "other",
+    ]);
+  });
+
+  it("drops what a chat room holds when its productSource changes", async () => {
+    // The stored messages would show next to the pages that the product
+    // answers, and a preview set while the product kept the messages can show
+    // the user in a room that the host stores, so the room starts empty on its
+    // new side, as on the Rust mock.
+    const host = createMockHost();
+    const chat = host.callbacks.chat!;
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    const create = (roomId: string, config: ChatRoomConfig) =>
+      chat.createChatRoom(product, roomId, {
+        roomIdSource: roomId,
+        name: roomId,
+        icon: "",
+        config,
+      });
+    const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
+    const preview = {
+      timestamp: undefined,
+      badge: undefined,
+      lastMessage: undefined,
+      lastReaction: undefined,
+      unseenReactions: 0,
+      pinned: true,
+      activity: undefined,
+    };
+    for (const roomId of ["main", "other"]) {
+      await create(roomId, { productSource: false, reactionDetails: false });
+      await chat.postChatMessage(product, {
+        roomId,
+        payload: { tag: "Text", value: { text: "hi" } },
+      });
+      await chat.updateChatFeed(product, { roomId, update }, true);
+      await chat.setChatRoomPreview(product, { roomId, preview });
+    }
+
+    // Another configuration with the same source keeps what the room holds.
+    expect(
+      await create("main", { productSource: false, reactionDetails: true }),
+    ).toBe("Exists");
+    expect(host.chatRoomDeclarations("main")?.feed).toEqual([
+      { update, persist: true },
+    ]);
+    expect(host.chatRoomDeclarations("main")?.preview).toEqual(preview);
+
+    const sourced = { productSource: true, reactionDetails: false };
+    expect(await create("main", sourced)).toBe("Exists");
+    expect(host.chatRoomDeclarations("main")).toEqual({
+      feed: [],
+      config: sourced,
+    });
+    expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
+      "other",
+    ]);
+    expect(host.chatRoomDeclarations("other")?.feed).toEqual([
+      { update, persist: true },
+    ]);
+    expect(host.chatRoomDeclarations("other")?.preview).toEqual(preview);
+  });
+
+  it("hands out a copy of the declarations and keeps none for a deleted room", async () => {
+    // A test that keeps an earlier answer must not see later calls, and a
+    // call that arrives after the delete must not bring the room back.
+    const host = createMockHost();
+    const chat = host.callbacks.chat!;
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    const config = { productSource: false, reactionDetails: false };
+    await chat.createChatRoom(product, "main", {
+      roomIdSource: "main",
+      name: "Main",
+      icon: "",
+      config,
+    });
+    const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
+    const before = host.chatRoomDeclarations("main");
+    await chat.updateChatFeed(product, { roomId: "main", update }, true);
+    expect(before?.feed).toEqual([]);
+    // Neither an object that a test passed in nor one that the mock answered
+    // changes what the mock keeps.
+    config.reactionDetails = true;
+    (await chat.chatRoom(product, "main"))!.config.productSource = true;
+    expect(await chat.chatRoom(product, "main")).toEqual({
+      participatingAs: "RoomHost",
+      config: { productSource: false, reactionDetails: false },
+    });
+    const metadata = {
+      name: "Main",
+      description: undefined,
+      icon: undefined,
+      placeholder: undefined,
+    };
+    const preview = {
+      timestamp: undefined,
+      badge: undefined,
+      lastMessage: undefined,
+      lastReaction: undefined,
+      unseenReactions: 0,
+      pinned: false,
+      activity: undefined,
+    };
+    const second = { tag: "Deleted" as const, value: { messageId: "m2" } };
+    await chat.setChatRoomMetadata(product, { roomId: "main", metadata });
+    await chat.setChatRoomPreview(product, { roomId: "main", preview });
+    await chat.updateChatFeed(
+      product,
+      { roomId: "main", update: second },
+      true,
+    );
+    metadata.name = "Changed";
+    preview.pinned = true;
+    second.value.messageId = "changed";
+    expect(host.chatRoomDeclarations("main")).toEqual({
+      config: { productSource: false, reactionDetails: false },
+      metadata: { ...metadata, name: "Main" },
+      preview: { ...preview, pinned: false },
+      feed: [
+        { update, persist: true },
+        {
+          update: { tag: "Deleted", value: { messageId: "m2" } },
+          persist: true,
+        },
+      ],
+    });
+
+    const rooms = chat.subscribeChatRooms();
+    await drain(rooms, 1);
+    // A delete of a room that does not exist publishes no list, so the next
+    // list is the one without `main`.
+    await chat.deleteChatRoom(product, { roomId: "missing" });
+    await chat.deleteChatRoom(product, { roomId: "main" });
+    const [after] = await drain(rooms, 1);
+    expect(after).toEqual(ok({ rooms: [] }));
+
+    await chat.updateChatFeed(product, { roomId: "main", update }, true);
+    expect(host.chatRoomDeclarations("main")).toBeUndefined();
   });
 
   it("simulateDisconnect ends a live response stream, not just the status", async () => {
@@ -861,6 +1086,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: "lobby",
         name: "Lobby",
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       },
     );
 
@@ -1000,6 +1226,7 @@ describe("createMockHost TestHostAPI parity", () => {
         roomIdSource: "r",
         name: "R",
         icon: "https://example.invalid/i.png",
+        config: { productSource: false, reactionDetails: false },
       }),
     ).rejects.toThrow("chat down");
     await expect(
@@ -1015,6 +1242,11 @@ describe("createMockHost TestHostAPI parity", () => {
         payload: { tag: "Text", value: { text: "hi" } },
       }),
     ).rejects.toThrow("chat down");
+    // A failed room read is not a room that does not exist. If the core gets
+    // `undefined`, it accepts the delete of a room that still exists.
+    await expect(chat.callbacks.chat!.chatRoom(product, "r")).rejects.toThrow(
+      "chat down",
+    );
     // The subscription reports the same fault rather than opening a stream
     // that looks healthy and never carries a room.
     const rooms = chat.callbacks.chat!.subscribeChatRooms();

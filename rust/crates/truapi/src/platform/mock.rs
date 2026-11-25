@@ -46,10 +46,11 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	AuthPresenter, AuthState, ChainProvider, ChatPlatform, ChatRoomChangeOutcome, ChatRoomState,
+	CoreStorage, CoreStorageKey, Features, HostScan, JsonRpcConnection, LocaleHost, Navigation,
+	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
+	ProductStorage, ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -164,6 +165,32 @@ pub struct ChatMessageRecord {
 	pub payload: latest::ChatMessageContent,
 	/// The product's one-line description of the message.
 	pub alt: Option<String>,
+}
+
+/// What the product declared for one chat room through the mock.
+///
+/// The mock does not tell products apart: it keeps every room by its id alone.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChatRoomDeclarations {
+	/// The configuration of the last `create_chat_room`, or `None` for a room
+	/// the product did not create through the mock.
+	pub config: Option<latest::ChatRoomConfig>,
+	/// The last metadata from `set_chat_room_metadata`.
+	pub metadata: Option<latest::ChatRoomMetadata>,
+	/// The last chat list preview since the last change of `product_source`.
+	pub preview: Option<latest::ChatRoomPreview>,
+	/// Every feed update since the last change of `product_source`, in order.
+	pub feed: Vec<ChatFeedRecord>,
+}
+
+/// One feed update that the product sent through the mock.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChatFeedRecord {
+	/// The update.
+	pub update: latest::ChatFeedUpdate,
+	/// The host had to store the update, because it keeps the messages of the
+	/// room. Otherwise it only shows the update.
+	pub persist: bool,
 }
 
 /// How the mock's chain connection behaves.
@@ -330,6 +357,7 @@ pub struct MockPlatform {
 	chat_rooms: Arc<Mutex<BTreeMap<String, latest::ChatRoom>>>,
 	chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
 	chat_messages: Arc<Mutex<Vec<ChatMessageRecord>>>,
+	chat_declarations: Arc<Mutex<BTreeMap<String, ChatRoomDeclarations>>>,
 	/// Live `subscribe_chat_rooms` streams, fed a fresh list on every change.
 	chat_room_subscribers:
 		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
@@ -382,6 +410,7 @@ impl MockPlatform {
 			chat_rooms: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_messages: Arc::new(Mutex::new(Vec::new())),
+			chat_declarations: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
 			next_chat_message_id: Arc::new(AtomicU32::new(0)),
 			theme: Arc::new(Mutex::new(theme)),
@@ -707,6 +736,63 @@ impl MockPlatform {
 		self.chat_messages.lock().expect("chat messages poisoned").clone()
 	}
 
+	/// What the product declared for `room_id`, or `None` for a room it
+	/// declared nothing for or deleted.
+	pub fn chat_room_declarations(&self, room_id: &str) -> Option<ChatRoomDeclarations> {
+		self.chat_declarations
+			.lock()
+			.expect("chat declarations poisoned")
+			.get(room_id)
+			.cloned()
+	}
+
+	/// Apply `change` to the declarations of `room_id`, or fail with the
+	/// injected chat fault. A room that is not in the room list, for example
+	/// one deleted while the call was on its way, keeps no declarations.
+	fn declare_chat_room(
+		&self,
+		room_id: String,
+		change: impl FnOnce(&mut ChatRoomDeclarations),
+	) -> Result<(), latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		// The room list stays locked until the change lands, so a delete cannot
+		// run in between and leave declarations behind.
+		let rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
+		if !rooms.contains_key(&room_id) {
+			return Ok(());
+		}
+		let mut declarations = self.chat_declarations.lock().expect("chat declarations poisoned");
+		change(declarations.entry(room_id).or_default());
+		Ok(())
+	}
+
+	/// Keep `config` as the configuration of `room_id`. A change of
+	/// `product_source` drops the messages, the feed updates and the preview
+	/// of the room, as the `create_chat_room` contract asks.
+	fn configure_chat_room(&self, room_id: &str, config: latest::ChatRoomConfig) {
+		let source_changed = {
+			let mut declarations =
+				self.chat_declarations.lock().expect("chat declarations poisoned");
+			let room = declarations.entry(room_id.to_string()).or_default();
+			let product_source = room.config.as_ref().is_some_and(|config| config.product_source);
+			let source_changed = product_source != config.product_source;
+			if source_changed {
+				room.feed.clear();
+				room.preview = None;
+			}
+			room.config = Some(config);
+			source_changed
+		};
+		if source_changed {
+			self.chat_messages
+				.lock()
+				.expect("chat messages poisoned")
+				.retain(|message| message.room_id != room_id);
+		}
+	}
+
 	/// Drop the registered rooms and bots and the posted-message log.
 	///
 	/// Live `subscribe_chat_rooms` streams stay open and see the emptied list,
@@ -715,6 +801,7 @@ impl MockPlatform {
 		self.chat_rooms.lock().expect("chat rooms poisoned").clear();
 		self.chat_bots.lock().expect("chat bots poisoned").clear();
 		self.chat_messages.lock().expect("chat messages poisoned").clear();
+		self.chat_declarations.lock().expect("chat declarations poisoned").clear();
 		self.publish_chat_rooms();
 	}
 
@@ -1266,27 +1353,32 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-		_request: latest::HostChatCreateRoomRequest,
+		request: latest::HostChatCreateRoomRequest,
 	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&room_id) {
+			let status = if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
 					room_id.clone(),
 					latest::ChatRoom {
-						room_id,
+						room_id: room_id.clone(),
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
 					},
 				);
 				latest::ChatRoomRegistrationStatus::New
-			}
+			};
+			// The mock keeps every configuration, in the same call that
+			// creates the room, for a new room and for a room that exists. The
+			// room list stays locked, so a delete cannot run in between.
+			self.configure_chat_room(&room_id, request.config);
+			status
 		};
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
@@ -1378,6 +1470,82 @@ impl ChatPlatform for MockPlatform {
 			.expect("chat subscribers poisoned")
 			.push(sender);
 		Box::pin(receiver.map(Ok))
+	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<Option<ChatRoomState>, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let Some(room) =
+			self.chat_rooms.lock().expect("chat rooms poisoned").get(&room_id).cloned()
+		else {
+			return Ok(None);
+		};
+		let config = self
+			.chat_room_declarations(&room_id)
+			.and_then(|declarations| declarations.config)
+			.unwrap_or_default();
+		Ok(Some(ChatRoomState { participating_as: room.participating_as, config }))
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomMetadataRequest,
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))?;
+		Ok(ChatRoomChangeOutcome::Applied)
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomPreviewRequest,
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))?;
+		Ok(ChatRoomChangeOutcome::Applied)
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatDeleteRoomRequest,
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let removed = {
+			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
+			self.chat_declarations
+				.lock()
+				.expect("chat declarations poisoned")
+				.remove(&request.room_id);
+			self.chat_messages
+				.lock()
+				.expect("chat messages poisoned")
+				.retain(|message| message.room_id != request.room_id);
+			rooms.remove(&request.room_id).is_some()
+		};
+		if removed {
+			self.publish_chat_rooms();
+		}
+		Ok(ChatRoomChangeOutcome::Applied)
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<ChatRoomChangeOutcome, latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| {
+			room.feed.push(ChatFeedRecord { update: request.update, persist })
+		})?;
+		Ok(ChatRoomChangeOutcome::Applied)
 	}
 }
 

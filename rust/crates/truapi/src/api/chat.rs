@@ -31,17 +31,20 @@ pub trait Chat: Send + Sync {
 	/// later call names the room with the `roomId` of the answer.
 	///
 	/// `config` declares the parts of the room that the product serves: its
-	/// messages (`productSource`), who reacted (`reactionDetails`) and the
-	/// reports of what the user saw (`reportSeen`). The host keeps it across
-	/// restarts. Each call replaces it, also for a room that exists, so a
-	/// product declares its rooms again when it starts.
+	/// messages and the reports of what the user saw (`productSource`), and who
+	/// reacted (`reactionDetails`). The host keeps it across restarts. Each call
+	/// replaces it, also for a room that exists, so a product declares its rooms
+	/// again when it starts.
+	///
+	/// In version 2 the icon is an inline image as a `data:` URL with a Base64
+	/// payload, or the CID of a Bulletin preimage: a URL to fetch is refused.
 	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(result.isOk(), "createRoom failed:", result);
 	/// console.log("room created:", result.value.roomId);
@@ -113,7 +116,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.postMessage({
@@ -163,7 +166,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFooter({
@@ -187,14 +190,17 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Replace the name, description and empty-room text of a room, and its
-	/// icon when the metadata names one.
+	/// icon when the metadata names one. The icon is an inline image as a
+	/// `data:` URL with a Base64 payload, or the CID of a Bulletin preimage: a
+	/// URL to fetch is refused. A host that does not serve room metadata
+	/// answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomMetadata({
@@ -202,7 +208,7 @@ pub trait Chat: Send + Sync {
 	///   metadata: {
 	///     name: "Renamed Room",
 	///     description: "Now with a description",
-	///     icon: "https://example.com/renamed.png",
+	///     icon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
 	///     placeholder: "No messages yet",
 	///   },
 	/// });
@@ -221,13 +227,18 @@ pub trait Chat: Send + Sync {
 	/// the badge, whether the room is pinned, and the newest message and reaction
 	/// for the preview line, or an activity line that replaces it. In a room the
 	/// host stores, the preview cannot show a message or a reaction of the user.
+	/// An image badge is an inline image as a `data:` URL with a Base64
+	/// payload, or the CID of a Bulletin preimage: a URL to fetch is refused. A
+	/// host that does not serve previews answers `Unsupported`. A preview whose
+	/// message is a contact event, a call or a payment answers `Unsupported`:
+	/// the core does not serve these bodies yet.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomPreview({
@@ -260,14 +271,15 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Delete a room and all the host keeps for it: messages, configuration
-	/// and cache. A delete of a room that does not exist succeeds.
+	/// and cache. A delete of a room that does not exist succeeds. A host that
+	/// does not serve deletes answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.deleteRoom({ roomId: created.value.roomId });
@@ -286,14 +298,18 @@ pub trait Chat: Send + Sync {
 	/// edit, a reaction, a status, new content for a message with no edit mark,
 	/// or a deletion.
 	/// The host stores the change for a room it stores, and only shows it for a
-	/// room the product keeps.
+	/// room the product keeps. In a room the host stores, a change cannot name
+	/// the user as the author of a message, a quote or a reaction. A host that
+	/// does not serve feed updates answers `Unsupported`. A contact event, a
+	/// call or a payment answers `Unsupported`: the core does not serve these
+	/// bodies yet.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.updateFeed({
@@ -366,7 +382,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
-	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
+	///   config: { productSource: false, reactionDetails: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const { roomId: testRoom } = created.value;

@@ -918,3 +918,515 @@ fn review_discriminants_do_not_move() {
 
 	assert_eq!(discriminants, [9, 11]);
 }
+
+fn text_message(message_id: &str) -> ChatMessage {
+	ChatMessage {
+		message_id: message_id.to_string(),
+		origin: ChatMessageOrigin { participant_id: "product".to_string() },
+		timestamp: 1,
+		body: ChatMessageBody::Text { text: "hi".to_string() },
+		status: truapi::latest::ChatMessageStatus::Sent,
+		reply: None,
+		edited_at: None,
+		reactions: Vec::new(),
+		request: false,
+	}
+}
+
+fn image_item(resource: ChatResource) -> ChatMediaItem {
+	ChatMediaItem::Image {
+		resource,
+		meta: ChatMediaMeta {
+			mime_type: "image/png".to_string(),
+			size_bytes: None,
+			width: None,
+			height: None,
+			placeholder: None,
+			alt: None,
+			duration_ms: None,
+		},
+	}
+}
+
+fn hop(node: &str, size: u64) -> ChatResource {
+	ChatResource::Hop { identifier: [1; 32], ticket: [2; 32], node: node.to_string(), size }
+}
+
+// The node of a HOP file reaches the host as text.
+#[test]
+fn the_node_of_a_hop_file_is_screened_as_a_name() {
+	assert_eq!(
+		validate_chat_media_resource("media", hop(" wss://hop.example ", 1_000)),
+		Ok(hop("wss://hop.example", 1_000))
+	);
+	assert_eq!(
+		validate_chat_media_resource("media", hop("wss://hop\u{202e}.example", 1_000)),
+		Err(ChatFieldError::UnsafeCharacter { field: "media" })
+	);
+}
+
+// The host shows the length of a video, so the validation must keep it.
+#[test]
+fn a_video_keeps_its_length() {
+	let video = ChatMediaItem::Video {
+		resource: hop("wss://hop.example", 1_000),
+		meta: ChatMediaMeta {
+			mime_type: "video/mp4".to_string(),
+			size_bytes: None,
+			width: None,
+			height: None,
+			placeholder: None,
+			alt: None,
+			duration_ms: Some(12_000),
+		},
+	};
+	assert_eq!(validate_chat_media_item(video.clone()), Ok(video));
+}
+
+#[test]
+fn a_message_carries_at_most_the_media_budget() {
+	let many = |count| ChatMessageBody::RichText {
+		text: None,
+		media: (0..count).map(|_| image_item(hop("wss://hop.example", 1))).collect(),
+	};
+	validate_chat_message_body(many(CHAT_MEDIA_MAX))
+		.expect("a message carries as many media items as the budget allows");
+	assert_eq!(
+		validate_chat_message_body(many(CHAT_MEDIA_MAX + 1)),
+		Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
+	);
+}
+
+// A custom body gets the checks of a custom message that a product posts,
+// and the host shows its `alt` where it shows the `alt` of a post.
+#[test]
+fn a_custom_body_is_screened_like_a_posted_custom_message() {
+	let custom =
+		|message_type: &str, payload: Vec<u8>, alt: Option<&str>| ChatMessageBody::Custom {
+			message: ChatCustomBody { message_type: message_type.to_string(), payload },
+			alt: alt.map(str::to_string),
+		};
+	assert_eq!(
+		validate_chat_message_body(custom(" poll ", vec![1], Some("A poll"))),
+		Ok(custom("poll", vec![1], Some("A poll")))
+	);
+	assert_eq!(
+		validate_chat_message_body(custom("poll", vec![1], Some(""))),
+		Ok(custom("poll", vec![1], None))
+	);
+	assert_eq!(
+		validate_chat_message_body(custom("poll", vec![1], Some("a\u{202e}b"))),
+		Err(ChatFieldError::UnsafeCharacter { field: "alt" })
+	);
+	assert_eq!(
+		validate_chat_message_body(custom("  ", Vec::new(), None)),
+		Err(ChatFieldError::Empty { field: "messageType" })
+	);
+	assert_eq!(
+		validate_chat_message_body(custom(
+			"poll",
+			vec![0; CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1],
+			None
+		)),
+		Err(ChatFieldError::TooLong { field: "payload", limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES })
+	);
+}
+
+// `text` is the field a product shrinks by sending less, so its size
+// rejection keeps that name for `MessageTooLarge`.
+#[test]
+fn a_message_body_is_bounded_in_text() {
+	let text = |len| ChatMessageBody::Text { text: "x".repeat(len) };
+	validate_chat_message_body(text(CHAT_BODY_MAX_BYTES))
+		.expect("a text as long as the budget allows is a message");
+	assert_eq!(
+		validate_chat_message_body(text(CHAT_BODY_MAX_BYTES + 1)),
+		Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
+	);
+	let caption = ChatMessageBody::RichText {
+		text: Some("x".repeat(CHAT_BODY_MAX_BYTES + 1)),
+		media: Vec::new(),
+	};
+	assert_eq!(
+		validate_chat_message_body(caption),
+		Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
+	);
+}
+
+#[test]
+fn a_message_is_screened_in_every_identifier() {
+	assert_eq!(
+		validate_chat_message(text_message(" m1 ")).map(|message| message.message_id),
+		Ok("m1".to_string())
+	);
+	assert_eq!(
+		validate_chat_message(text_message("m\u{200d}1")),
+		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+	);
+	assert_eq!(
+		validate_chat_feed_update(ChatFeedUpdate::ReactionPlaced {
+			message_id: "m1".to_string(),
+			participant_id: "user\u{202e}".to_string(),
+			emoji: "👍".to_string(),
+		}),
+		Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+	);
+}
+
+// A deletion names its message as each other update does.
+#[test]
+fn a_deletion_names_a_screened_message() {
+	let deleted = |id: &str| ChatFeedUpdate::Deleted { message_id: id.to_string() };
+	assert_eq!(validate_chat_feed_update(deleted(" m1 ")), Ok(deleted("m1")));
+	assert_eq!(
+		validate_chat_feed_update(deleted("m\u{202e}1")),
+		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+	);
+}
+
+#[test]
+fn room_declarations_are_bounded_as_the_limits_say() {
+	let metadata = |description: usize| ChatRoomMetadata {
+		name: "Support".to_string(),
+		description: Some("x".repeat(description)),
+		icon: None,
+		placeholder: None,
+	};
+	validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES))
+		.expect("a description as long as a message body is a description");
+	assert_eq!(
+		validate_chat_room_metadata(metadata(CHAT_BODY_MAX_BYTES + 1)),
+		Err(ChatFieldError::TooLong { field: "description", limit: CHAT_BODY_MAX_BYTES })
+	);
+	assert_eq!(
+		validate_chat_room_metadata(ChatRoomMetadata {
+			name: "x".repeat(CHAT_FIELD_MAX_BYTES + 1),
+			..metadata(0)
+		}),
+		Err(ChatFieldError::TooLong { field: "name", limit: CHAT_FIELD_MAX_BYTES })
+	);
+	// RFC 0002 makes the icon a resource: inline image data or the CID of a
+	// preimage. A URL would make the host fetch from where the product points.
+	let icon = |icon: &str| ChatRoomMetadata { icon: Some(icon.to_string()), ..metadata(0) };
+	let inline = "data:image/png;base64,AQID";
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+	assert_eq!(validate_chat_room_metadata(icon(inline)), Ok(icon(inline)));
+	assert_eq!(validate_chat_room_metadata(icon(&format!(" {cid} "))), Ok(icon(&cid)));
+	assert_eq!(validate_chat_room_metadata(icon("")), Ok(icon("")));
+	for url in
+		["https://icons.example/room.png", "http://icons.example/room.png", "javascript:alert(1)"]
+	{
+		assert_eq!(
+			validate_chat_room_metadata(icon(url)),
+			Err(ChatFieldError::NotAResource { field: "icon" }),
+			"{url} names a place to fetch, not the image"
+		);
+	}
+
+	// The core bounds the empty-room text as it bounds a description.
+	let placeholder = |text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
+	validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES)))
+		.expect("an empty-room text as long as a message body is an empty-room text");
+	assert_eq!(
+		validate_chat_room_metadata(placeholder("x".repeat(CHAT_BODY_MAX_BYTES + 1))),
+		Err(ChatFieldError::TooLong { field: "placeholder", limit: CHAT_BODY_MAX_BYTES })
+	);
+
+	// An image badge is a resource as the icon is, and needs an image. An
+	// activity line is display text that says something.
+	let bare = ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message: None,
+		last_reaction: None,
+		unseen_reactions: 0,
+		pinned: true,
+		activity: None,
+	};
+	let badge = |icon: &str| ChatRoomPreview {
+		badge: Some(ChatRoomBadge::Image { icon: icon.to_string() }),
+		..bare.clone()
+	};
+	assert_eq!(validate_chat_room_preview(badge(&format!(" {cid} "))), Ok(badge(&cid)));
+	assert_eq!(validate_chat_room_preview(badge(inline)), Ok(badge(inline)));
+	assert_eq!(
+		validate_chat_room_preview(badge("")),
+		Err(ChatFieldError::Empty { field: "badge" })
+	);
+	assert_eq!(
+		validate_chat_room_preview(badge("https://icons.example/live.png")),
+		Err(ChatFieldError::NotAResource { field: "badge" })
+	);
+	let activity = |text: &str| ChatRoomPreview {
+		activity: Some(ChatRoomActivity { text: text.to_string(), ongoing: true }),
+		..bare.clone()
+	};
+	assert_eq!(
+		validate_chat_room_preview(activity("Ben is typing")),
+		Ok(activity("Ben is typing"))
+	);
+	assert_eq!(
+		validate_chat_room_preview(activity(" ")),
+		Err(ChatFieldError::Empty { field: "activity" })
+	);
+	assert_eq!(
+		validate_chat_room_preview(activity("Ben\u{202e} is typing")),
+		Err(ChatFieldError::UnsafeCharacter { field: "activity" })
+	);
+
+	// The preview carries messages, screened as a page message is.
+	let preview_message = |message_id: &str, reply_to: Option<&str>| ChatPreviewMessage {
+		message_id: message_id.to_string(),
+		origin: ChatMessageOrigin { participant_id: "product".to_string() },
+		timestamp: 1,
+		body: ChatMessageBody::Text { text: "hi".to_string() },
+		status: truapi::latest::ChatMessageStatus::Sent,
+		reply_to: reply_to.map(str::to_string),
+		edited_at: None,
+		request: false,
+	};
+	let preview = |message: ChatPreviewMessage| ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message: None,
+		last_reaction: Some(ChatPreviewReaction {
+			emoji: "👍".to_string(),
+			by_user: false,
+			message: Some(message),
+			removed: false,
+		}),
+		unseen_reactions: 1,
+		pinned: false,
+		activity: None,
+	};
+	validate_chat_room_preview(preview(preview_message("m1", Some("m0"))))
+		.expect("a reaction preview names a message that replies to another");
+	assert_eq!(
+		validate_chat_room_preview(preview(preview_message("m\u{202e}1", None))),
+		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+	);
+	assert_eq!(
+		validate_chat_room_preview(preview(preview_message("m1", Some("m\u{202e}0")))),
+		Err(ChatFieldError::UnsafeCharacter { field: "reply" })
+	);
+}
+
+// RFC 0002 names a resource by inline Base64 data or by the CID of a preimage.
+// A host puts a resource where it draws an image, so any other text could make
+// it read a URL or a path that the product chose.
+#[test]
+fn a_resource_is_inline_base64_image_data_or_a_preimage_cid() {
+	let resource = |text: &str| validate_chat_resource("icon", text);
+	let inline = "data:image/png;base64,AQID";
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+
+	assert_eq!(resource(""), Ok(String::new()), "an empty resource is no resource");
+	assert_eq!(resource(inline), Ok(inline.to_string()), "an inline image arrives as it came");
+	assert_eq!(
+		resource(&format!(" {inline} ")),
+		Ok(inline.to_string()),
+		"the spaces around a resource are not part of it"
+	);
+	assert_eq!(
+		resource("DATA:IMAGE/PNG;BASE64,AQID"),
+		Ok(inline.to_string()),
+		"a host reads the header of an inline image in one spelling"
+	);
+	for media_type in ALLOWED_ICON_DATA_TYPES {
+		let image = format!("data:{media_type};base64,AQID");
+		assert_eq!(resource(&image), Ok(image.clone()), "a host draws {media_type}");
+	}
+	assert_eq!(
+		resource(&format!(" {cid} ")),
+		Ok(cid.clone()),
+		"a host looks a preimage up by the one text form of its CID"
+	);
+
+	let upper_case_cid = cid.to_uppercase();
+	let refused = [
+		("da ta:image/png,/../../admin?x=1", "a URL parser resolves it as a path on the host"),
+		("d a t a : image/png , x", "spaces inside the header are not the header"),
+		("data:image/png", "it carries no image"),
+		("data:image/png;base64,", "it carries no image"),
+		("data:image/png,%89PNG", "an inline image carries Base64 data"),
+		("data:image/png;base64,@@@@", "the data is not Base64"),
+		("data:image/png;base64,AQI", "Base64 data without its padding has a second spelling"),
+		("data:image/png;base64,AQ==AQID", "padding ends the data"),
+		("data:image/png;charset=utf-8;base64,AQID", "an image has no parameters"),
+		("data:image/svg+xml;base64,AQID", "an SVG image can carry script"),
+		("data:text/html;base64,AQID", "a document is not an image"),
+		(
+			"https://icons.example/room.png",
+			"a URL makes the host fetch from where the product points",
+		),
+		(upper_case_cid.as_str(), "a CID has one text form"),
+		(
+			"bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+			"a CID of another codec names no Bulletin preimage",
+		),
+	];
+	for (text, reason) in refused {
+		assert_eq!(
+			resource(text),
+			Err(ChatFieldError::NotAResource { field: "icon" }),
+			"{text}: {reason}"
+		);
+	}
+
+	// Padded Base64 is a multiple of four characters long, so no inline image
+	// is one byte over the budget: these are the largest image within it and
+	// the smallest image past it.
+	let largest = format!("data:image/jpeg;base64,{}", "AQID".repeat(16_378));
+	let smallest_past = format!("data:image/png;base64,{}", "AQID".repeat(16_379));
+	assert_eq!(
+		(largest.len(), smallest_past.len()),
+		(CHAT_ICON_MAX_BYTES - 1, CHAT_ICON_MAX_BYTES + 2),
+		"the two images sit next to the budget"
+	);
+	assert_eq!(resource(&largest), Ok(largest.clone()), "an image within the budget arrives");
+	assert_eq!(
+		resource(&smallest_past),
+		Err(ChatFieldError::TooLong { field: "icon", limit: CHAT_ICON_MAX_BYTES }),
+		"an image past the budget is refused for its size"
+	);
+}
+
+// The core screens the quote of a reply as it screens the message that it
+// quotes.
+#[test]
+fn the_quote_of_a_reply_is_screened() {
+	let quoting = |participant_id: &str| ChatMessage {
+		reply: Some(ChatReply {
+			message_id: "m0".to_string(),
+			preview: Some(ChatReplyPreview {
+				origin: ChatMessageOrigin { participant_id: participant_id.to_string() },
+				body: ChatMessageBody::Text { text: "earlier".to_string() },
+			}),
+		}),
+		..text_message("m1")
+	};
+
+	assert_eq!(validate_chat_message(quoting(" contact ")), Ok(quoting("contact")));
+	assert_eq!(
+		validate_chat_message(quoting("con\u{202e}tact")),
+		Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+	);
+}
+
+/// A chat host with only the callbacks that have no default.
+struct ChatHostWithoutDeclarations;
+
+#[async_trait::async_trait]
+impl ChatPlatform for ChatHostWithoutDeclarations {
+	async fn create_chat_room(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+		_request: HostChatCreateRoomRequest,
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn register_chat_bot(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatRegisterBotRequest,
+	) -> Result<HostChatRegisterBotResponse, HostChatRegisterBotError> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn post_chat_message(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatPostMessageRequest,
+	) -> Result<HostChatPostMessageResponse, HostChatPostMessageError> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomFooterRequest,
+	) -> Result<(), GenericError> {
+		unimplemented!("not used by this test")
+	}
+
+	fn subscribe_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+	) -> Result<Option<ChatRoomState>, GenericError> {
+		unimplemented!("not used by this test")
+	}
+}
+
+// The Rust defaults have the same contract as the Swift and Kotlin bridges.
+// A host without the declaration callbacks answers `Unsupported` for every
+// change, the metadata too, so a product can tell it from a failure. The
+// configuration itself arrives in `create_chat_room` and goes back through
+// `chat_room`, which have no default.
+#[test]
+fn a_chat_host_without_declarations_answers_unsupported_for_each_change() {
+	let host = ChatHostWithoutDeclarations;
+	let product = ProductContext::new(ProductId::for_test("chat.dot"));
+	let unsupported = Ok(ChatRoomChangeOutcome::Unsupported);
+
+	assert_eq!(
+		futures::executor::block_on(host.set_chat_room_metadata(
+			&product,
+			HostChatSetRoomMetadataRequest {
+				room_id: "support".to_string(),
+				metadata: ChatRoomMetadata {
+					name: "Support".to_string(),
+					description: None,
+					icon: None,
+					placeholder: None,
+				},
+			},
+		)),
+		unsupported
+	);
+	assert_eq!(
+		futures::executor::block_on(host.set_chat_room_preview(
+			&product,
+			HostChatSetRoomPreviewRequest {
+				room_id: "support".to_string(),
+				preview: ChatRoomPreview {
+					timestamp: None,
+					badge: None,
+					last_message: None,
+					last_reaction: None,
+					unseen_reactions: 0,
+					pinned: false,
+					activity: None,
+				},
+			},
+		)),
+		unsupported
+	);
+	assert_eq!(
+		futures::executor::block_on(host.delete_chat_room(
+			&product,
+			HostChatDeleteRoomRequest { room_id: "support".to_string() },
+		)),
+		unsupported
+	);
+	assert_eq!(
+		futures::executor::block_on(host.update_chat_feed(
+			&product,
+			HostChatUpdateFeedRequest {
+				room_id: "support".to_string(),
+				update: ChatFeedUpdate::Deleted { message_id: "m1".to_string() },
+			},
+			true,
+		)),
+		unsupported
+	);
+}

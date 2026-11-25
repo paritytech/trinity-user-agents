@@ -296,12 +296,31 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// the core resolved for the room, and every later call names the room with
 	/// it: the id that the core derived, or, for a product built against the
 	/// earlier client, the id that the product gave.
+	///
+	/// A room id is unique only among the rooms of one product, so the host
+	/// keeps each room under the product and the id. A product built against
+	/// the earlier client chooses its room ids freely. The host never changes a
+	/// room that this product does not host: a room of another product with
+	/// the same id, or a room that this product takes part in as a bot.
+	///
+	/// The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a
+	/// `data:` URL with an image type. Only a product built against the earlier
+	/// client sends an `https` URL, and the core has not checked the payload of
+	/// its `data:` URL. The `data:` URL of any other product has a Base64
+	/// payload that the core decoded.
+	///
+	/// In the same step the host keeps `config` for the room across restarts,
+	/// for a new room and for a room that exists. A change of `product_source`
+	/// discards the stored messages or the cached pages of the room, and its
+	/// preview. A host that cannot keep `config` refuses it with `Unknown`
+	/// before it creates or changes anything.
 	async fn create_room(
 		&self,
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<latest::ChatRoomRegistrationStatus, HostRejection>;
+		config: latest::ChatRoomConfig,
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError>;
 
 	/// Register or resolve a native product Chat bot.
 	async fn register_bot(
@@ -340,6 +359,57 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Return the current product-scoped native Chat room list.
 	async fn list_rooms(&self) -> Result<Vec<latest::ChatRoom>, HostRejection>;
+
+	/// Return what the host keeps for one room of the product.
+	///
+	/// That is whether the product hosts the room or takes part as a bot, and
+	/// the configuration of its last `create_room`. The core reads it once
+	/// before each change to a room. The host looks the room up among the
+	/// rooms of this product only. `None` is a room that the product never
+	/// created; a host that cannot read its rooms returns a rejection, not
+	/// `None`.
+	async fn room(
+		&self,
+		room_id: String,
+	) -> Result<Option<crate::platform::ChatRoomState>, HostRejection>;
+
+	/// Replace the name, description, icon and empty-room text of a room. An
+	/// icon of `None` keeps the icon, and an empty icon removes it. A host that
+	/// does not serve it answers `Unsupported`.
+	async fn set_room_metadata(
+		&self,
+		room_id: String,
+		metadata: latest::ChatRoomMetadata,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
+
+	/// Replace how a room shows in the chat list. A host that does not serve it
+	/// answers `Unsupported`.
+	async fn set_room_preview(
+		&self,
+		room_id: String,
+		preview: latest::ChatRoomPreview,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
+
+	/// Delete a room with its messages, cache and declarations, and close its
+	/// screen. A room that does not exist is not an error. The core has not
+	/// checked that this product created the room, so the host deletes only a
+	/// room that this product hosts, and does nothing for any other id. A host
+	/// that does not serve it answers `Unsupported`.
+	async fn delete_room(
+		&self,
+		room_id: String,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
+
+	/// Apply one change to the messages of a room. With `persist` the host
+	/// stores the change; without it the host applies it only to an open room
+	/// screen and the chat list preview. A host that does not serve it answers
+	/// `Unsupported`. A rejection reaches the product as `HostFailure`.
+	async fn update_feed(
+		&self,
+		room_id: String,
+		update: latest::ChatFeedUpdate,
+		persist: bool,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection>;
 }
 
 /// Native game-reminder adapter. Hosts that can hold reminders pass an

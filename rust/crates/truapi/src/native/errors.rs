@@ -66,6 +66,7 @@ from_undeclared_host_error! {
 	crate::latest::HostPaymentStatusSubscribeError => Unknown,
 	crate::latest::HostPaymentTopUpStatusSubscribeError => Unknown,
 	crate::latest::HostNavigateToError => Unknown,
+	crate::latest::HostChatCreateRoomError => Unknown,
 }
 
 impl From<v01::GenericError> for HostRejection {

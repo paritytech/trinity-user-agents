@@ -23,13 +23,13 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::{
 	latest::{
-		ChatBotRegistrationStatus, ChatRoomRegistrationStatus, GenericError,
+		ChatBotRegistrationStatus, ChatRoomConfig, ChatRoomRegistrationStatus, GenericError,
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatListSubscribeItem,
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 		HostChatSetRoomFooterRequest,
 	},
-	platform::{ChatPlatform, ProductContext},
+	platform::{ChatPlatform, ChatRoomState, ProductContext},
 	v01::{ChatRoom, ChatRoomParticipation},
 };
 
@@ -131,6 +131,14 @@ impl ChatPlatform for CliChatHost {
 		room_id: String,
 		request: HostChatCreateRoomRequest,
 	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
+		// This host stores the messages of every room and serves no part of a
+		// room for the product, so it keeps only the default configuration. It
+		// refuses another one before it creates anything.
+		if request.config != ChatRoomConfig::default() {
+			return Err(HostChatCreateRoomError::Unknown {
+				reason: "this host keeps only the default room configuration".to_string(),
+			});
+		}
 		let mut state = self.lock();
 		let status = if state.rooms.contains_key(&room_id) {
 			ChatRoomRegistrationStatus::Exists
@@ -198,6 +206,20 @@ impl ChatPlatform for CliChatHost {
 		// The snapshot first, then every replacement, so a product that
 		// subscribes before creating a room still sees the room it creates.
 		stream::once(async move { Ok(snapshot) }).chain(receiver.map(Ok)).boxed()
+	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<Option<ChatRoomState>, GenericError> {
+		// `create_chat_room` refuses every configuration but the default, so
+		// each room this host keeps has it.
+		let participating_as = self.lock().rooms.get(&room_id).copied();
+		Ok(participating_as.map(|participating_as| ChatRoomState {
+			participating_as,
+			config: ChatRoomConfig::default(),
+		}))
 	}
 }
 

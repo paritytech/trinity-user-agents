@@ -18,11 +18,17 @@ pub struct HostChatCreateRoomRequest {
 	pub room_id_source: String,
 	/// Room display name.
 	pub name: String,
-	/// URL or base64 image.
+	/// Room icon: an inline PNG, JPEG, GIF, WebP or AVIF image as a `data:`
+	/// URL with a Base64 payload, or the CID of a Bulletin preimage. A URL that
+	/// names where to fetch the image is refused. An empty string means no
+	/// icon.
 	pub icon: String,
 	/// The parts of the room that the product serves. It replaces the
 	/// configuration that the host keeps for the room, also when the room
-	/// exists. The host keeps it across restarts.
+	/// exists. The host keeps it across restarts. A change of
+	/// `product_source` discards the stored messages or the cached pages of
+	/// the room, and its preview. A host that cannot keep this configuration
+	/// refuses the request and creates and changes nothing.
 	pub config: ChatRoomConfig,
 }
 
@@ -48,12 +54,15 @@ pub struct HostChatCreateRoomResponse {
 }
 
 /// Chat room registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From, derive_more::Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostChatCreateRoomError {
 	/// Not allowed.
+	#[display("not allowed")]
 	PermissionDenied,
 	/// Catch-all.
 	#[from]
+	#[display("{reason}")]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
@@ -153,8 +162,11 @@ pub struct ChatRoomMetadata {
 	pub name: String,
 	/// One or more lines the host shows in the room header.
 	pub description: Option<String>,
-	/// An icon that replaces the icon of `create_room`, with the same rules.
-	/// An empty string removes the icon. `None` keeps the current icon.
+	/// An icon that replaces the icon of `create_room`: an inline PNG, JPEG,
+	/// GIF, WebP or AVIF image as a `data:` URL with a Base64 payload, or the
+	/// CID of a Bulletin preimage. A URL that names where to fetch the image is
+	/// refused. An empty string removes the icon. `None` keeps the current
+	/// icon.
 	pub icon: Option<String>,
 	/// The text that the room shows while it has no messages. `None` shows
 	/// nothing.
@@ -170,7 +182,8 @@ pub enum ChatRoomBadge {
 		/// The number the host shows.
 		count: u32,
 	},
-	/// An image, with the rules of the icon of `create_room`.
+	/// An image: an inline image as a `data:` URL with a Base64 payload or the
+	/// CID of a Bulletin preimage, never a URL to fetch, and never empty.
 	Image {
 		/// The image the host shows.
 		icon: String,
@@ -259,18 +272,20 @@ pub struct ChatRoomActivity {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatRoomConfig {
 	/// `true`: the product keeps the messages and answers `messages_query` and
-	/// `user_action`, and the host keeps only a page cache.
+	/// `user_action`, and the host keeps only a page cache. The host sends a
+	/// `Seen` user action when the user sees the newest message.
 	/// `false`: the host stores the messages.
+	/// A `create_room` that changes it discards the stored messages or the
+	/// cached pages of the room, and its preview.
 	pub product_source: bool,
 	/// `true`: the host shows who reacted, and asks `reactions_query`.
 	pub reaction_details: bool,
-	/// `true`: the host sends a `Seen` user action when the user sees the
-	/// newest message.
-	pub report_seen: bool,
 }
 
 /// Request to replace the name, description, icon and empty-room text of a
 /// room.
+///
+/// A host that does not serve it answers `Unsupported`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomMetadataRequest {
 	/// A room that this product created.
@@ -314,8 +329,6 @@ pub enum HostChatSetRoomPreviewError {
 	/// In a room the host stores: the preview shows a message or a reaction of
 	/// the user.
 	NotOwner,
-	/// The product replaced the preview of this room too often.
-	RateLimited,
 }
 
 /// Failure to delete a room. A delete of a room that does not exist succeeds.
@@ -583,13 +596,13 @@ pub enum HostChatUpdateFeedError {
 	UnknownMessage,
 	/// `New` names a message the room holds already.
 	DuplicateMessage,
-	/// The text is over its limit.
+	/// The text or the custom payload is over its limit.
 	MessageTooLarge,
-	/// In a room the host stores: `New` from `"user"`, or `Edited` or `Deleted`
-	/// of a message the product did not write.
+	/// In a room the host stores: a new or replaced message that names `"user"`
+	/// as its author, as the author of the message it quotes, or as one who
+	/// reacted to it; a reaction placed or removed as `"user"`; or `Edited` or
+	/// `Deleted` of a message the product did not write.
 	NotOwner,
-	/// The product pushed updates to this room too often.
-	RateLimited,
 }
 
 /// Where a page of messages starts.

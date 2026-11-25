@@ -8,6 +8,8 @@ import Products
 final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     var createRoomStatus: CreateRoomStatus = .new
     var roomsToReturn: [RoomInfo] = []
+    /// The room stream ends before it yields a list, as a cancelled subscription does.
+    var endsRoomListWithoutRooms = false
     var sendMessageError: Error?
 
     private(set) var sentMessages: [ProductBotMessage] = []
@@ -35,8 +37,11 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {
         subscribeRoomsCallCount += 1
         let rooms = roomsToReturn
+        let endsWithoutRooms = endsRoomListWithoutRooms
         return AsyncStream<[RoomInfo]> { continuation in
-            continuation.yield(rooms)
+            if !endsWithoutRooms {
+                continuation.yield(rooms)
+            }
             continuation.finish()
         }.eraseToAnyAsyncSequence()
     }

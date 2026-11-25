@@ -24,7 +24,6 @@ const ROOM_ID_SOURCE = "support";
 const HOST_STORED_ROOM: ChatRoomConfig = {
   productSource: false,
   reactionDetails: false,
-  reportSeen: false,
 };
 
 /** Published limits, mirrored from `truapi::platform` so a case can cross one. */
@@ -195,7 +194,7 @@ export async function runChatScreeningE2e(
   const created = await client.chat.createRoom({
     roomIdSource: ROOM_ID_SOURCE,
     name: "Support",
-    icon: "https://rooms.invalid/support.png",
+    icon: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
     config: HOST_STORED_ROOM,
   });
   rows.push(
@@ -241,37 +240,45 @@ export async function runChatScreeningE2e(
         ),
   );
 
-  // The icon path is where the budget was measured on the arriving string
-  // rather than the resolved one, so it gets a case of its own: the room must
-  // not reach the host at all.
+  // A version 2 icon is a resource, so the budget case sends an inline image
+  // just past the icon budget: the room must not reach the host at all.
   startedAt = performance.now();
   const roomsBefore = registrations(chatLogPath);
   const oversizedIcon = await client.chat.createRoom({
     roomIdSource: "oversized-icon",
     name: "Oversized",
-    icon: `https://icons.invalid/${pathThatGrowsPast(ICON_MAX_BYTES)}`,
+    icon: `data:image/png;base64,${"A".repeat(ICON_MAX_BYTES)}`,
     config: HOST_STORED_ROOM,
   });
   const roomsAfter = registrations(chatLogPath);
+  // Any refusal keeps the room from the host, so the row also checks that the
+  // budget is what refused the icon.
+  const namesTheBudget =
+    oversizedIcon.isErr() &&
+    JSON.stringify(oversizedIcon.error).includes(
+      `icon must be at most ${ICON_MAX_BYTES} bytes`,
+    );
   rows.push(
     oversizedIcon.isOk()
       ? row(
-          "create_room_refuses_an_icon_that_resolves_past_its_budget",
+          "create_room_refuses_an_icon_past_its_budget",
           "fail",
           `accepted: ${JSON.stringify(oversizedIcon.value)}`,
           startedAt,
         )
-      : roomsAfter === roomsBefore
+      : roomsAfter === roomsBefore && namesTheBudget
         ? row(
-            "create_room_refuses_an_icon_that_resolves_past_its_budget",
+            "create_room_refuses_an_icon_past_its_budget",
             "pass",
             `${JSON.stringify(oversizedIcon.error)}; host registered no room`,
             startedAt,
           )
         : row(
-            "create_room_refuses_an_icon_that_resolves_past_its_budget",
+            "create_room_refuses_an_icon_past_its_budget",
             "fail",
-            "rejected the product, but the host registered the room",
+            roomsAfter === roomsBefore
+              ? `refused, but not for the icon budget: ${JSON.stringify(oversizedIcon.error)}`
+              : "rejected the product, but the host registered the room",
             startedAt,
           ),
   );

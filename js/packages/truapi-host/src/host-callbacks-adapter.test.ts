@@ -472,13 +472,27 @@ describe("createWasmRawCallbacks", () => {
       config: {
         productSource: false,
         reactionDetails: false,
-        reportSeen: false,
       },
     });
     const response = await raw.createChatRoom!(product, "0x01", request);
 
     expect(seen).toEqual(["chat.dot:0x01:support"]);
     expect(ChatRoomRegistrationStatus.dec(response)).toEqual("Exists");
+  });
+
+  it("answers no room for a host that answers undefined or null", async () => {
+    const product = ProductContext.enc({
+      productId: asProductId("chat.dot"),
+      executionKind: "Worker",
+    });
+    // A JavaScript host can answer `null`, which the typed callback rules out.
+    for (const noRoom of [undefined, null as unknown as undefined]) {
+      const raw = createWasmRawCallbacks(
+        makeHostCallbacks({ chat: { chatRoom: async () => noRoom } }),
+      );
+
+      expect(await raw.chatRoom!(product, "0x01")).toBeUndefined();
+    }
   });
 
   it("adapts typed result subscriptions", async () => {

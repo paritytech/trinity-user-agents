@@ -679,11 +679,8 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	{
 		let status: truapi::latest::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(room_id, request.name, request.icon)
-			.await
-			.map_err(|error| truapi::latest::HostChatCreateRoomError::Unknown {
-				reason: error.to_string(),
-			})?;
+			.create_room(room_id, request.name, request.icon, request.config)
+			.await?;
 
 		if status == truapi::latest::ChatRoomRegistrationStatus::New &&
 			let Ok(rooms) = self.chat.list_rooms().await
@@ -753,6 +750,66 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.chain(changes)
 		.map(Ok)
 		.boxed()
+	}
+
+	async fn chat_room(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<Option<crate::platform::ChatRoomState>, truapi::latest::GenericError> {
+		self.chat.room(room_id).await.map_err(truapi::latest::GenericError::from)
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomMetadataRequest,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+		self.chat
+			.set_room_metadata(request.room_id, request.metadata)
+			.await
+			.map_err(truapi::latest::GenericError::from)
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomPreviewRequest,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+		self.chat
+			.set_room_preview(request.room_id, request.preview)
+			.await
+			.map_err(truapi::latest::GenericError::from)
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatDeleteRoomRequest,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+		let outcome = self
+			.chat
+			.delete_room(request.room_id)
+			.await
+			.map_err(truapi::latest::GenericError::from)?;
+		if outcome == crate::platform::ChatRoomChangeOutcome::Applied &&
+			let Ok(rooms) = self.chat.list_rooms().await
+		{
+			self.events.notify_chat_rooms_changed(rooms);
+		}
+		Ok(outcome)
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<crate::platform::ChatRoomChangeOutcome, truapi::latest::GenericError> {
+		self.chat
+			.update_feed(request.room_id, request.update, persist)
+			.await
+			.map_err(truapi::latest::GenericError::from)
 	}
 }
 
