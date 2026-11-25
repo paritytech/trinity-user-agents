@@ -176,7 +176,8 @@ private extension FundingFlowWireframe {
 /// bottom sheets, a rounded card between the safe area insets, with the
 /// flow's screens pushed on it.
 final class FundingFlowNavigationController: UINavigationController, ModalSheetPresenterDelegate {
-    /// The user dragged the sheet away or tapped outside it.
+    /// The sheet went away without the flow closing it: the user dragged it
+    /// away or tapped outside it, or something under it was dismissed.
     var onUserDismiss: (() -> Void)?
 
     init(screens: [UIViewController]) {
@@ -194,6 +195,13 @@ final class FundingFlowNavigationController: UINavigationController, ModalSheetP
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .bgSurfaceContainer
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || presentingViewController == nil {
+            onUserDismiss?()
+        }
     }
 
     /// Dismisses the sheet, or completes at once when it is not on screen.
