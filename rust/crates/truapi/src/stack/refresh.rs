@@ -23,8 +23,7 @@ use super::{
 	source::{Listing, StackSource},
 };
 use crate::{
-	Spawner,
-	background_task::BackgroundTask,
+	BackgroundTask, Spawner,
 	chain_runtime::{GenesisCheck, GenesisHashes},
 	time::{Clock, Timer},
 	wake::WakeSignal,
@@ -206,7 +205,7 @@ impl StackRefresh {
 		self.task.get_or_init(|| {
 			started = true;
 			let requests = self.refresh_requests.subscribe();
-			BackgroundTask::spawn(spawner, self.shared.clone().run(host, requests))
+			spawner.create_task(self.shared.clone().run(host, requests))
 		});
 		started
 	}
@@ -233,7 +232,7 @@ impl StackRefresh {
 			let reported = self.shared.source().status();
 			changed(&reported);
 			let reports = self.shared.clone().report(changed, reported, chain_answers);
-			BackgroundTask::spawn(spawner, reports)
+			spawner.create_task(reports)
 		});
 		started
 	}
