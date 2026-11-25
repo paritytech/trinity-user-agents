@@ -560,6 +560,71 @@ fn previews_of_the_user() -> [latest::ChatRoomPreview; 3] {
 	]
 }
 
+// The host draws a contact event, a call and a payment with its own strings,
+// so a product could show a payment or a call that did not happen. The core
+// does not serve them yet, in any room, and the host never sees one.
+#[test]
+fn a_contact_event_call_or_payment_is_unsupported() {
+	let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
+	configure(
+		&chat,
+		"sourced",
+		latest::ChatRoomConfig { product_source: true, ..Default::default() },
+	);
+	let runtime = chat_runtime(chat.clone());
+	let bodies = [
+		latest::ChatMessageBody::Event(latest::ChatContactEvent::ContactAdded),
+		latest::ChatMessageBody::Call(latest::ChatCallRecord {
+			video: false,
+			answered_at: None,
+			closed: None,
+		}),
+		latest::ChatMessageBody::Payment(latest::ChatPaymentRecord { amount: 1, legacy: false }),
+	];
+
+	for room_id in ["stored", "sourced"] {
+		for body in &bodies {
+			let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+				unreachable!("text_message builds a new message")
+			};
+			message.body = body.clone();
+			let mut quote = quoting("contact");
+			if let Some(preview) = quote.reply.as_mut().and_then(|reply| reply.preview.as_mut()) {
+				preview.body = body.clone();
+			}
+			let edit = latest::ChatFeedUpdate::Edited {
+				message_id: "m1".to_string(),
+				body: body.clone(),
+				edited_at: 2,
+			};
+			for update in
+				[latest::ChatFeedUpdate::New(message), latest::ChatFeedUpdate::New(quote), edit]
+			{
+				assert_eq!(update_feed(&runtime, room_id, update), Err(CallError::Unsupported));
+			}
+
+			let preview = latest::ChatRoomPreview {
+				last_message: Some(latest::ChatPreviewMessage {
+					message_id: "m1".to_string(),
+					origin: latest::ChatMessageOrigin { participant_id: "product".to_string() },
+					timestamp: 1,
+					body: body.clone(),
+					status: latest::ChatMessageStatus::Sent,
+					reply_to: None,
+					edited_at: None,
+					request: false,
+				}),
+				..empty_preview()
+			};
+			assert_eq!(set_preview(&runtime, room_id, preview), Err(CallError::Unsupported));
+		}
+	}
+	assert!(
+		chat.feed.lock().unwrap().is_empty() && chat.calls().is_empty(),
+		"a host that draws these with its own strings would show what the product claims"
+	);
+}
+
 // In a room that the host stores, the user writes and reacts only through
 // the host. Thus no update from a product can name the user as its author.
 // Without this check, a host that trusts the core stores words that the
