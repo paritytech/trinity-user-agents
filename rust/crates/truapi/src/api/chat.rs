@@ -36,6 +36,9 @@ pub trait Chat: Send + Sync {
 	/// replaces it, also for a room that exists, so a product declares its rooms
 	/// again when it starts.
 	///
+	/// In version 2 the icon is inline image data or the CID of a Bulletin
+	/// preimage: a URL to fetch is refused.
+	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
@@ -188,7 +191,8 @@ pub trait Chat: Send + Sync {
 
 	/// Replace the name, description and empty-room text of a room, and its
 	/// icon when the metadata names one. The icon is inline image data or the
-	/// CID of a Bulletin preimage: a URL to fetch is refused.
+	/// CID of a Bulletin preimage: a URL to fetch is refused. A host that does
+	/// not serve room metadata answers `Unsupported`.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
