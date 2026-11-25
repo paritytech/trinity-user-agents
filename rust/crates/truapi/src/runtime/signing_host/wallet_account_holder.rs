@@ -194,9 +194,10 @@ impl WalletAccountHolder {
 		}
 	}
 
-	/// Wraps `value` in [`Served`] if the stack serves every product it names.
-	/// For a paired host's request, which does not pass through a product
-	/// connection.
+	/// `value` as [`Served`], naming each product by the id the stack serves
+	/// it under. For a paired host's request, which does not pass through a
+	/// product connection. The peer may be a host that is not built on this
+	/// core and names a product under `dot`, as a product does.
 	pub fn serve<T: NamesProducts>(&self, value: T) -> Result<Served<T>, AuthorityError> {
 		Ok(serve(self.services.stack(), value)?)
 	}

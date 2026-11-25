@@ -14,8 +14,9 @@ suite("the address a product account will be given", () => {
   // tx-demo reported these after connecting to a host whose session was
   // activated from the `bob` dev account. Pinned as literals because the point
   // of deriving here is to get the same answer a host will, and a derivation
-  // checked only against itself would agree with a host that disagreed. That
-  // host served a `.dot` id as written, which a stack on `dot` does.
+  // checked only against itself would agree with a host that disagreed. They
+  // are the addresses of the `.dot` ids as written, which a stack on `dot`
+  // serves.
   const CONTRACTS = "5DkXL5QxHcJV4mzcEfScZuS7HJYFzGVJHB1x3m8pLcwpBgja";
   const TX = "5GWoDJDcE2k6LV1aA2wntxwZf9DbES4Tq8423jDA333KqoG3";
   const onDot = {
@@ -62,7 +63,9 @@ suite("the address a product account will be given", () => {
         account: "bob",
         productId: asProductId("tx-demo.testnet"),
       }),
-    ).rejects.toThrow("the paseo stack does not serve product tx-demo.testnet");
+    ).rejects.toThrow(
+      "the paseo stack serves no product under the id tx-demo.testnet",
+    );
   });
 
   it("gives each product its own account", async () => {

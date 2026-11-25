@@ -506,9 +506,8 @@ pub async fn require_context_access(
 	// The manifest is resolved by bare label on the host's network, so
 	// `dim2.dot` and `dim2.paseo` read one document. The context is held to the
 	// owner's network, so a grant read for one TLD does not admit the pseudonym
-	// named under another. This is the owner's TLD as the handle spells it, not
-	// the host's: an owner id from another network reads this host's manifests,
-	// as `ring_vrf_key_access_granted` already does for the key grant.
+	// named under another. The ids that reach this are ones the stack serves, so
+	// what it keeps apart today is a localhost context and a dotNS owner.
 	if !context_id.on_one_network(&access.owner) {
 		Refusal { because: RefusedBecause::ContextOffNetwork, source: None, scopes: None }.warn(
 			&access.caller,

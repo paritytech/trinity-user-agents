@@ -107,7 +107,7 @@ test(
     try {
       await assert.rejects(runtime.activateStoredSession(), /absent/);
       const provider = await runtime.createProvider({
-        productId: "node-entry-test.dot",
+        productId: await runtime.parseProductId("node-entry-test.dot"),
       });
       const client = createClient(createTransport(provider));
 
@@ -140,10 +140,11 @@ test(
       },
     );
     try {
-      // The host names the product as it likes. The stack is on `paseo`, so
-      // the core runs it, and reports its demand, as `shared-worker.paseo`.
-      const productId = "shared-worker.dot";
-      const served = "shared-worker.paseo";
+      // The stack is on `paseo`, where the name `shared-worker.dot` is the
+      // product `shared-worker.paseo`. The host asks for that id once, so the
+      // demand it hears names the product as the host does.
+      const productId = await runtime.parseProductId("shared-worker.dot");
+      assert.equal(productId, "shared-worker.paseo");
       const changes = [];
       runtime.subscribeWorkerDemand((change) => changes.push(change));
       const chat = runtime.claimWorker(productId);
@@ -167,12 +168,12 @@ test(
       pocket.release();
       pocket.release();
       await runtime.parseProductId(productId);
-      assert.deepEqual(changes, [{ productId: served, wanted: true }]);
+      assert.deepEqual(changes, [{ productId, wanted: true }]);
       chat.release();
       await runtime.parseProductId(productId);
       assert.deepEqual(changes, [
-        { productId: served, wanted: true },
-        { productId: served, wanted: false },
+        { productId, wanted: true },
+        { productId, wanted: false },
       ]);
       closeRender();
     } finally {

@@ -578,9 +578,14 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		host_version: None,
 		platform_type: None,
 		platform_version: None,
-		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
-		)),
+		// On `dot`, the TLD the tests' products are under, in a build that
+		// allows it.
+		stack: crate::native::BundledStack {
+			reserved_values: crate::platform::ReservedValuesPolicy::ALLOWED,
+			..native_bundled_stack(&crate::test_support::test_descriptor(
+				"dot", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+			))
+		},
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
@@ -592,8 +597,16 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 	}
 }
 
+/// The bundled copy [`crate::test_support::published_test_descriptor`] is a
+/// later publication of: the same chains on `paseo`.
+fn native_bundled_paseo_stack() -> crate::native::BundledStack {
+	native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	))
+}
+
 /// `descriptor` signed, as a native host bundles it.
-fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
+pub fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
 	crate::native::BundledStack {
 		pointer,
@@ -822,7 +835,7 @@ fn process_runtime_counts_worker_references_per_product() {
 		native_host_runtime_config(),
 	)
 	.expect("host runtime config should be valid");
-	let product = || ProductId::for_test("shared.paseo");
+	let product = || ProductId::for_test("shared.dot");
 
 	let first = host.claim_worker(product());
 	let second = host.claim_worker(product());
@@ -1944,6 +1957,7 @@ impl NativeStackCallbacks for PublishedStack {
 #[test]
 fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let config = HostRuntimeConfig {
+		stack: native_bundled_paseo_stack(),
 		local_session_secret: None,
 		local_session_lite_username: None,
 		..native_host_runtime_config()
@@ -2003,7 +2017,8 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 /// status says why the copy waits instead.
 #[test]
 fn a_record_the_database_refuses_asks_for_no_restart() {
-	let config = native_host_runtime_config();
+	let config =
+		HostRuntimeConfig { stack: native_bundled_paseo_stack(), ..native_host_runtime_config() };
 	let wiped = crate::test_support::published_test_descriptor(
 		2,
 		"second",
@@ -2990,7 +3005,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 
 	let entropy = [7; 32];
 	let root_entropy = RootEntropy::new(entropy);
-	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let statement = root_entropy.derive_identity_keypair("dot").unwrap().public.to_bytes();
 	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
@@ -3013,7 +3028,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		let service = runtime.open_sso_service(statement, encryption).unwrap();
 		let request = RemoteMessage::request(
 			"subtree".to_string(),
-			ProductSubtreeRequest { product_id: ProductId::for_test("browse.paseo") },
+			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
 		)
 		.encode();
 		let response = |payload| SsoRequestOutcome::Response {
@@ -3027,7 +3042,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			.encode(),
 		};
 		let public_key = root_entropy
-			.derive_product_subtree_keypair(&ProductId::for_test("browse.paseo"))
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
 			.unwrap()
 			.public
 			.to_bytes();
@@ -3156,7 +3171,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 				callbacks.clone(),
 				None,
 				None,
-				native_execution_config("fetch.paseo", ExecutableKind::Worker),
+				native_execution_config("fetch.dot", ExecutableKind::Worker),
 			)
 			.unwrap();
 		let request = truapi::latest::RemotePermissionRequest {
@@ -3168,7 +3183,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 			futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
 		assert_eq!(
 			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
-			(granted, vec![(ProductId::for_test("fetch.paseo"), ExecutableKind::Worker)]),
+			(granted, vec![(ProductId::for_test("fetch.dot"), ExecutableKind::Worker)]),
 		);
 	}
 }

@@ -552,9 +552,9 @@ parsing, so a context off the wire carries a normalized product id.
 ### Product Identity
 
 Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
-that turns a host- or wire-supplied product id into the canonical form
-derivation, product storage and permission scopes are keyed by. Nothing else
-builds a `ProductId`, so holding one means the id is normalized. Code that reads
+that normalizes a host- or wire-supplied product id. Nothing else builds a
+`ProductId`, so holding one means the id is normalized. Derivation, product
+storage and permission scopes are keyed by a normalized id the stack serves. Code that reads
 an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
 and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
@@ -563,36 +563,41 @@ record is decoded without a stack. The stack decides which ids it serves:
 localhost ids, and names under its own TLD (`Stack::serves`).
 
 A name can also be written under `dot` on any stack. On a stack with another
-TLD the core reads it as the same name under the stack's TLD
-(`Stack::served_id`): the stack's own dotNS registry resolves it, so `game.dot`
-on a `paseo` host is the product `game.paseo`, with that product's keys,
-entropy, storage and permissions. Nothing derives under a `dot` id except on a
-stack whose TLD is `dot`, which only a build that allows Polkadot's reserved
-values can run. A name under any other TLD is not served.
+TLD it names the stack's own product: the stack's dotNS registry resolves it,
+so `game.dot` on a `paseo` host is the product `game.paseo`, with that
+product's keys, entropy, storage and permissions (`Stack::served_id`). A name
+under any other TLD names no product of the stack. A stack whose own TLD is
+`dot` serves `dot` ids as they are, and only a build that allows Polkadot's
+reserved values can run one.
 
-The core applies this wherever a product is named to it: the product a host
-asks it to run (`ProductContext::served_by`), a call that names another product
-(answered `MalformedFrame` when the stack does not serve it), every product a
-paired host's request names, a link, share host or Pocket deeplink
-(`parse_navigate`, `parse_product_share_host`), and the product ids a host
-passes to `HostRuntime`. Past those points every id is one the stack serves,
-and the subtree lookup, every key the signing wallet derives for a product
-other than its contact handle key, which only a connection's own product
-reaches, the manifest readers and worker references refuse any other id, a
-`dot` name on another stack included. `runtime::served` describes how a checked
-value reaches the account calls. Native hosts read links through a `Stack` they
-open from the bundled copy.
+The core reads a name this way where a product or a person writes it: a call
+that names a product (answered `MalformedFrame` when the stack does not serve
+it), every product a paired host's request names, and a link, share host or
+Pocket deeplink read through a `Stack` (`parse_navigate`,
+`parse_product_share_host`). `runtime::served` describes how a served value
+reaches the account calls. `parse_product_link` and `parse_dev_server` do not
+take a stack and answer the id as written.
 
-`HostRuntime` and the wasm runtimes administer stored state for any id
-(`permission_authorization_status` and its setter, `clear_product_state`), so a
-host on them can still read, change and clear what an unserved product left.
-They read a name the stack serves as `Stack::served_id` does, so a host that
-names `game.dot` on a `paseo` stack administers `game.paseo`. A native host can
-clear it with `clear_product_state`, but it reads and sets stored statuses only
-through a `NativeProductExecution`, which opens only for a served product.
+A host and the core hold one id for a product. `ProductContext::served_by`
+opens a product only under an id the stack serves and refuses a `dot` name on
+another stack, naming the id to open instead. A host that is given a name asks
+for the id first: a wasm runtime's `parseProductId`, or `Stack::served_id`,
+which the CLI applies to `--product-id`. Every other id a host passes is taken
+as written. The subtree lookup, `HostAccounts::derive_entropy`, every key the
+signing wallet derives for a product other than its contact handle key, which
+only a connection's own product reaches, the manifest readers and worker
+references refuse an id the stack does not serve.
+
+`HostRuntime` and the wasm runtimes administer stored state for any id as
+written (`permission_authorization_status` and its setter,
+`clear_product_state`), so a host on them can still read, change and clear what
+was kept under an id the stack does not serve, such as a `dot` id an earlier
+release ran on a `paseo` stack. A native host can clear it with
+`clear_product_state`, but it reads and sets stored statuses only through a
+`NativeProductExecution`, which opens only for a served product.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
-counts only under a TLD the stack accepts. These products bypass recorded permissions and
+counts only under an id the stack serves. These products bypass recorded permissions and
 permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except

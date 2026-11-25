@@ -92,7 +92,7 @@ export async function createMockClient(
   const { createWasmRawCallbacks } =
     await import("../generated/host-callbacks-adapter.js");
 
-  const { productId, ...hostConfig } = mockRuntimeConfig(
+  const { productId: requestedProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
   const host = createMockHost({
@@ -114,8 +114,10 @@ export async function createMockClient(
   // Both ends in one process, but still over a real MessagePort: the frames
   // crossing here are the same bytes that cross an iframe boundary.
   const channel = new MessageChannel();
+  // A suite names its product as it likes; the core runs it under the id the
+  // test stack serves it under.
   const core = runtime.productRuntime(
-    { productId },
+    { productId: runtime.parseProductId(requestedProduct) },
     {
       emitFrame(frame: Uint8Array) {
         channel.port1.postMessage(frame);
@@ -147,6 +149,7 @@ export async function createMockClient(
 /** The subset of the generated signing runtime this module drives. */
 interface SigningRuntime {
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  parseProductId(name: string): ProductId;
   productRuntime(
     product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },

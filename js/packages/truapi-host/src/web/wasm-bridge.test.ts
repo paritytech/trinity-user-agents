@@ -25,11 +25,16 @@ import { wasmIsBuilt } from "../testing/require-wasm.js";
 
 /**
  * {@link mockRuntimeConfig} with the bundled previewnet stack in place of its
- * test stack: the production bundle reads only a signed `stack`.
+ * test stack: the production bundle reads only a signed `stack`. The product
+ * is one previewnet serves.
  */
 function bundledRuntimeConfig() {
   const { testStack: _testStack, ...config } = mockRuntimeConfig();
-  return { ...config, stack: bundledTestStack() };
+  return {
+    ...config,
+    productId: asProductId("mock.testnet"),
+    stack: bundledTestStack(),
+  };
 }
 
 /**

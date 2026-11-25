@@ -382,8 +382,12 @@ fn product_selection_refuses_a_tld_the_stack_does_not_serve() {
 	let unserved = ProductId::for_test("third.elsewhere");
 	assert_eq!(
 		product.select(unserved.clone(), &stack),
-		Err(truapi::platform::UnservedProduct { product_id: unserved, stack_tld: tld.clone() }
-			.into())
+		Err(truapi::platform::UnservedProduct {
+			product_id: unserved,
+			stack_tld: tld.clone(),
+			served_as: None
+		}
+		.into())
 	);
 	assert_eq!(product.current().as_str(), format!("second.{tld}"));
 }

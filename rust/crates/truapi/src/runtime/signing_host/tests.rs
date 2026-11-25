@@ -698,6 +698,9 @@ fn a_context_grant_covers_the_identity_read() {
 fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 	let platform = Arc::new(StubPlatform::default());
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+	// The development id grants the same, so only its being on no network
+	// refuses its context below.
+	cache_grant(&platform, "localhost:3000", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
@@ -872,7 +875,7 @@ fn a_product_may_grant_a_grantee_its_context() {
 /// and at each door.
 #[test]
 fn a_context_the_naming_product_did_not_grant_is_refused() {
-	let cases: [(&str, Option<&str>, &str, &str); 5] = [
+	let cases: [(&str, Option<&str>, &str, &str); 4] = [
 		(
 			OWNER_GRANTS_DIM2NEXT,
 			None,
@@ -896,12 +899,6 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 			Some(r#"{"dim2next":["storage"]}"#),
 			"dim2.dot",
 			"a narrower scope does not imply context",
-		),
-		(
-			OWNER_GRANTS_DIM2NEXT,
-			Some(r#"{"dim2next":["context"]}"#),
-			"localhost:3000",
-			"a grant must not reach the pseudonym of a development id, which is on no network",
 		),
 	];
 	for (owner, grants, context, why) in cases {
@@ -1209,6 +1206,9 @@ fn a_refusal_covers_every_executable_of_the_refused_target() {
 fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 	let platform = Arc::new(StubPlatform::default());
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+	// The development id grants the same, so only its being on no network
+	// refuses its context below.
+	cache_grant(&platform, "localhost:3000", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))

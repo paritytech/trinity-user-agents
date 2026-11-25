@@ -6065,6 +6065,37 @@ fn get_account_derives_rfc0022_product_key() {
 	);
 }
 
+/// A product names itself as its code spells it. On a `paseo` host `myapp.dot`
+/// is the product `myapp.paseo`, so the call is for the product's own account
+/// and answers from that product's subtree. A subtree an earlier release kept
+/// under the `dot` id, whose keys are a Polkadot product's, is never read.
+#[test]
+fn a_call_naming_a_dot_id_gets_the_stacks_own_products_account() {
+	let (mut host_config, _) = runtime_config("myapp.paseo");
+	host_config.stack = crate::test_support::paseo_test_stack();
+	let product = ProductContext::new(ProductId::for_test("myapp.paseo"));
+	let host =
+		ProductRuntimeHost::new(stub_platform(), (host_config, product), Spawner::for_test());
+	let session = sso_session_info();
+	for kept in ["myapp.paseo", "myapp.dot"] {
+		host.test_cache_product_subtree(
+			&session,
+			&ProductId::for_test(kept),
+			test_product_subtree(kept),
+		);
+	}
+	host.test_session_state().set_session(session);
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let HostAccountGetResponse::V1(response) =
+		futures::executor::block_on(host.get_account(&CallContext::default(), request))
+			.expect("a product's own account needs no prompt");
+
+	assert_eq!(response.account.public_key, test_product_account_public("myapp.paseo", 0));
+}
+
 #[test]
 fn get_account_own_product_prompts_and_rejects_on_a_cold_subtree() {
 	let host = ProductRuntimeHost::new(

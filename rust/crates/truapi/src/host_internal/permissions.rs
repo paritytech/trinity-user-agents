@@ -180,7 +180,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	/// Construct a service backed by the given storage + prompt callbacks.
 	///
 	/// The product is trusted only when `stack` trusts it, so a trusted label
-	/// under a TLD the stack does not accept reads its stored decisions like
+	/// under an id the stack does not serve reads its stored decisions like
 	/// any other product.
 	///
 	/// Device grants resolve without an OS check by default. Use

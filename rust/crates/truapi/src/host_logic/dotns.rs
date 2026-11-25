@@ -39,9 +39,8 @@ pub enum PocketDeeplinkAction {
 /// How the input URL should be opened. Kept in one enum rather than passing
 /// a raw string so the dispatcher can reject invalid input before reaching
 /// any platform callback. The open variants carry the ready-to-load canonical
-/// URL; `DotName` and `Localhost` keep the dotns/localhost identity visible so
-/// env-aware hosts can rewrite dotNS names for their active environment and
-/// re-parse without losing information.
+/// URL; `DotName` and `Localhost` also carry the product's id, the one the
+/// host opens it under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum NavigateDecision {

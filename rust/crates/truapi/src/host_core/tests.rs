@@ -408,7 +408,7 @@ fn a_kept_subtree_of_an_unserved_product_is_not_returned() {
 
 	let error = futures::executor::block_on(runtime.product_subtree_public_key(&unserved, None))
 		.expect_err("an unserved product has no subtree");
-	assert_eq!(error.reason, "the dot stack does not serve product foo.testnet");
+	assert_eq!(error.reason, "the dot stack serves no product under the id foo.testnet");
 }
 
 #[test]
@@ -2147,12 +2147,12 @@ fn forgetting_a_product_on_a_signing_host_clears_its_storage() {
 	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
 }
 
-/// A host names a product as it likes. On a stack with another TLD a `dot`
-/// name is the stack's own product, so the call acts on what that product
-/// stored. A product the stack does not serve keeps its id, and what it left
-/// can still be cleared.
+/// A host administers stored state under the id it names, served or not. So
+/// it can clear what was kept under a `dot` id on a stack that serves that
+/// name under its own TLD, and under another network's id, and neither clear
+/// touches the stack's own product of that name.
 #[test]
-fn a_host_call_reads_a_dot_name_as_the_stacks_own_product() {
+fn a_host_clears_what_was_stored_under_an_id_the_stack_does_not_serve() {
 	use crate::platform::{ProductStorage, ProductStorageKey};
 
 	let platform = Arc::new(StubPlatform::default());
@@ -2173,9 +2173,9 @@ fn a_host_call_reads_a_dot_name_as_the_stacks_own_product() {
 
 	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
 		.expect("clear product state");
-	assert_eq!(stored(), [false, true, true]);
+	assert_eq!(stored(), [true, false, true]);
 
 	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("left.paseo")))
 		.expect("clear product state");
-	assert_eq!(stored(), [false, true, false]);
+	assert_eq!(stored(), [true, false, false]);
 }

@@ -1257,6 +1257,66 @@ fn a_paired_request_for_a_dot_name_gets_the_stacks_own_products_subtree() {
 	);
 }
 
+/// A paired host relays an account as a product spelled it. The wallet shows
+/// the review for the stack's own product and signs with that product's
+/// account, so the signature verifies under `myapp.paseo`'s key and not under
+/// the key of Polkadot's `myapp.dot`.
+#[test]
+fn a_relayed_vrf_request_for_a_dot_account_is_signed_as_the_stacks_own_product() {
+	let platform = Arc::new(StubPlatform { sign_vrf_confirmed: true, ..StubPlatform::default() });
+	let (_, signing_host) = signing_fixture(platform.clone());
+	let account = |product_id: &str| api::ProductAccountId {
+		dot_ns_identifier: ProductId::for_test(product_id),
+		derivation_index: api::DerivationIndex::Index(0),
+	};
+
+	let response = answer(
+		&signing_host,
+		"vrf-1",
+		v1::RemoteMessage::SignVrfRequest(sso_messages::ProductRequest {
+			calling_product_id: ProductId::for_test("myapp.dot"),
+			payload: api::HostAccountSignVrfRequest {
+				account: account("myapp.dot"),
+				transcript_label: b"pop:airdrop".to_vec(),
+				items: vec![],
+			},
+		}),
+	);
+
+	let v1::RemoteMessage::SignVrfResponse(response) = response else {
+		panic!("expected a VRF signature response");
+	};
+	let signature = response.payload.expect("the user confirms the review");
+	let verifies_under = |product_id: &str| {
+		let keypair = RootEntropy::new(ENTROPY)
+			.derive_product_keypair(
+				&ProductId::for_test(product_id),
+				crate::host_logic::product_account::index_bytes(0),
+			)
+			.expect("fixture derives a product account");
+		keypair
+			.public
+			.vrf_verify(
+				merlin::Transcript::new(b"pop:airdrop"),
+				&schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap(),
+				&schnorrkel::vrf::VRFProof::from_bytes(&signature.proof).unwrap(),
+			)
+			.is_ok()
+	};
+	let reviewed: Vec<_> = platform
+		.sign_vrf_reviews
+		.lock()
+		.expect("review list mutex poisoned")
+		.iter()
+		.map(|review| (review.calling_product_id.clone(), review.request.account.clone()))
+		.collect();
+
+	assert_eq!(
+		(verifies_under("myapp.paseo"), verifies_under("myapp.dot"), reviewed),
+		(true, false, vec![(ProductId::for_test("myapp.paseo"), account("myapp.paseo"))])
+	);
+}
+
 /// The public key of `product_id`'s subtree under the fixture's seed.
 fn subtree_public_key(product_id: &str) -> [u8; 32] {
 	RootEntropy::new(ENTROPY)

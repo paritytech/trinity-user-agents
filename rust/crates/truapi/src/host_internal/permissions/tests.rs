@@ -1066,11 +1066,12 @@ fn a_trusted_product_ignores_stored_wildcard_denials() {
 	}
 }
 
-/// A trusted label skips every prompt only under a TLD the stack accepts. The
+/// A trusted label skips every prompt only under an id the stack serves. The
 /// host's settings screen reads the same service, so it must not report
-/// `peopl.testnet` as authorized on a `paseo` host that will not run it.
+/// `peopl.testnet` or `peopl.dot` as authorized on a `paseo` host that runs
+/// neither.
 #[test]
-fn a_trusted_label_is_trusted_only_under_a_tld_the_stack_accepts() {
+fn a_trusted_label_is_trusted_only_under_an_id_the_stack_serves() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let stack = crate::test_support::paseo_test_stack();
@@ -1083,12 +1084,12 @@ fn a_trusted_label_is_trusted_only_under_a_tld_the_stack_accepts() {
 	};
 
 	assert_eq!(
-		["peopl.dot", "peopl.paseo", "dim2.dot", "stash.dot", "peopl.testnet"].map(status),
+		["peopl.paseo", "dim2.paseo", "stash.paseo", "peopl.dot", "peopl.testnet"].map(status),
 		[
 			PermissionAuthorizationStatus::Authorized,
 			PermissionAuthorizationStatus::Authorized,
 			PermissionAuthorizationStatus::Authorized,
-			PermissionAuthorizationStatus::Authorized,
+			PermissionAuthorizationStatus::NotDetermined,
 			PermissionAuthorizationStatus::NotDetermined,
 		]
 	);

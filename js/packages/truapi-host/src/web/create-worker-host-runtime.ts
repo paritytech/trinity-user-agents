@@ -144,7 +144,13 @@ export interface WorkerPairingHostRuntime {
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
   getDeviceEncryptionKey(): Promise<Uint8Array | undefined>;
-  /** Validate and normalize a product identifier through the Rust core. */
+  /**
+   * The id the host's stack serves the product `value` names under, worked out
+   * by the Rust core. `value` is a name as a person or a configuration writes
+   * it: it is normalized, and on a stack whose TLD is not `dot` a name under
+   * `dot` comes back under the stack's TLD. Pass the answer wherever the
+   * runtime takes a product id. Rejects for a name the stack does not serve.
+   */
   parseProductId(value: string): Promise<ProductId>;
   getProductSubtreePublicKey(
     productId: ProductId,

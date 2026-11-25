@@ -38,7 +38,6 @@ import {
   type MockHost,
   type MockHostConfig,
   type MockRuntimeConfig,
-  type TestStack,
 } from "../web/create-mock-host.js";
 import { stackGenesisHashes } from "./networks.js";
 import {
@@ -259,7 +258,7 @@ export function publishTestHostGlobals(control: TestHostControl): () => void {
 export async function startTestHost(
   options: TestHostPageOptions,
 ): Promise<TestHostPage> {
-  const { productId: hostProduct, ...hostConfig } = mockRuntimeConfig(
+  const { productId: requestedProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
   const host = createMockHost({
@@ -296,16 +295,6 @@ export async function startTestHost(
       return glue;
     })();
     return derivation;
-  };
-  // The key the core reads a product's entry by. The core runs the product
-  // under the id its stack serves, so `mock.dot` stores as `mock.paseo` on
-  // the mock stack.
-  const storedKey = async (productId: ProductId, key: string) => {
-    const helpers = await deriveHelpers();
-    return helpers.productStorageKey(
-      helpers.testStackServedProductId(hostConfig.testStack, productId),
-      key,
-    );
   };
 
   if ((options.topology ?? "worker") === "worker") {
@@ -415,13 +404,23 @@ export async function startTestHost(
   // normalised to the same "pipe this port" step.
   // Set when the product connects, by whichever topology is running.
   let publishChatAction: ((action: unknown) => Promise<void>) | undefined;
+  // A suite names a product as it likes, and the core runs it under the id
+  // its stack serves: `tx-demo.dot` is `tx-demo.paseo` on the mock stack. The
+  // host asks once and uses that id for everything it does for the product.
+  const servedId = async (name: ProductId): Promise<ProductId> =>
+    directRuntime
+      ? directRuntime.parseProductId(name)
+      : workerRuntime!.parseProductId(name);
+  const hostProduct = await servedId(requestedProduct);
+  const seedKey = async (productId: ProductId, key: string) =>
+    (await deriveHelpers()).productStorageKey(await servedId(productId), key);
   // Before the iframe exists, so a product that reads its storage once at
   // startup finds these entries rather than racing a seed.
   const seeded = Object.entries(options.productStorage ?? {});
   const bootStorage: [string, Uint8Array][] = [];
   for (const [key, value] of seeded) {
     bootStorage.push([
-      await storedKey(hostProduct, key),
+      await seedKey(hostProduct, key),
       new TextEncoder().encode(value),
     ]);
   }
@@ -532,12 +531,12 @@ export async function startTestHost(
       productId?: ProductId,
     ) {
       host.writeProductStorage(
-        await storedKey(productId ?? hostProduct, key),
+        await seedKey(productId ?? hostProduct, key),
         typeof value === "string" ? new TextEncoder().encode(value) : value,
       );
     },
     async getProductAccountAddress(productId?: ProductId, index = 0) {
-      const target = productId ?? hostProduct;
+      const target = productId ? await servedId(productId) : hostProduct;
       const subtree = await (directRuntime
         ? directRuntime.productSubtreePublicKey(target)
         : workerRuntime?.getProductSubtreePublicKey(target));
@@ -619,11 +618,11 @@ interface ProductAccountDerivation {
   ): Uint8Array;
   productAccountAddress(publicKey: Uint8Array): string;
   productStorageKey(productId: string, key: string): string;
-  testStackServedProductId(testStack: TestStack, productId: string): string;
 }
 
 /** The main-thread signing runtime: hands back a product core directly. */
 interface DirectSigningRuntime {
+  parseProductId(name: string): ProductId;
   setGrantAllowancesUnchecked?(granted: boolean): void;
   productSubtreePublicKey(
     productId: ProductId,
@@ -649,6 +648,7 @@ interface WorkerSigningRuntime {
     liteUsername?: string,
   ): Promise<void>;
   disconnectSession(): Promise<void>;
+  parseProductId(name: string): Promise<ProductId>;
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
   getProductSubtreePublicKey(

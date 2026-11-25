@@ -74,6 +74,6 @@ suite("the key a seeded product storage entry is stored under", () => {
     ]).toEqual(["calc.paseo", "localhost:5173", "calc.dot"]);
     expect(() =>
       testStackServedProductId(mockTestStack(), "calc.testnet"),
-    ).toThrow("the paseo stack does not serve product calc.testnet");
+    ).toThrow("the paseo stack serves no product under the id calc.testnet");
   });
 });

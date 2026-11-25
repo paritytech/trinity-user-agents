@@ -126,7 +126,7 @@ impl Stack {
 
 	/// Whether `product_id` is a first-party product the host grants every
 	/// [`truapi::latest::RemotePermission`] without prompting: a trusted label
-	/// under a TLD this stack accepts.
+	/// under an id this stack serves.
 	///
 	/// Trusted products bypass recorded permissions and permission prompts.
 	/// Device permissions still need the OS grant. Hosts mediating product

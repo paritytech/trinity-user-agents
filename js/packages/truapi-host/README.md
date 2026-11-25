@@ -53,12 +53,15 @@ descriptor without an Asset Hub, People or Bulletin chain, a field `stack` does
 not have, and the TLDs `li`, which share hosts end in, and `localhost`, whose
 names all resolve to the local machine.
 
-The core runs products under the stack's TLD. A `productId` may also be written
-under `dot`: on a stack with another TLD the core reads it as the same name
-under the stack's TLD, so on `paseo` a host that passes `chat-bot.dot` runs
-`chat-bot.paseo`. That is the product's id everywhere: in the accounts and
-entropy it gets, in what the core stores for it, and in the `productId` the
-core hands to callbacks such as `subscribeWorkerDemand`.
+The core runs products under the stack's TLD, and every `productId` a host
+passes is an id the stack serves. A product can also be named under `dot`: on a
+stack with another TLD that name is the stack's own product, so on `paseo`
+`chat-bot.dot` is `chat-bot.paseo`. `runtime.parseProductId(name)` answers the
+id for a name and rejects a name the stack does not serve. Pass its answer to
+`createProvider`, `claimWorker` and the other calls: they refuse
+`chat-bot.dot` on a `paseo` stack, so the host and the core never hold two ids
+for one product, and the ids the core hands to callbacks such as
+`subscribeWorkerDemand` are the ones the host passed.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
@@ -219,9 +222,9 @@ needs, and a rejected schedule reaches the product as a host failure. A host
 keeps one reminder per product. The core serves
 `game` to the game product, `dim2`, alone. The mock test host
 (`@parity/truapi-host/testing`) accepts every reminder and cancel without
-holding them once it runs as that product; its default `mock.dot` gets
+holding them once it runs as that product; its default `mock.paseo` gets
 `Unsupported`, so a suite that exercises `game` passes
-`productId: "dim2.dot"`.
+`productId: "dim2.dot"`, which the test host runs as `dim2.paseo`.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
@@ -436,7 +439,8 @@ const runtime = await createNodePairingHostRuntime(
   }),
   { hostConfig },
 );
-const client = createClient(createTransport(await runtime.createProvider({ productId: "my-cli.dot" })));
+const productId = await runtime.parseProductId("my-cli.dot");
+const client = createClient(createTransport(await runtime.createProvider({ productId })));
 await client.account.requestLogin({});
 ```
 

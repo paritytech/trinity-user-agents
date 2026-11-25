@@ -250,22 +250,25 @@ fn a_stack_serves_its_own_tld_and_reads_the_reserved_one_as_it() {
 	);
 }
 
-/// A trusted label skips every prompt, so it counts only under a TLD the
-/// stack accepts: `peopl.com` parses, and must still prompt.
+/// A trusted label skips every prompt, so it counts only under an id the
+/// stack serves: `peopl.com` parses, and must still prompt. `peopl.dot` is no
+/// id on a `paseo` stack, so nothing that reached the core under it is
+/// trusted.
 #[test]
-fn a_trusted_label_is_trusted_only_under_an_accepted_tld() {
+fn a_trusted_label_is_trusted_only_under_an_id_the_stack_serves() {
 	let trusted = |stack_tld, product_id| on(stack_tld).trusts(&ProductId::for_test(product_id));
 
 	assert_eq!(
 		[
 			trusted("paseo", "peopl.paseo"),
-			trusted("paseo", "peopl.dot"),
+			trusted("dot", "peopl.dot"),
 			trusted("fork", "dim2.fork"),
+			trusted("paseo", "peopl.dot"),
 			trusted("paseo", "peopl.testnet"),
 			trusted("paseo", "peopl.com"),
 			trusted("paseo", "app.peopl.paseo"),
 		],
-		[true, true, true, false, false, false]
+		[true, true, true, false, false, false, false]
 	);
 }
 
@@ -303,20 +306,36 @@ fn a_dot_name_is_served_under_the_stacks_own_tld() {
 }
 
 /// The id a `dot` name is served under is the one keys derive from, so the
-/// name as written is not an id the stack serves.
+/// name as written is not an id the stack serves. The refusal names the id
+/// the stack serves the product under, which is what a host opens instead.
 #[test]
 fn only_ids_under_the_stacks_own_tld_are_served() {
-	let serves = |stack_tld, product_id| on(stack_tld).serves(&ProductId::for_test(product_id));
+	let refusal = |stack_tld, product_id| {
+		on(stack_tld)
+			.require_served(&ProductId::for_test(product_id))
+			.err()
+			.map(|unserved| unserved.to_string())
+	};
 
 	assert_eq!(
 		[
-			serves("paseo", "game.paseo"),
-			serves("paseo", "localhost"),
-			serves("dot", "game.dot"),
-			serves("paseo", "game.dot"),
-			serves("paseo", "game.testnet"),
+			refusal("paseo", "game.paseo"),
+			refusal("paseo", "localhost"),
+			refusal("dot", "game.dot"),
+			refusal("paseo", "game.dot"),
+			refusal("paseo", "game.testnet"),
 		],
-		[true, true, true, false, false]
+		[
+			None,
+			None,
+			None,
+			Some(
+				"the paseo stack serves no product under the id game.dot, which names its \
+				 product game.paseo"
+					.to_string()
+			),
+			Some("the paseo stack serves no product under the id game.testnet".to_string()),
+		]
 	);
 }
 

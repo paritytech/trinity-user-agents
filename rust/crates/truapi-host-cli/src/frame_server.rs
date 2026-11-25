@@ -74,15 +74,17 @@ pub struct ProductSelection {
 }
 
 impl ProductSelection {
-	/// Select the initial product identity, under the id `stack`, the stack
-	/// the host runs, serves the product under. Fails when it does not serve
-	/// the product.
+	/// Select the initial product identity. `product_id` is a name a person
+	/// typed, so it is read as `stack`, the stack the host runs, reads it: the
+	/// selection is the id the stack serves the product under. Fails when it
+	/// does not serve the product.
 	pub fn new(
 		product_id: ProductId,
 		execution_kind: ExecutableKind,
 		stack: &Stack,
 	) -> Result<Arc<Self>, RuntimeConfigValidationError> {
-		let product = ProductContext::served_by(stack, product_id, execution_kind)?;
+		let product =
+			ProductContext::served_by(stack, stack.served_id(&product_id)?, execution_kind)?;
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
@@ -92,15 +94,16 @@ impl ProductSelection {
 		self.current.borrow().product_id.clone()
 	}
 
-	/// Select a product, returning whether the selection changed. Fails, and
-	/// keeps the selection, when `stack`, the stack the host runs, does not
-	/// serve the product.
+	/// Select a product, read as [`Self::new`] reads it, returning whether
+	/// the selection changed. Fails, and keeps the selection, when `stack`,
+	/// the stack the host runs, does not serve the product.
 	pub fn select(
 		&self,
 		product_id: ProductId,
 		stack: &Stack,
 	) -> Result<bool, RuntimeConfigValidationError> {
-		let product = ProductContext::served_by(stack, product_id, self.execution_kind)?;
+		let product =
+			ProductContext::served_by(stack, stack.served_id(&product_id)?, self.execution_kind)?;
 		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false

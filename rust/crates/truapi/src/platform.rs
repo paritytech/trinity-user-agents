@@ -227,18 +227,20 @@ impl ProductContext {
 		Self { product_id, execution_kind }
 	}
 
-	/// The product a host asks the core to run on `stack`, under
-	/// [`Stack::served_id`]: a host on a `paseo` stack that asks for
-	/// `game.dot` runs `game.paseo`.
+	/// The product a host asks the core to run on `stack`.
 	///
-	/// Fails when the stack does not serve the product. Every bridge builds a
-	/// host-supplied product through here.
+	/// Fails when `product_id` is not an id the stack serves, so the host and
+	/// the core never hold two ids for one product. A name under `dot` on a
+	/// stack with another TLD is refused too: the host passes what
+	/// [`Stack::served_id`] gives for it. Every bridge builds a host-supplied
+	/// product through here.
 	pub fn served_by(
 		stack: &Stack,
 		product_id: ProductId,
 		execution_kind: ExecutableKind,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self::new_with_execution(stack.served_id(&product_id)?, execution_kind))
+		stack.require_served(&product_id)?;
+		Ok(Self::new_with_execution(product_id, execution_kind))
 	}
 }
 

@@ -213,9 +213,9 @@ let config = HostRuntimeConfig(
 for try await cards in runtime.pocketCards() { show(cards) }
 
 // A card the user approved, with the face they approved it by.
-try await runtime.addPocketCard(productId: "game.dot", cardId: "loyalty", title: "Loyalty", face: face)
-let removal = try await runtime.removePocketCard(productId: "game.dot", cardId: "loyalty")
-let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loyalty")
+try await runtime.addPocketCard(productId: "game.paseo", cardId: "loyalty", title: "Loyalty", face: face)
+let removal = try await runtime.removePocketCard(productId: "game.paseo", cardId: "loyalty")
+let kept = try await runtime.pocketCardFace(productId: "game.paseo", cardId: "loyalty")
 ```
 
 The core keeps the newest face of a card from every Pocket card render, so a

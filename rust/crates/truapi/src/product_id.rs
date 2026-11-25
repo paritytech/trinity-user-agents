@@ -14,8 +14,8 @@ use crate::{
 /// cap on chat identifiers.
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 
-/// Trusted product labels. A label counts only under a TLD the host's
-/// stack accepts.
+/// Trusted product labels. A label counts only under an id the host's stack
+/// serves.
 ///
 /// These products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant.

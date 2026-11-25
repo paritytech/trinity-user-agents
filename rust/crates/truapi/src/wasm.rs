@@ -915,6 +915,15 @@ pub fn parse_product_id_for_wasm(value: &str) -> Result<String, JsValue> {
 	product_id_from_js(value).map(Into::into)
 }
 
+/// The id `stack` serves the product `name` names under, as a runtime's
+/// `parseProductId` answers it.
+fn served_product_id(stack: &Stack, name: &str) -> Result<String, JsValue> {
+	stack
+		.served_id(&product_id_from_js(name)?)
+		.map(Into::into)
+		.map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
 struct WasmCoreInner {
 	core: ProductRuntime,
 	dispose_fn: SendWrapper<Function>,
@@ -1221,6 +1230,18 @@ impl WasmPairingHostRuntime {
 		self.runtime.reset_session_state().await;
 	}
 
+	/// The id this host's stack serves the product `name` names under.
+	///
+	/// `name` is a product name as a person or a configuration writes it. It
+	/// is normalized, and on a stack whose TLD is not `dot` a name under `dot`
+	/// comes back under the stack's TLD. The host passes the answer wherever
+	/// the runtime takes a product id, so the two never hold different ids
+	/// for one product. Throws for a name the stack does not serve.
+	#[wasm_bindgen(js_name = parseProductId)]
+	pub fn parse_product_id(&self, name: &str) -> Result<String, JsValue> {
+		served_product_id(self.runtime.stack(), name)
+	}
+
 	/// Claim one reference until the returned handle is freed.
 	///
 	/// An invalid product id, or one the stack does not serve, is logged and
@@ -1240,8 +1261,8 @@ impl WasmPairingHostRuntime {
 	}
 
 	/// Whether `productId` is a first-party product the host grants every
-	/// `RemotePermission` without prompting: a trusted label under a TLD this
-	/// host's stack accepts.
+	/// `RemotePermission` without prompting: a trusted label under an id this
+	/// host's stack serves.
 	///
 	/// Trusted products bypass recorded permissions and permission prompts.
 	/// Device permissions still need the OS grant. Hosts mediating product
@@ -1494,6 +1515,18 @@ impl WasmSigningHostRuntime {
 		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
+	/// The id this host's stack serves the product `name` names under.
+	///
+	/// `name` is a product name as a person or a configuration writes it. It
+	/// is normalized, and on a stack whose TLD is not `dot` a name under `dot`
+	/// comes back under the stack's TLD. The host passes the answer wherever
+	/// the runtime takes a product id, so the two never hold different ids
+	/// for one product. Throws for a name the stack does not serve.
+	#[wasm_bindgen(js_name = parseProductId)]
+	pub fn parse_product_id(&self, name: &str) -> Result<String, JsValue> {
+		served_product_id(self.runtime.stack(), name)
+	}
+
 	/// Claim one reference until the returned handle is freed.
 	///
 	/// An invalid product id, or one the stack does not serve, is logged and
@@ -1513,8 +1546,8 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Whether `productId` is a first-party product the host grants every
-	/// `RemotePermission` without prompting: a trusted label under a TLD this
-	/// host's stack accepts.
+	/// `RemotePermission` without prompting: a trusted label under an id this
+	/// host's stack serves.
 	///
 	/// Trusted products bypass recorded permissions and permission prompts.
 	/// Device permissions still need the OS grant. Hosts mediating product

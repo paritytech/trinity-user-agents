@@ -512,8 +512,9 @@ impl ProductConnection {
 		&self.product.product_id
 	}
 
-	/// Wraps `value` in [`Served`] if the stack serves every product it names.
-	/// Otherwise the request is malformed and nothing is looked up for it.
+	/// `value` as [`Served`], naming each product by the id the stack serves
+	/// it under. A request that names a product the stack does not serve is
+	/// malformed, and nothing is looked up for it.
 	fn serve<T: NamesProducts, D>(&self, value: T) -> Result<Served<T>, CallError<D>> {
 		Ok(serve(self.services.stack(), value)?)
 	}

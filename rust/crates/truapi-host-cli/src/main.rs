@@ -105,7 +105,8 @@ use crate::{
 
 /// Default product served by the pairing host's frame endpoint. Product ids
 /// must be a dotNS name under `.dot` or the stack's TLD, or a `localhost`
-/// identifier (host-spec product id).
+/// identifier (host-spec product id). A name under `.dot` selects the same
+/// name under the stack's TLD.
 const DEFAULT_PRODUCT_ID: &str = "headless-playground.dot";
 /// Deeplink scheme advertised by the pairing host.
 const DEEPLINK_SCHEME: &str = "polkadotapp";

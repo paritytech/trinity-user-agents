@@ -71,14 +71,24 @@ const RESERVED_TLD: &str = "dot";
 /// resolves there.
 const LOOPBACK_TLD: &str = "localhost";
 
-/// A product the stack does not serve.
+/// An id the stack serves no product under.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
-#[display("the {stack_tld} stack does not serve product {product_id}")]
+#[display(
+	"the {stack_tld} stack serves no product under the id {product_id}{}",
+	served_as
+		.as_ref()
+		.map(|served| format!(", which names its product {served}"))
+		.unwrap_or_default()
+)]
 pub struct UnservedProduct {
-	/// The product that was named.
+	/// The id that was named.
 	pub product_id: ProductId,
 	/// The stack's own TLD.
 	pub stack_tld: String,
+	/// The id the stack serves the named product under, when the id is a
+	/// name it reads as one of its own: a `dot` name on a stack with another
+	/// TLD.
+	pub served_as: Option<ProductId>,
 }
 
 /// A request naming such a product is malformed, the same as one whose id
@@ -446,20 +456,29 @@ impl Stack {
 	/// The id this stack serves the product `product_id` names under.
 	///
 	/// A localhost development id and a name under the stack's own TLD are
-	/// served as they are. On a stack with another TLD, a name under `dot` is
-	/// served as the same name under the stack's TLD, because the stack's own
-	/// dotNS registry resolves it: `game.dot` on a `paseo` stack is
-	/// `game.paseo`. Keys, entropy, storage and permissions are keyed by the
-	/// id returned here, so what a stack's registry publishes never gets the
-	/// keys of a Polkadot product.
+	/// ids the stack serves, and come back as they are. On a stack with
+	/// another TLD, a name under `dot` is read as the same name under the
+	/// stack's TLD, because the stack's own dotNS registry resolves it:
+	/// `game.dot` on a `paseo` stack is `game.paseo`. Keys, entropy, storage
+	/// and permissions are keyed by the id returned here, so what a stack's
+	/// registry publishes never gets the keys of a Polkadot product.
+	///
+	/// The core reads a name this way where one is written by a product or a
+	/// person: a call or a paired host's request that names a product, and a
+	/// link. A host does the same with a name it is given, and passes the
+	/// core the id it got.
 	///
 	/// Fails for a name under any other TLD, and for a `dot` name too long to
 	/// be an id under the stack's TLD.
 	pub fn served_id(&self, product_id: &ProductId) -> Result<ProductId, UnservedProduct> {
-		let unserved =
-			|| UnservedProduct { product_id: product_id.clone(), stack_tld: self.tld.clone() };
+		let unserved = || UnservedProduct {
+			product_id: product_id.clone(),
+			stack_tld: self.tld.clone(),
+			served_as: None,
+		};
 		match product_id.network_suffix() {
 			None => Ok(product_id.clone()),
+			Some(tld) if tld == self.tld => Ok(product_id.clone()),
 			Some(tld) if self.accepts_tld(tld) => {
 				product_id.under_tld(&self.tld).map_err(|_| unserved())
 			},
@@ -474,22 +493,28 @@ impl Stack {
 	/// product the stack serves under another id, which [`Self::served_id`]
 	/// gives.
 	pub fn serves(&self, product_id: &ProductId) -> bool {
-		product_id.network_suffix().is_none_or(|tld| tld == self.tld)
+		self.require_served(product_id).is_ok()
 	}
 
-	/// [`Self::serves`] as a check: fails with the product and the stack's TLD.
+	/// [`Self::serves`] as a check. The error says which id the stack serves
+	/// the product under when `product_id` is a name [`Self::served_id`]
+	/// reads.
 	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
-		if self.serves(product_id) {
+		let served = self.served_id(product_id)?;
+		if served == *product_id {
 			return Ok(());
 		}
-		Err(UnservedProduct { product_id: product_id.clone(), stack_tld: self.tld.clone() })
+		Err(UnservedProduct {
+			product_id: product_id.clone(),
+			stack_tld: self.tld.clone(),
+			served_as: Some(served),
+		})
 	}
 
-	/// Whether this stack gives the product `product_id` names every
-	/// `RemotePermission` without a prompt: a trusted label under one of
-	/// [`Self::accepted_tlds`].
+	/// Whether this stack gives `product_id` every `RemotePermission` without
+	/// a prompt: a trusted label under an id it serves.
 	pub fn trusts(&self, product_id: &ProductId) -> bool {
-		product_id.has_trusted_remote_permissions() && self.served_id(product_id).is_ok()
+		self.serves(product_id) && product_id.has_trusted_remote_permissions()
 	}
 
 	/// The stack's chains.

@@ -658,34 +658,60 @@ fn a_missing_database_directory_fails_runtime_creation() {
 	assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));
 }
 
-/// A host opens an execution only for a product its stack serves, so a name
-/// under another network's TLD gets no runtime.
+/// A host opens an execution only under an id its stack serves, so the host
+/// and the core never hold two ids for one product. A name under another
+/// network's TLD gets no runtime. Neither does a name under `dot` on a stack
+/// with a TLD of its own, and the refusal names the id to open instead.
 #[test]
 fn an_execution_opens_only_for_a_product_the_stack_serves() {
 	let callbacks = Arc::new(EventCallbacks::new());
-	let mut config = native_host_runtime_config();
-	config.local_session_secret = None;
-	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-		.expect("host runtime config should be valid");
-	let open = |product_id: &str| {
-		host.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config(product_id, ExecutableKind::App),
-		)
-		.map(|_| ())
+	let open_on = |tld: &str, product_id: &str| {
+		let descriptor =
+			crate::test_support::test_descriptor(tld, [0xa2; 32], [0xbb; 32], [0xcc; 32]);
+		let config = HostRuntimeConfig {
+			stack: crate::native::BundledStack {
+				reserved_values: crate::platform::ReservedValuesPolicy::ALLOWED,
+				..native_bundled_stack(&descriptor)
+			},
+			local_session_secret: None,
+			local_session_lite_username: None,
+			..native_host_runtime_config()
+		};
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+			.expect("host runtime config should be valid")
+			.open_product_execution(
+				callbacks.clone(),
+				None,
+				None,
+				native_execution_config(product_id, ExecutableKind::App),
+			)
+			.map(|_| ())
 	};
+	let refused =
+		|reason: &str| Err(NativeRuntimeConfigError::Invalid { reason: reason.to_string() });
 
-	assert!(open("myapp.dot").is_ok());
-	assert!(matches!(open("myapp.elsewhere"), Err(NativeRuntimeConfigError::Invalid { .. })));
+	assert_eq!(
+		[
+			open_on("dot", "myapp.dot"),
+			open_on("paseo", "myapp.paseo"),
+			open_on("paseo", "myapp.dot"),
+			open_on("paseo", "myapp.elsewhere"),
+		],
+		[
+			Ok(()),
+			Ok(()),
+			refused(
+				"the paseo stack serves no product under the id myapp.dot, which names its \
+				 product myapp.paseo"
+			),
+			refused("the paseo stack serves no product under the id myapp.elsewhere"),
+		]
+	);
 }
 
 /// A worker claim for a product the stack does not serve holds nothing. The
 /// worker can never open, so a reference would make the host retry it
-/// forever. A claim by a `dot` name starts the worker under the id the stack
-/// serves the product under.
+/// forever.
 #[test]
 fn a_worker_claim_for_an_unserved_product_starts_nothing() {
 	let callbacks = Arc::new(EventCallbacks::new());
@@ -700,7 +726,7 @@ fn a_worker_claim_for_an_unserved_product_starts_nothing() {
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
-		vec![(ProductId::for_test("shared.paseo"), crate::WorkerTransition::Start)]
+		vec![(ProductId::for_test("shared.dot"), crate::WorkerTransition::Start)]
 	);
 }
 
