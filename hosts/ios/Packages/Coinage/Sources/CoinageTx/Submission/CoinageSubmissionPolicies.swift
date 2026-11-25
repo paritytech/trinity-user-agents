@@ -2,6 +2,7 @@ import AsyncExtensions
 import DurableTransactions
 import Foundation
 import FoundationExt
+import KeyDerivation
 import NovaCrypto
 import SDKLogger
 import SubstrateSdk
@@ -22,6 +23,7 @@ enum CoinageSubmissionPolicies {
         let splitBuilder: SplitExtrinsicBuilder
         let unloadBuilder: UnloadExtrinsicBuilder
         let claimBuilder: ClaimExtrinsicBuilder
+        let coinKeyFactory: any CoinKeyDeriving
         let snKeyFactory: any SNKeyFactoryProtocol
         let dateProvider: any DateProviding
         let logger: SDKLoggerProtocol?
@@ -31,6 +33,7 @@ enum CoinageSubmissionPolicies {
         registry.register(split(deps), for: CoinageSubmissionParams.splitPolicyId)
         registry.register(unload(deps), for: CoinageSubmissionParams.unloadPolicyId)
         registry.register(claim(deps), for: CoinageSubmissionParams.claimPolicyId)
+        registry.register(reclaim(deps), for: CoinageSubmissionParams.reclaimPolicyId)
     }
 }
 
@@ -73,6 +76,21 @@ private extension CoinageSubmissionPolicies {
                 coinQuery: deps.coinQuery,
                 builder: deps.claimBuilder,
                 snKeyFactory: deps.snKeyFactory
+            ),
+            ledger: deps.ledger,
+            logger: deps.logger
+        )
+    }
+
+    static func reclaim(_ deps: Dependencies) -> InputGatedSubmissionPolicy<ReclaimRebuild> {
+        InputGatedSubmissionPolicy(
+            policyId: CoinageSubmissionParams.reclaimPolicyId,
+            chainId: deps.chainId,
+            rebuild: ReclaimRebuild(
+                coinService: deps.coinService,
+                coinQuery: deps.coinQuery,
+                coinKeyFactory: deps.coinKeyFactory,
+                builder: deps.claimBuilder
             ),
             ledger: deps.ledger,
             logger: deps.logger

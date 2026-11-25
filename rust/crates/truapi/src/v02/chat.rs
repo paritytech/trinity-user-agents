@@ -18,7 +18,9 @@ pub struct HostChatCreateRoomRequest {
 	pub room_id_source: String,
 	/// Room display name.
 	pub name: String,
-	/// URL or base64 image.
+	/// Room icon: an inline PNG, JPEG, GIF, WebP or AVIF image as a `data:`
+	/// URL, or the CID of a Bulletin preimage. A URL that names where to fetch
+	/// the image is refused. An empty string means no icon.
 	pub icon: String,
 	/// The parts of the room that the product serves. It replaces the
 	/// configuration that the host keeps for the room, also when the room
@@ -286,8 +288,7 @@ pub struct ChatRoomConfig {
 /// Request to replace the name, description, icon and empty-room text of a
 /// room.
 ///
-/// The metadata is a display hint. A host that does not show it accepts the
-/// request and keeps the name and icon of `create_room`.
+/// A host that does not serve it answers `Unsupported`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomMetadataRequest {
 	/// A room that this product created.

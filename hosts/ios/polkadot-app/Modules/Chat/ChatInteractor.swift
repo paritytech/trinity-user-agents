@@ -1,5 +1,6 @@
-import os
+import Coinage
 import UIKit
+import os
 import Operation_iOS
 import SubstrateSdk
 import Foundation_iOS
@@ -10,6 +11,7 @@ final class ChatInteractor {
     private let chatId: Chat.Id
     let engine: ChatEngineProtocol
     private let reactionRepository: ChatReactionRepositoryProtocol
+    private let reclaimCoinsService: any ReclaimCoinsServicing
     private let logger: LoggerProtocol
     private let usernameStorage: UsernameStoring
     private let permissionsService: CallPermissionsServicing
@@ -28,6 +30,7 @@ final class ChatInteractor {
         chatId: Chat.Id,
         engine: ChatEngineProtocol,
         reactionRepository: ChatReactionRepositoryProtocol,
+        reclaimCoinsService: any ReclaimCoinsServicing,
         usernameStorage: UsernameStoring = UsernameStorage(),
         permissionsService: CallPermissionsServicing = CallPermissionsService(),
         logger: LoggerProtocol = Logger.shared,
@@ -37,6 +40,7 @@ final class ChatInteractor {
         self.chatId = chatId
         self.engine = engine
         self.reactionRepository = reactionRepository
+        self.reclaimCoinsService = reclaimCoinsService
         self.usernameStorage = usernameStorage
         self.permissionsService = permissionsService
         self.logger = logger
@@ -386,6 +390,20 @@ extension ChatInteractor: ChatInteractorInputProtocol {
     func processAction(_ action: Chat.Action) {
         Task {
             await engine.processAction(action)
+        }
+    }
+
+    func reclaimTransfer(messageId: Chat.MessageId, coinKeys: [Data]) {
+        Task {
+            do {
+                try await reclaimCoinsService.reclaim(
+                    coinKeys: coinKeys,
+                    groupId: ChatTransferGroups.reclaim(messageId)
+                )
+            } catch {
+                logger.error("Failed to reclaim transfer \(messageId): \(error)")
+                await presenter?.didFailReclaim(messageId: messageId, error: error)
+            }
         }
     }
 }

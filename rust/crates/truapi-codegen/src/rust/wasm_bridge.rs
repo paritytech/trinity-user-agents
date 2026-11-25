@@ -312,6 +312,10 @@ fn emit_result_method(
 		)
 	} else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) {
 		formatdoc_decode_result(method, ok, &raw, &args, ctx)?
+	} else if let TypeRef::Option(inner) = ok &&
+		(ctx.is_api_codec(inner) || ctx.is_local_codec(inner))
+	{
+		formatdoc_decode_optional_result(method, inner, &raw, &args, ctx)?
 	} else {
 		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
 	};
@@ -404,6 +408,31 @@ fn formatdoc_decode_result(
             bytes,
             {message:?},
         )?)",
+		message = format!("{raw} response did not decode"),
+	})
+}
+
+/// The body of a method whose result is an optional codec payload: the host
+/// answers bytes, or `null` or `undefined` for `None`.
+fn formatdoc_decode_optional_result(
+	method: &PlatformMethod,
+	inner: &TypeRef,
+	raw: &str,
+	args: &str,
+	ctx: &BridgeCtx<'_>,
+) -> Result<String> {
+	let ty = rust_type(inner, ctx)?;
+	let call = bridge_call(
+		"invoke_optional_bytes_return",
+		&method.name,
+		args,
+		&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
+	);
+	Ok(formatdoc! {
+		"let bytes = {call}.await?;
+        Ok(bytes
+            .map(|bytes| decode_bytes::<{ty}>(bytes, {message:?}))
+            .transpose()?)",
 		message = format!("{raw} response did not decode"),
 	})
 }

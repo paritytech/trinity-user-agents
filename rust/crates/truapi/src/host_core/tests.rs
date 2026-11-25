@@ -2134,14 +2134,15 @@ impl ChatPlatform for ConfiguredChat {
 		futures::stream::empty().boxed()
 	}
 
-	async fn read_chat_room_config(
+	async fn chat_room(
 		&self,
 		_product: &ProductContext,
-		room_id: String,
-	) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
-		self.config
-			.clone()
-			.ok_or_else(|| v01::GenericError { reason: format!("no chat room {room_id}") })
+		_room_id: String,
+	) -> Result<Option<crate::platform::ChatRoomState>, v01::GenericError> {
+		Ok(self.config.clone().map(|config| crate::platform::ChatRoomState {
+			participating_as: truapi::latest::ChatRoomParticipation::RoomHost,
+			config,
+		}))
 	}
 }
 
@@ -2435,8 +2436,8 @@ fn a_chat_answer_is_screened_before_the_host_sees_it() {
 	));
 }
 
-// A room query needs the room: without its declarations the core refuses
-// before the product is asked.
+// A room query needs the room: a room the product never created declares
+// no handler, so the core answers before the product is asked.
 #[test]
 fn a_messages_query_for_an_unknown_room_never_reaches_the_product() {
 	let (runtime, sink) = roomless_chat_query_runtime();
@@ -2444,10 +2445,10 @@ fn a_messages_query_for_an_unknown_room_never_reaches_the_product() {
 		.control()
 		.chat_messages_query(messages_request(20))
 		.expect("may be asked");
-	assert!(matches!(
+	assert_eq!(
 		futures::executor::block_on(query.next()),
-		Some(Err(truapi::CallError::HostFailure { .. }))
-	));
+		Some(Err(truapi::CallError::Domain(truapi::latest::ProductChatQueryError::NotAvailable)))
+	);
 	assert!(sent_frames(&sink).is_empty());
 }
 
