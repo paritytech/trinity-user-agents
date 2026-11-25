@@ -76,7 +76,8 @@ struct ParticleField {
         }
     }
 
-    /// `count` particles at once from the source; a pan source sends them from where the finger last was.
+    /// `count` particles at once from the source, at most the most a host keeps alive; a pan source sends them from
+    /// where the finger last was.
     mutating func burst(_ emitter: Emitter, count: Int, at now: TimeInterval, finger: CGPoint?, size: CGSize) {
         let place: CGPoint? =
             switch emitter.source {
@@ -85,7 +86,7 @@ struct ParticleField {
                  .area: nil
             }
         if case .pan = emitter.source, place == nil { return }
-        for _ in 0 ..< max(count, 0) {
+        for _ in 0 ..< min(max(count, 0), Emitter.mostAlive) {
             send(emitter, from: place ?? start(emitter, size: size), at: now)
         }
     }
@@ -109,7 +110,8 @@ struct ParticleField {
         let length = hypot(to.x - from.x, to.y - from.y)
         let gap = 100 / emitter.ratePer100Points
         var along = gap - distanceCarry
-        while along <= length {
+        var sent = 0
+        while along <= length, sent < Emitter.mostAlive {
             let share = length > 0 ? along / length : 1
             send(
                 emitter,
@@ -117,8 +119,10 @@ struct ParticleField {
                 at: now
             )
             along += gap
+            sent += 1
         }
-        distanceCarry = length - (along - gap)
+        // A move owes no more than could ever be alive; what it owed past that is dropped.
+        distanceCarry = along <= length ? 0 : length - (along - gap)
     }
 
     private func start(_ emitter: Emitter, size: CGSize) -> CGPoint {
@@ -144,7 +148,13 @@ struct ParticleField {
         ))
     }
 
+    /// The whole particles `carry` owes, at most the most a host keeps alive: a long pause or a huge rate owes no
+    /// more than that, and the rest of its carry is dropped.
     private func take(_ carry: inout Double) -> Int {
+        guard carry < Double(Emitter.mostAlive) else {
+            carry = 0
+            return Emitter.mostAlive
+        }
         let whole = Int(carry.rounded(.down))
         carry -= Double(whole)
         return max(whole, 0)
