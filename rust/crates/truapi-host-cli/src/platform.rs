@@ -31,9 +31,9 @@ use truapi::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
 		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
-		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
-		ThemeHost, UserConfirmation, UserConfirmationReview,
+		Permissions, PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey,
+		ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost,
+		UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -46,7 +46,6 @@ use crate::{
 };
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
-static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
 
 /// A persistence failure with its filesystem operation or serialization cause.
 #[derive(derive_more::Display, derive_more::From, Debug)]
@@ -580,29 +579,6 @@ impl ProductStorage for CliPlatform {
 }
 
 #[async_trait::async_trait]
-impl ProductOperations for CliPlatform {
-	async fn begin_operation(
-		&self,
-		_product: &ProductContext,
-		_label: String,
-	) -> Result<api::HostWorkerBeginOperationResponse, api::HostWorkerOperationError> {
-		// The headless CLI has no worker to keep alive, so the id exists only so
-		// a product can pair begin/end.
-		Ok(api::HostWorkerBeginOperationResponse {
-			id: NEXT_OPERATION_ID.fetch_add(1, Ordering::Relaxed),
-		})
-	}
-
-	async fn end_operation(
-		&self,
-		_product: &ProductContext,
-		_id: u32,
-	) -> Result<(), api::HostWorkerOperationError> {
-		Ok(())
-	}
-}
-
-#[async_trait::async_trait]
 impl CoreStorage for CliPlatform {
 	async fn read_core_storage(
 		&self,
@@ -720,6 +696,7 @@ impl Notifications for CliPlatform {
 				self.ui.as_ref(),
 				SystemEvent::NotificationScheduled {
 					id,
+					title: notification.title.clone(),
 					text: notification.text.clone(),
 					scheduled_at,
 				},
@@ -734,6 +711,7 @@ impl Notifications for CliPlatform {
 						ui.as_ref(),
 						SystemEvent::NotificationDelivered {
 							id,
+							title: notification.title,
 							text: notification.text,
 							deeplink: notification.deeplink,
 						},
@@ -745,6 +723,7 @@ impl Notifications for CliPlatform {
 				self.ui.as_ref(),
 				SystemEvent::NotificationDelivered {
 					id,
+					title: notification.title,
 					text: notification.text,
 					deeplink: notification.deeplink,
 				},

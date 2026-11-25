@@ -13,7 +13,7 @@ final class ChatPresenter {
     let moduleNavigator: ModuleNavigating
     let paymentAssetViewModelFactory: PaymentAssetViewModelMaking
 
-    private var listModel: MessageListModel?
+    private(set) var listModel: MessageListModel?
     private var metadata: MessageListMetadata?
     private var footer: (any HashableContentConfiguration)?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
@@ -197,7 +197,7 @@ private extension ChatPresenter {
                 self?.interactor.acceptChatRequest()
             },
             declineChatRequest: { [weak self] in
-                self?.interactor.declineChatRequest()
+                self?.handleDeclineChatRequest()
             },
             cancelChatRequest: { [weak self] in
                 self?.handleCancelChatRequest()
@@ -225,6 +225,11 @@ private extension ChatPresenter {
             openProduct: { [moduleNavigator] productPage in
                 Task {
                     @MainActor in moduleNavigator.openProduct(page: productPage)
+                }
+            },
+            reclaimTransfer: { [weak self] messageId in
+                Task {
+                    @MainActor in self?.handleReclaimTransfer(for: messageId)
                 }
             }
         )
@@ -412,16 +417,33 @@ private extension ChatPresenter {
     }
 
     func handleCancelChatRequest() {
-        guard let username = metadata?.peerName else {
-            return
-        }
-
         MainActor.assumeIsolated {
-            wireframe.showCancelChatRequestConfirmation(
+            wireframe.showChatRequestConfirmation(
                 from: view,
-                username: username,
-                delegate: self
+                viewModel: .cancel(username: metadata?.peerName),
+                onConfirm: { [weak self] in
+                    self?.confirmCancelChatRequest()
+                }
             )
+        }
+    }
+
+    func handleDeclineChatRequest() {
+        MainActor.assumeIsolated {
+            wireframe.showChatRequestConfirmation(
+                from: view,
+                viewModel: .decline(username: metadata?.peerName),
+                onConfirm: { [weak self] in
+                    self?.interactor.declineChatRequest()
+                }
+            )
+        }
+    }
+
+    func confirmCancelChatRequest() {
+        interactor.cancelChatRequest()
+        MainActor.assumeIsolated {
+            wireframe.dismissChat(from: view)
         }
     }
 

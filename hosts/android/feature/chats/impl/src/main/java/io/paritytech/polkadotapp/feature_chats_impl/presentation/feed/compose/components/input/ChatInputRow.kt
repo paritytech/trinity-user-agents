@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -41,6 +44,7 @@ import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButto
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
+import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -50,6 +54,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatInputField
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.PayButton
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.paymentSubtitle
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.liftAboveDocklet
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRequestAnswerProgress
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatSendMessageInputState
@@ -74,26 +79,34 @@ internal fun ChatInputRow(
     onAttachClick: () -> Unit,
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
+    onCancelChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
     onAllowIdentitySigningClick: () -> Unit,
     onDeclineIdentitySigningClick: () -> Unit,
+    dockletHiddenFraction: () -> Float,
     onHeightChanged: (Dp) -> Unit,
 ) {
     val density = LocalDensity.current
-    val measuredModifier = Modifier
-        .fillMaxWidth()
-        .onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
+    val dockletLift = Modifier.liftAboveDocklet(
+        barInsets = LocalAppNavigationBarInsets.current,
+        navigationBars = WindowInsets.navigationBars,
+        ime = WindowInsets.ime,
+        hiddenFraction = dockletHiddenFraction,
+    )
+    val heightReporter = Modifier.onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
     if (inputState is ChatInputUiState.ExtensionCard) {
-        Box(modifier = measuredModifier) { inputState.renderer.drawInputSlot() }
+        Box(modifier = Modifier.fillMaxWidth().then(dockletLift).then(heightReporter)) { inputState.renderer.drawInputSlot() }
         return
     }
     PolkadotSurface(
-        modifier = measuredModifier,
+        modifier = Modifier.fillMaxWidth(),
         brush = footerBackgroundBrush(inputState)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(dockletLift)
+                .then(heightReporter)
                 .navigationBarsPadding()
                 .imePadding()
         ) {
@@ -134,7 +147,7 @@ internal fun ChatInputRow(
                 }
 
                 is ChatInputUiState.WaitChatRequestApproval -> {
-                    WaitingForAcceptLabel(username = username)
+                    WaitingForAcceptFooter(username = username, onCancelRequest = onCancelChatRequest)
                 }
 
                 is ChatInputUiState.Hidden -> {
@@ -143,6 +156,10 @@ internal fun ChatInputRow(
 
                 ChatInputUiState.PeerLeft -> {
                     ChatFooterLeave(username = username)
+                }
+
+                ChatInputUiState.ChatRequestCancelled -> {
+                    ChatFooterRequestCancelled(username = username)
                 }
 
                 ChatInputUiState.UnblockUser -> {
@@ -175,13 +192,14 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
     )
 
     is ChatInputUiState.AcceptChatRequest,
+    is ChatInputUiState.WaitChatRequestApproval,
+    is ChatInputUiState.ChatRequestCancelled,
     is ChatInputUiState.IdentitySigningConsent -> SolidColor(PolkadotTheme.colors.bg.surface.container)
 
     is ChatInputUiState.Hidden,
     is ChatInputUiState.ExtensionCard,
     is ChatInputUiState.PeerLeft,
-    is ChatInputUiState.UnblockUser,
-    is ChatInputUiState.WaitChatRequestApproval -> SolidColor(Color.Transparent)
+    is ChatInputUiState.UnblockUser -> SolidColor(Color.Transparent)
 }
 
 @Composable
@@ -384,6 +402,7 @@ private fun ChatInputRowPreview() {
                 isChatRequest = false
             ),
             username = "Julius.87",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -393,6 +412,7 @@ private fun ChatInputRowPreview() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -423,6 +443,7 @@ private fun ChatInputRowPreview_WithReply() {
                 showPayButton = true
             ),
             username = "John Doe",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -432,6 +453,7 @@ private fun ChatInputRowPreview_WithReply() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -455,6 +477,7 @@ private fun ChatInputRowPreview_WithEdit() {
                 isChatRequest = false
             ),
             username = "Julius.87",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -464,6 +487,7 @@ private fun ChatInputRowPreview_WithEdit() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -481,6 +505,7 @@ private fun ChatInputRowPreview_InviteToChat() {
                 isChatRequest = true
             ),
             username = "Julius.87",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -490,6 +515,7 @@ private fun ChatInputRowPreview_InviteToChat() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -504,6 +530,7 @@ private fun ChatInputRowPreview_AcceptRequest() {
         ChatInputRow(
             inputState = ChatInputUiState.AcceptChatRequest(ChatRequestAnswerProgress.None),
             username = "Maxwell.42",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -513,6 +540,7 @@ private fun ChatInputRowPreview_AcceptRequest() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -527,6 +555,7 @@ private fun ChatInputRowPreview_WaitingForAccept() {
         ChatInputRow(
             inputState = ChatInputUiState.WaitChatRequestApproval,
             username = "Julius.87",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -536,6 +565,7 @@ private fun ChatInputRowPreview_WaitingForAccept() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -550,6 +580,7 @@ private fun ChatInputRowPreview_PeerLeft() {
         ChatInputRow(
             inputState = ChatInputUiState.PeerLeft,
             username = "Julius.87",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -559,6 +590,7 @@ private fun ChatInputRowPreview_PeerLeft() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {}
@@ -573,6 +605,7 @@ private fun ChatInputRowPreview_UnblockUser() {
         ChatInputRow(
             inputState = ChatInputUiState.UnblockUser,
             username = "Julius.87",
+            dockletHiddenFraction = { 1f },
             onHeightChanged = {},
             onClearReply = {},
             onClearEdit = {},
@@ -581,6 +614,7 @@ private fun ChatInputRowPreview_UnblockUser() {
             onPayClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
+            onCancelChatRequest = {},
             onUnblockUserClick = {},
             onAllowIdentitySigningClick = {},
             onDeclineIdentitySigningClick = {},

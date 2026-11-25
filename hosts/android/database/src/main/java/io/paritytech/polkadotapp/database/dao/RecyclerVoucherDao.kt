@@ -29,10 +29,7 @@ interface RecyclerVoucherDao {
     /**
      * The location always; the fungibilities only when they could be worked out.
      *
-     * A null *parameter* leaves the stored fungibility standing, the same way [CoinDao.updateCoinPresence]
-     * treats a null age. It matters because a fungibility needs two chain reads the location does not — the
-     * ring capacity and the unloaded count — and neither failing may cost the voucher its member count,
-     * which is what decides spendability.
+     * A null *parameter* leaves the stored fungibility standing, as [CoinDao.updateCoinPresence] treats a null age.
      *
      * A null *column* is what "the maximum has never been frozen" looks like, so the maximum is written
      * exactly once: on the voucher's first landing in a ring, the only moment all three parts of its
@@ -52,7 +49,8 @@ interface RecyclerVoucherDao {
                 WHEN :maxRecyclerFungibility IS NULL THEN maxRecyclerFungibility
                 WHEN maxRecyclerFungibility IS NULL THEN :maxRecyclerFungibility
                 ELSE maxRecyclerFungibility
-            END
+            END,
+            recyclerUnloaded = :recyclerUnloaded
         WHERE ringVrfPublicKey = :ringVrfPublicKey
         """
     )
@@ -62,7 +60,8 @@ interface RecyclerVoucherDao {
         recyclerMembers: Int,
         enteredAt: Long?,
         recyclerFungibility: Int?,
-        maxRecyclerFungibility: Int?
+        maxRecyclerFungibility: Int?,
+        recyclerUnloaded: Int?
     )
 
     @Transaction
@@ -74,7 +73,8 @@ interface RecyclerVoucherDao {
                 recyclerMembers = update.recyclerMembers,
                 enteredAt = update.enteredAt,
                 recyclerFungibility = update.recyclerFungibility,
-                maxRecyclerFungibility = update.maxRecyclerFungibility
+                maxRecyclerFungibility = update.maxRecyclerFungibility,
+                recyclerUnloaded = update.recyclerUnloaded
             )
         }
     }
@@ -103,7 +103,9 @@ class RecyclerVoucherLocationUpdate(
     val recyclerIndex: Int,
     val recyclerMembers: Int,
     val enteredAt: Long?,
-    /** Null leaves the stored value standing — see [RecyclerVoucherDao.updateLocation]. */
+    /** Null leaves the stored fungibility standing — see [RecyclerVoucherDao.updateLocation]. */
     val recyclerFungibility: Int?,
-    val maxRecyclerFungibility: Int?
+    val maxRecyclerFungibility: Int?,
+    /** Null clears the stored count, so no deadline is ever computed from a stale one. */
+    val recyclerUnloaded: Int?
 )

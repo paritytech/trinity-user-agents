@@ -5,12 +5,9 @@ use crate::{
 		RemoteMessage, RemoteMessageData, decode_incoming_sso_request, v1,
 	},
 	host_logic::{
-		product_account::derive_identity_keypair,
-		sso::pairing::{
-			PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-		},
+		root_entropy::RootEntropy,
+		sso::pairing::{PairingBootstrap, establish_sso_session_info},
 		statement_store::SUBMIT_STATEMENT_METHOD,
-		worker::WorkerTransition,
 		x25519_seal::X25519PrivateKey,
 	},
 	test_support::{StubPlatform, runtime_config, wait_until},
@@ -50,7 +47,7 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> HostRuntime<Signing
 	)
 	.expect("signing host config is valid");
 	let runtime = HostRuntime::<SigningHost>::new(platform, config, Spawner::for_test());
-	futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new([0xab; 32])))
 		.expect("activation succeeds");
 	runtime
 }
@@ -896,59 +893,27 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 }
 
 #[test]
-fn an_open_render_holds_one_worker_reference() {
-	// The core owns the reference: no caller above it acquires or releases.
-	#[derive(Default)]
-	struct RecordingDemand {
-		transitions: Mutex<Vec<(String, WorkerTransition)>>,
-	}
-	impl crate::host_logic::worker::WorkerController for RecordingDemand {
-		fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-			self.transitions
-				.lock()
-				.expect("transition mutex poisoned")
-				.push((product_id.to_string(), transition));
-		}
-	}
+fn render_lifetime_is_independent_of_the_features_worker_claim() {
+	let (runtime, sink) = render_runtime();
+	let services = runtime.admin.product_runtime().connection().services();
+	let product = ProductId::for_test("worker.dot");
+	let owner = crate::WorkerHold::acquire(services, &product);
+	let mut render = start_render(&runtime, "loyalty");
+	assert_eq!(services.worker_ledger.count(&product), 1);
 
-	let (host_config, _) = runtime_config("worker.dot");
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("worker.dot"),
-		crate::platform::ExecutableKind::Worker,
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_INTERRUPT,
+		crate::frame::encode_clean_interrupt(),
 	);
-	let runtime = ProductRuntime::from_platform_with_config(
-		Arc::new(StubPlatform::default()),
-		host_config,
-		product,
-		Spawner::for_test(),
-		Arc::new(RecordingSink::default()),
-	);
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let demand = Arc::new(RecordingDemand::default());
-	assert!(
-		services.worker_ledger.install_worker_controller(demand.clone()),
-		"the controller installs once"
-	);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-
-	let render = runtime
-		.control()
-		.render(truapi::latest::ProductRendererRenderRequest {
-			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
-			payload: vec![],
-		})
-		.expect("a Worker connection may render");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
+	assert_eq!(poll_render(&mut render), core::task::Poll::Ready(None));
 	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	assert_eq!(
-		demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
-		[
-			("worker.dot".to_string(), WorkerTransition::Start),
-			("worker.dot".to_string(), WorkerTransition::Stop),
-		]
-	);
+	assert_eq!(services.worker_ledger.count(&product), 1);
+
+	let _replacement = start_render(&runtime, "loyalty");
+	drop(owner);
+	assert_eq!(services.worker_ledger.count(&product), 0);
 }
 
 /// A signed-out Worker runtime, which may render, and the sink holding the
@@ -1203,122 +1168,33 @@ fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
 }
 
 #[test]
-fn a_render_the_product_ends_releases_its_worker_reference() {
+fn the_host_receives_the_products_render_error() {
 	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
 	let mut render = start_render(&runtime, "loyalty");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
+	let error = truapi::latest::GenericError { reason: "the product stopped drawing".to_string() };
+	let interrupt = truapi::CallError::Domain(
+		truapi::versioned::renderer::ProductRendererRenderError::V1(error.clone()),
+	);
 
-	let request_id = render_request_id(&sink, 0);
 	deliver_render_frame(
 		&runtime,
-		&request_id,
+		&render_request_id(&sink, 0),
 		crate::frame::MESSAGE_TYPE_INTERRUPT,
-		crate::frame::encode_clean_interrupt(),
+		Result::<(), _>::Err(interrupt).encode(),
 	);
-	assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
-
 	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-		0,
-		"an ended stream holds no reference, whether or not the handle lives on"
-	);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-}
-
-#[test]
-fn a_render_the_product_interrupts_releases_its_worker_reference() {
-	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let mut render = start_render(&runtime, "loyalty");
-
-	let request_id = render_request_id(&sink, 0);
-	deliver_render_frame(
-		&runtime,
-		&request_id,
-		crate::frame::MESSAGE_TYPE_INTERRUPT,
-		Result::<(), truapi::CallError<v01::GenericError>>::Err(truapi::CallError::HostFailure {
-			reason: "the product stopped drawing".to_string(),
-		})
-		.encode(),
-	);
-	assert!(matches!(
 		poll_render(&mut render),
-		core::task::Poll::Ready(Some(Err(truapi::CallError::HostFailure { .. })))
-	));
-
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-		0,
-		"an interrupt ends the stream, so the reference goes with it"
+		core::task::Poll::Ready(Some(Err(truapi::CallError::Domain(error))))
 	);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 }
 
 #[test]
-fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
-	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let mut render = start_render(&runtime, "loyalty");
-
-	let request_id = render_request_id(&sink, 0);
-	deliver_render_frame(&runtime, &request_id, crate::frame::MESSAGE_TYPE_RECEIVE, vec![0xff]);
-	assert!(matches!(
-		poll_render(&mut render),
-		core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
-	));
-
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-}
-
-#[test]
-fn disposing_the_core_releases_an_open_renders_worker_reference() {
+fn closing_the_execution_interrupts_an_open_render() {
 	let (runtime, _sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
 	let mut render = start_render(&runtime, "loyalty");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
-	// The render fails rather than finishing, so the host opens it again on
-	// the next connection; the failure is where its reference is released.
 	runtime.dispose();
 	assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
-
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-}
-
-#[test]
-fn one_render_ending_leaves_the_other_renders_worker_reference() {
-	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let mut first = start_render(&runtime, "loyalty");
-	let second = start_render(&runtime, "rewards");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 2);
-
-	let request_id = render_request_id(&sink, 0);
-	deliver_render_frame(
-		&runtime,
-		&request_id,
-		crate::frame::MESSAGE_TYPE_INTERRUPT,
-		crate::frame::encode_clean_interrupt(),
-	);
-	assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
-	drop(first);
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-		1,
-		"dropping a stream that already released must not release again"
-	);
-
-	drop(second);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 }
 
 #[test]
@@ -1564,89 +1440,51 @@ fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
 }
 
 #[test]
-fn dispose_releases_the_demand_open_operations_hold() {
-	let platform = Arc::new(StubPlatform::default());
+fn retired_worker_operation_calls_cannot_create_or_release_references() {
+	use crate::frame::{
+		MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START, PROTOCOL_ERROR_METHOD_ID,
+		PROTOCOL_ERROR_TRAIT_ID, ProtocolErrorV1, VersionedProtocolError,
+	};
+
+	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
+	let product_id = ProductId::for_test("worker.dot");
+	let product = ProductContext::new_with_execution(
+		product_id.clone(),
+		crate::platform::ExecutableKind::Worker,
+	);
 	let sink = Arc::new(RecordingSink::default());
-	let (host_config, product) = runtime_config("myapp.dot");
-	let runtime = ProductRuntime::from_platform_with_config(
-		platform,
-		host_config,
-		product,
-		Spawner::for_test(),
-		sink,
-	);
-	let host = runtime.admin.product_runtime().clone();
-
-	futures::executor::block_on(truapi::api::Worker::begin_operation(
-		host.as_ref(),
-		&truapi::CallContext::default(),
-		truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-			truapi::latest::HostWorkerBeginOperationRequest { label: None },
-		),
-	))
-	.expect("begin operation");
-	assert_eq!(
-		host.connection()
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		1
-	);
-
-	runtime.dispose();
-
-	assert_eq!(
-		host.connection()
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"disposing a connection drops the demand its open operations held"
-	);
-}
-
-#[test]
-fn dispose_ends_the_operations_the_host_is_still_holding() {
-	let platform = Arc::new(StubPlatform::default());
-	let sink = Arc::new(RecordingSink::default());
-	let (host_config, product) = runtime_config("myapp.dot");
-	let runtime = ProductRuntime::from_platform_with_config(
-		platform.clone(),
-		host_config,
-		product,
-		Spawner::for_test(),
-		sink,
-	);
-	let host = runtime.admin.product_runtime().clone();
-
-	futures::executor::block_on(truapi::api::Worker::begin_operation(
-		host.as_ref(),
-		&truapi::CallContext::default(),
-		truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-			truapi::latest::HostWorkerBeginOperationRequest { label: None },
-		),
-	))
-	.expect("begin operation");
-
-	runtime.dispose();
-
-	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-	loop {
-		let ended = platform
-			.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.clone();
-		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-			break;
-		}
-		assert!(
-			std::time::Instant::now() < deadline,
-			"the host's own record of the operation is closed, not left to \
-             accumulate; saw {ended:?}"
-		);
-		std::thread::yield_now();
+	let worker = host.product_runtime(product, sink.clone());
+	let claim = host.hold_worker(&product_id);
+	for (method_id, message_type, value) in [
+		(0, MESSAGE_TYPE_REQUEST, (0u8, None::<String>).encode()),
+		(1, MESSAGE_TYPE_REQUEST, (0u8, 1u32).encode()),
+		(2, MESSAGE_TYPE_START, vec![0]),
+	] {
+		let request_id = format!("legacy:{method_id}");
+		let frame = ProtocolMessage {
+			request_id: request_id.clone(),
+			payload: Payload { trait_id: 19, method_id, message_type, value },
+		};
+		futures::executor::block_on(worker.receive_frame(frame.encode())).unwrap();
+		let response = ProtocolMessage {
+			request_id,
+			payload: Payload {
+				trait_id: PROTOCOL_ERROR_TRAIT_ID,
+				method_id: PROTOCOL_ERROR_METHOD_ID,
+				message_type: MESSAGE_TYPE_RESPONSE,
+				value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+					trait_id: 19,
+					method_id,
+				})
+				.encode(),
+			},
+		};
+		let reply = sink.frames.lock().unwrap().pop();
+		assert_eq!(reply, Some(response.encode()));
+		assert_eq!(host.worker_ledger().count(&product_id), 1);
 	}
+	drop(claim);
+	assert_eq!(host.worker_ledger().count(&product_id), 0);
 }
 
 #[test]
@@ -2010,10 +1848,11 @@ fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer(
 		statement_account_id: [0x31; 32],
 		encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 	};
-	let identity =
-		derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
-	let (_, responder_encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xab; 32], b"sso");
+	let entropy = RootEntropy::new([0xab; 32]);
+	let identity = entropy
+		.derive_identity_keypair("testnet")
+		.expect("identity derivation succeeds");
+	let (_, responder_encryption_public_key) = entropy.derive_x25519_keypair(b"sso");
 	let pairing_session = establish_sso_session_info(
 		&PairingBootstrap {
 			deeplink: String::new(),

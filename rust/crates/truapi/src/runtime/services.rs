@@ -105,7 +105,7 @@ pub struct RuntimeServices {
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
-	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+	pub contact_handle_cache: crate::runtime::contacts::ContactHandleCache,
 	/// dotNS reads running now, shared by the callers that overlap them.
 	pub dotns_reads: DotnsReads,
 	/// Public profile resolution and native cache retention shared by host callers.
@@ -230,6 +230,10 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let chain = match stack.genesis_check() {
+			Some(check) => chain.checking_genesis(check),
+			None => chain,
+		};
 		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
 			chain.clone(),
 			stack.chains().asset_hub,
@@ -258,7 +262,7 @@ impl RuntimeServices {
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
 			contacts_platform: contacts_platform.map(OnceLock::from).unwrap_or_default(),
-			contact_handles: Default::default(),
+			contact_handle_cache: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
 			public_profiles,
 			game_platform: OnceLock::new(),

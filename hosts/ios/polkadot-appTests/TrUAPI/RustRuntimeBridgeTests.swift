@@ -66,10 +66,6 @@ private struct StubHostProvider: ProductHostProviding {
     func resolveHost(rawString _: String) async throws -> ProductHost? {
         nil
     }
-
-    func resolvePage(destination: String) async throws -> ProductPage {
-        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
-    }
 }
 
 // MARK: - Bridge factory
@@ -298,19 +294,21 @@ struct RustRuntimeBridgeTests {
 
     // MARK: pushNotification
 
-    /// `pushNotification` maps text/deeplink/scheduledAt onto the scheduler
-    /// request and returns its UInt32.
+    /// `pushNotification` maps title/text/deeplink/scheduledAt onto the
+    /// scheduler and returns its UInt32. The core has already cleared a title
+    /// the product may not set, so the bridge passes it through.
     @Test func pushNotificationSchedules() async throws {
         let scheduler = MockNotificationScheduler()
         scheduler.notificationIdToReturn = 99
         let bridge = makeBridge(productId: try! ProductId("push.product.dot"), notificationScheduler: scheduler)
 
         let notificationId = try await bridge.pushNotification(
-            request: HostPushNotificationRequest(text: "hi", deeplink: "d", scheduledAt: nil)
+            request: HostPushNotificationRequest(text: "hi", deeplink: "d", scheduledAt: nil, title: "Daily Dollar")
         )
 
         #expect(notificationId == 99)
         #expect(scheduler.scheduledProductId == (try! ProductId("push.product.dot")))
+        #expect(scheduler.scheduledTitle == "Daily Dollar")
         #expect(scheduler.scheduledRequest?.text == "hi")
         #expect(scheduler.scheduledRequest?.deeplink == "d")
         #expect(scheduler.scheduledRequest?.scheduledAtMs == nil)

@@ -27,6 +27,7 @@ protocol ChatViewModelMaking {
 final class ChatViewModelFactory {
     struct Dependencies {
         let balanceFactory: TransferAmountViewModelFactoryProtocol
+        let fiatAmountFactory: TransferAmountViewModelFactoryProtocol
         let customDecoders: [ChatMessageCustomDecoding]
         let attachmentViewModelFactory: ChatAttachmentViewModelMaking
         let productRepository: AnyDataProviderRepository<Product>
@@ -45,6 +46,7 @@ final class ChatViewModelFactory {
 
     let timeFormatter: TimestampFormatting
     let balanceFactory: TransferAmountViewModelFactoryProtocol
+    let fiatAmountFactory: TransferAmountViewModelFactoryProtocol
     let dateSeparatorFormatter: ChatDateSeparatorFormatter
     let layoutContextCalculator: MessageLayoutContextCalculator
 
@@ -64,6 +66,7 @@ final class ChatViewModelFactory {
     ) {
         self.timeFormatter = timeFormatter
         balanceFactory = dependencies.balanceFactory
+        fiatAmountFactory = dependencies.fiatAmountFactory
         self.dateSeparatorFormatter = dateSeparatorFormatter
         self.layoutContextCalculator = layoutContextCalculator
         attachmentViewModelFactory = dependencies.attachmentViewModelFactory
@@ -750,11 +753,17 @@ private extension ChatViewModelFactory {
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         // TODO: fetch info by content.assetId + verify on real transfer
         let projection = content.bubbleProjection
-        let amountString = balanceFactory.amount(from: projection.displayedValue)
+        let amountString = fiatAmountFactory.amount(from: projection.displayedValue)
         let tokenSymbol = balanceFactory.symbol
         let originalAmountString: String? = projection.originalValue.flatMap {
-            balanceFactory.amount(from: $0)
+            fiatAmountFactory.amount(from: $0)
         }
+        let reclaimedAmountString = content.partialReclaimedValue.map { fiatAmountFactory.amount(from: $0) }
+        let reclaimAction = content.isReclaimable
+            ? ChatTransferMessageConfiguration.ReclaimAction(onReclaim: { [messageId, actions] in
+                actions.reclaimTransfer(messageId)
+            })
+            : nil
 
         let statusConfiguration: ChatMessageStatusViewConfiguration
         var configuration: ChatMessageContainerConfiguration
@@ -784,7 +793,6 @@ private extension ChatViewModelFactory {
             statusConfiguration = .inbox(date: deliveryDate, formatter: timeFormatter)
 
             configuration = ChatTransferMessageConfiguration.inbox(
-                currencySymbol: AppConfig.Brand.fiatSymbol,
                 amount: amountString,
                 tokenSymbol: tokenSymbol,
                 originalAmount: originalAmountString,
@@ -803,14 +811,15 @@ private extension ChatViewModelFactory {
             )
 
             configuration = ChatTransferMessageConfiguration.outbox(
-                currencySymbol: AppConfig.Brand.fiatSymbol,
                 amount: amountString,
                 tokenSymbol: tokenSymbol,
                 originalAmount: originalAmountString,
-                state: content.outgoingViewState,
+                to: peerMetadata.name,
+                state: content.outgoingViewState(reclaimedAmount: reclaimedAmountString),
                 statusConfiguration: statusConfiguration,
                 addReaction: addReaction,
-                messageReaction: messageReaction
+                messageReaction: messageReaction,
+                reclaimAction: reclaimAction
             )
         }
 

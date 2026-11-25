@@ -7,7 +7,7 @@ use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, Subscription,
-	api::{LocalStorage, Locale, Notifications, Permissions, System, Theme, Worker},
+	api::{LocalStorage, Locale, Notifications, Permissions, System, Theme},
 	latest,
 	versioned::{
 		local_storage::{
@@ -35,11 +35,6 @@ use truapi::{
 			HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
-		worker::{
-			HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
-			HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
-			HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
-		},
 	},
 };
 
@@ -395,48 +390,6 @@ impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 }
 
 #[async_trait::async_trait]
-impl<H: AccountHolder> Worker for ProductRuntimeHost<H> {
-	#[instrument(skip_all, fields(runtime.method = "worker.begin_operation"))]
-	async fn begin_operation(
-		&self,
-		_cx: &CallContext,
-		request: HostWorkerBeginOperationRequest,
-	) -> Result<HostWorkerBeginOperationResponse, CallError<HostWorkerBeginOperationError>> {
-		version(request)
-			.exec(|latest::HostWorkerBeginOperationRequest { label }| async move {
-				let response = self
-					.connection
-					.begin_operation_with_host(label.unwrap_or_default())
-					.await
-					.map_err(CallError::Domain)?;
-				self.connection.hold_worker_for_operation(response.id);
-				Ok(response)
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "worker.end_operation"))]
-	async fn end_operation(
-		&self,
-		_cx: &CallContext,
-		request: HostWorkerEndOperationRequest,
-	) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerEndOperationError>> {
-		version(request)
-			.exec(|latest::HostWorkerEndOperationRequest { id }| async move {
-				let ended =
-					self.connection.platform.end_operation(&self.connection.product, id).await;
-				// The product has declared the operation over, so the core stops
-				// counting it whatever the host made of the call. A host that dropped
-				// the operation and still failed would otherwise leave demand standing
-				// with nothing left able to end it, and a retry releases nothing.
-				self.connection.release_worker_for_operation(id);
-				ended.map_err(CallError::Domain)
-			})
-			.await
-	}
-}
-
-#[async_trait::async_trait]
 impl<H: AccountHolder> Theme for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "theme.subscribe"))]
 	async fn subscribe(
@@ -492,7 +445,7 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 		request: HostPushNotificationRequest,
 	) -> Result<HostPushNotificationResponse, CallError<HostPushNotificationError>> {
 		version(request)
-			.exec(|inner| async move {
+			.exec(|mut notification| async move {
 				let status = self
 					.connection
 					.permissions_service()
@@ -511,7 +464,13 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 						reason: format!("notification {reason}"),
 					}));
 				}
-				self.connection.platform.push_notification(inner).await.map_err(|err| {
+				let trusted = self.connection.product.product_id.has_trusted_remote_permissions();
+				notification.title = notification
+					.title
+					.filter(|_| trusted)
+					.map(|title| title.trim_matches(is_blank_title_char).to_string())
+					.filter(|title| !title.is_empty());
+				self.connection.platform.push_notification(notification).await.map_err(|err| {
 					CallError::Domain(latest::HostPushNotificationError::Unknown {
 						reason: err.reason,
 					})
@@ -536,4 +495,9 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 			})
 			.await
 	}
+}
+
+fn is_blank_title_char(character: char) -> bool {
+	character.is_whitespace() ||
+		matches!(character, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
 }

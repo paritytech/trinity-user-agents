@@ -182,30 +182,12 @@ fn selected_public_aliases(
 }
 
 fn emitted_version_prefixed_types(
+	api: &ApiDefinition,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
 ) -> BTreeSet<String> {
 	let mut names = BTreeSet::new();
-	for (wrapper_name, versions) in emit_versions {
-		let Some(wrapper) = wrappers.get(wrapper_name) else {
-			continue;
-		};
-		for version in versions {
-			let Some(variant) = wrapper.variants.get(version) else {
-				continue;
-			};
-			collect_preserved_version_prefixed_types(&variant.kind, aliases, &mut names);
-		}
-	}
-	names
-}
-
-fn preserve_version_prefixed_types_referenced_by_emitted_types(
-	api: &ApiDefinition,
-	aliases: &BTreeMap<String, String>,
-	names: &mut BTreeSet<String>,
-) {
 	loop {
 		let before = names.len();
 		for ty in &api.types {
@@ -215,36 +197,14 @@ fn preserve_version_prefixed_types_referenced_by_emitted_types(
 			{
 				continue;
 			}
-			preserve_version_prefixed_names(type_dependencies(ty), aliases, names);
+			let (dependencies, _) = binding_dependencies(ty, wrappers, emit_versions);
+			names.extend(dependencies.into_iter().filter(|name| {
+				version_prefixed_type(name).is_some() && !aliases.contains_key(name)
+			}));
 		}
 		if names.len() == before {
-			break;
+			return names;
 		}
-	}
-}
-
-fn preserve_version_prefixed_names(
-	dependencies: BTreeSet<String>,
-	aliases: &BTreeMap<String, String>,
-	names: &mut BTreeSet<String>,
-) {
-	names.extend(
-		dependencies
-			.into_iter()
-			.filter(|name| version_prefixed_type(name).is_some() && !aliases.contains_key(name)),
-	);
-}
-
-fn collect_preserved_version_prefixed_types(
-	kind: &VersionedKind,
-	aliases: &BTreeMap<String, String>,
-	names: &mut BTreeSet<String>,
-) {
-	match kind {
-		VersionedKind::Unit => {},
-		VersionedKind::Tuple(inner) => {
-			preserve_version_prefixed_names(type_ref_dependencies(inner), aliases, names);
-		},
 	}
 }
 
@@ -952,6 +912,118 @@ fn method_wire_version(
 	Ok(candidates.and_then(|versions| versions.into_iter().max()))
 }
 
+/// An older version a request method also sends, so hosts that predate its
+/// wire version keep serving the callers that need nothing newer.
+struct RequestFallback {
+	/// The wire version sent when every field in `added_fields` is absent.
+	version: u32,
+	/// TypeScript names of the optional request fields the wire version added.
+	added_fields: Vec<String>,
+}
+
+/// The oldest version a method marked `#[wire(request_fallback)]` sends in
+/// place of `wire_version`. Unmarked methods have none.
+///
+/// A version qualifies when the request payload at `wire_version` is the older
+/// payload plus optional fields, and the response and error payloads are the
+/// same type in both versions. Leaving those fields absent then means exactly
+/// what the older version meant, and the caller decodes the same reply.
+///
+/// Fails when a marked method has no qualifying version, since the mark would
+/// otherwise do nothing.
+fn request_fallback(
+	method: &MethodDef,
+	wrappers: &BTreeMap<String, VersionedWrapper>,
+	types: &HashMap<&str, &TypeDef>,
+	wire_version: u32,
+) -> Result<Option<RequestFallback>> {
+	if !method.wire.request_fallback {
+		return Ok(None);
+	}
+	match qualifying_request_fallback(method, wrappers, types, wire_version) {
+		Some(fallback) => Ok(Some(fallback)),
+		None => bail!(
+			"`{}` is marked `request_fallback`, but no older request version says the same \
+			 thing as V{wire_version}",
+			method.name
+		),
+	}
+}
+
+/// The oldest version [`request_fallback`] accepts for `method`, if any.
+fn qualifying_request_fallback(
+	method: &MethodDef,
+	wrappers: &BTreeMap<String, VersionedWrapper>,
+	types: &HashMap<&str, &TypeDef>,
+	wire_version: u32,
+) -> Option<RequestFallback> {
+	if method.kind != MethodKind::Request || method.wire.host_initiated {
+		return None;
+	}
+	let request_name = request_wrapper_name(method, wrappers)?;
+	let request = &wrappers[request_name];
+	let reply_wrappers: Vec<String> = method_versioned_wrappers(method, wrappers)
+		.into_iter()
+		.filter(|name| name != request_name)
+		.collect();
+	let struct_fields = |kind: &VersionedKind| match kind {
+		VersionedKind::Tuple(TypeRef::Named { name, args }) if args.is_empty() => {
+			match &types.get(name.as_str())?.kind {
+				TypeDefKind::Struct(fields) => Some(fields),
+				_ => None,
+			}
+		},
+		_ => None,
+	};
+	let newest_fields = struct_fields(&request.variants.get(&wire_version)?.kind)?;
+	for version in 1..wire_version {
+		let replies_unchanged = reply_wrappers.iter().all(|name| {
+			let variants = &wrappers[name].variants;
+			matches!(
+				(variants.get(&version), variants.get(&wire_version)),
+				(Some(older), Some(newest)) if older.kind == newest.kind
+			)
+		});
+		let Some(older_fields) =
+			request.variants.get(&version).and_then(|variant| struct_fields(&variant.kind))
+		else {
+			continue;
+		};
+		let keeps_older_fields = older_fields.iter().all(|older| {
+			newest_fields
+				.iter()
+				.any(|field| field.name == older.name && field.type_ref == older.type_ref)
+		});
+		let added: Vec<&FieldDef> = newest_fields
+			.iter()
+			.filter(|field| !older_fields.iter().any(|older| older.name == field.name))
+			.collect();
+		let added_are_optional =
+			added.iter().all(|field| matches!(field.type_ref, TypeRef::Option(_)));
+		if replies_unchanged && keeps_older_fields && added_are_optional && !added.is_empty() {
+			return Some(RequestFallback {
+				version,
+				added_fields: added.iter().map(|field| to_camel_case(&field.name)).collect(),
+			});
+		}
+	}
+	None
+}
+
+/// The wire versions a method sends and decodes: its wire version, and the
+/// version of its [`request_fallback`] when it has one.
+fn method_emitted_versions(
+	method: &MethodDef,
+	wrappers: &BTreeMap<String, VersionedWrapper>,
+	types: &HashMap<&str, &TypeDef>,
+	wire_version: u32,
+) -> Result<Vec<u32>> {
+	let fallback = request_fallback(method, wrappers, types, wire_version)?;
+	Ok(core::iter::once(wire_version)
+		.chain(fallback.map(|fallback| fallback.version))
+		.collect())
+}
+
 /// For each versioned wrapper, the set of wire versions the generated client
 /// actually emits. Each method picks one wire version via [`method_wire_version`];
 /// every wrapper it touches gets that version recorded here. Wrappers that no
@@ -968,6 +1040,7 @@ fn versioned_wrapper_emit_versions(
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	target_version: u32,
 ) -> Result<BTreeMap<String, BTreeSet<u32>>> {
+	let types = types_by_name(api);
 	let mut emit: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
 	for trait_def in &api.traits {
 		for method in &trait_def.methods {
@@ -977,8 +1050,9 @@ fn versioned_wrapper_emit_versions(
 			let Some(wire_version) = method_wire_version(method, wrappers, target_version)? else {
 				continue;
 			};
+			let versions = method_emitted_versions(method, wrappers, &types, wire_version)?;
 			for wrapper_name in method_versioned_wrappers(method, wrappers) {
-				emit.entry(wrapper_name).or_default().insert(wire_version);
+				emit.entry(wrapper_name).or_default().extend(&versions);
 			}
 			if method.wire.host_initiated &&
 				method.kind == MethodKind::Subscription &&
@@ -1108,13 +1182,8 @@ fn generate_type_bindings(
 	let wrappers = collect_versioned_wrappers(api);
 	let emit_versions = versioned_wrapper_emit_versions(api, &wrappers, target_version)?;
 	let aliases = selected_public_aliases(api, &wrappers, &emit_versions, target_version);
-	let mut preserved_version_prefixed_types =
-		emitted_version_prefixed_types(&wrappers, &emit_versions, &aliases);
-	preserve_version_prefixed_types_referenced_by_emitted_types(
-		api,
-		&aliases,
-		&mut preserved_version_prefixed_types,
-	);
+	let preserved_version_prefixed_types =
+		emitted_version_prefixed_types(api, &wrappers, &emit_versions, &aliases);
 	let internal_types = internal_type_names(api);
 	let types: Vec<_> = api
 		.types
@@ -1180,6 +1249,7 @@ fn generate_client_view(
 ) -> Result<String> {
 	validate_versioned_wrapper_shapes(api)?;
 	let wrappers = collect_versioned_wrappers(api);
+	let types = types_by_name(api);
 	let mut services = Vec::new();
 	let mut uses_hex_string = false;
 	for service in public_services(api)? {
@@ -1189,9 +1259,12 @@ fn generate_client_view(
 			.collect::<Vec<_>>();
 		for method in &methods {
 			if let Some(version) = method_wire_version(method, &wrappers, target_version)? {
+				let versions = method_emitted_versions(method, &wrappers, &types, version)?;
 				uses_hex_string |= method_versioned_wrappers(method, &wrappers)
 					.iter()
-					.filter_map(|name| wrappers[name].variants.get(&version))
+					.flat_map(|name| {
+						versions.iter().filter_map(|version| wrappers[name].variants.get(version))
+					})
 					.any(|variant| match &variant.kind {
 						VersionedKind::Tuple(inner) => type_ref_uses_hex_string(inner),
 						VersionedKind::Unit => false,
@@ -1284,7 +1357,7 @@ fn generate_client_view(
 		writeln!(out, "  }}\n").unwrap();
 
 		for method in methods {
-			emit_method(&mut out, api, trait_def, method, &wrappers, target_version)?;
+			emit_method(&mut out, &types, trait_def, method, &wrappers, target_version)?;
 			writeln!(out).unwrap();
 		}
 		writeln!(out, "}}\n").unwrap();
@@ -1849,7 +1922,7 @@ fn request_wrapper_name<'a>(
 
 fn emit_method(
 	out: &mut String,
-	_api: &ApiDefinition,
+	types: &HashMap<&str, &TypeDef>,
 	trait_def: &TraitDef,
 	method: &MethodDef,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
@@ -1913,22 +1986,55 @@ fn emit_method(
 			} else {
 				payload.value_expr.clone()
 			};
+			let encode = |version: u32| {
+				format!("{request_codec}.enc({{ tag: \"V{version}\", value: {request_expr} }})")
+			};
+			let fallback = request_fallback(method, wrappers, types, version)?;
+			let request_payload = match &fallback {
+				Some(fallback) => {
+					let absent = fallback
+						.added_fields
+						.iter()
+						.map(|field| format!("{request_expr}.{field} === undefined"))
+						.collect::<Vec<_>>()
+						.join(" && ");
+					format!("{absent} ? {} : {}", encode(fallback.version), encode(version))
+				},
+				None => encode(version),
+			};
 
 			writedoc!(
-                out,
-                "
+				out,
+				"
                   {ts_method_name}({arg_decl}): ResultAsync<{ok_type}, {err_type}> {{
                     return this.#transport.request<{ok_type}, {err_type}>({{
                       ids: W.{wire_const},
-                      payload: {request_codec}.enc({{ tag: \"V{version}\", value: {request_expr} }}),
+                      payload: {request_payload},
                       signal: options?.signal,
                       decodeResponse: (payload) => {{
                         const result = S.Result({response_codec}, {error_codec}).dec(payload);
                 ",
-                ok_type = response.inner_type_ts,
-                err_type = error.inner_type_ts
-            )
-            .unwrap();
+				ok_type = response.inner_type_ts,
+				err_type = error.inner_type_ts
+			)
+			.unwrap();
+			let domain_error_is_wrapper = call_error_inner(err)
+				.is_some_and(|domain| versioned_wrapper_for(domain, wrappers).is_some());
+			if let Some(fallback) = fallback.filter(|_| domain_error_is_wrapper) {
+				// The fallback only exists when the error payload is the same type
+				// in both versions, so the caller sees one tag whichever was sent.
+				let older = fallback.version;
+				let relabelled = format!(
+					"{{ success: false, value: {{ tag: \"Domain\", value: {{ tag: \"V{version}\", value: result.value.value.value }} }} }}"
+				);
+				writeln!(
+					out,
+					"        if (!result.success && result.value.tag === \"Domain\" && result.value.value.tag === \"V{older}\") {{"
+				)
+				.unwrap();
+				writeln!(out, "          return {relabelled};").unwrap();
+				writeln!(out, "        }}").unwrap();
+			}
 			if ok_is_wrapper {
 				writeln!(
 					out,

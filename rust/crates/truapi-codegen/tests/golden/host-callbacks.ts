@@ -31,11 +31,11 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomRegistrationStatus,
   FundingFrameOutcome,
   FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -61,7 +61,6 @@ import type {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
-  HostWorkerBeginOperationResponse,
   Result,
 } from "@parity/truapi";
 
@@ -512,13 +511,14 @@ export type FundingQuoteUnavailable =
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export interface HostContactLookup {
   /**
-   * The key every handle here was minted under. Per session, and never
-   * given to a product.
+   * The key every handle here was minted under. Per session and product,
+   * and never given to a product.
    */
   handleKey: Bytes32;
 
@@ -1334,8 +1334,9 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export const HostContactLookup: S.Codec<HostContactLookup> = S.lazy(
   (): S.Codec<HostContactLookup> =>
@@ -1754,12 +1755,17 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. `room_id` is the id
+   * that the core derived from the product and `request.room_id_source`, or,
+   * for a product built against the earlier client, the id that the product
+   * gave. The host stores the room under this id, and every later call names
+   * the room with it.
    */
   createChatRoom(
     product: ProductContext,
+    roomId: string,
     request: HostChatCreateRoomRequest,
-  ): Promise<HostChatCreateRoomResponse>;
+  ): Promise<ChatRoomRegistrationStatus>;
 
   /**
    * Register or resolve a product-scoped native chat bot. Host-owned in the
@@ -2060,7 +2066,9 @@ export interface Features {
 export interface FundingPlatform {
   /**
    * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
+   * host itself when `product` is ``undefined``. A cancel while the overlay is up
+   * drops this call, and the host takes the overlay down when it is
+   * dropped.
    */
   presentFunding(
     product: ProductContext | undefined,
@@ -2361,34 +2369,6 @@ export interface PreimageHost {
 }
 
 /**
- * Host store for a product's pending operations, which the host uses to keep
- * the product's worker runtime alive. Reached only through the `Worker`
- * protocol trait, so non-worker products never call these.
- */
-export interface ProductOperations {
-  /**
-   * Record a pending operation. `label` is a host log and UI hint, empty
-   * when the product gave none.
-   *
-   * The returned id must be unique among this product's open operations.
-   * The core keys the worker reference an operation holds by that id, so an
-   * id already open for the product records nothing the second time, and
-   * ending it once drops the demand both were holding. Ids may repeat
-   * across products, and may be reused once an operation has ended.
-   */
-  beginOperation(
-    product: ProductContext,
-    label: string,
-  ): Promise<HostWorkerBeginOperationResponse>;
-
-  /**
-   * Remove a pending operation. Idempotent: an unknown or already-ended id
-   * returns `Ok`, so a retry after an ambiguous failure is safe.
-   */
-  endOperation(product: ProductContext, id: number): Promise<void>;
-}
-
-/**
  * Product-scoped key-value storage.
  *
  * The core namespaces product keys before calling this trait, and the key
@@ -2556,7 +2536,6 @@ export interface HostCallbacks {
   theme: ThemeHost;
   locale: LocaleHost;
   preimage: PreimageHost;
-  productOperations: ProductOperations;
   chat?: ChatPlatform;
   contacts?: ContactsPlatform;
   game?: GamePlatform;
@@ -2579,7 +2558,6 @@ export interface RequiredHostCallbacks {
   theme: Required<ThemeHost>;
   locale: Required<LocaleHost>;
   preimage: Required<PreimageHost>;
-  productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
   contacts?: Required<ContactsPlatform>;
   game?: Required<GamePlatform>;

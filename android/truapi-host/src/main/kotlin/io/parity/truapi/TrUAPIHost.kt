@@ -27,7 +27,6 @@ package io.parity.truapi
 
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
@@ -93,6 +92,7 @@ import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
@@ -169,9 +169,6 @@ interface HostCoreStorage {
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
 }
-
-/** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
-private val defaultOperationIds = AtomicInteger(0)
 
 /**
  * Host-side callback bundle that the Rust core invokes for capabilities the
@@ -374,7 +371,7 @@ interface HostBridge {
      * [TrUAPIHostRuntime] was built with, never on the per-execution bridge
      * passed to [TrUAPIHostRuntime.openProductExecution]. Can arrive on any
      * thread, including synchronously on the calling thread during
-     * `acquireWorker`/`releaseWorker`, often the main thread and
+     * `claimWorker` or a claim's `release`, often the main thread and
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
@@ -387,24 +384,6 @@ interface HostBridge {
      * Can arrive on any thread.
      */
     fun workerCrashing(productId: ProductId, crashes: UInt) {}
-
-    /**
-     * Begin a pending operation. [label] is a log/UI hint, empty when the
-     * product gave none. Leave unimplemented to opt out of worker keep-alive;
-     * override to run background work past the product's surface.
-     *
-     * The default id is still distinct per call, because an operation id names
-     * one operation: a host overriding only [endOperation], and the core's own
-     * demand accounting, both end the wrong ones when every operation shares an
-     * id.
-     */
-    @Throws(HostRejection::class)
-    suspend fun beginOperation(productId: ProductId, label: String): UInt =
-        defaultOperationIds.incrementAndGet().toUInt()
-
-    /** End a pending operation. Idempotent, so a retry after an ambiguous failure is safe. */
-    @Throws(HostRejection::class)
-    suspend fun endOperation(productId: ProductId, id: UInt) {}
 
     /**
      * A device finished pairing with this signing host.
@@ -500,9 +479,12 @@ interface HostBridge {
  */
 interface ChatHostBridge {
     /**
-     * Create or resolve a native product Chat room. The core has bounded and
-     * normalized these arguments and screened the icon scheme; escaping them
-     * for the surface that renders them is still the host's job.
+     * Create or resolve a native product Chat room. `roomId` is the id that the
+     * core resolved for the room, and every later call names the room with it:
+     * the id that the core derived, or, for a product built against the earlier
+     * client, the id that the product gave. The core has bounded and normalized
+     * these arguments and screened the icon scheme; escaping them for the
+     * surface that renders them is still the host's job.
      */
     @Throws(HostRejection::class)
     suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
@@ -721,11 +703,7 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun clearProductStorage(productId: ProductId) =
         withStorageException { bridge.clearProductStorage(productId) }
 
-    override suspend fun beginOperation(productId: ProductId, label: String): UInt =
-        withHostRejection { bridge.beginOperation(productId, label) }
 
-    override suspend fun endOperation(productId: ProductId, id: UInt) =
-        withHostRejection { bridge.endOperation(productId, id) }
 }
 
 // A host that throws an exception type its callback does not declare crosses
@@ -1156,23 +1134,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
-    /**
-     * Take one reference on the product's worker for a modality holder that is
-     * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.requestWorkerTransition], which is where the host starts the
-     * worker. Pair every call with one [releaseWorker].
-     */
-    fun acquireWorker(productId: ProductId) {
-        inner.acquireWorker(productId)
-    }
-
-    /**
-     * Release one reference. The last one reports a stop transition, after
-     * which the host may stop the worker. Releasing with none held is a no-op.
-     */
-    fun releaseWorker(productId: ProductId) {
-        inner.releaseWorker(productId)
-    }
+    /** The first claim requests a worker start. Releasing the last claim requests a stop. */
+    fun claimWorker(productId: ProductId): NativeWorkerClaim = inner.claimWorker(productId)
 
     /**
      * Forget one product: revoke its grants and Allow once answers, then

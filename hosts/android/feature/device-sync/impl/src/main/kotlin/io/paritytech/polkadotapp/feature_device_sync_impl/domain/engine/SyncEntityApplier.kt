@@ -85,7 +85,7 @@ class SyncEntityApplier @Inject constructor(
         is LocalStatusScale.Outgoing -> when (status) {
             OutgoingStatusScale.NEW -> ChatMessage.Status.PROCESSING
             OutgoingStatusScale.SENT -> ChatMessage.Status.IS_SENT
-            OutgoingStatusScale.DELIVERED -> ChatMessage.Status.IS_READ
+            OutgoingStatusScale.DELIVERED -> ChatMessage.Status.IS_DELIVERED
         }
 
         is LocalStatusScale.Incoming -> when (status) {

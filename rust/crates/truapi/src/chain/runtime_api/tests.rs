@@ -106,3 +106,27 @@ fn rpc_batches_start_together_and_keep_out_of_order_successes_and_errors_in_inpu
 		);
 	});
 }
+
+/// Reads that must agree with each other, such as a registry read and the
+/// scans that follow it, all go to the one block.
+#[test]
+fn calls_at_a_block_name_that_block() {
+	block_on(async {
+		let (reply, response) = oneshot::channel();
+		let transport = std::sync::Arc::new(PendingRpc {
+			requests: Mutex::new(Vec::new()),
+			replies: Mutex::new(HashMap::from([("0x01".to_string(), response)])),
+		});
+		let at = H256::repeat_byte(0xab);
+		let mut rpc = RpcClientAtBlock::new(RpcClient::new(transport.clone()), at);
+		reply.send(Ok(json!("0x11"))).unwrap();
+
+		let output = rpc.call("Read_api", &[1]).await.unwrap();
+
+		assert_eq!(output, [0x11]);
+		assert_eq!(
+			transport.requests.lock().unwrap().clone(),
+			[json!(["Read_api", "0x01", format!("{at:?}")])]
+		);
+	});
+}

@@ -141,19 +141,6 @@ fn a_stalled_relay_fails_the_wait() {
 	);
 }
 
-/// A chain dropped between uses would sync again from its checkpoint and
-/// start with no peers.
-#[tokio::test]
-async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
-	let network = Network::default().bundled_stack(ChainBackend::LightClient);
-	let provider = CliChainProvider::new(&network);
-
-	drop(provider.connect(network.genesis().people).await.expect("add People"));
-
-	let light = light_client(network.namespace()).expect("the default network is bundled");
-	assert!(light.is_connected(network.genesis().people));
-}
-
 /// Ignored by default; needs network access to paseo-next-v2's chains. The
 /// light client syncs from its bundled checkpoint first, so it runs longer.
 ///
@@ -176,8 +163,9 @@ async fn the_light_client_reaches_paseo_next_v2() {
 		.rpc_client(network.genesis().asset_hub)
 		.await
 		.expect("connect to Asset Hub");
-	let light = light_client(network.namespace()).expect("paseo-next-v2 is bundled");
+	let light = network.light_client().expect("the stack runs on the light client");
 	let state = light
+		.provider()
 		.lifecycle(network.genesis().asset_hub)
 		.expect("Asset Hub is running")
 		.next()
@@ -185,6 +173,23 @@ async fn the_light_client_reaches_paseo_next_v2() {
 	assert_eq!(state.map(|state| state.phase), Some(ChainPhase::Ready));
 
 	reach_paseo_next_v2(ChainBackend::LightClient).await;
+}
+
+/// pcf-devnet is in no bundled catalog, so this runs only on the specs its
+/// descriptor names. Its Asset Hub spec lists one bootnode, so allow minutes.
+#[tokio::test]
+#[ignore = "needs network access to pcf-devnet's chains"]
+async fn the_light_client_reaches_a_stack_outside_the_catalog() {
+	let network = Network::PcfDevnet.bundled_stack(ChainBackend::LightClient);
+	let client = CliChainProvider::new(&network)
+		.rpc_client(network.genesis().asset_hub)
+		.await
+		.expect("connect to Asset Hub");
+	let genesis: String = client
+		.request("chainSpec_v1_genesisHash", subxt_rpcs::rpc_params![])
+		.await
+		.expect("Asset Hub answers");
+	assert_eq!(genesis, format!("0x{}", hex::encode(network.genesis().asset_hub)));
 }
 
 /// Every consumer this provider serves reaches its own chain on `backend`, and

@@ -25,6 +25,9 @@ enum PrivacyModeMetrics {
     static let glowOpacity: Double = 0.5
     static let boxHeight: CGFloat = 78
     static let headerMinHeight: CGFloat = 52
+    static let shieldSize: CGFloat = 20
+    static let shieldFrame: CGFloat = 32
+    static let infoButtonOutset: CGFloat = 12
     static let inset: CGFloat = 20
     static let selectionAnimation: Animation = .easeInOut(duration: 0.2)
     static let slowDragFade: Double = 0.28

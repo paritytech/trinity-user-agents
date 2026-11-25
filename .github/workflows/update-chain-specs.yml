@@ -1,13 +1,13 @@
 name: Refresh Chain Specs
 
 # Refresh the smoldot chain specs bundled in truapi-provider and the stack descriptors bundled in
-# truapi-host (how the CLI uses them: rust/crates/truapi-host-cli/SPEC.md §14.1). Consumers get a
-# refresh only after a new @parity/truapi-provider or truapi-host is published, so this runs
-# weekly rather than hourly.
+# truapi-host (how the CLI uses them: rust/crates/truapi-host-cli/SPEC.md §14.1). Both change in
+# one PR, because a stack's restart from genesis changes both its descriptor and its light-client
+# spec, from which the provider derives each chain's genesis hash.
 on:
   schedule:
-    # Mondays at 00:00 UTC.
-    - cron: "0 0 * * 1"
+    # Daily at 01:00 UTC.
+    - cron: "0 1 * * *"
   workflow_dispatch:
     inputs:
       skip_bootnode_check:
@@ -21,8 +21,31 @@ permissions:
   pull-requests: write
 
 jobs:
+  branch:
+    name: Find an open refresh PR
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      open: ${{ steps.pull-request.outputs.open }}
+    steps:
+      - name: Find an open refresh PR
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head auto/chain-spec-update --state open \
+            --json number --jq length)"
+          if [ "$open" -gt 0 ]; then
+            echo "::notice::the refresh PR from auto/chain-spec-update is open; merge or close it to resume the scheduled refresh"
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          fi
+
   update:
     name: Update Chain Specs
+    needs: branch
+    if: ${{ !cancelled() && needs.branch.result != 'failure' && needs.branch.outputs.open != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -36,7 +59,7 @@ jobs:
       - name: Refresh chain specs
         run: bash scripts/update-chain-specs.sh
         env:
-          # The weekly refresh keeps its own bootnodes. A dispatch decides.
+          # A scheduled refresh leaves the bootnodes unchanged. A dispatch uses its input.
           SKIP_BOOTNODE_CHECK: ${{ github.event_name == 'schedule' && 'true' || inputs.skip_bootnode_check }}
 
       # The released truapi-host bundles the stacks, so a change to what `stack bundle`
@@ -79,19 +102,22 @@ jobs:
             stack descriptors bundled in truapi-host (`stacks/`), with
             the changeset both need.
 
-            This branch is rebuilt from main on every run, so a commit pushed to it is lost on the
-            next one: make a fix in this PR only to merge it before the next run, or on main.
+            The scheduled refresh leaves this branch alone while this PR is open, so a commit
+            pushed to it stays and a queued merge is not disturbed. Merge or close this PR to
+            resume it. A manual run rebuilds the branch from main regardless and drops pushed
+            commits.
             The newest head can also end up with no checks attached even though earlier ones had
             them. If none are shown below, push an empty commit before merging rather than
             assuming the suite passed.
 
-            When a stack restarted from genesis, `every_catalog_genesis_hash_matches_its_bundled_spec`
-            or `test_light_client_catalog_match` fails: the refresh rewrites the specs and the
-            descriptors, never the catalog constants. Edit `genesis_hex` in
-            `rust/crates/truapi-provider/src/networks.rs` in this same PR. The first failure prints
-            the network and service, the hash the refreshed spec derives to on the left
-            and the stale catalog constant on the right; copy the left one into `networks.rs`, and
-            update any consumer that pins the old hash.
+            If `test_bundled_light_specs_match_the_bundled_copies` fails, a descriptor in `stacks/`
+            names a light spec that `stacks/light-specs/` does not hold or that fails the check.
+            `scripts/update-stacks.sh` writes both together, so rerun it rather than editing either
+            file.
+
+            If `paseo_chains_keep_their_genesis` fails, a refreshed public Paseo spec derives to
+            a chain other than Paseo: an endpoint in `scripts/update-chain-specs.sh` serves
+            another chain. Do not merge until that endpoint is replaced.
 
             If `test_built_in_network_hosts` fails, a stack moved an endpoint: confirm the new
             host is a test network before adding it to `TEST_NETWORK_HOSTS` in

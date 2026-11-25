@@ -18,6 +18,11 @@ final class ProductSigningContext: PolkadotSigningContextProtocol {
         self.signingModel = signingModel
     }
 
+    deinit {
+        signResultContinuation?.resume(throwing: ProductNativeApiError.signingRejected)
+        createTransactionContinuation?.resume(throwing: ProductNativeApiError.signingRejected)
+    }
+
     func setSignResultContinuation(_ continuation: CheckedContinuation<SignResult, Error>) {
         signResultContinuation = continuation
     }

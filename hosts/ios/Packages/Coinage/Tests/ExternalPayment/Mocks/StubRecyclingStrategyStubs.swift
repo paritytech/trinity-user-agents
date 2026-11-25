@@ -23,7 +23,9 @@ struct StubRecyclingStrategyProvider: RecyclingStrategyProviding {
     }
 
     func voucherStrategy(for type: RecyclingStrategyType) -> CoinRecyclingStrategyProtocol {
-        ParametricRecyclingStrategy(params: type.params(forcedRecyclingAge: CoinageConstants.recycleAtAge))
+        ParametricRecyclingStrategy(
+            params: type.params(forcedRecyclingAge: CoinageConstants.recycleAtAge, privacyConfig: .bundled)
+        )
     }
 }
 

@@ -79,30 +79,38 @@ pub mod latest {
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
-		FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
-		FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit,
-		FundingDetail, FundingDirection, FundingFact, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingPayout,
-		FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail,
-		FundingReceived, FundingUpdate, GenericError, HorizontalAlignment, HostPlatform,
-		HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource,
-		MaterialFailure, MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES,
-		NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
-		NftPurseChequeRecord, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
-		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
-		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, Parameter, PaymentTopUpSource, PocketCard, ProductAccount,
-		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
-		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment,
+		ContextualAlias, DerivationIndex, Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES,
+		FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
+		FundingCancelDecision, FundingDeposit, FundingDetail, FundingDirection, FundingFact,
+		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
+		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+		HorizontalAlignment, HostPlatform, HostSignPayloadData, ImageFit, ImageProps, ImageRef,
+		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
+		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
+		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
+		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
+		TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle,
+		VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
-	pub use crate::v02::{ChatRoomFooter, RenderContext};
+	pub use crate::v02::{
+		ChatCallClose, ChatCallRecord, ChatContactEvent, ChatCustomBody, ChatFeedUpdate,
+		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
+		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
+		RenderContext,
+	};
 
 	pub use crate::versioned::{
 		account::latest::*, chain::latest::*, chat::latest::*, coin_payment::latest::*,
@@ -111,7 +119,7 @@ pub mod latest {
 		nft_purse::latest::*, notifications::latest::*, payment::latest::*, permissions::latest::*,
 		pocket::latest::*, preimage::latest::*, renderer::latest::*,
 		resource_allocation::latest::*, scanner::latest::*, signing::latest::*,
-		statement_store::latest::*, system::latest::*, theme::latest::*, worker::latest::*,
+		statement_store::latest::*, system::latest::*, theme::latest::*,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -396,7 +404,6 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 
 cfg_select! {
 	feature = "runtime" => {
-		pub mod background_task;
 		pub mod bootstrap;
 		pub mod chain;
 		mod chain_runtime;
@@ -404,6 +411,8 @@ cfg_select! {
 		mod dotns_views;
 		mod dynamic_vrf;
 		mod evm_contract;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod gap_scan;
 		pub mod frame;
 		mod host_core;
 		mod host_internal;
@@ -458,6 +467,9 @@ cfg_select! {
 		pub mod installation;
 
 		#[cfg(not(target_arch = "wasm32"))]
+		mod installation_registry;
+
+		#[cfg(not(target_arch = "wasm32"))]
 		mod nft;
 
 		#[cfg(not(target_arch = "wasm32"))]
@@ -472,7 +484,7 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		mod materials;
 
-		pub use spawner::Spawner;
+		pub use spawner::{BackgroundTask, Spawner};
 
 		pub use truapi_core::TrUApiCore;
 
@@ -522,7 +534,7 @@ cfg_select! {
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
 			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, SigningHost, StatementRenewalTarget,
+			ResumePairingError, SigningHost, StatementRenewalTarget, WorkerHold,
 			contacts::contact_handle,
 			login_failure::reports_exhausted_period,
 			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},

@@ -175,13 +175,13 @@ after activation. A name the host passes is shown until a record answers.
 
 ### Stack
 
-Both host configs carry a `Stack`, the core's only chain configuration: the
-Relay, Asset Hub, People and Bulletin genesis hashes, the network
-`get_chain_info` reports, and the dotNS TLD.
+Both host configs carry a `Stack`, the core's only chain configuration. Its
+doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell puts three things in its runtime config: the stack's
-pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. The core resolves the `Stack` from them with
+pointer, the signed descriptor its build bundles, and the build's
+[`ReservedValuesPolicy`](src/stack.rs), whose doc says what the core reserves
+and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
 A Rust host that resolves its chains itself, such as the CLI, uses
@@ -192,13 +192,67 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain and
-does not check genesis hashes against the live chains.
+derivation working offline. The core does not check it against the chain.
+
+#### Checks against the chains
+
+When an operator restarts a stack's chains from genesis, the same endpoints
+serve new chains with new genesis hashes. A build that still runs the old
+descriptor would read them as the old chains. So the core asks every chain
+connection for its genesis hash before anything else uses the connection. This
+covers the core's own connections, each product's, and the statement
+subscriptions on People.
+
+- If the hash is the one the connection was opened for, the core hands the
+  connection out.
+- If the hash is different, the call fails with a host failure. For a chain of
+  the stack, `StackStatus::mismatches` lists it until a connection reaches the
+  chain the descriptor names. Without delaying that failure, the core also
+  asks the connections it handed out earlier for that chain again, apart from
+  the statement subscriptions, because a host may have redialled underneath
+  them. It closes those that give a different hash or say the chain is halted,
+  as dotli does while it redials. Those that give the right hash, fail another
+  way, or say nothing for 30 seconds stay open, since one endpoint can front
+  several nodes.
+- If the chain cannot be reached, or says nothing for 30 seconds, the call fails
+  as unavailable and the next connection asks again. A chain that dotli reports
+  as halted is asked again for up to 47 seconds, as a halted follow is, and is
+  unavailable after that. Any other error fails the call with a host failure.
+  None of these is a mismatch.
+
+While a chain is listed, the core fetches the descriptor every five minutes
+instead of every hour, since the operator publishes the new genesis hashes with
+the restart. Once the core holds a descriptor that changes a chain, it sets
+`restart_required` and fetches hourly again.
+
+A host learns of a mismatch through its stack callbacks, and can read it from
+`stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
+(`worker-runtime.ts`), which builds the pairing runtime without the stack
+callbacks and exposes no `stackStatus()` to the host, so a host on them sees a
+refused chain only as failing calls. A `WasmProductRuntime` built on its own
+has no status either. A browser host that passes `stackChanged` without
+`fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
+Without the callbacks the chain is still refused, and nothing is fetched. A host
+shows a listed chain as out of service and keeps its own features off it.
+
+The check has three limits:
+
+- It runs only when the core opens a connection. If a host redials underneath
+  one, as dotli does, the core notices when it opens the next connection for
+  that chain, in any scope.
+- A light client answers from its chain spec, so a chain that restarted is out
+  of its reach and never listed. Only the hourly fetch brings it the new
+  descriptor.
+- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
+  is not checked.
 
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start,
+whichever has the higher `sequence`. The bundled descriptor has to be one the
+core can run under the build's policy even when the stored one is newer, so a
+build that refuses its own bundle fails on every device, not only on fresh
+installs. It never waits on the network to start,
 and waits a few seconds at most for the stored copy before it starts from the
 bundled one.
 
@@ -218,13 +272,20 @@ the request.
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
-without a People chain.
+without a People chain, and one on another TLD than the bundled copy, since
+accounts derive under the TLD. A stored descriptor it would refuse is ignored
+until the next one the core takes replaces it, whatever its `sequence`. After
+a refused or failed fetch, `last_refresh` reports that fetch even if writing
+the record fails.
 
-A newer descriptor that changes a genesis hash, the network, the TLD or the
+A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
-again. Any other change applies at once. `StackStatus` documents the rest,
-including the `generation` a host keys cached chain data by.
+again. Any other change needs no restart. `StackStatus` carries it once the
+core has stored the descriptor or its store has failed, at most 30 seconds
+after the fetch, and shows the copy from before the fetch until then. It
+documents the rest, including the `generation` a host keys cached chain data
+by.
 
 ### Core database
 
@@ -297,19 +358,21 @@ mortal extrinsics (`DurableRequest::presigned`, then `execute` or
 transaction); the engine broadcasts them once committed and follows each with
 a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
-the shared chain capabilities and the domain's `CompletionOracle`. Every
+the shared chain capabilities and the domain's `CompletionOracle`, which a
+pass asks once per domain about its undecided rows. Every
 verdict is a compare-and-set against the status and attempt it was derived
 from, and rows are never deleted.
 
-A domain can also schedule transactions it cannot sign yet
-(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
-`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
-policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
-submission executor builds them: one task per domain, policy and group asks the
+Each domain is registered in the `DurableRegistry` with the genesis hash of
+its chain, its `CompletionOracle` and its one `SubmissionPolicy`. A domain can
+also defer transactions it cannot sign yet (`DurableRequest::deferred`),
+each with a `SubmissionPlan`: the `PolicyParams` its domain's policy builds it
+from. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain and group asks the
 policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
 and fails each `GiveUp`, backing off after rounds that decide nothing. A
 presigned submission may carry a plan as well. When a verdict proves a
-transaction with a policy failed, the verdict writer asks the policy's
+transaction with a plan failed, the verdict writer asks the domain policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
 records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
@@ -348,7 +411,7 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`, and the host
+bindings expose it as `claim_worker`, one reference per claim, and the host
 reports a worker that stopped without being asked, because it crashed, failed
 to boot or the system killed it, with `worker_exited`: while references remain
 the ledger requests `Start` again, and the core hands the restarted worker its
@@ -569,9 +632,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider a Rust host offers with `origin: Bundled`
-  ships inside it: its shipped manifest is what the core goes by, and dotNS
-  is never read for it.
+  Funding drops out.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -648,7 +709,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   who continues before every row answered: once every row of that request
   answered, the core selects `best` as `select_funding_provider` would, at
   once when they already have. A new ask, `select_funding_options`,
-  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  `cancel_funding_auto_start` (the user going back from the quotes),
+  `cancel_funding` or a list with
   no usable quote disarms it. `funding_available` says whether the host
   offers any provider, announced with `Providers` when
   `set_funding_provider_config` changes the list.
@@ -720,8 +782,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  when the provider publishes an `app` subname on dotNS, read within ten
+  seconds; otherwise `NoApp`). The
   core never shows it on its own: it holds the call, tells the host through
   `provider_frame_requested`, and presents it once the host calls
   `open_provider_frame`, at once while the user looks at the session or when
@@ -745,18 +807,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session, named or not, or saw the user's payment; from then on only the
   provider ends the session, and it cannot fail it once funds started.
   Before that, an unassigned session expires 24 hours after it opened and an
-  assigned one 7 days after its provider last reported. `cancel_funding`
-  answers what a cancel did: it ends an unassigned session; before money
+  assigned one 7 days after its provider last reported. `cancel_funding` is
+  the host's one cancel, whatever the session went through, and answers
+  what it did: while the overlay is up it drops `present_funding`, which
+  the host answers by taking the overlay down, and drops the session, or,
+  when the user already chose a provider, keeps it as started and asks the
+  provider to stop; it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
   it asks the provider, who answers `Refused` or `Offer`, one offer per
   cancel, and the host answers the offer with
   `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
   showed (`None` declines), which the provider hears through `settleCancel`;
-  terms other than the offer's answer `NoOffer`, and an inbound session whose
-  credit started answers `TooLate`. A provider asked before money moved
-  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  terms other than the offer's answer `NoOffer`, an inbound session whose
+  credit started answers `TooLate`, and an ended or unknown one `Refused`.
+  A provider asked before money moved answers `Stopped`, and the core ends
+  the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
-  money moved.
+  money moved; a cancel after that asks again.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

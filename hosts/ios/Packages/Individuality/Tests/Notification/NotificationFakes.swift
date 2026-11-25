@@ -7,6 +7,7 @@ import Foundation
 import IssueMonitoring
 import KeyDerivation
 import os
+import ChainStore
 import SubstrateSdk
 @testable import Individuality
 
@@ -210,4 +211,23 @@ extension AccountId {
     static func target(_ byte: UInt8) -> AccountId {
         Data(repeating: byte, count: 32)
     }
+}
+
+// MARK: - FixedStatementStorageParameters
+
+struct FixedStatementStorageParameters: StatementStorageParametersProviding {
+    let allowance: ResourcesPallet.StatementAllowance?
+
+    func notificationAllowance() async throws -> ResourcesPallet.StatementAllowance? {
+        allowance
+    }
+}
+
+// MARK: - UnavailableChainResource
+
+final class UnavailableChainResource: ChainResourceProtocol {
+    func getChainInterface(for _: ChainId) -> ChainProtocol? { nil }
+    func getChainInterfaceByGenesis(_: ChainId) -> ChainProtocol? { nil }
+    func getRpcConnection(for _: ChainId) -> JSONRPCEngine? { nil }
+    func getRuntimeCodingService(for _: ChainId) -> RuntimeCodingServiceProtocol? { nil }
 }

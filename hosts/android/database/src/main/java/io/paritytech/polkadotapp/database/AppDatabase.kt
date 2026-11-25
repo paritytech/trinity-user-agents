@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.database.dao.ChatRequestDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestSyncStateDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDao
 import io.paritytech.polkadotapp.database.dao.ChatSearchRecentDao
+import io.paritytech.polkadotapp.database.dao.ChatSeenDao
 import io.paritytech.polkadotapp.database.dao.CoinDao
 import io.paritytech.polkadotapp.database.dao.CoinageEntryDao
 import io.paritytech.polkadotapp.database.dao.CoinageInstallationDao
@@ -92,6 +93,7 @@ import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
 import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
 import io.paritytech.polkadotapp.database.migrations.Migration72To73Spec
+import io.paritytech.polkadotapp.database.migrations.Migration73To74Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
 import io.paritytech.polkadotapp.database.model.ChatAcceptanceLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
@@ -106,6 +108,7 @@ import io.paritytech.polkadotapp.database.model.ChatRequestLocal
 import io.paritytech.polkadotapp.database.model.ChatRequestSyncStateLocal
 import io.paritytech.polkadotapp.database.model.ChatRoomLocal
 import io.paritytech.polkadotapp.database.model.ChatSearchRecentLocal
+import io.paritytech.polkadotapp.database.model.ChatSeenStateLocal
 import io.paritytech.polkadotapp.database.model.CoinLocal
 import io.paritytech.polkadotapp.database.model.CoinageEntryInputLocal
 import io.paritytech.polkadotapp.database.model.CoinageEntryOutputLocal
@@ -147,7 +150,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 73,
+    version = 75,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -202,6 +205,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ProductTopUpLocal::class,
         ChatAcceptanceLocal::class,
         ChatIdentitySigningConsentLocal::class,
+        ChatSeenStateLocal::class,
     ],
     autoMigrations = [
         // Add ChatMessageReactionLocal
@@ -292,6 +296,10 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 71, to = 72),
         // Drop the Pocket card and face tables
         AutoMigration(from = 72, to = 73, spec = Migration72To73Spec::class),
+        // Add chat_seen_states and mark delivered outgoing messages IS_DELIVERED rather than IS_READ
+        AutoMigration(from = 73, to = 74, spec = Migration73To74Spec::class),
+        // Add recycler_vouchers.recyclerUnloaded for readiness by anonymity-minutes
+        AutoMigration(from = 74, to = 75),
     ]
 )
 @TypeConverters(
@@ -439,4 +447,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chatAcceptanceDao(): ChatAcceptanceDao
 
     abstract fun chatIdentitySigningConsentDao(): ChatIdentitySigningConsentDao
+
+    abstract fun chatSeenDao(): ChatSeenDao
 }

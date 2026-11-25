@@ -13,7 +13,11 @@
 // pin addresses by reading them back from the host, never by hard-coding a
 // well-known one.
 
-import { mockTestStack, type TestStack } from "../web/create-mock-host.js";
+import {
+  mockTestStack,
+  withChainsGeneration,
+  type TestStack,
+} from "../web/create-mock-host.js";
 
 /** Name of a built-in dev account. */
 export type DevAccountName = "alice" | "bob" | "charlie" | "dave";
@@ -175,11 +179,11 @@ export function liveChain(chain: { rpcUrl: string; genesisHash: string }): {
       servedChains: [chain.genesisHash],
     },
     runtimeConfig: {
-      testStack: {
+      testStack: withChainsGeneration({
         ...mockTestStack(),
         network: "paseo",
         assetHub: { genesisHash: chain.genesisHash },
-      },
+      }),
     },
   };
 }

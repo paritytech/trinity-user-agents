@@ -23,6 +23,7 @@ pub use dotns_lookup::DotnsLookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod funding_telemetry;
 mod host_accounts;
 mod host_grants;
 mod host_session;
@@ -58,6 +59,7 @@ pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 mod test_resource_controls;
 mod versioning;
 mod vrf;
+mod worker_hold;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -79,7 +81,7 @@ pub use remote_account_holder::RemoteAccountHolder;
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
 type ContactsPicker =
-	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
+	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandleKey);
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
 pub use pairing_host::PairingHost;
@@ -95,6 +97,7 @@ pub use sso_responder_service::{
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
+pub use worker_hold::WorkerHold;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
@@ -415,7 +418,7 @@ impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
 	}
 }
 
-/// Per-connection adapters, permissions, channels and open operation demand.
+/// Per-connection adapters, permissions and channels.
 pub struct ProductConnection {
 	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
@@ -438,7 +441,6 @@ pub struct ProductConnection {
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// Control of the card face under this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
-	open_operations: Mutex<HashSet<u32>>,
 	/// Cards whose back this connection has drawn. A press on a back reaches
 	/// the product only for these: a product whose SDK predates
 	/// `PocketCardBack` cannot decode one and would lose its whole action
@@ -456,7 +458,6 @@ impl Drop for ProductConnection {
 	fn drop(&mut self) {
 		// This runtime owns its chain connections outright, so they go with it.
 		self.chain.release_scope();
-		self.release_open_operations();
 	}
 }
 
@@ -665,77 +666,6 @@ impl ProductConnection {
 		renderer_access_for(self.product.execution_kind)
 	}
 
-	/// Hold worker demand until the matching [`Self::release_worker_reference`].
-	pub fn acquire_worker_reference(&self) {
-		self.services.worker_ledger.acquire(&self.product.product_id);
-	}
-
-	/// Release one core-held reference on this connection's product worker.
-	pub fn release_worker_reference(&self) {
-		self.services.worker_ledger.release(&self.product.product_id);
-	}
-
-	/// Hold this connection's product worker until the hold is dropped.
-	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
-		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
-	}
-
-	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
-	async fn begin_operation_with_host(
-		&self,
-		label: String,
-	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-		let (tx, rx) = futures::channel::oneshot::channel();
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		self.services.spawner.spawn(async move {
-			let begun = platform.begin_operation(&product, label).await;
-			if let Err(Ok(response)) = tx.send(begun) {
-				let _ = platform.end_operation(&product, response.id).await;
-			}
-		});
-		rx.await.unwrap_or_else(|_| {
-			Err(latest::HostWorkerOperationError::Unknown {
-				reason: "the host did not answer".to_string(),
-			})
-		})
-	}
-
-	/// Hold worker demand until this operation ends or the connection closes.
-	fn hold_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
-			self.acquire_worker_reference();
-		}
-	}
-
-	/// Release all operation demand immediately and schedule host cleanup.
-	/// Repeated calls leave already released operations alone.
-	pub fn release_open_operations(&self) {
-		let open = core::mem::take(
-			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
-		);
-		if open.is_empty() {
-			return;
-		}
-		for _ in &open {
-			self.release_worker_reference();
-		}
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		self.services.spawner.spawn(async move {
-			for id in open {
-				let _ = platform.end_operation(&product, id).await;
-			}
-		});
-	}
-
-	/// Release one open operation's demand; unknown ids leave demand unchanged.
-	fn release_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
-			self.release_worker_reference();
-		}
-	}
-
 	/// End the renderer action and failure streams this connection's product
 	/// is reading.
 	pub fn detach_renderer(&self) {
@@ -830,7 +760,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			pocket_platform: adapters.pocket_platform,
 			game_platform: adapters.game_platform,
 			expanded_card: adapters.expanded_card,
-			open_operations: Mutex::new(HashSet::new()),
 			drawn_backs: Mutex::new(HashSet::new()),
 		});
 		let accounts = ProductAccounts::new(accounts, connection.clone());
@@ -955,15 +884,15 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		call_data: Vec<u8>,
 		declared: &[v01::ContactHandle],
 	) -> Result<Vec<u8>, ContactResolutionError> {
-		let cache = &self.connection.services.contact_handles;
+		let cache = &self.connection.services.contact_handle_cache;
 		let declared_bytes: Vec<[u8; 32]> = declared.iter().map(|handle| handle.bytes).collect();
-		if cache.has_undeclared_handle(&call_data, &declared_bytes) {
+		if cache.has_undeclared_handle(self.connection.product_id(), &call_data, &declared_bytes) {
 			return Err(ContactResolutionError::UnknownContact);
 		}
 		if declared.is_empty() {
 			return Ok(call_data);
 		}
-		let (platform, handles) = self.contacts_picker().map_err(|error| match error {
+		let (platform, handle_key) = self.contacts_picker().map_err(|error| match error {
 			CallError::Unsupported => ContactResolutionError::Unsupported,
 			CallError::Domain(v01::HostContactsPickError::NotConnected) => {
 				ContactResolutionError::NotConnected
@@ -975,7 +904,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		})?;
 		let mut resolved: Vec<([u8; 32], Option<[u8; 32]>)> = declared_bytes
 			.iter()
-			.map(|handle| (*handle, cache.get(handle, &handles)))
+			.map(|handle| (*handle, cache.get(handle, &handle_key)))
 			.collect();
 		// The host is asked only about handles the cache cannot answer, all
 		// of them in one lookup.
@@ -986,7 +915,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.collect();
 		if !misses.is_empty() {
 			let generation = cache.generation();
-			let lookup = handles.lookup(misses);
+			let lookup = handle_key.lookup(misses);
 			let matches = platform
 				.contacts(&lookup)
 				.await
@@ -1004,9 +933,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				let answer = answers.next().expect("one answer per miss; qed");
 				// A host answer is checked, not trusted: an account that does
 				// not hash to its handle is treated as no contact at all.
-				*account = answer.filter(|account| handles.names(handle, account));
+				*account = answer.filter(|account| handle_key.matches(handle, account));
 				if let Some(account) = account {
-					cache.insert(*handle, *account, generation);
+					cache.insert(&handle_key, *handle, *account, generation);
 				}
 			}
 		}
@@ -1029,7 +958,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.accounts
 			.current_session()
 			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
-		let handles = self.accounts.contact_handles(&session).map_err(|error| match error {
+		let handle_key = self.accounts.contact_handle_key(&session).map_err(|error| match error {
 			AuthorityError::Disconnected => {
 				CallError::Domain(latest::HostContactsPickError::NotConnected)
 			},
@@ -1037,7 +966,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				reason: other.to_string(),
 			}),
 		})?;
-		Ok((platform, handles))
+		Ok((platform, handle_key))
 	}
 }
 
@@ -1375,7 +1304,7 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
 		version(request)
 			.exec(|_request| async move {
-				let (platform, handles) = self.contacts_picker()?;
+				let (platform, handle_key) = self.contacts_picker()?;
 
 				let unknown = |error: latest::GenericError| {
 					CallError::Domain(latest::HostContactsPickError::Unknown {
@@ -1385,7 +1314,7 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 
 				// Read before the picker opens: a removal signalled while the user is
 				// choosing must not be undone by caching their choice.
-				let generation = self.connection.services.contact_handles.generation();
+				let generation = self.connection.services.contact_handle_cache.generation();
 				let outcome =
 					match until_cancelled(cx, platform.pick_contact(&self.connection.product))
 						.await
@@ -1397,11 +1326,11 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 						.map_err(unknown)?
 					{
 						crate::platform::HostContactPick::Picked { account } => {
-							let handle = handles.mint(&account);
+							let handle = handle_key.mint(&account);
 							self.connection
 								.services
-								.contact_handles
-								.insert(handle, account, generation);
+								.contact_handle_cache
+								.insert(&handle_key, handle, account, generation);
 							latest::ContactPickOutcome::Picked {
 								handle: latest::ContactHandle { bytes: handle },
 							}
@@ -1476,19 +1405,30 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
+		// A v0.1 product names the room with its own `roomId` in every later
+		// call, and its answer carries no other id. So its room keeps that id.
+		// Only a v0.2 request gets the id that the host derives.
+		let product_names_room = matches!(request, HostChatCreateRoomRequest::V1(_));
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+				let field = if product_names_room { "roomId" } else { "roomIdSource" };
+				request.room_id_source = normalize_chat_identifier(field, &request.room_id_source)
 					.map_err(chat_create_room_field_error)?;
 				request.name = validate_chat_name("name", &request.name)
 					.map_err(chat_create_room_field_error)?;
 				request.icon = validate_chat_icon("icon", &request.icon)
 					.map_err(chat_create_room_field_error)?;
-				platform
-					.create_chat_room(&self.connection.product, request)
+				let room_id = if product_names_room {
+					request.room_id_source.clone()
+				} else {
+					self.connection.product.product_id.chat_room_id(&request.room_id_source)
+				};
+				let status = platform
+					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
-					.map_err(CallError::Domain)
+					.map_err(CallError::Domain)?;
+				Ok(latest::HostChatCreateRoomResponse { status, room_id })
 			})
 			.await
 	}
@@ -1734,35 +1674,29 @@ impl<H: AccountHolder> FundingProvider for ProductRuntimeHost<H> {
 				let services = &self.connection.services;
 				let provider = &self.connection.product;
 				if matches!(target, latest::FundingFrameTarget::App { .. }) {
-					use crate::host_logic::funding_providers::FundingProviderApp;
-					let has_app = match services.funding_providers().app(&provider.product_id) {
-						FundingProviderApp::Shipped => true,
-						FundingProviderApp::Absent => false,
-						FundingProviderApp::Unknown => {
-							crate::runtime::product_manifest::publishes_app(
-								services,
-								services.platform.as_ref(),
-								&provider.product_id,
-								APP_LOOKUP_CEILING,
-							)
-							.await
-							.unwrap_or(false)
-						},
-					};
+					let has_app = crate::runtime::product_manifest::publishes_app(
+						services,
+						services.platform.as_ref(),
+						&provider.product_id,
+						APP_LOOKUP_CEILING,
+					)
+					.await
+					.unwrap_or(false);
 					if !has_app {
 						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
 					}
 				}
 				// The worker never puts a screen in front of the user on its own:
 				// the host opens it, at once or from a notice the user taps.
-				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				let shows = crate::runtime::funding_telemetry::FrameTarget::of(&target);
+				let mut frame = services.funding().request_frame(&intent, provider.clone(), shows);
 				if let Some(outcome) = frame.opened().await {
 					return Ok(latest::HostFundingPresentFrameResponse { outcome });
 				}
-				let outcome = platform
-					.present_provider_frame(provider, intent, target)
-					.await
-					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				let shown = platform.present_provider_frame(provider, intent, target).await;
+				frame.closed(crate::runtime::funding_telemetry::FrameClose::of(&shown));
+				let outcome =
+					shown.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
 			})
 			.await
