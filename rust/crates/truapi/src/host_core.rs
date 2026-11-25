@@ -1957,6 +1957,175 @@ impl ProductRuntimeControl {
 	}
 }
 
+impl ProductRuntimeControl {
+	/// Ask the product for one page of messages of a room it keeps. The
+	/// subscription yields at most one item and then ends; the core answers
+	/// `NotAvailable` itself for a room that does not set `product_source`.
+	pub fn chat_messages_query(
+		&self,
+		request: truapi::latest::ProductChatMessagesQueryRequest,
+	) -> Result<ChatQuery<truapi::latest::ProductChatMessagesQueryResponse>, ProductRuntimeError> {
+		let page_size = request.page_size;
+		let request = crate::platform::validate_chat_messages_query(request);
+		self.chat_query(
+			request.as_ref().map(|request| request.room_id.clone()).map_err(Clone::clone),
+			crate::runtime::ChatHandler::Config(|config| config.product_source),
+			move |subscriptions, transport| {
+				Ok(Box::pin(crate::generated::dispatcher::chat_messages_query(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatMessagesQueryRequest::V2(request?),
+				)))
+			},
+			move |page| crate::platform::validate_chat_messages_page(page, page_size),
+		)
+	}
+
+	/// Tell the product what the user did in a room it keeps, and take its
+	/// answer. The core refuses an action for a room that does not set
+	/// `product_source` without asking the product, and answers a payment with
+	/// `Unsupported`.
+	pub fn chat_user_action(
+		&self,
+		request: truapi::latest::ProductChatUserActionRequest,
+	) -> Result<
+		ChatQuery<
+			truapi::latest::ProductChatUserActionResponse,
+			truapi::latest::ProductChatUserActionError,
+		>,
+		ProductRuntimeError,
+	> {
+		// This version carries no payment, so a payment never reaches the
+		// product. A later change gives `SendPayment` a `CoinPaymentCheque`.
+		if matches!(request.action, truapi::latest::ChatUserAction::SendPayment) {
+			return Ok(truapi::Subscription::interrupted(truapi::CallError::Unsupported));
+		}
+		let room_id = crate::platform::normalize_chat_identifier("roomId", &request.room_id);
+		self.chat_query(
+			room_id.clone(),
+			crate::runtime::ChatHandler::Config(|config| config.product_source),
+			move |subscriptions, transport| {
+				let request = truapi::latest::ProductChatUserActionRequest {
+					room_id: room_id?,
+					action: crate::platform::validate_chat_user_action(request.action)?,
+				};
+				Ok(Box::pin(crate::generated::dispatcher::chat_user_action(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatUserActionRequest::V2(request),
+				)))
+			},
+			|answer| match answer {
+				truapi::latest::ProductChatUserActionResponse::MessageCreated(message) => {
+					crate::platform::validate_chat_message(message)
+						.map(truapi::latest::ProductChatUserActionResponse::MessageCreated)
+				},
+				acknowledged => Ok(acknowledged),
+			},
+		)
+	}
+
+	/// Ask the product who reacted to one message. The core answers
+	/// `NotAvailable` itself for a room that does not set `reaction_details`.
+	pub fn chat_reactions_query(
+		&self,
+		request: truapi::latest::ProductChatReactionsQueryRequest,
+	) -> Result<ChatQuery<truapi::latest::ProductChatReactionsQueryResponse>, ProductRuntimeError>
+	{
+		let room_id = crate::platform::normalize_chat_identifier("roomId", &request.room_id);
+		self.chat_query(
+			room_id.clone(),
+			crate::runtime::ChatHandler::Config(|config| config.reaction_details),
+			move |subscriptions, transport| {
+				let request = truapi::latest::ProductChatReactionsQueryRequest {
+					room_id: room_id?,
+					..request
+				};
+				Ok(Box::pin(crate::generated::dispatcher::chat_reactions_query(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatReactionsQueryRequest::V2(request),
+				)))
+			},
+			crate::platform::validate_chat_reactions_answer,
+		)
+	}
+
+	/// Run one chat query: check the room declares the handler, hold a worker
+	/// reference while the product answers, take the first item, screen it,
+	/// and stop the product's stream.
+	fn chat_query<Item, Error, Envelope, EnvelopeError>(
+		&self,
+		room_id: Result<String, crate::platform::ChatFieldError>,
+		handler: crate::runtime::ChatHandler,
+		ask: impl for<'a> FnOnce(
+			&'a HostInitiatedSubscriptionManager,
+			Arc<dyn Transport>,
+		) -> Result<
+			futures::future::BoxFuture<'a, Result<Envelope, truapi::CallError<EnvelopeError>>>,
+			crate::platform::ChatFieldError,
+		> + Send
+		+ 'static,
+		screen: impl FnOnce(Item) -> Result<Item, crate::platform::ChatFieldError> + Send + 'static,
+	) -> Result<ChatQuery<Item, Error>, ProductRuntimeError>
+	where
+		Item: Send + 'static,
+		Error: ChatQueryError + Send + 'static,
+		Envelope: truapi::versioned::IntoLatest<Latest = Item> + Send + 'static,
+		EnvelopeError: truapi::versioned::IntoLatest<Latest = Error> + Send + 'static,
+	{
+		self.connection()?.native_chat_platform()?;
+		let connection = self.connection.clone();
+		let subscriptions = self.host_subscriptions.clone();
+		let transport: Arc<dyn Transport> = self.transport.clone();
+		let answer = async move {
+			let failed = |reason: String| truapi::CallError::MalformedFrame { reason };
+			let room_id = match room_id {
+				Ok(room_id) => room_id,
+				Err(error) => return Err(failed(error.to_string())),
+			};
+			match connection.chat_handler_declared(room_id, handler).await {
+				Ok(true) => {},
+				Ok(false) => return Err(truapi::CallError::Domain(Error::not_declared())),
+				Err(reason) => return Err(truapi::CallError::HostFailure { reason }),
+			}
+			// Held from the product's `Start` to its answer, and released
+			// when this future ends, whichever way it ends.
+			let _reference = connection.hold_worker();
+			let call = ask(&subscriptions, transport).map_err(|error| failed(error.to_string()))?;
+			let answer = call
+				.await
+				.map(truapi::versioned::IntoLatest::into_latest)
+				.map_err(crate::interrupt::interrupt_into_latest)?;
+			screen(answer).map_err(|error| failed(error.to_string()))
+		};
+		Ok(truapi::Subscription::new(futures::stream::once(answer)))
+	}
+}
+
+/// A chat query the host asks a product: at most one item, then the end.
+pub type ChatQuery<Item, Error = truapi::latest::ProductChatQueryError> =
+	truapi::Subscription<Item, truapi::CallError<Error>>;
+
+/// The domain error the core answers a chat query with itself. A request or
+/// an item that does not pass the screen fails with `MalformedFrame`.
+pub trait ChatQueryError {
+	/// The answer for a room whose configuration does not declare the handler.
+	fn not_declared() -> Self;
+}
+
+impl ChatQueryError for truapi::latest::ProductChatQueryError {
+	fn not_declared() -> Self {
+		Self::NotAvailable
+	}
+}
+
+impl ChatQueryError for truapi::latest::ProductChatUserActionError {
+	fn not_declared() -> Self {
+		Self::NotAvailable
+	}
+}
+
 /// Calls a funding provider's worker through its product connection, each
 /// call awaiting the worker's one answer.
 struct WorkerFundingLink {

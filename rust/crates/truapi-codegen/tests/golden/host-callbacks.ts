@@ -1933,9 +1933,11 @@ export interface ChatPlatform {
    *
    * The core calls it once before each change to a room: to check that the
    * product hosts the room, and to read whether the host stores its
-   * messages. The host looks the room up among the rooms of the product
-   * only. ``undefined`` is a room that the product never created. A host that
-   * cannot read its rooms returns an error, not ``undefined``.
+   * messages. It calls it once before each query it asks the product, to
+   * read which queries the product answers. The host looks the room up
+   * among the rooms of the product only. ``undefined`` is a room that the product
+   * never created. A host that cannot read its rooms returns an error, not
+   * ``undefined``.
    */
   chatRoom(
     product: ProductContext,

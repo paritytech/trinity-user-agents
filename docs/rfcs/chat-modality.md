@@ -430,6 +430,8 @@ struct AggregatedReaction {
     unseen: bool,
 }
 
+// In a room with more than one other participant, `Delivered` and `Read`
+// mean every recipient. `Message.receipts` gives the counts.
 enum MessageStatus {
     // Message is visible to sender but not yet ready for delivery.
     // e.g. media is still uploading.
@@ -451,7 +453,9 @@ struct Message {
     expires_at: Option<Timestamp>,
     forward: Option<ForwardSource>,
     last_edited: Option<Timestamp>,
+    edit_count: u32,
     reactions: Map<Emoji, AggregatedReaction>,
+    receipts: Option<ReceiptSummary>,
     // The thread whose root is this message.
     thread: Option<ThreadSummary>,
     // The readers of a post of a Channel.
@@ -474,6 +478,12 @@ struct ForwardSource {
 struct ThreadSummary {
     room_id: RoomId,
     replies: u32,
+}
+
+struct ReceiptSummary {
+    recipients: u32,
+    delivered: u32,
+    read: u32,
 }
 ```
 
@@ -542,6 +552,8 @@ enum UserChatAction {
         expires_at: Option<Timestamp>,
         forward: Option<ForwardSource>,
     },
+    // Changes only the text of `Text` or `RichText`, and keeps the media.
+    // A reader drops any other edit, and an edit by another origin.
     EditMessage {
         message_id: MessageId,
         new_content: MessageContent,
@@ -555,7 +567,9 @@ enum UserChatAction {
         reaction: MessageReaction,
     },
     MessageDeleted {
-        message_id: MessageId
+        message_id: MessageId,
+        // false: hide the message on the user's own devices only.
+        for_everyone: bool,
     },
     // The user opened the view-once media of a message.
     Opened { message_id: MessageId },
@@ -605,30 +619,54 @@ fn handle_chat_messages_source(
     // Host calls this when the user performs a chat action (send, edit, react).
     on_user_action: fn(UserChatAction) -> UserChatActionResult,
 
-    // Host calls this when the user has seen a message.
-    // Product can update its unread counter accordingly.
+    // Host calls this when the user has seen a message, and with it every
+    // earlier message. Product can update its unread counter accordingly.
     on_user_seen_message: fn(Message),
 );
 ```
 
 - Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
-#### 4.4 Reaction Details
+#### 4.4 Message Details
 
-When a user taps on a reaction to see who reacted, the Host requests the full list from the Product. This is **not paginated** — for large chats where tracking individual reactors is impractical, the Product returns `NotAvailable`.
+When a user asks who reacted, who read a message, or how it read before an edit, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
 
 ```rust
-enum MessageReactionsErr {
-    // The Product cannot provide individual reaction details
+enum MessageDetailsKind {
+    Reactions,
+    Receipts,
+    Edits,
+}
+
+enum MessageDetails {
+    Reactions(Vec<MessageReaction>),
+    Receipts(Vec<MessageReceipt>),
+    // The earlier versions, oldest first.
+    Edits(Vec<MessageVersion>),
+}
+
+struct MessageVersion {
+    content: MessageContent,
+    edited_at: Timestamp,
+}
+
+struct MessageReceipt {
+    participant_id: ChatParticipantId,
+    delivered_at: Option<Timestamp>,
+    read_at: Option<Timestamp>,
+}
+
+enum MessageDetailsErr {
+    // The Product cannot provide individual details
     // (e.g. chat is too large).
     NotAvailable,
     Unknown(GenericErr),
 }
 
-// Register a handler to load individual reactions for a message.
-// If not registered, the Host does not offer a "see who reacted" UI.
-fn handle_message_reactions_detail(
+// Register a handler to load the details of a message.
+// If not registered, the Host offers none of these views.
+fn handle_message_details(
     room_id: RoomId,
-    get_reactions: fn(MessageId) -> Result<Vec<MessageReaction>, MessageReactionsErr>,
+    get_details: fn(MessageId, MessageDetailsKind) -> Result<MessageDetails, MessageDetailsErr>,
 );
 ```
 
@@ -932,7 +970,7 @@ When a Product does **not** register a handler, the Host applies these defaults:
 | Chat footer | Default input, payment disabled, default attachments |
 | Participants | Two participants: user and Product |
 | Participant actions | Based on participant type (open contact, open product info) |
-| Reaction details | Not available — no "see who reacted" UI |
+| Message details | Not available: no view of who reacted, who read, or earlier versions |
 | Placeholder | None |
 
 ### 11. Transport & Serialization
@@ -961,7 +999,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 9. **Reply threads**: Reply to a specific message.
 10. **Emoji reactions**: Place and remove emoji reactions on messages. Aggregated counts displayed inline; detailed reaction lists available on demand.
 11. **Unread counter**: Track and display unread message count per room — either Host-derived or Product-controlled.
-12. **Message status**: Track message lifecycle (preparing, delivered, read).
+12. **Message status**: Track message lifecycle (preparing, delivered, read), with read receipts in groups.
 13. **Typing indicator**: Preview text with `ongoing` flag for "User is typing..." style animations.
 14. **Participants**: List, paginate, and resolve participants. Support multiple identity types (Person, LitePerson, Contact, Product, Custom).
 15. **Per-message actions**: Configurable long-press menu — built-in actions (copy, reply, edit, react) extensible with Product-defined actions.
@@ -1021,7 +1059,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 ## Unresolved Questions
 
-1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows content edits.
+1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows text edits that keep the media.
 
 2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
 

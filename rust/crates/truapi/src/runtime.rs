@@ -72,7 +72,7 @@ use std::{
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
 pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey};
-pub use chat::chat_platform_for;
+pub use chat::{ChatHandler, chat_platform_for};
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
@@ -619,7 +619,7 @@ impl ProductConnection {
 	}
 
 	/// Chat access policy for this connection; see [`chat_platform_for`].
-	fn native_chat_platform(
+	pub fn native_chat_platform(
 		&self,
 	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
 		chat_platform_for(
@@ -649,6 +649,15 @@ impl ProductConnection {
 	) -> Result<(), crate::host_core::ProductRuntimeError> {
 		self.native_chat_platform()?;
 		self.chat.publish(action)
+	}
+
+	/// Hold this connection's product worker until the hold is dropped.
+	///
+	/// The first hold requests the worker's startup and the last release
+	/// requests a stop. Acquiring and dropping it may call into the host, so
+	/// neither should happen under a lock.
+	pub fn hold_worker(&self) -> WorkerHold {
+		WorkerHold::acquire(&self.services, &self.product.product_id)
 	}
 
 	/// Renderer access policy for this connection; see [`renderer_access_for`].

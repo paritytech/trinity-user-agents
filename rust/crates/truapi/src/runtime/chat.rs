@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use truapi::latest;
+
 use crate::host_core::ProductRuntimeError;
 
 /// Chat access policy shared by the wire runtime and the native entrypoints:
@@ -16,4 +18,13 @@ pub fn chat_platform_for(
 		return Err(ProductRuntimeError::Denied);
 	}
 	chat.cloned().ok_or(ProductRuntimeError::Unsupported)
+}
+
+/// The declaration of a room that lets the core ask a product a query.
+#[derive(Clone, Copy)]
+pub enum ChatHandler {
+	/// A flag of the room configuration.
+	Config(fn(&latest::ChatRoomConfig) -> bool),
+	/// No declaration. The core does not read the room, which need not exist.
+	Undeclared,
 }

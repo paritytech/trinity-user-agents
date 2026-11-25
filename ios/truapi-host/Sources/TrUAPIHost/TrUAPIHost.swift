@@ -344,14 +344,14 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Return what the host keeps for one room of the product: whether the
     /// product hosts it or takes part as a bot, and the configuration of its
-    /// last `createRoom`. The core reads it once before each change to a room.
-    /// The host looks the room up among the rooms of the product only. Answer
-    /// `nil` for a room that the product never created, and throw when the
-    /// host cannot read its rooms. The default finds the room in
-    /// ``listRooms()`` and pairs it with ``ChatRoomConfig/hostDefault``. A host
-    /// that serves a Chat Extension v2 request implements `room` with a read of
-    /// one room, because the default reads the whole room list for each change
-    /// to a room.
+    /// last `createRoom`. The core reads it once before each change to a room
+    /// and before each query of the room. The host looks the room up among the
+    /// rooms of the product only. Answer `nil` for a room that the product
+    /// never created, and throw when the host cannot read its rooms. The
+    /// default finds the room in ``listRooms()`` and pairs it with
+    /// ``ChatRoomConfig/hostDefault``. A host that serves a Chat Extension v2
+    /// request implements `room` with a read of one room, because the default
+    /// reads the whole room list for each change to a room.
     func room(roomId: String) async throws -> ChatRoomState?
 
     /// Replace the name, description, icon and empty-room text of a room, and
@@ -1859,6 +1859,18 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func stopWsBridge()
     func close()
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
+    func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessagesQueryResponse
+    func chatUserAction(
+        _ request: ProductChatUserActionRequest,
+        timeout: Duration
+    ) async throws -> ProductChatUserActionResponse
+    func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatReactionsQueryResponse
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
@@ -1877,6 +1889,101 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func notifyChainClosed(connectionId: UInt32)
     func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
+}
+
+/// The chat queries with the timeouts of ``ChatQueryTimeout``.
+public extension TrUAPIProductExecutionProtocol {
+    func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest
+    ) async throws -> ProductChatMessagesQueryResponse {
+        try await chatMessagesQuery(request, timeout: ChatQueryTimeout.messages)
+    }
+
+    func chatUserAction(
+        _ request: ProductChatUserActionRequest
+    ) async throws -> ProductChatUserActionResponse {
+        try await chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
+    }
+
+    func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest
+    ) async throws -> ProductChatReactionsQueryResponse {
+        try await chatReactionsQuery(request, timeout: ChatQueryTimeout.lookup)
+    }
+
+    /// An execution that does not ask chat pages answers that the page is not
+    /// available.
+    func chatMessagesQuery(
+        _: ProductChatMessagesQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatMessagesQueryResponse {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
+    /// An execution that does not send user actions answers that the product
+    /// does not take them.
+    func chatUserAction(
+        _: ProductChatUserActionRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatUserActionResponse {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
+    /// An execution that does not ask reactions answers that they are not
+    /// available.
+    func chatReactionsQuery(
+        _: ProductChatReactionsQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatReactionsQueryResponse {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+}
+
+/// How long the host waits for the answer to a chat query. After the timeout
+/// the host shows its failure state for that query.
+public enum ChatQueryTimeout {
+    /// A page of messages.
+    public static let messages: Duration = .seconds(10)
+    /// A message or a payment that the user sent.
+    public static let sentMessage: Duration = .seconds(30)
+    /// A user action that sends nothing.
+    public static let userAction: Duration = .seconds(10)
+    /// The reactions of a message.
+    public static let lookup: Duration = .seconds(5)
+
+    /// The timeout of one user action.
+    public static func timeout(for action: ChatUserAction) -> Duration {
+        switch action {
+        case .newMessage, .sendPayment: sentMessage
+        default: userAction
+        }
+    }
+}
+
+/// Why a chat query has no answer.
+public enum ChatQueryError: Error, Equatable {
+    /// The product, or the core for a room that does not declare the handler,
+    /// refused the query. ``ProductChatQueryError/notAvailable`` asks the host
+    /// to apply its default.
+    case refused(ProductChatQueryError)
+    /// The product, or the core for a room that the host stores, refused the
+    /// user action. The host reverts the action, and shows the reason of
+    /// ``ProductChatUserActionError/rejected(reason:)`` to the user.
+    case actionRefused(ProductChatUserActionError)
+    /// The query failed on its way, for example because the worker stopped.
+    case failed(reason: String)
+    /// The product ended the query without an answer.
+    case noAnswer
+    /// No answer came before the timeout.
+    case timedOut
+
+    fileprivate init(_ refusal: NativeChatQueryRefusal) {
+        switch refusal {
+        case let .query(error): self = .refused(error)
+        case let .userAction(error): self = .actionRefused(error)
+        case let .failed(reason): self = .failed(reason: reason)
+        }
+    }
 }
 
 /// One App, Widget, or Worker executable connected to a shared host runtime.
@@ -1916,6 +2023,42 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
         try inner.publishChatAction(action: action)
+    }
+
+    /// Ask the product for one page of messages of a room that it keeps.
+    public func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessagesQueryResponse {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatMessagesQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .messages(page) = answer { page } else { nil }
+        }
+    }
+
+    /// Tell the product what the user did in a room that it keeps.
+    public func chatUserAction(
+        _ request: ProductChatUserActionRequest,
+        timeout: Duration
+    ) async throws -> ProductChatUserActionResponse {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatUserAction(request: request, observer: observer)
+        } answer: { answer in
+            if case let .userAction(item) = answer { item } else { nil }
+        }
+    }
+
+    /// Ask the product who reacted to one message.
+    public func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatReactionsQueryResponse {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatReactionsQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .reactions(reactions) = answer { reactions } else { nil }
+        }
     }
 
     public func render(
@@ -2044,6 +2187,72 @@ private func hostRejectionReason(_ error: Error) -> String {
 /// Bounded: the reason reaches the product, and a host message can carry a
 /// whole failed statement.
 private let hostRejectionReasonMaxCharacters = 256
+
+/// Start one chat query, and wait for its answer. A timeout or a cancelled
+/// task stops the query in the product.
+func chatQuery<Answer>(
+    timeout: Duration,
+    start: (NativeChatQueryObserver) throws -> NativeChatQuery,
+    answer extract: (NativeChatQueryAnswer) -> Answer?
+) async throws -> Answer {
+    let outcome = ChatQueryOutcome()
+    let query = try start(outcome)
+    defer { query.cancel() }
+    let answer = try await withTaskCancellationHandler {
+        let timer = Task {
+            guard (try? await Task.sleep(for: timeout)) != nil else { return }
+            outcome.resolve(.failure(ChatQueryError.timedOut))
+        }
+        defer { timer.cancel() }
+        return try await outcome.value()
+    } onCancel: {
+        outcome.resolve(.failure(CancellationError()))
+    }
+    guard let typed = extract(answer) else {
+        throw ChatQueryError.failed(reason: "the product answered another query")
+    }
+    return typed
+}
+
+/// The first result of one chat query: the answer of the product, its
+/// refusal, a timeout or a cancellation. Later results have no effect.
+final class ChatQueryOutcome: NativeChatQueryObserver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<NativeChatQueryAnswer, Error>?
+    private var waiter: CheckedContinuation<NativeChatQueryAnswer, Error>?
+
+    func onAnswer(answer: NativeChatQueryAnswer) {
+        resolve(.success(answer))
+    }
+
+    func onRefusal(refusal: NativeChatQueryRefusal) {
+        resolve(.failure(ChatQueryError(refusal)))
+    }
+
+    func onComplete() {
+        resolve(.failure(ChatQueryError.noAnswer))
+    }
+
+    func resolve(_ outcome: Result<NativeChatQueryAnswer, Error>) {
+        let waiter: CheckedContinuation<NativeChatQueryAnswer, Error>? = lock.withLock {
+            guard result == nil else { return nil }
+            result = outcome
+            defer { self.waiter = nil }
+            return self.waiter
+        }
+        waiter?.resume(with: outcome)
+    }
+
+    func value() async throws -> NativeChatQueryAnswer {
+        try await withCheckedThrowingContinuation { continuation in
+            let ready: Result<NativeChatQueryAnswer, Error>? = lock.withLock {
+                if result == nil { waiter = continuation }
+                return result
+            }
+            if let ready { continuation.resume(with: ready) }
+        }
+    }
+}
 
 /// A core stream that `observer` feeds, cancelled when the stream terminates.
 private func observedStream<Element, Observer>(

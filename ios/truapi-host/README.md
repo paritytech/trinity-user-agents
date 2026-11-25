@@ -144,7 +144,7 @@ and the text input.
 | Request | What the host does |
 | --- | --- |
 | `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. A room id is unique only among the rooms of one product, so the host keeps each room under the product and the id, and never changes a room that the product does not host: a room of another product with the same id, or a room that the product takes part in as a bot. The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a `data:` URL with an image type. Only a product built against the earlier client sends an `https` URL, and the core has not checked the payload of its `data:` URL; the `data:` URL of any other product has a Base64 payload that the core decoded. Throw `HostChatCreateRoomError.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The host looks the room up among the rooms of the product only. The core reads it once before each change to a room |
+| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The host looks the room up among the rooms of the product only. The core reads it once before each change to a room and before each query of the room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen. The core has not checked that the product created the room, so the host deletes only a room that the product hosts, and does nothing for any other id |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.applied`, or the outcome that names why it did not apply the change |
@@ -223,6 +223,29 @@ names, icons, message bodies, URLs, and the action and media counts. Ids and
 names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
+
+The host asks a room that declares a handler in its configuration through three
+queries on the execution. Each one waits for one answer, and stops the query in
+the product after its timeout or when the task is cancelled:
+
+```swift
+let page = try await execution.chatMessagesQuery(
+    ProductChatMessagesQueryRequest(roomId: roomId, anchor: .before(cursor: nil), pageSize: 40)
+)
+```
+
+| Query | Default timeout (`ChatQueryTimeout`) |
+| --- | --- |
+| `chatMessagesQuery` | 10 s (`messages`) |
+| `chatUserAction` | 30 s for a sent message (`sentMessage`), 10 s for other actions (`userAction`) |
+| `chatReactionsQuery` | 5 s (`lookup`) |
+
+Each query also takes `timeout:`. A query with no answer throws
+`ChatQueryError`: `.refused(.notAvailable)` asks the host to apply its default,
+`.actionRefused` reverts a user action, and `.failed`, `.noAnswer` and
+`.timedOut` show the failure state of that query. The core answers
+`.notAvailable` itself for a room that does not declare the handler, without
+starting the worker.
 
 The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
 carries back, so it must name that message for as long as the host stores it.
