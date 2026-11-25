@@ -5,8 +5,10 @@ use std::{
 };
 use tempfile::tempdir;
 
-/// Clears `target` as a host does: its locks first, then the data.
+/// Clears `target` as a host does: the name resolved, its locks taken, then the
+/// data removed.
 fn clear(catalog: &SessionCatalog, target: SessionClearTarget) -> Result<Vec<String>> {
+	let target = catalog.resolve_clear_target(&target)?;
 	catalog.clear(catalog.prepare_clear(&target)?)
 }
 
@@ -726,6 +728,48 @@ fn an_unpromoted_name_resolves_to_itself() -> Result<()> {
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 
 	assert_eq!(catalog.resolve_session_name("worker-0")?, "worker-0");
+	Ok(())
+}
+
+/// A clear removes the session its name resolved to when the user confirmed
+/// it. A session that appears before the locks are taken and would now win
+/// the name, such as a provisioned `bob.01` for `bob`, is left alone.
+#[test]
+fn a_prepared_clear_removes_the_session_its_name_resolved_to() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	catalog.ensure_profile("bob")?;
+	let confirmed = catalog.resolve_clear_target(&SessionClearTarget::Named("bob".to_string()))?;
+	let newer = catalog.ensure_profile("bob.01")?;
+	fs::write(newer.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
+
+	let cleared = catalog.clear(catalog.prepare_clear(&confirmed)?)?;
+
+	assert_eq!(
+		(confirmed, cleared, catalog.list()?),
+		(
+			SessionClearTarget::Named("bob".to_string()),
+			vec!["bob".to_string()],
+			vec!["bob.01".to_string()],
+		)
+	);
+	Ok(())
+}
+
+/// A name that cannot be selected is refused as it is typed, before
+/// resolution could turn it into another session's name.
+#[test]
+fn a_clear_checks_the_typed_name_before_resolving_it() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let alicee = catalog.ensure_profile("alicee.01")?;
+	fs::write(alicee.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
+
+	let resolved = catalog
+		.resolve_clear_target(&SessionClearTarget::Named("../alicee".to_string()))
+		.map_err(|error| error.to_string());
+
+	assert_eq!(resolved, Err(validate_selectable_name("../alicee").unwrap_err().to_string()));
 	Ok(())
 }
 

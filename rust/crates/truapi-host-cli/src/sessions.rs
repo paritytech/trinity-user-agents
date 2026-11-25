@@ -452,13 +452,13 @@ impl SessionCatalog {
 		Ok(names)
 	}
 
-	/// Check that a clear target currently resolves to managed session data.
+	/// Check that a clear target names a listed session as it is given,
+	/// without resolving it.
 	pub fn validate_clear_target(&self, target: &SessionClearTarget) -> Result<()> {
 		let SessionClearTarget::Named(name) = target else {
 			return Ok(());
 		};
 		validate_selectable_name(name)?;
-		let name = &self.resolve_session_name(name)?;
 		if self.list()?.iter().any(|existing| existing == name) {
 			Ok(())
 		} else {
@@ -467,11 +467,14 @@ impl SessionCatalog {
 	}
 
 	/// `target` with a name resolved as session selection resolves it, so a
-	/// name promoted away clears the session it created. Fails as
-	/// [`Self::validate_clear_target`] does.
+	/// name promoted away clears the session it created. The typed name is
+	/// checked before it is resolved. Fails when the typed name is not
+	/// selectable, and as [`Self::validate_clear_target`] does for the name it
+	/// resolves to.
 	pub fn resolve_clear_target(&self, target: &SessionClearTarget) -> Result<SessionClearTarget> {
 		let target = match target {
 			SessionClearTarget::Named(name) => {
+				validate_selectable_name(name)?;
 				SessionClearTarget::Named(self.resolve_session_name(name)?)
 			},
 			SessionClearTarget::All => SessionClearTarget::All,
@@ -480,8 +483,11 @@ impl SessionCatalog {
 		Ok(target)
 	}
 
-	/// Check `target` and take the account store locks a clear of it needs,
-	/// before anything is removed or a host stops for it.
+	/// Check that `target`, as [`Self::resolve_clear_target`] returned it, is
+	/// still listed, and take the account store locks a clear of it needs,
+	/// before anything is removed or a host stops for it. The name is not
+	/// resolved again, so the clear removes the session the user confirmed
+	/// even when sessions changed in the meantime.
 	///
 	/// The locks are each removed session's own, so a host provisioning one of
 	/// those sessions cannot write it back after the clear, and the shared
@@ -489,10 +495,11 @@ impl SessionCatalog {
 	/// another stack holds the shared lock too, so it refuses only a clear that
 	/// has records there. The store is read without its lock to decide that,
 	/// which is safe since every write renames a whole file into place. Fails
-	/// as [`Self::resolve_clear_target`] does, and when another process holds
+	/// as [`Self::validate_clear_target`] does, and when another process holds
 	/// one of the locks.
 	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
-		let target = self.resolve_clear_target(target)?;
+		self.validate_clear_target(target)?;
+		let target = target.clone();
 		let names = match &target {
 			SessionClearTarget::Named(name) => vec![name.clone()],
 			SessionClearTarget::All => self.list()?,
