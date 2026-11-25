@@ -162,14 +162,15 @@ fn a_restart_is_asked_for_only_once_the_record_is_stored() {
 	let mut source = load(&bundled, None);
 
 	let first_record = serve(&mut source, &wiped, START);
-	let before_the_store = source.status().restart_required;
+	source.record_not_stored("disk full".to_string());
+	let after_the_failed_store = source.status().restart_required;
 	let second_record = serve(&mut source, &wiped, START + 3600);
 	source.record_stored();
 
 	assert_eq!(
 		(
 			first_record.is_some(),
-			before_the_store,
+			after_the_failed_store,
 			second_record.is_some(),
 			source.status().restart_required
 		),
