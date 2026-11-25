@@ -306,7 +306,7 @@ impl<Role> HostRuntime<Role> {
 	/// the next transaction naming a contact reads the list again.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
-		self.services.contact_handles.clear();
+		self.services.contact_handle_cache.clear();
 	}
 
 	/// Reference counts per product worker, shared by every connection of
@@ -904,9 +904,11 @@ impl HostRuntime<SigningHost> {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did: it ended, its provider was asked, a cancel is already with
-	/// the provider, or it is too late because the balance was credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did: it ended, including one
+	/// whose overlay was up and closes, its provider was asked, a cancel is
+	/// already with the provider, it is too late because the balance was
+	/// credited, or there is nothing to cancel.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
 	pub async fn cancel_funding(
 		&self,
@@ -2064,7 +2066,7 @@ impl ProductRuntime {
 	/// what it cached before. For an embedder that holds only this runtime;
 	/// one holding the host runtime calls it there.
 	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
+		self.admin.product_runtime.connection().services().contact_handle_cache.clear();
 	}
 
 	/// Build a product-facing host core around a platform implementation and

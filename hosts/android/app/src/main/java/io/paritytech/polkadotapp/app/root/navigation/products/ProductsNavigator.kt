@@ -14,7 +14,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCard
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended.FundingEndedBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingProviderFrameBottomSheet
@@ -110,66 +110,66 @@ class ProductsNavigator @Inject constructor(
         performNavigation(R.id.action_global_to_truapiContactPickBottomSheet)
     }
 
-    override suspend fun openFundingOverlay(sessionId: FundingSessionId) = withContext(dispatchers.main) {
+    override suspend fun openFundingOverlay(intentId: FundingIntentId) = withContext(dispatchers.main) {
         performNavigation(
             R.id.action_global_to_fundingBottomSheet,
-            bundleOf(FundingBottomSheet.SESSION_ID to sessionId.value),
+            bundleOf(FundingBottomSheet.SESSION_ID to intentId.value),
         )
     }
 
-    override suspend fun closeFundingOverlay(sessionId: FundingSessionId) = withContext(dispatchers.main) {
-        popSession(R.id.fundingBottomSheet, FundingBottomSheet.SESSION_ID, sessionId)
+    override suspend fun closeFundingOverlay(intentId: FundingIntentId) = withContext(dispatchers.main) {
+        popSession(R.id.fundingBottomSheet, FundingBottomSheet.SESSION_ID, intentId)
     }
 
-    override suspend fun openFundingEnded(sessionId: FundingSessionId) = withContext(dispatchers.main) {
+    override suspend fun openFundingEnded(intentId: FundingIntentId) = withContext(dispatchers.main) {
         performNavigation(
             R.id.action_global_to_fundingEndedBottomSheet,
-            bundleOf(FundingEndedBottomSheet.SESSION_ID to sessionId.value),
+            bundleOf(FundingEndedBottomSheet.SESSION_ID to intentId.value),
         )
     }
 
-    override suspend fun closeFundingEnded(sessionId: FundingSessionId) = withContext(dispatchers.main) {
-        popIfOnTop(R.id.fundingEndedBottomSheet, FundingEndedBottomSheet.SESSION_ID, sessionId.value)
+    override suspend fun closeFundingEnded(intentId: FundingIntentId) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingEndedBottomSheet, FundingEndedBottomSheet.SESSION_ID, intentId.value)
     }
 
     override suspend fun openFundingHistory() = withContext(dispatchers.main) {
         performNavigation(R.id.action_global_to_fundingHistoryBottomSheet)
     }
 
-    override suspend fun isFundingOverlayShown(sessionId: FundingSessionId): Boolean = withContext(dispatchers.main) {
-        sessionOnTop(R.id.fundingBottomSheet, FundingBottomSheet.SESSION_ID, sessionId)
+    override suspend fun isFundingOverlayShown(intentId: FundingIntentId): Boolean = withContext(dispatchers.main) {
+        sessionOnTop(R.id.fundingBottomSheet, FundingBottomSheet.SESSION_ID, intentId)
     }
 
     override suspend fun openFundingProviderFrame(request: FundingFrameRequest) = withContext(dispatchers.main) {
         performNavigation(
             R.id.action_global_to_fundingProviderFrameBottomSheet,
             bundleOf(
-                FundingProviderFrameBottomSheet.SESSION_ID to request.sessionId.value,
+                FundingProviderFrameBottomSheet.SESSION_ID to request.intentId.value,
                 FundingProviderFrameBottomSheet.REQUEST_ID to request.id.value,
             ),
         )
     }
 
-    override suspend fun closeFundingProviderFrame(sessionId: FundingSessionId) = withContext(dispatchers.main) {
-        popIfOnTop(R.id.fundingProviderFrameBottomSheet, FundingProviderFrameBottomSheet.SESSION_ID, sessionId.value)
+    override suspend fun closeFundingProviderFrame(intentId: FundingIntentId) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingProviderFrameBottomSheet, FundingProviderFrameBottomSheet.SESSION_ID, intentId.value)
     }
 
     /**
      * Closes the session's sheet even when its provider frame sits on top of it: the frame belongs to the same
      * session, so it goes too. Anything else on top is left alone, and so is the sheet under it.
      */
-    private fun popSession(destinationId: Int, argument: String, sessionId: FundingSessionId) {
-        if (sessionOnTop(destinationId, argument, sessionId)) navigationHolder.navController?.popBackStack(destinationId, inclusive = true)
+    private fun popSession(destinationId: Int, argument: String, intentId: FundingIntentId) {
+        if (sessionOnTop(destinationId, argument, intentId)) navigationHolder.navController?.popBackStack(destinationId, inclusive = true)
     }
 
-    /** Whether the screen for [sessionId] is on the stack with nothing but the session's own provider screens over it. */
-    private fun sessionOnTop(destinationId: Int, argument: String, sessionId: FundingSessionId): Boolean {
+    /** Whether the screen for [intentId] is on the stack with nothing but the session's own provider screens over it. */
+    private fun sessionOnTop(destinationId: Int, argument: String, intentId: FundingIntentId): Boolean {
         val stack = navigationHolder.navController?.currentBackStack?.value.orEmpty()
-        val index = stack.indexOfLast { it.destination.id == destinationId && it.arguments?.getString(argument) == sessionId.value }
+        val index = stack.indexOfLast { it.destination.id == destinationId && it.arguments?.getString(argument) == intentId.value }
         if (index < 0) return false
 
         val above = stack.drop(index + 1).filter { it.destination !is NavGraph }
-        return above.all { it.arguments?.getString(FundingProviderFrameBottomSheet.SESSION_ID) == sessionId.value }
+        return above.all { it.arguments?.getString(FundingProviderFrameBottomSheet.SESSION_ID) == intentId.value }
     }
 
     private fun popIfOnTop(destinationId: Int, argument: String, value: String) {

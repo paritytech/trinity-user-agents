@@ -28,9 +28,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
 

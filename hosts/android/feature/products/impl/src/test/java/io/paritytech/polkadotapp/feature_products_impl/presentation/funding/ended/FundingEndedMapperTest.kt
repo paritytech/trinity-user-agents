@@ -38,7 +38,7 @@ class FundingEndedMapperTest {
 
         assertEquals(true, ended.succeeded)
         assertEquals(FundingEndedIcon.IN, ended.icon)
-        assertEquals("+$50", ended.figure)
+        assertEquals("+$50 CASH", ended.figure)
         assertEquals(FundingEndedTone.SUCCESS, ended.figureTone)
         assertEquals(List(FundingTimeline.DOTS) { FundingDotState.DONE }, ended.timeline.dots)
         assertNull(ended.note)
@@ -52,7 +52,7 @@ class FundingEndedMapperTest {
         )
 
         assertEquals(FundingEndedIcon.FAILED, ended.icon)
-        assertEquals("$50", ended.figure)
+        assertEquals("$50 CASH", ended.figure)
         assertEquals(FundingEndedTone.TERTIARY, ended.figureTone)
         assertEquals(FundingDotState.FAILED, ended.timeline.dots[FundingTimeline.MILESTONE_GAP])
         assertEquals(1, ended.timeline.failedLabel)
@@ -97,7 +97,7 @@ class FundingEndedMapperTest {
         val ended = map(summary(FundingDirection.OUT, released(), FundingEndedOutcome.Succeeded, payoutState = FundingPayoutState.PENDING))
 
         assertEquals(true, ended.succeeded)
-        assertEquals("-$50", ended.figure)
+        assertEquals("-$50 CASH", ended.figure)
         assertEquals(FundingDotState.CURRENT, ended.timeline.dots[5])
         assertTrue(
             ended.rows.contains(

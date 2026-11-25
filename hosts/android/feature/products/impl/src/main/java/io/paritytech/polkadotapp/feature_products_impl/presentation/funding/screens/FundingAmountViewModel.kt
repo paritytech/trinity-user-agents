@@ -6,7 +6,8 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFlowState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingHistoryClock
@@ -38,7 +39,8 @@ import kotlin.time.Duration.Companion.milliseconds
 @HiltViewModel(assistedFactory = FundingAmountViewModel.Factory::class)
 class FundingAmountViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
+    private val quotes: FundingQuotes,
     private val router: ProductsRouter,
 ) : BaseViewModel() {
     private var quoteJob: Job? = null
@@ -47,7 +49,7 @@ class FundingAmountViewModel @AssistedInject constructor(
         .map { Triple(it.units, it.options, it.list) to it }
         .distinctUntilChanged { old, new -> old.first == new.first }
         .mapLatest { (key, flow) ->
-            key.first?.let { units -> service.amountIssue(units, flow.spendable, sheet.sessionId) }
+            key.first?.let { units -> sessions.amountIssue(units, flow.spendable, sheet.intentId) }
                 ?: Result.success(null)
         }
 
@@ -56,14 +58,14 @@ class FundingAmountViewModel @AssistedInject constructor(
         flow.withAmountCheck(issue)
     }.stateIn(this, WhileOnScreen, null)
 
-    private val history = service.entries().map(FundingHistoryClock::of).onStart { emit(FundingHistoryClock.HIDDEN) }
+    private val history = sessions.entries().map(FundingHistoryClock::of).onStart { emit(FundingHistoryClock.HIDDEN) }
 
     val state: StateFlow<FundingAmountUiState?> = combine(checked, history) { checked, history ->
         checked?.toAmountUiState(history)
     }.stateIn(this, WhileOnScreen, null)
 
     fun onRailSelected(rail: FundingRail) {
-        if (sheet.flow.value?.rail != rail) service.quote(null, sheet.sessionId)
+        if (sheet.flow.value?.rail != rail) quotes.quote(null, sheet.intentId)
         sheet.update { it.withRail(rail) }
         scheduleQuote()
     }
@@ -87,7 +89,7 @@ class FundingAmountViewModel @AssistedInject constructor(
             FundingRail.CARD, FundingRail.BANK -> {
                 val pending = quoteJob?.isActive == true
                 quoteJob?.cancel()
-                if (pending || (!current.quoting && current.askedAmount != current.askAmount)) sheet.requote()
+                if (pending || current.quotesFailed || (!current.quoting && current.askedAmount != current.askAmount)) sheet.requote()
                 sheet.push(FundingScreen.SUMMARY)
             }
         }

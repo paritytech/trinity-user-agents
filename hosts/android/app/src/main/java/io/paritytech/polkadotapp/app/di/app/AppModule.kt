@@ -74,7 +74,6 @@ internal interface AppModule {
     @Binds
     fun bindSentryEventCapture(impl: RealSentryEventCapture): SentryEventCapture
 
-
     @Binds
     fun bindSentryMetricsCapture(impl: RealSentryMetricsCapture): SentryMetricsCapture
 

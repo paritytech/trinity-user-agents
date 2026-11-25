@@ -7,7 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCancelUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionFacts
@@ -36,7 +36,7 @@ data class FundingCancelOfferUiState(
 @HiltViewModel(assistedFactory = FundingCancelOfferViewModel.Factory::class)
 class FundingCancelOfferViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
 ) : BaseViewModel() {
     private val isAnswering = MutableStateFlow(false)
 
@@ -58,7 +58,7 @@ class FundingCancelOfferViewModel @AssistedInject constructor(
         val shown = sheet.entry.value?.session?.cancel as? FundingCancel.Offered
         val terms = if (accept) shown?.let { CancelTerms(fee = it.fee, refund = it.refund) } else null
 
-        service.answerCancelOffer(sheet.sessionId, terms)
+        sessions.answerCancelOffer(sheet.intentId, terms)
             .logFailure("Funding cancel answer failed")
             .onSuccess { leave(it.message()) }
             .onFailure { leave(RCommon.string.funding_error_cancel_failed) }

@@ -8,9 +8,11 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCoreCalls
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingSessions
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -39,7 +41,7 @@ class TrUAPIHostFundingTest {
 
     @Test
     fun `opening passes the direction and amount to the core`() = runBlocking {
-        val service = mockk<FundingService> { coEvery { open(CoreFundingDirection.OUT, Balance(BigInteger("250"))) } returns Result.success(FundingSessionId("intent")) }
+        val service = mockk<FundingSessions> { coEvery { open(CoreFundingDirection.OUT, Balance(BigInteger("250"))) } returns Result.success(FundingIntentId("intent")) }
 
         assertEquals(Result.success("intent"), TrUAPIHostFunding(service, mockk()).openFunding(FundingDirection.OUT, Balance(BigInteger("250"))))
     }
@@ -61,7 +63,7 @@ class TrUAPIHostFundingTest {
             summary("cancelled", atMs = 5uL, FundingStatus.Failed(FundingFailure.Cancelled), refunded = "10"),
         )
 
-        val read = TrUAPIHostFunding(RealFundingService(core, testDispatchers()), mockk()).observeActivity().first()
+        val read = TrUAPIHostFunding(FundingCoreCalls(backgroundScope, testDispatchers()).let { calls -> RealFundingSessions(core, RealFundingQuotes(core, calls), calls, testDispatchers()) }, mockk()).observeActivity().first()
 
         assertEquals(
             listOf(
@@ -83,15 +85,15 @@ class TrUAPIHostFundingTest {
 
     @Test
     fun `each session the history shows is acknowledged`() = runBlocking {
-        val service = mockk<FundingService>(relaxed = true)
+        val service = mockk<FundingSessions>(relaxed = true)
         val funding = TrUAPIHostFunding(service, mockk())
 
         funding.acknowledgeShown(listOf("a", "b"))
         funding.acknowledgeShown(emptyList())
 
         coVerify(exactly = 2) { service.acknowledge(any()) }
-        coVerify { service.acknowledge(FundingSessionId("a")) }
-        coVerify { service.acknowledge(FundingSessionId("b")) }
+        coVerify { service.acknowledge(FundingIntentId("a")) }
+        coVerify { service.acknowledge(FundingIntentId("b")) }
     }
 
     private fun entry(intent: String, openedAtMs: ULong, status: FundingStatus) = FundingBookEntry(

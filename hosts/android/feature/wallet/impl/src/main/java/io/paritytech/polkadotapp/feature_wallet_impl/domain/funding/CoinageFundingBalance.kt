@@ -14,12 +14,11 @@ internal class CoinageFundingBalance @Inject constructor(
     private val coinageHoldingsUseCase: CoinageHoldingsUseCase,
     private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase,
 ) : FundingBalance {
-    override suspend fun spendable(): Balance? {
+    override suspend fun spendable(): Result<Balance> {
         val holdings = coinageHoldingsUseCase.subscribeHoldings().first()
 
         return coinageBalanceConverterUseCase.create()
             .map { conversion -> with(conversion) { holdings.toHoldingsInfo() }.balance.availablePrivate }
             .logFailure("CoinageFundingBalance: Failed to classify coinage holdings")
-            .getOrNull()
     }
 }

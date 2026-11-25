@@ -7,9 +7,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.toActivityStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -26,21 +26,21 @@ import kotlin.time.Instant
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 class TrUAPIHostFunding @Inject constructor(
-    private val service: FundingService,
+    private val sessions: FundingSessions,
     private val sessionScreens: FundingSessionScreens,
 ) : HostFunding {
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
-        service.open(direction.toCore(), amount).map { it?.value }
+        sessions.open(direction.toCore(), amount).map { it?.value }
 
-    override suspend fun isFundingAvailable(): Result<Boolean> = service.isAvailable()
+    override suspend fun isFundingAvailable(): Result<Boolean> = sessions.isAvailable()
 
-    override fun observeActivity(): Flow<FundingActivity> = service.entries().map(::activityOf)
+    override fun observeActivity(): Flow<FundingActivity> = sessions.entries().map(::activityOf)
 
     override suspend fun acknowledgeShown(intents: List<String>) {
-        intents.forEach { service.acknowledge(FundingSessionId(it)) }
+        intents.forEach { sessions.acknowledge(FundingIntentId(it)) }
     }
 
-    override suspend fun showSession(intent: String) = sessionScreens.show(FundingSessionId(intent))
+    override suspend fun showSession(intent: String) = sessionScreens.show(FundingIntentId(intent))
 
     override suspend fun presentScreens() = sessionScreens.present()
 }

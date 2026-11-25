@@ -191,6 +191,7 @@ private const val FUNDING_ICON_PIXELS = 96
 fun fundingProblemText(problem: FundingSummaryProblem): String = when (problem) {
     FundingSummaryProblem.StartFailed -> stringResource(RCommon.string.funding_error_start_failed)
     FundingSummaryProblem.NoProvider -> stringResource(RCommon.string.funding_error_no_provider)
+    FundingSummaryProblem.QuotesFailed -> stringResource(RCommon.string.funding_error_quotes_failed)
     is FundingSummaryProblem.QuoteRefused -> problem.text.text()
     is FundingSummaryProblem.Failed -> problem.reason.failedText()
     is FundingSummaryProblem.Minimum -> stringResource(RCommon.string.funding_error_minimum, problem.amount)

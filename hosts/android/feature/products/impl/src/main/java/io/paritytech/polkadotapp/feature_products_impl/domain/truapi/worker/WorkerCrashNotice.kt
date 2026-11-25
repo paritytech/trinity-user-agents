@@ -1,13 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.paritytech.polkadotapp.common.di.modules.ProcessScope
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.common.presentation.notification.error
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import uniffi.truapi.ProductId
 import javax.inject.Inject
@@ -25,13 +25,12 @@ class WorkerCrashNotice @Inject constructor(
     private val resolveProduct: Lazy<ResolveProductUseCase>,
     private val appNotifier: AppNotifier,
     private val contextManager: ContextManager,
-    dispatchers: CoroutineDispatchers,
+    @param:ProcessScope private val scope: CoroutineScope,
+    private val dispatchers: CoroutineDispatchers,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
-
     /** May arrive on any thread; the name is resolved off it. */
     fun onCrashing(productId: ProductId) {
-        scope.launch {
+        scope.launch(dispatchers.computation) {
             val name = resolveProduct.get().resolve(productId).getOrNull()?.product?.name ?: productId.value
             appNotifier.error(contextManager.applicationContext.getString(RCommon.string.worker_crashing_notice, name))
         }

@@ -5,7 +5,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.Test
@@ -16,7 +16,7 @@ class FundingResumeTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
-    private val service = mockk<FundingService> {
+    private val service = mockk<FundingSessions> {
         coEvery { resume() } returns Result.success(Unit)
     }
     private val context = mockk<Context> {

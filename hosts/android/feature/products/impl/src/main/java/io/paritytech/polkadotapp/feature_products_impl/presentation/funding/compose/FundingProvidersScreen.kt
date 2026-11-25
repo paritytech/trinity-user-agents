@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.design.components.progress.Shimmer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -26,8 +27,8 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingProviderLogo
 import uniffi.truapi.ProductId
-import java.util.Locale
 import kotlin.math.max
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -38,7 +39,6 @@ private val SKELETON_HEIGHT = 12.dp
 private const val DIMMED_ALPHA = 0.5f
 private const val WARNING_SECONDS = 20L
 private const val ERROR_SECONDS = 10L
-private const val SECONDS_PER_MINUTE = 60
 
 /** Every provider's live quote, the cheapest marked, with how long the prices hold before they are asked again. */
 @Composable
@@ -84,7 +84,7 @@ private fun CountdownText(seconds: Long) {
     NovaText(
         text = stringResource(
             RCommon.string.funding_providers_rate_updated_in,
-            String.format(Locale.ROOT, "%d:%02d", seconds / SECONDS_PER_MINUTE, seconds % SECONDS_PER_MINUTE),
+            LocalTimeFormatter.current.formatCountdown(seconds.seconds),
         ),
         style = PolkadotTheme.typography.body.smallEmphasized,
         color = when {

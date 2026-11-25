@@ -7,7 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionFacts
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSheet
@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.stateIn
 @HiltViewModel(assistedFactory = FundingSummaryViewModel.Factory::class)
 class FundingSummaryViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
 ) : BaseViewModel() {
     private val start = MutableStateFlow<FundingStartState>(FundingStartState.Idle)
 
@@ -49,7 +49,7 @@ class FundingSummaryViewModel @AssistedInject constructor(
 
         start.value = FundingStartState.Starting
         launchUnit {
-            start.value = service.start(sheet.sessionId, providerId)
+            start.value = sessions.start(sheet.intentId, providerId)
                 .logFailure("Funding provider selection failed")
                 .fold(onSuccess = { FundingStartState.Started }, onFailure = { FundingStartState.StartFailed })
         }

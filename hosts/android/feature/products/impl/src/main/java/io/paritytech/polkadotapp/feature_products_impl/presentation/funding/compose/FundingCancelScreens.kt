@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -19,6 +20,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import uniffi.truapi.FundingRail
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -64,7 +66,7 @@ fun FundingCancelOfferScreen(
                 text = if (lapsed) {
                     stringResource(RCommon.string.funding_cancel_offer_expired)
                 } else {
-                    stringResource(RCommon.string.funding_cancel_offer_valid_for, "%d:%02d".format(seconds / 60, seconds % 60))
+                    stringResource(RCommon.string.funding_cancel_offer_valid_for, LocalTimeFormatter.current.formatCountdown(seconds.seconds))
                 },
                 style = PolkadotTheme.typography.body.small,
                 color = PolkadotTheme.colors.fg.secondary,

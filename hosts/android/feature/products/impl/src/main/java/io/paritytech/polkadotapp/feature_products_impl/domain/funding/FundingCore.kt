@@ -15,23 +15,23 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
 
-/** The core's funding calls, as [FundingService] makes them. Each boots the core first when it is not running. */
+/** The core's funding calls, as the funding parts make them. Each boots the core first when it is not running. */
 interface FundingCore {
     suspend fun start(): Result<Unit>
 
     suspend fun available(): Result<Boolean>
 
-    suspend fun open(direction: FundingDirection, amount: Balance?): Result<String?>
+    suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingIntentId?>
 
-    suspend fun session(intent: String): Result<FundingSession?>
+    suspend fun session(intentId: FundingIntentId): Result<FundingSession?>
 
-    suspend fun progress(intent: String): Result<FundingProgress?>
+    suspend fun progress(intentId: FundingIntentId): Result<FundingProgress?>
 
-    suspend fun options(intent: String): Result<FundingOptions?>
+    suspend fun options(intentId: FundingIntentId): Result<FundingOptions?>
 
-    suspend fun quotes(intent: String): Result<FundingQuoteList?>
+    suspend fun quotes(intentId: FundingIntentId): Result<FundingQuoteList?>
 
-    suspend fun summary(intent: String): Result<FundingSessionSummary?>
+    suspend fun summary(intentId: FundingIntentId): Result<FundingSessionSummary?>
 
     /** Every session the core holds in full, with its progress. */
     suspend fun entries(): Result<List<FundingBookEntry>>
@@ -39,28 +39,28 @@ interface FundingCore {
     /** Every ended session, as summaries. */
     suspend fun history(): Result<List<FundingSessionSummary>>
 
-    suspend fun select(intent: String, selection: FundingSelection): Result<Unit>
+    suspend fun select(intentId: FundingIntentId, selection: FundingSelection): Result<Unit>
 
     /** The request id the quote list for [amount] carries; `null` while the selection names no asset. */
-    suspend fun requestQuote(intent: String, amount: Balance): Result<ULong?>
+    suspend fun requestQuote(intentId: FundingIntentId, amount: Balance): Result<ULong?>
 
-    suspend fun startWhenQuoted(intent: String, requestId: ULong): Result<Unit>
+    suspend fun startWhenQuoted(intentId: FundingIntentId, requestId: ULong): Result<Unit>
 
-    suspend fun cancelAutoStart(intent: String): Result<Unit>
+    suspend fun cancelAutoStart(intentId: FundingIntentId): Result<Unit>
 
-    suspend fun amountIssue(intent: String, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?>
+    suspend fun amountIssue(intentId: FundingIntentId, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?>
 
-    suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean>
+    suspend fun selectProvider(intentId: FundingIntentId, providerId: ProductId, quoteId: String): Result<Boolean>
 
-    suspend fun cancel(intent: String): Result<CancelOutcome>
+    suspend fun cancel(intentId: FundingIntentId): Result<CancelOutcome>
 
-    suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation>
+    suspend fun confirmCancel(intentId: FundingIntentId, terms: CancelTerms?): Result<CancelConfirmation>
 
-    suspend fun acknowledge(intent: String): Result<Boolean>
+    suspend fun acknowledge(intentId: FundingIntentId): Result<Boolean>
 
-    /** Lets the screen session [intent]'s provider asked for be presented; answers whether one was waiting. */
-    suspend fun openFrame(intent: String): Result<Boolean>
+    /** Lets the screen session [intentId]'s provider asked for be presented; answers whether one was waiting. */
+    suspend fun openFrame(intentId: FundingIntentId): Result<Boolean>
 
-    /** Whether session [intent]'s provider waits for its screen to be opened. */
-    suspend fun frameWaiting(intent: String): Result<Boolean>
+    /** Whether session [intentId]'s provider waits for its screen to be opened. */
+    suspend fun frameWaiting(intentId: FundingIntentId): Result<Boolean>
 }

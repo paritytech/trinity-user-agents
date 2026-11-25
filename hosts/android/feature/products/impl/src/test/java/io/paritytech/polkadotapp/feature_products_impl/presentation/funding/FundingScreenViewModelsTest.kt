@@ -43,7 +43,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingScreenViewModelsTest {
     private val testDispatcher = StandardTestDispatcher()
-    private val service = FakeFundingService()
+    private val service = FakeFunding()
     private val router: ProductsRouter = mockk(relaxed = true)
 
     @Before
@@ -55,7 +55,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `the amount is quoted once the user stops typing for 0_6 s`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service, router)
+        val model = FundingAmountViewModel(sheet, service, service, router)
 
         model.onKey(FundingKey.Digit('5'))
         advanceTimeBy(300)
@@ -73,7 +73,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `continuing with a quote still waiting asks it at once and shows the summary`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service, router)
+        val model = FundingAmountViewModel(sheet, service, service, router)
         model.state.launchIn(backgroundScope)
         model.onKey(FundingKey.Digit('5'))
         runCurrent()
@@ -86,7 +86,7 @@ class FundingScreenViewModelsTest {
 
     @Test
     fun `the clock shows once a session started, wears a dot while one runs, and opens the history`() = runTest(testDispatcher) {
-        val model = FundingAmountViewModel(FakeFundingSheet(flow(), entry()), service, router)
+        val model = FundingAmountViewModel(FakeFundingSheet(flow(), entry()), service, service, router)
         model.state.launchIn(backgroundScope)
         val settingUp = entry(session = FakeFundingCore.session("new"))
         val ended = entry(session = FakeFundingCore.session("old", providerId = ramp, stage = FundingStage.Failed(FundingFailure.Expired, 2uL)))
@@ -112,7 +112,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `switching rail drops the quotes on screen`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service, router)
+        val model = FundingAmountViewModel(sheet, service, service, router)
 
         model.onRailSelected(FundingRail.BANK)
 
@@ -135,7 +135,7 @@ class FundingScreenViewModelsTest {
 
     @Test
     fun `starting hands the session to the quoted provider, and a refusal lets the user try again`() = runTest(testDispatcher) {
-        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount.toBalanceOrNull()) }, entry())
+        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount.toBalanceOrNull(), failed = false) }, entry())
         val model = FundingSummaryViewModel(sheet, service)
         model.state.launchIn(backgroundScope)
         service.startResult = Result.failure(FundingStartError.NotSelected(null))
@@ -173,7 +173,7 @@ class FundingScreenViewModelsTest {
         val sheet = FakeFundingSheet(flow(), entry(session = FakeFundingCore.session("intent", providerId = ramp)))
         val model = FundingCancelConfirmViewModel(sheet, service)
 
-        service.cancelResult = Result.success(CancelOutcome.ENDED)
+        service.cancelResult = Result.success(CancelOutcome.CANCELLED)
         model.onConfirm()
         advanceUntilIdle()
         assertEquals(listOf("close"), sheet.actions)

@@ -183,6 +183,8 @@ An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `C
 
 `HostBridge` defaults the callback to nothing on both hosts, so a host carries structured traffic once it says it wants it.
 
+Both apps send a marker the table exports to Sentry at the table's severity, as a log whose body is the marker, tagged `truapi.core`, with each attribute beside the tag. A marker the table keeps local or does not list never reaches Sentry. On Android both bridges call one injected `CoreEventLogger`, which writes the event to the device log at debug and hands an exported marker to `CoreEventSink`, bound to `SentryCoreEventSink`, so Sentry logs there come from `SentryLogTree` and that sink. On iOS both bridges call `logCoreEvent` on the logger they already hold, typed `CoreEventLoggerProtocol`. It logs the event as a `[truapi.core]` line at the marker's level, or at debug when the marker is not exported, and carries the attributes as SwiftyBeaver context. `HostLogSinkDestination`, the one destination that holds the `HostLogSink`, forwards that line at info and above as the marker with the attributes as fields.
+
 ## Trade-offs
 
 The cost is that every new marker has to be registered, which the author cannot skip because an unregistered target does not compile. That is deliberate: it is the same friction that stops a marker shipping off-device without anyone saying what it carries.
@@ -191,10 +193,45 @@ A host has to call the function to hold the table at all, so a host that never c
 
 The benefit is that the number of places the rule is written stays at one as hosts are added, and that a marker is local until someone states otherwise rather than exported until someone notices.
 
+## Funding events
+
+Funding's flow facts leave the core as core events under exported markers. The core emits them; each app's `onCoreEvent` sink hands them to Sentry Logs as the marker with its attributes, so they arrive from builds that are not released, through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
+
+**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. The table gates the event path as it does the log path, so an entry missing or local would reach no host. Each entry's doc comment lists the attributes it carries and the closed set each takes.
+
+| Marker | Logged when |
+|---|---|
+| `overlay_opened` | the overlay opens on a new session |
+| `overlay_closed` | it closes: started, dismissed or failed, and how far the user got |
+| `quotes_settled` | every provider asked for a quote request answered, or a newer request replaced it |
+| `provider_chosen` | the session is handed to a provider on a quote: its rank, fee and time buckets |
+| `provider_took` | the provider's worker takes the session, or first fails to |
+| `step_reached` | a milestone (received, added, sent) is first reached |
+| `status_flag` | taking longer, retrying or retrying a payout first shows |
+| `ended`, `ended_unexpectedly` | the provider is done with the session: outcome and reason class |
+| `cancel_requested` | the user asks to cancel |
+| `cancel_answered` | the provider answers a cancel, or its worker first fails to |
+| `cancel_confirmed` | the user answers a cancel offer |
+| `frame_requested`, `frame_opened`, `frame_closed` | a provider's screen is asked for, opened, and closed, or dropped before the user opened it |
+
+Each is emitted once, on a change a commit stored or on the call that made it, never on loading sessions after a restart.
+
+**The attributes.** A fact is a `CoreEvent` carrying its own attributes, then `funding.ref`, a random per-session label, the session's labels (direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when a compiled-in list of known ids names them, amount bucket) and the session's `age_ms`. Labels are text, conditions such as `money_moved` are flags, and counts and durations are counts, left off when unknown rather than sent as zero. The facts are built in `runtime/funding_telemetry.rs` on `CoreEvent`'s own builder; its one addition, `tag`, takes a label only from a closed enum or fixed bucket, so a string a provider, a product or a manifest wrote cannot become one. The runtime-built labels (provider, product, asset, network) pass the gate described under core events or collapse to `other`, `third_party` or `none`. Asset and network are strings a provider's manifest wrote, so they are tagged only when a small list of known ids beside the builder names them (`usdt`, `usdc`, `dot`, `polkadot`, `polkadot-asset-hub`, `paseo` and the like) and are `other` otherwise; the product-sdk asset catalog replaces that list later.
+
+```
+[truapi] INFO truapi.funding.overlay_opened amount_preset=true funding.ref=V1StGXR8_Z5jdHi6 direction=in opener=host product=none rail=none provider=none asset=none network=none amount_bucket=50-100 age_ms=0
+```
+
+That is the core's own console line; a host receives the same as typed attributes.
+
+**Privacy.** No fact carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. The reference is drawn at random per session and kept in memory only, so it joins a session's facts without leading back to the session; a session resumed after a restart draws a new one. Funding's own warnings leave as `truapi.tracing.warn` and name no session either.
+
+**Production.** The hosts' Sentry logs send nothing from release builds, and there is no consent screen behind it. Funding telemetry from production needs consent and a policy decision first.
+
 ## Open questions
 
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
-2. Do metrics want the same treatment that events have, or is a count on an event enough?
+2. Do metrics want the same treatment that events have, or is a count on an event enough? Funding's measures are counts on its core events for now.
 3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
 
 ## Delivery

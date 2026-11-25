@@ -16,7 +16,8 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequestId
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebFileChooserExecutor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,7 +51,8 @@ data class FundingProviderFrameUiState(
 class FundingProviderFrameViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val frames: FundingFrames,
-    private val service: FundingService,
+    private val sessions: FundingSessions,
+    private val providerFrames: FundingProviderFrames,
     private val router: ProductsRouter,
     private val contextManager: ContextManager,
     private val fileProvider: FileProvider,
@@ -75,7 +77,7 @@ class FundingProviderFrameViewModel @Inject constructor(
     val webView: StateFlow<WebView?> = frame?.appWebView ?: MutableStateFlow(null)
 
     private val awaitsUserTransfer = frame?.let { frame ->
-        service.entryState(frame.request.sessionId).map { it.progress?.awaitsUserTransfer == true }.onStart { emit(false) }
+        sessions.entryState(frame.request.intentId).map { it.progress?.awaitsUserTransfer == true }.onStart { emit(false) }
     } ?: flowOf(false)
 
     val state: StateFlow<FundingProviderFrameUiState> = (frame?.loadProgress ?: MutableStateFlow(DotNsLoadProgress.Idle))
@@ -153,13 +155,13 @@ class FundingProviderFrameViewModel @Inject constructor(
         frame?.isShown = false
     }
 
-    private fun hide() = launchUnit { frame?.let { router.closeFundingProviderFrame(it.request.sessionId) } }
+    private fun hide() = launchUnit { frame?.let { router.closeFundingProviderFrame(it.request.intentId) } }
 
     private fun finish(outcome: FundingFrameOutcome) = launchUnit {
         val frame = frame ?: return@launchUnit
-        service.answerFrame(frame.request, outcome)
+        providerFrames.answer(frame.request, outcome)
         frames.release(frame.request.id)
-        router.closeFundingProviderFrame(frame.request.sessionId)
+        router.closeFundingProviderFrame(frame.request.intentId)
     }
 
     private data class LoadState(val isContentVisible: Boolean, val failed: Boolean)

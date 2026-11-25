@@ -15,7 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHo
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequestId
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.compose.createFundingPageWebView
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
@@ -125,17 +125,17 @@ class FundingFrames @Inject constructor(
 
     fun get(requestId: FundingFrameRequestId): FundingFrame? = synchronized(frames) { frames[requestId] }
 
-    /** The newest frame still waiting for session [sessionId]. */
-    fun waiting(sessionId: FundingSessionId): FundingFrame? =
-        synchronized(frames) { frames.values.lastOrNull { it.request.sessionId == sessionId } }
+    /** The newest frame still waiting for session [intentId]. */
+    fun waiting(intentId: FundingIntentId): FundingFrame? =
+        synchronized(frames) { frames.values.lastOrNull { it.request.intentId == intentId } }
 
     fun release(requestId: FundingFrameRequestId) {
         synchronized(frames) { frames.remove(requestId) }?.release()
     }
 
-    fun releaseAll(sessionId: FundingSessionId) {
+    fun releaseAll(intentId: FundingIntentId) {
         val released = synchronized(frames) {
-            frames.values.filter { it.request.sessionId == sessionId }.onEach { frames.remove(it.request.id) }
+            frames.values.filter { it.request.intentId == intentId }.onEach { frames.remove(it.request.id) }
         }
         released.forEach(FundingFrame::release)
     }

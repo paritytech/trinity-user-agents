@@ -13,6 +13,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingIconFetcher
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingIconModel
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

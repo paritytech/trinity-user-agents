@@ -84,10 +84,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.Ex
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIconImageLoaderRegistrar
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.RealAllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.RealStatementStoreSubmissionSponsoring
@@ -152,7 +155,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundi
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostFunding
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIOurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashListener
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
@@ -162,6 +164,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingIconImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.FundingResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
@@ -436,10 +439,13 @@ internal interface ProductsModule {
     fun bindFundingCore(impl: TrUAPIFundingCore): FundingCore
 
     @Binds
-    fun bindFundingService(impl: RealFundingService): FundingService
+    fun bindFundingSessions(impl: RealFundingSessions): FundingSessions
 
     @Binds
-    fun bindWorkerCrashListener(impl: RealFundingService): WorkerCrashListener
+    fun bindFundingQuotes(impl: RealFundingQuotes): FundingQuotes
+
+    @Binds
+    fun bindFundingProviderFrames(impl: RealFundingProviderFrames): FundingProviderFrames
 
     @Binds
     @Singleton

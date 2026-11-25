@@ -17,7 +17,8 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         deferred ones through their domain's submission policy, and its
+                         deferred ones through their domain's submission policy once the
+                         transactions they depend on take effect, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, the tracker of what they hold on
@@ -110,7 +111,8 @@ hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
 stacks/                    generated copies, which host builds bundle, of each signed known stack's
-                           link and descriptor; `scripts/update-stacks.sh` writes them from
+                           link and descriptor, and in `light-specs/` the light specs truapi-host
+                           ships for its built-ins; `scripts/update-stacks.sh` writes them from
                            `rust/crates/trinity-stack/known-stacks.json`
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
@@ -350,6 +352,10 @@ Two ways to lose work that involve no pushing at all:
   the core's marker table decides. Its `Adding a signal` subsection shows what
   a host event looks like on each host, how a core log line is registered and
   raised, and how to check one in Sentry.
+- A funding fact the core emits is a `CoreEvent` under an exported
+  `truapi.funding.*` marker whose entry in `markers.rs` documents its
+  attributes, built in `runtime/funding_telemetry.rs`; the `Funding events`
+  section of the same doc says what one may carry and how it reaches Sentry.
 
 ## Scope of a change
 

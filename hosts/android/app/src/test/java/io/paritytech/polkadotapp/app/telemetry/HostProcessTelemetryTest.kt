@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.app.telemetry
 
 import android.content.Intent
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
@@ -13,9 +16,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
-import io.mockk.mockk
-import io.mockk.slot
-import io.mockk.verify
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
