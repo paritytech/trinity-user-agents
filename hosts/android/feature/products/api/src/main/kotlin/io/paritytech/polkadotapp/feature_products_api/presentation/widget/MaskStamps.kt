@@ -11,11 +11,19 @@ import kotlin.math.sin
 
 /** The core brush's spacing and tip geometry, in hundredths of a dp, shared by drawing and coverage. */
 internal object MaskStamps {
+    /** The most stamps one line has (`MASK_STAMPS_MAX`). */
+    const val MAX_STAMPS = 4096
+
+    /** The least distance between two stamps, in hundredths of a dp (`MASK_STAMP_SPACING_MIN`). */
+    const val MIN_SPACING = 50.0
+
     data class Centre(val x: Double, val y: Double)
 
     fun centres(width: Long, brush: JsMaskBrush, points: List<JsMaskPoint>): List<Centre> {
         if (points.isEmpty() || width <= 0) return emptyList()
-        val spacing = max(width * brush.spacingPermille.coerceIn(50, 4000) / 1000.0, 1.0)
+        val total = points.zipWithNext().sumOf { (a, b) -> hypot(b.x.toDouble() - a.x, b.y.toDouble() - a.y) }
+        // Never closer than the core's least spacing, and stretched so a long line keeps to the most stamps.
+        val spacing = maxOf(width * brush.spacingPermille.coerceIn(50, 4000) / 1000.0, MIN_SPACING, total / (MAX_STAMPS - 1))
         val centres = mutableListOf(Centre(points.first().x.toDouble(), points.first().y.toDouble()))
         var sinceLast = 0.0
         for ((a, b) in points.zipWithNext()) {
@@ -24,14 +32,14 @@ internal object MaskStamps {
             val length = hypot(dx, dy)
             if (length == 0.0) continue
             var along = spacing - sinceLast
-            while (along <= length) {
+            while (along <= length && centres.size < MAX_STAMPS) {
                 val t = along / length
                 centres += Centre(a.x + t * dx, a.y + t * dy)
                 along += spacing
             }
             sinceLast = length - (along - spacing)
         }
-        if (sinceLast > 0.0) centres += Centre(points.last().x.toDouble(), points.last().y.toDouble())
+        if (sinceLast > 0.0 && centres.size < MAX_STAMPS) centres += Centre(points.last().x.toDouble(), points.last().y.toDouble())
         return centres
     }
 
