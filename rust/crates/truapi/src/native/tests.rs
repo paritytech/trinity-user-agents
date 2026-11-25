@@ -7,9 +7,9 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest,
-	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError,
+	StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -428,16 +428,6 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
-	async fn begin_operation(
-		&self,
-		_product_id: ProductId,
-		_label: String,
-	) -> Result<u32, HostRejection> {
-		Ok(1)
-	}
-	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
-		Ok(())
-	}
 }
 
 #[async_trait::async_trait]
@@ -606,7 +596,11 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 /// `descriptor` signed, as a native host bundles it.
 fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
-	crate::native::BundledStack { pointer, descriptor, allows_reserved_values: false }
+	crate::native::BundledStack {
+		pointer,
+		descriptor,
+		reserved_values: crate::platform::ReservedValuesPolicy::default(),
+	}
 }
 
 pub fn native_execution_config(
@@ -831,10 +825,16 @@ fn process_runtime_counts_worker_references_per_product() {
 	.expect("host runtime config should be valid");
 	let product = || ProductId::for_test("shared.dot");
 
-	host.acquire_worker(product());
-	host.acquire_worker(product());
-	host.release_worker(product());
-	host.release_worker(product());
+	let first = host.claim_worker(product());
+	let second = host.claim_worker(product());
+	first.release();
+	first.release();
+	drop(first);
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start)]
+	);
+	drop(second);
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
@@ -2082,14 +2082,14 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 }
 
 #[test]
-fn runtime_config_passes_the_reserved_values_flag_through() {
+fn runtime_config_passes_the_reserved_values_through() {
 	// A testnet build must not run a stack on `dot`; a Polkadot build may.
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
 	let refused =
 		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
-	stack.allows_reserved_values = true;
+	stack.reserved_values.allowed = true;
 	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
 	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
 		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
@@ -2101,11 +2101,48 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 		(refused.err(), allowed.map(tld).ok()),
 		(
 			Some(NativeRuntimeConfigError::Invalid {
-				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
+				reason: "stack uses the reserved tld dot, which this build does not allow"
 					.to_string(),
 			}),
 			Some("dot".into()),
 		),
+	);
+}
+
+#[test]
+fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
+	// A build that reserves a TLD or a genesis hash must not start a stack on it.
+	let stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let reserving = |reserved_values| {
+		build_runtime(HostRuntimeConfig {
+			stack: crate::native::BundledStack { reserved_values, ..stack.clone() },
+			..native_host_runtime_config()
+		})
+		.err()
+	};
+	let refused = |reason: &str| {
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: format!("{reason}, which this build does not allow"),
+		})
+	};
+
+	assert_eq!(
+		[
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_tlds: vec!["paseo".to_string()],
+				..Default::default()
+			}),
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_genesis_hashes: vec![[0xc3; 32]],
+				..Default::default()
+			}),
+		],
+		[
+			refused("stack uses the reserved tld paseo"),
+			refused(&format!("stack uses the reserved genesis hash 0x{}", "c3".repeat(32))),
+		],
 	);
 }
 
@@ -2328,20 +2365,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
 	}
 
 	let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
@@ -2536,20 +2559,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			&self,
 			_product_id: ProductId,
 		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}

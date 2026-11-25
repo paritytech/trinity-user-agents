@@ -416,12 +416,12 @@ impl NftLedger {
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
-			.write_unless_refused(move |tx| {
-				let recorded = record_handoff(tx, &request, &budget)
-					.and_then(|()| record(tx, &sealed).map_err(HandoffError::Db));
-				Ok(recorded.map(|()| sealed))
+			.write_interactive(move |tx| {
+				record_handoff(tx, &request, &budget)?;
+				record(tx, &sealed)?;
+				Ok(sealed)
 			})
-			.await?
+			.await
 	}
 
 	/// Checks, in a read, that `request` can be handed off, with every NFT

@@ -189,9 +189,9 @@ markers! {
 	/// `truapi.funding.ended` does.
 	FUNDING_ENDED_UNEXPECTEDLY = "truapi.funding.ended_unexpectedly" => Export(Error);
 
-	/// The user asked to cancel. `result`: `ended`, `requested`, `pending`,
-	/// `too_late`, `refused`. `status_at`: the status variant when asked,
-	/// such as `waiting_for_payment`. `money_moved`.
+	/// The user asked to cancel. `result`: `cancelled`, `requested`,
+	/// `pending`, `too_late`, `refused`. `status_at`: the status variant when
+	/// asked, such as `waiting_for_payment`. `money_moved`.
 	FUNDING_CANCEL_REQUESTED = "truapi.funding.cancel_requested" => Export(Info);
 
 	/// The provider answered a cancel, or its worker first failed to.

@@ -52,7 +52,7 @@ public struct ParametricRecyclingStrategy: CoinRecyclingStrategyProtocol {
         switch params.voucherReadiness {
         case .immediate:
             return true
-        case let .ringFillOrMembersAndAge(requiredRingFill, _, _):
+        case let .ringFillOrAnonymityMinutes(requiredRingFill, _, _):
             let ringFilled =
                 if let capacity = context.capacity(for: voucher.exponent), capacity > 0 {
                     BigRational(numerator: BigUInt(recycler.membersCount), denominator: BigUInt(capacity))

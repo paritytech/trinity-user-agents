@@ -8,6 +8,8 @@ public protocol DatabaseDependencyFactoring: Sendable {
     /// A coin repository scoped to the given public keys — a filtered query rather than the whole set.
     func makeCoinRepository(publicKeys: [PublicKey]) -> AnyDataProviderRepository<Coin>
     func makeTrackedCoinRepository() -> AnyDataProviderRepository<TrackedCoin>
+    /// A tracked-coin repository scoped to the given public keys — a filtered query rather than the whole set.
+    func makeTrackedCoinRepository(publicKeys: [PublicKey]) -> AnyDataProviderRepository<TrackedCoin>
     /// A write-only repository for chain-sync presence updates (`age`, `isOnchain`), backed by a
     /// mapper that touches only those fields — see ``CoinPresenceUpdate``.
     func makeCoinPresenceRepository() -> AnyDataProviderRepository<CoinPresenceUpdate>
