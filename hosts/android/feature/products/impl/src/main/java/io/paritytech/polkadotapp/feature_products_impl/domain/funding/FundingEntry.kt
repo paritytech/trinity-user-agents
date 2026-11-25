@@ -11,16 +11,11 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 
 enum class FundingPhase {
-    /** Not handed to a provider yet. */
     SELECTING,
-
-    /** Handed to a provider and in flight. */
     RUNNING,
-
     ENDED,
 }
 
-/** One funding session as the screens draw it: what the core holds for it, and the quotes of the latest ask on it. */
 data class FundingEntry(
     val id: FundingIntentId,
     val direction: FundingDirection,
@@ -28,17 +23,11 @@ data class FundingEntry(
     val openedAtMs: ULong,
     val session: FundingSession?,
     val progress: FundingProgress?,
-    /** How an ended session went. */
     val summary: FundingSessionSummary?,
-    /** What the core offers for the reported selection, while the session is being set up. */
     val options: FundingOptions?,
-    /** The amount of the latest ask; `null` while none is. */
     val askedAmount: Balance?,
-    /** The core's list for [askedAmount]; `null` from a new ask until its first list. */
     val quotes: FundingQuoteList?,
-    /** The latest ask did not reach the core, or its list could not be read. */
     val quotesFailed: Boolean,
-    /** The core waits on the session's screens for the user to start it or leave. */
     val isPresented: Boolean,
     val phase: FundingPhase,
 ) {
@@ -48,11 +37,9 @@ data class FundingEntry(
     val hasEnded: Boolean
         get() = phase == FundingPhase.ENDED
 
-    /** A session that never started and that nothing waits on any more: the core dropped it or the user left it. */
     val isGone: Boolean
         get() = phase == FundingPhase.SELECTING && !isPresented
 
-    /** Why the session ended, once it has failed. */
     val failure: FundingFailure?
         get() = session?.stage?.failure
 

@@ -15,7 +15,6 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
 
-/** The core's funding calls, as the funding parts make them. Each boots the core first when it is not running. */
 interface FundingCore {
     suspend fun start(): Result<Unit>
 
@@ -31,20 +30,15 @@ interface FundingCore {
 
     suspend fun summary(intentId: FundingIntentId): Result<FundingSessionSummary?>
 
-    /** Every session the core holds in full, with its progress. */
     suspend fun entries(): Result<List<FundingBookEntry>>
 
-    /** Every ended session, as summaries. */
     suspend fun history(): Result<List<FundingSessionSummary>>
 
     suspend fun select(intentId: FundingIntentId, selection: FundingSelection): Result<Unit>
 
-    /** The request id the quote list for [amount] carries; `null` while the selection names no asset. */
     suspend fun requestQuote(intentId: FundingIntentId, amount: Balance): Result<ULong?>
 
     suspend fun startWhenQuoted(intentId: FundingIntentId, requestId: ULong): Result<Unit>
-
-    suspend fun cancelAutoStart(intentId: FundingIntentId): Result<Unit>
 
     suspend fun amountIssue(intentId: FundingIntentId, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?>
 
@@ -56,9 +50,7 @@ interface FundingCore {
 
     suspend fun acknowledge(intentId: FundingIntentId): Result<Boolean>
 
-    /** Lets the screen session [intentId]'s provider asked for be presented; answers whether one was waiting. */
     suspend fun openFrame(intentId: FundingIntentId): Result<Boolean>
 
-    /** Whether session [intentId]'s provider waits for its screen to be opened. */
     suspend fun frameWaiting(intentId: FundingIntentId): Result<Boolean>
 }

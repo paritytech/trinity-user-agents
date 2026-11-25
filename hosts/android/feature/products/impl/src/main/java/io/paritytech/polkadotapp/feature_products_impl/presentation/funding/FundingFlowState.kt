@@ -24,26 +24,17 @@ import java.math.RoundingMode
 import java.util.Locale
 import kotlin.time.Instant
 
-/** The amounts the providers take, as the core works them out; `null` where a bound is not known. */
 data class FundingLimits(
     val minimum: BigDecimal?,
     val maximum: BigDecimal?,
 )
 
-/**
- * What the user has chosen in one funding overlay, with the core's options for it and its latest quote list. The
- * core decides the rails, the asset an ask names, who is asked and whether the amount can go ahead; this holds the
- * user's picks and reads those facts for the screens.
- */
 data class FundingFlowState(
     val direction: FundingDirection,
-    /** The payment balance's decimals. */
     val cashPrecision: Int,
     val spendable: BigDecimal?,
-    /** What the core offers for the selection on screen; `null` until it has said. */
     val options: FundingOptions?,
     val rail: FundingRail,
-    /** Whether the user picked [rail], so the core's default no longer moves it. */
     val railChosen: Boolean,
     val amountText: String,
     val country: FundingCountry?,
@@ -51,13 +42,9 @@ data class FundingFlowState(
     val asset: String?,
     val chosenProviderId: ProductId?,
     val rows: Map<ProductId, FundingQuoteState>,
-    /** The amount quotes were last asked for, in balance units; `null` while none are. */
     val askedAmount: Balance?,
-    /** The quotes on screen before the same amount was asked again, shown greyed while the new ones arrive. */
     val staleQuotes: Map<ProductId, FundingQuote>,
-    /** The core's list for [askedAmount]; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
-    /** Why the typed amount cannot go ahead, as the core last answered for it. */
     val amountIssue: FundingAmountIssue?,
 ) {
     companion object {
@@ -91,10 +78,7 @@ data class FundingFlowState(
             value.setScale(2, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
     }
 
-    /**
-     * The typed amount in balance units, rounded down so the host never asks for more than the user typed; `null`
-     * for text that is not a plain decimal amount.
-     */
+    // Rounded down so the host never asks for more than the user typed.
     val units: Balance?
         get() = amountText.takeIf(AMOUNT_TEXT::matches)?.toBigDecimalOrNull()?.planksFromAmount(cashPrecision)
 
@@ -107,7 +91,6 @@ data class FundingFlowState(
     val availableRails: Set<FundingRail>
         get() = options?.rails.orEmpty().toSet()
 
-    /** The providers asked for the ask on screen, in the order the core lists them. */
     val servingCandidates: List<FundingCandidate>
         get() = rows.keys.mapNotNull { id -> candidates.firstOrNull { it.providerId == id } }
 
@@ -117,18 +100,15 @@ data class FundingFlowState(
     val amountLimits: FundingLimits
         get() = options?.limits.toLimits()
 
-    /** The asset a card or bank ask names, as the core resolves it for the user's currency. */
     val fiatAsset: String?
         get() = options?.asset.takeIf { rail != FundingRail.CRYPTO }
 
-    /** What [quote]'s provider-side figures are counted in: the asked asset, at the decimals the quote states. */
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
 
-    /** The user's choice while its quote stands, otherwise the one the core marks best. */
     val selectedProviderId: ProductId?
         get() = chosenProviderId?.takeIf { rows[it]?.quote != null } ?: list?.best?.takeIf { rows[it]?.quote != null }
 
@@ -141,7 +121,6 @@ data class FundingFlowState(
     val refreshAt: Instant?
         get() = list?.let { Instant.fromEpochMilliseconds(it.refreshAtMs.toLong()) }
 
-    /** Asked and waiting: the ask's first list has not come, or a provider on it has not answered. */
     val isQuoting: Boolean
         get() = selectedQuote == null && askedAmount != null && list?.complete != true
 
@@ -151,37 +130,29 @@ data class FundingFlowState(
     val noProviderQuoted: Boolean
         get() = allAnswered && quotedProviders.isEmpty()
 
-    /** Why no provider would quote, for the summary screen, when their refusals say the amount is outside what they take. */
     val unavailableIssue: FundingAmountIssue?
         get() = list?.issue
 
-    /** The ids of the crypto networks a provider routes. */
     val networks: List<String>
         get() = options?.networks.orEmpty().map { it.network }
 
-    /** The least [networkId] takes, as the core says. */
     fun minimum(networkId: String): BigDecimal? =
         options?.networks?.firstOrNull { it.network == networkId }?.limits?.min?.let(::cashDecimal)
 
-    /** The tokens the core offers on the network picked, or on any before one is. */
     val tokens: List<FundingToken>
         get() = options?.tokens.orEmpty().map(::FundingToken)
 
-    /** What the core knows about each country on this rail and asset, by ISO code. */
     val countrySupport: Map<String, FundingCountrySupport>
         get() = options?.countries.orEmpty().associate { it.country.uppercase(Locale.ROOT) to it.support }
 
-    /** Countries the core says no provider on this rail and asset takes payment from. */
     val unsupportedCountries: Set<String>
         get() = countrySupport.filterValues { it is FundingCountrySupport.Unsupported }.keys
 
-    /** The least each supported country takes, where a provider showed one. */
     val countryMinimums: Map<String, BigDecimal>
         get() = countrySupport.mapNotNull { (code, support) ->
             (support as? FundingCountrySupport.Supported)?.min?.let(::cashDecimal)?.let { code to it }
         }.toMap()
 
-    /** The amount to ask quotes for: the typed one, once the core names the asset the selection is asked in. */
     val askAmount: Balance?
         get() = units?.takeIf { amount.signum() > 0 && options?.asset != null }
 
@@ -204,10 +175,6 @@ data class FundingFlowState(
 
     fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue)
 
-    /**
-     * Quotes of [amount] were asked: its rows read pending until the core's first list for it names who is asked.
-     * Asking the same amount again keeps its quotes greyed until they are answered.
-     */
     fun asking(amount: Balance): FundingFlowState = copy(
         askedAmount = amount,
         rows = rows.mapValues { FundingQuoteState.Pending },
@@ -215,10 +182,6 @@ data class FundingFlowState(
         list = null,
     )
 
-    /**
-     * The core's list for the current ask, which is the only one it keeps; `null` once a selection withdrew it. A
-     * row still pending after the same amount was asked again keeps its last quote greyed until it answers.
-     */
     fun receiving(newList: FundingQuoteList?): FundingFlowState {
         if (newList == null) return dropped()
         if (askedAmount == null) return this
@@ -232,10 +195,6 @@ data class FundingFlowState(
         return copy(rows = newRows, staleQuotes = stale, list = newList)
     }
 
-    /**
-     * The rail, asset, network and country on screen, as the core is told of them, with the country's currency from
-     * the platform's locale data.
-     */
     val selection: FundingSelection
         get() = FundingSelection(
             rail = rail,
@@ -245,7 +204,6 @@ data class FundingFlowState(
             currency = country?.currencyCode,
         )
 
-    /** The core's options for the selection on screen; before the user picks a rail, its default rail too. */
     fun withOptions(newOptions: FundingOptions): FundingFlowState {
         val updated = copy(options = newOptions)
         return if (railChosen || newOptions.defaultRail == rail) {
@@ -255,7 +213,6 @@ data class FundingFlowState(
         }
     }
 
-    /** No quotes and no ask. */
     private fun dropped(): FundingFlowState = copy(rows = emptyMap(), askedAmount = null, staleQuotes = emptyMap(), list = null)
 
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
@@ -265,18 +222,14 @@ data class FundingFlowState(
 
     private fun decimal(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
 
-    /** A core amount in balance units; `null` when it is not a number. */
     private fun cashDecimal(units: U128): BigDecimal? = units.toBalanceOrNull()?.let(::decimal)
 }
 
-/** The order the rail tabs are drawn in. */
 val FUNDING_RAIL_ORDER: List<FundingRail> = listOf(FundingRail.CRYPTO, FundingRail.CARD, FundingRail.BANK)
 
-// The asset a quote is read in before the core named one.
 private const val DEFAULT_ASSET = "USD"
 
 private val AMOUNT_TEXT = Regex("""\d*\.?\d*""")
 
-/** The first rail the core routes, crypto first, or card when it routes none. */
 private val FundingOptions?.defaultRail: FundingRail
     get() = this?.rails?.firstOrNull() ?: FundingRail.CARD

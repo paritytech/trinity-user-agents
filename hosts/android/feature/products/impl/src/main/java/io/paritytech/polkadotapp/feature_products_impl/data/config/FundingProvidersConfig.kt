@@ -8,12 +8,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 
-/**
- * The published funding providers Remote Config lists, by name without a TLD; the core reads each on the network it is
- * connected to and offers no others.
- */
 interface FundingProvidersConfig {
-    /** The names as configured, after the first Remote Config sync and again on every update. */
     fun publishedNames(): Flow<List<String>>
 }
 

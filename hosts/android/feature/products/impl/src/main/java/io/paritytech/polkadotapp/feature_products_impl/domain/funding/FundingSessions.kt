@@ -38,84 +38,55 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * The sessions the core holds: the list, one session's state, and the user's steps on it. The core owns every
- * session: the screens follow its state, report what the user picked, and leave every decision to the core.
- */
+// The core owns every session: the screens follow its state and report what the user picked.
 interface FundingSessions {
-    /** Every session the core holds, in flight and ended, newest first: the current list, then a new one on every change. Never ends. */
+    // Newest first, in flight and ended. Never ends.
     fun entries(): Flow<List<FundingEntry>>
 
-    /**
-     * Session [intentId] as it changes, current state first, with the options and quotes for it. Completes after the
-     * session ended, and without a value once it is gone: dropped by the core or left before it started.
-     */
+    // Completes after the session ended, and without a value once it is gone (dropped, or left before it started).
     fun entryState(intentId: FundingIntentId): Flow<FundingEntry>
 
-    /** The new sessions whose screens the core asks for. One consumer reads it; each waits until it does. Never ends. */
+    // One consumer; each request waits until it is read. Never ends.
     val presentationRequests: Flow<FundingEntry>
 
-    /** The screens of session [intentId] are up, so the core no longer takes it as dismissed when they do not appear. */
     fun shown(intentId: FundingIntentId)
 
-    /** Starts the core, which resumes the sessions it holds. */
     suspend fun resume(): Result<Unit>
 
-    /**
-     * Opens a session on the host's own behalf, for [amount] in the balance asset's planks or what the user types when
-     * `null`. Its screens are asked for through [presentationRequests]; answers its id, or `null` once the user left it.
-     */
+    // Answers `null` once the user left the session.
     suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingIntentId?>
 
-    /** Tells the core what the user picked, in order with the asks after it. What it leads to comes back as options. */
     fun select(selection: FundingSelection, intentId: FundingIntentId)
 
-    /** Why [amount] cannot go ahead for the reported selection, given what a withdrawal can spend. */
     suspend fun amountIssue(amount: Balance, spendable: Balance?, intentId: FundingIntentId): Result<FundingAmountIssue?>
 
-    /**
-     * Hands the session to [provider] on the quote on screen. With no provider the core hands it to the latest ask's
-     * best quote once every provider answered, and the session's state says when it did. Fails with a
-     * [FundingStartError] when the provider did not take it.
-     */
+    // With no provider, the core starts on the best quote once every provider answered; the session's state says when.
     suspend fun start(intentId: FundingIntentId, provider: ProductId?): Result<Unit>
 
-    /** The user left the session's screens, which is not a cancel. One that never started is dropped; one in flight runs on. */
+    // Not a cancel: one that never started is dropped, one in flight runs on.
     fun leave(intentId: FundingIntentId)
 
-    /**
-     * Cancels a session in whatever state it is. One that never started is dropped by the core, which takes its
-     * screens down; one in flight ends or its provider is asked; an ended one is refused.
-     */
     suspend fun cancel(intentId: FundingIntentId): Result<CancelOutcome>
 
-    /** Answers the provider's cancel offer: [terms] are the ones the user accepted, as shown, or `null` to keep going. */
+    // `null` terms keep the session going.
     suspend fun answerCancelOffer(intentId: FundingIntentId, terms: CancelTerms?): Result<CancelConfirmation>
 
-    /** The user was shown how session [intentId] ended. */
     suspend fun acknowledge(intentId: FundingIntentId)
 }
 
-/** Why the session could not be handed to the chosen provider. */
 sealed class FundingStartError : Exception() {
-    /** No quote from that provider is on screen. */
     class NoQuote : FundingStartError()
 
-    /** The user left before the provider took the session. */
     class Left : FundingStartError()
 
-    /** The provider would not take it; [failure] says why when the core recorded one. */
     class NotSelected(val failure: FundingFailure?) : FundingStartError()
 }
 
-/**
- * Reads what the core holds when it says a session changed, and pushes it to whoever follows a session or the list.
- * Steps that change the core run on the shared [FundingCoreCalls] queue, in the order they were made.
- */
+// Steps that change the core run on the shared FundingCoreCalls queue, in the order they were made.
 @Singleton
 class RealFundingSessions @Inject constructor(
     private val core: FundingCore,
-    private val quotes: RealFundingQuotes,
+    private val quotes: FundingQuotes,
     private val calls: FundingCoreCalls,
     dispatchers: CoroutineDispatchers,
 ) : FundingSessions {
@@ -165,30 +136,25 @@ class RealFundingSessions @Inject constructor(
         core.amountIssue(intentId, amount, spendable).logFailure("Funding amount check failed")
 
     override suspend fun start(intentId: FundingIntentId, provider: ProductId?): Result<Unit> {
-        if (provider == null) {
-            quotes.startOnBest(intentId)
-            return Result.success(Unit)
-        }
+        if (provider == null) return quotes.startOnBest(intentId)
 
         val quoteId = quotes.quoteId(intentId, provider) ?: return Result.failure(FundingStartError.NoQuote())
 
+        // The session's change can report the start before selectProvider returns, so `selected` wins over presenting.
         return core.selectProvider(intentId, provider, quoteId).flatMap { selected ->
             when {
+                selected -> Result.success(resolve(intentId, FundingPresentOutcome.STARTED))
                 !isPresenting(intentId) -> Result.failure(FundingStartError.Left())
-                !selected -> {
+                else -> {
                     changed(intentId)
                     core.session(intentId).flatMap { Result.failure<Unit>(FundingStartError.NotSelected(it?.stage?.failure)) }
                 }
-                else -> Result.success(resolve(intentId, FundingPresentOutcome.STARTED))
             }
         }
     }
 
     override fun leave(intentId: FundingIntentId) {
-        if (!isPresenting(intentId)) return
-
-        // The core forgets the start on the best quote itself once the screens are answered dismissed.
-        quotes.disarm(intentId)
+        // The core forgets a start on the best quote itself once the screens are answered dismissed.
         resolve(intentId, FundingPresentOutcome.DISMISSED)
     }
 
@@ -203,10 +169,7 @@ class RealFundingSessions @Inject constructor(
         changes.tryEmit(Change.Entries)
     }
 
-    /**
-     * The core waits on the session's screens. A session whose screens are not [shown] within [SHOWN_TIMEOUT_MS] is
-     * taken as dismissed, so a navigation that silently failed does not hold the core forever.
-     */
+    // Screens not shown within SHOWN_TIMEOUT_MS count as dismissed, so a navigation that failed silently does not hold the core.
     suspend fun present(intentId: FundingIntentId, direction: FundingDirection, amount: Balance?): FundingPresentOutcome {
         val presentation = Presentation(direction, amount)
         synchronized(lock) { presentations[intentId] = presentation }
@@ -223,16 +186,15 @@ class RealFundingSessions @Inject constructor(
         }
     }
 
-    /** The core says session [intentId] changed. Called on the core's thread, so the read happens elsewhere. */
+    // Called on the core's thread, so the read happens elsewhere.
     fun onSessionChanged(intentId: FundingIntentId) {
         calls.launch {
-            startedOnBest(intentId)
+            resolveIfStarted(intentId)
             changed(intentId)
             changes.tryEmit(Change.Entries)
         }
     }
 
-    /** The core says what it offers for session [intentId] changed. */
     fun onOptionsChanged(intentId: FundingIntentId) {
         calls.launch { changed(intentId) }
     }
@@ -244,23 +206,22 @@ class RealFundingSessions @Inject constructor(
     private fun isPresenting(intentId: FundingIntentId): Boolean = synchronized(lock) { intentId in presentations }
 
     private fun resolve(intentId: FundingIntentId, outcome: FundingPresentOutcome) {
-        val presentation = synchronized(lock) { presentations.remove(intentId) }
-        presentation?.outcome?.complete(outcome)
+        val presentation = synchronized(lock) { presentations.remove(intentId) } ?: return
+        quotes.forget(intentId)
+        presentation.outcome.complete(outcome)
         changed(intentId)
     }
 
-    /** A session the core handed to the best quote it was asked to start on is reported started. Runs on the call queue. */
-    private suspend fun startedOnBest(intentId: FundingIntentId) {
-        if (!quotes.isStartingOnBest(intentId) || !isPresenting(intentId)) return
+    // Runs on the call queue. Covers a start on the best quote, which the core makes without a call from here.
+    private suspend fun resolveIfStarted(intentId: FundingIntentId) {
+        if (!isPresenting(intentId)) return
 
         core.session(intentId).logFailure("Funding session read failed").onSuccess { session ->
-            if (session?.providerId == null) return@onSuccess
-            quotes.startedOnBest(intentId)
-            resolve(intentId, FundingPresentOutcome.STARTED)
+            if (session?.providerId != null) resolve(intentId, FundingPresentOutcome.STARTED)
         }
     }
 
-    /** Session [intentId] as the core holds it; `null` when a read failed, which the next change reads again. */
+    // `null` when a read failed; the next change reads again.
     private suspend fun readEntry(intentId: FundingIntentId): FundingEntry? {
         val read = core.session(intentId).flatMap { session ->
             val summary = if (session?.stage?.isOpen == true) Result.success(null) else core.summary(intentId)
@@ -291,7 +252,6 @@ class RealFundingSessions @Inject constructor(
         }
     }
 
-    /** Every session the core holds, newest first: those it holds in full, and the ended ones from its history. */
     private suspend fun readEntries(): List<FundingEntry>? {
         val book = core.entries().logFailure("Funding entries read failed").getOrElse { return null }
         val history = core.history().logFailure("Funding history read failed").getOrElse { return null }

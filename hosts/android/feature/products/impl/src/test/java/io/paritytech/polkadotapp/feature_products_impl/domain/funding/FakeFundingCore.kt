@@ -39,6 +39,7 @@ class FakeFundingCore : FundingCore {
     var providerTakes = true
     var quoteRequestFails = false
     var quotesReadFails = false
+    var autoStartFails = false
     var cancelOutcome = CancelOutcome.REQUESTED
     val waitingFrames = mutableSetOf<String>()
 
@@ -71,11 +72,10 @@ class FakeFundingCore : FundingCore {
         return if (quoteRequestFails) Result.failure(IllegalStateException("quote request")) else Result.success(nextRequestId++)
     }
 
-    override suspend fun startWhenQuoted(intentId: FundingIntentId, requestId: ULong): Result<Unit> =
-        Result.success(Unit).also { calls += "startWhenQuoted $requestId" }
-
-    override suspend fun cancelAutoStart(intentId: FundingIntentId): Result<Unit> =
-        Result.success(Unit).also { calls += "cancelAutoStart" }
+    override suspend fun startWhenQuoted(intentId: FundingIntentId, requestId: ULong): Result<Unit> {
+        calls += "startWhenQuoted $requestId"
+        return if (autoStartFails) Result.failure(IllegalStateException("auto-start")) else Result.success(Unit)
+    }
 
     override suspend fun amountIssue(intentId: FundingIntentId, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?> =
         Result.success(null)
