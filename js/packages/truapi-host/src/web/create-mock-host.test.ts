@@ -801,14 +801,14 @@ describe("createMockHost TestHostAPI parity", () => {
       tag: "Deleted",
       value: { messageId: "m1" },
     } as const;
-    await host.callbacks.chat!.updateChatFeed!(
+    await host.callbacks.chat!.updateChatFeed(
       product,
       { roomId: "main", update },
       false,
     );
 
     expect(host.chatRoomDeclarations("main")).toEqual({
-      feed: [[update, false]],
+      feed: [{ update, persist: false }],
       config,
     });
     expect(host.chatRoomDeclarations("other")).toBeUndefined();
@@ -817,7 +817,7 @@ describe("createMockHost TestHostAPI parity", () => {
       config,
     });
 
-    await host.callbacks.chat!.deleteChatRoom!(product, { roomId: "main" });
+    await host.callbacks.chat!.deleteChatRoom(product, { roomId: "main" });
     expect(host.chatRoomDeclarations("main")).toBeUndefined();
   });
 
@@ -842,7 +842,7 @@ describe("createMockHost TestHostAPI parity", () => {
       });
     }
 
-    await host.callbacks.chat!.deleteChatRoom!(product, { roomId: "main" });
+    await host.callbacks.chat!.deleteChatRoom(product, { roomId: "main" });
 
     expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
       "other",
@@ -851,7 +851,9 @@ describe("createMockHost TestHostAPI parity", () => {
 
   it("drops what a chat room holds when its productSource changes", async () => {
     // The stored messages would show next to the pages that the product
-    // answers, so the room starts empty on its new side, as on the Rust mock.
+    // answers, and a preview set while the product kept the messages can show
+    // the user in a room that the host stores, so the room starts empty on its
+    // new side, as on the Rust mock.
     const host = createMockHost();
     const chat = host.callbacks.chat!;
     const product = {
@@ -866,20 +868,33 @@ describe("createMockHost TestHostAPI parity", () => {
         config,
       });
     const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
+    const preview = {
+      timestamp: undefined,
+      badge: undefined,
+      lastMessage: undefined,
+      lastReaction: undefined,
+      unseenReactions: 0,
+      pinned: true,
+      activity: undefined,
+    };
     for (const roomId of ["main", "other"]) {
       await create(roomId, { productSource: false, reactionDetails: false });
       await chat.postChatMessage(product, {
         roomId,
         payload: { tag: "Text", value: { text: "hi" } },
       });
-      await chat.updateChatFeed!(product, { roomId, update }, true);
+      await chat.updateChatFeed(product, { roomId, update }, true);
+      await chat.setChatRoomPreview(product, { roomId, preview });
     }
 
     // Another configuration with the same source keeps what the room holds.
     expect(
       await create("main", { productSource: false, reactionDetails: true }),
     ).toBe("Exists");
-    expect(host.chatRoomDeclarations("main")?.feed).toEqual([[update, true]]);
+    expect(host.chatRoomDeclarations("main")?.feed).toEqual([
+      { update, persist: true },
+    ]);
+    expect(host.chatRoomDeclarations("main")?.preview).toEqual(preview);
 
     const sourced = { productSource: true, reactionDetails: false };
     expect(await create("main", sourced)).toBe("Exists");
@@ -890,7 +905,10 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
       "other",
     ]);
-    expect(host.chatRoomDeclarations("other")?.feed).toEqual([[update, true]]);
+    expect(host.chatRoomDeclarations("other")?.feed).toEqual([
+      { update, persist: true },
+    ]);
+    expect(host.chatRoomDeclarations("other")?.preview).toEqual(preview);
   });
 
   it("hands out a copy of the declarations and keeps none for a deleted room", async () => {
@@ -902,27 +920,74 @@ describe("createMockHost TestHostAPI parity", () => {
       productId: "p",
       executionKind: { tag: "Unknown" } as const,
     };
+    const config = { productSource: false, reactionDetails: false };
     await chat.createChatRoom(product, "main", {
       roomIdSource: "main",
       name: "Main",
       icon: "",
-      config: { productSource: false, reactionDetails: false },
+      config,
     });
     const update = { tag: "Deleted", value: { messageId: "m1" } } as const;
     const before = host.chatRoomDeclarations("main");
-    await chat.updateChatFeed!(product, { roomId: "main", update }, true);
+    await chat.updateChatFeed(product, { roomId: "main", update }, true);
     expect(before?.feed).toEqual([]);
+    // Neither an object that a test passed in nor one that the mock answered
+    // changes what the mock keeps.
+    config.reactionDetails = true;
+    (await chat.chatRoom(product, "main"))!.config.productSource = true;
+    expect(await chat.chatRoom(product, "main")).toEqual({
+      participatingAs: "RoomHost",
+      config: { productSource: false, reactionDetails: false },
+    });
+    const metadata = {
+      name: "Main",
+      description: undefined,
+      icon: undefined,
+      placeholder: undefined,
+    };
+    const preview = {
+      timestamp: undefined,
+      badge: undefined,
+      lastMessage: undefined,
+      lastReaction: undefined,
+      unseenReactions: 0,
+      pinned: false,
+      activity: undefined,
+    };
+    const second = { tag: "Deleted" as const, value: { messageId: "m2" } };
+    await chat.setChatRoomMetadata(product, { roomId: "main", metadata });
+    await chat.setChatRoomPreview(product, { roomId: "main", preview });
+    await chat.updateChatFeed(
+      product,
+      { roomId: "main", update: second },
+      true,
+    );
+    metadata.name = "Changed";
+    preview.pinned = true;
+    second.value.messageId = "changed";
+    expect(host.chatRoomDeclarations("main")).toEqual({
+      config: { productSource: false, reactionDetails: false },
+      metadata: { ...metadata, name: "Main" },
+      preview: { ...preview, pinned: false },
+      feed: [
+        { update, persist: true },
+        {
+          update: { tag: "Deleted", value: { messageId: "m2" } },
+          persist: true,
+        },
+      ],
+    });
 
     const rooms = chat.subscribeChatRooms();
     await drain(rooms, 1);
     // A delete of a room that does not exist publishes no list, so the next
     // list is the one without `main`.
-    await chat.deleteChatRoom!(product, { roomId: "missing" });
-    await chat.deleteChatRoom!(product, { roomId: "main" });
+    await chat.deleteChatRoom(product, { roomId: "missing" });
+    await chat.deleteChatRoom(product, { roomId: "main" });
     const [after] = await drain(rooms, 1);
     expect(after).toEqual(ok({ rooms: [] }));
 
-    await chat.updateChatFeed!(product, { roomId: "main", update }, true);
+    await chat.updateChatFeed(product, { roomId: "main", update }, true);
     expect(host.chatRoomDeclarations("main")).toBeUndefined();
   });
 

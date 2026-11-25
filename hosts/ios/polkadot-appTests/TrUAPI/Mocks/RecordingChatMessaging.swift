@@ -8,7 +8,7 @@ import Products
 final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     var createRoomStatus: CreateRoomStatus = .new
     var roomsToReturn: [RoomInfo] = []
-    /// The room stream ends before it yields a list, as a failed subscription does.
+    /// The room stream ends before it yields a list, as a cancelled subscription does.
     var endsRoomListWithoutRooms = false
     var sendMessageError: Error?
 

@@ -141,12 +141,12 @@ with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
-| `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomError.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The core reads it once before each change to a room |
+| `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. A room id is unique only among the rooms of one product, so the host keeps each room under the product and the id, and never changes a room that the product does not host: a room of another product with the same id, or a room that the product takes part in as a bot. The icon is empty, the CID of a Bulletin preimage, an `https` URL, or a `data:` URL with an image type. Only a product built against the earlier client sends an `https` URL, and the core has not checked the payload of its `data:` URL; the `data:` URL of any other product has a Base64 payload that the core decoded. Throw `HostChatCreateRoomError.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
+| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The host looks the room up among the rooms of the product only. The core reads it once before each change to a room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
-| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen. The core has not checked that the product created the room, so the host deletes only a room that the product hosts, and does nothing for any other id |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores |
-| `setRoomFooter` | Shows the text input, or nothing |
+| `setRoomFooter` | Shows the text input, nothing, or a card that the product draws |
 
 The core checks that the product created the room before it calls any of
 these, except `createRoom` and `deleteRoom`, and bounds and screens every
