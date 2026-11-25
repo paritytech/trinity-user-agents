@@ -31,6 +31,15 @@ public struct CoinProvenance: Equatable, Sendable {
         )
     }
 
+    /// Taken back from a payment we handed off after its claim window. Inherits the parent's chain and
+    /// appends the reclaim as one transfer in a bundle of `bundleSize`.
+    public static func reclaimed(from coin: Coin, bundleSize: Int) -> CoinProvenance {
+        CoinProvenance(
+            recyclerFungibility: coin.recyclerFungibility,
+            hops: coin.hops + [.transfer(bundleSize: UInt8(clamping: bundleSize))]
+        )
+    }
+
     /// Received from a peer. Their chain is not visible to us, so it is assumed to be one transfer
     /// per unit of on-chain age — the conservative reading — with the bundle we claimed it in
     /// recorded as the most recent hop.

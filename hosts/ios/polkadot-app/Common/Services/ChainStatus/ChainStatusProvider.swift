@@ -18,7 +18,7 @@ actor ChainStatusProvider {
 
     private static let connectDebounce: Duration = .milliseconds(300)
     private static let deadDwell: TimeInterval = 3
-    private static let anchorTimeout: Duration = .seconds(15)
+    static let anchorTimeout: Duration = .seconds(15)
 
     private let networkStatusService: NetworkStatusProviding
     private let blockProvider: ChainBlockProviding
@@ -27,6 +27,7 @@ actor ChainStatusProvider {
     private let statementStoreStatusProvider: StatementStoreStatusProviding
     private let chainRegistry: ChainRegistryProtocol
     private let logger: LoggerProtocol
+    private let clock: any Clock<Duration>
 
     private nonisolated let rowsSubject: AsyncCurrentValueSubject<[ChainConnectionStatusViewModel]>
 
@@ -53,7 +54,8 @@ actor ChainStatusProvider {
         appStateStreamFactory: ApplicationStateStreamFactory,
         statementStoreStatusProvider: StatementStoreStatusProviding,
         chainRegistry: ChainRegistryProtocol,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.networkStatusService = networkStatusService
         self.blockProvider = blockProvider
@@ -62,6 +64,7 @@ actor ChainStatusProvider {
         self.statementStoreStatusProvider = statementStoreStatusProvider
         self.chainRegistry = chainRegistry
         self.logger = logger
+        self.clock = clock
 
         let seededStatuses = ChainConnectionTarget.allCases
             .reduce(into: [ChainConnectionTarget: NetworkStatus]()) { $0[$1] = .connecting }
@@ -318,11 +321,11 @@ extension ChainStatusProvider {
         let generation = (anchorGeneration[target] ?? 0) + 1
         anchorGeneration[target] = generation
 
-        anchorTasks[target] = Task { [weak self, anchorProvider] in
+        anchorTasks[target] = Task { [weak self, anchorProvider, clock] in
             do {
                 // Without a deadline a hung fetch would leave the target in awaitingReanchor forever, freezing its row
                 // on the last indication.
-                let anchor = try await withTimeout(Self.anchorTimeout) {
+                let anchor = try await withTimeout(Self.anchorTimeout, clock: clock) {
                     try await anchorProvider.fetchAnchor(for: target, slotCount: slotCount)
                 }
                 await self?.finishReanchor(for: target, generation: generation, anchor: anchor, at: date)

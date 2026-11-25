@@ -1,5 +1,6 @@
 import Foundation
 import FoundationExt
+import StructuredConcurrencyTestSupport
 
 @MainActor
 final class ApplicationActivityStub: ApplicationActivityProviding {
@@ -9,7 +10,7 @@ final class ApplicationActivityStub: ApplicationActivityProviding {
 
     let changes = StateChangeSignal()
 
-    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private let gate = TestGate()
 
     init(isInBackground: Bool = false) {
         self.isInBackground = isInBackground
@@ -19,33 +20,20 @@ final class ApplicationActivityStub: ApplicationActivityProviding {
         guard isInBackground else { return }
 
         waitCallCount += 1
-        let waiterId = UUID()
+        changes.signal()
 
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                waiters[waiterId] = continuation
-                changes.signal()
-            }
-        } onCancel: {
-            Task { @MainActor in self.cancel(waiterId) }
+        do {
+            try await gate.pass()
+        } catch {
+            cancelledWaitCount += 1
+            changes.signal()
         }
     }
 
     func enterForeground() {
         isInBackground = false
 
-        let pending = waiters
-        waiters = [:]
-        pending.values.forEach { $0.resume() }
-    }
-}
-
-private extension ApplicationActivityStub {
-    func cancel(_ waiterId: UUID) {
-        guard let waiter = waiters.removeValue(forKey: waiterId) else { return }
-
-        cancelledWaitCount += 1
-        waiter.resume()
-        changes.signal()
+        gate.open()
+        gate.release()
     }
 }

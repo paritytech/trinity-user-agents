@@ -360,7 +360,10 @@ fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session);
 	let mut cx = CallContext::with_request_id(message_id.to_string());
-	cx.set_timeout(std::time::Duration::from_millis(1));
+	// The People connection is dialled in a task of its own, so the timeout
+	// leaves it time to subscribe. No sign response is scripted, so the call
+	// still ends by the timeout.
+	cx.set_timeout(std::time::Duration::from_millis(500));
 	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
 		account: account_id("myapp.dot", 0),
 		payload: raw_payload(),
@@ -369,7 +372,10 @@ fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
 
 	match err {
 		CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { reason })) => {
-			assert_eq!(reason, "Account authority request timed out after 1ms for sign-raw-timeout")
+			assert_eq!(
+				reason,
+				"Account authority request timed out after 500ms for sign-raw-timeout"
+			)
 		},
 		other => panic!("expected SSO response timeout, got {other:?}"),
 	}
