@@ -12,6 +12,11 @@ struct MessageListMetadata {
         chatMetadata.peerMetadata.name
     }
 
+    /// The text that the room screen shows: the placeholder of the room while the screen shows no message.
+    func placeholder(showsMessages: Bool) -> String? {
+        showsMessages ? nil : chatMetadata.roomPlaceholder
+    }
+
     func isSeenByPeer(_ message: Chat.LocalMessage) -> Bool {
         message.order > 0 && message.order <= chatMetadata.peerSeenOrder
     }

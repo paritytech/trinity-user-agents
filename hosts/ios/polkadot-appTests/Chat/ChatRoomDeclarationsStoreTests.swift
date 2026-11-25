@@ -49,6 +49,7 @@ struct ChatRoomDeclarationsStoreTests {
         #expect(chat.message == nil)
         #expect(chat.unreadDisplayMessageCount == 0)
         #expect(chat.roomMetadata?.name == "Lobby")
+        #expect(chat.roomPolicy?.messageStore == .product)
     }
 
     @Test func aChangeThatKeepsTheMessageStoreKeepsTheMessages() async throws {

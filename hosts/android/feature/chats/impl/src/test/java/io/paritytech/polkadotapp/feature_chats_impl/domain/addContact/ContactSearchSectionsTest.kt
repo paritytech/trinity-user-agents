@@ -115,6 +115,7 @@ class ContactSearchSectionsTest {
         timestamp = 0L,
         unreadBadge = ChatSummaryBadge.None,
         hasUnseenReaction = false,
+        activity = null,
         customPreviewRenderer = null,
     )
 

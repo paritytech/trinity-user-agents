@@ -18,7 +18,8 @@ final class ProductRoomFixture {
             settings: InMemorySettingsManager(),
             storageFacade: storageFacade,
             operationQueue: OperationQueue(),
-            logger: StubLogger()
+            logger: StubLogger(),
+            messageOrderAllocator: InMemoryChatMessageOrderAllocator()
         )
         surface.bind(.init(bot: bot, context: context), owner: self)
     }
@@ -29,6 +30,14 @@ final class ProductRoomFixture {
 
     func chatId(_ roomId: String) -> Chat.Id {
         .chatExtension(bot.identifier, roomId: roomId)
+    }
+
+    func bridge() async -> RustChatExecutionBridge {
+        let productId = try! ProductId(productId)
+        return await RustChatExecutionBridge(
+            dependencies: MainActor.run { makeChatBridgeDependencies(productId: productId) },
+            chatMessaging: surface
+        )
     }
 
     func storedChat(_ roomId: String) async throws -> Chat.LocalModel? {

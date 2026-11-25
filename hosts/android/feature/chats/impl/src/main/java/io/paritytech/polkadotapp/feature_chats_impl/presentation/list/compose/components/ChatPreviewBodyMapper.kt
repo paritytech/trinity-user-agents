@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.design.components.text.ensureAnnotatedString
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.withBold
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ActivityPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatPreviewUiModel
@@ -35,6 +36,8 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrec
 data class ChatPreviewBody(
     val text: AnnotatedString,
     val icon: ImageVector? = null,
+    /** The line pulses while an activity of the room continues. */
+    val pulses: Boolean = false,
 )
 
 @Composable
@@ -45,6 +48,8 @@ internal fun ChatPreviewUiModel.toPreviewBody(username: String): ChatPreviewBody
                 .withCurrencyTickerStyle(PolkadotTheme.typography.paragraph.medium).asPlainBody()
 
         is DraftPreviewUiModel -> draftPreviewBody(text)
+
+        is ActivityPreviewUiModel -> ChatPreviewBody(text = AnnotatedString(text), pulses = ongoing)
 
         is LastMessageUiModel -> toPreviewBody(username)
     }

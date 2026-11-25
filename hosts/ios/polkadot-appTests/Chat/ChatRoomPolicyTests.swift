@@ -1,0 +1,123 @@
+import Foundation
+import PolkadotUI
+import Products
+import Testing
+import TrUAPIHost
+@testable import polkadot_app
+
+/// The host defaults for a product room that declares nothing.
+struct ChatRoomPolicyTests {
+    private let policy = ChatRoomPolicy.defaults
+
+    @Test func theHostStoresTheMessages() {
+        #expect(policy.messageStore == .host)
+    }
+
+    @Test func seenMessagesAreNotReported() {
+        #expect(!policy.reportsSeen)
+    }
+
+    @Test func theBotOfAProductHasNoMenu() {
+        #expect(makeBot().peerMetadata.moreActions.isEmpty)
+    }
+
+    @Test func theFooterIsTheInput() {
+        #expect(policy.footer == .input)
+    }
+
+    @Test func anEmptyFooterHidesTheInput() {
+        let room = room(footer: .empty)
+
+        #expect(room.roomPolicy?.footer == .empty)
+        #expect(room.peerMetadata(using: SingleBotRegistry(bot: makeBot())).input == .empty)
+    }
+
+    @Test(arguments: [nil, Chat.RoomFooter.textInput])
+    func aRoomWithoutAnEmptyFooterKeepsTheDefaults(footer: Chat.RoomFooter?) {
+        #expect(room(footer: footer).roomPolicy == policy)
+    }
+}
+
+private extension ChatRoomPolicyTests {
+    func makeBot() -> ProductBot {
+        ProductBot(
+            product: Product(id: try! ProductId("dim2.paseo"), name: "Jollity"),
+            description: nil,
+            runtime: TrUAPIChatHandler(productId: try! ProductId("dim2.paseo"), workers: StubWorkerManager()),
+            resolveImage: WidgetImageResolver { _ in nil }
+        )
+    }
+
+    func room(footer: Chat.RoomFooter?) -> Chat.LocalModel {
+        Chat.LocalModel(
+            peer: .chatExtension("dim2.paseo", roomId: "room"),
+            message: nil,
+            unreadDisplayMessageCount: 0,
+            hasIncomingReaction: false,
+            createdAt: nil,
+            roomMetadata: nil,
+            roomFooter: footer
+        )
+    }
+}
+
+/// The policy of a room takes each aspect that its product declared from the stored declarations.
+struct ChatRoomPolicyDeclarationsTests {
+    @Test func aProductSourceRoomKeepsItsMessagesInTheProduct() {
+        let policy = ChatRoomPolicy(footer: nil, declarations: declarations(config: config(productSource: true)))
+
+        #expect(policy.messageStore == .product)
+    }
+
+    /// The product of a product-source room learns which messages the user saw, and a host room reports nothing.
+    @Test func onlyAProductSourceRoomReportsSeen() {
+        let product = ChatRoomPolicy(footer: nil, declarations: declarations(config: config(productSource: true)))
+        let host = ChatRoomPolicy(footer: nil, declarations: declarations(config: config(productSource: false)))
+
+        #expect(product.reportsSeen)
+        #expect(!host.reportsSeen)
+    }
+
+    /// The footer is the one of `set_room_footer`, also for a room with declarations.
+    @Test func theFooterOfTheRoomSetsTheFooter() {
+        #expect(ChatRoomPolicy(footer: .textInput, declarations: declarations()).footer == .input)
+        #expect(ChatRoomPolicy(footer: .empty, declarations: declarations()).footer == .empty)
+        // A docked card takes the place of the input.
+        let card = Chat.RoomFooter.card(messageType: "game", payload: Data([1]))
+        #expect(ChatRoomPolicy(footer: card, declarations: declarations()).footer == .empty)
+    }
+
+    @Test func theGenerationComesFromTheStore() {
+        let policy = ChatRoomPolicy(footer: nil, declarations: declarations(generation: 3))
+
+        #expect(policy.configGeneration == 3)
+    }
+
+    /// The list reads the policy of a stored room, so a product-source room shows as one without a worker.
+    @Test func aStoredRoomReadsItsPolicy() {
+        let room = Chat.LocalModel(
+            peer: .chatExtension("dim2.paseo", roomId: "room"),
+            message: nil,
+            unreadDisplayMessageCount: 0,
+            hasIncomingReaction: false,
+            createdAt: nil,
+            roomMetadata: nil,
+            roomDeclarations: declarations(config: config(productSource: true))
+        )
+
+        #expect(room.roomPolicy?.messageStore == .product)
+    }
+}
+
+private extension ChatRoomPolicyDeclarationsTests {
+    func config(productSource: Bool) -> Chat.RoomConfig {
+        Chat.RoomConfig(productSource: productSource, reactionDetails: false)
+    }
+
+    func declarations(
+        config: Chat.RoomConfig? = nil,
+        generation: Int64 = 0
+    ) -> Chat.RoomDeclarations {
+        Chat.RoomDeclarations(config: config, configGeneration: generation, preview: .hostDefault, placeholder: nil)
+    }
+}

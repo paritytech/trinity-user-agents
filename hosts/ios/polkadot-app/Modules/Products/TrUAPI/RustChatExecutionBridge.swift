@@ -141,6 +141,17 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         try await chatMessaging.setRoomPreview(roomId: requireRoomId(roomId), preview: Chat.RoomPreview(preview))
         return .applied
     }
+
+    /// A delete of a room is idempotent: a room that is gone already is not an error.
+    func deleteRoom(roomId: String) async throws -> ChatRoomChangeOutcome {
+        logger.debug("[truapi:chat-bridge] deleteRoom \(roomId)")
+        do {
+            try await chatMessaging.deleteRoom(roomId: requireRoomId(roomId))
+        } catch ChatRoomError.unknownRoom {
+            logger.debug("[truapi:chat-bridge] deleteRoom \(roomId): no such room")
+        }
+        return .applied
+    }
 }
 
 private extension RustChatExecutionBridge {

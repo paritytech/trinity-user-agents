@@ -31,5 +31,8 @@ data class ChatListUiState(
         ) : Badge
 
         object None : Badge
+
+        /** A small round image in place of the unread count. */
+        data class Image(val icon: String) : Badge
     }
 }

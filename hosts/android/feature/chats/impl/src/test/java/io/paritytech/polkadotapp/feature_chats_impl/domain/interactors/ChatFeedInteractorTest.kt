@@ -18,6 +18,7 @@ class ChatFeedInteractorTest {
         chatNotificationPublisher = chatNotificationPublisher,
         chatActiveTracker = chatActiveTracker,
         chatEngine = mockk(),
+        roomPolicyProvider = mockk(),
         contactsRepository = mockk(),
         coroutineDispatchers = mockk(),
         chatDisplayGenerator = mockk(),

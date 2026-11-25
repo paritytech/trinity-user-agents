@@ -67,6 +67,8 @@ extension Chat {
         let roomMetadata: Chat.RoomMetadata?
         var peerSeenOrder: UInt64 = 0
         var roomFooter: Chat.RoomFooter?
+        /// What the product declared for its room. Nil for a chat that is not a product room.
+        var roomDeclarations: Chat.RoomDeclarations?
 
         var chatId: Chat.Id {
             peer.chatId

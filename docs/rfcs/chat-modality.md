@@ -74,6 +74,8 @@ struct CreateChatRoomRequest {
         avatar: ResourceUri?,
         name: String,
         description: String?,
+        kind: RoomKind,
+        parent: Option<RoomId>,
     },
     // Optional. Initial state for the room preview that will define appearance in the chat list. If not provided - default rendering is used
     initial_preview?: {
@@ -139,6 +141,38 @@ struct RoomMetadata {
     avatar: ResourceUri?,
     name: String,
     description: String?,
+    kind: RoomKind,
+    // The Space, Category or Forum that holds the room, and its place there.
+    parent: Option<RoomId>,
+    position: u32,
+    settings: RoomSettings,
+}
+
+enum RoomKind {
+    // Its parent can be a Channel: then it is the inbox of one reader to
+    // the admins of the Channel.
+    Direct,
+    Group,
+    // A Group of posts with `only_admins_post`. The comments of a post are
+    // a Thread on it.
+    Channel,
+    Space,
+    Category,
+    // Each child room is a topic.
+    Forum,
+    Voice,
+    // The replies to one message of the parent room.
+    Thread { root: MessageId },
+}
+
+// Settings that every member sees. A change shows as `SettingsChanged`.
+struct RoomSettings {
+    // Seconds between two messages of one member. 0: no wait.
+    slow_mode: u32,
+    // A text that a member can read after the join.
+    welcome: Option<String>,
+    // A reader drops a message from a participant who is not an admin.
+    only_admins_post: bool,
 }
 
 enum ChatRoomPreviewOrder {
@@ -191,6 +225,7 @@ This is the core of v2. The Product can either rely on the Host's built-in messa
 ```rust
 // Unique in the room.
 MessageId = String
+// The id "room" is the room itself, for a post of a Channel with no author.
 ChatParticipantId = String
 Timestamp = u64
 
@@ -233,6 +268,7 @@ enum RoomEvent {
     Renamed(String),
     AvatarChanged,
     DescriptionChanged,
+    SettingsChanged,
 }
 
 enum ChatMedia {
@@ -275,6 +311,15 @@ struct Message {
     reply_to: Option<MessageId>,
     last_edited: Option<Timestamp>,
     reactions: Map<Emoji, AggregatedReaction>,
+    // The thread whose root is this message.
+    thread: Option<ThreadSummary>,
+    // The readers of a post of a Channel.
+    views: Option<u32>,
+}
+
+struct ThreadSummary {
+    room_id: RoomId,
+    replies: u32,
 }
 ```
 
@@ -348,7 +393,7 @@ enum UserChatAction {
     MessageDeleted {
         message_id: MessageId
     },
-    // The user changed the name, the avatar or the description of the room.
+    // The user changed the metadata or the settings of the room.
     EditRoom(RoomMetadata),
 }
 
@@ -572,6 +617,8 @@ enum ChatParticipant {
 }
 ```
 
+The role of a participant in a Space applies in each room of the Space.
+
 #### 8.2 Methods
 
 ```rust
@@ -675,6 +722,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 18. **Participant actions**: Configurable actions when tapping on a participant.
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
 20. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
+21. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 
 #### Non-Functional Requirements
 

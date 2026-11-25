@@ -22,6 +22,14 @@ data class DraftPreviewUiModel(
     val text: String
 ) : ChatPreviewUiModel
 
+/** A line that a product room shows in place of its preview line, for example "Ben is typing". */
+data class ActivityPreviewUiModel(
+    override val timestamp: Timestamp,
+    val text: String,
+    /** The activity continues, so the row animates the line. */
+    val ongoing: Boolean,
+) : ChatPreviewUiModel
+
 enum class MessageAttachmentType {
     IMAGE, VIDEO, FILE
 }

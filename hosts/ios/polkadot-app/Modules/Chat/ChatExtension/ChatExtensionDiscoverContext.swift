@@ -41,6 +41,9 @@ protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring {
         footer: Chat.RoomFooter
     ) async throws
 
+    /// Removes a room, its messages and its declarations.
+    func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws
+
     /// Replaces the name and the placeholder of a room and changes its icon. The native chat draws no description.
     func setRoomMetadata(
         for chatBot: ChatExtensionBotProtocol,
@@ -105,19 +108,23 @@ actor ChatExtensionDiscoverContext {
     let roomMetadataRepository: AnyDataProviderRepository<Chat.RoomMetadataUpdate>
     let roomFooterRepository: AnyDataProviderRepository<Chat.RoomFooterUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
+    let roomRemover: ChatRoomRemoving
+    let messageOrderAllocator: ChatMessageOrderAllocating
 
     init(
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         storageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        messageOrderAllocator: ChatMessageOrderAllocating = FileChatMessageOrderAllocator.shared
     ) {
         self.settings = settings
         self.storageFacade = storageFacade
+        self.messageOrderAllocator = messageOrderAllocator
 
         messageRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
-                mapper: AnyCoreDataMapper(ChatMessageEntityMapper())
+                mapper: AnyCoreDataMapper(ChatMessageEntityMapper(orderAllocator: messageOrderAllocator))
             )
         )
 
@@ -144,6 +151,8 @@ actor ChatExtensionDiscoverContext {
             operationQueue: operationQueue,
             logger: logger
         )
+
+        roomRemover = ChatRoomRemover(databaseService: storageFacade.databaseService)
     }
 }
 
@@ -406,6 +415,14 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
 
         let update = Chat.RoomFooterUpdate(chatId: chatId, footer: footer)
         try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
+    }
+
+    func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+
+        guard try await roomRemover.removeRoom(chatId) else {
+            throw ChatRoomError.unknownRoom(roomId)
+        }
     }
 
     func setRoomMetadata(
