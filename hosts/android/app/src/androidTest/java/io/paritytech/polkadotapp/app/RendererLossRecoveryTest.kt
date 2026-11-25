@@ -52,7 +52,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         val reports = Reports()
         val bridge = mockk<HostBridge>(relaxed = true) { coEvery { coreStorage.read(any()) } returns null }
-        TrUAPIHostRuntime(bridge, CONFIG).use { runtime ->
+        TrUAPIHostRuntime(bridge, CONFIG, NoWorkers).use { runtime ->
             runtime.openAppExecution(bridge, PRODUCT).use { execution ->
                 val endpoint = execution.startWsBridge()
                 val provider = PageProvider(context, scope)

@@ -93,7 +93,7 @@ import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
-import uniffi.truapi.NativeHostWebViewWorker
+import uniffi.truapi.NativeWorkerEngine
 import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeWorkerExecutionState
 import uniffi.truapi.NativeWorkerExecutionObserver
@@ -987,18 +987,18 @@ object LocalhostBridgeBootstrap {
 /**
  * Process-owned Rust host runtime. Product executables open independent
  * connections from this object and share its authentication and core services.
- * Supply [workers] when the host can launch product WebViews for worker claims.
+ * [workerEngine] runs the products' workers. A host that runs them in WebViews passes its WebView host.
  */
-class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::class) constructor(
+class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
     runtimeConfig: HostRuntimeConfig,
-    workers: NativeHostWebViewWorker? = null,
+    workerEngine: NativeWorkerEngine,
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
     private var closed = false
-    private val inner = NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig, workers)
+    private val inner = NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig, workerEngine)
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -1115,10 +1115,6 @@ class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::clas
     ): TrUAPIProductExecution = openExecutionWithBridges(bridge, chat, game) { callbacks ->
         inner.openWidgetExecution(productId, callbacks)
     }
-
-    /** Look up the ready execution without acquiring demand or control of its bridge. */
-    fun currentWorkerExecution(productId: ProductId): TrUAPIWorkerExecution? =
-        inner.currentWorkerExecution(productId)?.let(::TrUAPIWorkerExecution)
 
     /** Report the latest startup state and subsequent replacements while collected. */
     fun workerExecutionState(productId: ProductId): Flow<WorkerExecutionState> = observedFlow {

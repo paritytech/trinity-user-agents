@@ -20,13 +20,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import uniffi.truapi.NativeHostWebViewWorker
+import uniffi.truapi.NativeWorkerEngine
 import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.seconds
 
 /** Creates and disposes each worker's hidden WebView on the main thread. */
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -38,7 +36,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
-) : NativeHostWebViewWorker {
+) : NativeWorkerEngine {
     private class WebViewWorker(val scope: CoroutineScope) {
         var runtime: WebViewRuntime? = null
     }
@@ -90,22 +88,13 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }.getOrThrow()
         provider.useTrUAPIPermissions(execution)
         webViewRuntime.loadInitialPage()
-        withTimeout(READY_TIMEOUT) {
-            webViewRuntime.waitForReady()
-            webViewRuntime.startWorkerModule(workerScript.entrypoint)
-        }
+        webViewRuntime.waitForReady()
+        webViewRuntime.startWorkerModule(workerScript.entrypoint)
     }
 
     private fun dispose(id: ULong) {
         val worker = workers.remove(id) ?: return
         worker.scope.cancel()
         worker.runtime?.dispose()
-    }
-
-    companion object {
-        // Generous: a cold WebView on a slow device fetching a worker archive over dotNS.
-        private val READY_TIMEOUT = 60.seconds
-
-        val EXECUTION_WAIT_TIMEOUT = READY_TIMEOUT + 30.seconds
     }
 }

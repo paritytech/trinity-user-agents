@@ -114,7 +114,7 @@ class TrUAPIDiagnosticsTest {
             localSessionLiteUsername = "android-diag",
         )
 
-        val runtime = TrUAPIHostRuntime(bridge, config)
+        val runtime = TrUAPIHostRuntime(bridge, config, NoWorkers)
         val execution = runtime.openAppExecution(
             bridge = bridge,
             productId = ProductId.parse("dotli.dot").getOrThrow(),

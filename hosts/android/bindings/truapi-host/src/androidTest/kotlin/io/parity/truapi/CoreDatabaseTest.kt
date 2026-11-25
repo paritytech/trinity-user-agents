@@ -31,7 +31,7 @@ class CoreDatabaseTest {
     @Test
     fun theCoreDatabaseOpensInTheConfiguredDirectory() {
         directory.mkdirs()
-        val runtime = TrUAPIHostRuntime(InertHostBridge(context), instrumentedRuntimeConfig(directory.absolutePath))
+        val runtime = TrUAPIHostRuntime(InertHostBridge(context), instrumentedRuntimeConfig(directory.absolutePath), NoWorkers)
 
         val status = runtime.use { runBlocking { it.coreDatabaseStatus() } }
 
@@ -44,7 +44,7 @@ class CoreDatabaseTest {
     @Test
     fun aMissingDirectoryStopsTheRuntimeFromStarting() {
         assertThrows(NativeRuntimeConfigException.DatabaseUnavailable::class.java) {
-            TrUAPIHostRuntime(InertHostBridge(context), instrumentedRuntimeConfig(directory.absolutePath))
+            TrUAPIHostRuntime(InertHostBridge(context), instrumentedRuntimeConfig(directory.absolutePath), NoWorkers)
         }
     }
 }

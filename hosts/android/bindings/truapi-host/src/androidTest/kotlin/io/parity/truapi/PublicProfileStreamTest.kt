@@ -28,7 +28,7 @@ class PublicProfileStreamTest {
     @Test
     fun anInvalidUsernameEndsTheStreamWithATypedErrorBeforeAnyProfile() {
         directory.mkdirs()
-        val runtime = TrUAPIHostRuntime(InertHostBridge(context), instrumentedRuntimeConfig(directory.absolutePath))
+        val runtime = TrUAPIHostRuntime(InertHostBridge(context), instrumentedRuntimeConfig(directory.absolutePath), NoWorkers)
         val profiles = mutableListOf<PublicProfile>()
 
         runtime.use {

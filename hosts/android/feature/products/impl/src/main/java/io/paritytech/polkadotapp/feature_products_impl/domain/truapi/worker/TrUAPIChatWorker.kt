@@ -19,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -50,6 +53,9 @@ class TrUAPIChatWorker(
     private val chatMessaging: ProductChatMessaging,
     private val scope: CoroutineScope,
 ) : ProductWorker {
+    // The execution of the worker while it runs, which presses and the room list go to.
+    private val execution: StateFlow<TrUAPIWorkerExecution?>
+
     init {
         val workerJob = scope.coroutineContext.job
         val claim = runtime.claimWorker(productId)
@@ -57,14 +63,14 @@ class TrUAPIChatWorker(
             runCatching { claim.release() }
                 .onFailure { Timber.w(it, "TrUAPI worker claim release failed for %s", productId.value) }
         }
+        execution = runtime.workerExecutionState(productId)
+            .map { (it as? WorkerExecutionState.Running)?.execution }
+            .stateIn(scope, SharingStarted.Eagerly, null)
         scope.launch {
-            runtime.workerExecutionState(productId)
-                .map { (it as? WorkerExecutionState.Running)?.execution }
-                .distinctUntilChanged()
-                .collectLatest { execution ->
-                    if (execution == null) return@collectLatest
-                    coroutineScope { TrUAPIChatRoomForwarding(productId, execution, chatMessaging).start(this) }
-                }
+            execution.collectLatest { execution ->
+                if (execution == null) return@collectLatest
+                coroutineScope { TrUAPIChatRoomForwarding(productId, execution, chatMessaging).start(this) }
+            }
         }
     }
 
@@ -112,9 +118,6 @@ class TrUAPIChatWorker(
             .distinctUntilChanged()
             .flatMapLatest { state ->
                 when (state) {
-                    // Reported, not thrown: a later execution must still be able to draw.
-                    is WorkerExecutionState.Failed ->
-                        flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
                     WorkerExecutionState.Idle, WorkerExecutionState.Pending -> emptyFlow()
                     is WorkerExecutionState.Running -> state.execution.chatRender(context, payload, label)
                 }
@@ -127,7 +130,7 @@ class TrUAPIChatWorker(
             Timber.w("TrUAPI chat dispatchEvent for %s/%s dropped: no room id", productId.value, event.messageId)
             return
         }
-        val execution = runtime.currentWorkerExecution(productId)
+        val execution = execution.value
         if (execution == null) {
             Timber.w("TrUAPI chat dispatchEvent for %s/%s dropped: no running execution", productId.value, event.messageId)
             return
@@ -138,7 +141,7 @@ class TrUAPIChatWorker(
 
     /** A press inside the card the product docked in the footer of [roomId]. */
     override fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
-        val execution = runtime.currentWorkerExecution(productId)
+        val execution = execution.value
         if (execution == null) {
             Timber.w("TrUAPI chat footer event for %s/%s dropped: no running execution", productId.value, roomId.value)
             return
@@ -162,13 +165,12 @@ class TrUAPIChatWorker(
         runtime.workerExecutionState(productId).mapNotNull { state ->
             when (state) {
                 is WorkerExecutionState.Running -> state.execution
-                is WorkerExecutionState.Failed -> throw ExecutionUnavailableException(state.reason)
                 WorkerExecutionState.Idle, WorkerExecutionState.Pending -> null
             }
         }.first()
 
     private suspend fun awaitRunningExecution(): TrUAPIWorkerExecution =
-        withTimeoutOrNull(TrUAPIWorkerSupervisor.EXECUTION_WAIT_TIMEOUT) { runningExecution() }
+        withTimeoutOrNull(EXECUTION_WAIT_TIMEOUT) { runningExecution() }
             ?: throw IllegalStateException(
                 "TrUAPI worker for ${productId.value} did not report a running execution in time",
             )
@@ -180,7 +182,6 @@ class TrUAPIChatWorker(
         flow {
             var drew = false
             render(ProductRendererRenderRequest(context, payload))
-                .retryWhileConnecting()
                 .collect { node ->
                     drew = true
                     emit(Result.success(node.toJsWidget()))
@@ -210,10 +211,12 @@ class TrUAPIChatWorker(
         is JsUiEvent.Type.InputFieldValueChange -> newValue.toByteArray(Charsets.UTF_8)
     }
 
-    private class ExecutionUnavailableException(cause: Throwable) : Exception(cause.message, cause)
-
     private companion object {
         const val NATIVE_PEER = "native"
+
+        // How long a message waits for a worker that is starting. The claim stays meanwhile, and
+        // the core keeps starting the worker: its own startup deadline is as long.
+        val EXECUTION_WAIT_TIMEOUT = 90.seconds
         val MATERIALS_REPORT_TIMEOUT = 1.seconds
     }
 }

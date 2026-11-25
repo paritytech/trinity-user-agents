@@ -21,7 +21,6 @@ import io.paritytech.polkadotapp.test_shared.argThat
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,7 +37,6 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -59,7 +57,6 @@ import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 
 class TrUAPIChatWorkerTest {
@@ -83,7 +80,6 @@ class TrUAPIChatWorkerTest {
     private fun runningRuntime(execution: TrUAPIWorkerExecution): TrUAPIHostRuntime {
         val runtime: TrUAPIHostRuntime = mock()
         whenever(runtime.workerExecutionState(productId)).thenReturn(flowOf(WorkerExecutionState.Running(execution)))
-        whenever(runtime.currentWorkerExecution(productId)).thenReturn(execution)
         return runtime
     }
 
@@ -102,26 +98,6 @@ class TrUAPIChatWorkerTest {
             RenderContext.ChatMessage(roomId = roomId.value, messageId = messageId, messageType = messageType),
             requireNotNull(captured).context,
         )
-    }
-
-    @Test
-    fun `a Failed execution state whose cause is a TimeoutCancellationException still yields a failure value`() = runTest {
-        val timeoutCause = try {
-            withTimeout(1.milliseconds) { awaitCancellation() }
-            error("unreachable: withTimeout should have thrown")
-        } catch (e: TimeoutCancellationException) {
-            e
-        }
-        val runtime: TrUAPIHostRuntime = mock()
-        whenever(runtime.workerExecutionState(productId)).thenReturn(flowOf(WorkerExecutionState.Failed(timeoutCause)))
-        val worker = worker(runtime = runtime)
-
-        val results = worker.renderMessage(roomId, messageId, messageType, messageData).toList()
-
-        assertEquals(1, results.size)
-        val failure = results.single().exceptionOrNull()
-        assertFalse("the value that reaches the collector must not itself be a cancellation", failure is CancellationException)
-        assertSame(timeoutCause, failure?.cause)
     }
 
     @Test
@@ -186,50 +162,6 @@ class TrUAPIChatWorkerTest {
         // Gaps of 1, 2, 4, 8, 16 and then 30 seconds: five minutes hold 14 openings, past any bounded attempt count.
         assertEquals(14, opened)
         assertTrue("a node that drew must not be replaced by an error", results.all { it.isSuccess })
-        collector.cancel()
-    }
-
-    @Test
-    fun `a NotConnected refusal is retried on the same render`() = runTest {
-        val execution: TrUAPIWorkerExecution = mock()
-        var collected = 0
-        val flakyThenDraws = flow<RendererNode> {
-            collected++
-            if (collected == 1) throw ProductRuntimeException.NotConnected()
-            emit(RendererNode.Nil)
-        }
-        whenever(execution.render(any())).thenReturn(flakyThenDraws)
-        val worker = worker(runtime = runningRuntime(execution))
-
-        val results = worker.renderMessage(roomId, messageId, messageType, messageData).toList()
-
-        assertEquals(listOf(Result.success(JsWidget.Spacer())), results)
-        assertEquals(2, collected)
-        verify(execution, times(1)).render(any())
-    }
-
-    @Test
-    fun `a failed execution reports the failure without ending the cell`() = runTest {
-        val replacement: TrUAPIWorkerExecution = mock()
-        whenever(replacement.render(any())).thenReturn(flowOf(RendererNode.Nil))
-        val states = MutableStateFlow<WorkerExecutionState>(
-            WorkerExecutionState.Failed(IllegalStateException("boot failed")),
-        )
-        val runtime: TrUAPIHostRuntime = mock()
-        whenever(runtime.workerExecutionState(productId)).thenReturn(states)
-        val worker = worker(runtime = runtime, scope = CoroutineScope(StandardTestDispatcher(testScheduler)))
-
-        val results = mutableListOf<Result<JsWidget>>()
-        val collector = launch {
-            worker.renderMessage(roomId, messageId, messageType, messageData).collect { results += it }
-        }
-        advanceUntilIdle()
-        assertTrue(results.single().isFailure)
-
-        states.value = WorkerExecutionState.Running(replacement)
-        advanceUntilIdle()
-
-        assertEquals(Result.success(JsWidget.Spacer()), results.last())
         collector.cancel()
     }
 
@@ -369,9 +301,9 @@ class TrUAPIChatWorkerTest {
     fun `dispatchEvent publishes a renderer action addressed by RenderContext ChatMessage`() = runTest {
         val execution: TrUAPIWorkerExecution = mock()
         val runtime: TrUAPIHostRuntime = mock()
-        whenever(runtime.currentWorkerExecution(productId)).thenReturn(execution)
-        whenever(runtime.workerExecutionState(productId)).thenReturn(emptyFlow())
+        whenever(runtime.workerExecutionState(productId)).thenReturn(flowOf(WorkerExecutionState.Running(execution)))
         val worker = worker(runtime = runtime)
+        advanceUntilIdle()
 
         worker.dispatchEvent(
             JsUiEvent(messageId, messageType, actionId = "onTap", eventType = JsUiEvent.Type.ButtonClick, roomId = roomId),
@@ -414,11 +346,12 @@ class TrUAPIChatWorkerTest {
     @Test
     fun `a footer press publishes a renderer action addressed by RenderContext ChatRoomFooter`() = runTest {
         val actions = mutableListOf<HostRendererActionSubscribeItem>()
-        val execution = mockk<TrUAPIWorkerExecution> {
+        val execution = mockk<TrUAPIWorkerExecution>(relaxed = true) {
             every { publishRendererAction(capture(actions)) } just Runs
         }
         val runtime = runningRuntime(execution)
         val worker = worker(runtime = runtime)
+        advanceUntilIdle()
 
         worker.dispatchRoomFooterEvent(roomId, "register", "join", JsUiEvent.Type.ButtonClick)
 
@@ -439,18 +372,6 @@ class TrUAPIChatWorkerTest {
             HostChatActionSubscribeItem(roomId.value, "native", ChatActionPayload.MessagePosted(ChatMessageContent.Text("hello"))),
             captured,
         )
-    }
-
-    @Test
-    fun `onUserMessage on a failed execution fails with the boot cause`() = runTest {
-        val cause = IllegalStateException("worker boot failed")
-        val runtime: TrUAPIHostRuntime = mock()
-        whenever(runtime.workerExecutionState(productId)).thenReturn(flowOf(WorkerExecutionState.Failed(cause)))
-        val worker = worker(runtime = runtime)
-
-        val result = worker.onUserMessage(roomId, "hello")
-
-        assertSame(cause, result.exceptionOrNull()?.cause)
     }
 
     @Test
@@ -528,12 +449,12 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
-    fun `forwarding starts on the execution that follows a failed boot, and moves to a replacement`() = runTest {
+    fun `forwarding starts on the execution that follows a pending start, and moves to a replacement`() = runTest {
         val first: TrUAPIWorkerExecution = mock()
         val replacement: TrUAPIWorkerExecution = mock()
         val rooms = MutableSharedFlow<List<ProductChatRoom>>()
         val chatMessaging = FakeChatMessaging(rooms = rooms)
-        val states = MutableStateFlow<WorkerExecutionState>(WorkerExecutionState.Failed(IllegalStateException("boot failed")))
+        val states = MutableStateFlow<WorkerExecutionState>(WorkerExecutionState.Pending)
         val runtime: TrUAPIHostRuntime = mock()
         whenever(runtime.workerExecutionState(productId)).thenReturn(states)
 

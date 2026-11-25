@@ -70,7 +70,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
             stack = TrUAPIStack.PREVIEWNET.bundled(context),
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
-        TrUAPIHostRuntime(bridge, config).use { runtime ->
+        TrUAPIHostRuntime(bridge, config, NoWorkers).use { runtime ->
             runtime.openAppExecution(bridge, ProductId.parse("media.paseo").getOrThrow()).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView

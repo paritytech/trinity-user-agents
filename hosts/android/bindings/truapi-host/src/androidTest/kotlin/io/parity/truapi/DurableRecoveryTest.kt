@@ -31,7 +31,7 @@ class DurableRecoveryTest {
         directory.mkdirs()
         val reported = LinkedBlockingQueue<Boolean>()
         val bridge = InertHostBridge(context, onDurableWork = reported::put)
-        val runtime = TrUAPIHostRuntime(bridge, instrumentedRuntimeConfig(directory.absolutePath))
+        val runtime = TrUAPIHostRuntime(bridge, instrumentedRuntimeConfig(directory.absolutePath), NoWorkers)
 
         runtime.use {
             assertEquals(false, reported.poll(5, TimeUnit.SECONDS))

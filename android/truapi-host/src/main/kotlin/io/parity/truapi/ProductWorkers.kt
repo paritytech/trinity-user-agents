@@ -42,12 +42,10 @@ sealed interface WorkerExecutionState {
     data object Idle : WorkerExecutionState
     data object Pending : WorkerExecutionState
     data class Running(val execution: TrUAPIWorkerExecution) : WorkerExecutionState
-    data class Failed(val reason: Throwable) : WorkerExecutionState
 }
 
 internal fun NativeWorkerExecutionState.toWorkerExecutionState(): WorkerExecutionState = when (this) {
     NativeWorkerExecutionState.Idle -> WorkerExecutionState.Idle
     NativeWorkerExecutionState.Pending -> WorkerExecutionState.Pending
     is NativeWorkerExecutionState.Running -> WorkerExecutionState.Running(TrUAPIWorkerExecution(execution))
-    is NativeWorkerExecutionState.Failed -> WorkerExecutionState.Failed(IllegalStateException(reason))
 }

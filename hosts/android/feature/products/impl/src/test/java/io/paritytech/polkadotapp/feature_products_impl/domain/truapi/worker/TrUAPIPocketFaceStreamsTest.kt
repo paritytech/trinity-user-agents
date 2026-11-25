@@ -170,7 +170,6 @@ class TrUAPIPocketFaceStreamsTest {
 
         assertEquals(live, drawn.resolveMaterials())
         assertEquals(kept, faces.resolveKeptMaterials(key, tree))
-        verify(exactly = 0) { runtime.currentWorkerExecution(any()) }
     }
 
     @Test

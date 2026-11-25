@@ -19,10 +19,12 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 /**
@@ -34,6 +36,9 @@ class TrUAPIPocketFaceStreams @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val publishedCards: PublishedPocketCards,
 ) : PocketFaceStreams {
+    // The execution each card on screen draws from, which its presses go to.
+    private val executions = ConcurrentHashMap<PocketCardKey, TrUAPIWorkerExecution>()
+
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun renderFaces(key: PocketCardKey): Flow<RenderedFace> = flow {
         // A card whose product publishes no Pocket worker has nothing to stream, and the reference
@@ -49,10 +54,13 @@ class TrUAPIPocketFaceStreams @Inject constructor(
         try {
             emitAll(
                 runtime.workerExecutionState(key.productId)
-                    .flatMapLatest { state -> (state as? WorkerExecutionState.Running)?.execution?.faces(key) ?: emptyFlow() }
+                    .map { state -> (state as? WorkerExecutionState.Running)?.execution }
+                    .onEach { execution -> if (execution == null) executions.remove(key) else executions[key] = execution }
+                    .flatMapLatest { execution -> execution?.faces(key) ?: emptyFlow() }
                     .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),
             )
         } finally {
+            executions.remove(key)
             claim.release()
         }
     }
@@ -70,7 +78,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
     }
 
     override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
-        val execution = runtimeProvider.currentRuntime()?.currentWorkerExecution(key.productId) ?: return
+        val execution = executions[key] ?: return
         runCatching { execution.publishRendererAction(HostRendererActionSubscribeItem(key.renderContext(), actionId, payload)) }
             .logFailure("truapi.renderer.action '$actionId' for ${key.cardId.value}")
     }
@@ -83,7 +91,6 @@ class TrUAPIPocketFaceStreams @Inject constructor(
 
     private fun TrUAPIWorkerExecution.faces(key: PocketCardKey): Flow<RenderedFace> =
         render(ProductRendererRenderRequest(key.renderContext(), payload = ByteArray(0)))
-            .retryWhileConnecting()
             .map { tree -> RenderedFace(tree) { resolveDrawn(key, tree) } }
 
     private fun TrUAPIWorkerExecution.resolveDrawn(key: PocketCardKey, tree: RendererNode): MaterialsResolution? =
