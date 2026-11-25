@@ -6,6 +6,9 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.chains.network.binding.BlockHash
 import io.paritytech.polkadotapp.chains.network.binding.ScaleResult
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_transactions.api.data.validation.EncodedExtrinsicBody
+import io.paritytech.polkadotapp.feature_transactions.api.data.validation.ExtrinsicValidator
+import io.paritytech.polkadotapp.feature_transactions.api.data.validation.TransactionValidity
 import javax.inject.Inject
 
 class RealExtrinsicValidator @Inject constructor(

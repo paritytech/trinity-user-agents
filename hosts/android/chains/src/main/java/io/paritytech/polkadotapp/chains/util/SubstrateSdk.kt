@@ -243,6 +243,8 @@ fun RuntimeMetadata.identity() = module(Modules.IDENTITY)
 
 fun RuntimeMetadata.resources() = module(Modules.RESOURCES)
 
+fun RuntimeMetadata.parameters() = module(Modules.PARAMETERS)
+
 fun RuntimeMetadata.assetRegistry() = module(ASSET_REGISTRY)
 
 fun RuntimeMetadata.tokens() = module(TOKENS)
@@ -407,6 +409,8 @@ object Modules {
     const val IDENTITY = "Identity"
 
     const val RESOURCES = "Resources"
+
+    const val PARAMETERS = "Parameters"
 
     const val PEOPLE_LITE = "PeopleLite"
 
