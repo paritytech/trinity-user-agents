@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.truapiHostVersion
 
 class HostPageOpensTest {
     private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
@@ -38,8 +39,9 @@ class HostPageOpensTest {
                     "open.source" to "pocket_card",
                     "host.session_id" to "tap-session",
                     "open.reused" to "false",
+                    "truapi.host_version" to truapiHostVersion(),
                 ),
-                extras = mapOf("host.app_build" to 123L),
+                extras = mapOf("host.app_build" to 123L, "event.monotonic_ms" to nowMs),
                 isFailure = false,
             ),
             events.single(),
