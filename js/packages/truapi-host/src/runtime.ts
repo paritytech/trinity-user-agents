@@ -169,7 +169,11 @@ export interface StackStatus {
    * again to follow it. A copy on another TLD is refused and never sets it.
    */
   restartRequired: boolean;
-  /** The last finished fetch. Not set before the first one. */
+  /**
+   * The last finished fetch. Not set before the first one. A fetch that
+   * changed the stored record finishes once that record is stored or its
+   * store fails; the whole status shows it only from then on.
+   */
   lastRefresh?: {
     /**
      * `current`: the published descriptor is the copy the core holds.

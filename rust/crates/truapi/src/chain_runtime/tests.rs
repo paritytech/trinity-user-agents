@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_support::{
-	HeardAnswers, ScriptedProvider, extract_id, notification_sender, wait_for_sent,
+	HeardAnswers, ScriptedProvider, extract_id, finish, notification_sender, wait_for_sent,
 };
 use core::time::Duration;
 use futures::pin_mut;
@@ -2727,11 +2727,11 @@ fn a_connection_to_a_chain_with_a_different_genesis_hash_is_refused() {
 	let runtime =
 		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
 
-	let refused = futures::executor::block_on(runtime.rpc_client("test", &named))
+	let refused = finish(runtime.rpc_client("test", &named))
 		.err()
 		.expect("a chain with a different genesis hash is refused");
 	let socket_closed = provider.sender.lock().unwrap().is_none();
-	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let again = finish(runtime.rpc_client("test", &named));
 
 	assert!(socket_closed, "a refused connection's socket is closed");
 	assert!(again.is_err(), "the refused connection is not kept");
@@ -2768,8 +2768,8 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 	let runtime =
 		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
 
-	let first = futures::executor::block_on(runtime.rpc_client("test", &named));
-	let second = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let first = finish(runtime.rpc_client("test", &named));
+	let second = finish(runtime.rpc_client("test", &named));
 
 	assert!(first.is_ok() && second.is_ok(), "the chain is usable");
 	assert_eq!(
@@ -2789,12 +2789,12 @@ fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	let provider = node_answering_in_turn(vec![genesis_reply(named), genesis_reply(answered)]);
 	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
-		.expect("the first connection reaches the chain");
+	let earlier =
+		finish(runtime.rpc_client("test", &named)).expect("the first connection reaches the chain");
 
-	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let newer = finish(runtime.for_product(1).rpc_client("test", &named));
 	crate::test_support::wait_until(|| earlier.is_closed(), "the earlier connection is closed");
-	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let again = finish(runtime.rpc_client("test", &named));
 
 	assert!(newer.is_err() && again.is_err(), "the restarted chain is handed out to nobody");
 	assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 3);
@@ -2816,11 +2816,11 @@ fn a_wrong_answer_leaves_the_earlier_connections_that_still_reach_the_chain_open
 	]);
 	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
-		.expect("the first connection reaches the chain");
+	let earlier =
+		finish(runtime.rpc_client("test", &named)).expect("the first connection reaches the chain");
 
-	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
-	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let newer = finish(runtime.for_product(1).rpc_client("test", &named));
+	let again = finish(runtime.rpc_client("test", &named));
 
 	assert_eq!(
 		(
@@ -2843,10 +2843,10 @@ fn a_connection_that_gets_no_answer_leaves_the_earlier_ones_open() {
 	let provider = node_answering_in_turn(vec![genesis_reply(named), no_answer]);
 	let runtime = ChainRuntime::new(provider, Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
-		.expect("the first connection reaches the chain");
+	let earlier =
+		finish(runtime.rpc_client("test", &named)).expect("the first connection reaches the chain");
 
-	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let newer = finish(runtime.for_product(1).rpc_client("test", &named));
 
 	assert_eq!((newer.is_err(), earlier.is_closed()), (true, false));
 }
@@ -2861,13 +2861,13 @@ fn a_wrong_answer_on_a_connection_the_caller_opened_closes_the_pooled_ones() {
 	let redialled = node_answering_in_turn(vec![genesis_reply(named), genesis_reply(answered)]);
 	let runtime = ChainRuntime::new(redialled, Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
-	let pooled = futures::executor::block_on(runtime.rpc_client("test", &named))
+	let pooled = finish(runtime.rpc_client("test", &named))
 		.expect("the pooled connection reaches the chain");
 	let own = futures::executor::block_on(node_of(answered).connect(named.to_vec()))
 		.expect("the scripted node accepts the connection");
 	let own = HostRpcClient::new(own, Spawner::for_test());
 
-	let refused = futures::executor::block_on(runtime.check_genesis(named, &own));
+	let refused = finish(runtime.check_genesis(named, &own));
 
 	assert!(refused.is_err(), "the caller's own connection is refused");
 	crate::test_support::wait_until(|| pooled.is_closed(), "the pooled connection is closed");
@@ -2884,7 +2884,7 @@ fn a_connection_asked_again_is_closed_only_when_it_reaches_another_chain() {
 		let runtime = ChainRuntime::new(node, Spawner::for_test());
 		let connection = futures::executor::block_on(runtime.connection_for("test", &named))
 			.expect("the scripted node accepts the connection");
-		futures::executor::block_on(close_connections_on_another_chain(
+		finish(close_connections_on_another_chain(
 			vec![connection.clone()],
 			named,
 			runtime.timer.clone(),
@@ -2944,7 +2944,7 @@ fn a_products_connection_is_checked_like_the_cores() {
 	let runtime =
 		ChainRuntime::new(node_of(answered), Spawner::for_test()).checking_genesis(heard.clone());
 
-	let product = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let product = finish(runtime.for_product(1).rpc_client("test", &named));
 
 	assert!(product.is_err(), "the product is not given the wiped chain");
 	assert_eq!(heard.heard(), vec![GenesisHashes { named, answered }]);
@@ -2981,6 +2981,7 @@ fn a_node_that_hangs_up_before_naming_its_chain_is_unavailable() {
 
 	wait_for_sent(&provider, |sent| !sent.is_empty());
 	provider.sender.lock().unwrap().take();
+	crate::test_support::wait_until(|| connect.is_finished(), "the connection fails");
 	let failure = connect.join().unwrap().expect("the chain hung up");
 
 	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
@@ -3005,7 +3006,7 @@ fn a_node_that_does_not_name_its_chain_is_not_used() {
 			Spawner::for_test(),
 		)
 		.checking_genesis(heard.clone());
-		let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+		let failure = finish(runtime.rpc_client("test", &[0xa1; 32]))
 			.err()
 			.expect("a chain that gives no genesis hash is not used");
 		(failure.kind(), heard.heard().len())
@@ -3077,6 +3078,7 @@ fn connect_through_halts(
 		crate::test_support::wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
 		timer.advance(pause);
 	}
+	crate::test_support::wait_until(|| connect.is_finished(), "the check ends after the pauses");
 	connect.join().unwrap()
 }
 
@@ -3104,6 +3106,151 @@ fn a_chain_that_stays_halted_is_unavailable() {
 	let failure = connect_through_halts(halted, chain_halt::HALT_RETRIES, &heard);
 
 	assert_eq!((failure, heard.heard()), (Some(RuntimeFailureKind::Unavailable), Vec::new()));
+}
+
+/// The check can pause for most of a minute while the chain is halted, with
+/// no request out for the silence deadline to time. A caller that gives up
+/// meanwhile must not leave the setup with nothing to drive it, holding the
+/// socket until the next caller on the chain or the scope's release. The setup
+/// goes on alone, and closes the socket once the halt outlasts its retries.
+#[test]
+fn a_connection_no_caller_waits_for_still_closes_once_the_halt_outlasts_the_check() {
+	let named = [0xa1; 32];
+	let provider = node_halted_for(usize::MAX, named);
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.with_timer(timer.clone())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+
+	let given_up = runtime.rpc_client("test", &named).now_or_never();
+	for (sleep, pause) in chain_halt::halt_schedule().into_iter().enumerate() {
+		crate::test_support::wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
+		timer.advance(pause);
+	}
+
+	assert!(given_up.is_none(), "a halted chain is not handed out at once");
+	let socket_closed = || provider.sender.lock().unwrap().is_none();
+	crate::test_support::wait_until(socket_closed, "the socket closes");
+}
+
+/// A setup that ends without a caller and passes the check keeps its
+/// connection, so the next caller on the chain is handed that one rather
+/// than dialling again.
+#[test]
+fn a_connection_no_caller_waits_for_is_handed_to_the_next_caller() {
+	let named = [0xa1; 32];
+	let provider = node_halted_for(1, named);
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.with_timer(timer.clone())
+		.checking_genesis(heard.clone());
+
+	let given_up = runtime.rpc_client("test", &named).now_or_never();
+	crate::test_support::wait_until(|| timer.sleeps() == 1, "the check pauses for the halt");
+	timer.advance(chain_halt::halt_schedule()[0]);
+	let ready = || {
+		let scopes = runtime.connections.lock().unwrap();
+		matches!(
+			scopes[&ConnectionScope::Core].get(&encode_hex(&named)),
+			Some(ConnectionEntry::Ready(_))
+		)
+	};
+	crate::test_support::wait_until(ready, "the abandoned setup leaves its connection ready");
+	let next = finish(runtime.rpc_client("test", &named));
+
+	assert_eq!(
+		(
+			given_up.is_none(),
+			next.is_ok(),
+			heard.heard().len(),
+			provider.connect_calls.load(Ordering::SeqCst),
+		),
+		(true, true, 1, 1)
+	);
+}
+
+/// A host that opens the socket when asked and hands it over only once
+/// `handover` fires, as a browser host's `chainConnect` promise settles after
+/// it dialled.
+struct LateHandover {
+	node: Arc<ScriptedProvider>,
+	handover: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl RuntimeChainProvider for LateHandover {
+	async fn connect(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+		let socket = self.node.connect(genesis_hash).await;
+		let handover = self.handover.lock().unwrap().take().expect("the test dials once");
+		let _ = handover.await;
+		socket
+	}
+}
+
+/// A scope released while the host is still handing a connection over must
+/// not leave that socket open with nothing to close it, nor hold it through a
+/// genesis check of up to a minute that nobody needs, against the host's
+/// limit of sockets per chain. The setup runs on, and closes the connection as
+/// it is handed over.
+#[test]
+fn a_connection_handed_over_after_its_scope_was_released_is_closed_unchecked() {
+	let named = [0xa1; 32];
+	let node = node_of(named);
+	let (hand_over, handover) = futures::channel::oneshot::channel();
+	let host = LateHandover { node: node.clone(), handover: Mutex::new(Some(handover)) };
+	let heard = Arc::<HeardAnswers>::default();
+	let product = ChainRuntime::new(Arc::new(host), Spawner::for_test())
+		.checking_genesis(heard.clone())
+		.for_product(1);
+
+	let given_up = product.rpc_client("test", &named).now_or_never();
+	crate::test_support::wait_until(
+		|| node.connect_calls.load(Ordering::SeqCst) == 1,
+		"the host dials",
+	);
+	product.release_scope();
+	let _ = hand_over.send(());
+	let socket_closed = || node.sender.lock().unwrap().is_none();
+	crate::test_support::wait_until(socket_closed, "the socket handed over late is closed");
+
+	assert_eq!(
+		(given_up.is_none(), node.sent.lock().unwrap().clone(), heard.heard()),
+		(true, Vec::<String>::new(), Vec::new())
+	);
+}
+
+/// A runtime dropped while the host dials must not stay held by the dial. A
+/// native host's genesis check is its stack refresh, which keeps the core
+/// database open, so until the host answers the setup holds it only weakly.
+#[test]
+fn a_dial_the_host_has_not_answered_does_not_hold_the_genesis_check() {
+	let named = [0xa1; 32];
+	let node = node_of(named);
+	let (hand_over, handover) = futures::channel::oneshot::channel();
+	let host = LateHandover { node: node.clone(), handover: Mutex::new(Some(handover)) };
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(Arc::new(host), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let given_up = runtime.rpc_client("test", &named).now_or_never();
+	crate::test_support::wait_until(
+		|| node.connect_calls.load(Ordering::SeqCst) == 1,
+		"the host dials",
+	);
+	drop(runtime);
+	let holders_of_the_check = Arc::strong_count(&heard);
+	let _ = hand_over.send(());
+	let socket_closed = || node.sender.lock().unwrap().is_none();
+	crate::test_support::wait_until(socket_closed, "the socket handed over late is closed");
+
+	assert_eq!(
+		(given_up.is_none(), holders_of_the_check, node.sent.lock().unwrap().len()),
+		(true, 1, 0)
+	);
 }
 
 /// A product mints its follow id from the request id it chose, which is

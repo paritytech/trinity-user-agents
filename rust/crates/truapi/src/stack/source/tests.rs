@@ -31,6 +31,20 @@ fn serve(source: &mut StackSource, descriptor: &serde_json::Value, now: i64) -> 
 	source.fetched(Ok(Served::Document { bytes: &bytes, etag: None }), now)
 }
 
+/// [`serve`], with the record it returns stored, as the refresh loop stores
+/// it before the host is told of the fetch.
+fn serve_stored(
+	source: &mut StackSource,
+	descriptor: &serde_json::Value,
+	now: i64,
+) -> Option<Vec<u8>> {
+	let record = serve(source, descriptor, now);
+	if record.is_some() {
+		source.record_stored();
+	}
+	record
+}
+
 fn unreachable() -> StackRefreshOutcome {
 	StackRefreshOutcome::Unreachable { reason: "connection refused".to_string() }
 }
@@ -71,7 +85,7 @@ fn a_newer_copy_on_the_same_chains_is_used_at_once() {
 	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
 	let newer = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 
-	let record = serve(&mut source, &newer, START);
+	let record = serve_stored(&mut source, &newer, START);
 
 	assert!(record.is_some(), "the newer copy is stored");
 	assert_eq!(source.status(), stack_status(&newer, Some(StackRefreshOutcome::Current)));
@@ -148,14 +162,15 @@ fn a_restart_is_asked_for_only_once_the_record_is_stored() {
 	let mut source = load(&bundled, None);
 
 	let first_record = serve(&mut source, &wiped, START);
-	let before_the_store = source.status().restart_required;
+	source.record_not_stored("disk full".to_string());
+	let after_the_failed_store = source.status().restart_required;
 	let second_record = serve(&mut source, &wiped, START + 3600);
 	source.record_stored();
 
 	assert_eq!(
 		(
 			first_record.is_some(),
-			before_the_store,
+			after_the_failed_store,
 			second_record.is_some(),
 			source.status().restart_required
 		),
@@ -213,7 +228,7 @@ fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
 	let fetched = refused.map(|copy| {
 		let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
 		let refusal = serve(&mut source, &copy, START);
-		let record = serve(&mut source, &corrected, START + 3600);
+		let record = serve_stored(&mut source, &corrected, START + 3600);
 		(refusal, record.is_some(), source.status())
 	});
 
@@ -359,7 +374,7 @@ fn a_stale_or_expired_copy_is_reported() {
 	newer["validUntil"] = (START - 10).into();
 	newer["expiresAt"] = (START + 10).into();
 
-	serve(&mut source, &newer, START);
+	serve_stored(&mut source, &newer, START);
 	let stale = source.status();
 	let _no_record = fail(&mut source, START + 10);
 
@@ -377,7 +392,7 @@ fn fetched_at_start() -> (serde_json::Value, StackSource) {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 	source.due_fetch(START).expect("a build copy is due at once");
-	serve(&mut source, &bundled, START);
+	serve_stored(&mut source, &bundled, START);
 	(bundled, source)
 }
 

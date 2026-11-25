@@ -159,6 +159,14 @@ type ScopeTransactionOperations = BTreeMap<u64, TransactionOperation>;
 /// Shared, single-flight provider connect keyed by genesis hash. Concurrent
 /// first connections for the same chain await one in-flight `connect` rather
 /// than each opening a connection and orphaning all but the last insert.
+///
+/// A task polls it beside its callers, so it runs to its end even once no
+/// caller waits, its scope is released or its runtime is dropped. When the
+/// host's `connect` answers, a setup no longer wanted closes the connection at
+/// once. Any other runs the genesis check, whose waits are bounded, then
+/// leaves the connection ready for the next caller or drops it, which closes
+/// the socket. Until `connect` answers it holds the genesis check only weakly,
+/// and a `connect` the host never answers keeps that task for good.
 type ConnectionSetup = Shared<BoxFuture<'static, Result<Arc<ChainConnection>, RuntimeFailure>>>;
 
 /// Shared, single-flight setup of the connection's cached Subxt client.
@@ -609,7 +617,9 @@ impl ChainRuntime {
 	/// connection, so a later teardown could no longer abort anything.
 	///
 	/// Pending connections occupy an entry too; completion cannot restore an
-	/// entry removed by teardown.
+	/// entry removed by teardown. Their setup runs on, and closes the
+	/// connection it opens once it finds the scope gone, which it looks for as
+	/// the host hands the connection over and again after the genesis check.
 	pub fn release_scope(&self) {
 		let dropped: Vec<Arc<ChainConnection>> = self
 			.connections
@@ -1123,14 +1133,22 @@ impl ChainRuntime {
 					let runtime_calls = self.runtime_calls.clone();
 					let genesis_check = match &self.genesis_check {
 						Some(check) => {
-							Some((check.clone(), hash_from_bytes(method, &genesis_hash)?.0))
+							Some((Arc::downgrade(check), hash_from_bytes(method, &genesis_hash)?.0))
 						},
 						None => None,
 					};
 					let identity = Arc::new(());
 					let setup_identity = identity.clone();
 					let setup: ConnectionSetup = async move {
-						let connected = provider.connect(genesis_hash.clone()).await.map(|rpc| {
+						let connected = provider.connect(genesis_hash.clone()).await;
+						if let Ok(rpc) = &connected &&
+							let Some(failure) =
+								abandoned(&registry, &scope, &setup_key, &setup_identity)
+						{
+							rpc.close();
+							return Err(failure);
+						}
+						let connected = connected.map(|rpc| {
 							ChainConnection::new(
 								rpc,
 								spawner,
@@ -1142,17 +1160,20 @@ impl ChainRuntime {
 							)
 						});
 						let result = match (connected, genesis_check) {
-							(Ok(connection), Some((check, named))) => verify_genesis(
-								&connection.methods,
-								named,
-								check.as_ref(),
-								&connection.timer,
-								&connection.spawner,
-								&registry,
-								&setup_key,
-							)
-							.await
-							.map(|()| connection),
+							(Ok(connection), Some((check, named))) => match check.upgrade() {
+								Some(check) => verify_genesis(
+									&connection.methods,
+									named,
+									check.as_ref(),
+									&connection.timer,
+									&connection.spawner,
+									&registry,
+									&setup_key,
+								)
+								.await
+								.map(|()| connection),
+								None => Err(scope_released(CONNECT_METHOD)),
+							},
 							(connected, _) => connected,
 						};
 						let registry =
@@ -1181,6 +1202,7 @@ impl ChainRuntime {
 					}
 					.boxed()
 					.shared();
+					self.spawner.spawn(setup.clone().map(drop));
 					connections.insert(
 						key,
 						ConnectionEntry::Connecting { identity, setup: setup.clone() },
@@ -2392,6 +2414,32 @@ async fn close_connections_on_another_chain(
 
 fn scope_released(method: &'static str) -> RuntimeFailure {
 	RuntimeFailure::unavailable_with_reason(method, "chain connections were released")
+}
+
+/// Why the setup `identity` names for `key` in `scope` is no longer wanted:
+/// the scope or its runtime is gone, or another setup took the entry. `None`
+/// while the entry is still this setup's.
+fn abandoned(
+	registry: &Weak<ConnectionRegistry>,
+	scope: &ConnectionScope,
+	key: &str,
+	identity: &Arc<()>,
+) -> Option<RuntimeFailure> {
+	let Some(registry) = registry.upgrade() else {
+		return Some(scope_released(CONNECT_METHOD));
+	};
+	let scopes = registry.lock().unwrap();
+	let Some(connections) = scopes.get(scope) else {
+		return Some(scope_released(CONNECT_METHOD));
+	};
+	match connections.get(key) {
+		Some(ConnectionEntry::Connecting { identity: current, .. })
+			if Arc::ptr_eq(current, identity) =>
+		{
+			None
+		},
+		_ => Some(connection_superseded()),
+	}
 }
 
 fn connection_superseded() -> RuntimeFailure {

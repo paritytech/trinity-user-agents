@@ -4,7 +4,9 @@ use std::sync::{
 };
 
 use futures::{
-	channel::mpsc,
+	FutureExt,
+	channel::{mpsc, oneshot},
+	future::BoxFuture,
 	stream::{BoxStream, StreamExt},
 };
 use serde_json::json;
@@ -25,7 +27,9 @@ use crate::{
 		StatementWatchError, TopicFilter, hex_topic,
 	},
 	platform::JsonRpcConnection,
-	test_support::{HeardAnswers, StubPlatform, statement_page_frame, subscribe_ack_frame},
+	test_support::{
+		HeardAnswers, StubPlatform, finish, statement_page_frame, subscribe_ack_frame, wait_until,
+	},
 };
 
 const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -433,7 +437,7 @@ fn checked_statement_store(genesis: [u8; 32]) -> CheckedStore {
 fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 	let CheckedStore { statement_store, heard, .. } = checked_statement_store(PEOPLE_GENESIS);
 
-	let client = block_on(statement_store.client("test"));
+	let client = finish(statement_store.client("test"));
 
 	assert!(client.is_ok(), "{:?}", client.err());
 	assert_eq!(
@@ -453,7 +457,7 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 		checked_statement_store(WIPED_PEOPLE);
 
 	let refused =
-		block_on(statement_store.client("test")).expect_err("the wiped People chain is refused");
+		finish(statement_store.client("test")).expect_err("the wiped People chain is refused");
 
 	let kind = match refused {
 		StatementStoreRpcClientError::Chain(failure) => Some(failure.kind()),
@@ -475,4 +479,57 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 			0,
 		)
 	);
+}
+
+/// A browser host's `chainConnect` can settle after the caller that dialled
+/// gave up, as a withdrawn SSO request does. The connection it hands over then
+/// has nobody to close it, so the dial closes it itself.
+#[test]
+fn a_subscription_connection_handed_over_after_its_caller_went_is_closed() {
+	let (hand_over, handover) = oneshot::channel();
+	let node = Arc::new(StubPlatform {
+		chain_connect_handover: Some(handover.shared()),
+		..Default::default()
+	});
+	let statement_store = StatementStoreRpc::new(
+		node.clone(),
+		ChainRuntime::new(PeopleChain::new(vec![Upstream::Drops]), Spawner::for_test()),
+		PEOPLE_GENESIS,
+		Spawner::for_test(),
+	);
+
+	let mut client = Box::pin(statement_store.client("test"));
+	let dialling = || {
+		let handed_out = client.as_mut().now_or_never();
+		assert!(handed_out.is_none(), "the connection is not handed out before the host hands it");
+		node.chain_connects.lock().unwrap().len() == 1
+	};
+	wait_until(dialling, "the host dials");
+	drop(client);
+	let _ = hand_over.send(());
+	let closed = || node.chain_closes.load(Ordering::SeqCst) == 1;
+
+	wait_until(closed, "the connection handed over late is closed");
+}
+
+/// A caller withdrawn before the dial's task starts leaves nothing to dial
+/// for, so the host is not asked for a People socket only to have it closed.
+#[test]
+fn a_dial_whose_caller_went_before_it_started_is_not_made() {
+	let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
+	let queue = queued.clone();
+	let spawner = Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task));
+	let node = Arc::new(StubPlatform::default());
+	let statement_store = StatementStoreRpc::new(
+		node.clone(),
+		ChainRuntime::new(PeopleChain::new(vec![Upstream::Drops]), Spawner::for_test()),
+		PEOPLE_GENESIS,
+		spawner,
+	);
+
+	let given_up = statement_store.client("test").now_or_never();
+	let dial = queued.lock().unwrap().pop().expect("the dial waits for its task");
+	block_on(dial);
+
+	assert_eq!((given_up.is_none(), node.chain_connects.lock().unwrap().len()), (true, 0));
 }

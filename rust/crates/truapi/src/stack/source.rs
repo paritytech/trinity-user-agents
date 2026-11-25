@@ -156,7 +156,9 @@ pub struct StackStatus {
 	/// runtime again to follow it. A copy on another TLD is refused and never
 	/// sets it.
 	pub restart_required: bool,
-	/// The last finished fetch, or `None` before the first one.
+	/// The last finished fetch, or `None` before the first one. A fetch that
+	/// changed the stored record finishes once that record is stored or its
+	/// store fails; the whole status shows it only from then on.
 	pub last_refresh: Option<StackRefreshOutcome>,
 	/// Where a chain's last answer differed from the descriptor the core
 	/// runs: its chains in the descriptor's order, then People's
@@ -191,6 +193,10 @@ pub struct StackSource {
 	/// People's `NetworkSuffix` as last read, or `None` before any read. It is
 	/// not stored, so each runtime starts without one.
 	people_suffix: Option<Vec<u8>>,
+	/// The status from before the last [`Self::fetched`], shown until the
+	/// record it returned is stored or fails to store, so that the host is
+	/// never told `Current` for a copy whose store may still fail.
+	before_store: Option<StackStatus>,
 }
 
 impl StackSource {
@@ -233,6 +239,7 @@ impl StackSource {
 			last_refresh: None,
 			wrong_genesis: Vec::new(),
 			people_suffix: None,
+			before_store: None,
 		})
 	}
 
@@ -247,7 +254,14 @@ impl StackSource {
 	}
 
 	/// What the host is told about the stack.
+	///
+	/// While the record a [`Self::fetched`] returned is being stored, this is
+	/// the status from before that fetch, with the chains' answers since.
 	pub fn status(&self) -> StackStatus {
+		let mismatches = self.mismatches();
+		if let Some(before) = &self.before_store {
+			return StackStatus { mismatches, ..before.clone() };
+		}
 		StackStatus {
 			descriptor: serde_json::to_string(&self.running.descriptor)
 				.expect("a descriptor always serialises"),
@@ -256,7 +270,7 @@ impl StackSource {
 			expired: self.expired,
 			restart_required: self.next_start.is_some(),
 			last_refresh: self.last_refresh.clone(),
-			mismatches: self.mismatches(),
+			mismatches,
 		}
 	}
 
@@ -370,7 +384,8 @@ impl StackSource {
 	/// Takes the answer to a fetch, or why the fetch failed, and returns the
 	/// record to store when it changed. Store it, then call
 	/// [`Self::record_stored`], or [`Self::record_not_stored`] when the store
-	/// failed. The record goes back to [`Self::load`] as `stored`.
+	/// failed. Until then [`Self::status`] shows the status from before this
+	/// fetch. The record goes back to [`Self::load`] as `stored`.
 	///
 	/// A copy the core cannot run, or that changes a pinned field, is refused
 	/// and not stored. After a refused or failed fetch the record holds the
@@ -423,6 +438,9 @@ impl StackSource {
 				return None;
 			},
 		};
+		if refreshed.stored.is_some() {
+			self.before_store = Some(self.status());
+		}
 		self.last_refresh = Some(outcome);
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
@@ -441,6 +459,7 @@ impl StackSource {
 	/// host told to restart before the record is stored would start from the
 	/// old copy again.
 	pub fn record_stored(&mut self) {
+		self.before_store = None;
 		if let Some(copy) = self.unstored.take() {
 			self.next_start = Some(copy);
 		}
@@ -452,6 +471,7 @@ impl StackSource {
 	/// It shows in [`StackStatus::last_refresh`] only after a fetch that came
 	/// to `Current`. A refused or failed fetch stays reported as such.
 	pub fn record_not_stored(&mut self, reason: String) {
+		self.before_store = None;
 		if self.last_refresh == Some(StackRefreshOutcome::Current) {
 			self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });
 		}

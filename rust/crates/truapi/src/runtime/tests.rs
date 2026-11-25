@@ -1849,7 +1849,9 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 /// A call that ignores a withdrawal is dropped after a two-second grace.
 /// People's connection can take half a minute to open, while the host redials
 /// or the genesis check waits out a halted chain, so the wait for it watches
-/// the withdrawal and the product is answered at once.
+/// the withdrawal and the product is answered at once. The call is polled by
+/// hand, so it has to end in the poll after the withdrawal, before any grace
+/// could pass: the error alone reads the same either way.
 #[test]
 fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
 	let platform = Arc::new(StubPlatform {
@@ -1866,24 +1868,30 @@ fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
 		account: account_id("myapp.dot", 0),
 		payload: raw_payload(),
 	});
-
-	let call = std::thread::spawn(move || {
-		futures::executor::block_on(host.sign_raw(&cx, request)).is_err()
-	});
-	let dialled = || !platform.chain_connects.lock().unwrap().is_empty();
+	let mut call = Box::pin(host.sign_raw(&cx, request));
+	let dialled = || {
+		assert!(call.as_mut().now_or_never().is_none(), "the call waits for People");
+		!platform.chain_connects.lock().unwrap().is_empty()
+	};
 	wait_until(dialled, "People is dialled");
-	let withdrawn = std::time::Instant::now();
-	cancel.cancel();
-	let failed = call.join().ok();
-	let answered_in = withdrawn.elapsed();
 
+	cancel.cancel();
+	let answer = call.as_mut().now_or_never();
+
+	let Some(Err(CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown {
+		reason,
+	})))) = answer
+	else {
+		panic!("expected the call to end on the withdrawal at once, got {answer:?}");
+	};
 	assert!(
-		answered_in < AUTHORITY_CANCEL_UNWIND_GRACE / 2,
-		"answered {answered_in:?} after the withdrawal, as late as a call that ignores it"
+		reason.contains("cancelled") && reason.contains("sign-raw-connecting"),
+		"expected the withdrawal of this call, got {reason}"
 	);
 	assert_eq!(
-		(failed, platform.pending_connect_dropped.load(Ordering::SeqCst)),
-		(Some(true), true)
+		platform.chain_connects.lock().unwrap().clone(),
+		vec![paseo_test_stack().chains().people],
+		"the call was waiting on People"
 	);
 }
 

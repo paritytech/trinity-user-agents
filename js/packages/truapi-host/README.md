@@ -95,8 +95,9 @@ The core keeps the last copy it verified in core storage, under the
 bundled copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
-`/web` worker runtime does not pass these callbacks yet and has no
-`stackStatus()`, so a `/web` host sees a refused chain only as failing calls.
+`/web` and `/node` hosts run the core in a worker, `worker-runtime`, that does
+not pass these callbacks yet and exposes no `stackStatus()` to the host, so a
+host on them sees a refused chain only as failing calls.
 
 The test host has no descriptor, so it passes `testStack` instead: an `id` and
 a `generation`, the network, the TLD and each chain's genesis hash. Only the
