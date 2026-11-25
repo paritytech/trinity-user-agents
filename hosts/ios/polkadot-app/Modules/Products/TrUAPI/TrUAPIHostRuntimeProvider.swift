@@ -43,7 +43,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
-    private let fundingService: FundingService
+    private let fundingHandler: FundingCoreEventHandling
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
@@ -68,7 +68,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
-        fundingService: FundingService,
+        fundingHandler: FundingCoreEventHandling,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
@@ -80,7 +80,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
-        self.fundingService = fundingService
+        self.fundingHandler = fundingHandler
         self.tldProvider = tldProvider
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
@@ -136,16 +136,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Builds the runtime now, off the caller's thread, rather than on first
     /// use: the core resumes the funding sessions a provider was still working
-    /// on when it starts, and the funding service waits for it. Called once,
-    /// after the worker manager and payments are attached.
-    func setup() {
-        Task.detached { [weak self] in
-            do {
-                _ = try self?.sharedRuntime()
-            } catch {
-                self?.logger.error("[truapi] building the runtime at startup failed: \(error)")
-            }
-        }
+    /// on when it starts. Called once, after the worker manager and payments
+    /// are attached.
+    func setup() async throws -> TrUAPIHostRuntime {
+        try await Task.detached { [self] in try sharedRuntime() }.value
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -206,9 +200,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         // Also before any execution opens, so a product's Funding request
         // never answers unsupported. The core offers only the providers the
         // host lists: the ones `funding_config` names.
-        runtime.setFunding(AppFundingHostBridge(handler: fundingService))
-        bridge.onWorkerCrashing { [weak fundingService] productId in
-            fundingService?.workerCrashing(productId: productId)
+        runtime.setFunding(AppFundingHostBridge(handler: fundingHandler))
+        bridge.onWorkerCrashing { [weak fundingHandler] productId in
+            fundingHandler?.workerCrashing(productId: productId)
         }
         listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
@@ -224,7 +218,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
         cachedRuntime = runtime
-        fundingService.attach(runtime: runtime)
         return runtime
     }
 }

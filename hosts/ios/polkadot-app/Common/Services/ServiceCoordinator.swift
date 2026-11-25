@@ -244,7 +244,7 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
-            fundingService: fundingService,
+            fundingHandler: fundingService,
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
@@ -339,7 +339,13 @@ extension ServiceCoordinator {
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
         truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
-        truapiRuntimeProvider.setup()
+        Task { [logger] in
+            do {
+                try await fundingService.attach(runtime: truapiRuntimeProvider.setup())
+            } catch {
+                logger.error("[truapi] building the runtime at startup failed: \(error)")
+            }
+        }
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
