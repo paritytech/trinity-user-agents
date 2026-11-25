@@ -552,7 +552,10 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
 ///
 /// A URL that names where to fetch the image is refused, so the host never
 /// fetches from where a product points.
-fn validate_chat_resource(field: &'static str, resource: &str) -> Result<String, ChatFieldError> {
+pub fn validate_chat_resource(
+	field: &'static str,
+	resource: &str,
+) -> Result<String, ChatFieldError> {
 	let trimmed = resource.trim();
 	if trimmed.is_empty() {
 		return Ok(String::new());
@@ -2331,8 +2334,9 @@ pub trait PreimageHost: Send + Sync {
 /// fetch or open is restricted to `https` or an inline raster image and
 /// delivered as the parser resolved it. The one exception is the node of a HOP
 /// media item: a `wss` URL that the core screens only as a name. The icon of
-/// the room metadata and an image badge take no URL at all: inline image data
-/// or the CID of a Bulletin preimage, as RFC 0002 names resources.
+/// a v2 `create_chat_room`, the icon of the room metadata and an image badge
+/// take no URL at all: inline image data or the CID of a Bulletin preimage, as
+/// RFC 0002 names resources.
 ///
 /// The core screens a URL's shape, not its reachability. `https://127.0.0.1`,
 /// `https://[::1]`, a private range and `https://169.254.169.254` (the cloud

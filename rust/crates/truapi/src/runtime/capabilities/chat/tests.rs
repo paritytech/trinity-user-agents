@@ -957,3 +957,40 @@ fn a_room_keeps_its_icon_rules() {
 		]
 	);
 }
+
+// RFC 0002 makes the icon of a v2 room a resource: inline image data or the
+// CID of a preimage. A URL would make the host fetch from where the product
+// points, so it never reaches the host.
+#[test]
+fn a_v2_room_takes_a_resource_as_its_icon() {
+	let chat = RecordingHost::with_rooms(&[]);
+	let runtime = chat_runtime(chat.clone());
+	let create = |icon: &str| {
+		block_on(Chat::create_room(
+			&runtime,
+			&CallContext::default(),
+			HostChatCreateRoomRequest::V2(latest::HostChatCreateRoomRequest {
+				room_id_source: "support".to_string(),
+				name: "Support".to_string(),
+				icon: icon.to_string(),
+				config: latest::ChatRoomConfig::default(),
+			}),
+		))
+	};
+	let inline = "data:image/png;base64,AQID";
+	let cid = crate::BulletinCid::from([7; 32]).to_string();
+
+	assert_eq!(
+		create("https://icons.example/support.png"),
+		Err(CallError::Domain(HostChatCreateRoomError::V2(
+			latest::HostChatCreateRoomError::Unknown {
+				reason: ChatFieldError::NotAResource { field: "icon" }.to_string(),
+			}
+		)))
+	);
+	assert!(chat.icons.lock().unwrap().is_empty(), "a refused icon must not reach the host");
+	create(inline).expect("an inline icon is accepted");
+	create(&format!(" {cid} ")).expect("a preimage CID is accepted");
+	create("").expect("no icon is accepted");
+	assert_eq!(*chat.icons.lock().unwrap(), [inline.to_string(), cid, String::new()]);
+}

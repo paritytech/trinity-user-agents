@@ -36,6 +36,9 @@ pub trait Chat: Send + Sync {
 	/// replaces it, also for a room that exists, so a product declares its rooms
 	/// again when it starts.
 	///
+	/// In version 2 the icon is inline image data or the CID of a Bulletin
+	/// preimage: a URL to fetch is refused.
+	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",

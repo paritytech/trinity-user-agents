@@ -36,8 +36,8 @@ use crate::{
 	platform::{
 		ChatFieldError, ChatPlatform, ChatRoomChangeOutcome, normalize_chat_identifier,
 		validate_chat_custom_message, validate_chat_feed_update, validate_chat_icon,
-		validate_chat_message_content, validate_chat_name, validate_chat_room_metadata,
-		validate_chat_room_preview,
+		validate_chat_message_content, validate_chat_name, validate_chat_resource,
+		validate_chat_room_metadata, validate_chat_room_preview,
 	},
 	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
@@ -74,7 +74,11 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				request.room_id_source = normalize_chat_identifier(field, &request.room_id_source)
 					.map_err(field_error)?;
 				request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
-				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
+				// RFC 0002 makes the icon of a v0.2 room a resource. A v0.1
+				// product keeps the icon rules it was built against.
+				let validate_icon =
+					if product_names_room { validate_chat_icon } else { validate_chat_resource };
+				request.icon = validate_icon("icon", &request.icon).map_err(field_error)?;
 				let room_id = if product_names_room {
 					request.room_id_source.clone()
 				} else {
