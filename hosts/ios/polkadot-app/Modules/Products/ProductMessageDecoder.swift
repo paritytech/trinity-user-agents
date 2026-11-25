@@ -73,7 +73,7 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
                 refusedRoomFooters[roomId] = footer
                 logger
                     .warning(
-                        "[truapi.product] A \(messageType) card is docked, but only the TrUAPI chat runtime can draw one"
+                        "[truapi.chat] A card is docked, but only the TrUAPI chat runtime can draw one"
                     )
             }
             return nil
