@@ -345,13 +345,15 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Return what the host keeps for one room of the product: whether the
     /// product hosts it or takes part as a bot, and the configuration of its
     /// last `createRoom`. The core reads it once before each change to a room
-    /// and before each query of the room. The host looks the room up among the
-    /// rooms of the product only. Answer `nil` for a room that the product
-    /// never created, and throw when the host cannot read its rooms. The
-    /// default finds the room in ``listRooms()`` and pairs it with
-    /// ``ChatRoomConfig/hostDefault``. A host that serves a Chat Extension v2
-    /// request implements `room` with a read of one room, because the default
-    /// reads the whole room list for each change to a room.
+    /// and before each query of the room. Before a posted message it reads the
+    /// room the product names, before any check that the product created the
+    /// room. The host looks the room up among the rooms of the product only.
+    /// Answer `nil` for a room that the product never created, and throw when
+    /// the host cannot read its rooms. The default finds the room in
+    /// ``listRooms()`` and pairs it with ``ChatRoomConfig/hostDefault``. A
+    /// host that serves a Chat Extension v2 request implements `room` with a
+    /// read of one room, because the default reads the whole room list for
+    /// each change to a room.
     func room(roomId: String) async throws -> ChatRoomState?
 
     /// Replace the name, description, icon and empty-room text of a room, and

@@ -27,7 +27,6 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.ChatRoomState
-import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 
@@ -43,8 +42,6 @@ class ProductChatHostBridge(
     override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus =
         createRoom(roomId, name, icon, HOST_DEFAULT_CHAT_ROOM_CONFIG)
 
-    // The room screen reads the messages of a room from the host store only, so this host refuses a room whose product
-    // keeps the messages, before it creates anything.
     override suspend fun createRoom(
         roomId: String,
         name: String,
@@ -52,7 +49,6 @@ class ProductChatHostBridge(
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        if (config.productSource) throw HostChatCreateRoomException.UnsupportedConfig()
         val roomIcon = ProductChatIcon.fromCallback(icon).orReject()
         val room = ProductChatIdParameter(roomId)
         val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status

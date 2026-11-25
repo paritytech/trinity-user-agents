@@ -2618,10 +2618,11 @@ pub trait ChatPlatform: Send + Sync {
 	/// The core calls it once before each change to a room: to check that the
 	/// product hosts the room, and to read whether the host stores its
 	/// messages. It calls it once before each query it asks the product, to
-	/// read which queries the product answers. The host looks the room up
-	/// among the rooms of the product only. `None` is a room that the product
-	/// never created. A host that cannot read its rooms returns an error, not
-	/// `None`.
+	/// read which queries the product answers. Before `post_chat_message` it
+	/// reads the room that the product names, before any check that the
+	/// product created the room. The host looks the room up among the rooms of
+	/// the product only. `None` is a room that the product never created. A
+	/// host that cannot read its rooms returns an error, not `None`.
 	async fn chat_room(
 		&self,
 		product: &ProductContext,

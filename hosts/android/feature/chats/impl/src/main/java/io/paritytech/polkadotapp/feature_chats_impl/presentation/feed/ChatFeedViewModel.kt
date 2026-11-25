@@ -48,6 +48,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
@@ -81,6 +82,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -90,7 +92,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -175,11 +177,22 @@ class ChatFeedViewModel @Inject constructor(
         ),
         combineToPair(reactions, interactor.subscribePeerSeenOrder(chatId)),
         originDisplayResolver,
-        revisions,
+        combineToPair(revisions, feedSnapshot.map { it.replyQuotes }.distinctUntilChanged()),
         customMessageRenderers
-    ) { (messages, activeCall), (reactions, peerSeenOrder), originDisplayResolver, revisionsMap, customMessageRenderers ->
-        messageUiMapper.map(messages, originDisplayResolver, reactions, revisionsMap, peerSeenOrder, customMessageRenderers, activeCall)
+    ) { (messages, activeCall), (reactions, peerSeenOrder), originDisplayResolver, (revisionsMap, replyQuotes), customMessageRenderers ->
+        messageUiMapper.map(
+            messages = messages,
+            originDisplayResolver = originDisplayResolver,
+            reactions = reactions,
+            revisions = revisionsMap,
+            peerSeenOrder = peerSeenOrder,
+            customMessageRenderers = customMessageRenderers,
+            activeCall = activeCall,
+            replyQuotes = replyQuotes,
+        )
     }.shareInBackground()
+
+    private val readiness = feedSnapshot.map { it.readiness }.distinctUntilChanged()
 
     override val chatDisplay = interactor.observeChatDisplay(openChatRequest)
         .withLastContentKept(keepsLastContent) { it.isSuccess }
@@ -234,18 +247,16 @@ class ChatFeedViewModel @Inject constructor(
         chatInputStateType.toChatInputUiState(messageInput, answerProgress)
     }.stateIn(this, SharingStarted.Eagerly, ChatInputUiState.Hidden)
 
-    private val firstNewMessageInfo = messages
-        .take(1)
-        .map { messagesList ->
-            val index = messagesList.indexOfLast { it.isUnread() }.collectionIndexOrNull()
-
-            if (index != null) {
-                FirstNewMessageInfo(
-                    index = index,
-                    messageId = messagesList[index].id
-                )
-            } else null
+    // The "New messages" marker waits for the first page of a product-source room, so a cached page does not set it, and
+    // for that page to reach the mapped list, which starts empty while the snapshot already holds the messages.
+    private val firstNewMessageInfo = combineToPair(messages, feedSnapshot)
+        .transformWhile { (messagesList, snapshot) ->
+            val ready = snapshot.readiness != ChatRoomReadiness.LOADING &&
+                (messagesList.isNotEmpty() || snapshot.messages.isEmpty())
+            emit(if (ready) messagesList.firstNewMessageInfo() else null)
+            !ready
         }
+        .distinctUntilChanged()
         .shareInBackground()
 
     private val unreadCounter = combine(
@@ -259,13 +270,17 @@ class ChatFeedViewModel @Inject constructor(
         messages,
         firstNewMessageInfo,
         unreadCounter.distinctUntilChanged(),
-    ) { messagesList, firstNewMessageInfo, unreadCounter ->
-        ChatMessagesState(
+        readiness,
+    ) { messagesList, firstNewMessageInfo, unreadCounter, readiness ->
+        readiness to ChatMessagesState(
             messages = messagesList,
             unreadCounter = unreadCounter,
             firstNewMessageInfo = firstNewMessageInfo
         )
     }
+        // The list stays loading until the first page of a product-source room, so it opens at the first unread message.
+        .dropWhile { (readiness, _) -> readiness == ChatRoomReadiness.LOADING }
+        .map { (_, state) -> state }
         .withLoading()
         .stateIn(CoroutineScope(coroutineContext + dispatchers.computation), SharingStarted.Eagerly, LoadingState.Loading)
 
@@ -838,6 +853,11 @@ class ChatFeedViewModel @Inject constructor(
     private fun MutableStateFlow<ChatSendMessageInputState>.updateInput(message: String) {
         update { it.copy(inputMessage = message.take(MAX_CHAT_MESSAGE_LENGTH)) }
     }
+}
+
+private fun List<ChatMessageUiModel>.firstNewMessageInfo(): FirstNewMessageInfo? {
+    val index = indexOfLast { it.isUnread() }.collectionIndexOrNull() ?: return null
+    return FirstNewMessageInfo(index = index, messageId = this[index].id)
 }
 
 private fun <T> Flow<T>.withLastContentKept(keepsLastContent: Flow<Boolean>, hasContent: (T) -> Boolean): Flow<T> {

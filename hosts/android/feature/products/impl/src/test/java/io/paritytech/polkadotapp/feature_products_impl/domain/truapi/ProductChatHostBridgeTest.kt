@@ -53,7 +53,6 @@ import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.ChatRoomState
-import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 
@@ -231,13 +230,16 @@ class ProductChatHostBridgeTest {
     @Test
     fun `a declared config is answered as declared, with the participation of the room`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
-        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true)
+        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true, reactionDetails = true)
         every { messaging.subscribeChatRooms() } returns flowOf(listOf(ProductChatRoom(ROOM, RoomParticipation.BOT)))
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
             Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
 
         assertEquals(
-            ChatRoomState(ChatRoomParticipation.BOT, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reactionDetails = true)),
+            ChatRoomState(
+                ChatRoomParticipation.BOT,
+                HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true, reactionDetails = true),
+            ),
             ProductChatHostBridge(productId, messaging).room(ROOM),
         )
     }
@@ -398,22 +400,6 @@ class ProductChatHostBridgeTest {
         coVerify { messaging.setRoomPreview(ProductChatIdParameter(ROOM), match { it.lastMessage?.content == drawn }) }
     }
 
-    // The room screen reads the host store only, so a room whose product keeps the messages would show nothing. The
-    // host refuses it before it creates the room, so no room is left with a behaviour that the product did not ask for.
-    @Test
-    fun `a room whose product keeps the messages is refused before it exists`() = runTest {
-        val messaging = mockk<ProductChatMessaging>()
-
-        val thrown = runCatching {
-            ProductChatHostBridge(productId, messaging)
-                .createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
-        }.exceptionOrNull()
-
-        assertTrue(thrown is HostChatCreateRoomException.UnsupportedConfig)
-        coVerify(exactly = 0) { messaging.createRoom(any()) }
-        coVerify(exactly = 0) { messaging.setRoomConfig(any(), any()) }
-    }
-
     // A room of a product built against the earlier client has the default configuration.
     @Test
     fun `a room created without a configuration keeps the default one`() = runTest {
@@ -422,6 +408,19 @@ class ProductChatHostBridgeTest {
         bridge(api).createRoom(ROOM, "Jollity", "")
 
         assertEquals(listOf(ProductChatIdParameter(ROOM) to ChatRoomConfigModel.HOST_DEFAULT), api.configs)
+    }
+
+    // This host serves a room whose product keeps the messages, so the room keeps that configuration.
+    @Test
+    fun `a room whose product keeps the messages keeps its configuration`() = runTest {
+        val api = FakeChatMessaging(onCreateRoom = { Result.success(CreateProductRoomResult(CreateRoomStatus.New)) })
+
+        bridge(api).createRoom(ROOM, "Jollity", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
+
+        assertEquals(
+            listOf(ProductChatIdParameter(ROOM) to ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true)),
+            api.configs,
+        )
     }
 
     @Test

@@ -1,11 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.verify
+import io.parity.truapi.ChatQueryException
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import kotlinx.coroutines.CoroutineScope
@@ -14,11 +19,18 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.NativeWorkerClaim
+import uniffi.truapi.ProductChatMessagesQueryResponse
+import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductRuntimeException
 
 class TrUAPIChatWorkerRoomsTest {
     private val productId = ProductId.parse("game.dot").getOrThrow()
@@ -86,5 +98,58 @@ class TrUAPIChatWorkerRoomsTest {
 
         verify(exactly = 1) { chatClaim.release() }
         verify(exactly = 1) { roomClaim.release() }
+    }
+
+    @Test
+    fun `a page of messages is asked with the anchor of the room screen`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } returns ProductChatMessagesQueryResponse(emptyList(), next = "c2")
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before("c1"), pageSize = 40)
+
+        assertEquals("c2", page.getOrNull()?.next)
+        coVerify { execution.chatMessagesQuery(ProductChatMessagesQueryRequest("lobby", ChatPageAnchor.Before("c1"), 40u), any()) }
+    }
+
+    @Test
+    fun `a question the product does not answer hides the feature`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ChatQueryException.Refused(ProductChatQueryError.NOT_AVAILABLE)
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
+
+        assertTrue(page.exceptionOrNull() is ProductChatQueryException.NotAvailable)
+        coVerify(exactly = 1) { execution.chatMessagesQuery(any(), any()) }
+    }
+
+    @Test
+    fun `an unavailable worker is asked once more after a second`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ChatQueryException.Failed("not connected") andThen
+            ProductChatMessagesQueryResponse(emptyList(), next = null)
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
+
+        assertTrue(page.isSuccess)
+        coVerify(exactly = 2) { execution.chatMessagesQuery(any(), any()) }
+    }
+
+    @Test
+    fun `a page asked before the client of a restarted worker connects waits for the connection`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ProductRuntimeException.NotConnected() andThenThrows
+            ProductRuntimeException.NotConnected() andThenThrows ProductRuntimeException.NotConnected() andThen
+            ProductChatMessagesQueryResponse(emptyList(), next = null)
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
+
+        assertTrue(page.isSuccess)
+        coVerify(exactly = 4) { execution.chatMessagesQuery(any(), any()) }
+    }
+
+    @Test
+    fun `a client that never connects fails the page after a limited wait`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ProductRuntimeException.NotConnected()
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
+
+        assertTrue(page.isFailure)
+        assertTrue(currentTime < 20_000)
     }
 }

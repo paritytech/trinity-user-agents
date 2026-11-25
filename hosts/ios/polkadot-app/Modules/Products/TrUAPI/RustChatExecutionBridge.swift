@@ -8,6 +8,7 @@ import TrUAPIHost
 /// `ChatHostBridge` callbacks against the product's chat binding.
 final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
+    private let feedListeners: ProductFeedListeners
     private let pageCache: ProductMessageCaching
     // The base class keeps `dependencies` private; hold on to what this bridge reads here.
     private let productId: ProductId
@@ -16,9 +17,11 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     init(
         dependencies: Dependencies,
         chatMessaging: any ProductChatMessaging,
+        feedListeners: ProductFeedListeners = .shared,
         pageCache: ProductMessageCaching = ProductMessageCache.shared
     ) {
         self.chatMessaging = chatMessaging
+        self.feedListeners = feedListeners
         self.pageCache = pageCache
         productId = dependencies.productId
         logger = dependencies.logger
@@ -118,7 +121,8 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     // MARK: - Chat Extension v2
 
     /// The core reads `nil` as a room that the product never created, so a room that is gone by the time its
-    /// configuration is read answers `nil` too, never an error.
+    /// configuration is read answers `nil` too, never an error. The core also reads the room before a posted
+    /// message, for a room that it has not checked.
     func room(roomId: String) async throws -> ChatRoomState? {
         guard let room = try await listRooms().first(where: { $0.roomId == roomId }) else { return nil }
         do {
@@ -162,14 +166,18 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     }
 
     /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
-    /// room that the product keeps, the update changes the cached page, so the next open shows the change before
-    /// the newest page arrives.
+    /// room that the product keeps, an open room screen takes the update. When no screen shows the room, the update
+    /// changes the cached page, so the next open shows the change before the newest page arrives.
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws -> ChatFeedOutcome {
         let roomId = try requireRoomId(roomId)
 
+        let chatId = Chat.Id.chatExtension(productId.rawValue, roomId: roomId)
+
         guard persist else {
-            await pageCache.apply(update, productId: productId.rawValue, roomId: roomId)
-            logger.debug("[truapi:chat-bridge] updateFeed \(roomId): the cached page takes it")
+            if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
+                await pageCache.apply(update, productId: productId.rawValue, roomId: roomId)
+                logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room, the cached page takes it")
+            }
             return .applied
         }
 

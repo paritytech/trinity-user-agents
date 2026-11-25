@@ -364,10 +364,12 @@ pub trait NativeChatCallbacks: Send + Sync {
 	///
 	/// That is whether the product hosts the room or takes part as a bot, and
 	/// the configuration of its last `create_room`. The core reads it once
-	/// before each change to a room and before each query of the room. The
-	/// host looks the room up among the rooms of this product only. `None` is
-	/// a room that the product never created; a host that cannot read its
-	/// rooms returns a rejection, not `None`.
+	/// before each change to a room and before each query of the room. Before
+	/// a posted message it reads the room the product names, before any check
+	/// that the product created the room. The host looks the room up among the
+	/// rooms of this product only. `None` is a room that the product never
+	/// created; a host that cannot read its rooms returns a rejection, not
+	/// `None`.
 	async fn room(
 		&self,
 		room_id: String,

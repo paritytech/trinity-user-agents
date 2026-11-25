@@ -18,6 +18,18 @@ struct ChatRoomReadinessTests {
 
         #expect(await calls(3) == [.openRoom, .closeRoom, .openRoom])
     }
+
+    @Test func theReadinessOfTheWindowReachesThePresenter() async throws {
+        engine.snapshotUpdates = [MessageListSnapshot(messages: [], readiness: .unavailable)]
+        let interactor = makeInteractor()
+
+        interactor.setup()
+        for await event in output.events where event == .listModel {
+            break
+        }
+
+        #expect(try #require(output.listModel).readiness == .unavailable)
+    }
 }
 
 private extension ChatRoomReadinessTests {

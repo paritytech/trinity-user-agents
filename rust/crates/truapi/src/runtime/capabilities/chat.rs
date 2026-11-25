@@ -167,6 +167,15 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 					.map_err(post_field_error)?
 					.filter(|alt| !alt.is_empty())
 					.filter(|_| matches!(request.payload, latest::ChatMessageContent::Custom(_)));
+				let room = platform
+					.chat_room(&self.connection.product, request.room_id.clone())
+					.await
+					.map_err(room_host_error)?;
+				// A room that keeps its messages in the product takes them
+				// through `update_feed`, so it takes no posted message.
+				if room.is_some_and(|room| room.config.product_source) {
+					return Err(CallError::Denied);
+				}
 				platform
 					.post_chat_message(&self.connection.product, request)
 					.await
