@@ -702,7 +702,11 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 /// `descriptor` signed, as a native host bundles it.
 fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
-	crate::native::BundledStack { pointer, descriptor, allows_reserved_values: false }
+	crate::native::BundledStack {
+		pointer,
+		descriptor,
+		reserved_values: crate::platform::ReservedValuesPolicy::default(),
+	}
 }
 
 pub fn native_execution_config(
@@ -2430,14 +2434,14 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 }
 
 #[test]
-fn runtime_config_passes_the_reserved_values_flag_through() {
+fn runtime_config_passes_the_reserved_values_through() {
 	// A testnet build must not run a stack on `dot`; a Polkadot build may.
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
 	let refused =
 		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
-	stack.allows_reserved_values = true;
+	stack.reserved_values.allowed = true;
 	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
 	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
 		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
@@ -2449,11 +2453,48 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 		(refused.err(), allowed.map(tld).ok()),
 		(
 			Some(NativeRuntimeConfigError::Invalid {
-				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
+				reason: "stack uses the reserved tld dot, which this build does not allow"
 					.to_string(),
 			}),
 			Some("dot".into()),
 		),
+	);
+}
+
+#[test]
+fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
+	// A build that reserves a TLD or a genesis hash must not start a stack on it.
+	let stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let reserving = |reserved_values| {
+		build_runtime(HostRuntimeConfig {
+			stack: crate::native::BundledStack { reserved_values, ..stack.clone() },
+			..native_host_runtime_config()
+		})
+		.err()
+	};
+	let refused = |reason: &str| {
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: format!("{reason}, which this build does not allow"),
+		})
+	};
+
+	assert_eq!(
+		[
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_tlds: vec!["paseo".to_string()],
+				..Default::default()
+			}),
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_genesis_hashes: vec![[0xc3; 32]],
+				..Default::default()
+			}),
+		],
+		[
+			refused("stack uses the reserved tld paseo"),
+			refused(&format!("stack uses the reserved genesis hash 0x{}", "c3".repeat(32))),
+		],
 	);
 }
 

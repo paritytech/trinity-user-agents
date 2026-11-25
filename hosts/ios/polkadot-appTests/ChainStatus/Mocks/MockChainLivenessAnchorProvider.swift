@@ -1,12 +1,12 @@
 import Foundation
+import StructuredConcurrencyTestSupport
 @testable import polkadot_app
 
 actor MockChainLivenessAnchorProvider: ChainLivenessAnchorProviding {
     private(set) var fetchAnchorCalls: [(target: ChainConnectionTarget, slotCount: Int)] = []
     private var anchorToReturn: ChainLivenessAnchor?
     private var errorToThrow: Error?
-    private var isGateClosed = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private let gate = TestGate(isClosed: false)
 
     func setAnchor(_ anchor: ChainLivenessAnchor?) {
         anchorToReturn = anchor
@@ -20,18 +20,21 @@ actor MockChainLivenessAnchorProvider: ChainLivenessAnchorProviding {
     /// probe is genuinely outstanding. Without this the mock answers immediately and the hold
     /// cannot be exercised at all — a test would only be racing the completion.
     func closeGate() {
-        isGateClosed = true
+        gate.close()
     }
 
     func openGate() {
-        isGateClosed = false
+        gate.open()
     }
 
     /// Resumes everything parked so far. Does not change whether new calls park.
     func release() {
-        let resumed = waiters
-        waiters = []
-        resumed.forEach { $0.resume() }
+        gate.release()
+    }
+
+    /// Suspends until at least `count` fetches are parked at the gate.
+    func waitForParkedFetches(_ count: Int) async {
+        await gate.waitForParked(count)
     }
 
     func fetchAnchor(
@@ -40,9 +43,7 @@ actor MockChainLivenessAnchorProvider: ChainLivenessAnchorProviding {
     ) async throws -> ChainLivenessAnchor {
         fetchAnchorCalls.append((target: target, slotCount: slotCount))
 
-        if isGateClosed {
-            await withCheckedContinuation { waiters.append($0) }
-        }
+        try await gate.pass()
 
         if let error = errorToThrow {
             throw error

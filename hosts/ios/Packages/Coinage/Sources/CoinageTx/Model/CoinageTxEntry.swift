@@ -131,4 +131,15 @@ public extension [CoinageTxEntry] {
     func outputPublicKeys() -> Set<PublicKey> {
         Set(flatMap { $0.outputs.map(\.publicKey) })
     }
+
+    /// A retry registers a new entry for the same input, so a key with a later non-failed entry is not failed.
+    func failedInputKeys() -> Set<PublicKey> {
+        let failed = filter { $0.status == .failure }.inputPublicKeys()
+        let stillAttempted = filter { $0.status != .failure }.inputPublicKeys()
+        return failed.subtracting(stillAttempted)
+    }
+
+    func inputPublicKeys() -> Set<PublicKey> {
+        Set(flatMap { $0.inputs.map(\.publicKey) })
+    }
 }

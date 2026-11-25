@@ -5,24 +5,27 @@
 
 use std::sync::Arc;
 
-use js_sys::{Function, Object, Reflect, Uint8Array};
+use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use send_wrapper::SendWrapper;
 use truapi::latest::GenericError;
 use wasm_bindgen::{JsCast, JsValue};
 
-use super::{
-	await_optional_promise, call_js_function, get_optional_bool_at, get_optional_function,
-	get_optional_string_at, get_required_object, get_required_string_at, js_to_string,
-};
 #[cfg(feature = "test-host")]
-use super::{get_optional_object, get_required_bytes32_at};
+use super::get_required_bytes32_at;
+use super::{
+	await_optional_promise, bytes32_from_js, call_js_function, get_optional_array_at,
+	get_optional_bool_at, get_optional_function, get_optional_object, get_optional_string_at,
+	get_required_object, get_required_string_at, js_to_string, string_from_js,
+};
 #[cfg(feature = "test-host")]
 use crate::platform::{StackChains, StackIdentity};
 use crate::{
 	Spawner,
+	chain_runtime::encode_hex,
 	platform::{
-		CoreStorage, CoreStorageRecords, Stack, StackFetchRequest, StackFetchResponse, StackHost,
-		StackRefresh, StackRefreshOutcome, StackStatus,
+		CoreStorage, CoreStorageRecords, ReservedValuesPolicy, Stack, StackFetchRequest,
+		StackFetchResponse, StackHost, StackMismatch, StackRefresh, StackRefreshOutcome,
+		StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -46,19 +49,19 @@ pub async fn stack_from_js(
 		return Ok((test_stack_from_js(&test_stack)?, None));
 	}
 	let stack = get_required_object(runtime_config, "stack", "runtimeConfig.stack")?;
+	refuse_unknown_fields(
+		&stack,
+		"runtimeConfig.stack",
+		&["pointer", "descriptor", "reservedValues"],
+	)?;
 	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
 	let descriptor = bytes_at(&stack, "descriptor")?
 		.ok_or_else(|| JsValue::from_str("runtimeConfig.stack.descriptor must be a Uint8Array"))?;
-	let allows_reserved_values = get_optional_bool_at(
-		&stack,
-		"allowsReservedValues",
-		"runtimeConfig.stack.allowsReservedValues",
-	)?
-	.unwrap_or(false);
+	let reserved_values = reserved_values_from_js(&stack, "runtimeConfig.stack.reservedValues")?;
 	let refresh = StackRefresh::load(
 		&pointer,
 		&descriptor,
-		allows_reserved_values,
+		reserved_values,
 		Box::new(CoreStorageRecords::new(storage)),
 		Arc::new(RealTimer),
 		Box::new(SystemClock),
@@ -70,26 +73,26 @@ pub async fn stack_from_js(
 
 /// Starts keeping `refresh` current through the host's `fetchStackDescriptor`
 /// callback, and reports the status to `stackChanged` at start and on each
-/// change. A host without `fetchStackDescriptor` gets the status once, at
-/// start: nothing changes it after that.
+/// change. Without `fetchStackDescriptor` the core stays on the copy it
+/// started from, and `stackChanged` gets the status at start and again
+/// whenever what a chain answered changes it.
 pub fn start_refresh(
 	refresh: &StackRefresh,
 	callbacks: &JsValue,
 	spawner: &Spawner,
 ) -> Result<(), JsValue> {
 	let changed = get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new);
-	match get_optional_function(callbacks, "fetchStackDescriptor")? {
-		Some(fetch) => {
+	let fetch = get_optional_function(callbacks, "fetchStackDescriptor")?;
+	let started = match (fetch, changed) {
+		(Some(fetch), changed) => {
 			let host = JsStackHost { fetch: SendWrapper::new(fetch), changed };
-			let started = refresh.start(Box::new(host), spawner);
-			debug_assert!(started, "a refresh that was just loaded has not started");
+			refresh.start(Box::new(host), spawner)
 		},
-		None => {
-			if let Some(changed) = &changed {
-				report_status(changed, &refresh.status());
-			}
-		},
-	}
+		(None, Some(changed)) => refresh
+			.start_reporting(Box::new(move |status| report_status(&changed, status)), spawner),
+		(None, None) => return Ok(()),
+	};
+	debug_assert!(started, "a refresh that was just loaded has not started");
 	Ok(())
 }
 
@@ -101,9 +104,24 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 
 /// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
 /// `assetHub`, `people`, `bulletin` and the optional `relay`, each
-/// `{ genesisHash }`, and `allowsReservedValues`, which defaults to false.
+/// `{ genesisHash }`, and the optional `reservedValues`.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
+	refuse_unknown_fields(
+		stack,
+		"runtimeConfig.testStack",
+		&[
+			"id",
+			"generation",
+			"network",
+			"tld",
+			"relay",
+			"assetHub",
+			"people",
+			"bulletin",
+			"reservedValues",
+		],
+	)?;
 	let genesis = |role: &str| {
 		let path = format!("runtimeConfig.testStack.{role}");
 		get_optional_object(stack, role, &path)?
@@ -136,14 +154,53 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,
-		get_optional_bool_at(
-			stack,
-			"allowsReservedValues",
-			"runtimeConfig.testStack.allowsReservedValues",
-		)?
-		.unwrap_or(false),
+		&reserved_values_from_js(stack, "runtimeConfig.testStack.reservedValues")?,
 	)
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
+}
+
+/// Refuses a field of the config object at `path` outside `fields`. A misspelt
+/// or retired field would otherwise be read as absent, and its value ignored.
+fn refuse_unknown_fields(object: &JsValue, path: &str, fields: &[&str]) -> Result<(), JsValue> {
+	if Array::is_array(object) {
+		return Err(JsValue::from_str(&format!("{path} must be an object")));
+	}
+	let unknown_field = Reflect::own_keys(object)?
+		.iter()
+		.filter_map(|key| key.as_string())
+		.find(|key| !fields.contains(&key.as_str()));
+	match unknown_field {
+		Some(field) => Err(JsValue::from_str(&format!(
+			"{path}.{field} is not a field; {path} takes {}",
+			fields.join(", ")
+		))),
+		None => Ok(()),
+	}
+}
+
+/// A stack config's optional `reservedValues`, at `path`. Each of its fields
+/// is optional, and one it does not have is refused.
+fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValuesPolicy, JsValue> {
+	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
+		return Ok(ReservedValuesPolicy::default());
+	};
+	refuse_unknown_fields(&reserved_values, path, &["allowed", "extraGenesisHashes", "extraTlds"])?;
+	Ok(ReservedValuesPolicy {
+		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
+			.unwrap_or(false),
+		extra_genesis_hashes: get_optional_array_at(
+			&reserved_values,
+			"extraGenesisHashes",
+			&format!("{path}.extraGenesisHashes"),
+			bytes32_from_js,
+		)?,
+		extra_tlds: get_optional_array_at(
+			&reserved_values,
+			"extraTlds",
+			&format!("{path}.extraTlds"),
+			string_from_js,
+		)?,
+	})
 }
 
 /// `runtimeConfig.stack.<name>` as bytes, or `None` when it is not set.
@@ -234,11 +291,19 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 }
 
 /// `{ descriptor, generation, stale, expired, restartRequired,
-/// lastRefresh? }`, where `lastRefresh` is `{ outcome, reason? }` and
-/// `outcome` is `current`, `unreachable`, `refused` or `notStored`.
+/// lastRefresh?, mismatches }`, where `lastRefresh` is `{ outcome, reason? }`
+/// and `outcome` is `current`, `unreachable`, `refused` or `notStored`.
+/// `mismatches` holds what [`mismatch_to_js`] gives for each.
 fn status_to_js(status: &StackStatus) -> JsValue {
-	let StackStatus { descriptor, generation, stale, expired, restart_required, last_refresh } =
-		status;
+	let StackStatus {
+		descriptor,
+		generation,
+		stale,
+		expired,
+		restart_required,
+		last_refresh,
+		mismatches,
+	} = status;
 	let last_refresh = last_refresh.as_ref().map_or(JsValue::UNDEFINED, |outcome| {
 		let (outcome, reason) = match outcome {
 			StackRefreshOutcome::Current => ("current", None),
@@ -248,6 +313,7 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 		};
 		object(&[("outcome", JsValue::from_str(outcome)), ("reason", JsValue::from(reason))])
 	});
+	let mismatches: Array = mismatches.iter().map(mismatch_to_js).collect();
 	object(&[
 		("descriptor", JsValue::from_str(descriptor)),
 		("generation", JsValue::from_str(generation)),
@@ -255,5 +321,19 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 		("expired", JsValue::from(*expired)),
 		("restartRequired", JsValue::from(*restart_required)),
 		("lastRefresh", last_refresh),
+		("mismatches", mismatches.into()),
 	])
+}
+
+/// `{ kind: "genesisHash", role, named, answered }`, with both hashes as `0x`
+/// hex.
+fn mismatch_to_js(mismatch: &StackMismatch) -> JsValue {
+	match mismatch {
+		StackMismatch::GenesisHash { role, named, answered } => object(&[
+			("kind", JsValue::from_str("genesisHash")),
+			("role", JsValue::from_str(role)),
+			("named", JsValue::from_str(&encode_hex(named))),
+			("answered", JsValue::from_str(&encode_hex(answered))),
+		]),
+	}
 }

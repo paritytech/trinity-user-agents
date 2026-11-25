@@ -15,6 +15,7 @@ protocol RecyclingStrategyProviding {
 /// call because `quotaExhausted` moves. The voucher arm needs no quota read, so it is offered bare.
 public struct RecyclingStrategyProvider: RecyclingStrategyProviding {
     private let quotaTracker: any UnloadQuotaTracking
+    private let privacyConfigProvider: any CoinagePrivacyConfigProviding
     private let forcedRecyclingAge: Int16
     private let quotaReserve: BigRational
 
@@ -22,10 +23,12 @@ public struct RecyclingStrategyProvider: RecyclingStrategyProviding {
     /// payments; the valve engages once remaining crosses it.
     public init(
         quotaTracker: any UnloadQuotaTracking,
+        privacyConfigProvider: any CoinagePrivacyConfigProviding,
         forcedRecyclingAge: Int16 = CoinageConstants.recycleAtAge,
         quotaReserve: BigRational = .percent(of: 20)
     ) {
         self.quotaTracker = quotaTracker
+        self.privacyConfigProvider = privacyConfigProvider
         self.forcedRecyclingAge = forcedRecyclingAge
         self.quotaReserve = quotaReserve
     }
@@ -50,7 +53,12 @@ public struct RecyclingStrategyProvider: RecyclingStrategyProviding {
 
         return EnsureChainLimitsStrategy(
             inner: EnsureQuotaLimitsStrategy(
-                inner: ParametricRecyclingStrategy(params: type.params(forcedRecyclingAge: forcedRecyclingAge)),
+                inner: ParametricRecyclingStrategy(
+                    params: type.params(
+                        forcedRecyclingAge: forcedRecyclingAge,
+                        privacyConfig: privacyConfigProvider.privacyConfig
+                    )
+                ),
                 quotaExhausted: quotaExhausted
             ),
             forcedRecyclingAge: forcedRecyclingAge
@@ -66,6 +74,11 @@ public struct RecyclingStrategyProvider: RecyclingStrategyProviding {
     /// Voucher usability only: both decorators delegate it untouched, so a bare policy suffices and
     /// no quota read happens on the balance path.
     public func voucherStrategy(for type: RecyclingStrategyType) -> CoinRecyclingStrategyProtocol {
-        ParametricRecyclingStrategy(params: type.params(forcedRecyclingAge: forcedRecyclingAge))
+        ParametricRecyclingStrategy(
+            params: type.params(
+                forcedRecyclingAge: forcedRecyclingAge,
+                privacyConfig: privacyConfigProvider.privacyConfig
+            )
+        )
     }
 }

@@ -414,11 +414,12 @@ extension VoucherLocationService {
 }
 
 extension VoucherLocationService {
-    /// Pairs each resolved location with its ring's fungibility.
+    /// Pairs each resolved location with its ring's unloaded count and fungibility.
     ///
-    /// A score is only attached when the ring's own readings are all in hand: the voucher resolved
-    /// into a ring, its unloaded count was actually delivered, and its denomination's capacity is
-    /// known. Anything short of that leaves the stored score alone rather than guessing an
+    /// The unloaded count rides on the in-recycler location as soon as it is delivered, independent of
+    /// capacity. A score is only attached when the ring's own readings are all in hand: the voucher
+    /// resolved into a ring, its unloaded count was actually delivered, and its denomination's capacity
+    /// is known. Anything short of that leaves the stored score alone rather than guessing an
     /// optimistic one — this drives a privacy indicator, so an absent reading must not read as
     /// "nothing unloaded".
     static func updates(
@@ -430,26 +431,35 @@ extension VoucherLocationService {
         locations.reduce(into: [:]) { updates, entry in
             let (derivationIndex, location) = entry
 
+            var remoteState = location
+            if case let .inRecycler(recycler) = location,
+               // Delivered-and-absent is a real zero: the pallet creates the entry on the first
+               // unload, so "no entry" means nothing has been unloaded from this ring yet.
+               case let .defined(delivered) = unloadedCounts[derivationIndex] ?? .undefined {
+                remoteState = .inRecycler(Voucher.Recycler(
+                    index: recycler.index,
+                    membersCount: recycler.membersCount,
+                    enteredAt: recycler.enteredAt,
+                    unloadedCount: delivered ?? 0
+                ))
+            }
+
             updates[derivationIndex] = VoucherLocationUpdate(
                 derivationIndex: derivationIndex,
-                remoteState: location,
+                remoteState: remoteState,
                 recyclerFungibility: nil,
                 maxRecyclerFungibility: nil
             )
 
-            guard case let .inRecycler(recycler) = location,
-                  // Delivered-and-absent is a real zero: the pallet creates the entry on the first
-                  // unload, so "no entry" means nothing has been unloaded from this ring yet.
-                  case let .defined(delivered) = unloadedCounts[derivationIndex] ?? .undefined,
+            guard case let .inRecycler(recycler) = remoteState,
+                  let unloaded = recycler.unloadedCount,
                   let exponent = voucherByIndex[derivationIndex]?.exponent,
                   let capacity = capacities[exponent]
             else { return }
 
-            let unloaded = delivered ?? 0
-
             updates[derivationIndex] = VoucherLocationUpdate(
                 derivationIndex: derivationIndex,
-                remoteState: location,
+                remoteState: remoteState,
                 recyclerFungibility: RecyclerFungibility.current(
                     included: recycler.membersCount,
                     unloaded: unloaded,

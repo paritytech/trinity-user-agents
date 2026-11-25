@@ -159,6 +159,10 @@ pub enum TypographyStyle {
     BodyLargeRegular,
     BodyMediumRegular,
     BodySmallRegular,
+    HeadlineMedium,
+    HeadlineSmall,
+    TitleExtraLarge,
+    TitleLarge,
 }
 
 /// Button emphasis.

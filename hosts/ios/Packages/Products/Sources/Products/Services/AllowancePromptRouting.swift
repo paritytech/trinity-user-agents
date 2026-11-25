@@ -28,6 +28,10 @@ public final class AllowancePromptContext {
         self.resources = resources
     }
 
+    deinit {
+        continuation?.resume(returning: .rejected)
+    }
+
     public func setContinuation(_ continuation: CheckedContinuation<AllowancePromptDecision, Never>) {
         self.continuation = continuation
     }
