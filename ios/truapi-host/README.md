@@ -125,23 +125,26 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it
 when it opens the product's `.worker` execution. Hosts without it pass nothing
 and Chat calls answer unsupported.
 
-The bridge carries the requests of Chat Extension v2. `createRoom`,
-`registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default.
-The other requests have defaults for a host that does not serve them yet:
+The bridge carries the requests of Chat Extension v2. `registerBot`,
+`postMessage`, `setRoomFooter` and `listRooms` have no default, and a host
+implements one of the two `createRoom` methods: the default
+`createRoom(roomId:name:icon:)` refuses the room. The other requests have
+defaults for a host that does not serve them yet:
 `createRoom(roomId:name:icon:config:)` creates the room only with
-`ChatRoomConfig.hostDefault` and refuses any other configuration before it
-creates anything, `roomConfig` answers `ChatRoomConfig.hostDefault`,
-`setRoomMetadata` keeps the name and icon of `createRoom`, `setRoomPreview` and
-`deleteRoom` answer `ChatRoomChangeOutcome.unsupported`, and `updateFeed`
-answers `ChatFeedOutcome.unsupported`, which the product receives as
-`Unsupported`. A host that serves one of them answers `.applied`. A room the
-product declares nothing for is a room the host stores, with the name and icon
-of `createRoom` and the text input.
+`ChatRoomConfig.hostDefault`, through `createRoom(roomId:name:icon:)`, and
+refuses any other configuration before it creates anything, `room(roomId:)`
+finds the room in `listRooms()` and pairs it with `ChatRoomConfig.hostDefault`,
+`setRoomMetadata`, `setRoomPreview` and `deleteRoom` answer
+`ChatRoomChangeOutcome.unsupported`, and `updateFeed` answers
+`ChatFeedOutcome.unsupported`, which the product receives as `Unsupported`. A
+host that serves one of them answers `.applied`. A room the product declares
+nothing for is a room the host stores, with the name and icon of `createRoom`
+and the text input.
 
 | Request | What the host does |
 | --- | --- |
 | `createRoom(roomId:name:icon:config:)` | Creates or resolves the room and keeps its configuration in the same step, across restarts. Throw `HostChatCreateRoomError.UnsupportedConfig` for a configuration the host cannot keep, before it creates anything |
-| `roomConfig` | Answers the configuration of the last `createRoom` of the room. The core reads it before each feed update, preview and query |
+| `room(roomId:)` | Answers whether the product hosts the room or takes part as a bot, and the configuration of the last `createRoom` of the room, or `nil` for a room the product never created. The core reads it once before each change to a room and before each query of the room |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name, description and empty-room text, and the icon when the metadata names one; and how the room shows in the chat list (sort time, pinning, badge, which can be an image, the newest message and reaction the preview line is made from, or an activity line that replaces it) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
 | `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Answers `ChatFeedOutcome.applied`, or the outcome that names why it did not apply the change |
@@ -159,12 +162,6 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     private let store: ChatStore
 
     init(store: ChatStore) { self.store = store }
-
-    func createRoom(roomId: String, name: String, icon: String) throws
-        -> ChatRoomRegistrationStatus
-    {
-        try createRoom(roomId: roomId, name: name, icon: icon, config: .hostDefault)
-    }
 
     // The room and its configuration land in one write.
     func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) throws
@@ -195,9 +192,8 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
 
-    func roomConfig(roomId: String) throws -> ChatRoomConfig {
-        store.config(roomId) ?? .hostDefault
-    }
+    // The room and its configuration in one read.
+    func room(roomId: String) throws -> ChatRoomState? { store.room(roomId) }
 
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws -> ChatFeedOutcome {
         store.apply(update, to: roomId, persist: persist) ? .applied : .unknownMessage

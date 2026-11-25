@@ -114,7 +114,7 @@ pub struct EventCallbacks {
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
 	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
-	/// The rejection reason of `list_rooms`, if any.
+	/// The rejection reason of `list_rooms`, and so of `room`, if any.
 	pub chat_list_rejection: Mutex<Option<String>>,
 	/// Chat declarations the core handed over, as `"<callback> <room>"`.
 	pub chat_declared: Mutex<Vec<String>>,
@@ -552,26 +552,31 @@ impl NativeChatCallbacks for EventCallbacks {
 			.collect())
 	}
 
-	async fn room_config(
+	async fn room(
 		&self,
 		room_id: String,
-	) -> Result<truapi::latest::ChatRoomConfig, HostRejection> {
-		Ok(self
+	) -> Result<Option<crate::platform::ChatRoomState>, HostRejection> {
+		let rooms = self.list_rooms().await?;
+		let Some(room) = rooms.into_iter().find(|room| room.room_id == room_id) else {
+			return Ok(None);
+		};
+		let config = self
 			.chat_room_configs
 			.lock()
 			.expect("room configs mutex poisoned")
 			.get(&room_id)
 			.cloned()
-			.unwrap_or_default())
+			.unwrap_or_default();
+		Ok(Some(crate::platform::ChatRoomState { participating_as: room.participating_as, config }))
 	}
 
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
 		_metadata: truapi::latest::ChatRoomMetadata,
-	) -> Result<(), HostRejection> {
+	) -> Result<crate::platform::ChatRoomChangeOutcome, HostRejection> {
 		self.declare("metadata", &room_id);
-		Ok(())
+		Ok(crate::platform::ChatRoomChangeOutcome::Applied)
 	}
 
 	async fn set_room_preview(
@@ -1915,17 +1920,19 @@ fn room_preview() -> truapi::latest::ChatRoomPreview {
 	}
 }
 
-// The core checks a room against this list before it deletes the room. If the
-// host cannot read the list, the core must get an error, not an empty list.
+// The core reads a room before it deletes the room. If the host cannot read
+// it, the core must get an error, not a room that does not exist.
 #[test]
-fn native_chat_adapter_surfaces_a_room_list_rejection() {
+fn native_chat_adapter_surfaces_a_room_rejection() {
 	let (callbacks, platform, product) = chat_adapter();
 	*callbacks.chat_list_rejection.lock().expect("list rejection mutex poisoned") =
 		Some("store locked".to_string());
 
 	assert_eq!(
-		futures::executor::block_on(crate::platform::ChatPlatform::list_chat_rooms(
-			&platform, &product,
+		futures::executor::block_on(crate::platform::ChatPlatform::chat_room(
+			&platform,
+			&product,
+			"support".to_string(),
 		)),
 		Err(truapi::latest::GenericError { reason: "store locked".to_string() })
 	);
@@ -1945,20 +1952,27 @@ fn native_chat_adapter_creates_a_room_with_its_configuration() {
 			truapi::latest::HostChatCreateRoomRequest { config, ..room_request("support") },
 		))
 	};
-	let read_config = || {
-		futures::executor::block_on(crate::platform::ChatPlatform::read_chat_room_config(
+	let read = || {
+		futures::executor::block_on(crate::platform::ChatPlatform::chat_room(
 			&platform,
 			&product,
 			"support".to_string(),
 		))
 	};
+	let hosted = |config: truapi::latest::ChatRoomConfig| {
+		Ok(Some(crate::platform::ChatRoomState {
+			participating_as: truapi::latest::ChatRoomParticipation::RoomHost,
+			config,
+		}))
+	};
 
+	assert_eq!(read(), Ok(None));
 	create(room_config()).unwrap();
-	assert_eq!(read_config(), Ok(room_config()));
+	assert_eq!(read(), hosted(room_config()));
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
 		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	create(truapi::latest::ChatRoomConfig::default()).unwrap();
-	assert_eq!(read_config(), Ok(truapi::latest::ChatRoomConfig::default()));
+	assert_eq!(read(), hosted(truapi::latest::ChatRoomConfig::default()));
 	assert!(callbacks.chat_declared.lock().expect("declared mutex poisoned").is_empty());
 }
 
@@ -2025,8 +2039,8 @@ fn native_chat_adapter_forwards_every_declaration() {
 	assert_eq!(ready_rooms(rooms.as_mut(), "the room list").rooms.len(), 1);
 
 	use crate::platform::ChatPlatform as _;
-	let deleted = futures::executor::block_on(async {
-		platform
+	let outcomes = futures::executor::block_on(async {
+		let metadata = platform
 			.set_chat_room_metadata(
 				&product,
 				truapi::latest::HostChatSetRoomMetadataRequest {
@@ -2035,7 +2049,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 				},
 			)
 			.await?;
-		platform
+		let preview = platform
 			.set_chat_room_preview(
 				&product,
 				truapi::latest::HostChatSetRoomPreviewRequest {
@@ -2044,15 +2058,17 @@ fn native_chat_adapter_forwards_every_declaration() {
 				},
 			)
 			.await?;
-		platform
+		let deleted = platform
 			.delete_chat_room(
 				&product,
 				truapi::latest::HostChatDeleteRoomRequest { room_id: room() },
 			)
-			.await
+			.await?;
+		Ok::<_, truapi::latest::GenericError>([metadata, preview, deleted])
 	})
 	.expect("every declaration reaches the host");
-	assert_eq!(deleted, crate::platform::ChatRoomChangeOutcome::Applied);
+	let applied = || crate::platform::ChatRoomChangeOutcome::Applied;
+	assert_eq!(outcomes, [applied(), applied(), applied()]);
 
 	assert_eq!(
 		*callbacks.chat_declared.lock().expect("declared mutex poisoned"),

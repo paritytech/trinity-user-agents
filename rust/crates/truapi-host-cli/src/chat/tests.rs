@@ -104,11 +104,13 @@ fn a_room_appears_in_the_list_a_subscriber_already_holds() {
 	assert_eq!(replacement.rooms[0].room_id, "support");
 }
 
-// The core reads the room list before each change to a room. A read through
-// the subscription would leave one subscriber for each read, so the room list
-// is read without one.
+// The core reads the room before each change to a room, and learns from it
+// whether the host stores the messages. This host keeps only the default
+// configuration, and a room it never created reads as `None`. A read through
+// the subscription would leave one subscriber for each read, so the room is
+// read without one.
 #[test]
-fn a_room_check_leaves_no_subscriber() {
+fn a_room_read_answers_the_room_and_leaves_no_subscriber() {
 	let host = CliChatHost::new(Transcript::new(None, "chat"));
 	futures::executor::block_on(host.create_chat_room(
 		&product(),
@@ -116,12 +118,21 @@ fn a_room_check_leaves_no_subscriber() {
 		room("support"),
 	))
 	.expect("a new room is created");
+	let read = |room_id: &str| {
+		futures::executor::block_on(host.chat_room(&product(), room_id.to_string()))
+			.expect("the host reads its rooms")
+	};
 
 	for _ in 0..3 {
-		let listed = futures::executor::block_on(host.list_chat_rooms(&product()))
-			.expect("the host lists its rooms");
-		assert_eq!(listed.rooms.len(), 1);
+		assert_eq!(
+			read("support"),
+			Some(ChatRoomState {
+				participating_as: ChatRoomParticipation::RoomHost,
+				config: ChatRoomConfig::default(),
+			})
+		);
 	}
+	assert_eq!(read("missing"), None);
 	assert!(host.lock().subscribers.is_empty());
 }
 
