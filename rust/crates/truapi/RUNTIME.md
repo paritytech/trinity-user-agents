@@ -277,8 +277,11 @@ the record fails.
 A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
-again. Any other change applies at once. `StackStatus` documents the rest,
-including the `generation` a host keys cached chain data by.
+again. Any other change needs no restart. `StackStatus` carries it once the
+core has stored the descriptor or its store has failed, at most 30 seconds
+after the fetch, and shows the copy from before the fetch until then. It
+documents the rest, including the `generation` a host keys cached chain data
+by.
 
 ### Core database
 
