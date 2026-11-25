@@ -230,8 +230,8 @@ operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
 On native hosts the core starts a worker on the first claim and stops it
-on the last release. The WebView host opens each execution through its startup
-attempt. Web hosts receive `Start` and `Stop` through `requestWorkerTransition`.
+on the last release. The runtime's worker engine opens each execution through
+its startup attempt. Web hosts receive `Start` and `Stop` through `requestWorkerTransition`.
 A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.

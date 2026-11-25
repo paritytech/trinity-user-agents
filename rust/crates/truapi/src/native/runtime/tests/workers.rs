@@ -6,17 +6,17 @@ use crate::native::{
 use std::{sync::mpsc, time::Duration};
 
 #[derive(Default)]
-struct WebViews {
+struct RecordingEngine {
 	fail_next_start: AtomicBool,
 	starts: Mutex<Vec<Arc<NativeWorkerAttempt>>>,
 	stops: Mutex<Vec<u64>>,
 }
 
-impl NativeWorkerEngine for WebViews {
+impl NativeWorkerEngine for RecordingEngine {
 	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
 		if self.fail_next_start.swap(false, Ordering::Relaxed) {
 			attempt.failed("initial boot error".into());
-			assert!(self.stops.lock().unwrap().is_empty(), "the WebView is still starting");
+			assert!(self.stops.lock().unwrap().is_empty(), "the attempt is still starting");
 		}
 		self.starts.lock().unwrap().push(attempt);
 	}
@@ -26,14 +26,14 @@ impl NativeWorkerEngine for WebViews {
 	}
 }
 
-impl WebViews {
+impl RecordingEngine {
 	fn latest(&self) -> Arc<NativeWorkerAttempt> {
 		self.starts.lock().unwrap().last().unwrap().clone()
 	}
 }
 
-fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<WebViews>, ProductId) {
-	let views = Arc::new(WebViews::default());
+fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<RecordingEngine>, ProductId) {
+	let views = Arc::new(RecordingEngine::default());
 	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
@@ -165,7 +165,7 @@ async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
 	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
 	views.fail_next_start.store(true, Ordering::Relaxed);
-	let _claim = runtime.claim_worker(product.clone());
+	let claim = runtime.claim_worker(product.clone());
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 	assert_eq!(views.starts.lock().unwrap().len(), 2);
 	let retry = views.latest();
@@ -175,13 +175,16 @@ async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	let NativeWorkerExecutionState::Running { execution } = next() else {
 		panic!("a consumer waiting through the failed start must receive the retry's execution");
 	};
-	assert!(Arc::ptr_eq(&execution, &running(&runtime, &product).unwrap()));
+	let opened: Arc<dyn NativeWorkerExecution> = owner.clone();
+	assert!(Arc::ptr_eq(&execution, &opened));
 	retry.failed("renderer lost".into());
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
+	drop(claim);
+	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
 }
 
 #[tokio::test]
-async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
+async fn a_stale_attempt_cannot_open_publish_or_stop_a_replacement() {
 	let (runtime, views, product) = setup();
 	let old_claim = runtime.claim_worker(product.clone());
 	let old = views.latest();
@@ -297,11 +300,11 @@ struct EndsSessionWhileStarting {
 	runtime: OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
 	starting: AtomicBool,
 	starts: Mutex<Vec<u64>>,
-	stops: Mutex<Vec<WebViewStop>>,
+	stops: Mutex<Vec<EngineStop>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct WebViewStop {
+struct EngineStop {
 	attempt: u64,
 	during_start: bool,
 	session_unlocked: bool,
@@ -322,7 +325,7 @@ impl NativeWorkerEngine for EndsSessionWhileStarting {
 
 	fn stop(&self, _product_id: ProductId, attempt: u64) {
 		let runtime = self.runtime.get().unwrap().upgrade().unwrap();
-		self.stops.lock().unwrap().push(WebViewStop {
+		self.stops.lock().unwrap().push(EngineStop {
 			attempt,
 			during_start: self.starting.load(Ordering::Relaxed),
 			session_unlocked: runtime.workers.try_lock().is_some(),
@@ -331,7 +334,7 @@ impl NativeWorkerEngine for EndsSessionWhileStarting {
 }
 
 #[tokio::test]
-async fn ending_a_session_disposes_its_webviews_unlocked_and_never_one_still_starting() {
+async fn ending_a_session_stops_its_attempts_unlocked_and_never_one_still_starting() {
 	let host = Arc::new(EndsSessionWhileStarting::default());
 	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
@@ -346,11 +349,11 @@ async fn ending_a_session_disposes_its_webviews_unlocked_and_never_one_still_sta
 	assert_eq!(
 		host.stops.lock().unwrap().clone(),
 		vec![
-			WebViewStop { attempt: starts[0], during_start: true, session_unlocked: true },
-			WebViewStop { attempt: starts[1], during_start: false, session_unlocked: true },
+			EngineStop { attempt: starts[0], during_start: true, session_unlocked: true },
+			EngineStop { attempt: starts[1], during_start: false, session_unlocked: true },
 		],
-		"the idle WebView goes before the session end returns, with the host free to call back, \
-		 and the one being created only after its start call returned"
+		"the idle attempt is stopped before the session end returns, with the engine free to call \
+		 back, and the one being started only after its start call returned"
 	);
 }
 

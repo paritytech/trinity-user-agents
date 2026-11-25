@@ -645,6 +645,9 @@ impl NativeTrUApiHostRuntime {
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
 	/// Construct the shared runtime and deliver worker demand acquired during initialization.
+	///
+	/// `worker_engine` runs the runtime's workers for as long as it lives. Its
+	/// [`NativeWorkerEngine::start`] can be called on this thread before the constructor returns.
 	#[uniffi::constructor]
 	pub fn with_runtime_config(
 		callbacks: Arc<dyn HostCallbacks>,

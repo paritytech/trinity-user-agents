@@ -359,9 +359,9 @@ Each host has one `host_logic::worker::WorkerLedger` in `RuntimeServices`.
 Each `claim_worker` call holds one reference to a product's worker. The first
 claim starts an attempt. Releasing the last claim stops it.
 
-On native hosts, the Rust controller sends the startup attempt to the WebView
-host. The WebView opens its execution through that attempt, and reports module
-startup and a crash through it. Rust publishes the execution when its module
+On native hosts, the Rust controller sends the startup attempt to the runtime's
+worker engine. The engine opens the worker's execution through that attempt, and
+reports module startup and a crash through it. Rust publishes the execution when its module
 has started and its bridge has authenticated. On the web, `@parity/truapi-host`
 delivers `requestWorkerTransition` to the host and reports no worker exits.
 
@@ -370,8 +370,7 @@ immediate. For repeated exits less than a minute apart, the delay starts at 1 s
 and doubles up to 5 min. On the third consecutive crash, the core notifies the
 host through `worker_crashing`. Releasing the last claim cancels a pending
 retry. When the replacement connects, it receives its active funding sessions.
-Observers see the worker as pending while the ledger retries it, and as failed
-only when no attempt can start.
+Observers see the worker as pending while the ledger retries it.
 
 ### Inter-host SSO
 

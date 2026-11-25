@@ -122,7 +122,7 @@ pub struct NativeWorkerAttempt {
 
 #[uniffi::export]
 impl NativeWorkerAttempt {
-	/// The ID its engine is asked to dispose only this attempt by.
+	/// The ID [`NativeWorkerEngine::stop`] names this attempt by.
 	pub fn id(&self) -> u64 {
 		self.id
 	}
@@ -157,8 +157,8 @@ impl NativeWorkerAttempt {
 		self.update_readiness(Signal::ModuleStarted)
 	}
 
-	/// Revoke this attempt after startup failure or renderer loss, applying the ledger's retry
-	/// policy.
+	/// Revoke this attempt after its start failed or its worker was lost, applying the ledger's
+	/// retry policy.
 	pub fn failed(&self, reason: String) {
 		self.fail(&reason, Registry::fail);
 	}
@@ -234,19 +234,20 @@ impl NativeWorkerAttempt {
 		let Some(runtime) = self.runtime.upgrade() else { return false };
 		let Some(mut session) = self.current(&runtime) else { return false };
 		let used = session.registry.ready(&self.product, signal);
-		if session.registry.running(&self.product).is_some() {
+		if session.registry.is_running(&self.product) {
 			runtime.runtime.worker_ledger().running(&self.product, self.id);
 		}
 		used
 	}
 }
 
-struct EngineAttempt {
+/// An attempt on its engine, stopped there when the last copy is dropped.
+struct StartedAttempt {
 	engine: Arc<dyn NativeWorkerEngine>,
 	attempt: Arc<NativeWorkerAttempt>,
 }
 
-impl Drop for EngineAttempt {
+impl Drop for StartedAttempt {
 	fn drop(&mut self) {
 		self.engine.stop(self.attempt.product.clone(), self.attempt.id);
 	}
@@ -283,7 +284,7 @@ impl WorkerController for Controller {
 				runtime: self.0.clone(),
 			});
 			let started =
-				Arc::new(EngineAttempt { engine: session.worker_engine.clone(), attempt });
+				Arc::new(StartedAttempt { engine: session.worker_engine.clone(), attempt });
 			let timeout = started.attempt.deadline(&runtime, session.startup_deadline);
 			// A stop racing startup must reach the engine after its start call returns.
 			let previous = session.registry.begin(product_id, timeout, started.clone());
