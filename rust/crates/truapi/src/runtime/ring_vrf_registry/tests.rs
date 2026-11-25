@@ -92,7 +92,8 @@ fn stack_in(generation: &str, people: [u8; 32], sequence: u32) -> Stack {
 	let paseo = paseo_test_stack();
 	let identity = StackIdentity { id: paseo.id().to_string(), generation: generation.to_string() };
 	let chains = StackChains { people, ..paseo.chains().clone() };
-	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, true)
+	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, &allowed)
 		.expect("test stack is valid")
 }
 

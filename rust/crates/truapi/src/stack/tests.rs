@@ -298,7 +298,7 @@ fn allowed_reserved_values_with_extra_ones_are_refused() {
 		policies.map(|policy| {
 			(
 				bundled(&descriptor, &policy).err(),
-				Stack::new(identity(), "paseo".into(), "paseo".into(), chains.clone(), &policy)
+				Stack::new(identity(), "paseo".into(), "paseo".into(), chains.clone(), 0, &policy)
 					.err(),
 			)
 		}),
@@ -342,7 +342,7 @@ fn a_policy_fault_is_reported_before_the_stacks() {
 		[
 			bundled(&on_kusama, &policy),
 			Stack::bundled(&test_stack_link(None), &bytes, &policy),
-			Stack::new(identity(), "paseo".into(), "kusama".into(), zero_asset_hub, &policy),
+			Stack::new(identity(), "paseo".into(), "kusama".into(), zero_asset_hub, 0, &policy),
 		],
 		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })),
 	);
@@ -432,7 +432,8 @@ fn stack_in_run(generation: &str, chains: StackChains, sequence: u32) -> Stack {
 /// [`stack_in_run`] for the stack with this `id`, such as a fork's.
 fn stack_with_id(id: &str, generation: &str, chains: StackChains, sequence: u32) -> Stack {
 	let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
-	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, false)
+	let policy = ReservedValuesPolicy::default();
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, &policy)
 		.expect("stack is valid")
 }
 
@@ -555,9 +556,9 @@ fn a_refresh_keeps_the_run_unless_it_restarts_the_chains() {
 	let edited = |edit: fn(&mut serde_json::Value)| {
 		let mut descriptor = base.clone();
 		edit(&mut descriptor);
-		bundled(&descriptor, false).expect("stack is valid")
+		bundled(&descriptor, &ReservedValuesPolicy::default()).expect("stack is valid")
 	};
-	let running = bundled(&base, false).expect("stack is valid");
+	let running = bundled(&base, &ReservedValuesPolicy::default()).expect("stack is valid");
 	let republished = |descriptor: &mut serde_json::Value| {
 		let sequence = descriptor["sequence"].as_u64().expect("the descriptor has a sequence");
 		descriptor["sequence"] = (sequence + 1).into();

@@ -734,7 +734,8 @@ fn host_in_generation(
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
 	let chains = paseo_test_stack().chains().clone();
-	let stack = Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, 0, true)
+	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
+	let stack = Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, 0, &allowed)
 		.expect("test stack is valid");
 	let product = ProductContext::new(ProductId::for_test("unknown.dot"));
 	ProductRuntimeHost::new_pairing_for_tests(
