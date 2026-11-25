@@ -3133,6 +3133,75 @@ fn a_connection_no_caller_waits_for_still_closes_once_the_halt_outlasts_the_chec
 	crate::test_support::wait_until(socket_closed, "the socket closes");
 }
 
+/// A setup that ends without a caller and passes the check keeps its
+/// connection, so the next caller on the chain is handed that one rather
+/// than dialling again.
+#[test]
+fn a_connection_no_caller_waits_for_is_handed_to_the_next_caller() {
+	let named = [0xa1; 32];
+	let provider = node_halted_for(1, named);
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.with_timer(timer.clone())
+		.checking_genesis(heard.clone());
+
+	let given_up = runtime.rpc_client("test", &named).now_or_never();
+	crate::test_support::wait_until(|| timer.sleeps() == 1, "the check pauses for the halt");
+	timer.advance(chain_halt::halt_schedule()[0]);
+	crate::test_support::wait_until(|| !heard.heard().is_empty(), "the chain names itself");
+	let next = finish(runtime.rpc_client("test", &named));
+
+	assert_eq!(
+		(given_up.is_none(), next.is_ok(), provider.connect_calls.load(Ordering::SeqCst)),
+		(true, true, 1)
+	);
+}
+
+/// A host that opens the socket when asked and hands it over only once
+/// `handover` fires, as a browser host's `chainConnect` promise settles after
+/// it dialled.
+struct LateHandover {
+	node: Arc<ScriptedProvider>,
+	handover: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl RuntimeChainProvider for LateHandover {
+	async fn connect(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+		let socket = self.node.connect(genesis_hash).await;
+		let handover = self.handover.lock().unwrap().take().expect("the test dials once");
+		let _ = handover.await;
+		socket
+	}
+}
+
+/// A scope released while the host is still handing a connection over must
+/// not leave that socket open with nothing to close it. The setup runs on, and
+/// drops the connection it is handed once it finds the scope gone.
+#[test]
+fn a_connection_handed_over_after_its_scope_was_released_is_closed() {
+	let node = Arc::new(ScriptedProvider::new(|_| None));
+	let (hand_over, handover) = futures::channel::oneshot::channel();
+	let host = LateHandover { node: node.clone(), handover: Mutex::new(Some(handover)) };
+	let product = ChainRuntime::new(Arc::new(host), Spawner::for_test()).for_product(1);
+
+	let given_up = product.rpc_client("test", &[0xa1; 32]).now_or_never();
+	crate::test_support::wait_until(
+		|| node.connect_calls.load(Ordering::SeqCst) == 1,
+		"the host dials",
+	);
+	product.release_scope();
+	let _ = hand_over.send(());
+
+	assert!(given_up.is_none(), "the connection is not handed out before the host hands it over");
+	let socket_closed = || node.sender.lock().unwrap().is_none();
+	crate::test_support::wait_until(socket_closed, "the socket handed over late is closed");
+}
+
 /// A product mints its follow id from the request id it chose, which is
 /// arbitrary text off the wire. The line naming the occupants leaves the
 /// device, so it names the runtime and not what the product called itself.

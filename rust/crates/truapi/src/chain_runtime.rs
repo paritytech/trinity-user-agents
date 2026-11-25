@@ -74,7 +74,6 @@ use truapi::v01::{
 
 use crate::{
 	Spawner,
-	background_task::BackgroundTask,
 	host_rpc_client::HostRpcClient,
 	time::{RealTimer, Timer},
 };
@@ -160,6 +159,13 @@ type ScopeTransactionOperations = BTreeMap<u64, TransactionOperation>;
 /// Shared, single-flight provider connect keyed by genesis hash. Concurrent
 /// first connections for the same chain await one in-flight `connect` rather
 /// than each opening a connection and orphaning all but the last insert.
+///
+/// A task polls it beside its callers, so it runs to its end even once no
+/// caller waits, its scope is released or its runtime is dropped. It then
+/// leaves the connection ready for the next caller, or drops it, which closes
+/// the socket. The end comes once the host's `connect` answers and the genesis
+/// check's bounded waits are over, so a `connect` the host never answers keeps
+/// that task for good.
 type ConnectionSetup = Shared<BoxFuture<'static, Result<Arc<ChainConnection>, RuntimeFailure>>>;
 
 /// Shared, single-flight setup of the connection's cached Subxt client.
@@ -610,7 +616,8 @@ impl ChainRuntime {
 	/// connection, so a later teardown could no longer abort anything.
 	///
 	/// Pending connections occupy an entry too; completion cannot restore an
-	/// entry removed by teardown.
+	/// entry removed by teardown. Their setup runs on, and drops the
+	/// connection it opens once it finds the scope gone.
 	pub fn release_scope(&self) {
 		let dropped: Vec<Arc<ChainConnection>> = self
 			.connections
@@ -1182,14 +1189,10 @@ impl ChainRuntime {
 					}
 					.boxed()
 					.shared();
-					let driver = BackgroundTask::spawn(&self.spawner, setup.clone().map(drop));
+					self.spawner.spawn(setup.clone().map(drop));
 					connections.insert(
 						key,
-						ConnectionEntry::Connecting {
-							identity,
-							setup: setup.clone(),
-							_driver: driver,
-						},
+						ConnectionEntry::Connecting { identity, setup: setup.clone() },
 					);
 					setup
 				},
@@ -1372,15 +1375,7 @@ impl ChainRuntime {
 }
 
 enum ConnectionEntry {
-	/// A connection being opened through `setup`, which `_driver` polls as
-	/// well as each caller waiting for it. A setup every caller gave up on
-	/// still ends, so it lets go of its socket or leaves the connection ready
-	/// for the next caller. Dropping the entry stops the driver.
-	Connecting {
-		identity: Arc<()>,
-		setup: ConnectionSetup,
-		_driver: BackgroundTask,
-	},
+	Connecting { identity: Arc<()>, setup: ConnectionSetup },
 	Ready(Arc<ChainConnection>),
 }
 
