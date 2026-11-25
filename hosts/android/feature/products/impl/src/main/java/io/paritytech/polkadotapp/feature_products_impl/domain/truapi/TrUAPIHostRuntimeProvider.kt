@@ -6,8 +6,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.parity.truapi.LightClient
+import io.parity.truapi.CoreChainConnections
 import io.parity.truapi.TrUAPIHostRuntime
-import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -20,7 +21,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInsta
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigMaterialsSwitch
-import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
@@ -39,7 +39,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.CoreAttribute
@@ -69,11 +68,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val environment: TestnetEnvironment,
     private val chainDirectory: TrUAPIChainDirectory,
+    private val lightClient: LightClient,
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
     private val encryptedPreferences: EncryptedPreferences,
-    @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
@@ -103,9 +102,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     // dispatcher thread, where a suspending registry lookup is not allowed.
     private val cachedChains = AtomicReference(EMPTY_CHAINS)
 
-    private val chainProvider = WebSocketChainProvider(
+    private val chainConnections = CoreChainConnections(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
-        client = chainHttpClient,
+        lightClient = lightClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
@@ -140,12 +139,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         paymentPlatforms.install(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
-        chainProvider.attach(
+        chainConnections.attach(
             onResponse = runtime::notifyChainResponse,
             onClosed = runtime::notifyChainClosed,
         )
         observeAppLifecycle()
-        scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
+        scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainConnections)
         observeWalletAccount(runtime)
     }
 
@@ -211,7 +210,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
                 // closeAll reports each connection back to the core, so it
                 // evicts them and re-dials chainConnect on next use. Sockets do
                 // not idle in background and recover on foreground.
-                if (state == AppLifecycleState.BACKGROUND) chainProvider.closeAll()
+                if (state == AppLifecycleState.BACKGROUND) chainConnections.closeAll()
             }
         }
     }
@@ -289,12 +288,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
+        override fun chainConnect(genesisHash: ByteArray): UInt? = chainConnections.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
-            chainProvider.send(connectionId, request)
+            chainConnections.send(connectionId, request)
 
-        override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+        override fun chainClose(connectionId: UInt) = chainConnections.close(connectionId)
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing

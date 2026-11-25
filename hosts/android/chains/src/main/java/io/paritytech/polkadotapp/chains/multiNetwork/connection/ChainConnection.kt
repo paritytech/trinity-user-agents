@@ -6,8 +6,13 @@ import io.novasama.substrate_sdk_android.wsrpc.interceptor.WebSocketResponseInte
 import io.novasama.substrate_sdk_android.wsrpc.networkStateFlow
 import io.novasama.substrate_sdk_android.wsrpc.response.RpcResponse
 import io.novasama.substrate_sdk_android.wsrpc.state.SocketStateMachine.State
+import io.parity.truapi.LightClient
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.autobalance.NodeAutobalancer
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.ProviderWebSocketFactory
+import io.paritytech.polkadotapp.common.data.network.SocketServiceFactory
+import io.paritytech.polkadotapp.common.utils.FeatureFlags
+import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,12 +46,24 @@ class ChainConnectionFactory @Inject constructor(
     private val refCounter: ChainConnectionRefCounter,
     private val nodeAutobalancer: NodeAutobalancer,
     private val socketServiceProvider: Provider<SocketService>,
+    private val socketServiceFactory: SocketServiceFactory,
+    private val lightClient: LightClient,
     private val networkStateService: NetworkStateService,
     private val shortLivedConnectionDetector: ShortLivedConnectionDetector,
 ) {
     suspend fun create(chain: Chain): ChainConnection {
+        val genesisHash = chain.genesisHash.value
+        val socketService = when {
+            lightClient.serves(genesisHash) ->
+                socketServiceFactory.create(ProviderWebSocketFactory.forLightClient(lightClient, genesisHash))
+
+            FeatureFlags.isEnabled(FeatureOption.CHAIN_CONNECTIONS_THROUGH_PROVIDER) ->
+                socketServiceFactory.create(ProviderWebSocketFactory.forNodes(genesisHash))
+
+            else -> socketServiceProvider.get()
+        }
         val connection = ChainConnection(
-            socketService = socketServiceProvider.get(),
+            socketService = socketService,
             refCounter = refCounter,
             nodeAutobalancer = nodeAutobalancer,
             chain = chain,

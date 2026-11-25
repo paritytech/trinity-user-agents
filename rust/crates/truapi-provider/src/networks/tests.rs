@@ -1,9 +1,8 @@
-/// `ChainCloseReason::StreamEnded` documents that every connection this crate
-/// hands a host runs on the embedded light client, whose stream ends only when
-/// the connection is closed. That holds because the FFI registers no chains of
-/// its own, so every source it resolves comes from this catalog. The `ws`
-/// backend ends its stream when a socket drops, which would make that doc
-/// false, so a catalog entry must never be one.
+/// `ChainCloseReason::StreamEnded` documents that a light-client provider's
+/// stream ends only when the connection is closed. Such a provider resolves
+/// every source from this catalog. The `ws` backend ends its stream when a
+/// socket drops, which would make that doc false, so a catalog entry must
+/// never be one.
 #[test]
 fn every_catalog_source_is_light_backed() {
 	for network in super::CATALOG.iter() {

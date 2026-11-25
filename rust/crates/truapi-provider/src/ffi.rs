@@ -7,6 +7,11 @@
 //! specs the host fetched, or from the bundled network catalog, where the
 //! only argument a host supplies is the genesis hash.
 //!
+//! [`ChainProvider::with_rpc_nodes`] builds a provider that serves the chains
+//! it is given from remote nodes instead, bypassing the light client. Either
+//! way the host connects by genesis hash alone, and the provider picks the
+//! route.
+//!
 //! Inbound responses are delivered to a foreign [`ChainMessageListener`]; a
 //! background thread pumps the response stream and invokes it until the
 //! connection closes.
@@ -22,7 +27,7 @@
 use core::future::Future;
 use std::{
 	fmt,
-	sync::{Arc, Weak},
+	sync::{Arc, OnceLock, Weak},
 };
 
 use crate::platform::{ChainProvider as _, JsonRpcConnection};
@@ -93,6 +98,12 @@ pub enum ChainProviderError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// The light client did not answer a metrics request.
+	#[error("{reason}")]
+	Metrics {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for ChainProviderError {
@@ -136,10 +147,10 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for ChainProviderError {
 pub enum ChainCloseReason {
 	/// The response stream ended.
 	///
-	/// Every connection this crate hands a host runs on the embedded light
-	/// client, and that stream ends only when the connection is closed, so in
-	/// practice this is your own teardown arriving back: `disconnect()`, or
-	/// dropping the handle. It is not a report that the peer went away.
+	/// On the light client that stream ends only when the connection is
+	/// closed, so there it is your own teardown arriving back: `disconnect()`,
+	/// or dropping the handle. On a remote node it also ends when the node
+	/// drops the socket or goes silent, and the provider does not reconnect.
 	StreamEnded,
 	/// This listener returned an error from `on_message`, so the connection was
 	/// closed under it.
@@ -305,6 +316,15 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for StorageClientError {
 	}
 }
 
+/// A chain served by a remote JSON-RPC node.
+#[derive(uniffi::Record)]
+pub struct RpcNode {
+	/// The chain's 32-byte genesis hash.
+	pub genesis_hash: Vec<u8>,
+	/// The node's `ws://` or `wss://` endpoint.
+	pub url: String,
+}
+
 /// The light spec of one chain of a stack, as the host fetched it.
 #[derive(uniffi::Record)]
 pub struct LightSpec {
@@ -314,12 +334,24 @@ pub struct LightSpec {
 	pub spec: Vec<u8>,
 }
 
-/// Embedded-smoldot chain provider. Construct one per process, or one per
-/// stack on a host that runs several, and share it; every connection runs on
-/// its single embedded light client.
+/// Chain provider. One built with [`new`](ChainProvider::new),
+/// [`with_storage`](ChainProvider::with_storage) or a stack constructor runs
+/// every connection on its single embedded light client, so construct one per
+/// process, or one per stack on a host that runs several, and share it. One
+/// built with [`with_rpc_nodes`](ChainProvider::with_rpc_nodes) serves only the
+/// chains it was given, each from its node.
 #[derive(uniffi::Object)]
 pub struct ChainProvider {
 	inner: EmbeddedChainProvider,
+	routes: Routes,
+}
+
+/// Where a provider sends a connection for a genesis hash.
+enum Routes {
+	/// The bundled catalog or the provider's stack, on the embedded light client.
+	LightClient,
+	/// The registered remote nodes, and nothing else.
+	RpcNodes,
 }
 
 #[uniffi::export]
@@ -334,7 +366,10 @@ impl ChainProvider {
 	/// for a stack.
 	#[uniffi::constructor]
 	pub fn new() -> Arc<Self> {
-		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().build() })
+		Arc::new(Self {
+			inner: EmbeddedChainProvider::builder().catalog().build(),
+			routes: Routes::LightClient,
+		})
 	}
 
 	/// Create a provider that reads and writes database blobs through `client`.
@@ -345,7 +380,34 @@ impl ChainProvider {
 	/// are backed up, encrypted, or excluded from cloud sync.
 	#[uniffi::constructor(name = "with_storage")]
 	pub fn with_storage(client: Arc<dyn StorageClient>) -> Arc<Self> {
-		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().storage(client).build() })
+		Arc::new(Self {
+			inner: EmbeddedChainProvider::builder().catalog().storage(client).build(),
+			routes: Routes::LightClient,
+		})
+	}
+
+	/// Create a provider that serves each of `nodes`' chains from its node and
+	/// refuses any other chain, rather than starting the light client for it. A
+	/// later node for the same genesis hash replaces the earlier one.
+	///
+	/// The light client starts only on a light-client connect, so this provider
+	/// never starts it and is cheap to build. A host that rotates between nodes
+	/// builds one per node.
+	#[uniffi::constructor(name = "with_rpc_nodes")]
+	pub fn with_rpc_nodes(nodes: Vec<RpcNode>) -> Result<Arc<Self>, ChainProviderError> {
+		let builder =
+			nodes.into_iter().try_fold(EmbeddedChainProvider::builder(), |builder, node| {
+				// The parse error is enough on its own: echoing the url could leak
+				// a key embedded in it.
+				let url = url::Url::parse(&node.url).map_err(|error| {
+					ChainProviderError::Connect { reason: format!("invalid url: {error}") }
+				})?;
+				Ok::<_, ChainProviderError>(
+					builder
+						.chain(genesis_from(node.genesis_hash)?, crate::ChainSource::rpc_node(url)),
+				)
+			})?;
+		Ok(Arc::new(Self { inner: builder.build(), routes: Routes::RpcNodes }))
 	}
 
 	/// Create a provider for a Trinity stack, with nowhere to keep finalized
@@ -372,7 +434,7 @@ impl ChainProvider {
 		light_specs: Vec<LightSpec>,
 	) -> Result<Arc<Self>, ChainProviderError> {
 		let builder = stack_builder(&link, &descriptor, light_specs)?;
-		Ok(Arc::new(Self { inner: builder.build() }))
+		Ok(Arc::new(Self { inner: builder.build(), routes: Routes::LightClient }))
 	}
 
 	/// [`for_stack`](Self::for_stack), keeping database blobs through `client`
@@ -385,7 +447,7 @@ impl ChainProvider {
 		client: Arc<dyn StorageClient>,
 	) -> Result<Arc<Self>, ChainProviderError> {
 		let builder = stack_builder(&link, &descriptor, light_specs)?;
-		Ok(Arc::new(Self { inner: builder.storage(client).build() }))
+		Ok(Arc::new(Self { inner: builder.storage(client).build(), routes: Routes::LightClient }))
 	}
 
 	/// Hand over the light spec of the stack's chain with `genesis_hash` after
@@ -436,6 +498,20 @@ impl ChainProvider {
 			})
 	}
 
+	/// The light client's metrics for `genesis_hash`: the JSON smoldot answers
+	/// `sudo_unstable_metrics` with, unchanged (smoldot marks the format
+	/// unstable). `null` when this provider is not running the chain, since
+	/// reading metrics never starts one. Never call it from a listener callback.
+	pub async fn metrics(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Option<String>, ChainProviderError> {
+		self.inner
+			.metrics(genesis_from(genesis_hash)?)
+			.await
+			.map_err(|error| ChainProviderError::Metrics { reason: error.to_string() })
+	}
+
 	/// Snapshot the finalized state for `genesis_hash` and hand it to storage.
 	/// Answers whether a blob was stored, and fails when the provider was built
 	/// without one, for the same reason [`load_database`](Self::load_database) does.
@@ -458,44 +534,45 @@ impl ChainProvider {
 			})
 	}
 
-	/// Open a connection to the chain identified by `genesis_hash` (32 bytes).
-	/// The chain is resolved from the provider's stack or from the catalog;
+	/// Open a connection to the chain identified by `genesis_hash` (32 bytes);
 	/// responses are delivered to `listener` until the connection closes.
+	///
+	/// On the light client the chain is resolved from the provider's stack or
+	/// from the catalog. On a remote node, a dropped or silent socket ends the
+	/// connection with [`ChainCloseReason::StreamEnded`] and nothing reconnects:
+	/// the host connects again and replays its subscriptions. A remote node
+	/// cannot be connected from a thread that runs tokio tasks, such as the one
+	/// the TrUAPI core calls `chain_connect` on.
+	///
+	/// On a light-client provider with storage, a chain the light client is not
+	/// running first resumes from the stored blob: smoldot stops a chain when its
+	/// last connection closes, so this is every connect after one. The store is
+	/// awaited on the calling thread, which this call blocks, so a store that
+	/// needs that thread stalls the connect for 5 s and the chain starts cold.
 	pub fn connect(
 		&self,
 		genesis_hash: Vec<u8>,
 		listener: Arc<dyn ChainMessageListener>,
 	) -> Result<Arc<ChainConnection>, ChainProviderError> {
-		// A listener callback runs on the pump thread, which is already inside
-		// `block_on`; blocking again there is a panic the host cannot catch,
-		// and an abort on the shipping profile. Refuse it as an error instead,
-		// since reconnecting from `on_closed` is the flow `ChainCloseReason`
-		// exists to inform.
-		if PUMPING.get() {
-			return Err(ChainProviderError::Connect {
-				reason: "connect() cannot be called from a listener callback; \
-                         call it from another thread"
-					.to_string(),
-			});
-		}
+		refuse_inside_listener("connect")?;
 		let genesis = genesis_from(genesis_hash)?;
-		let connection = block_on(self.inner.connect(genesis))
-			.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
-		let connection: Arc<dyn JsonRpcConnection> = Arc::from(connection);
-
-		let responses = connection.responses();
-		// Weak on purpose: a strong handle here would keep the connection alive
-		// forever. `Drop` is what calls `close()`, `close()` is what ends the
-		// response stream, and the pump parks on that stream -- so holding a
-		// strong reference means the drop that would release it can never run.
-		let pumped = Arc::downgrade(&connection);
-		spawn_pump("truapi-pump", pump_responses(responses, pumped, listener)).map_err(
-			|error| ChainProviderError::Connect {
-				reason: format!("could not start the response pump: {error}"),
+		let connect_error =
+			|error: crate::ProviderError| ChainProviderError::Connect { reason: error.to_string() };
+		let connection = match self.routes {
+			Routes::LightClient => block_on(async {
+				self.inner.load_database_for_connect(genesis).await?;
+				self.inner.connect(genesis).await
+			})
+			.map_err(connect_error)?,
+			Routes::RpcNodes => {
+				refuse_inside_async_runtime()?;
+				let runtime = rpc_runtime()?;
+				let connection =
+					runtime.block_on(self.inner.connect(genesis)).map_err(connect_error)?;
+				Box::new(InRuntime { inner: connection, runtime })
 			},
-		)?;
-
-		Ok(Arc::new(ChainConnection { inner: connection }))
+		};
+		start_pump(connection, listener)
 	}
 
 	/// Watch what the light client is doing on the chain identified by
@@ -519,6 +596,114 @@ impl ChainProvider {
 			}
 		})?;
 		Ok(Arc::new(LifecycleWatch { stop }))
+	}
+}
+
+/// A listener callback runs on the pump thread, which is already inside
+/// `block_on`; blocking again there is a panic the host cannot catch, and an
+/// abort on the shipping profile. Refuse it as an error instead, since
+/// reconnecting from `on_closed` is the flow `ChainCloseReason` exists to inform.
+fn refuse_inside_listener(method: &str) -> Result<(), ChainProviderError> {
+	if PUMPING.get() {
+		return Err(ChainProviderError::Connect {
+			reason: format!(
+				"{method}() cannot be called from a listener callback; call it from another thread"
+			),
+		});
+	}
+	Ok(())
+}
+
+/// Blocking on the RPC runtime from a thread that already runs tokio tasks is a
+/// panic, and an abort on the shipping profile. The TrUAPI core calls a host's
+/// `chain_connect` on such a thread, so a host connecting inline from there
+/// would take the app down. Refuse it as an error instead.
+fn refuse_inside_async_runtime() -> Result<(), ChainProviderError> {
+	if tokio::runtime::Handle::try_current().is_ok() {
+		return Err(ChainProviderError::Connect {
+			reason: "connect() to a remote node cannot be called from a thread that runs async \
+			         tasks; call it from another thread"
+				.to_string(),
+		});
+	}
+	Ok(())
+}
+
+/// Pump `connection`'s responses into `listener` on a thread of its own and
+/// hand the host its side of the pipe.
+fn start_pump(
+	connection: Box<dyn JsonRpcConnection>,
+	listener: Arc<dyn ChainMessageListener>,
+) -> Result<Arc<ChainConnection>, ChainProviderError> {
+	let connection: Arc<dyn JsonRpcConnection> = Arc::from(connection);
+
+	let responses = connection.responses();
+	// Weak on purpose: a strong handle here would keep the connection alive
+	// forever. `Drop` is what calls `close()`, `close()` is what ends the
+	// response stream, and the pump parks on that stream -- so holding a
+	// strong reference means the drop that would release it can never run.
+	let pumped = Arc::downgrade(&connection);
+	spawn_pump("truapi-pump", pump_responses(responses, pumped, listener)).map_err(|error| {
+		ChainProviderError::Connect {
+			reason: format!("could not start the response pump: {error}"),
+		}
+	})?;
+
+	Ok(Arc::new(ChainConnection { inner: connection }))
+}
+
+/// The WebSocket backend needs an ambient tokio runtime for its handshake,
+/// writer task and keepalive timers, and a foreign host has none. One
+/// current-thread runtime is driven for the life of the process on a dedicated
+/// thread, shared by every RPC connection.
+fn rpc_runtime() -> Result<&'static tokio::runtime::Handle, ChainProviderError> {
+	static HANDLE: OnceLock<Result<tokio::runtime::Handle, String>> = OnceLock::new();
+	HANDLE
+		.get_or_init(|| {
+			let runtime = tokio::runtime::Builder::new_current_thread()
+				.enable_all()
+				.build()
+				.map_err(|error| error.to_string())?;
+			let handle = runtime.handle().clone();
+			// `Handle::block_on` cannot drive a current-thread runtime's IO and
+			// timer drivers; only this `block_on` does.
+			std::thread::Builder::new()
+				.name("truapi-rpc".to_string())
+				.spawn(move || runtime.block_on(core::future::pending::<()>()))
+				.map_err(|error| error.to_string())?;
+			Ok(handle)
+		})
+		.as_ref()
+		.map_err(|reason| ChainProviderError::Connect {
+			reason: format!("could not start the rpc runtime: {reason}"),
+		})
+}
+
+/// A WebSocket connection whose response stream is polled from a pump thread.
+/// The stream arms tokio timers (the read timeout), which need the runtime's
+/// context on whichever thread polls it, so every poll enters it.
+struct InRuntime {
+	inner: Box<dyn JsonRpcConnection>,
+	runtime: &'static tokio::runtime::Handle,
+}
+
+impl JsonRpcConnection for InRuntime {
+	fn send(&self, request: String) {
+		self.inner.send(request);
+	}
+
+	fn responses(&self) -> BoxStream<'static, String> {
+		let runtime = self.runtime;
+		let mut responses = self.inner.responses();
+		futures::stream::poll_fn(move |cx| {
+			let _context = runtime.enter();
+			responses.poll_next_unpin(cx)
+		})
+		.boxed()
+	}
+
+	fn close(&self) {
+		self.inner.close();
 	}
 }
 

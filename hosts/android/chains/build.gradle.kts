@@ -20,6 +20,7 @@ dependencies {
     api(libs.google.gson)
 
     implementation(libs.bouncycastle.jdk18)
+    implementation(libs.neovisionaries.websocket)
 
     implementation(libs.bundles.squareup.okhttp3)
     api(libs.squareup.retrofit2.core)
@@ -29,4 +30,7 @@ dependencies {
 
     testImplementation(project(":test-shared"))
     testImplementation(libs.mockk)
+    testImplementation(libs.squareup.okhttp3.mockwebserver)
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

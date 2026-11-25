@@ -82,8 +82,8 @@ serde_json = "1"
 serde_with = { version = "3", default-features = false, features = ["macros"] }
 sha2 = "0.10"
 shlex = "1"
-smoldot = { version = "4", default-features = false }
-smoldot-light = { version = "2.1", default-features = false }
+smoldot = { version = "6", default-features = false }
+smoldot-light = { version = "4", default-features = false }
 socket2 = "0.6"
 sp-crypto-hashing = { version = "0.1", default-features = false }
 strum = { version = "0.28", features = ["derive"] }
@@ -156,3 +156,7 @@ codegen-units = 16
 # Most core edits touch one crate, so reusing the previous compilation is the
 # largest remaining win on this path.
 incremental = true
+
+[patch.crates-io]
+smoldot = { git = "https://github.com/paritytech/smoldot", rev = "35bb2efdacb57b7036390302298d1eaa43b21558" }
+smoldot-light = { git = "https://github.com/paritytech/smoldot", rev = "35bb2efdacb57b7036390302298d1eaa43b21558" }

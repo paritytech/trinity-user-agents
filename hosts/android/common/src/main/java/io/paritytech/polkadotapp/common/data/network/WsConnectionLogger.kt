@@ -12,7 +12,8 @@ class WsConnectionLogger(private val ignoreStateMachineLogs: Boolean) : Logger {
 
         if (shouldIgnoreStateMachineLog(message)) return
 
-        if (message.length > TRUNCATION_SIZE) {
+        // Storage subscriptions are kept whole: their keys are what light-client data usage is measured against.
+        if (message.length > TRUNCATION_SIZE && !message.contains("\"method\":\"state_subscribeStorage\"")) {
             val message = "${message.take(TRUNCATION_SIZE)}... (${message.length - TRUNCATION_SIZE} more)"
             Timber.d(message)
         } else {

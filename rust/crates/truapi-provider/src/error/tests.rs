@@ -1,7 +1,7 @@
 use super::{FrameForId, frame_for_id, synthetic_error_frame};
 
 #[test]
-fn a_matching_result_frame_yields_its_string() {
+fn a_matching_result_frame_yields_its_result() {
 	let frame = frame_for_id(r#"{"id":"db","result":"blob"}"#, "db").expect("the id matches");
 	let FrameForId::Result(result) = frame else {
 		panic!("expected a result");
@@ -23,8 +23,19 @@ fn a_matching_error_frame_fails_instead_of_waiting() {
 }
 
 #[test]
-fn a_matching_non_string_result_fails() {
-	let frame = frame_for_id(r#"{"id":"db","result":null}"#, "db").expect("the id matches");
+fn a_matching_object_result_is_passed_through() {
+	// Metrics answer with an object; whether a result has the right shape is
+	// for the request that awaited it to decide.
+	let frame = frame_for_id(r#"{"id":"m","result":{"metrics":[]}}"#, "m").expect("the id matches");
+	let FrameForId::Result(result) = frame else {
+		panic!("expected a result");
+	};
+	assert_eq!(result, serde_json::json!({"metrics": []}));
+}
+
+#[test]
+fn a_matching_frame_without_result_or_error_fails() {
+	let frame = frame_for_id(r#"{"id":"db"}"#, "db").expect("the id matches");
 	assert!(matches!(frame, FrameForId::Failure(_)));
 }
 

@@ -31,7 +31,7 @@ pub enum ProviderError {
 	/// The WebSocket handshake with a remote node failed.
 	#[display("WebSocket handshake with {url} failed: {reason}")]
 	Handshake {
-		/// The node URL.
+		/// The node's scheme, host and port, without its path or query.
 		url: String,
 		/// The underlying failure.
 		reason: String,
@@ -137,25 +137,14 @@ impl From<StorageClientError> for ProviderError {
 	}
 }
 
-/// `url` without its userinfo, for an error that will be logged.
+/// `url` reduced to its scheme, host and port, for an error that will be logged.
 ///
-/// [`ProviderError::Handshake`] prints the URL in its `Display`, so a node
-/// address carrying `user:pass@` would otherwise leak the credentials into
-/// every log line and error report that touches it.
+/// [`ProviderError::Handshake`] prints the URL in its `Display`. A node address
+/// can carry a credential as `user:pass@`, in its path, or in its query under
+/// any parameter name, so only the part that names the node is kept.
 #[cfg(feature = "ws")]
 pub fn redacted(url: &url::Url) -> String {
-	if url.username().is_empty() && url.password().is_none() {
-		return url.to_string();
-	}
-
-	// Both setters reject only a URL with no host, an empty domain, or the
-	// `file` scheme. None of those can carry userinfo, so any URL reaching here
-	// has already returned above and the discarded results cannot hide a
-	// credential.
-	let mut stripped = url.clone();
-	let _ = stripped.set_username("");
-	let _ = stripped.set_password(None);
-	stripped.to_string()
+	url.origin().ascii_serialization()
 }
 
 /// JSON-RPC internal-error code (per the spec's reserved range).
@@ -188,10 +177,10 @@ pub fn synthetic_error_frame(request: &str, message: &str) -> Option<String> {
 /// Outcome of matching a JSON-RPC response frame against an awaited request id.
 #[cfg(feature = "smoldot")]
 pub enum FrameForId {
-	/// The frame answers `id` with a string `result`.
-	Result(String),
-	/// The frame answers `id` with an `error`, or with a `result` that is not a
-	/// string.
+	/// The frame answers `id` with a `result`.
+	Result(Value),
+	/// The frame answers `id` with an `error`, or with neither a `result` nor
+	/// an `error`.
 	Failure(String),
 }
 
@@ -211,9 +200,9 @@ pub fn frame_for_id(frame: &str, id: &str) -> Option<FrameForId> {
 		let message = error.get("message").and_then(Value::as_str).unwrap_or("unknown error");
 		return Some(FrameForId::Failure(message.to_owned()));
 	}
-	match value.get("result").and_then(Value::as_str) {
-		Some(result) => Some(FrameForId::Result(result.to_owned())),
-		None => Some(FrameForId::Failure("response carried no string result".to_owned())),
+	match value.get("result") {
+		Some(result) => Some(FrameForId::Result(result.clone())),
+		None => Some(FrameForId::Failure("response carried no result".to_owned())),
 	}
 }
 

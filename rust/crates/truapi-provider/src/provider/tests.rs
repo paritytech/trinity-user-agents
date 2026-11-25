@@ -168,6 +168,46 @@ struct StoredKey {
 	genesis_hash: [u8; 32],
 }
 
+/// Reading metrics must not start a chain: a host polling them for chains it
+/// stopped would otherwise keep every chain running.
+#[cfg(feature = "smoldot")]
+#[test]
+fn metrics_for_a_chain_not_running_start_nothing() {
+	const GENESIS: [u8; 32] = [8; 32];
+	let provider = EmbeddedChainProvider::builder()
+		.chain(GENESIS, ChainSource::light_client("{}").build())
+		.build();
+
+	let metrics = futures::executor::block_on(provider.metrics(GENESIS)).expect("nothing asked");
+	assert_eq!((metrics, provider.is_connected(GENESIS)), (None, false));
+}
+
+/// smoldot's answer is handed over as it is, so counters it adds later need no
+/// change here.
+#[cfg(feature = "smoldot")]
+#[test]
+fn metrics_for_a_running_chain_are_smoldots_json() {
+	const GENESIS: [u8; 32] = [1; 32];
+	const SPEC: &str = include_str!("../../tests/fixtures/paseo.json");
+	let provider = EmbeddedChainProvider::builder()
+		.chain(GENESIS, ChainSource::light_client(SPEC).build())
+		.build();
+	let _running =
+		futures::executor::block_on(provider.connect(GENESIS)).expect("the chain is added");
+
+	let metrics = futures::executor::block_on(provider.metrics(GENESIS))
+		.expect("the light client answers")
+		.expect("the chain is running");
+	let parsed: serde_json::Value = serde_json::from_str(&metrics).expect("metrics are JSON");
+	let names: Vec<&str> = parsed["metrics"]
+		.as_array()
+		.expect("a list of metric families")
+		.iter()
+		.filter_map(|family| family["name"].as_str())
+		.collect();
+	assert!(names.contains(&"networkConnectionsDialedTotal"), "unexpected families: {names:?}");
+}
+
 /// A store answering from memory, recording what it was asked to keep.
 #[cfg(feature = "smoldot")]
 #[derive(Default)]
