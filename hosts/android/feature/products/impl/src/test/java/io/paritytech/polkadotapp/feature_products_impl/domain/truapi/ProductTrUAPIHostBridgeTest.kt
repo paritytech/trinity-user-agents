@@ -53,7 +53,7 @@ class ProductTrUAPIHostBridgeTest {
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
-        coreEventLogger = CoreEventLogger { _, _, _ -> },
+        coreEventLogger = CoreEventLogger { _, _, _, _ -> },
         scope = scope,
     )
 
