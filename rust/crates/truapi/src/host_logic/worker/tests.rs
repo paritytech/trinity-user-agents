@@ -119,9 +119,10 @@ fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 	ledger.acquire(&product);
 	let exited = |now_ms| ledger.exited(&product, current(&ledger, &product), now_ms);
 	let waits: Vec<_> = (0..12).map(|n| exited(n * 10)).collect();
+	let waiting = current(&ledger, &product);
 	let restarts_before = recorder.seen().len();
-	ledger.restart(&product, current(&ledger, &product));
-	ledger.restart(&product, current(&ledger, &product));
+	ledger.restart(&product, waiting);
+	ledger.restart(&product, waiting);
 	let after_quiet = exited(11 * 10 + CRASH_RUN_WINDOW_MS + 1);
 
 	assert_eq!(
@@ -161,16 +162,17 @@ fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
-	let exited = |now_ms| ledger.exited(&product, current(&ledger, &product), now_ms);
-	exited(0);
-	assert!(exited(1).is_some());
+	ledger.exited(&product, current(&ledger, &product), 0);
+	let waiting = current(&ledger, &product);
+	assert!(ledger.exited(&product, waiting, 1).is_some());
 	ledger.release(&product);
-	ledger.restart(&product, current(&ledger, &product));
+	ledger.restart(&product, waiting);
 	ledger.acquire(&product);
-	assert!(exited(2).is_some());
+	let replaced = current(&ledger, &product);
+	assert!(ledger.exited(&product, replaced, 2).is_some());
 	ledger.release(&product);
 	ledger.acquire(&product);
-	ledger.restart(&product, current(&ledger, &product));
+	ledger.restart(&product, replaced);
 
 	assert_eq!(
 		recorder.seen(),

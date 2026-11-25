@@ -65,8 +65,6 @@ struct CrashRun {
 	backoff: Backoff,
 	/// When the last one was reported, in Unix milliseconds.
 	last_exit_ms: u64,
-	/// Whether a restart waits out its backoff.
-	restart_pending: bool,
 }
 
 /// The holds on one product's worker and the attempt started for them.
@@ -147,11 +145,6 @@ impl WorkerLedger {
 			if demand.count != 1 {
 				return;
 			}
-			// Started now, so a restart still waiting on its backoff has
-			// nothing left to do.
-			if let Some(run) = state.crashes.get_mut(product_id) {
-				run.restart_pending = false;
-			}
 			state.request(product_id, WorkerTransition::Start);
 		}
 		self.drain();
@@ -203,7 +196,6 @@ impl WorkerLedger {
 				crashes: 0,
 				backoff: Backoff::new(RESTART_BACKOFF_FIRST, RESTART_BACKOFF_LONGEST),
 				last_exit_ms: now_ms,
-				restart_pending: false,
 			});
 			if now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
 				run.crashes = 0;
@@ -215,7 +207,6 @@ impl WorkerLedger {
 			// The first crash of a run restarts at once.
 			let wait_ms =
 				(consecutive_crashes > 1).then(|| run.backoff.next_pause().as_millis() as u64);
-			run.restart_pending = wait_ms.is_some();
 			if consecutive_crashes == CRASH_NOTICE_AFTER {
 				state.pending.push_back(LedgerEvent::Crashing {
 					product_id: product_id.clone(),
@@ -239,12 +230,6 @@ impl WorkerLedger {
 			let mut state = self.state();
 			let Some(demand) = state.references.get(product_id) else { return };
 			if attempt_id != demand.attempt_id {
-				return;
-			}
-			let Some(run) = state.crashes.get_mut(product_id) else {
-				return;
-			};
-			if !core::mem::take(&mut run.restart_pending) {
 				return;
 			}
 			state.request(product_id, WorkerTransition::Start);
