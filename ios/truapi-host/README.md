@@ -694,12 +694,9 @@ let runtimeConfig = HostRuntimeConfig(
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
-let execution = try runtime.openProductExecution(
+let execution = try runtime.openAppExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(
-        productId: try ProductId("my-product.dot"),
-        executionKind: .app
-    )
+    productId: ProductId("my-product.dot")
 )
 // The endpoint stays valid across backgrounding: iOS reclaims a suspended
 // app's listening socket, and the runtime rebinds it on the same port when

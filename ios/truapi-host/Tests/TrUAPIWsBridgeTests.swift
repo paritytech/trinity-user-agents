@@ -58,12 +58,9 @@ struct TrUAPIWsBridgeTests {
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
-                executionKind: .app
-            )
+            productId: ProductId("test.dot")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -95,12 +92,9 @@ struct TrUAPIWsBridgeTests {
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
-                executionKind: .app
-            )
+            productId: ProductId("test.dot")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -133,12 +127,9 @@ struct TrUAPIWsBridgeTests {
             runtimeConfig: Self.makeHostRuntimeConfig(),
             notificationCenter: notifications
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
-                executionKind: .app
-            )
+            productId: ProductId("test.dot")
         )
         let endpoint = try execution.startWsBridge(bindPort: 0)
         defer { execution.stopWsBridge() }
