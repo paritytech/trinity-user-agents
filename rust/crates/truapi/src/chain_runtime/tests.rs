@@ -3180,26 +3180,65 @@ impl RuntimeChainProvider for LateHandover {
 }
 
 /// A scope released while the host is still handing a connection over must
-/// not leave that socket open with nothing to close it. The setup runs on, and
-/// drops the connection it is handed once it finds the scope gone.
+/// not leave that socket open with nothing to close it, nor hold it through a
+/// genesis check of up to a minute that nobody needs, against the host's
+/// limit of sockets per chain. The setup runs on, and closes the connection as
+/// it is handed over.
 #[test]
-fn a_connection_handed_over_after_its_scope_was_released_is_closed() {
-	let node = Arc::new(ScriptedProvider::new(|_| None));
+fn a_connection_handed_over_after_its_scope_was_released_is_closed_unchecked() {
+	let named = [0xa1; 32];
+	let node = node_of(named);
 	let (hand_over, handover) = futures::channel::oneshot::channel();
 	let host = LateHandover { node: node.clone(), handover: Mutex::new(Some(handover)) };
-	let product = ChainRuntime::new(Arc::new(host), Spawner::for_test()).for_product(1);
+	let heard = Arc::<HeardAnswers>::default();
+	let product = ChainRuntime::new(Arc::new(host), Spawner::for_test())
+		.checking_genesis(heard.clone())
+		.for_product(1);
 
-	let given_up = product.rpc_client("test", &[0xa1; 32]).now_or_never();
+	let given_up = product.rpc_client("test", &named).now_or_never();
 	crate::test_support::wait_until(
 		|| node.connect_calls.load(Ordering::SeqCst) == 1,
 		"the host dials",
 	);
 	product.release_scope();
 	let _ = hand_over.send(());
-
-	assert!(given_up.is_none(), "the connection is not handed out before the host hands it over");
 	let socket_closed = || node.sender.lock().unwrap().is_none();
 	crate::test_support::wait_until(socket_closed, "the socket handed over late is closed");
+
+	assert_eq!(
+		(given_up.is_none(), node.sent.lock().unwrap().clone(), heard.heard()),
+		(true, Vec::<String>::new(), Vec::new())
+	);
+}
+
+/// A runtime dropped while the host dials must not stay held by the dial. A
+/// native host's genesis check is its stack refresh, which keeps the core
+/// database open, so until the host answers the setup holds it only weakly.
+#[test]
+fn a_dial_the_host_has_not_answered_does_not_hold_the_genesis_check() {
+	let named = [0xa1; 32];
+	let node = node_of(named);
+	let (hand_over, handover) = futures::channel::oneshot::channel();
+	let host = LateHandover { node: node.clone(), handover: Mutex::new(Some(handover)) };
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(Arc::new(host), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let given_up = runtime.rpc_client("test", &named).now_or_never();
+	crate::test_support::wait_until(
+		|| node.connect_calls.load(Ordering::SeqCst) == 1,
+		"the host dials",
+	);
+	drop(runtime);
+	let holders_of_the_check = Arc::strong_count(&heard);
+	let _ = hand_over.send(());
+	let socket_closed = || node.sender.lock().unwrap().is_none();
+	crate::test_support::wait_until(socket_closed, "the socket handed over late is closed");
+
+	assert_eq!(
+		(given_up.is_none(), holders_of_the_check, node.sent.lock().unwrap().len()),
+		(true, 1, 0)
+	);
 }
 
 /// A product mints its follow id from the request id it chose, which is
