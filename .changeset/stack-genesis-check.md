@@ -13,8 +13,8 @@ A build with an old descriptor can't reach a wiped chain until it has the new de
 the core can get it. While a chain is listed the core asks every five minutes instead of every hour. A host that only
 passes `stackChanged` still hears when `mismatches` changes.
 
-On a pairing host, `createTransaction` fails with `ChainUnavailable` rather than `Unknown` when People can't be reached,
-or stays halted, while the core opens the People connection that carries the request to the paired wallet. A v0.1 caller
-still gets `Unknown`.
+On a pairing host, `createTransaction` also fails with `ChainUnavailable` rather than `Unknown` when the People
+connection that carries the request to the paired wallet can't be dialled, or its node hangs up or goes silent when
+asked for its genesis hash. A halted People chain already gave `ChainUnavailable`. A v0.1 caller still gets `Unknown`.
 
 An unreachable chain isn't listed, and a runtime built from `testStack` isn't checked.
