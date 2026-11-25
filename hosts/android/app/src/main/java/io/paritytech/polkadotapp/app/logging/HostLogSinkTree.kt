@@ -9,7 +9,7 @@ import javax.inject.Inject
  * Forwards `truapi.*` lines at info and above to the [HostLogSink], at most [LINES_PER_WINDOW] per tag
  * in each [WINDOW_MS] window. A `truapi.core` line counts against its marker rather than the whole tag,
  * so one noisy marker cannot hide the others. The first line after a window that dropped lines is
- * preceded by one line that counts them, so a product or connection stuck in a loop sends at most that
+ * preceded by one line that counts them, so a tagged line or core marker stuck in a loop sends at most that
  * many lines a minute plus the count. A count that no later line follows, because the tag went quiet or
  * the app stopped, is never sent.
  */
