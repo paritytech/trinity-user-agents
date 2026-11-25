@@ -92,12 +92,12 @@ flowchart TD
   A --> W{Worker content id?}
   U --> W
   D --> W
-  W -- yes --> T[TrUAPIWorkerManager.reload]
+  W -- yes --> T[TrUAPIHostRuntime.reloadWorker]
   W --> G[removeSupersededContent]
 ```
 
-- **Worker releases** (`worker.<base>`, or `<base>` for legacy) restart the TrUAPI worker through
-  its transition queue. The chat handler and Pocket cards read the current execution on every call,
+- **Worker releases** (`worker.<base>`, or `<base>` for legacy) ask the core to restart the worker
+  if a consumer still holds a claim. The chat handler and Pocket cards read the current execution on every call,
   so they follow the restart without being rebuilt. Native workers are not reloaded: they pick up
   the new archive on their next boot.
 - **Cleanup** runs at start and after every apply. It deletes stored archives that no pointer

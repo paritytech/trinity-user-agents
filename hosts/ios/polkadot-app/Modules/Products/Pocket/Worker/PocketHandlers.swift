@@ -11,7 +11,7 @@ import Products
 /// handler is decided by the collection and the product manifests alone, and by
 /// nothing else the session holds.
 final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
-    private let workers: any TrUAPIWorkerManaging
+    private let runtime: ProductWorkerRuntimeProvider
     private let published: any PublishedPocketCardsResolving
     private let logger: LoggerProtocol
 
@@ -27,11 +27,11 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
     }
 
     init(
-        workers: any TrUAPIWorkerManaging,
+        runtime: @escaping ProductWorkerRuntimeProvider,
         published: any PublishedPocketCardsResolving,
         logger: LoggerProtocol = Logger.shared
     ) {
-        self.workers = workers
+        self.runtime = runtime
         self.published = published
         self.logger = logger
     }
@@ -136,7 +136,7 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
             let started = wanted.compactMap { productId -> TrUAPIPocketHandler? in
                 guard running.handlers[productId] == nil else { return nil }
 
-                let handler = TrUAPIPocketHandler(productId: productId, workers: workers, logger: logger)
+                let handler = TrUAPIPocketHandler(productId: productId, runtime: runtime, logger: logger)
                 running.handlers[productId] = handler
                 return handler
             }

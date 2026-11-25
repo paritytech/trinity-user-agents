@@ -285,9 +285,9 @@ private struct NetworkTestProduct {
                 hostName: "network-tests", stack: previewnetStack(),
                 databaseDirectory: temporaryDatabaseDirectory()
             ))
-            let execution = try runtime.openProductExecution(
+            let execution = try runtime.openAppExecution(
                 bridge: bridge,
-                configuration: ProductExecutionConfig(productId: ProductId("network.paseo"), executionKind: .app)
+                productId: ProductId("network.paseo")
             )
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()

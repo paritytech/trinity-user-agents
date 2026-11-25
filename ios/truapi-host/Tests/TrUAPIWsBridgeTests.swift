@@ -1,38 +1,9 @@
 import Foundation
-import os
 import Testing
 @testable import TrUAPIHost
 import UIKit
 
 struct TrUAPIWsBridgeTests {
-    @Test(.timeLimit(.minutes(1)))
-    func anOpenRenderDoesNotHoldAWorkerAfterTheLastConsumerLeaves() async throws {
-        let bridge = StubHostBridge()
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: Self.makeHostRuntimeConfig())
-        let product = try ProductId("shared.dot")
-        let chat = runtime.claimWorker(productId: product)
-        let pocket = runtime.claimWorker(productId: product)
-        let execution = try runtime.openProductExecution(
-            bridge: bridge, configuration: ProductExecutionConfig(productId: product, executionKind: .worker)
-        )
-        defer { execution.close() }
-        let endpoint = try execution.startWsBridge(bindPort: 0)
-        let url = try #require(URL(string: "ws://127.0.0.1:\(endpoint.port)/?t=\(endpoint.token)"))
-        let socket = URLSession.shared.webSocketTask(with: url)
-        socket.resume()
-        defer { socket.cancel(with: .normalClosure, reason: nil) }
-        try await socket.send(.data(Self.featureSupportedRequestFrame()))
-        _ = try await socket.receive()
-
-        let stream = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "front"), payload: Data()))
-        withExtendedLifetime(stream) {
-            pocket.release()
-            #expect(bridge.workerTransitions.withLock { $0 } == [.start])
-            chat.release()
-            #expect(bridge.workerTransitions.withLock { $0 } == [.start, .stop])
-        }
-    }
-
     @Test(.timeLimit(.minutes(5)))
     func anInvalidUsernameTerminatesTheProfileStreamWithTheCoreDomainError() async throws {
         let runtime = try TrUAPIHostRuntime(
@@ -87,12 +58,9 @@ struct TrUAPIWsBridgeTests {
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
-                executionKind: .app
-            )
+            productId: ProductId("test.dot")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -124,12 +92,9 @@ struct TrUAPIWsBridgeTests {
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
-                executionKind: .app
-            )
+            productId: ProductId("test.dot")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -162,12 +127,9 @@ struct TrUAPIWsBridgeTests {
             runtimeConfig: Self.makeHostRuntimeConfig(),
             notificationCenter: notifications
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
-                executionKind: .app
-            )
+            productId: ProductId("test.dot")
         )
         let endpoint = try execution.startWsBridge(bindPort: 0)
         defer { execution.stopWsBridge() }
@@ -305,12 +267,6 @@ func temporaryDatabaseDirectory() throws -> String {
 }
 
 final class StubHostBridge: HostBridge, @unchecked Sendable {
-    let workerTransitions = OSAllocatedUnfairLock(initialState: [WorkerTransition]())
-
-    func requestWorkerTransition(productId _: ProductId, transition: WorkerTransition) {
-        workerTransitions.withLock { $0.append(transition) }
-    }
-
     let storage: HostStorageBackend = StubStorage()
     let coreStorage: HostCoreStorageBackend = StubCoreStorage()
     private let logLock = NSLock()

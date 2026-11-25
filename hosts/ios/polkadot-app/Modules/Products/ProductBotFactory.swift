@@ -7,23 +7,20 @@ import Products
 
 /// Creates ``ProductBot`` instances for a given product.
 ///
-/// The native path is a thin adapter over the shared ``ProductWorkerManager`` —
-/// the worker itself is assembled by ``DefaultProductWorkerFactory``. The rust
-/// path is a chat seam onto the product's one worker, which
-/// ``TrUAPIWorkerManager`` runs.
+/// The Rust chat handler shares the product's core-owned worker and presentation context.
 final class ProductBotFactory {
     private let productFileProvider: ChatProductFileProviding
     private let settingsManager: SettingsManagerProtocol
-    private let runtimeProvider: TrUAPIHostRuntimeProviding
-    private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
+    private let runtime: ProductWorkerRuntimeProvider
+    private let contexts: ProductWorkerContexts
     private let workerManager: ProductWorkerManaging
     private let productImages: ProductImageSources
     private let logger: LoggerProtocol
 
     init(
         productFileProvider: ChatProductFileProviding,
-        runtimeProvider: TrUAPIHostRuntimeProviding,
-        workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
+        runtime: @escaping ProductWorkerRuntimeProvider,
+        contexts: ProductWorkerContexts,
         workerManager: ProductWorkerManaging,
         productImages: ProductImageSources,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
@@ -31,8 +28,8 @@ final class ProductBotFactory {
     ) {
         self.productFileProvider = productFileProvider
         self.settingsManager = settingsManager
-        self.runtimeProvider = runtimeProvider
-        self.workers = workers
+        self.runtime = runtime
+        self.contexts = contexts
         self.workerManager = workerManager
         self.productImages = productImages
         self.logger = logger
@@ -46,16 +43,17 @@ final class ProductBotFactory {
         let images = productImages.resolver(contentId: { source.contentId })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
-        if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
-            let runtime = TrUAPIChatHandler(
+        if settingsManager.isTrUAPIRuntimeEnabled {
+            let handler = TrUAPIChatHandler(
                 productId: product.id,
-                workers: workers,
+                runtime: runtime,
+                context: contexts.context(for: product.id),
                 logger: logger
             )
             return ProductBot(
                 product: product,
                 description: description,
-                runtime: runtime,
+                runtime: handler,
                 resolveImage: resolveImage,
                 logger: logger
             )

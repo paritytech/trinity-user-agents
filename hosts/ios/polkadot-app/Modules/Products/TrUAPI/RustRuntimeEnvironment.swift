@@ -28,6 +28,7 @@ struct RustRuntimeEnvironment {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
         let osPermissionAsker: OSPermissionAsking
+        var acknowledgeStartup: (@Sendable () -> Bool)?
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -70,12 +71,13 @@ struct RustRuntimeEnvironment {
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging
+        chatMessaging: any ProductChatMessaging,
+        attempt: NativeWorkerAttempt
     ) throws -> ExecutionModel {
         try makeExecution(
             productId: productId,
             routers: routers,
-            purpose: .worker(chatMessaging: chatMessaging)
+            purpose: .worker(chatMessaging: chatMessaging, attempt: attempt)
         )
     }
 }
@@ -85,7 +87,7 @@ enum ExecutionPurpose {
     case app
     case expandedCard(face: any ExpandedCardFaceShowing)
     /// The product's one worker, serving its chat bot and its Pocket cards.
-    case worker(chatMessaging: any ProductChatMessaging)
+    case worker(chatMessaging: any ProductChatMessaging, attempt: NativeWorkerAttempt)
 }
 
 private extension RustRuntimeEnvironment {
@@ -111,19 +113,38 @@ private extension RustRuntimeEnvironment {
 
         let bridges = purpose.makeBridges(dependencies: dependencies)
 
-        let execution = try runtime.openProductExecution(
-            bridge: bridges.host,
-            configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
-            chat: bridges.chat,
-            game: gameReminders == nil ? nil : bridges.host
-        )
+        let game = gameReminders == nil ? nil : bridges.host
+        let execution: TrUAPIProductExecution
+        let acknowledge: (@Sendable () -> Bool)?
+        switch purpose {
+        case let .worker(_, attempt):
+            execution = try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
+            acknowledge = { attempt.moduleStarted() }
+        case .app:
+            execution = runtime.openAppExecution(
+                bridge: bridges.host,
+                productId: productId,
+                chat: bridges.chat,
+                game: game
+            )
+            acknowledge = nil
+        case .expandedCard:
+            execution = runtime.openWidgetExecution(
+                bridge: bridges.host,
+                productId: productId,
+                chat: bridges.chat,
+                game: game
+            )
+            acknowledge = nil
+        }
 
         bridges.host.attach(execution)
 
         return ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
+            osPermissionAsker: osPermissionAsker,
+            acknowledgeStartup: acknowledge
         )
     }
 
@@ -164,16 +185,6 @@ private extension RustRuntimeEnvironment {
     }
 }
 
-extension ExecutionPurpose {
-    var executionKind: ExecutableKind {
-        switch self {
-        case .app: .app
-        case .expandedCard: .widget
-        case .worker: .worker
-        }
-    }
-}
-
 private extension ExecutionPurpose {
     /// A worker's bridge also answers its chat callbacks, so it is handed back twice.
     func makeBridges(
@@ -184,7 +195,7 @@ private extension ExecutionPurpose {
             return (RustProductExecutionBridge(dependencies: dependencies), nil)
         case let .expandedCard(face):
             return (RustProductExecutionBridge(dependencies: dependencies, cardFace: face), nil)
-        case let .worker(chatMessaging):
+        case let .worker(chatMessaging, _):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
             return (chat, chat)
         }

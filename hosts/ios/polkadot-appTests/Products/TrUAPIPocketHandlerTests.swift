@@ -11,41 +11,35 @@ private let gameProductId = try! ProductId("game.paseo")
 /// invisible on screen: a stream nothing reopens, and a stream torn down for a
 /// worker that never moved.
 struct TrUAPIPocketHandlerTests {
-    /// The manager publishes every product's execution in one value, so it
-    /// re-sends whenever any worker starts or stops. Reopening on those would
-    /// drop a live render and pay the connect retries again, for a worker this
-    /// card's product never moved.
-    @Test
-    func doesNotReopenTheRenderWhenAnotherProductsWorkerMoves() async throws {
-        let workers = StubWorkerManager()
+    @Test(.timeLimit(.minutes(1)))
+    func keepsDrawingWhenTheCoreReportsTheRunningWorkerAgain() async throws {
+        let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         execution.keepsRenderStreamOpen = true
         let streams = makeStreams(workers: workers)
-
         let drawing = Task {
-            for try await _ in streams.renderFaces(for: loyalty) {
-                return true
+            for try await face in streams.renderFaces(for: loyalty) {
+                if case let .string(text) = face { return text == "still live" }
             }
             return false
         }
         defer { drawing.cancel() }
 
-        // Subscribed before anything is published, so the count of deliveries
-        // below starts from the empty map the handler opens with.
-        try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
+        var delivered = workers.executionsDelivered.makeAsyncIterator()
+        _ = await delivered.next()
         workers.publish([gameProductId: execution])
         try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
-        workers.publish([gameProductId: execution, try! ProductId("shop.paseo"): MockProductExecution()])
-        workers.publish([gameProductId: execution])
-        // The last republish arriving means the one before it has been handled.
+        let sameWorker = MockProductExecution()
+        sameWorker.renderNodes = [.string(text: "reopened")]
+        sameWorker.keepsRenderStreamOpen = true
+        workers.publish([gameProductId: sameWorker])
+        workers.publish([gameProductId: sameWorker])
         for _ in 0 ..< 3 {
-            try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
+            _ = await delivered.next()
         }
 
-        // A reopen cancels the drain of the first stream, so this face would never reach the card.
-        let live = try #require(execution.renderContinuations.first)
-        live.yield(.string(text: "still live"))
-
+        let original = try #require(execution.renders.first)
+        original.observer.onUpdate(node: .string(text: "still live"))
         #expect(try await withTimeout(.hangGuard) { try await drawing.value })
         #expect(execution.renderRequests.count == 1)
     }
@@ -54,7 +48,7 @@ struct TrUAPIPocketHandlerTests {
     /// it rather than stay on the stream of the one that went away.
     @Test
     func opensARenderOnTheExecutionThatReplacesTheWorker() async throws {
-        let workers = StubWorkerManager()
+        let workers = StubWorkerRuntime()
         let first = MockProductExecution()
         first.keepsRenderStreamOpen = true
         let streams = makeStreams(workers: workers)
@@ -67,9 +61,15 @@ struct TrUAPIPocketHandlerTests {
         defer { drawing.cancel() }
 
         try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
+        let original = try #require(first.renders.first)
 
         let replacement = MockProductExecution()
         replacement.keepsRenderStreamOpen = true
+        workers.publish([:])
+        try await withTimeout(.hangGuard) {
+            var cancellation = original.cancellation.makeAsyncIterator()
+            try #require(await cancellation.next())
+        }
         workers.publish([gameProductId: replacement])
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
@@ -82,6 +82,6 @@ struct TrUAPIPocketHandlerTests {
 
 private let loyalty = PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
-private func makeStreams(workers: StubWorkerManager) -> TrUAPIPocketHandler {
-    TrUAPIPocketHandler(productId: gameProductId, workers: workers)
+private func makeStreams(workers: StubWorkerRuntime) -> TrUAPIPocketHandler {
+    TrUAPIPocketHandler(productId: gameProductId, runtime: { workers })
 }
