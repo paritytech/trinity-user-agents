@@ -77,6 +77,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallRe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.withOutbox
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.ContactChatSigners
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.DeleteLocalChatUseCase
@@ -125,6 +127,7 @@ class ChatFeedInteractor @Inject internal constructor(
     private val chatSigners: ContactChatSigners,
     private val identitySigningConsent: IdentitySigningConsentUseCase,
     private val roomSourceContextFactory: ChatRoomSourceContextFactory,
+    private val attachmentStager: ProductAttachmentStager,
     private val chatSeenRepository: ChatSeenRepository,
     private val chatRequestRepository: ChatRequestRepository,
     private val outgoingChatRequestCanceller: OutgoingChatRequestCanceller,
@@ -202,10 +205,15 @@ class ChatFeedInteractor @Inject internal constructor(
         )
     }
 
-    /** The window of messages of the room, with their reactions and revisions. */
+    /**
+     * The window of messages of the room, with their reactions and revisions. The messages that wait in the outbox show
+     * at their time until the host sends them.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
-    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> =
-        roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() }
+    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> = combine(
+        roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() },
+        attachmentStager.observe(chatId),
+    ) { snapshot, outbox -> snapshot.withOutbox(outbox) }
 
     /** Stops the source of the room and closes the room when it is open. Call it when the room screen goes away. */
     fun releaseRoom(chatId: ChatId) {
@@ -219,6 +227,9 @@ class ChatFeedInteractor @Inject internal constructor(
     fun openRoom(chatId: ChatId) = roomSource(chatId).open()
 
     fun closeRoom(chatId: ChatId) = roomSource(chatId).close()
+
+    /** Sends again what waits in the outbox of the room. The room screen calls it when it opens. */
+    suspend fun resumeOutbox(chatId: ChatId) = attachmentStager.resume(chatId)
 
     fun subscribePeerSeenOrder(chatId: ChatId): Flow<Long> {
         return when (chatId.chatVariant()) {
@@ -236,8 +247,12 @@ class ChatFeedInteractor @Inject internal constructor(
 
         val content = ChatMessage.Content.Text(text)
 
-        // A product-source room sends the message to the product, which keeps it.
-        performInProductRoom(chatId, ChatSourceAction.Send(content, replyToMessageId))?.let { return it }
+        // A product-source room keeps the message in the outbox, under the UUID that the host chose, until the product
+        // has it.
+        roomSource(chatId).productSource()?.let { source ->
+            attachmentStager.enqueueText(chatId, text, replyToMessageId)
+            return source.perform(ChatSourceAction.ShowNewest)
+        }
 
         chatEngine.sendUserMessage(
             chatId = chatId,
@@ -257,6 +272,8 @@ class ChatFeedInteractor @Inject internal constructor(
         emoji: String,
         messageReactions: List<ChatMessageReaction>,
     ): ChatSourceActionOutcome {
+        // A message that waits in the outbox takes the reaction now and sends it after the message.
+        if (attachmentStager.toggleReactionPending(messageId, emoji)) return ChatSourceActionOutcome.Done
         performInProductRoom(chatId, ChatSourceAction.ToggleReaction(messageId, emoji))?.let { return it }
 
         val existingUserReaction = messageReactions.find { it.origin.isUser() }
@@ -456,6 +473,8 @@ class ChatFeedInteractor @Inject internal constructor(
     }
 
     suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String): ChatSourceActionOutcome {
+        // A message that waits in the outbox takes the edit now and sends it after the message.
+        if (attachmentStager.editPending(messageId, newText, System.currentTimeMillis())) return ChatSourceActionOutcome.Done
         performInProductRoom(chatId, ChatSourceAction.Edit(messageId, ChatMessage.Content.Text(newText)))?.let { return it }
 
         chatEngine.editMessage(chatId, messageId, newText)

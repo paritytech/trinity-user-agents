@@ -6,7 +6,7 @@ import TrUAPIHost
 
 extension ProductMessageSource {
     var orderedIds: [String] {
-        pages.flatMap(\.ids)
+        pages.flatMap(\.ids) + pending
     }
 
     func insertLive(_ message: ChatMessage) {

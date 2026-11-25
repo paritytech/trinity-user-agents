@@ -37,6 +37,7 @@ class ChatFeedInteractorTest {
         chatSigners = mockk(),
         identitySigningConsent = mockk(),
         roomSourceContextFactory = mockk(),
+        attachmentStager = mockk(),
         chatSeenRepository = mockk(),
         chatRequestRepository = mockk(),
         outgoingChatRequestCanceller = mockk(),

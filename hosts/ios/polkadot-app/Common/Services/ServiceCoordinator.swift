@@ -368,6 +368,10 @@ extension ServiceCoordinator {
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )
+        // The outbox sends the messages of the user in every product room through the bots of this registry. The
+        // messages that wait from before go now.
+        ProductOutboxDelivery.shared.attach(registry: chatExtensionsRegistry)
+        Task { await ProductOutbox.shared.resume() }
 
         let callCoordinator = RealCallCoordinator(
             presentationManager: ChatChatCallPresentationManager(logger: logger),

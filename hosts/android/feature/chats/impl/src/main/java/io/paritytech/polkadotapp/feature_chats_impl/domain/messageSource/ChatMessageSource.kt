@@ -96,8 +96,8 @@ sealed interface ChatPageOutcome {
 
 /** An action of the user on the messages of a room. Ids are the ids of the window. */
 sealed interface ChatSourceAction {
-    /** The user sent a message. The window shows the newest messages, and the message once the product has it. */
-    data class Send(val content: ChatMessage.Content, val replyTo: ChatMessageId?) : ChatSourceAction
+    /** The user sent a message, which the outbox sends. The window shows the newest messages. */
+    data object ShowNewest : ChatSourceAction
 
     data class Edit(val messageId: ChatMessageId, val content: ChatMessage.Content) : ChatSourceAction
 

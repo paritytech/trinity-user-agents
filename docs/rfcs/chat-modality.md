@@ -453,6 +453,8 @@ struct ChatMedia {
     spoiler: bool,
     // The receiver opens it once, then the Host drops it. See `Opened`.
     view_once: bool,
+    // The status of this item while it differs from the message.
+    status: Option<MessageStatus>,
 }
 
 enum ChatMediaKind {
@@ -520,17 +522,21 @@ struct AggregatedReaction {
     // Another participant reacted with this emoji and the user has not seen
     // that reaction yet.
     unseen: bool,
+    // The user's own reaction has not left yet.
+    pending: bool,
 }
 
 // In a room with more than one other participant, `Delivered` and `Read`
 // mean every recipient. `Message.receipts` gives the counts.
 enum MessageStatus {
     // Message is visible to sender but not yet ready for delivery.
-    // e.g. media is still uploading.
-    Preparing,
+    // e.g. media is still uploading, with its progress in percent.
+    Preparing { progress: Option<u8> },
     ReadyForDelivery,
     Delivered,
     Read,
+    // The Host offers a retry only when `retryable`.
+    Failed { reason: Option<String>, retryable: bool },
 }
 
 struct Message {
@@ -548,6 +554,8 @@ struct Message {
     buttons: Vec<Vec<MessageButton>>,
     last_edited: Option<Timestamp>,
     edit_count: u32,
+    // The status of the newest own edit while it differs from `status`.
+    edit_status: Option<MessageStatus>,
     reactions: Map<Emoji, AggregatedReaction>,
     receipts: Option<ReceiptSummary>,
     // The thread whose root is this message.
