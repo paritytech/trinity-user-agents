@@ -72,14 +72,7 @@ const RESERVED_TLD: &str = "dot";
 const LOOPBACK_TLD: &str = "localhost";
 
 /// An id the stack serves no product under.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
-#[display(
-	"the {stack_tld} stack serves no product under the id {product_id}{}",
-	served_as
-		.as_ref()
-		.map(|served| format!(", which names its product {served}"))
-		.unwrap_or_default()
-)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Error)]
 pub struct UnservedProduct {
 	/// The id that was named.
 	pub product_id: ProductId,
@@ -89,6 +82,17 @@ pub struct UnservedProduct {
 	/// name it reads as one of its own: a `dot` name on a stack with another
 	/// TLD.
 	pub served_as: Option<ProductId>,
+}
+
+impl core::fmt::Display for UnservedProduct {
+	fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		let Self { product_id, stack_tld, served_as } = self;
+		write!(formatter, "the {stack_tld} stack serves no product under the id {product_id}")?;
+		match served_as {
+			Some(served) => write!(formatter, ", which names its product {served}"),
+			None => Ok(()),
+		}
+	}
 }
 
 /// A request naming such a product is malformed, the same as one whose id
@@ -471,48 +475,50 @@ impl Stack {
 	/// Fails for a name under any other TLD, and for a `dot` name too long to
 	/// be an id under the stack's TLD.
 	pub fn served_id(&self, product_id: &ProductId) -> Result<ProductId, UnservedProduct> {
+		if self.serves(product_id) {
+			return Ok(product_id.clone());
+		}
 		let unserved = || UnservedProduct {
 			product_id: product_id.clone(),
 			stack_tld: self.tld.clone(),
 			served_as: None,
 		};
 		match product_id.network_suffix() {
-			None => Ok(product_id.clone()),
-			Some(tld) if tld == self.tld => Ok(product_id.clone()),
 			Some(tld) if self.accepts_tld(tld) => {
 				product_id.under_tld(&self.tld).map_err(|_| unserved())
 			},
-			Some(_) => Err(unserved()),
+			_ => Err(unserved()),
 		}
 	}
 
-	/// Whether `product_id` is an id this stack serves a product under: a
-	/// localhost development id, or a name under its own TLD.
+	/// Whether `product_id` is an id this stack serves a product under.
 	///
-	/// A `dot` name on a stack with another TLD is not one. It names a
-	/// product the stack serves under another id, which [`Self::served_id`]
-	/// gives.
+	/// Those are localhost development ids and names under its own TLD. A
+	/// `dot` name on a stack with another TLD is not one. It names a product
+	/// the stack serves under another id, which [`Self::served_id`] gives.
 	pub fn serves(&self, product_id: &ProductId) -> bool {
-		self.require_served(product_id).is_ok()
+		product_id.network_suffix().is_none_or(|tld| tld == self.tld)
 	}
 
-	/// [`Self::serves`] as a check. The error says which id the stack serves
-	/// the product under when `product_id` is a name [`Self::served_id`]
-	/// reads.
+	/// [`Self::serves`] as a check.
+	///
+	/// The error carries the id the stack serves the product under when
+	/// `product_id` is a name [`Self::served_id`] reads.
 	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
-		let served = self.served_id(product_id)?;
-		if served == *product_id {
+		if self.serves(product_id) {
 			return Ok(());
 		}
 		Err(UnservedProduct {
 			product_id: product_id.clone(),
 			stack_tld: self.tld.clone(),
-			served_as: Some(served),
+			served_as: self.served_id(product_id).ok(),
 		})
 	}
 
 	/// Whether this stack gives `product_id` every `RemotePermission` without
-	/// a prompt: a trusted label under an id it serves.
+	/// a prompt.
+	///
+	/// It does for a trusted label under an id it serves.
 	pub fn trusts(&self, product_id: &ProductId) -> bool {
 		self.serves(product_id) && product_id.has_trusted_remote_permissions()
 	}

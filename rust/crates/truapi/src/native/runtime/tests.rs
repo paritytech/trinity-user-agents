@@ -709,24 +709,31 @@ fn an_execution_opens_only_for_a_product_the_stack_serves() {
 	);
 }
 
-/// A worker claim for a product the stack does not serve holds nothing. The
+/// A worker claim under an id the stack does not serve holds nothing. The
 /// worker can never open, so a reference would make the host retry it
-/// forever.
+/// forever. On a `paseo` stack that goes for a name under `dot` as well as for
+/// another network's id: the host claims the worker under the id it opens.
 #[test]
 fn a_worker_claim_for_an_unserved_product_starts_nothing() {
 	let callbacks = Arc::new(EventCallbacks::new());
+	let descriptor =
+		crate::test_support::test_descriptor("paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32]);
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
-		native_host_runtime_config(),
+		HostRuntimeConfig {
+			stack: native_bundled_stack(&descriptor),
+			..native_host_runtime_config()
+		},
 	)
 	.expect("host runtime config should be valid");
 
 	let _unserved = host.claim_worker(ProductId::for_test("shared.elsewhere"));
-	let _served = host.claim_worker(ProductId::for_test("shared.dot"));
+	let _under_dot = host.claim_worker(ProductId::for_test("shared.dot"));
+	let _served = host.claim_worker(ProductId::for_test("shared.paseo"));
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
-		vec![(ProductId::for_test("shared.dot"), crate::WorkerTransition::Start)]
+		vec![(ProductId::for_test("shared.paseo"), crate::WorkerTransition::Start)]
 	);
 }
 

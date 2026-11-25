@@ -476,8 +476,8 @@ async fn root_manifest_within(
 /// With `peopl.paseo` granting `dim2next` its key:
 /// - `dim2next.paseo` may prove in `dim2.paseo`'s context when `dim2.paseo` grants `dim2next`
 ///   `context`.
-/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a namesake's on another
-///   network.
+/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a localhost id's, which is
+///   on no network.
 ///
 /// Guards the alias read as well as the proof: both come from one VRF evaluation.
 pub async fn require_context_access(

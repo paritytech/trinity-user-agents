@@ -443,7 +443,8 @@ check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
 val container = ContainerScriptBundle.load(webView.context)
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("my-product.dot").getOrThrow(), ExecutableKind.APP),
+    // An id the bundled stack serves: a name under the stack's TLD.
+    configuration = ProductExecutionConfig(ProductId.parse("my-product.paseo").getOrThrow(), ExecutableKind.APP),
 )
 val endpoint = execution.startWsBridge()
 

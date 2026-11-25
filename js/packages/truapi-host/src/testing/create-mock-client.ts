@@ -111,13 +111,15 @@ export async function createMockClient(
   const account = resolveAccount(options.account ?? "alice");
   await runtime.activateLocalSession(account.entropy);
 
+  // A suite names its product as it likes, and the core opens a product only
+  // under an id the test stack serves, so ask for that id first.
+  const productId = runtime.parseProductId(requestedProduct);
+
   // Both ends in one process, but still over a real MessagePort: the frames
   // crossing here are the same bytes that cross an iframe boundary.
   const channel = new MessageChannel();
-  // A suite names its product as it likes; the core runs it under the id the
-  // test stack serves it under.
   const core = runtime.productRuntime(
-    { productId: runtime.parseProductId(requestedProduct) },
+    { productId },
     {
       emitFrame(frame: Uint8Array) {
         channel.port1.postMessage(frame);

@@ -257,9 +257,9 @@ export interface StackCallbacks {
 export interface ProductRuntimeConfig {
   /**
    * Stable identifier used to scope product accounts, permissions, and storage.
-   * It is an id the host's stack serves: a runtime's `parseProductId` gives
-   * it for a name, such as one written under `dot` on a stack with another
-   * TLD.
+   * It is an id the host's stack serves. A pairing or signing host runtime's
+   * `parseProductId` gives it for a name, such as one written under `dot` on
+   * a stack with another TLD.
    */
   productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */

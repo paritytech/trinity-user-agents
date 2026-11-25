@@ -581,20 +581,27 @@ take a stack and answer the id as written.
 A host and the core hold one id for a product. `ProductContext::served_by`
 opens a product only under an id the stack serves and refuses a `dot` name on
 another stack, naming the id to open instead. A host that is given a name asks
-for the id first: a wasm runtime's `parseProductId`, or `Stack::served_id`,
-which the CLI applies to `--product-id`. Every other id a host passes is taken
-as written. The subtree lookup, `HostAccounts::derive_entropy`, every key the
+for the id first: a wasm pairing or signing host runtime's `parseProductId`, or
+`Stack::served_id` in Rust, which the CLI applies to `--product-id`. A native
+host gets served ids from `parse_navigate` and `parse_product_share_host` and
+builds any other id under the stack's TLD. Every other id a host passes is
+taken as written, and a worker claim under an id the stack does not serve
+holds nothing. The subtree lookup, `HostAccounts::derive_entropy`, every key the
 signing wallet derives for a product other than its contact handle key, which
 only a connection's own product reaches, the manifest readers and worker
 references refuse an id the stack does not serve.
 
-`HostRuntime` and the wasm runtimes administer stored state for any id as
-written (`permission_authorization_status` and its setter,
-`clear_product_state`), so a host on them can still read, change and clear what
-was kept under an id the stack does not serve, such as a `dot` id an earlier
-release ran on a `paseo` stack. A native host can clear it with
-`clear_product_state`, but it reads and sets stored statuses only through a
-`NativeProductExecution`, which opens only for a served product.
+`HostRuntime` and the wasm runtimes administer stored state by the id as
+written. `clear_product_state` clears what is kept under exactly that id,
+served or not, so a host can drop what an id it no longer runs left behind,
+such as a `dot` id an earlier release ran on a `paseo` stack.
+`permission_authorization_status` and its setter read and change the statuses
+of an id the stack serves and of an id it serves nothing under. They refuse a
+`dot` name on a stack with another TLD: the stack keeps that product's
+statuses under its own id, and a status stored under the name would be one no
+product reads. A native host can clear with `clear_product_state`, but it
+reads and sets stored statuses only through a `NativeProductExecution`, which
+opens only for a served product.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
 counts only under an id the stack serves. These products bypass recorded permissions and

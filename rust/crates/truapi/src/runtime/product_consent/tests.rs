@@ -86,7 +86,7 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 	assert_eq!((first.unwrap(), second.unwrap(), prompts(&platform)), (Authorized, Authorized, 1));
 }
 
-/// A trusted label is trusted only under a TLD the stack accepts, so
+/// A trusted label is trusted only under an id the stack serves, so
 /// `dim2.testnet` on a paseo stack is asked like any other product.
 #[test]
 fn a_trusted_label_off_the_stack_is_asked_for_account_access() {
@@ -101,8 +101,8 @@ fn a_trusted_label_off_the_stack_is_asked_for_account_access() {
 	);
 }
 
-/// A trusted product skips the review of its own operations, but only under a
-/// TLD the stack accepts.
+/// A trusted product skips the review of its own operations, but only under
+/// an id the stack serves.
 #[test]
 fn a_trusted_label_off_the_stack_does_not_skip_a_review() {
 	let stack = paseo_test_stack();

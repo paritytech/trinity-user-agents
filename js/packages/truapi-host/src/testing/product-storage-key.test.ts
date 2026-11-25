@@ -58,9 +58,9 @@ suite("the key a seeded product storage entry is stored under", () => {
   });
 
   it("names the product as the host's stack serves it", async () => {
-    // The core runs `calc.dot` as `calc.paseo` on the mock stack and reads
-    // its storage by that id, so a seed keyed by the id as written would
-    // land where the product never looks.
+    // On the mock stack the name `calc.dot` is the product `calc.paseo`, and
+    // the core reads its storage by that id, so a seed keyed by the id as
+    // written would land where the product never looks.
     const { testStackServedProductId } = await seedingHelpers();
     const onDot = {
       ...mockTestStack(),

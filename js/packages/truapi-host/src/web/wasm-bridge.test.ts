@@ -127,6 +127,42 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     expect(() => parseProductId("not a product")).toThrow();
   });
 
+  it("opens a product only under an id the stack serves, and names that id", async () => {
+    const { WasmPairingHostRuntime, initSync } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      hostConfig,
+    );
+    const open = (productId: string) =>
+      runtime.productRuntime({ productId }, { emitFrame: () => {} });
+
+    // The bundled stack is previewnet, on `testnet`. A name under `dot` is
+    // that stack's own product, which the host asks for before it opens it,
+    // so the host and the core hold one id for it.
+    expect([
+      runtime.parseProductId(" Game.DOT "),
+      runtime.parseProductId("game.testnet"),
+      runtime.parseProductId("localhost:3000"),
+    ]).toEqual(["game.testnet", "game.testnet", "localhost:3000"]);
+    expect(() => runtime.parseProductId("game.paseo")).toThrow(
+      "the testnet stack serves no product under the id game.paseo",
+    );
+    expect(() => open("game.dot")).toThrow(
+      "the testnet stack serves no product under the id game.dot, which names its product game.testnet",
+    );
+    expect(() => open("game.paseo")).toThrow(
+      "the testnet stack serves no product under the id game.paseo",
+    );
+    open("game.testnet").dispose();
+  });
+
   it("distinguishes product IDs from shared labels in persisted storage keys", async () => {
     const { initSync, describeCoreStorageKey } = await import(glueUrl.href);
     initSync({ module: readFileSync(wasmUrl) });

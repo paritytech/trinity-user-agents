@@ -53,15 +53,25 @@ descriptor without an Asset Hub, People or Bulletin chain, a field `stack` does
 not have, and the TLDs `li`, which share hosts end in, and `localhost`, whose
 names all resolve to the local machine.
 
-The core runs products under the stack's TLD, and every `productId` a host
-passes is an id the stack serves. A product can also be named under `dot`: on a
-stack with another TLD that name is the stack's own product, so on `paseo`
-`chat-bot.dot` is `chat-bot.paseo`. `runtime.parseProductId(name)` answers the
-id for a name and rejects a name the stack does not serve. Pass its answer to
-`createProvider`, `claimWorker` and the other calls: they refuse
-`chat-bot.dot` on a `paseo` stack, so the host and the core never hold two ids
-for one product, and the ids the core hands to callbacks such as
-`subscribeWorkerDemand` are the ones the host passed.
+The core runs products under the stack's TLD. A product can also be named
+under `dot`: on a stack with another TLD that name is the stack's own product,
+so on `paseo` `chat-bot.dot` is `chat-bot.paseo`. `runtime.parseProductId(name)`
+answers the id for a name and rejects a name the stack does not serve. Pass its
+answer wherever the runtime takes a product id, so the host and the core hold
+one id for a product. With `chat-bot.dot` on a `paseo` stack:
+
+- `createProvider` rejects, and the error names `chat-bot.paseo`;
+- `claimWorker` holds nothing and the core logs a warning, so no demand is
+  reported for it;
+- `getPermissionAuthorizationStatus`, `getPermissionAuthorizationStatuses` and
+  `setPermissionAuthorizationStatus` reject, since a status stored under that
+  name is one no product reads;
+- `clearProductState` clears what is stored under exactly that id, which is how
+  a host drops what an earlier release kept under it. It does not touch
+  `chat-bot.paseo`.
+
+Ids the core hands to a host are ids the stack serves, also when a product
+wrote a `dot` name in a call.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
@@ -414,7 +424,7 @@ connects again: `onPort` is called with a fresh port once the new document
 sends a frame, and the function `onPort` returned for the previous port runs
 then. Each port is a new product session, so give it a core connection of its
 own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
-and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker and answers the id the host's stack serves the name under. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 ## Example — Node (worker thread)
 

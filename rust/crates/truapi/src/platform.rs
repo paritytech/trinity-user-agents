@@ -739,7 +739,7 @@ pub enum RuntimeConfigValidationError {
 	#[display("{_0}")]
 	#[from]
 	InvalidProductId(#[error(not(source))] ProductIdError),
-	/// The host's stack does not serve the product.
+	/// The id is not one the host's stack serves.
 	#[display("{_0}")]
 	#[from]
 	UnservedProduct(UnservedProduct),

@@ -6,8 +6,9 @@
 // of the account, not of the run.
 //
 // The product id is the one the host's stack serves the product under. On a
-// stack whose TLD is not `dot`, the core reads `tx-demo.dot` as
-// `tx-demo.<tld>`, and so does the derivation here.
+// stack whose TLD is not `dot`, the name `tx-demo.dot` is the product
+// `tx-demo.<tld>`, which is the id the test host opens and the one derived
+// from here.
 
 import type { ProductId } from "@parity/truapi";
 import { readFile } from "node:fs/promises";

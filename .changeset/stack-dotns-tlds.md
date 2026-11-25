@@ -1,5 +1,6 @@
 ---
 "@parity/truapi-host": major
+"@parity/truapi": patch
 ---
 
 The core serves products under the stack's own TLD. A stack may use any TLD that is a DNS label except `li` and
@@ -15,13 +16,17 @@ reads a name this way in a call or a paired host's request that names a product,
 deeplink, and it answers with the id it serves. The wallet and a pairing host derive nothing under a `dot` id unless
 their stack's TLD is `dot`.
 
-A host passes the core ids its stack serves, so the two never hold different ids for one product. `productRuntime`
-and `claimWorker` refuse `game.dot` on a `paseo` stack, and the error names the id to use. A runtime's
+A host passes the core ids its stack serves, so the two never hold different ids for one product. A runtime's
 `parseProductId` gives that id for a name: it answers the id the host's stack serves the name under and rejects a name
-the stack does not serve. The wasm module's own `parseProductId` checks syntax only and accepts any TLD. A product that
-an earlier release ran as `name.dot` on such a stack runs as `name.<tld>`, with new accounts and none of what was
-stored under the `dot` id. `clearProductState` and the permission status calls take an id as written, so a host can
-still clear what was kept under the old one.
+the stack does not serve. The wasm module's own `parseProductId` checks syntax only and accepts any TLD. With `game.dot`
+on a `paseo` stack, `productRuntime` and `createProvider` throw an error that names `game.paseo`, `claimWorker` holds
+nothing and logs a warning, and the permission status calls reject, because a status stored under that name is one no
+product reads. `clearProductState` clears what is stored under exactly the id it is given.
+
+A product that an earlier release ran as `name.dot` on such a stack runs as `name.<tld>`, with new accounts and none of
+what was stored under the `dot` id: its storage, Pocket cards, chat rooms, ring-VRF registrations and stored permission
+statuses. A host drops those with `clearProductState("name.dot")`. The CLI reads `--product-id name.dot` as
+`name.<tld>`, so its default product and any product a user selected under `.dot` get new accounts too.
 
 The test host follows the same rule. Its test stack is on `paseo` and its default product is `mock.paseo`. The
 Playwright fixture, `createMockClient`, `productAccountAddress`, `getProductAccountAddress` and `seedProductStorage`

@@ -73,6 +73,16 @@ pub struct ProductSelection {
 	execution_kind: ExecutableKind,
 }
 
+/// The product a person names with `product_id`, under the id `stack` serves
+/// it under.
+fn named_product(
+	stack: &Stack,
+	product_id: &ProductId,
+	execution_kind: ExecutableKind,
+) -> Result<ProductContext, RuntimeConfigValidationError> {
+	ProductContext::served_by(stack, stack.served_id(product_id)?, execution_kind)
+}
+
 impl ProductSelection {
 	/// Select the initial product identity. `product_id` is a name a person
 	/// typed, so it is read as `stack`, the stack the host runs, reads it: the
@@ -83,8 +93,7 @@ impl ProductSelection {
 		execution_kind: ExecutableKind,
 		stack: &Stack,
 	) -> Result<Arc<Self>, RuntimeConfigValidationError> {
-		let product =
-			ProductContext::served_by(stack, stack.served_id(&product_id)?, execution_kind)?;
+		let product = named_product(stack, &product_id, execution_kind)?;
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
@@ -102,8 +111,7 @@ impl ProductSelection {
 		product_id: ProductId,
 		stack: &Stack,
 	) -> Result<bool, RuntimeConfigValidationError> {
-		let product =
-			ProductContext::served_by(stack, stack.served_id(&product_id)?, self.execution_kind)?;
+		let product = named_product(stack, &product_id, self.execution_kind)?;
 		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false

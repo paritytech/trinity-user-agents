@@ -65,7 +65,8 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 		..StubPlatform::default()
 	});
 	let runtime = activated_signing_runtime(platform.clone());
-	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
+	let (requester, target) =
+		(ProductId::for_test("myapp.testnet"), ProductId::for_test("peopl.testnet"));
 	let access = || {
 		futures::executor::block_on(runtime.role.accounts().consent().account_access(
 			&requester,
@@ -78,9 +79,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	let allowed_once = access();
 	futures::executor::block_on(runtime.set_permission_authorization_status(
 		&requester,
-		PermissionAuthorizationRequest::AccountAccess {
-			target_product_id: ProductId::for_test("peopl.dot"),
-		},
+		PermissionAuthorizationRequest::AccountAccess { target_product_id: target.clone() },
 		PermissionAuthorizationStatus::NotDetermined,
 	))
 	.expect("the reset is stored");
@@ -88,6 +87,43 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	assert_eq!(
 		(allowed_once, access(), platform.account_access_reviews.lock().unwrap().len()),
 		(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied, 2)
+	);
+}
+
+/// A record under a name the stack serves as another id is one no product
+/// reads. A host that set a status there would take the running product for
+/// changed, so the permission calls refuse the name and say which id the
+/// product has. An id the stack serves nothing under has only its record,
+/// which the host can still read.
+#[test]
+fn a_permission_call_refuses_a_name_the_stack_serves_under_another_id() {
+	use crate::platform::PermissionAuthorizationRequest;
+
+	let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+	let request = || PermissionAuthorizationRequest::AccountAccess {
+		target_product_id: ProductId::for_test("peopl.testnet"),
+	};
+	let read = |product_id: &str| {
+		futures::executor::block_on(
+			runtime.permission_authorization_status(&ProductId::for_test(product_id), request()),
+		)
+		.map_err(|error| error.reason)
+	};
+	let deny = |product_id: &str| {
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&ProductId::for_test(product_id),
+			request(),
+			PermissionAuthorizationStatus::Denied,
+		))
+		.map_err(|error| error.reason)
+	};
+	let refusal = "the testnet stack serves no product under the id myapp.dot, which names its \
+	               product myapp.testnet"
+		.to_string();
+
+	assert_eq!(
+		(deny("myapp.dot"), read("myapp.dot"), read("left.paseo")),
+		(Err(refusal.clone()), Err(refusal), Ok(PermissionAuthorizationStatus::NotDetermined))
 	);
 }
 

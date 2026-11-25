@@ -43,9 +43,9 @@ suite("the address a product account will be given", () => {
   });
 
   it("reads a dot name as the host's stack does", async () => {
-    // The mock test stack is on `paseo`, where the core runs `tx-demo.dot` as
-    // `tx-demo.paseo`. A suite that funded the account of the id as written
-    // would fund one the product never signs with.
+    // The mock test stack is on `paseo`, where the name `tx-demo.dot` is the
+    // product `tx-demo.paseo`. A suite that funded the account of the id as
+    // written would fund one the product never signs with.
     const written = await productAccountAddress({
       account: "bob",
       productId: asProductId("tx-demo.dot"),

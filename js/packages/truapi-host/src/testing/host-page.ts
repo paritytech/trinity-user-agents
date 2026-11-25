@@ -404,16 +404,24 @@ export async function startTestHost(
   // normalised to the same "pipe this port" step.
   // Set when the product connects, by whichever topology is running.
   let publishChatAction: ((action: unknown) => Promise<void>) | undefined;
-  // A suite names a product as it likes, and the core runs it under the id
-  // its stack serves: `tx-demo.dot` is `tx-demo.paseo` on the mock stack. The
-  // host asks once and uses that id for everything it does for the product.
+  // A suite names a product as it likes, and the core opens a product only
+  // under an id its stack serves: `tx-demo.dot` names `tx-demo.paseo` on the
+  // mock stack. The host asks for that id once and uses it for everything it
+  // does for the product.
   const servedId = async (name: ProductId): Promise<ProductId> =>
     directRuntime
       ? directRuntime.parseProductId(name)
       : workerRuntime!.parseProductId(name);
-  const hostProduct = await servedId(requestedProduct);
-  const seedKey = async (productId: ProductId, key: string) =>
-    (await deriveHelpers()).productStorageKey(await servedId(productId), key);
+  const hostProduct = await servedId(requestedProduct).catch(
+    (error: unknown) => {
+      // The stack serves no such product, so nothing here will be used.
+      worker?.terminate();
+      host.dispose();
+      throw error;
+    },
+  );
+  const seedKey = async (served: ProductId, key: string) =>
+    (await deriveHelpers()).productStorageKey(served, key);
   // Before the iframe exists, so a product that reads its storage once at
   // startup finds these entries rather than racing a seed.
   const seeded = Object.entries(options.productStorage ?? {});
@@ -530,8 +538,9 @@ export async function startTestHost(
       value: Uint8Array | string,
       productId?: ProductId,
     ) {
+      const served = productId ? await servedId(productId) : hostProduct;
       host.writeProductStorage(
-        await seedKey(productId ?? hostProduct, key),
+        await seedKey(served, key),
         typeof value === "string" ? new TextEncoder().encode(value) : value,
       );
     },

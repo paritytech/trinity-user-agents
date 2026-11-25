@@ -365,6 +365,8 @@ fn product_selection_compares_canonical_ids() {
 
 	assert_eq!(product.current().as_str(), "dotli.paseo");
 	assert_eq!(product.select(ProductId::for_test("dotli.paseo"), &stack()), Ok(false));
+	assert_eq!(product.select(ProductId::for_test("Other.DOT"), &stack()), Ok(true));
+	assert_eq!(product.current().as_str(), "other.paseo");
 	assert_eq!(product.select(ProductId::for_test("localhost:3000"), &stack()), Ok(true));
 	assert_eq!(product.current().as_str(), "localhost:3000");
 	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000"), &stack()), Ok(false));

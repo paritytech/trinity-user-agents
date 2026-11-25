@@ -79,12 +79,12 @@ export const test = base.extend<{ testHost: TestHost }>(
 
 - **`productUrl`** is required. Only the type checks it, so a missing value loads `/undefined` rather than failing.
 - **`productId`** must be the identifier your product signs with, as a dotNS name or `localhost:<port>`. It defaults to
-  `mock.paseo`. The test stack is on `paseo`, so the host reads a name under `.dot` as the same name under `.paseo`. A
-  wrong value fails every signing call with `PermissionDenied` while reads still work. `127.0.0.1:<port>`
-  is not a valid id, so use `localhost:<port>`, and if your product derives its id from its own origin, serve it on
-  `localhost` too. From 0.29 the id is typed as `ProductId`, so wrap the string with `asProductId` as above. On 0.28 and
-  older, pass the plain string. If your repo doesn't depend on `@parity/truapi` directly, add it as a dev dependency at
-  the same version.
+  `mock.paseo`. The test stack is on `paseo`, so the host reads a name under `.dot` as the same name under `.paseo`, and
+  a name under another TLD fails the start. A value that names another product than the one your page signs as fails
+  every signing call with `PermissionDenied` while reads still work. `127.0.0.1:<port>` is not a valid id, so use
+  `localhost:<port>`, and if your product derives its id from its own origin, serve it on `localhost` too. From 0.29 the
+  id is typed as `ProductId`, so wrap the string with `asProductId` as above. On 0.28 and older, pass the plain string.
+  If your repo doesn't depend on `@parity/truapi` directly, add it as a dev dependency at the same version.
 - **`networks`** lists the chains your product reads. The old package fell back to Paseo Asset Hub when a suite named
   none. This one doesn't, so a suite that relied on that default needs `networks: [PASEO_ASSET_HUB]` to stay on the same
   network. With no `networks`, chain reads and statement submits fail after about 30 seconds with

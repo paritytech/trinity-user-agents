@@ -174,7 +174,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: try ProductId("chat.paseo"), executionKind: .chat),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -213,9 +213,10 @@ let config = HostRuntimeConfig(
 for try await cards in runtime.pocketCards() { show(cards) }
 
 // A card the user approved, with the face they approved it by.
-try await runtime.addPocketCard(productId: "game.paseo", cardId: "loyalty", title: "Loyalty", face: face)
-let removal = try await runtime.removePocketCard(productId: "game.paseo", cardId: "loyalty")
-let kept = try await runtime.pocketCardFace(productId: "game.paseo", cardId: "loyalty")
+let game = try ProductId("game.paseo")
+try await runtime.addPocketCard(productId: game, cardId: "loyalty", title: "Loyalty", face: face)
+let removal = try await runtime.removePocketCard(productId: game, cardId: "loyalty")
+let kept = try await runtime.pocketCardFace(productId: game, cardId: "loyalty")
 ```
 
 The core keeps the newest face of a card from every Pocket card render, so a
@@ -349,7 +350,7 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("dim2.dot"), executionKind: .worker),
+    configuration: ProductExecutionConfig(productId: try ProductId("dim2.paseo"), executionKind: .worker),
     game: MyGameBridge(reminders: reminderStore)
 )
 ```
@@ -709,7 +710,8 @@ try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,
     configuration: ProductExecutionConfig(
-        productId: try ProductId("my-product.dot"),
+        // An id the bundled stack serves: a name under the stack's TLD.
+        productId: try ProductId("my-product.paseo"),
         executionKind: .app
     )
 )
