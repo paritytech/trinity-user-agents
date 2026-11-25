@@ -8,13 +8,16 @@ import Coinage
 /// layout supplies the grouped-cell surface). Three modes as lit spheres resting in a recessed groove that
 /// carries a stepped speed-to-privacy scale, and a ring marking the selection. Tap a mode and the ring
 /// slides to it; drag the ring and it follows the finger, settling on the nearest mode on release. The
-/// spheres stay in their slots and grow or shrink as the ring comes and goes. A description card follows.
+/// spheres stay in their slots and grow or shrink as the ring comes and goes. A description card with the
+/// mode's trade-offs as bullet points follows. The header's info button explains coin quality.
 ///
 /// A dumb view: it renders the ``selected`` mode supplied by the Settings view model and reports user
-/// input through ``onSelect``; the presenter/interactor own persistence and re-gating.
+/// input through ``onSelect`` and ``onShowInfo``; the presenter/interactor own persistence and re-gating,
+/// and the wireframe presents the info sheet.
 struct PaymentPrivacyModeCard: View {
     let selected: RecyclingStrategyType
     let onSelect: (RecyclingStrategyType) -> Void
+    let onShowInfo: () -> Void
 
     private let modes = RecyclingStrategyType.allCases
 
@@ -28,9 +31,14 @@ struct PaymentPrivacyModeCard: View {
     @State private var lastDragX: CGFloat?
     @State private var lastDragTime: Date?
 
-    init(selected: RecyclingStrategyType, onSelect: @escaping (RecyclingStrategyType) -> Void) {
+    init(
+        selected: RecyclingStrategyType,
+        onSelect: @escaping (RecyclingStrategyType) -> Void,
+        onShowInfo: @escaping () -> Void
+    ) {
         self.selected = selected
         self.onSelect = onSelect
+        self.onShowInfo = onShowInfo
         _ringPosition = State(initialValue: CGFloat(RecyclingStrategyType.allCases.firstIndex(of: selected) ?? 0))
     }
 
@@ -59,19 +67,49 @@ private extension PaymentPrivacyModeCard {
     }
 
     var header: some View {
-        HStack(spacing: DSSpacings.smallIncreased) {
-            Image(systemName: "shield")
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(.fgSecondary)
-                .frame(width: 32, height: 32)
+        HStack(alignment: .center, spacing: DSSpacings.small) {
+            HStack(alignment: .firstTextBaseline, spacing: DSSpacings.smallIncreased) {
+                Image(systemName: "shield")
+                    .font(.system(size: PrivacyModeMetrics.shieldSize, weight: .regular))
+                    .foregroundStyle(.fgPrimary)
+                    .frame(width: PrivacyModeMetrics.shieldFrame)
+                    .accessibilityHidden(true)
 
-            Text(CashLogo.styled(title, symbol: PaymentAssetBranding.shared.current.symbol, typography: .bodyLarge))
-                .typography(.bodyLarge)
-                .foregroundStyle(.fgPrimary)
-                .accessibilityLabel(title)
+                VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
+                    Text(CashLogo.styled(
+                        title,
+                        symbol: PaymentAssetBranding.shared.current.symbol,
+                        typography: .bodyLarge
+                    ))
+                    .typography(.bodyLarge)
+                    .foregroundStyle(.fgPrimary)
+                    .accessibilityLabel(title)
+
+                    Text(.settingsPrivacymodeSubtitle)
+                        .typography(.paragraphMedium)
+                        .foregroundStyle(.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+
+            infoButton
         }
         .padding(.vertical, DSSpacings.small)
         .frame(minHeight: PrivacyModeMetrics.headerMinHeight)
+    }
+
+    var infoButton: some View {
+        Button(action: onShowInfo) {
+            Image(.iconInfo20)
+                .renderingMode(.template)
+                .resizable()
+        }
+        .buttonStyle(.dsIcon(style: .ghost, shape: .pill, size: .medium))
+        .padding(.trailing, -PrivacyModeMetrics.infoButtonOutset)
+        .accessibilityLabel(Text(.settingsPrivacymodeInfoQualityTitle))
     }
 }
 
@@ -92,6 +130,16 @@ private extension PaymentPrivacyModeCard {
             .gesture(dragGesture(width: width))
         }
         .frame(height: PrivacyModeMetrics.boxHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(modes[chosenIndex].displayTitle)
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: commit(target: min(chosenIndex + 1, modes.count - 1))
+            case .decrement: commit(target: max(chosenIndex - 1, 0))
+            @unknown default: break
+            }
+        }
     }
 
     func trackGroove(width: CGFloat) -> some View {
@@ -143,20 +191,19 @@ private extension PaymentPrivacyModeCard {
 private extension PaymentPrivacyModeCard {
     var descriptionCard: some View {
         let shown = modes[highlightedIndex]
-        return VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
+        return VStack(alignment: .leading, spacing: DSSpacings.tiny) {
             Text(shown.displayTitle)
                 .typography(.titleMedium)
                 .foregroundStyle(.fgPrimary)
 
-            Text(shown.displayDescription)
-                .typography(.paragraphMedium)
-                .foregroundStyle(.fgSecondary)
+            DSBulletList(shown.displayBullets, spacing: DSSpacings.extraTiny)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DSSpacings.mediumIncreased)
         .padding(.vertical, DSSpacings.extraMedium)
         .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.extraMedium, style: .continuous))
         .animation(.easeOut(duration: 0.18), value: highlightedIndex)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -327,10 +374,14 @@ private extension UIColor {
 #if DEBUG
     #Preview("PaymentPrivacyModeCard") {
         StatefulPreviewWrapper(RecyclingStrategyType.balanced) { binding in
-            PaymentPrivacyModeCard(selected: binding.wrappedValue) { binding.wrappedValue = $0 }
-                .dsMenuListCellSurface(position: .first, showsDivider: true)
-                .padding()
-                .background(Color.bgSurfaceMain)
+            PaymentPrivacyModeCard(
+                selected: binding.wrappedValue,
+                onSelect: { binding.wrappedValue = $0 },
+                onShowInfo: {}
+            )
+            .dsMenuListCellSurface(position: .first, showsDivider: true)
+            .padding()
+            .background(Color.bgSurfaceMain)
         }
     }
 

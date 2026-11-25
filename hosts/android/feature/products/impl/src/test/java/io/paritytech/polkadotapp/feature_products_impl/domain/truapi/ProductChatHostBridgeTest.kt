@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
@@ -51,6 +52,7 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.ChatRoomState
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 
@@ -204,22 +206,43 @@ class ProductChatHostBridgeTest {
     @Test
     fun `a room without declarations answers the host default config`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
+        every { messaging.subscribeChatRooms() } returns flowOf(listOf(ProductChatRoom(ROOM, RoomParticipation.ROOM_HOST)))
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns Result.success(null)
 
-        assertEquals(HOST_DEFAULT_CHAT_ROOM_CONFIG, ProductChatHostBridge(productId, messaging).roomConfig(ROOM))
+        assertEquals(
+            ChatRoomState(ChatRoomParticipation.ROOM_HOST, HOST_DEFAULT_CHAT_ROOM_CONFIG),
+            ProductChatHostBridge(productId, messaging).room(ROOM),
+        )
     }
 
     @Test
-    fun `a declared config is answered as declared`() = runTest {
+    fun `a declared config is answered as declared, with the participation of the room`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
         val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true, reactionDetails = true)
+        every { messaging.subscribeChatRooms() } returns flowOf(listOf(ProductChatRoom(ROOM, RoomParticipation.BOT)))
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
             Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
 
-        val config = ProductChatHostBridge(productId, messaging).roomConfig(ROOM)
+        assertEquals(
+            ChatRoomState(
+                ChatRoomParticipation.BOT,
+                HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true, reactionDetails = true),
+            ),
+            ProductChatHostBridge(productId, messaging).room(ROOM),
+        )
+    }
 
-        assertTrue(config.productSource)
-        assertTrue(config.reactionDetails)
+    // The core reads null as a room that the product never created. A room that is not listed, or that is gone by the
+    // time its declarations are read, must answer null and not a host failure.
+    @Test
+    fun `a room that does not exist answers null`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        every { messaging.subscribeChatRooms() } returns flowOf(listOf(ProductChatRoom("gone", RoomParticipation.ROOM_HOST)))
+        coEvery { messaging.roomDeclarations(ProductChatIdParameter("gone")) } returns Result.failure(UnknownChatRoomException())
+        val bridge = ProductChatHostBridge(productId, messaging)
+
+        assertEquals(null, bridge.room(ROOM))
+        assertEquals(null, bridge.room("gone"))
     }
 
     @Test
@@ -235,7 +258,7 @@ class ProductChatHostBridgeTest {
 
         // The configuration arrives with the room, in one call.
         bridge.createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reactionDetails = true))
-        bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null, placeholder = null))
+        val described = bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null, placeholder = null))
         val previewed = bridge.setRoomPreview(
             ROOM,
             ChatRoomPreview(
@@ -250,7 +273,8 @@ class ProductChatHostBridgeTest {
         )
         val deleted = bridge.deleteRoom(ROOM)
 
-        // This host serves both requests, so the product must not receive Unsupported for them.
+        // This host serves these requests, so the product must not receive Unsupported for them.
+        assertEquals(ChatRoomChangeOutcome.APPLIED, described)
         assertEquals(ChatRoomChangeOutcome.APPLIED, previewed)
         assertEquals(ChatRoomChangeOutcome.APPLIED, deleted)
 

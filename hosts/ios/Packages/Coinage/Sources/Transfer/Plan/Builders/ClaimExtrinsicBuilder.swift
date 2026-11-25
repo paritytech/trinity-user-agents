@@ -5,8 +5,8 @@ import KeyDerivation
 import SDKLogger
 import SubstrateSdk
 
-/// Declares a claim of a coin a peer handed us: a `Coinage.transfer` of that coin into one of ours,
-/// signed by the peer's key.
+/// Declares a `Coinage.transfer` of one coin into a fresh one, signed by that coin's own secret key: a
+/// peer's key for a claim of a coin they handed us, or our derived key for a reclaim of one we handed off.
 ///
 /// Shared by the claim path, which declares it once, and by ``ClaimRebuild``, which declares it again
 /// into the coin the first attempt recorded. Minting into the same coin is what lets a payment we have
@@ -19,9 +19,9 @@ struct ClaimExtrinsicBuilder: Sendable {
     let factory: any DurableTxMaking
     let chainId: ChainId
 
-    func request(receivedKey: Data, destination: PublicKey) throws -> DurableTxRequest {
+    func request(coinKey: Data, destination: PublicKey) throws -> DurableTxRequest {
         let call = CoinagePallet.Calls.Transfer(to: destination)
-        let wallet = DynamicDerivedWallet(secretKeyProvider: { receivedKey })
+        let wallet = DynamicDerivedWallet(secretKeyProvider: { coinKey })
 
         return try DurableTxRequest(
             builder: { try $0.adding(call: call.callAsFunction()) },
@@ -29,9 +29,9 @@ struct ClaimExtrinsicBuilder: Sendable {
         )
     }
 
-    func build(_ claims: [(receivedKey: Data, destination: PublicKey)]) async throws -> [ExtrinsicBuiltModel] {
+    func build(_ claims: [(coinKey: Data, destination: PublicKey)]) async throws -> [ExtrinsicBuiltModel] {
         try await factory.makeExtrinsics(
-            claims.map { try request(receivedKey: $0.receivedKey, destination: $0.destination) },
+            claims.map { try request(coinKey: $0.coinKey, destination: $0.destination) },
             chainId: chainId
         )
     }
