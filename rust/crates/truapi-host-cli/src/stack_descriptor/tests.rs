@@ -256,3 +256,29 @@ fn a_local_stack_that_is_not_a_regular_file_is_refused() {
 		))
 	);
 }
+
+/// A regular file opened as `/dev/fd/<n>`, as `--stack /dev/stdin < s.json`
+/// gives, resolves on macOS to `/dev/fd/<file name>`, which every file of that
+/// name shares, so it is refused there. Linux resolves it to the file itself,
+/// which names the stack as the file's own path does.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_local_stack_opened_as_a_file_descriptor_is_named_by_its_file_or_refused() {
+	use std::os::fd::AsRawFd as _;
+
+	let file = tempfile::NamedTempFile::new().expect("temporary file");
+	let path = format!("/dev/fd/{}", file.as_file().as_raw_fd());
+	let name = file.path().file_name().expect("a file name").to_str().expect("UTF-8");
+	let canonical = std::fs::canonicalize(file.path()).expect("the file resolves");
+
+	let expected = if cfg!(target_os = "macos") {
+		Err(format!(
+			"{path} resolves to /dev/fd/{name}, a file descriptor's path that another file can \
+			 resolve to as well, so it cannot name a stack; save the descriptor to a file and give \
+			 its path"
+		))
+	} else {
+		Ok(format!("file:{}", canonical.display()))
+	};
+	assert_eq!(stack_id(&path, None).map_err(|error| error.to_string()), expected);
+}

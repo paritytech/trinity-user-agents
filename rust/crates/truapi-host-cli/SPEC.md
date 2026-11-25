@@ -1882,8 +1882,10 @@ stack with no key is read with that stack's key, so it is verified and is the
 same stack as under its network name. A local file's id is `file:` followed by
 its canonical path: two files are two stacks, and a file that moves becomes
 another stack. A path that is not a regular file, such as the pipe `<(curl …)`
-gives or a fifo, is refused, since one such path can carry any descriptor; so is
-a file whose canonical path is not UTF-8.
+gives or a fifo, is refused, since one such path can carry any descriptor. So is
+a file whose canonical path is under `/dev/fd`, which on macOS a redirected
+`/dev/stdin` resolves to and which another file of that name shares, and one
+whose canonical path is not UTF-8.
 
 #### `network-check`
 

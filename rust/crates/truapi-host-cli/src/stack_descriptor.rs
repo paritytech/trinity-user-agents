@@ -76,7 +76,8 @@ pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<Descripto
 /// a URL carries. A local file has no pointer of its own, so its id is `file:` followed by its
 /// canonical path: two files are two stacks, and a file that moves becomes another stack. A path
 /// that is not a regular file, such as a pipe or a fifo, is refused, since one path can carry any
-/// descriptor; so is a file whose canonical path is not UTF-8.
+/// descriptor. So is a file whose canonical path is under `/dev/fd`, which other files can share,
+/// or is not UTF-8.
 pub fn stack_id(stack: &str, key: Option<&str>) -> Result<String> {
 	match pointer_of(stack, key)? {
 		Some(pointer) => Ok(pointer.stack_id()),
@@ -98,6 +99,13 @@ fn local_file_id(path: &str) -> Result<String> {
 			 the descriptor to a file and give its path"
 		)
 	})?;
+	if canonical.starts_with("/dev/fd") {
+		bail!(
+			"{path} resolves to {}, a file descriptor's path that another file can resolve to as \
+			 well, so it cannot name a stack; save the descriptor to a file and give its path",
+			canonical.display()
+		);
+	}
 	canonical_file_id(canonical)
 }
 
