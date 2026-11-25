@@ -36,7 +36,7 @@ use crate::{
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	host_logic::root_entropy::RootEntropy,
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
+	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -169,11 +169,6 @@ impl NativeTrUApiHostRuntime {
 			};
 		let core_db = futures::executor::block_on(Db::open(core_db_config(directory)))
 			.map_err(unavailable)?;
-		let pocket = futures::executor::block_on(PocketCards::open(
-			core_db.clone(),
-			runtime_config.pinned_pocket_cards,
-		))
-		.map_err(unavailable)?;
 		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
 			&pointer,
@@ -183,6 +178,10 @@ impl NativeTrUApiHostRuntime {
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
 		))?;
+		let pinned = PinnedPocketCard::privileged(stack_refresh.stack().tld())
+			.expect("a verified stack names a dotNS TLD; qed");
+		let pocket = futures::executor::block_on(PocketCards::open(core_db.clone(), pinned))
+			.map_err(unavailable)?;
 		let signing = SigningHostConfig {
 			host: runtime_config.host,
 			stack: stack_refresh.stack(),

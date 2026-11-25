@@ -8,17 +8,6 @@ import TrUAPIHost
 struct AssetPinnedPocketCardsTests {
     let pinned = AssetPinnedPocketCards(tld: "paseo")
 
-    /// Humanity is backed by the governance-reserved personhood product, whose
-    /// id is a function of the network the app is on.
-    @Test
-    func placesHumanityOnThePersonhoodProduct() async {
-        #expect(pinned.cards() == [PinnedPocketCard(
-            productId: try! ProductId("peopl.paseo"),
-            cardId: "humanity",
-            title: "Humanity"
-        )])
-    }
-
     @Test
     func namesAPinnedCardWithoutAwaiting() {
         let key = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity"))

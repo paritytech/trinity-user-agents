@@ -5,7 +5,7 @@ use core::str::FromStr;
 use parity_scale_codec::{Decode, Encode};
 
 use crate::{
-	CallError,
+	CallError, PrivilegedProduct,
 	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label, normalize_host},
 };
 
@@ -13,17 +13,6 @@ use crate::{
 /// per id and never evicted, so this keeps each cache entry small. Matches the
 /// cap on chat identifiers.
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
-
-/// Trusted product labels across every network in [`DOTNS_TLDS`].
-///
-/// These products bypass recorded permissions and permission prompts. Device
-/// permissions still need the OS grant.
-///
-/// [`DOTNS_TLDS`]: crate::dotns_name::DOTNS_TLDS
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
-
-/// The bare label of the game product, Jollity, on every network.
-const GAME_PRODUCT_LABEL: &str = "dim2";
 
 /// The label a development product identifier is served under.
 const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
@@ -220,17 +209,22 @@ impl ProductId {
 		is_localhost_form(&self.0)
 	}
 
-	/// Whether this product gets every [`RemotePermission`] without a prompt.
-	/// Stored decisions don't change this.
+	/// The privileged product this id names, on any network.
 	///
-	/// Matches the whole label: `peopl.dot` and `peopl.paseo` are trusted,
-	/// `app.peopl.dot` and localhost ids are not. The id also needs a dotNS TLD,
-	/// so a bare `peopl` never qualifies.
+	/// Matches the whole name: `peopl.dot` and `peopl.paseo` are Humanity,
+	/// `app.peopl.dot` and localhost ids are no privileged product. The id also
+	/// needs a dotNS TLD, so a bare `peopl` never qualifies.
+	pub fn privileged_product(&self) -> Option<PrivilegedProduct> {
+		self.dotns_name()?.parse().ok()
+	}
+
+	/// Whether this product gets every [`RemotePermission`] without a prompt:
+	/// it is a [privileged product](Self::privileged_product). Stored decisions
+	/// don't change this.
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {
-		self.dotns_name()
-			.is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+		self.privileged_product().is_some()
 	}
 
 	/// [`has_trusted_remote_permissions`](Self::has_trusted_remote_permissions)
@@ -242,7 +236,7 @@ impl ProductId {
 	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
 	/// is not.
 	pub fn is_game_product(&self) -> bool {
-		self.dotns_name() == Some(GAME_PRODUCT_LABEL)
+		self.privileged_product() == Some(PrivilegedProduct::Game)
 	}
 
 	/// Parse only a supported share host, without a URL or network lookup.

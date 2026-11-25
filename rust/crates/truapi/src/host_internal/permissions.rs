@@ -30,10 +30,9 @@
 //! its set-shaped key is that domain's key, so it persists per-domain with no
 //! special case.
 //!
-//! Products listed in [`crate::platform::REMOTE_PERMISSION_TRUSTED_LABELS`]
-//! get remote permissions, device permissions, identity disclosure and account
-//! access without a prompt or a stored record. Device permissions still need
-//! the OS grant.
+//! A [`crate::platform::PrivilegedProduct`] gets remote permissions, device
+//! permissions, identity disclosure and account access without a prompt or a
+//! stored record. Device permissions still need the OS grant.
 
 use std::{collections::HashSet, sync::Arc};
 

@@ -585,7 +585,6 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
-		pinned_pocket_cards: Vec::new(),
 		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
@@ -901,6 +900,42 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	assert_eq!(
 		(host.device_encryption_key().expect("device key should read"), first_connected_key),
 		([9; 32], Some(Some(handed_over_public_key)))
+	);
+}
+
+#[test]
+fn the_runtime_pins_humanity_on_the_network_of_the_stack_it_runs() {
+	struct Recorder(Mutex<Vec<(String, String, bool)>>);
+	impl super::NativePocketObserver for Recorder {
+		fn on_cards(&self, cards: Vec<crate::pocket_cards::PocketEntry>) {
+			*self.0.lock().unwrap() = cards
+				.into_iter()
+				.map(|card| (card.product_id.to_string(), card.card_id, card.privileged))
+				.collect();
+		}
+
+		fn on_error(&self, reason: String) {
+			panic!("the Pocket must read: {reason}");
+		}
+	}
+	let mut config = native_host_runtime_config();
+	config.stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"testnet", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	));
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+	let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+
+	let _subscription = host.observe_pocket_cards(recorder.clone());
+
+	crate::test_support::wait_until(
+		|| !recorder.0.lock().unwrap().is_empty(),
+		"the Pocket must list its pinned cards",
+	);
+	assert_eq!(
+		*recorder.0.lock().unwrap(),
+		vec![("peopl.testnet".to_string(), "humanity".to_string(), true)]
 	);
 }
 

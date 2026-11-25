@@ -6,8 +6,9 @@ import io.paritytech.polkadotapp.common.utils.toLittleEndianBytes
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.productContext
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import uniffi.truapi.PrivilegedProduct
+import uniffi.truapi.privilegedProductId
 
-private const val PERSONHOOD_PRODUCT_NAME = "peopl"
 private val SYSTEM_PREFIX = "sys/".encodeToByteArray()
 
 /**
@@ -16,7 +17,7 @@ private val SYSTEM_PREFIX = "sys/".encodeToByteArray()
  * identity on chain.
  */
 fun personhoodProductContext(tld: DotNsTld, suffix: DerivationIndex32): BandersnatchContext {
-    return productContext("$PERSONHOOD_PRODUCT_NAME.${tld.value}", suffix)
+    return productContext(privilegedProductId(PrivilegedProduct.PERSONHOOD, tld.value).value, suffix)
 }
 
 /**

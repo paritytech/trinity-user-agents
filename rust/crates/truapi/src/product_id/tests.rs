@@ -1,5 +1,5 @@
 use super::*;
-use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+use crate::dotns_name::MAX_DNS_LABEL_LEN;
 
 // Hosts store rooms under this id, so a change to the derivation loses
 // every stored room.
@@ -140,35 +140,6 @@ fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
 			!ProductId::normalizes_to_trusted_remote_permissions(product_id),
 			"{product_id} must not be read as trusted"
 		);
-	}
-}
-
-#[test]
-fn every_trusted_remote_permission_label_is_a_product_identifier() {
-	// A label that product-id validation rejects would never reach the
-	// permission engine, so the whitelist entry would be silently inert.
-	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		for tld in DOTNS_TLDS {
-			let product_id = format!("{label}.{tld}");
-			assert!(
-				product_id.parse::<ProductId>().is_ok(),
-				"{product_id} must be an accepted product identifier"
-			);
-			assert!(
-				ProductId::normalizes_to_trusted_remote_permissions(&product_id),
-				"{product_id} must be recognized as trusted"
-			);
-		}
-	}
-}
-
-#[test]
-fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
-	// The predicate compares against the label of an already-normalized id,
-	// so an entry carrying a TLD or an uppercase letter can never match.
-	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		assert!(!label.contains('.'), "{label} must not carry a TLD");
-		assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
 	}
 }
 

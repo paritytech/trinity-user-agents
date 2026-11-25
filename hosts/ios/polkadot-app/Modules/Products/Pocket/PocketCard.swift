@@ -66,11 +66,8 @@ protocol PocketCardStore: PocketCollection {
     func face(for key: PocketCardKey) async -> RendererNode?
 }
 
-/// The cards the host itself places: present on first run, removable by nobody.
+/// The cards the core pins: present on first run, removable by nobody.
 protocol PinnedPocketCards: Sendable {
-    /// The cards the runtime is started with.
-    func cards() -> [PinnedPocketCard]
-
     /// The host-placed card `key` names, if it names one.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry?
 

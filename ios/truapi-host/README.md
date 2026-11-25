@@ -199,16 +199,11 @@ untrusted: they may name a message in another room, or one that never existed.
 
 The core keeps the Pocket collection in its database: the cards in the Pocket
 and the newest face of each. Products reach it only from a Worker execution
-with an active session. The host lists the cards it pins in
-`HostRuntimeConfig.pinnedPocketCards` and reads and edits the collection on the
-runtime.
+with an active session. The runtime pins the privileged products' cards on its
+stack's network, which `pinnedPocketCards(networkSuffix:)` lists, and the host
+reads and edits the collection on the runtime.
 
 ```swift
-let config = HostRuntimeConfig(
-    // ...
-    pinnedPocketCards: [PinnedPocketCard(productId: try ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")]
-)
-
 // Every card, pinned first, now and after each change.
 for try await cards in runtime.pocketCards() { show(cards) }
 

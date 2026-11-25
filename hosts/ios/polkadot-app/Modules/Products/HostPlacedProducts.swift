@@ -1,33 +1,16 @@
-import struct TrUAPIHost.ProductId
 import Foundation
-import KeyDerivation
 import Keystore_iOS
 import Products
+import TrUAPIHost
 
-/// A product the host itself puts in chat: present on first run, with no add, install or discover
+/// The products the host itself puts in chat: present on first run, with no add, install or discover
 /// step, and removable by nobody. The chat analogue of Pocket's privileged card
-/// (`docs/rfcs/pocket-modality.md`), shaped like its `AssetPinnedPocketCards`.
-///
-/// Placing one grants no permissions; it still prompts like any other product.
-struct HostPlacedProduct: Sendable {
-    /// Must match the room the product registers, which iOS gives the host no way to check. A
-    /// product that registers another room, or none, gets that chat as well and leaves this one
-    /// empty beside it. Pocket's `Definition` names its `cardId` the same way, but owns card ids
-    /// in a way no host owns a room id.
-    let roomId: String
-
-    /// Shown until the published manifest resolves and supplies the real name.
-    let fallbackName: String
-
-    /// Reserved identity as a function of the network TLD, so one entry covers every chain.
-    let productId: @Sendable (String) throws -> ProductId
-}
-
+/// (`docs/rfcs/pocket-modality.md`). The core decides which they are.
 enum HostPlacedProducts {
     /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
-    static let all: [HostPlacedProduct] = [
-        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
-    ]
+    static func all(tld: String) -> [HostPlacedChat] {
+        (try? hostPlacedChats(networkSuffix: tld)) ?? []
+    }
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing
     /// needs — the trick Pocket's `pinned(key:)` uses. An exact match, not a prefix test, so
@@ -38,7 +21,7 @@ enum HostPlacedProducts {
             return false
         }
 
-        return all.contains { (try? $0.productId(String(tld))) == productId }
+        return all(tld: String(tld)).contains { $0.productId == productId }
     }
 }
 
@@ -61,6 +44,6 @@ final class HostPlacedProductsProvider: HostPlacedProductsProviding, @unchecked 
             return []
         }
 
-        return HostPlacedProducts.all.compactMap { try? $0.productId(tld) }
+        return HostPlacedProducts.all(tld: tld).map(\.productId)
     }
 }

@@ -1,50 +1,23 @@
 import Foundation
-import KeyDerivation
 import Products
 import TrUAPIHost
 
-/// Humanity, backed by the governance-reserved personhood product and drawn
-/// from a face bundled with the app until that product streams its own.
-///
-/// The reserved product id is a function of the network's dotNS suffix, so the
-/// card belongs to whichever network the app is on.
+/// The cards the core pins on the network the app is on, each drawn from a
+/// face bundled with the app until its product streams its own.
 struct AssetPinnedPocketCards: PinnedPocketCards {
-    private struct Definition {
-        let cardId: String
-        let title: String
-        let backingProduct: (String) throws -> ProductId
-
-        func card(tld: String) throws -> PocketCardEntry {
-            try PocketCardEntry(
-                key: PocketCardKey(productId: backingProduct(tld), cardId: PocketCardId(value: cardId)),
-                title: title,
-                privileged: true
-            )
-        }
-    }
-
-    private static let definitions = [
-        Definition(cardId: "humanity", title: "Humanity", backingProduct: BuiltInProduct.personhood(for:))
-    ]
-
     private let tld: String
 
     init(tld: String) {
         self.tld = tld
     }
 
-    func cards() -> [PinnedPocketCard] {
-        Self.definitions.compactMap {
-            try? PinnedPocketCard(productId: $0.backingProduct(tld), cardId: $0.cardId, title: $0.title)
-        }
-    }
-
     /// A key already names the product that must back it.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
-        Self.definitions
-            .lazy
-            .compactMap { try? $0.card(tld: tld) }
-            .first { $0.key == key }
+        let cards = (try? pinnedPocketCards(networkSuffix: tld)) ?? []
+
+        return cards
+            .first { $0.productId == key.productId && $0.cardId == key.cardId.value }
+            .map { PocketCardEntry(key: key, title: $0.title, privileged: true) }
     }
 
     /// The face shipped with the app, shown until the backing product draws its

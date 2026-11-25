@@ -43,6 +43,8 @@ use parity_scale_codec::{Decode, Encode};
 pub mod api;
 mod dotns_name;
 pub mod markers;
+mod privileged_product;
+pub use privileged_product::PrivilegedProduct;
 mod product_id;
 pub use product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;

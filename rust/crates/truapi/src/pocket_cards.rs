@@ -1,10 +1,10 @@
 //! The Pocket collection in the core database: which cards are in the Pocket,
 //! and the newest face drawn for each.
 //!
-//! The host hands over the cards it pins when the runtime starts and adds the
-//! cards the user approves. Products read their own cards and may remove them.
-//! The faces their renders draw are kept here, so a card has one to show
-//! offline and at the next start.
+//! The runtime pins the privileged products' cards when it starts, and the
+//! host adds the cards the user approves. Products read their own cards and
+//! may remove them. The faces their renders draw are kept here, so a card has
+//! one to show offline and at the next start.
 
 use core::time::Duration;
 use std::sync::{
@@ -29,8 +29,8 @@ use truapi::latest::{
 use crate::{
 	native::MAX_FACE_DEPTH,
 	platform::{
-		ChatFieldError, PocketPlatform, ProductContext, ProductId, normalize_chat_identifier,
-		validate_chat_name,
+		ChatFieldError, PocketPlatform, PrivilegedProduct, ProductContext, ProductId,
+		ProductIdError, normalize_chat_identifier, validate_chat_name,
 	},
 	store::{Db, DbError},
 	time::Timer,
@@ -48,14 +48,16 @@ pub struct PinnedPocketCard {
 }
 
 impl PinnedPocketCard {
-	/// The card with its id and title screened as a product's would be, so a
-	/// product can address it.
-	pub fn screened(self) -> Result<Self, ChatFieldError> {
-		Ok(Self {
-			card_id: normalize_chat_identifier("cardId", &self.card_id)?,
-			title: validate_chat_name("title", &self.title)?,
-			..self
-		})
+	/// The cards every host pins on the network with `network_suffix`, each
+	/// backed by a [`PrivilegedProduct`].
+	///
+	/// Fails when `network_suffix` is not a dotNS TLD.
+	pub fn privileged(network_suffix: &str) -> Result<Vec<Self>, ProductIdError> {
+		Ok(vec![Self {
+			product_id: PrivilegedProduct::Personhood.product_id(network_suffix)?,
+			card_id: "humanity".into(),
+			title: "Humanity".into(),
+		}])
 	}
 }
 

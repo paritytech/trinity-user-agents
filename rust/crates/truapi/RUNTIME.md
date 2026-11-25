@@ -61,9 +61,8 @@ and tests live in `runtime/tests.rs` and `runtime/tests/`.
 Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
-Trusted products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions and permission prompts. Device permissions still need the OS
-grant.
+Privileged products, `truapi::platform::PrivilegedProduct`, bypass recorded
+permissions and permission prompts. Device permissions still need the OS grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user,
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
@@ -250,12 +249,12 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each side. The host lists the cards it
-pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
-approves with `add_pocket_card`, and follows the collection with
-`observe_pocket_cards`. A card no longer pinned stays only if the user added
-it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+cards in the Pocket and the newest face of each side. The runtime pins the
+privileged products' cards on the stack's network (`pinned_pocket_cards` lists
+them for a host), the host adds the cards the user approves with
+`add_pocket_card`, and follows the collection with `observe_pocket_cards`. A
+card no longer pinned stays only if the user added it. The core keeps the
+newest face of a card from every `RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
 render, at most every two seconds and once more when the render stops, so a
 card has both sides offline and at cold start. `pocket_card_face` reads a side.
 A product connection's renderer actions leave out a press on a back that
@@ -479,9 +478,13 @@ register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
-all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-permission prompts. Device permissions still need the OS grant. The runtime grants
+`PrivilegedProduct` names the privileged products (Humanity `peopl`, Jollity
+`dim2`, Collectibles `stash`) by the label reserved for each across all
+networks in `DOTNS_TLDS`, and `ProductId::privileged_product` reads one off an
+id. The native exports give hosts each product's id and label, the cards every
+host pins in the Pocket and the chats every host places. These products bypass
+recorded permissions and permission prompts. Device permissions still need the
+OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
 for raw bytes signed inside the `<Bytes>` watermark.
