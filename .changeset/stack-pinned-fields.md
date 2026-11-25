@@ -11,5 +11,6 @@ starts from the bundled copy. Only a new build changes one of them. A fresher re
 is a Polkadot fork made again from a later block, because both change the relay's `lightSpec`. The pins cover what the
 descriptor names, not what a host reads from the chains.
 
-`truapi-host stack bundle --skip-same-projection` also compares every field the core pins, so a published copy that
+`truapi-host stack bundle --skip-same-projection` also compares every field the core pins when the bundled copy names
+the `dot` TLD or a Polkadot genesis hash, which only a build that allows reserved values runs, so a published copy that
 changes only one of them is still written.

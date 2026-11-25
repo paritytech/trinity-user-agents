@@ -103,9 +103,7 @@ type DescriptorEdit = Box<dyn FnOnce(&mut serde_json::Value)>;
 /// of fields: a change to any of them is news, and a change elsewhere is not.
 /// The light specs are news only to the bundle, which ships them: a relay's
 /// rotates with every fresh checkpoint, and a notice on every command for it
-/// would tell the user nothing they need to act on. So are the other fields
-/// the core pins for a stack its build allows reserved values: a bundle left
-/// older in one would have such a build refuse every published copy.
+/// would tell the user nothing they need to act on.
 #[test]
 fn test_reads_same_by_field() {
 	let base = stack_descriptor(|_| {});
@@ -159,49 +157,6 @@ fn test_reads_same_by_field() {
 			Box::new(|descriptor| descriptor["chains"][0]["lightSpec"] = light_spec("07")),
 		),
 	];
-	let pinned: [(&str, DescriptorEdit); 6] = [
-		(
-			"relay genesis",
-			Box::new(|descriptor| {
-				descriptor["chains"][0]["genesisHash"] = format!("0x{}", "08".repeat(32)).into()
-			}),
-		),
-		(
-			"chain roles",
-			Box::new(|descriptor| {
-				descriptor["chains"].as_array_mut().unwrap().push(serde_json::json!({
-					"role": "Collectives",
-					"genesisHash": format!("0x{}", "09".repeat(32)),
-					"paraId": 1001,
-					"rpc": ["ws://127.0.0.1:9909"],
-				}));
-			}),
-		),
-		(
-			"assets",
-			Box::new(|descriptor| {
-				descriptor["assets"] = serde_json::json!([
-					{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
-				]);
-			}),
-		),
-		(
-			"dotns",
-			Box::new(|descriptor| {
-				descriptor["dotns"]["storeFactory"] = format!("0x{}", "cd".repeat(20)).into();
-			}),
-		),
-		(
-			"coinage",
-			Box::new(|descriptor| {
-				descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
-			}),
-		),
-		(
-			"assets written empty",
-			Box::new(|descriptor| descriptor["assets"] = serde_json::json!([])),
-		),
-	];
 	let noticed = |edits: Vec<(&'static str, DescriptorEdit)>| {
 		edits
 			.into_iter()
@@ -229,23 +184,67 @@ fn test_reads_same_by_field() {
 		noticed(light_specs.into_iter().collect()),
 		[("role light spec", false, true), ("relay light spec", false, true)]
 	);
-	assert_eq!(
-		noticed(pinned.into_iter().collect()),
-		[
-			("relay genesis", false, true),
-			("chain roles", false, true),
-			("assets", false, true),
-			("dotns", false, true),
-			("coinage", false, true),
-			("assets written empty", false, false),
-		]
-	);
 
 	let renamed = stack_descriptor(|descriptor| {
 		descriptor["name"] = "Renamed".into();
 		descriptor["sequence"] = 2.into();
 	});
 	assert!(bundles_same(&base, &renamed));
+}
+
+/// Only a build that allows reserved values runs a stack that names one, and only such a build
+/// pins the rest of its descriptor. A pinned field the CLI does not read rewrites the bundle of a
+/// stack on `dot` or on a Polkadot genesis hash, which a build that pins it would otherwise refuse
+/// to follow, and leaves a testnet's bundle in place.
+#[test]
+fn a_pinned_field_rewrites_the_bundle_only_of_a_stack_that_names_a_reserved_value() {
+	let pinned_changes: [fn(&mut serde_json::Value); 5] = [
+		|descriptor| {
+			descriptor["chains"][0]["genesisHash"] = format!("0x{}", "08".repeat(32)).into()
+		},
+		|descriptor| {
+			descriptor["chains"].as_array_mut().unwrap().push(serde_json::json!({
+				"role": "Collectives",
+				"genesisHash": format!("0x{}", "09".repeat(32)),
+				"paraId": 1001,
+				"rpc": ["ws://127.0.0.1:9909"],
+			}));
+		},
+		|descriptor| {
+			descriptor["assets"] = serde_json::json!([
+				{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
+			]);
+		},
+		|descriptor| descriptor["dotns"]["storeFactory"] = format!("0x{}", "cd".repeat(20)).into(),
+		|descriptor| {
+			descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+		},
+	];
+	let assets_written_empty: fn(&mut serde_json::Value) =
+		|descriptor| descriptor["assets"] = serde_json::json!([]);
+	let bases: [fn(&mut serde_json::Value); 3] = [
+		|_testnet| {},
+		|on_dot| on_dot["tld"] = "dot".into(),
+		|on_polkadot_relay| {
+			on_polkadot_relay["chains"][0]["genesisHash"] =
+				"0x91b171bb158e2d3848fa23a9f1c25182fb8e20313b2c1eb49219da7a70ce90c3".into()
+		},
+	];
+	let rewritten = |base: fn(&mut serde_json::Value), change: fn(&mut serde_json::Value)| {
+		let changed = stack_descriptor(|descriptor| {
+			base(descriptor);
+			change(descriptor);
+		});
+		!bundles_same(&stack_descriptor(base), &changed)
+	};
+
+	assert_eq!(
+		bases.map(|base| (
+			pinned_changes.map(|change| rewritten(base, change)),
+			rewritten(base, assets_written_empty)
+		)),
+		[([false; 5], false), ([true; 5], false), ([true; 5], false)]
+	);
 }
 
 /// A source and its fork can both be local files with one descriptor `id`. If
