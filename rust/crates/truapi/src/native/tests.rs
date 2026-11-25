@@ -113,7 +113,11 @@ pub fn claimed_worker(
 	)
 	.unwrap();
 	let claim = host.claim_worker(ProductId::for_test(product));
-	let worker = attempts.try_recv().unwrap().open_execution(callbacks, chat, None).unwrap();
+	let worker = attempts
+		.try_recv()
+		.unwrap()
+		.open_execution(ExecutionCallbacks { host: callbacks, chat, game: None })
+		.unwrap();
 	(host, claim, worker)
 }
 
@@ -619,13 +623,6 @@ fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::Bundle
 	}
 }
 
-pub fn native_execution_config(
-	product_id: &str,
-	execution_kind: ExecutableKind,
-) -> ProductExecutionConfig {
-	ProductExecutionConfig { product_id: ProductId::for_test(product_id), execution_kind }
-}
-
 pub fn native_product_execution(
 	callbacks: Arc<dyn HostCallbacks>,
 	product_id: &str,
@@ -635,13 +632,10 @@ pub fn native_product_execution(
 	config.local_session_lite_username = None;
 	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
 		.expect("host runtime config should be valid");
-	host.open_product_execution(
-		callbacks,
-		None,
-		None,
-		native_execution_config(product_id, ExecutableKind::App),
+	host.open_app_execution(
+		ProductId::for_test(product_id),
+		ExecutionCallbacks { host: callbacks, chat: None, game: None },
 	)
-	.expect("product execution config should be valid")
 }
 
 /// A deeplink that is not hex at all, and one that is hex but not a
@@ -898,14 +892,10 @@ fn publishing_chat_actions_requires_a_worker_with_a_chat_adapter() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let (host, _claim, worker) =
 		claimed_worker(native_host_runtime_config(), "chat-product.dot", callbacks.clone(), None);
-	let app = host
-		.open_product_execution(
-			callbacks.clone(),
-			Some(callbacks),
-			None,
-			native_execution_config("chat-product.dot", ExecutableKind::App),
-		)
-		.unwrap();
+	let app = host.open_app_execution(
+		ProductId::for_test("chat-product.dot"),
+		ExecutionCallbacks { host: callbacks.clone(), chat: Some(callbacks), game: None },
+	);
 	assert!(matches!(
 		worker.publish_chat_action(text_chat_action("worker")),
 		Err(crate::ProductRuntimeError::Unsupported)
@@ -2674,14 +2664,10 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 	let host = native_host_runtime_no_session();
 	let callbacks = Arc::new(EventCallbacks::new());
 	let weak_callbacks = Arc::downgrade(&callbacks);
-	let execution = host
-		.open_product_execution(
-			callbacks,
-			None,
-			None,
-			native_execution_config("first.dot", ExecutableKind::App),
-		)
-		.expect("open execution");
+	let execution = host.open_app_execution(
+		ProductId::for_test("first.dot"),
+		ExecutionCallbacks { host: callbacks, chat: None, game: None },
+	);
 	execution.start_ws_bridge(0).expect("start bridge");
 
 	execution.shutdown();
@@ -2792,13 +2778,10 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	)
 	.expect("create host");
 	let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
-		host.open_product_execution(
-			callbacks[index].clone(),
-			None,
-			None,
-			native_execution_config(product_id, ExecutableKind::App),
+		host.open_app_execution(
+			ProductId::for_test(product_id),
+			ExecutionCallbacks { host: callbacks[index].clone(), chat: None, game: None },
 		)
-		.expect("open execution")
 	});
 	executions[0].start_ws_bridge(0).expect("start first");
 	let endpoint = executions[1].start_ws_bridge(0).expect("start second");
@@ -2866,14 +2849,10 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 		chat_host.clone(),
 		Some(chat_host),
 	);
-	let app = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("shared.dot", ExecutableKind::App),
-		)
-		.expect("App execution should open");
+	let app = host.open_app_execution(
+		ProductId::for_test("shared.dot"),
+		ExecutionCallbacks { host: Arc::new(EventCallbacks::new()), chat: None, game: None },
+	);
 	let app_endpoint = app.start_ws_bridge(0).expect("start app bridge");
 	let chat_endpoint = chat.start_ws_bridge(0).expect("start chat bridge");
 	assert_eq!(
@@ -3202,13 +3181,10 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
 		)
 		.unwrap();
 		let open = |product_id| {
-			host.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				native_execution_config(product_id, ExecutableKind::App),
+			host.open_app_execution(
+				ProductId::for_test(product_id),
+				ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
 			)
-			.unwrap()
 		};
 		let first_execution = open("fetch.dot");
 		let next_execution = open("fetch.dot");
@@ -3251,14 +3227,10 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 			None,
 		)
 		.unwrap();
-		let execution = host
-			.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				native_execution_config("fetch.dot", ExecutableKind::App),
-			)
-			.unwrap();
+		let execution = host.open_app_execution(
+			ProductId::for_test("fetch.dot"),
+			ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
+		);
 		futures::executor::block_on(async {
 			let request =
 				execution.authorize_remote_permission(truapi::latest::RemotePermissionRequest {
@@ -3296,14 +3268,14 @@ fn a_native_status_read_follows_the_os_gate() {
 		None,
 	)
 	.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
-			None,
-			None,
-			native_execution_config("gated.dot", ExecutableKind::App),
-		)
-		.expect("execution should open");
+	let execution = host.open_app_execution(
+		ProductId::for_test("gated.dot"),
+		ExecutionCallbacks {
+			host: Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
+			chat: None,
+			game: None,
+		},
+	);
 
 	let camera = futures::executor::block_on(execution.permission_authorization_status(
 		PermissionAuthorizationRequest::Device(v01::HostDevicePermissionRequest::Camera),

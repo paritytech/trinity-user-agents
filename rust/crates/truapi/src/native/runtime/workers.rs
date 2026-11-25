@@ -9,8 +9,8 @@ use futures::{StreamExt, channel::mpsc};
 use parking_lot::{MappedMutexGuard, MutexGuard};
 
 use super::{
-	HostCallbacks, HostRejection, NativeChatCallbacks, NativeGameCallbacks, NativeProductExecution,
-	NativeSubscription, NativeTrUApiHostRuntime, NativeWorkerExecution,
+	ExecutionCallbacks, HostCallbacks, HostRejection, NativeProductExecution, NativeSubscription,
+	NativeTrUApiHostRuntime, NativeWorkerExecution,
 };
 use crate::{
 	background_task::BackgroundTask,
@@ -216,9 +216,7 @@ impl NativeWorkerAttempt {
 	/// Fails if an execution was already opened, the demand ended or a replacement started.
 	pub fn open_execution(
 		self: &Arc<Self>,
-		callbacks: Arc<dyn HostCallbacks>,
-		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+		callbacks: ExecutionCallbacks,
 	) -> Result<Arc<NativeProductExecution>, HostRejection> {
 		let stale =
 			|| HostRejection::Rejected { reason: "worker startup is no longer pending".into() };
@@ -235,10 +233,8 @@ impl NativeWorkerAttempt {
 		{
 			return Err(stale());
 		}
-		let execution = runtime.open_product_execution_with_callbacks(
+		let execution = runtime.open_execution(
 			callbacks,
-			chat_callbacks,
-			game_callbacks,
 			ProductContext::new_with_execution(self.product.clone(), ExecutableKind::Worker),
 			Some(self.clone()),
 		);

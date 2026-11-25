@@ -51,13 +51,12 @@ use crate::{
 use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
+		ExecutionCallbacks, HostCallbacks, NativeBalanceCallbacks, NativeContactsCallbacks,
+		NativeFundingCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
+		NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
 		BundledStack, HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
-		ProductExecutionConfig,
 	},
 	errors::{HostRejection, NativeCoreDatabaseError},
 	events::NativeEventBus,
@@ -260,14 +259,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(host)
 	}
 
-	fn open_product_execution_with_callbacks(
+	fn open_execution(
 		&self,
-		callbacks: Arc<dyn HostCallbacks>,
-		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+		callbacks: ExecutionCallbacks,
 		product: ProductContext,
 		worker_attempt: Option<Arc<NativeWorkerAttempt>>,
 	) -> Arc<NativeProductExecution> {
+		let ExecutionCallbacks { host: callbacks, chat: chat_callbacks, game: game_callbacks } =
+			callbacks;
 		let events = Arc::new(NativeEventBus::default());
 		let callback_platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -713,32 +712,32 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.notify_contacts_changed();
 	}
 
-	/// Open a connection-scoped execution with immutable trusted context.
-	/// `chat_callbacks` installs the host's Chat adapter; hosts without the
-	/// Chat modality pass `None`. `game_callbacks` does the same for game
-	/// reminders.
+	/// Open a connection-scoped App execution with immutable trusted context.
 	///
-	/// Rejects a Worker context. A worker must open through its [`NativeWorkerAttempt`].
-	pub fn open_product_execution(
+	/// A Worker execution opens through its [`NativeWorkerAttempt`].
+	pub fn open_app_execution(
 		&self,
-		callbacks: Arc<dyn HostCallbacks>,
-		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
-		execution_config: ProductExecutionConfig,
-	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
-		let product: ProductContext = execution_config.into();
-		if product.execution_kind == ExecutableKind::Worker {
-			return Err(NativeRuntimeConfigError::Invalid {
-				reason: "open a worker through its startup attempt".into(),
-			});
-		}
-		Ok(self.open_product_execution_with_callbacks(
+		product_id: ProductId,
+		callbacks: ExecutionCallbacks,
+	) -> Arc<NativeProductExecution> {
+		self.open_execution(
 			callbacks,
-			chat_callbacks,
-			game_callbacks,
-			product,
+			ProductContext::new_with_execution(product_id, ExecutableKind::App),
 			None,
-		))
+		)
+	}
+
+	/// Open a connection-scoped Widget execution with immutable trusted context.
+	pub fn open_widget_execution(
+		&self,
+		product_id: ProductId,
+		callbacks: ExecutionCallbacks,
+	) -> Arc<NativeProductExecution> {
+		self.open_execution(
+			callbacks,
+			ProductContext::new_with_execution(product_id, ExecutableKind::Widget),
+			None,
+		)
 	}
 
 	/// Claim a product's worker while this consumer needs it.

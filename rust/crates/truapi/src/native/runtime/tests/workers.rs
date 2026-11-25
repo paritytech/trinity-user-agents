@@ -45,7 +45,13 @@ fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<WebViews>, ProductId) {
 
 fn open(attempt: &Arc<NativeWorkerAttempt>) -> Arc<NativeProductExecution> {
 	let callbacks = Arc::new(EventCallbacks::new());
-	attempt.open_execution(callbacks.clone(), Some(callbacks), None).unwrap()
+	attempt
+		.open_execution(ExecutionCallbacks {
+			host: callbacks.clone(),
+			chat: Some(callbacks),
+			game: None,
+		})
+		.unwrap()
 }
 
 struct RenderObserver;
@@ -140,9 +146,8 @@ impl NativeWorkerExecutionObserver for Observer {
 
 #[test]
 fn a_host_without_worker_support_reports_unavailable_until_the_claim_ends() {
-	let callbacks = Arc::new(EventCallbacks::new());
 	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
-		callbacks.clone(),
+		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
 		None,
 	)
@@ -155,18 +160,6 @@ fn a_host_without_worker_support_reports_unavailable_until_the_claim_ends() {
 	let claim = runtime.claim_worker(product);
 	assert!(
 		matches!(next(), NativeWorkerExecutionState::Failed { reason } if reason == "no worker host configured")
-	);
-	let direct = runtime.open_product_execution(
-		callbacks,
-		None,
-		None,
-		native_execution_config("chat.dot", ExecutableKind::Worker),
-	);
-	assert_eq!(
-		direct.err(),
-		Some(NativeRuntimeConfigError::Invalid {
-			reason: "open a worker through its startup attempt".into()
-		})
 	);
 	drop(claim);
 	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
@@ -204,7 +197,14 @@ async fn a_late_webview_cannot_open_publish_or_stop_a_replacement() {
 	old_claim.release();
 	let _new_claim = runtime.claim_worker(product.clone());
 	let current = views.latest();
-	assert!(old.open_execution(Arc::new(EventCallbacks::new()), None, None).is_err());
+	assert!(
+		old.open_execution(ExecutionCallbacks {
+			host: Arc::new(EventCallbacks::new()),
+			chat: None,
+			game: None,
+		})
+		.is_err()
+	);
 	let current_owner = open(&current);
 	let _socket = connect(&current_owner).await;
 	assert!(!old.module_started());
@@ -252,7 +252,15 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 		consumer.publish_chat_action(text_chat_action("closed")),
 		Err(crate::ProductRuntimeError::Closed)
 	));
-	assert!(pending.open_execution(Arc::new(EventCallbacks::new()), None, None).is_err());
+	assert!(
+		pending
+			.open_execution(ExecutionCallbacks {
+				host: Arc::new(EventCallbacks::new()),
+				chat: None,
+				game: None,
+			})
+			.is_err()
+	);
 }
 
 #[derive(Default)]
@@ -330,7 +338,9 @@ async fn losing_the_latest_socket_withdraws_a_worker_until_it_can_receive_calls_
 	let _claim = runtime.claim_worker(product.clone());
 	let attempt = views.latest();
 	let callbacks = Arc::new(EventCallbacks::new());
-	let owner = attempt.open_execution(callbacks.clone(), None, None).unwrap();
+	let owner = attempt
+		.open_execution(ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None })
+		.unwrap();
 	let endpoint = owner.start_ws_bridge(0).unwrap();
 	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
 	let (send, receive) = mpsc::channel();
