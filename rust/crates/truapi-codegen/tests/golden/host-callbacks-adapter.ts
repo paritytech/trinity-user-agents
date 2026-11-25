@@ -210,7 +210,7 @@ export function createWasmRawCallbacks(
               ProductContext.dec(product),
               roomId,
             );
-            return value === undefined ? undefined : ChatRoomState.enc(value);
+            return value == null ? undefined : ChatRoomState.enc(value);
           },
           setChatRoomMetadata: async (product, request) =>
             ChatRoomChangeOutcome.enc(

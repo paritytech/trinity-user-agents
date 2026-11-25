@@ -367,7 +367,22 @@ export interface ChatMessageRecord {
   payload: ChatMessageContent;
 }
 
-/** What the product declared for one chat room, as the Rust mock keeps it. */
+/** One feed update that the product sent through the mock. */
+export interface ChatFeedRecord {
+  /** The update. */
+  update: ChatFeedUpdate;
+  /**
+   * The host had to store the update, because it keeps the messages of the
+   * room. Otherwise it only shows the update.
+   */
+  persist: boolean;
+}
+
+/**
+ * What the product declared for one chat room, as the Rust mock keeps it.
+ *
+ * The mock does not tell products apart: it keeps every room by its id alone.
+ */
 export interface ChatRoomDeclarations {
   /**
    * The configuration of the last `createChatRoom`, or undefined for a room
@@ -376,13 +391,10 @@ export interface ChatRoomDeclarations {
   config?: ChatRoomConfig;
   /** The last metadata from `setChatRoomMetadata`. */
   metadata?: ChatRoomMetadata;
-  /** The last chat list preview. */
+  /** The last chat list preview since the last change of `productSource`. */
   preview?: ChatRoomPreview;
-  /**
-   * Every feed update since the last change of `productSource`, in order,
-   * with whether the host had to store it.
-   */
-  feed: [ChatFeedUpdate, boolean][];
+  /** Every feed update since the last change of `productSource`, in order. */
+  feed: ChatFeedRecord[];
 }
 
 /** State of the mock's chain connection, as the host sees it. */
@@ -1413,9 +1425,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const productSource = room.config?.productSource ?? false;
         if (productSource !== request.config.productSource) {
           room.feed = [];
+          delete room.preview;
           dropChatMessages(roomId);
         }
-        room.config = request.config;
+        room.config = structuredClone(request.config);
         chatDeclarations.set(roomId, room);
         if (status === "New") publishChatRooms();
         return status;
@@ -1449,13 +1462,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
       async setChatRoomMetadata(_product, request) {
         declareChatRoom(request.roomId, (room) => {
-          room.metadata = request.metadata;
+          room.metadata = structuredClone(request.metadata);
         });
         return "Applied";
       },
       async setChatRoomPreview(_product, request) {
         declareChatRoom(request.roomId, (room) => {
-          room.preview = request.preview;
+          room.preview = structuredClone(request.preview);
         });
         return "Applied";
       },
@@ -1468,7 +1481,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
       async updateChatFeed(_product, request, persist) {
         declareChatRoom(request.roomId, (room) => {
-          room.feed.push([request.update, persist]);
+          room.feed.push({ update: structuredClone(request.update), persist });
         });
         return "Applied";
       },
@@ -1496,7 +1509,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (!room) return undefined;
         return {
           participatingAs: room.participatingAs,
-          config: chatDeclarations.get(roomId)?.config ?? {
+          config: structuredClone(chatDeclarations.get(roomId)?.config) ?? {
             productSource: false,
             reactionDetails: false,
           },
