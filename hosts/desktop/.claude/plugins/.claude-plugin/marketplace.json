@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "polkadot-desktop-local",
+  "description": "Project-local Claude Code plugins for polkadot-desktop.",
+  "owner": {
+    "name": "polkadot-desktop"
+  },
+  "plugins": [
+    {
+      "name": "typescript-lsp-native",
+      "description": "TypeScript language server backed by the project's own TypeScript 7 (tsgo) binary instead of the Node tsserver.",
+      "source": "./typescript-lsp-native"
+    }
+  ]
+}

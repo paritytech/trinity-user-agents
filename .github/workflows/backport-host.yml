@@ -17,7 +17,7 @@ name: Backport a host tree
 
 on:
   schedule:
-    # Daily, both trees. A run that finds nothing costs a shallow clone and a
+    # Daily, every tree. A run that finds nothing costs a shallow clone and a
     # handful of API calls, and a tree that is already carrying an open work
     # order is left alone, so checking often is cheap and quiet.
     - cron: "0 6 * * *"
@@ -28,10 +28,11 @@ on:
         required: false
         type: choice
         options:
-          - both
+          - all
           - android
+          - desktop
           - ios
-        default: both
+        default: all
 
 permissions:
   contents: write
@@ -43,14 +44,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
-      # One tree's source being unreachable says nothing about the other's.
+      # One tree's source being unreachable says nothing about the others.
       fail-fast: false
       matrix:
-        host: ${{ (inputs.host == '' || inputs.host == 'both')
-          && fromJSON('["android","ios"]')
+        host: ${{ (inputs.host == '' || inputs.host == 'all')
+          && fromJSON('["android","desktop","ios"]')
           || fromJSON(format('["{0}"]', inputs.host)) }}
     # Per tree, so a dispatch never races the schedule to the same branch, and
-    # the two trees never wait on each other. Not cancel-in-progress: a run that
+    # the trees never wait on each other. Not cancel-in-progress: a run that
     # has already pushed a branch should finish opening its pull request.
     concurrency:
       group: backport-host-${{ matrix.host }}

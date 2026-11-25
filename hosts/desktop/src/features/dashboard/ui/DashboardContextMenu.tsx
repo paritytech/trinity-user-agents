@@ -1,0 +1,62 @@
+import { ContextMenu } from '@novasamatech/tr-ui';
+import { LayoutDashboard } from 'lucide-react';
+import { type MouseEvent, type PropsWithChildren } from 'react';
+
+import AddToDashboardIcon from '@/shared/assets/images/add-to-dashboard.svg?jsx';
+import { useTranslation } from '@/shared/translation';
+
+type DashboardContextMenuProps = PropsWithChildren<{
+  showCleanup: boolean;
+  onAddWidget: () => void;
+  onCleanup: () => void;
+}>;
+
+// Cards own their own menu — only the empty grid background opens this one.
+// Preventing the event's default cancels the open: Radix composes our
+// onContextMenu with checkForDefaultPrevented, so a prevented event skips its
+// internal open handler.
+const suppressOnCard = (event: MouseEvent<HTMLElement>) => {
+  const target = event.target;
+  if (target instanceof Element && target.closest('.react-grid-item')) {
+    event.preventDefault();
+  }
+};
+
+export const DashboardContextMenu = ({ children, showCleanup, onAddWidget, onCleanup }: DashboardContextMenuProps) => {
+  const { t } = useTranslation();
+
+  return (
+    <ContextMenu>
+      <ContextMenu.Trigger asChild onContextMenu={suppressOnCard}>
+        {children}
+      </ContextMenu.Trigger>
+      <ContextMenu.Content>
+        <div className="w-52.5">
+          <ContextMenu.Item onSelect={onAddWidget}>
+            <div className="flex h-8 w-full items-center gap-2 rounded-md">
+              <AddToDashboardIcon className="size-4 -scale-y-100 text-fg-primary" aria-hidden />
+              <span className="flex-1 text-sm leading-5 font-medium text-fg-primary">
+                {t('feature.dashboard.addWidget.title')}
+              </span>
+            </div>
+          </ContextMenu.Item>
+
+          {showCleanup ? (
+            <>
+              <ContextMenu.Separator />
+
+              <ContextMenu.Item onSelect={onCleanup}>
+                <div className="flex h-8 w-full items-center gap-2 rounded-md">
+                  <LayoutDashboard className="size-4" />
+                  <span className="flex-1 text-sm leading-5 font-medium text-fg-primary">
+                    {t('feature.dashboard.widgetMenu.cleanup')}
+                  </span>
+                </div>
+              </ContextMenu.Item>
+            </>
+          ) : null}
+        </div>
+      </ContextMenu.Content>
+    </ContextMenu>
+  );
+};

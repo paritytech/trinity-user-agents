@@ -1,0 +1,94 @@
+@reference 'tailwindcss';
+
+/*
+ * react-grid-layout positions every item with `transform: translate(x, y)` and an explicit
+ * width, but never sets `left` — so the translate is measured from the item's static
+ * position. Under `dir: rtl` that static position is the container's RIGHT edge, and the
+ * same positive translate pushes the item further right instead of in from the left: a
+ * widget at x=349 rendered at 1047..1721 in a 1372px window, entirely off-screen.
+ *
+ * The library has no RTL support (no notion of direction anywhere in its dist), so the grid
+ * is kept in LTR geometry by anchoring the origin back to the left edge. Item widths are
+ * already explicit, so pinning `left` costs nothing, and `direction` is deliberately left
+ * alone — card CONTENT stays RTL. This also realigns drag hit-testing and the swap overlay,
+ * which compute `left` physically from the container's left edge.
+ *
+ * Widget ORDER stays left-to-right in RTL; true order mirroring (first widget top-right)
+ * means mirroring x across the persisted layout and is a separate change.
+ */
+[dir='rtl'] .react-grid-layout > .react-grid-item {
+  right: auto;
+  left: 0;
+}
+
+/* Electron <webview> captures pointer events; host may never receive mouseup and drag never completes. */
+.react-grid-layout:has(.react-grid-item.react-draggable-dragging) webview {
+  pointer-events: none;
+}
+
+.react-grid-layout:has(.react-grid-item.resizing) webview {
+  pointer-events: none;
+}
+
+.react-grid-layout .react-grid-placeholder,
+.react-grid-placeholder {
+  @apply rounded-xl opacity-100;
+  border: 2px dashed rgba(128, 128, 128, 0.5);
+  background-color: rgba(128, 128, 128, 0.18);
+}
+
+.dashboard-swap-overlay {
+  @apply rounded-xl;
+  position: absolute;
+  z-index: 3;
+  border: 2px dashed rgba(128, 128, 128, 0.5);
+  background-color: rgba(128, 128, 128, 0.18);
+  pointer-events: none;
+}
+
+.react-grid-item button,
+.react-grid-item [role='button'] {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.react-grid-item.react-draggable-dragging {
+  cursor: grabbing !important;
+}
+
+.react-grid-item.react-draggable-dragging [data-folder='true'] {
+  border: none;
+}
+
+.react-grid-item > .react-resizable-handle.react-resizable-handle-se {
+  display: none;
+}
+
+.react-grid-item > .react-resizable-handle.react-resizable-handle-s {
+  right: 0;
+  bottom: -8px;
+  left: 0;
+  transform: none;
+  opacity: 1;
+  cursor: s-resize;
+  margin: 0;
+  background: none;
+  width: 100%;
+  height: 16px;
+}
+
+.react-grid-item > .react-resizable-handle.react-resizable-handle-s::after {
+  position: absolute;
+  margin: auto;
+  inset: 0;
+  border: none;
+  border-radius: 3px;
+  background: rgb(180, 180, 180);
+  width: 40px;
+  height: 6px;
+  content: '';
+}
+
+.react-grid-item > .react-resizable-handle.react-resizable-handle-s:hover::after {
+  background: rgb(150, 150, 150);
+}

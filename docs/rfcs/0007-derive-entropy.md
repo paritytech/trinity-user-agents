@@ -13,7 +13,7 @@ This RFC introduces a new Host API method, `host_derive_entropy`, that allows pr
 
 ## Motivation
 
-Products running on a Polkadot Host currently have no standardized way to derive deterministic cryptographic keys tied to a user's account. This is a blocker for features that require stable key material -- for example, generating X25519 key pairs for encrypted peer-to-peer communication (see [polkadot-desktop#117](https://github.com/paritytech/polkadot-desktop/issues/117)).
+Products running on a Polkadot Host currently have no standardized way to derive deterministic cryptographic keys tied to a user's account. This is a blocker for features that require stable key material -- for example, generating X25519 key pairs for encrypted peer-to-peer communication.
 
 Without a host-provided derivation primitive, each product would need to implement its own key management, leading to inconsistent security properties, duplicated effort, and no guarantee of determinism across hosts.
 

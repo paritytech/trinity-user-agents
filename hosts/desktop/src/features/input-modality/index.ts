@@ -1,0 +1,1 @@
+export { inputModalityFeature } from './feature';

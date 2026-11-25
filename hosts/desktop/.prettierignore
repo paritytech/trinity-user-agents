@@ -1,0 +1,12 @@
+src/locales/*.json
+src/routeTree.gen.ts
+node_modules
+package.json
+package-lock.json
+coverage
+release
+.github
+.husky
+.claude/**/*.md
+docs/RFC
+.trinity/

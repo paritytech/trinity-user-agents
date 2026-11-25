@@ -4,6 +4,11 @@
     "ref": "06de1e5ac9861484bc2b4ba72ae97209efe164ce",
     "source": "https://github.com/paritytech/polkadot-android-community.git"
   },
+  "desktop": {
+    "branch": "main",
+    "ref": "c8e93ecd72a0d2696b622014d47c80f84d3e7635",
+    "source": "https://github.com/paritytech/polkadot-desktop-community.git"
+  },
   "ios": {
     "branch": "develop",
     "ref": "3ebf9ed99b96d0a1ceabc8a00f031c378d3d638b",

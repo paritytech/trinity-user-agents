@@ -1,0 +1,62 @@
+# dependencies
+node_modules
+
+# testing
+/.coverage
+/coverage
+coverage.txt
+junit.xml
+.features-gen
+
+# production
+/build
+/dist
+/release
+
+# misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.eslintcache
+.playwright-mcp
+.swc
+.vscode
+.idea
+.tanstack
+.astro
+tsconfig.*.json
+
+npm-debug.log*
+schema.graphql
+
+*-results.json
+test-results
+playwright-report
+playwright/.cache
+allure-results
+allure-report
+src/dev-dist
+
+.cursor
+.claude/settings.local.json
+.claude/worktrees
+.worktrees
+.env
+docs/superpowers
+docs/_reviews
+docs/_plans
+docs/_verification
+
+# nix
+result
+
+# Python bytecode from .github/scripts unit tests
+__pycache__/
+
+# temp
+tmp/
+# truapi-host signer state: one base path per e2e worker slot. Holds plaintext 0600
+# mnemonics for attested on-chain identities — never commit.
+.truapi-host/

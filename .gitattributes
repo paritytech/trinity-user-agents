@@ -10,3 +10,6 @@ ios/truapi-host/Sources/truapi*FFI/include/** linguist-generated=true
 
 ios/truapi-provider/Sources/TrUAPIProvider/truapi_provider.swift linguist-generated=true
 ios/*-provider/Sources/*FFI/include/** linguist-generated=true
+
+hosts/desktop/package-lock.json linguist-generated=true
+hosts/desktop/.papi/** linguist-generated=true

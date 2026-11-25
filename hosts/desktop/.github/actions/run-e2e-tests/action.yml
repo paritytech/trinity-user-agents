@@ -1,0 +1,302 @@
+name: Run E2E tests
+description: Parametrized E2E test runner (artifact or in-repo build, optional Allure)
+inputs:
+  artifact-name:
+    description: Name of the build artifact to download. Leave empty if app is built in workflow.
+    required: false
+    default: ''
+  playwright-browsers:
+    description: Playwright browsers to install (e.g. chromium, firefox, webkit).
+    required: false
+    default: chromium
+  test-command:
+    description: Command to run tests.
+    required: false
+    default: 'npm run test:e2e'
+  launch-name:
+    description: Name of the launch.
+    required: false
+    default: "E2E Tests - Build #${{ github.run_number }}"
+  signer-backed:
+    description: >-
+      Whether this job signs in and therefore needs truapi-host. Default 'false':
+      this action also runs the `security` job and the macOS/Windows `smoke` rows,
+      and truapi-host publishes no Windows or Intel-Mac binary, so an unconditional
+      install would fail those jobs before a test runs.
+    required: false
+    default: 'false'
+  identity-cache:
+    description: >-
+      Whether to restore and save the truapi-host identity cache. Only 'true' on
+      trusted runs — the cache holds plaintext mnemonics for attested on-chain
+      identities.
+    required: false
+    default: 'false'
+  cache-scope:
+    description: >-
+      Discriminator keeping each matrix shard's identity cache separate. Shards share
+      a github.run_id, so without this they collide and all but one save is dropped.
+    required: false
+    default: default
+  identity-url:
+    description: >-
+      Identity registry the harness asks whether a username claim landed (E2E_IDENTITY_URL). Must
+      address the registry for the network under test. Empty means registrations are not confirmed
+      against the registry; the harness falls back to the name truapi-host reports itself.
+    required: false
+    default: ''
+  results-artifact-name:
+    description: >-
+      If set, the local allure-results/ dir is uploaded as a workflow artifact under this name
+      (must be unique across the run). Consumed by the report job to build the static Allure report.
+    required: false
+    default: ''
+  junit-artifact-name:
+    description: >-
+      If set, the local test-results/junit.xml is uploaded as a workflow artifact under this name
+      (must be unique across the run). Consumed by the summary job to render the per-project /
+      per-OS Step Summary (see .github/scripts/render-e2e-report.py).
+    required: false
+    default: ''
+
+outputs:
+  allure-launch-id:
+    description: Allure launch ID
+    value: ${{ steps.export-launch-info.outputs.launch-id }}
+  allure-launch-url:
+    description: Allure launch URL
+    value: ${{ steps.export-launch-info.outputs.launch-url }}
+  allure-job-run-url:
+    description: Allure job run URL
+    value: ${{ steps.export-launch-info.outputs.job-run-url }}
+  platform:
+    description: Platform where tests ran
+    value: ${{ steps.export-launch-info.outputs.platform }}
+
+runs:
+  using: composite
+  steps:
+    - name: Download build output
+      if: inputs.artifact-name != ''
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: release/build
+
+    - name: Get Playwright version
+      id: pw-version
+      shell: bash
+      run: echo "version=$(npx playwright --version | awk '{print $2}')" >> $GITHUB_OUTPUT
+
+    - name: Cache Playwright browsers
+      id: pw-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/AppData/Local/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}-${{ inputs.playwright-browsers }}
+
+    - name: Install Playwright browsers
+      if: steps.pw-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npx playwright install ${{ inputs.playwright-browsers }}
+
+    - name: Install Playwright system deps and start virtual display (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        npx playwright install-deps ${{ inputs.playwright-browsers }}
+        Xvfb :99 -screen 0 1280x1024x24 &
+        echo "DISPLAY=:99" >> $GITHUB_ENV
+
+    # electron@42 has no postinstall, and its Node installers don't finish
+    # reliably on hosted runners, so fetch the release asset with blocking shell
+    # tools. The cache avoids re-downloading and dodges release-CDN 502s on reruns.
+    - name: Cache Electron binary zip
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .electron-cache
+        key: electron-zip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
+    - name: Install Electron binary
+      shell: bash
+      run: |
+        set -eu
+        VERSION=$(node -p "require('electron/package.json').version")
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)    ASSET=linux-x64;    BIN=electron;;
+          Linux-ARM64)  ASSET=linux-arm64;  BIN=electron;;
+          macOS-X64)    ASSET=darwin-x64;   BIN="Electron.app/Contents/MacOS/Electron";;
+          macOS-ARM64)  ASSET=darwin-arm64; BIN="Electron.app/Contents/MacOS/Electron";;
+          Windows-X64)  ASSET=win32-x64;    BIN=electron.exe;;
+          *) echo "Unsupported runner ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1;;
+        esac
+        DEST=node_modules/electron
+        ZIP=".electron-cache/electron-v${VERSION}-${ASSET}.zip"
+        mkdir -p .electron-cache
+        if [ ! -s "$ZIP" ]; then
+          curl -fSL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 --connect-timeout 30 \
+            "https://github.com/electron/electron/releases/download/v${VERSION}/electron-v${VERSION}-${ASSET}.zip" \
+            -o "$ZIP"
+        fi
+        rm -rf "${DEST}/dist"
+        mkdir -p "${DEST}/dist"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          7z x -y -o"${DEST}/dist" "$ZIP" >/dev/null
+        else
+          unzip -q -o "$ZIP" -d "${DEST}/dist"
+        fi
+        printf '%s' "$BIN" > "${DEST}/path.txt"
+        test -e "${DEST}/dist/${BIN}"
+        echo "Electron binary ready: ${DEST}/dist/${BIN}"
+
+    # Allure TestOps needs the endpoint, the token and the project id together — a pull request
+    # from a fork gets none of them, and a repository can hold the token without the other two.
+    # Rather than fail the run, the suite falls back to running Playwright directly; the local
+    # allure-results/ and junit.xml artifacts are produced either way, so the report job's static
+    # report and Step Summary work with or without TestOps.
+    - name: Detect Allure TestOps configuration
+      id: allure-config
+      shell: bash
+      run: |
+        if [ -n "${ALLURE_ENDPOINT:-}" ] && [ -n "${ALLURE_TOKEN:-}" ] && [ -n "${ALLURE_PROJECT_ID:-}" ]; then
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Allure TestOps reporting is off — it needs ALLURE_ENDPOINT, ALLURE_TOKEN and ALLURE_PROJECT_ID."
+        fi
+
+    - name: Install allurectl
+      if: steps.allure-config.outputs.enabled == 'true'
+      uses: allure-framework/setup-allurectl@2d89ee0b7ba2f59dbe9849b6df5763cab78e14db # v1
+      with:
+        allure-endpoint: ${{ env.ALLURE_ENDPOINT }}
+        allure-token: ${{ env.ALLURE_TOKEN }}
+        allure-project-id: ${{ env.ALLURE_PROJECT_ID }}
+
+    - name: Install truapi-host
+      if: inputs.signer-backed == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/bin/truapi-host" --version
+
+    - name: Restore signer identities
+      if: ${{ inputs.signer-backed == 'true' && inputs.identity-cache == 'true' }}
+      uses: actions/cache/restore@v4
+      with:
+        path: .truapi-host
+        # Scoped per project AND per run. Cache entries are immutable, so a single
+        # fixed key would never update — any identity attested after the first save
+        # would re-attest on every later run and burn a username suffix each time.
+        # `github.run_id` alone is not enough either: it is identical for every
+        # matrix shard, so all shards would race for one key, the first to finish
+        # would win, and the rest would silently persist nothing.
+        key: truapi-host-identities-paseo-next-v2-${{ inputs.cache-scope }}-${{ github.run_id }}
+        restore-keys: |
+          truapi-host-identities-paseo-next-v2-${{ inputs.cache-scope }}-
+
+    - name: Run E2E tests (Allure)
+      if: steps.allure-config.outputs.enabled == 'true'
+      shell: bash
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        allurectl watch -- ${{ inputs.test-command }}
+      env:
+        E2E_TEST: true
+        CI: true
+        E2E_IDENTITY_URL: ${{ inputs.identity-url }}
+        ALLURE_LAUNCH_NAME: ${{ inputs.launch-name }}
+        ALLURE_LAUNCH_TAGS: "branch:${{ github.ref_name }}"
+
+    - name: Run E2E tests (no Allure TestOps)
+      if: steps.allure-config.outputs.enabled != 'true'
+      shell: bash
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        ${{ inputs.test-command }}
+      env:
+        E2E_TEST: true
+        CI: true
+        E2E_IDENTITY_URL: ${{ inputs.identity-url }}
+
+    # A run that provisioned nothing — cancelled early, or dead before the first slot
+    # warmed — still writes a cache entry, and `restore-keys` resolves to the NEWEST
+    # match. So one empty save shadows the identities the last good run stored, and every
+    # run after it re-mints the whole tree: on-chain attestations, a device slot from each
+    # identity's daily budget, and a username base spent per slot. Save only a tree that
+    # holds at least one provisioned session (an `accounts.json` outside `default`, the
+    # same marker `slotHasIdentity` reads in e2e/helpers/signing-host.ts).
+    - name: Check for provisioned signer identities
+      id: identities
+      if: ${{ always() && inputs.signer-backed == 'true' && inputs.identity-cache == 'true' }}
+      shell: bash
+      run: |
+        if [ -n "$(find .truapi-host -path '*_signing_host/accounts.json' -not -path '*/default_signing_host/*' -print -quit 2>/dev/null)" ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::No provisioned identity under .truapi-host — skipping the identity cache save so the last good entry keeps winning restore-keys."
+        fi
+
+    # `always()`: identities attested during a failed run must still be kept, or the
+    # next run pays the on-chain attestation for them again.
+    - name: Save signer identities
+      if: ${{ always() && inputs.signer-backed == 'true' && inputs.identity-cache == 'true' && steps.identities.outputs.present == 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: .truapi-host
+        key: truapi-host-identities-paseo-next-v2-${{ inputs.cache-scope }}-${{ github.run_id }}
+
+    - name: Export Allure launch info
+      id: export-launch-info
+      if: always() && steps.allure-config.outputs.enabled == 'true'
+      shell: bash
+      run: |
+        # Export allurectl environment variables
+        export $(allurectl job-run env)
+
+        # Set as output for next steps/jobs
+        echo "ALLURE_LAUNCH_ID=${ALLURE_LAUNCH_ID}" >> $GITHUB_ENV
+        echo "ALLURE_LAUNCH_URL=${ALLURE_LAUNCH_URL}" >> $GITHUB_ENV
+        echo "ALLURE_JOB_RUN_URL=${ALLURE_JOB_RUN_URL}" >> $GITHUB_ENV
+
+        # Set as action outputs
+        echo "launch-id=${ALLURE_LAUNCH_ID}" >> $GITHUB_OUTPUT
+        echo "launch-url=${ALLURE_LAUNCH_URL}" >> $GITHUB_OUTPUT
+        echo "job-run-url=${ALLURE_JOB_RUN_URL}" >> $GITHUB_OUTPUT
+        echo "platform=${{ runner.os }}" >> $GITHUB_OUTPUT
+
+        echo "✅ Launch info captured:"
+        echo "  Launch ID: ${ALLURE_LAUNCH_ID}"
+        echo "  Launch URL: ${ALLURE_LAUNCH_URL}"
+        echo "  Job Run URL: ${ALLURE_JOB_RUN_URL}"
+
+    # Upload the raw allure-results so the report job can merge every job's
+    # results into one static Allure report. Runs even when tests fail.
+    - name: Upload Allure results
+      if: always() && inputs.results-artifact-name != ''
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: ${{ inputs.results-artifact-name }}
+        path: allure-results
+        if-no-files-found: warn
+        retention-days: 1
+
+    # Upload this shard's junit.xml so the summary job can render the merged
+    # per-project / per-OS comparison table into the run's Step Summary. The
+    # artifact name carries the OS suffix (…-linux/-macos/-windows); the
+    # renderer reads the surface column from it and the project from each
+    # <testsuite hostname>. Runs even when tests fail.
+    - name: Upload JUnit results
+      if: always() && inputs.junit-artifact-name != ''
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: ${{ inputs.junit-artifact-name }}
+        path: test-results/junit.xml
+        if-no-files-found: warn
+        retention-days: 1
+

@@ -20,11 +20,12 @@ import tempfile
 import yaml
 
 # GitHub reads workflows only from the repository root, so the workflows
-# vendored under hosts/android drive nothing and the actions they call are
-# unreachable. Linting them would mean carrying fixes to dormant code through
-# every upstream refresh. hosts/ios is not listed: nine root workflows call its
-# actions, so those are live and are checked.
-UNREACHABLE = ("hosts/android/.github/",)
+# vendored under hosts/android and hosts/desktop drive nothing and the actions
+# they call are unreachable. Linting them would mean carrying fixes to dormant
+# code through every upstream refresh. hosts/ios is not listed: nine root
+# workflows call its actions, so those are live and are checked. A desktop
+# action leaves this list once a root workflow calls it.
+UNREACHABLE = ("hosts/android/.github/", "hosts/desktop/.github/")
 
 # Expressions are interpolated before the shell ever sees them. Shellcheck
 # cannot parse the braces, so each becomes a variable reference rather than a
