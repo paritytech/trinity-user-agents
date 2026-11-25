@@ -1,8 +1,16 @@
-import { asProductId } from "@parity/truapi";
+import {
+  asProductId,
+  createClient,
+  createMessagePortProvider,
+  createTransport,
+} from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { CoreStorageKey } from "../generated/host-callbacks.js";
+import {
+  CoreStorageKey,
+  type JsonRpcConnection,
+} from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import type {
   BundledStack,
@@ -22,6 +30,38 @@ import { wasmIsBuilt } from "../testing/require-wasm.js";
 function bundledRuntimeConfig() {
   const { testStack: _testStack, ...config } = mockRuntimeConfig();
   return { ...config, stack: bundledTestStack() };
+}
+
+/**
+ * A connection to a node that gives `genesisHash` as its chain's, as one whose
+ * chain restarted from genesis does. It answers no other request.
+ */
+function chainWithGenesis(genesisHash: string): JsonRpcConnection {
+  const answers: string[] = [];
+  let closed = false;
+  let wake = () => {};
+  return {
+    send(request) {
+      const { id, method } = JSON.parse(request);
+      if (method !== "chainSpec_v1_genesisHash") return;
+      answers.push(JSON.stringify({ jsonrpc: "2.0", id, result: genesisHash }));
+      wake();
+    },
+    async *responses() {
+      while (!closed) {
+        // Waits only with nothing to deliver, so no answer or close that
+        // comes while one is being delivered is missed.
+        if (answers.length === 0) {
+          await new Promise<void>((resolve) => (wake = resolve));
+        }
+        yield* answers.splice(0);
+      }
+    },
+    close() {
+      closed = true;
+      wake();
+    },
+  };
 }
 
 // Drives the REAL truapi WASM core against createMockHost's callbacks —
@@ -338,8 +378,102 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       hostConfig,
     );
 
-    expect(statuses).toEqual([runtime.stackStatus()]);
-    expect(statuses[0].lastRefresh).toBeUndefined();
+    try {
+      expect(statuses).toEqual([runtime.stackStatus()]);
+      expect(statuses[0].lastRefresh).toBeUndefined();
+      expect(statuses[0].mismatches).toEqual([]);
+    } finally {
+      runtime.free();
+    }
+  });
+
+  it("tells a host without fetchStackDescriptor of a chain that restarted", async () => {
+    // A stack can restart its chains while a page stays open. A host that
+    // does not fetch the descriptor still has to keep its own features off
+    // such a chain, so what the chain answered has to reach `stackChanged`
+    // in the shape `StackMismatch` documents.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+    let mismatchReported = () => {};
+    const mismatchReport = new Promise<void>(
+      (resolve) => (mismatchReported = resolve),
+    );
+    const mock = createMockHost();
+    const restarted = `0x${"ab".repeat(32)}`;
+    mock.callbacks.chain.connect = async () => chainWithGenesis(restarted);
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(mock.callbacks),
+        requestWorkerTransition: () => {},
+        stackChanged: (status: StackStatus) => {
+          statuses.push(status);
+          if (status.mismatches.length > 0) mismatchReported();
+        },
+      },
+      hostConfig,
+    );
+    const channel = new MessageChannel();
+    const core = runtime.productRuntime(
+      { productId },
+      { emitFrame: (frame: Uint8Array) => channel.port1.postMessage(frame) },
+    );
+    channel.port1.onmessage = (event: MessageEvent) =>
+      void core.receiveFrame(event.data);
+    channel.port1.start();
+    const provider = createMessagePortProvider(channel.port2);
+    const client = createClient(createTransport(provider));
+    const people = JSON.parse(statuses[0].descriptor).chains.find(
+      (chain: { role: string }) => chain.role === "People",
+    );
+
+    try {
+      const answer = await client.chain.getSpecGenesisHash({
+        genesisHash: people.genesisHash,
+      });
+      // A task of the core's own sends the report, in no set order with the
+      // answer.
+      let giveUp: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        mismatchReport,
+        new Promise((_, reject) => {
+          giveUp = setTimeout(
+            () => reject(new Error("no status listed the mismatch")),
+            2000,
+          );
+        }),
+      ]);
+      clearTimeout(giveUp);
+
+      // The call fails as a host failure, and the mismatch names People:
+      // together they show it was this chain's connection the core refused.
+      expect([
+        answer.isErr() && answer.error.tag,
+        statuses.map((status) => status.mismatches),
+      ]).toEqual([
+        "HostFailure",
+        [
+          [],
+          [
+            {
+              kind: "genesisHash",
+              role: "People",
+              named: people.genesisHash,
+              answered: restarted,
+            },
+          ],
+        ],
+      ]);
+    } finally {
+      provider.dispose();
+      core.dispose();
+      runtime.free();
+      channel.port1.close();
+      channel.port2.close();
+    }
   });
 
   it("tells a host of its stack only once the runtime exists", async () => {

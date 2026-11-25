@@ -15,6 +15,7 @@ use std::time::Duration;
 use web_time::Duration;
 
 use crate::{
+	chain_runtime::{GenesisCheck, GenesisHashes},
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	host_logic::{
 		session::{SessionInfo, SsoSessionInfo},
@@ -82,6 +83,18 @@ pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
 	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
 		futures::future::Either::Left((item, _)) => item,
 		futures::future::Either::Right(_) => panic!("nothing came"),
+	}
+}
+
+/// The output of `future`, failing the test rather than hanging when it does
+/// not finish within two seconds.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn finish<F: core::future::Future>(future: F) -> F::Output {
+	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+	let future = core::pin::pin!(future);
+	match futures::executor::block_on(futures::future::select(future, timeout)) {
+		futures::future::Either::Left((output, _)) => output,
+		futures::future::Either::Right(_) => panic!("the future did not finish"),
 	}
 }
 
@@ -234,6 +247,12 @@ pub struct StubPlatform {
 	pub chain_connect_pending: bool,
 	/// Set when a `chain_connect_pending` connect future is dropped.
 	pub pending_connect_dropped: Arc<AtomicBool>,
+	/// When set, a chain connect hands its connection over only once this
+	/// fires, as a browser host's `chainConnect` settles after it dialled.
+	pub chain_connect_handover:
+		Option<futures::future::Shared<futures::channel::oneshot::Receiver<()>>>,
+	/// How many chain connections were closed.
+	pub chain_closes: Arc<AtomicUsize>,
 	/// Value returned by `lookup_preimage`, if any. Tests set this to a
 	/// forged value to exercise the in-core integrity check.
 	pub preimage_lookup_value: Option<Vec<u8>>,
@@ -418,6 +437,23 @@ pub fn test_descriptor_chain(
 	chain
 }
 
+/// What a genesis check heard, in order.
+#[derive(Default)]
+pub struct HeardAnswers(Mutex<Vec<GenesisHashes>>);
+
+impl GenesisCheck for HeardAnswers {
+	fn chain_answered(&self, hashes: GenesisHashes) {
+		self.0.lock().expect("heard answers mutex poisoned").push(hashes);
+	}
+}
+
+impl HeardAnswers {
+	/// Every answer heard so far.
+	pub fn heard(&self) -> Vec<GenesisHashes> {
+		self.0.lock().expect("heard answers mutex poisoned").clone()
+	}
+}
+
 /// The People chain the test stack is published on.
 pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
 
@@ -493,6 +529,7 @@ pub fn stack_status(
 		expired: false,
 		restart_required: false,
 		last_refresh,
+		mismatches: Vec::new(),
 	}
 }
 
@@ -1465,6 +1502,7 @@ struct RecordingConnection {
 	pairing_success_via_query: bool,
 	pairing_silent_after_subscribe: bool,
 	chain_responses_end: bool,
+	closes: Arc<AtomicUsize>,
 }
 
 async fn wait_for_statement_subscribe_id(sent: Arc<Mutex<Vec<String>>>, index: usize) -> String {
@@ -1843,7 +1881,9 @@ impl JsonRpcConnection for RecordingConnection {
 		}
 	}
 
-	fn close(&self) {}
+	fn close(&self) {
+		self.closes.fetch_add(1, Ordering::SeqCst);
+	}
 }
 
 /// The scripting key for one request: a `state_call` is keyed by the runtime API
@@ -1989,6 +2029,9 @@ impl ChainProvider for StubPlatform {
 			let _guard = DropFlagGuard(self.pending_connect_dropped.clone());
 			futures::future::pending::<()>().await;
 		}
+		if let Some(handover) = &self.chain_connect_handover {
+			let _ = handover.clone().await;
+		}
 		Ok(Box::new(RecordingConnection {
 			sent: Arc::default(),
 			all_sent: self.sent_rpc.clone(),
@@ -2005,6 +2048,7 @@ impl ChainProvider for StubPlatform {
 			pairing_success_via_query: self.pairing_success_via_query,
 			pairing_silent_after_subscribe: self.pairing_silent_after_subscribe,
 			chain_responses_end: self.chain_responses_end,
+			closes: self.chain_closes.clone(),
 		}))
 	}
 }

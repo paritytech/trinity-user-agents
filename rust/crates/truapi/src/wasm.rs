@@ -1049,8 +1049,8 @@ impl WasmPairingHostRuntime {
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
-	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
-	/// callback receives. `undefined` for a test stack.
+	/// restartRequired, lastRefresh?, mismatches }`, the value the
+	/// `stackChanged` callback receives. `undefined` for a test stack.
 	#[wasm_bindgen(js_name = stackStatus)]
 	pub fn stack_status(&self) -> JsValue {
 		stack_status_to_js(self.stack_refresh.as_ref())
@@ -1382,8 +1382,8 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
-	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
-	/// callback receives. `undefined` for a test stack.
+	/// restartRequired, lastRefresh?, mismatches }`, the value the
+	/// `stackChanged` callback receives. `undefined` for a test stack.
 	#[wasm_bindgen(js_name = stackStatus)]
 	pub fn stack_status(&self) -> JsValue {
 		stack_status_to_js(self.stack_refresh.as_ref())

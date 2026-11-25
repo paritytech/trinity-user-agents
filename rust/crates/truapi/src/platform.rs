@@ -35,8 +35,8 @@ pub use crate::{
 	},
 	stack::{
 		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
-		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackRecords,
-		StackRefresh, StackRefreshOutcome, StackStatus, UnservedProduct,
+		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,
+		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus, UnservedProduct,
 	},
 };
 
