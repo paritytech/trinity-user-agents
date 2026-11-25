@@ -8,11 +8,12 @@ import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.RealFundingActivityMixin
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.RealFundingEntriesMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import kotlinx.coroutines.CompletableDeferred
@@ -49,7 +50,7 @@ class DigitalDollarCardDetailsViewModelTest {
         coEvery { openFunding(any(), null) } coAnswers {
             CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
         }
-        every { observeActivity() } returns emptyFlow()
+        every { observeActivity() } returns flowOf(FundingActivity(inFlight = emptyList(), history = emptyList()))
         coEvery { acknowledgeShown(any()) } returns Unit
     }
 
@@ -108,6 +109,6 @@ class DigitalDollarCardDetailsViewModelTest {
         interactor = interactor,
         router = mockk(),
         tokenAmountMapper = mockk(relaxed = true),
-        fundingActivityMixinFactory = RealFundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L }),
+        fundingEntriesMixinFactory = RealFundingEntriesMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L }),
     )
 }

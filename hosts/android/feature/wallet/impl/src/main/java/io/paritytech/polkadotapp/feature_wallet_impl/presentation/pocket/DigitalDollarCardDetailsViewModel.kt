@@ -22,12 +22,12 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.C
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingEntriesMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
@@ -45,7 +45,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val interactor: DigitalDollarCardDetailsInteractor,
     private val router: PocketRouter,
     private val tokenAmountMapper: TokenAmountMapper,
-    fundingActivityMixinFactory: FundingActivityMixin.Factory,
+    fundingEntriesMixinFactory: FundingEntriesMixin.Factory,
 ) : BaseViewModel() {
     private val fundInProgress = MutableStateFlow(false)
 
@@ -118,9 +118,9 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             )
         )
 
-    private val funding = fundingActivityMixinFactory.create(this) { showPresentationError(it) }
+    private val funding = fundingEntriesMixinFactory.create(this) { showPresentationError(it) }
 
-    val fundingActivity: StateFlow<FundingActivityUiState> = funding.activity
+    val fundingActivity: StateFlow<FundingEntriesUiState> = funding.activity
 
     val fundingSheet: StateFlow<FundingSheet?> = funding.sheet
 

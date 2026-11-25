@@ -2,13 +2,13 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.fundin
 
 import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 
-interface FundingActivityMixin {
-    val activity: StateFlow<FundingActivityUiState>
+interface FundingEntriesMixin {
+    val activity: StateFlow<FundingEntriesUiState>
 
     val sheet: StateFlow<FundingSheet?>
 
@@ -32,6 +32,6 @@ interface FundingActivityMixin {
 
     interface Factory {
         /** [onFailure] shows why funding could not open, including when no provider is listed. */
-        fun create(scope: CoroutineScope, onFailure: (PresentationThrowable) -> Unit): FundingActivityMixin
+        fun create(scope: CoroutineScope, onFailure: (PresentationThrowable) -> Unit): FundingEntriesMixin
     }
 }

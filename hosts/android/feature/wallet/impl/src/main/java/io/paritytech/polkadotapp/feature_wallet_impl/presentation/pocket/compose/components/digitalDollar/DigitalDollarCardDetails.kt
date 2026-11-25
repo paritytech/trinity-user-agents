@@ -109,7 +109,7 @@ fun DigitalDollarCardDetails(
         onBackupCloseClick = viewModel::onBackupCloseClick
     )
 
-    FundingActivitySheet(
+    FundingEntriesSheet(
         sheet = fundingSheet,
         state = fundingActivity,
         onHistory = viewModel::onHistoryClick,

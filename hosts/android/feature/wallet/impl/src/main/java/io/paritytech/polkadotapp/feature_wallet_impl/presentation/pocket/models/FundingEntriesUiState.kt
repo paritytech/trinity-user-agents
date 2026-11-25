@@ -7,18 +7,18 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlin.time.Instant
 
 /** The CASH card's funding lists: what is in progress, delayed first, then what completed, newest first. */
-data class FundingActivityUiState(
-    val inFlight: ImmutableList<FundingActivityRowUi>,
-    val completed: ImmutableList<FundingActivityRowUi>,
+data class FundingEntriesUiState(
+    val inFlight: ImmutableList<FundingEntryRowUi>,
+    val completed: ImmutableList<FundingEntryRowUi>,
     /** What the ended rows' times are read against, as "today" or a weekday. */
     val now: Instant,
 ) {
     /** Top-ups in progress, for the Topping up sheet. */
-    val toppingUp: List<FundingActivityRowUi>
+    val toppingUp: List<FundingEntryRowUi>
         get() = inFlight.filter { it.inbound }
 
     /** Withdrawals in progress, for the Sending sheet. */
-    val sending: List<FundingActivityRowUi>
+    val sending: List<FundingEntryRowUi>
         get() = inFlight.filterNot { it.inbound }
 }
 
@@ -30,7 +30,7 @@ enum class FundingSheet {
 }
 
 /** One row: the amount as its title, the rail in a pill, and a line under it. */
-data class FundingActivityRowUi(
+data class FundingEntryRowUi(
     val id: String,
     val inbound: Boolean,
     /** "$50 CASH" in flight in, "+$50 CASH" once added, "-$50 CASH" out, unsigned once nothing moved. */

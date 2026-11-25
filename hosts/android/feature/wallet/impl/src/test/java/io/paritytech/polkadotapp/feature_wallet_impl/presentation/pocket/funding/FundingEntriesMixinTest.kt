@@ -40,7 +40,7 @@ import kotlin.time.Instant
 private const val EVENT_TIMEOUT_MS = 1_000L
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class FundingActivityMixinTest {
+class FundingEntriesMixinTest {
     // Each open parks until the test answers it, as the overlay holds the call while it is up.
     private val pendingOpens = ArrayDeque<CompletableDeferred<Result<String?>>>()
     private val hostFunding = mockk<HostFunding> {
@@ -194,8 +194,8 @@ class FundingActivityMixinTest {
         assertNull(mixin.sheet.value)
     }
 
-    private fun mixin(): FundingActivityMixin {
-        val mixin = RealFundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L })
+    private fun mixin(): FundingEntriesMixin {
+        val mixin = RealFundingEntriesMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L })
             .create(scope) { failures += it }
         // The activity is shared while a screen reads it.
         mixin.activity.launchIn(scope)

@@ -16,8 +16,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRail
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenSymbolAppearance
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntryRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
@@ -27,12 +27,12 @@ import java.math.BigDecimal
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 
-class FundingActivityMapperTest {
+class FundingEntriesMapperTest {
     private val asset = mockk<Chain.Asset> { every { precision } returns 6 }
     private val now = Instant.fromEpochMilliseconds(86_400_000)
-    private val mapper = FundingActivityMapper(asset, PlainAmounts)
+    private val mapper = FundingEntriesMapper(asset, PlainAmounts)
 
-    private fun FundingActivityMapper.map(activity: FundingActivity) = map(activity, now)
+    private fun FundingEntriesMapper.map(activity: FundingActivity) = map(activity, now)
 
     @Test
     fun `a failure reads why and when, under an unsigned amount`() {
@@ -149,7 +149,7 @@ class FundingActivityMapperTest {
     )
 
     /** The sign and the amount in whole CASH, as the row formats them. */
-    private fun label(row: FundingActivityRowUi): String? = row.amount?.let { it.sign + it.value.amount.stripTrailingZeros().toPlainString() }
+    private fun label(row: FundingEntryRowUi): String? = row.amount?.let { it.sign + it.value.amount.stripTrailingZeros().toPlainString() }
 
     /** Models an amount by its value alone; the formatter the rows share is not under test here. */
     private object PlainAmounts : TokenAmountMapper {

@@ -36,8 +36,8 @@ import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.FundingActivitySheet
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.FundingEntriesSheet
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchResultUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchResults
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchSectionUiModel
@@ -68,7 +68,7 @@ fun SendPaymentScreen(contract: SendPaymentContract) {
         onScannerClick = contract::onScannerClick,
     )
 
-    FundingActivitySheet(
+    FundingEntriesSheet(
         sheet = uiState.fundingSheet,
         state = uiState.funding,
         onHistory = contract::onFundingHistoryClick,
@@ -224,7 +224,7 @@ private fun SendPaymentScreenPreview() {
                         )
                     )
                 ),
-                funding = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = Instant.fromEpochMilliseconds(0)),
+                funding = FundingEntriesUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = Instant.fromEpochMilliseconds(0)),
                 fundingSheet = null,
             ),
             onInputChange = {},

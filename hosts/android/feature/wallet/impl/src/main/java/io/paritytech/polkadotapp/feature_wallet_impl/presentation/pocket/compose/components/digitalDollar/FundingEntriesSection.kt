@@ -47,9 +47,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatCash
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntryRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
@@ -67,9 +67,9 @@ private const val OUT_ARROW_TURN = 180f
 /** Hosts whichever funding sheet is shown; [onBack] leaves the history for the sheet it was opened from. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FundingActivitySheet(
+fun FundingEntriesSheet(
     sheet: FundingSheet?,
-    state: FundingActivityUiState,
+    state: FundingEntriesUiState,
     onHistory: () -> Unit,
     onBack: () -> Unit,
     onStartNew: () -> Unit,
@@ -103,7 +103,7 @@ fun FundingActivitySheet(
 @Composable
 private fun FundingInProgressSheetContent(
     sheet: FundingSheet,
-    state: FundingActivityUiState,
+    state: FundingEntriesUiState,
     onHistory: () -> Unit,
     onStartNew: () -> Unit,
     onRowClick: (id: String) -> Unit,
@@ -136,7 +136,7 @@ private fun FundingInProgressSheetContent(
             verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         ) {
             items(rows, key = { it.id }) { row ->
-                FundingActivityRow(
+                FundingEntryRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = ROW_MIN_HEIGHT),
@@ -158,7 +158,7 @@ private fun FundingInProgressSheetContent(
 /** Top-ups and withdrawals together: those in progress, then those completed, newest first. */
 @Composable
 internal fun FundingHistorySheetContent(
-    state: FundingActivityUiState,
+    state: FundingEntriesUiState,
     onBack: () -> Unit,
     onRowClick: (id: String) -> Unit,
 ) {
@@ -200,7 +200,7 @@ internal fun FundingHistorySheetContent(
 
 private fun LazyListScope.section(
     title: Int,
-    rows: List<FundingActivityRowUi>,
+    rows: List<FundingEntryRowUi>,
     now: Instant,
     onRowClick: (id: String) -> Unit,
 ) {
@@ -214,7 +214,7 @@ private fun LazyListScope.section(
         )
     }
     items(rows, key = { it.id }, contentType = { "row" }) { row ->
-        FundingActivityRow(
+        FundingEntryRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ROW_MIN_HEIGHT),
@@ -227,7 +227,7 @@ private fun LazyListScope.section(
 
 /** One session: a glyph and the amount, the rail in a pill, and the line under it. */
 @Composable
-fun FundingActivityRow(modifier: Modifier = Modifier, row: FundingActivityRowUi, now: Instant, onClick: () -> Unit) {
+fun FundingEntryRow(modifier: Modifier = Modifier, row: FundingEntryRowUi, now: Instant, onClick: () -> Unit) {
     val warning = row.icon == FundingRowIcon.IN_PROGRESS_WARNING
     PolkadotSurface(
         modifier = modifier,

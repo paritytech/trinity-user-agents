@@ -9,9 +9,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntryRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowAmount
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
@@ -25,11 +25,11 @@ import kotlin.time.Instant
  *
  * In progress, a delayed session comes first, then the newest; completed ones are newest first.
  */
-class FundingActivityMapper(
+class FundingEntriesMapper(
     private val asset: Chain.Asset,
     private val tokenAmounts: TokenAmountMapper,
 ) {
-    fun map(activity: FundingActivity, now: Instant): FundingActivityUiState = FundingActivityUiState(
+    fun map(activity: FundingActivity, now: Instant): FundingEntriesUiState = FundingEntriesUiState(
         inFlight = activity.inFlight
             .sortedWith(compareByDescending<FundingActivityItem> { it.isDelayed }.thenByDescending { it.date })
             .map(::row)
@@ -41,7 +41,7 @@ class FundingActivityMapper(
     private val FundingActivityItem.isDelayed: Boolean
         get() = (status as? FundingActivityStatus.InProgress)?.step?.isSlow == true
 
-    private fun row(item: FundingActivityItem): FundingActivityRowUi {
+    private fun row(item: FundingActivityItem): FundingEntryRowUi {
         val status = item.status
         val inbound = item.direction == FundingDirection.IN
         val moved = status == FundingActivityStatus.ToppedUp || status == FundingActivityStatus.Sent
@@ -51,7 +51,7 @@ class FundingActivityMapper(
             else -> ""
         }
 
-        return FundingActivityRowUi(
+        return FundingEntryRowUi(
             id = item.id,
             inbound = inbound,
             amount = item.amount?.let { FundingRowAmount(sign, tokenAmounts.mapFrom(asset.withAmount(it))) },

@@ -25,7 +25,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingEntriesMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
 import kotlinx.coroutines.flow.SharingStarted
@@ -52,9 +52,9 @@ class SendPaymentViewModel @Inject constructor(
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
     private val interactor: SendPaymentInteractor,
-    fundingActivityMixinFactory: FundingActivityMixin.Factory,
+    fundingEntriesMixinFactory: FundingEntriesMixin.Factory,
 ) : BaseViewModel(), SendPaymentContract {
-    private val funding = fundingActivityMixinFactory.create(this) { showPresentationError(it) }
+    private val funding = fundingEntriesMixinFactory.create(this) { showPresentationError(it) }
 
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()

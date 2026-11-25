@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
@@ -23,7 +24,7 @@ import io.paritytech.polkadotapp.feature_transfers_api.presentation.PreviousPaym
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.ParseAddressUsernameConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.UsernameAddressConverterFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.RealFundingActivityMixin
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.RealFundingEntriesMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.RealSendPaymentInteractor
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import io.paritytech.polkadotapp.test_shared.any
@@ -33,8 +34,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -86,7 +87,7 @@ class SendPaymentViewModelTest {
         coEvery { openFunding(any(), null) } coAnswers {
             CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
         }
-        every { observeActivity() } returns emptyFlow()
+        every { observeActivity() } returns flowOf(FundingActivity(inFlight = emptyList(), history = emptyList()))
         coEvery { acknowledgeShown(any()) } returns Unit
     }
 
@@ -242,6 +243,6 @@ class SendPaymentViewModelTest {
         previousPaymentsAddressConverterFactory = previousPaymentsAddressConverterFactory,
         contactsAddressConverterFactory = contactsAddressConverterFactory,
         interactor = interactor,
-        fundingActivityMixinFactory = RealFundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L }),
+        fundingEntriesMixinFactory = RealFundingEntriesMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L }),
     )
 }

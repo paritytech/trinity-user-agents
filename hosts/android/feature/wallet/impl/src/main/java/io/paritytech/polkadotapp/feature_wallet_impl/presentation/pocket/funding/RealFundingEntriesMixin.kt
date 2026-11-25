@@ -12,7 +12,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.GetCashUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
@@ -33,22 +33,22 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.minutes
 
-internal class RealFundingActivityMixin(
+internal class RealFundingEntriesMixin(
     private val hostFunding: HostFunding,
     private val chainAssetProvider: ChainAssetProvider,
     private val tokenAmountMapper: TokenAmountMapper,
     private val timeProvider: TimeProvider,
     private val scope: CoroutineScope,
     private val onFailure: (PresentationThrowable) -> Unit,
-) : FundingActivityMixin {
+) : FundingEntriesMixin {
     class Factory @Inject constructor(
         private val hostFunding: HostFunding,
         @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
         private val tokenAmountMapper: TokenAmountMapper,
         private val timeProvider: TimeProvider,
-    ) : FundingActivityMixin.Factory {
-        override fun create(scope: CoroutineScope, onFailure: (PresentationThrowable) -> Unit): FundingActivityMixin =
-            RealFundingActivityMixin(hostFunding, chainAssetProvider, tokenAmountMapper, timeProvider, scope, onFailure)
+    ) : FundingEntriesMixin.Factory {
+        override fun create(scope: CoroutineScope, onFailure: (PresentationThrowable) -> Unit): FundingEntriesMixin =
+            RealFundingEntriesMixin(hostFunding, chainAssetProvider, tokenAmountMapper, timeProvider, scope, onFailure)
     }
 
     private val sheets = FundingSheets()
@@ -56,12 +56,12 @@ internal class RealFundingActivityMixin(
     private val historyScreen = MutableStateFlow(false)
 
     // Never ends: the core's sessions as they change, with the clock.
-    private val observed: SharedFlow<FundingActivityUiState> =
+    private val observed: SharedFlow<FundingEntriesUiState> =
         combine(hostFunding.observeActivity(), timeProvider.ticking(NOW_TICK)) { activity, now ->
-            FundingActivityMapper(chainAssetProvider.asset(), tokenAmountMapper).map(activity, now)
+            FundingEntriesMapper(chainAssetProvider.asset(), tokenAmountMapper).map(activity, now)
         }.shareIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), replay = 1)
 
-    override val activity: StateFlow<FundingActivityUiState> =
+    override val activity: StateFlow<FundingEntriesUiState> =
         observed.stateIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), empty())
 
     override val sheet: StateFlow<FundingSheet?> = sheets.shown.stateIn(scope, SharingStarted.Eagerly, null)
@@ -127,7 +127,7 @@ internal class RealFundingActivityMixin(
             .collect { hostFunding.acknowledgeShown(it) }
     }
 
-    private fun empty() = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = timeProvider.now())
+    private fun empty() = FundingEntriesUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = timeProvider.now())
 
     private fun FundingDirection.inProgressSheet() = if (this == FundingDirection.IN) FundingSheet.TOPPING_UP else FundingSheet.SENDING
 
