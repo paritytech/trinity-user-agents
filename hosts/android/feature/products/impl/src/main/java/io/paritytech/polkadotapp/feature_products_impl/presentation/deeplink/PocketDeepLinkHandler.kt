@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -44,6 +47,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private val gate: ProductDeepLinkGate,
     private val accountRepository: AccountRepository,
     private val router: ProductsRouter,
+    private val pageOpens: HostPageOpens,
     @param:ApplicationContext private val context: Context,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
@@ -67,17 +71,22 @@ internal class PocketDeepLinkHandler @Inject constructor(
     }
 
     context(scope: ComputationalScope)
-    override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(dispatchers.io) {
+    override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> {
+        // Read before any hop: the card page's load is timed from here.
+        val open = pageOpens.ask(HostOpenSource.DEEPLINK)
+        return withContext(dispatchers.io) { handle(data, open) }
+    }
+
+    private suspend fun handle(data: Uri, open: HostPageOpen): Result<DeeplinkProcessingOutcome> =
         when (val deeplink = parser.parse(data.toString())) {
             null -> Result.success(malformed(data))
             PocketDeeplink.Collection -> openCollection()
             is PocketDeeplink.Card -> dotNsTldProvider.getTld()
                 .flatMap { tld -> productIdFromHost(deeplink.productId.value, tld) }
                 .flatMap { productId ->
-                    dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)), deeplink.pageQuery)
+                    dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)), deeplink.pageQuery, open)
                 }
         }
-    }
 
     private suspend fun openCollection(): Result<DeeplinkProcessingOutcome> = runCancellableCatching {
         accountRepository.awaitAccountsInitialized()
@@ -85,7 +94,11 @@ internal class PocketDeepLinkHandler @Inject constructor(
         DeeplinkProcessingOutcome.Navigate { router.openWalletTab() }
     }
 
-    private suspend fun dispatchCard(key: PocketCardKey, pageQuery: String): Result<DeeplinkProcessingOutcome> {
+    private suspend fun dispatchCard(
+        key: PocketCardKey,
+        pageQuery: String,
+        open: HostPageOpen,
+    ): Result<DeeplinkProcessingOutcome> {
         val present = collection.observeCards().first().any { it.key == key }
 
         // A card already held is opened, whichever action asked for it. One that is not held has to
@@ -94,6 +107,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         return if (present) {
             Result.success(
                 DeeplinkProcessingOutcome.Navigate {
+                    pageOpens.hold(key.productId.value, open)
                     cardOpenRequests.request(key, pageQuery)
                     router.openWalletTab()
                 },

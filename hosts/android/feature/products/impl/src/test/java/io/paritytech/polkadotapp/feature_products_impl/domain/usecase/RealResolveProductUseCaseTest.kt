@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
@@ -43,6 +44,7 @@ class RealResolveProductUseCaseTest {
         manifestParser,
         productRepository,
         debugPocketCards,
+        HostLoadFailureTelemetry(originProvider = { error("unused") }, capture = { }),
     )
 
     private fun appJson() = """{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}"""

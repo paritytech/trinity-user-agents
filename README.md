@@ -246,6 +246,11 @@ SSO session, responder identity and handshake payload structs zeroize their fiel
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
 
+Android Pocket load events share the iOS telemetry shape: `load.attempt` counts
+loads from 1 under the same session id, and only the first load carries
+`open.source` and `tap_ms`. Signed timing values expose clock errors. Page-visible
+and Pocket-open events include the core version and monotonic event time.
+
 ### JS Host SDKs
 
 JS hosts integrate the Rust core through [`@parity/truapi-host`](js/packages/truapi-host),
