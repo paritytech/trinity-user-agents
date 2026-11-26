@@ -17,7 +17,7 @@ interface FundingQuotes {
     // `null` drops the quotes on screen.
     fun quote(amount: Balance?, intentId: FundingIntentId)
 
-    fun shown(intentId: FundingIntentId): FundingQuotesShown?
+    fun latestAsk(intentId: FundingIntentId): FundingQuotesShown?
 
     fun quoteId(intentId: FundingIntentId, provider: ProductId): String?
 
@@ -67,7 +67,7 @@ class RealFundingQuotes @Inject constructor(
         }
     }
 
-    override fun shown(intentId: FundingIntentId): FundingQuotesShown? = synchronized(lock) { asks[intentId]?.shown() }
+    override fun latestAsk(intentId: FundingIntentId): FundingQuotesShown? = synchronized(lock) { asks[intentId]?.shown() }
 
     fun onQuotesChanged(intentId: FundingIntentId) {
         calls.launch { readList(intentId) }
