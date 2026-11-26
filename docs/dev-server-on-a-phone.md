@@ -40,8 +40,8 @@ opens that page.
 Add `?product_id=<name>` to the address, for example
 `192.168.x.x:3000?product_id=humanity.dot`, and the page runs as that product:
 its accounts, and the storage and permissions that product has on the TrUAPI
-runtime on this device. A product the native runtime runs, the default in the
-iOS DevCI build, keeps storage the page does not see. A product that signs
+runtime on this device. On Android, a product the native runtime runs keeps
+storage the page does not see. A product that signs
 without asking, such as `peopl.dot`, does so from the development server too.
 The name must be one the app accepts as a product id, a dotNS name such as
 `humanity.dot` or `localhost[:port]`.
@@ -56,8 +56,8 @@ when the page's own navigation drops the query.
   gives a local product, whichever address the phone reached the server by.
   Storage, permissions and account derivation key off that identifier, so two
   servers on the same port are the same product to the app.
-- It always runs on the TrUAPI runtime, whichever runtime the debug toggle
-  selects for dotNS products.
+- It always runs on the TrUAPI runtime, whichever runtime the Android debug
+  toggle selects for dotNS products.
 - A `localhost` product can sign as any other product's account without asking.
   That is why only development builds open one.
 

@@ -5,18 +5,8 @@ import Individuality
 import KeyDerivation
 import Products
 
-/// Creates per-caller Accounts Protocol handlers (RFC-0004, RFC-0023) with prompt routing baked in.
-protocol APPersonhoodHandlerMaking: Sendable {
-    func makeCreateProofHandler(callingProductId: ProductId?) -> APCreateProofHandling
-    func makeAliasHandler(callingProductId: ProductId?) -> APAliasHandling
-    func makeSignVrfHandler(callingProductId: ProductId?) -> APSignVrfHandling
-    func makeListRingVrfKeysHandler(callingProductId: ProductId?) -> APListRingVrfKeysHandling
-}
-
-/// Single wiring point for Accounts Protocol handlers, shared between
-/// the in-WebView host API and the SSO request handlers. Prompt routing
-/// comes from the caller's router facade so confirmations anchor to that
-/// context's presentation view.
+/// Creates per-caller Accounts Protocol handlers (RFC-0004, RFC-0023). Prompt routing comes from
+/// the caller's router facade so confirmations anchor to that context's presentation view.
 final class APPersonhoodHandlerFactory: @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let routers: ProductRoutersFacadeProtocol
@@ -45,7 +35,7 @@ final class APPersonhoodHandlerFactory: @unchecked Sendable {
     }
 }
 
-extension APPersonhoodHandlerFactory: APPersonhoodHandlerMaking {
+extension APPersonhoodHandlerFactory {
     func makeCreateProofHandler(callingProductId: ProductId?) -> APCreateProofHandling {
         APCreateProofHandler(
             callingProductId: callingProductId,

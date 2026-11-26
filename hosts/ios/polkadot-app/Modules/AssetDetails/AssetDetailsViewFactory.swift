@@ -3,7 +3,6 @@ import Keystore_iOS
 import SubstrateSdk
 import Coinage
 import ChainRegistry
-import BackgroundExecution
 
 @MainActor
 enum AssetDetailsViewFactory {
@@ -32,13 +31,6 @@ enum AssetDetailsViewFactory {
                 logger: Logger.shared
             )
         )
-
-        #if TESTNET_FEATURE
-            interactor.backgroundExecutor = ConnectionRetainingExecutor(
-                provider: ChainRegistryFacade.sharedRegistry
-            )
-            interactor.topupService = TopUpService.create(for: chainAsset.chainAssetId)
-        #endif
 
         let wireframe = AssetDetailsWireframe(context: context)
         let presenter = AssetDetailsPresenter(

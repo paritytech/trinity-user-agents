@@ -86,81 +86,9 @@ struct ProductSubtreeMessageTests {
         }
     }
 
-    @Test("Handler responds with the subtree key without any consent prompt")
-    func handlerIsConsentFree() async throws {
-        let accountManager = MockProductsAccountManager()
-        let sender = MockHostMessageSender()
-        let handler = SSOProductSubtreeRequestHandler(
-            accountManager: accountManager,
-            messageSender: sender,
-            logger: MockLogger()
-        )
-
-        let message = PolkadotHostRemoteMessage(
-            messageId: "request-1",
-            versionedContent: .v1(.productSubtreeRequest(.init(productId: try! ProductId("browse.dot"))))
-        )
-
-        await handler.handle(message: message, from: makeHost())
-
-        guard
-            case let .productSubtreeResponse(requestMessageId, .success(key))? =
-            sender.postedMessages.first?.latestContent()
-        else {
-            Issue.record("Expected successful productSubtreeResponse")
-            return
-        }
-
-        #expect(requestMessageId == "request-1")
-        #expect(key.productPublicKey == accountManager.subtreePublicKey)
-        #expect(accountManager.requestedProductIds == [try! ProductId("browse.dot")])
-    }
-
-    @Test("Handler reports a failure result when derivation throws")
-    func handlerReportsFailure() async throws {
-        let accountManager = MockProductsAccountManager()
-        accountManager.subtreeError = MockDerivationError.invalidProductId
-        let sender = MockHostMessageSender()
-        let handler = SSOProductSubtreeRequestHandler(
-            accountManager: accountManager,
-            messageSender: sender,
-            logger: MockLogger()
-        )
-
-        let message = PolkadotHostRemoteMessage(
-            messageId: "request-2",
-            versionedContent: .v1(.productSubtreeRequest(.init(productId: try! ProductId("bad.dot"))))
-        )
-
-        await handler.handle(message: message, from: makeHost())
-
-        guard
-            case .productSubtreeResponse(_, .failure)? =
-            sender.postedMessages.first?.latestContent()
-        else {
-            Issue.record("Expected failed productSubtreeResponse")
-            return
-        }
-    }
-
-    private func makeHost() -> PolkadotSignInHost {
-        PolkadotSignInHost(
-            accountId: Data.random(of: 32)!,
-            publicKey: Data.random(of: 32)!,
-            name: "TestHost",
-            iconUrl: nil
-        )
-    }
-
     private func encoded(_ value: some ScaleEncodable) throws -> Data {
         let encoder = ScaleEncoder()
         try value.encode(scaleEncoder: encoder)
         return encoder.encode()
     }
-}
-
-// MARK: - Test Errors
-
-private enum MockDerivationError: Error {
-    case invalidProductId
 }

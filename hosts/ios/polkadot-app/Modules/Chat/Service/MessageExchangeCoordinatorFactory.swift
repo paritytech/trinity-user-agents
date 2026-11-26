@@ -16,10 +16,6 @@ protocol MessageExchangeCoordinatorMaking {
     func makeTrUAPIHostCoordinator(
         runtimeProvider: TrUAPIHostRuntimeProviding
     ) throws -> MessageExchangeSignInHostCoordinating
-    func makeNativeHostCoordinator(
-        accountManager: ProductsAccountManaging,
-        sponsorFactory: TransactionSponsorMaking
-    ) throws -> MessageExchangeSignInHostCoordinating
 }
 
 final class MessageExchangeCoordinatorFactory {
@@ -142,33 +138,6 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
                     ownEncryptionPublicKey: encryptor.localPublicKey
                 )
             }
-        )
-    }
-
-    func makeNativeHostCoordinator(
-        accountManager: ProductsAccountManaging,
-        sponsorFactory: TransactionSponsorMaking
-    ) throws -> MessageExchangeSignInHostCoordinating {
-        try MessageExchangeSignInHostCoordinator(
-            ownKeyId: Chat.Contact.Own.sso(),
-            serviceFactory: makeSSOServiceFactory(),
-            signerResolver: IdentitySignerResolver(signManager: ChatSignerManager(entropyManager: entropyManager)),
-            accountManager: accountManager,
-            sponsorFactory: sponsorFactory,
-            routers: ProductRoutersFacade.sso()
-        )
-    }
-}
-
-private extension MessageExchangeCoordinatorFactory {
-    func makeSSOServiceFactory() -> MessageExchageServiceMaking {
-        MessageExchangeServiceFactory(
-            messageExchangeModeProvider: FixedMessageExchangeModeProvider(mode: .identity),
-            entropyManager: entropyManager,
-            deviceEncryptionKeyFactory: nil,
-            maxStatementSize: Constants.maxSSOStatementSize,
-            operationQueue: operationQueue,
-            logger: logger
         )
     }
 }

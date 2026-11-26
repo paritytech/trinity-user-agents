@@ -17,159 +17,6 @@ enum SPAViewFactory {
         configuration: SPAConfiguration,
         flowState: SPAFlowState
     ) -> SPAViewProtocol? {
-        let truapiEnabled = SettingsManager.shared.isTrUAPIRuntimeEnabled
-
-        if truapiEnabled || configuration.contentSource.isRustOnly {
-            return createRustView(configuration: configuration, flowState: flowState)
-        }
-
-        return createNativeView(configuration: configuration, flowState: flowState)
-    }
-
-    @MainActor
-    private static func createNativeView(
-        configuration: SPAConfiguration,
-        flowState: SPAFlowState
-    ) -> SPAViewProtocol? {
-        guard let workerFacade: ProductWorkerFacade = RootDependencyLocator.getDependency() else {
-            return nil
-        }
-
-        let routers = ProductRoutersFacade.spa()
-        let dependencyLocator: TruApiDependenciesLocator = RootDependencyLocator.getDependency()
-            ?? TruApiDependenciesLocator()
-        let allowanceSupport: AllowanceSupport? = dependencyLocator.getDependency()
-        let accountManager = ProductsAccountManager(
-            entropyManager: RootEntropyManager.shared,
-            allowanceSupport: allowanceSupport
-        )
-
-        let wireframe = SPAWireframe()
-
-        let entropyManager = RootEntropyManager.shared
-
-        let chainRegistry = ChainRegistryFacade.sharedRegistry
-
-        let resourceKeyManager = ProductResourceKeyManager(
-            keychain: Keychain(),
-            userDefaults: SharedContainerGroup.userDefaults
-        )
-
-        let sponsorVrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-        guard let sponsorKeyResolver = try? sponsorVrfRepo.keyResolver() else {
-            return nil
-        }
-
-        let sponsorFactory = HostTransactionSponsorFactory(
-            accountManager: accountManager,
-            resourceKeyManager: resourceKeyManager,
-            chainRegistry: chainRegistry,
-            keyResolver: sponsorKeyResolver,
-            logger: Logger.shared
-        )
-
-        let nativeApiFactory = ProductsNativeApiFactory(
-            chainRegistry: chainRegistry,
-            usernameStorage: UsernameStorage(),
-            localStorage: ProductsLocalStorage(
-                productId: configuration.productDomain,
-                settingsManager: SettingsManager.shared
-            ),
-            notificationService: UserNotificationService.shared,
-            entropyManager: entropyManager,
-            dependencyLocator: dependencyLocator,
-            accountManager: accountManager,
-            resourceKeyManager: resourceKeyManager,
-            sponsorFactory: sponsorFactory,
-            substrateStorageFacade: SubstrateDataStorageFacade.shared,
-            hostProvider: flowState.hostProvider,
-            workerOperations: workerFacade.operations
-        )
-
-        let nativeApi = nativeApiFactory.makeApi(
-            productId: configuration.productDomain,
-            routers: routers
-        )
-
-        let schemeHandlerProxy = SchemeHandlerProxy()
-
-        let scriptsFactory = SPANativeRuntimeScriptsFactory(
-            containerScriptProvider: BundledContainerScriptProvider()
-        )
-
-        let interactor = SPANativeRuntimeInteractor(
-            nativeApi: nativeApi,
-            scriptsFactory: scriptsFactory,
-            contentLoader: flowState.contentLoader,
-            presenceRegistry: RootDependencyLocator.getDependency(),
-            schemeHandlerProxy: schemeHandlerProxy,
-            configuration: configuration,
-            logger: Logger.shared,
-            productRepository: ProductRepositoryFactory().createRepository(),
-            chatProviderFactory: ChatContactDataProviderFactory(),
-            workerManager: workerFacade.manager,
-            workerProductId: configuration.productDomain,
-            chainStatusProvider: chainStatusProvider(for: configuration)
-        )
-
-        let presenter = SPAPresenter(
-            interactor: interactor,
-            wireframe: wireframe,
-            configuration: configuration,
-            hostProvider: flowState.hostProvider
-        )
-        let view = createViewController(
-            presenter: presenter,
-            configuration: configuration,
-            schemeHandlerProxy: schemeHandlerProxy,
-            hostProvider: flowState.hostProvider
-        )
-
-        presenter.view = view
-        interactor.presenter = presenter
-
-        routers.setPresentationView(view)
-
-        if !configuration.isRootScreen {
-            view.controller.hidesBottomBarWhenPushed = true
-        }
-
-        return view
-    }
-
-    @MainActor
-    static func createView(
-        page: ProductPage,
-        flowState: SPAFlowState,
-        presentation: SPAPresentation = .pushed,
-        browserTabId: UUID? = nil
-    ) -> SPAViewProtocol? {
-        let configuration = SPAConfiguration(
-            title: nil,
-            isRootScreen: false,
-            showMoreButton: true,
-            page: page,
-            presentation: presentation,
-            browserTabId: browserTabId
-        )
-
-        return createView(
-            configuration: configuration,
-            flowState: flowState
-        )
-    }
-}
-
-// MARK: - Rust runtime assembly
-
-extension SPAViewFactory {
-    /// Internal for the pages that only the rust runtime can load by address:
-    /// the debug playground and a debug Pocket card's widget URL.
-    @MainActor
-    static func createRustView(
-        configuration: SPAConfiguration,
-        flowState: SPAFlowState
-    ) -> SPAViewProtocol? {
         let routers = ProductRoutersFacade.spa()
         let wireframe = SPAWireframe()
         let schemeHandlerProxy = SchemeHandlerProxy()
@@ -218,6 +65,28 @@ extension SPAViewFactory {
         }
 
         return view
+    }
+
+    @MainActor
+    static func createView(
+        page: ProductPage,
+        flowState: SPAFlowState,
+        presentation: SPAPresentation = .pushed,
+        browserTabId: UUID? = nil
+    ) -> SPAViewProtocol? {
+        let configuration = SPAConfiguration(
+            title: nil,
+            isRootScreen: false,
+            showMoreButton: true,
+            page: page,
+            presentation: presentation,
+            browserTabId: browserTabId
+        )
+
+        return createView(
+            configuration: configuration,
+            flowState: flowState
+        )
     }
 }
 

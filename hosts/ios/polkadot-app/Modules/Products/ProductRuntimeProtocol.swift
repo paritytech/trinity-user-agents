@@ -73,12 +73,6 @@ protocol SPARuntimeProtocol: ProductRuntimeProtocol {
     func useLatestBuild() async throws -> ProductContent?
 }
 
-/// One scripts protocol per surface (see `ChatScriptsMaking` in the Products
-/// package); implemented by the native and rust SPA scripts factories.
-protocol SPAScriptsMaking {
-    func makeScripts() throws -> [JSEngineScript]
-}
-
 /// Creation also anchors the context's routers to the presentation view the
 /// factory received, so a created runtime can prompt immediately.
 protocol SPARuntimeFactoryProtocol: AnyObject {

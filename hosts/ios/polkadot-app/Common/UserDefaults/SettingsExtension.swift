@@ -20,7 +20,6 @@ enum SettingsKey: String {
     case localNetworkPermissionRequested
     case backendSessionId = "backendSessionId.v3"
     case showTransferStrategyDebug
-    case truApiRuntimeEnabled
     case hostPlacementEnabled
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled

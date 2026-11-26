@@ -6,11 +6,9 @@ import SubstrateSdk
 import StructuredConcurrency
 import Coinage
 import CommonService
-import KeyDerivation
 import AsyncExtensions
 import AsyncAlgorithms
 import ChainRegistry
-import BackgroundExecution
 import TrUAPIHost
 import UIKitExt
 
@@ -31,12 +29,6 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
 
     private let fundingOpener: FundingOpening
     private var topUpTask: Task<Void, Never>?
-
-    #if TESTNET_FEATURE
-        var backgroundExecutor: BackgroundExecuting?
-        var topupService: TopUpService?
-        var faucetTask: Task<Void, Error>?
-    #endif
 
     init(
         priceLocalSubscriptionFactory: PriceProviderFactoryProtocol,
@@ -80,41 +72,6 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
             }
         }
     }
-
-    #if TESTNET_FEATURE
-        func topUp() {
-            faucetTask?.cancel()
-            faucetTask = Task { [weak presenter, topupService, backgroundExecutor, coinageService] in
-                guard let topupService, let backgroundExecutor else {
-                    return
-                }
-                do {
-                    guard let amount = Decimal(5).toSubstrateAmount(precision: chainAsset.asset.decimalPrecision) else {
-                        return
-                    }
-
-                    let randomSeed = try Data.randomOrError(of: 32)
-                    let depositWallet = try DynamicDerivedWallet(seedBytes: randomSeed)
-
-                    try await backgroundExecutor.execute {
-                        try await markStallActivity("Topup") {
-                            try await topupService.topUp(depositWallet, amount: .plank(amount))
-                            _ = try await markStallRegion("Loading vouchers") {
-                                try await coinageService.loadVouchers(
-                                    amount: amount,
-                                    externalAssetHolder: depositWallet
-                                )
-                            }
-                        }
-                    }
-
-                    await presenter?.didCompleteTopUp(.success(()))
-                } catch {
-                    await presenter?.didCompleteTopUp(.failure(error))
-                }
-            }
-        }
-    #endif
 
     /// Reads the balance and the holdings behind it as one value. Two subscriptions would let the
     /// figures and the rows come from different evaluations, so the breakdown would briefly show

@@ -94,20 +94,6 @@ final class DebugSettingsViewLayout: UIView {
         }
     #endif
 
-    let truApiRuntimeSwitch = UISwitch()
-
-    private let truApiRuntimeLabel: Label = .create { (view: Label) in
-        view.typography = .bodyMedium
-        view.textColor = .fgPrimary
-        view.text = "TrUAPI Runtime (\(truapiHostVersion()))"
-    }
-
-    private let truApiRuntimeRow: UIStackView = .create { stack in
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.distribution = .equalSpacing
-    }
-
     let hostPlacedSwitch = UISwitch()
 
     private let hostPlacedLabel: Label = .create { (view: Label) in
@@ -127,6 +113,12 @@ final class DebugSettingsViewLayout: UIView {
         view.textColor = .fgSecondary
         view.lineBreakMode = .byTruncatingMiddle
         view.text = "Chain ID: \(AppConfig.Chains.peopleChain)"
+    }
+
+    let truapiHostVersionLabel: Label = .create { (view: Label) in
+        view.typography = .bodyMedium
+        view.textColor = .fgSecondary
+        view.text = "TrUAPI Host: \(truapiHostVersion())"
     }
 
     private let scrollView: UIScrollView = .create { scrollView in
@@ -167,11 +159,11 @@ final class DebugSettingsViewLayout: UIView {
         }
 
         strategyDebugRow.addArrangedSubviews([strategyDebugLabel, strategyDebugSwitch])
-        truApiRuntimeRow.addArrangedSubviews([truApiRuntimeLabel, truApiRuntimeSwitch])
         hostPlacedRow.addArrangedSubviews([hostPlacedLabel, hostPlacedSwitch])
 
         var rows: [UIView] = [
             chainLabel,
+            truapiHostVersionLabel,
             clearBackupButton,
             clearReferralButton,
             shareLogsButton,
@@ -193,7 +185,7 @@ final class DebugSettingsViewLayout: UIView {
             ])
         #endif
 
-        rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])
+        rows.append(contentsOf: [strategyDebugRow, hostPlacedRow])
 
         stackView.addArrangedSubviews(rows)
 

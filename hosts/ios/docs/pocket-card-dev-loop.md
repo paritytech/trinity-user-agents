@@ -105,8 +105,8 @@ test page:
    with the face away** to open the card with the face hidden.
 3. Add the card and open it.
 
-A card with a widget URL always loads through the TrUAPI runtime. A published
-widget needs **Debug → TrUAPI Runtime** on, which applies at the next launch.
+A card with a widget URL loads through the TrUAPI runtime, like a published
+widget.
 
 The page logs each answer, and a red bar pinned to its bottom edge goes missing
 when the page is sized wrong.

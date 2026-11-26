@@ -1,19 +1,16 @@
 import Foundation
 import FoundationExt
 import UIKit
-import Keystore_iOS
 import PolkadotUI
 import Products
 
 /// Creates ``ProductBot`` instances for a given product.
 ///
-/// The native path is a thin adapter over the shared ``ProductWorkerManager`` —
-/// the worker itself is assembled by ``DefaultProductWorkerFactory``. The rust
-/// path is a chat seam onto the product's one worker, which
-/// ``TrUAPIWorkerManager`` runs.
+/// A bot is a chat seam onto the product's one worker, which ``TrUAPIWorkerManager``
+/// runs. Until those workers are running, it falls back to a thin adapter over the
+/// shared ``ProductWorkerManager``, whose worker ``DefaultProductWorkerFactory`` assembles.
 final class ProductBotFactory {
     private let productFileProvider: ChatProductFileProviding
-    private let settingsManager: SettingsManagerProtocol
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
@@ -26,11 +23,9 @@ final class ProductBotFactory {
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
         productImages: ProductImageSources,
-        settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productFileProvider = productFileProvider
-        self.settingsManager = settingsManager
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
@@ -46,7 +41,7 @@ final class ProductBotFactory {
         let images = productImages.resolver(contentId: { source.contentId })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
-        if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
+        if let workers = workers() {
             let runtime = TrUAPIChatHandler(
                 productId: product.id,
                 workers: workers,

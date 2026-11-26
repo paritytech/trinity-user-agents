@@ -85,7 +85,7 @@ struct AssetDetailsView: View {
                 }
             #endif
 
-            #if DEBUG || TESTNET_FEATURE
+            #if DEBUG
                 HStack {
                     VStack { Divider().background(Color.fgPrimary) }
                     Text(verbatim: "Debug features")
@@ -93,18 +93,12 @@ struct AssetDetailsView: View {
                         .foregroundStyle(Color.fgPrimary)
                     VStack { Divider().background(Color.fgPrimary) }
                 }
-            #endif
 
-            #if DEBUG
                 CoinageTestDataSwitch(mode: $testDataMode)
 
                 CoinageCoinSetSwitch(set: $coinSet)
 
                 CoinageLightPad(turn: $fixedLight, lean: $fixedLean)
-            #endif
-
-            #if TESTNET_FEATURE
-                testnetTopUpButton()
             #endif
         }
     }
@@ -207,30 +201,6 @@ struct AssetDetailsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
-
-    #if TESTNET_FEATURE
-        private func testnetTopUpButton() -> some View {
-            Button {
-                viewModel.onTestnetTopUp?()
-            } label: {
-                Group {
-                    if viewModel.isTestnetTopUpInProgress {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(.fgPrimaryInverted)
-                    } else {
-                        Text(verbatim: "Faucet Top Up")
-                            .textStyle(.body14SemiBold())
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .foregroundStyle(Color.fgPrimaryInverted)
-                .background(.bgActionPrimary, in: RoundedRectangle(cornerRadius: 12))
-            }
-            .disabled(viewModel.isTestnetTopUpInProgress)
-        }
-    #endif
 }
 
 private extension AssetDetailsView {
