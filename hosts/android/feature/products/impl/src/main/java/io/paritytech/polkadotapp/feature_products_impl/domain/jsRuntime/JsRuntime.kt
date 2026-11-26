@@ -38,18 +38,6 @@ interface JsRuntime {
      */
     suspend fun loadEntryModule(srcPath: String): Result<Unit>
 
-    /**
-     * Register [js] to run at document-start on every navigation, before any page script.
-     *
-     * Used to install the host bridge/container before product code can touch the transport,
-     * closing the race where a product calls into the host API before injection completes
-     * (manifesting as "Environment is not correct"). Persists across navigations.
-     *
-     * @return `true` if document-start injection is active; `false` if the runtime cannot
-     *   support it (e.g. WebView provider too old) so the caller can fall back to page-load injection.
-     */
-    suspend fun injectDocumentStartScript(js: String, allowedOriginRules: Set<String>): Boolean
-
     suspend fun waitForReady()
 
     fun dispose()

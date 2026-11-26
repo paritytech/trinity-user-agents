@@ -1,9 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import dagger.Lazy
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
-import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIChatWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
@@ -19,8 +17,8 @@ import javax.inject.Inject
 interface WorkerBootFactory {
     /**
      * Boots the worker for [productId] on [scope], wiring [botApi] as its host-call surface.
-     * Throws when the chosen runtime cannot produce one: a product with no worker script fails here
-     * on the JS path, but boots on the core path and surfaces as a supervisor `Failed` state later.
+     * Throws when the core cannot produce one. A product with no worker script still boots here and
+     * surfaces as a supervisor `Failed` state later.
      */
     suspend fun boot(
         productId: ProductId,
@@ -30,24 +28,10 @@ interface WorkerBootFactory {
 }
 
 class RealWorkerBootFactory @Inject constructor(
-    private val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory,
-    private val runtimeSettings: ProductRuntimeSettings,
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
 ) : WorkerBootFactory {
     override suspend fun boot(
-        productId: ProductId,
-        botApi: BindableProductsBotApi,
-        scope: CoroutineScope,
-    ): ProductWorker {
-        return if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
-            bootCore(productId, botApi, scope)
-        } else {
-            bootJs(productId, botApi, scope)
-        }
-    }
-
-    private suspend fun bootCore(
         productId: ProductId,
         botApi: BindableProductsBotApi,
         scope: CoroutineScope,
@@ -58,13 +42,4 @@ class RealWorkerBootFactory @Inject constructor(
         chatMessaging = botApi,
         scope = scope,
     )
-
-    private suspend fun bootJs(
-        productId: ProductId,
-        botApi: BindableProductsBotApi,
-        scope: CoroutineScope,
-    ): ProductWorker {
-        val executor = scriptExecutorFactory.create(productId)
-        return executor.initializeBot(botApi, scope).map { executor }.getOrThrow()
-    }
 }

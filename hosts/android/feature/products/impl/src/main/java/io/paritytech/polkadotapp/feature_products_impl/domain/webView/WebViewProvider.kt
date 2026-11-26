@@ -4,7 +4,6 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,7 +16,7 @@ import kotlinx.coroutines.withContext
 
 abstract class WebViewProvider(
     private val dispatchers: CoroutineDispatchers
-) : PageLifecycleSource {
+) {
     private val mutex = Mutex()
     private val cachedWebView = MutableStateFlow<WebView?>(null)
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
@@ -78,11 +77,11 @@ abstract class WebViewProvider(
         onWebViewDestroyedListeners += listener
     }
 
-    override fun addOnPageFinishedListener(listener: () -> Unit) {
+    fun addOnPageFinishedListener(listener: () -> Unit) {
         onPageFinishedListeners += listener
     }
 
-    override fun addOnPageStartedListener(listener: (url: String) -> Unit) {
+    fun addOnPageStartedListener(listener: (url: String) -> Unit) {
         onPageStartedListeners += listener
     }
 

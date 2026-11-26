@@ -63,7 +63,7 @@ private const val MAX_LIVE_TABS = 3
  * The [visitStack] rides alongside as unobserved bookkeeping so [goToPreviousTab] can undo focus changes.
  *
  * Each tab owns its WebView stack. At most [MAX_LIVE_TABS] stay alive (LRU); the rest "sleep" (WebView
- * destroyed, url kept) and rehydrate when selected. A tab's [CoroutineScope] drives its [HostApiSession]
+ * destroyed, url kept) and rehydrate when selected. A tab's [CoroutineScope] drives its TrUAPI bridge
  * disposal, so cancelling it destroys the WebView; the browser fragment only attaches, never destroys.
  */
 @OptIn(ExperimentalCoroutinesApi::class)

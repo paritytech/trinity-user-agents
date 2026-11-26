@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.test.TestScope
@@ -23,26 +22,17 @@ class ProductTabSessionFactoryTest {
         every { create(any(), any(), any(), any(), any(), any(), any()) } returns provider
     }
     private val sessionStarter = mockk<TrUAPISessionStarter>(relaxed = true)
-    private val native = mockk<NativeProductTabSessionFactory> {
-        every { create(any(), any(), any()) } returns provider
-    }
-    private val runtimeSettings = object : ProductRuntimeSettings {
-        override fun isTrUAPIRuntimeEnabled() = false
-
-        override fun setTrUAPIRuntimeEnabled(enabled: Boolean) = Unit
-    }
     private val scope = TestScope()
     private val factory = ProductTabSessionFactory(
-        native,
-        TrUAPIProductTabSessionFactory(webViewProviders, sessionStarter, mockk(relaxed = true)),
-        runtimeSettings,
+        webViewProviders,
+        sessionStarter,
+        mockk(relaxed = true),
         productSources(),
     )
 
     @Test
-    fun `a dev server runs on TrUAPI under the core's id, with the server's origin as first party`() {
-        // The core runs a dev server product whichever runtime the toggle selects, and a phone reaches the
-        // server by an address that is not that id, so neither can be derived from the other.
+    fun `a dev server runs under the core's id, with the server's origin as first party`() {
+        // A phone reaches the server by an address that is not that id, so neither can be derived from the other.
         factory.create(devServer.url, scope) {}
 
         val productId = ProductId.parse("humanity.dot").getOrThrow()
@@ -57,14 +47,12 @@ class ProductTabSessionFactoryTest {
             )
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)
         }
-        verify(exactly = 0) { native.create(any(), any(), any()) }
     }
 
     @Test
-    fun `any other page follows the runtime toggle`() {
+    fun `a published page reads its id off each url it loads`() {
         factory.create("https://coinflip.dot.li", scope) {}
 
-        verify { native.create("https://coinflip.dot.li", scope, any()) }
-        verify(exactly = 0) { sessionStarter.start(any(), any(), any(), any(), any(), any()) }
+        verify { sessionStarter.start(provider, "https://coinflip.dot.li", scope, any(), null, null) }
     }
 }

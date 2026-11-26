@@ -62,9 +62,6 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onClearDotNsCacheClick = contract::onClearDotNsCacheClick,
         onClearJWTTokenClick = contract::onClearJWTTokenClick,
         onCoinageDebugWidgetsToggled = contract::onCoinageDebugWidgetsToggled,
-        onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
-        onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
-        onRuntimeRestartCancelled = contract::onRuntimeRestartCancelled,
     )
 }
 
@@ -89,9 +86,6 @@ private fun DebugMenuScreenInternal(
     onClearDotNsCacheClick: () -> Unit,
     onClearJWTTokenClick: () -> Unit,
     onCoinageDebugWidgetsToggled: (Boolean) -> Unit,
-    onTruapiRuntimeToggled: (Boolean) -> Unit,
-    onRuntimeRestartConfirmed: () -> Unit,
-    onRuntimeRestartCancelled: () -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -115,14 +109,6 @@ private fun DebugMenuScreenInternal(
                 title = stringResource(RCommon.string.debug_menu_coinage_debug_widgets),
                 checked = state.coinageDebugWidgetsEnabled,
                 onCheckedChange = onCoinageDebugWidgetsToggled
-            )
-
-            VerticalSpacer { large }
-
-            DebugMenuToggleItem(
-                title = stringResource(RCommon.string.debug_menu_truapi_runtime, state.truapiHostVersion),
-                checked = state.truapiRuntimeEnabled,
-                onCheckedChange = onTruapiRuntimeToggled
             )
 
             VerticalSpacer { extraLargeIncreased }
@@ -241,60 +227,6 @@ private fun DebugMenuScreenInternal(
             onConfirm = onDevServerAddressEntered,
         )
     }
-
-    if (state.runtimeRestartRevertsTo != null) {
-        RuntimeRestartDialog(
-            onDismiss = onRuntimeRestartCancelled,
-            onConfirm = onRuntimeRestartConfirmed,
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RuntimeRestartDialog(
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    BasicAlertDialog(onDismissRequest = onDismiss) {
-        PolkadotSurface(
-            color = PolkadotTheme.colors.bg.surface.container,
-            shape = RoundedCornerShape(28.dp),
-            shadowElevation = 5.dp
-        ) {
-            Column(
-                modifier = Modifier.padding(PolkadotTheme.spacings.large),
-            ) {
-                NovaText(
-                    text = stringResource(RCommon.string.debug_menu_runtime_restart_title),
-                    style = PolkadotTheme.typography.headline.small,
-                    color = PolkadotTheme.colors.fg.primary
-                )
-
-                VerticalSpacer { mediumIncreased }
-
-                NovaText(
-                    text = stringResource(RCommon.string.debug_menu_runtime_restart_message),
-                    style = PolkadotTheme.typography.body.large,
-                    color = PolkadotTheme.colors.fg.secondary
-                )
-
-                VerticalSpacer { large }
-
-                Row(modifier = Modifier.align(Alignment.End)) {
-                    PolkadotTextButton(
-                        text = stringResource(RCommon.string.common_cancel),
-                        onClick = onDismiss,
-                    )
-
-                    PolkadotTextButton(
-                        text = stringResource(RCommon.string.debug_menu_runtime_restart_confirm),
-                        onClick = onConfirm,
-                    )
-                }
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -398,7 +330,7 @@ private fun DebugMenuToggleItem(
 private fun DebugMenuScreenPreview() {
     PolkadotTheme {
         DebugMenuScreenInternal(
-            state = DebugMenuState(truapiHostVersion = "0.24.0"),
+            state = DebugMenuState(),
             onBackClick = {},
             onClearBackupClick = {},
             onCopyWalletAccountClick = {},
@@ -416,9 +348,6 @@ private fun DebugMenuScreenPreview() {
             onClearDotNsCacheClick = {},
             onClearJWTTokenClick = {},
             onCoinageDebugWidgetsToggled = {},
-            onTruapiRuntimeToggled = {},
-            onRuntimeRestartConfirmed = {},
-            onRuntimeRestartCancelled = {},
         )
     }
 }

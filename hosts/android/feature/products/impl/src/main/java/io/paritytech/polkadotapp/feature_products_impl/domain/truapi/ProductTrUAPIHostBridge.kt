@@ -42,6 +42,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.CoreAttribute
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
@@ -53,7 +54,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -148,10 +148,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         /**
-         * Classified and dispatched by the same rule as the native `navigateTo`
-         * handler, so a link cannot resolve differently depending on the
-         * runtime toggle. Opening every URL externally would push in-app dotNS
-         * navigation into the system browser, where those names do not resolve.
+         * Classified by [DotNsUtils.classifyNavigation] and dispatched through
+         * the session's navigation policy. Opening every URL externally would push
+         * in-app dotNS navigation into the system browser, where those names do
+         * not resolve.
          */
         override suspend fun navigateTo(url: String) {
             val destination = url.toUri()
@@ -380,8 +380,7 @@ internal suspend fun TrUAPIConfirmationLauncher.decide(
     return awaitDecision(confirmation)
 }
 
-// Reports the theme name the native host's `themeSubscribe` already sends, so a
-// product reads the same theme on either runtime.
+// Reports the app theme as a custom theme name with its light or dark variant.
 private fun ProductTheme.toNativeTheme(): HostThemeSubscribeItem = HostThemeSubscribeItem(
     name = ThemeName.Custom(name),
     variant = when (variant) {

@@ -11,7 +11,6 @@ class DotNsOnChainConsumerInfo(
     val full: DotNsUsername?
 )
 
-
 @Keep
 @Serializable
 class DotNsUsername(

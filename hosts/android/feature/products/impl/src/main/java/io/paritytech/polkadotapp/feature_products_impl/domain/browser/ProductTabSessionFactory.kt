@@ -1,32 +1,46 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 
 import android.net.Uri
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Builds the live runtime for a single browser tab on the host runtime
- * [ProductRuntimeSettings] selects for where the product runs from, read per
- * tab at [create]. Where the product runs from is decided here, once, and
- * passed down.
- * [RealProductSessionController] just attaches its listeners to the returned
- * provider.
+ * Builds the live runtime for a single browser tab — the WebView provider plus
+ * its Rust TrUAPI host bridge — all hosted in the tab's [CoroutineScope]
+ * (cancelling it disposes the core and destroys the WebView). Where the product
+ * runs from is decided here, once, and passed down.
+ *
+ * [RealProductSessionController] just attaches its listeners to the returned provider.
  */
 class ProductTabSessionFactory @Inject constructor(
-    private val native: NativeProductTabSessionFactory,
-    private val truapi: TrUAPIProductTabSessionFactory,
-    private val runtimeSettings: ProductRuntimeSettings,
+    private val browserWebViewProviderFactory: BrowserWebViewProvider.Factory,
+    private val sessionStarter: TrUAPISessionStarter,
+    private val dotNsTldProvider: DotNsTldProvider,
     private val productSources: ProductSources,
 ) {
     fun create(url: String, scope: CoroutineScope, onDeeplink: (Uri) -> Unit): BrowserWebViewProvider {
         val source = productSources.of(url)
 
-        return if (runtimeSettings.isTrUAPIRuntimeEnabledFor(source)) {
-            truapi.create(url, scope, onDeeplink, source)
-        } else {
-            native.create(url, scope, onDeeplink)
-        }
+        val provider = browserWebViewProviderFactory.create(
+            url,
+            NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),
+            allowIframes = true,
+            scope,
+            source = source,
+        )
+
+        val hostApiNavigation = NavigationPolicy.HostApiNavigation(
+            onDeeplinkNavigation = onDeeplink,
+            webViewLoader = { target -> scope.launch { provider.getWebView().loadUrl(target) } },
+            dotNsTldProvider = dotNsTldProvider,
+        )
+
+        sessionStarter.start(provider, url, scope, hostApiNavigation, explicitProductId = source?.fixedProductId)
+        return provider
     }
 }

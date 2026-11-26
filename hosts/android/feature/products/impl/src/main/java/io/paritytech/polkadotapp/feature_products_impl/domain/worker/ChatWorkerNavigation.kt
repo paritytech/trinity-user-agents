@@ -19,7 +19,7 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
- * Where a chat worker's `navigateTo` goes, on either runtime: through the app's deeplink handler,
+ * Where a chat worker's `navigateTo` goes: through the app's deeplink handler,
  * and only while the person is looking at that product's chat. The script keeps running while the
  * chat is closed, so a background bot could otherwise pull them off any screen.
  */
