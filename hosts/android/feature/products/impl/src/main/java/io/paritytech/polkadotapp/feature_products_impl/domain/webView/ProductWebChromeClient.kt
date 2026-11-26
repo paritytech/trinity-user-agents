@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
 import android.net.Uri
+import android.util.Log
 import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -56,7 +57,7 @@ class ProductWebChromeClient @AssistedInject constructor(
             // embedded third-party iframe is indistinguishable from one in the product's own document.
             val source = it.sourceId().orEmpty().ifEmpty { UNKNOWN_CONSOLE_SOURCE }
             val message = "$logPrefix: ${it.message()} [$source:${it.lineNumber()}]"
-            it.messageLevel().timberLog(message, it.message())
+            Timber.log(it.messageLevel().priority(), message)
         }
         return true
     }
@@ -132,20 +133,12 @@ private fun String.toDeviceCapability(): DeviceCapabilityType? = when (this) {
     else -> null
 }
 
-// The sent line is the console message alone, so neither the page URL in the prefix nor the script
-// URL leaves the device.
-private fun ConsoleMessage.MessageLevel?.timberLog(message: String, sentMessage: String) {
-    when (this) {
-        ConsoleMessage.MessageLevel.TIP -> Timber.v(message)
-        ConsoleMessage.MessageLevel.LOG -> Timber.d(message)
-        ConsoleMessage.MessageLevel.WARNING -> Timber.tag(PRODUCT_LOG_TAG).w(sentMessage.take(SENT_MESSAGE_MAX_CHARS))
-        ConsoleMessage.MessageLevel.ERROR -> Timber.tag(PRODUCT_LOG_TAG).e(sentMessage.take(SENT_MESSAGE_MAX_CHARS))
-        ConsoleMessage.MessageLevel.DEBUG -> Timber.d(message)
-        null -> Timber.d(message)
-    }
+// Console output keeps its own level and carries no `truapi.` tag, so none of it reaches Sentry. Only a
+// build with the debug menu keeps it on the device, and a release build drops it. A product reports to
+// its own Sentry project.
+private fun ConsoleMessage.MessageLevel?.priority(): Int = when (this) {
+    ConsoleMessage.MessageLevel.TIP -> Log.VERBOSE
+    ConsoleMessage.MessageLevel.WARNING -> Log.WARN
+    ConsoleMessage.MessageLevel.ERROR -> Log.ERROR
+    ConsoleMessage.MessageLevel.LOG, ConsoleMessage.MessageLevel.DEBUG, null -> Log.DEBUG
 }
-
-private const val PRODUCT_LOG_TAG = "truapi.product"
-
-// The same cap the core puts on the details it sends, since these lines leave the device.
-private const val SENT_MESSAGE_MAX_CHARS = 512
