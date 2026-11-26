@@ -35,7 +35,7 @@ pub const PERSONHOOD_LABEL: &str = "peopl";
 /// `peopl.dot` on Polkadot, `peopl.paseo` on paseo-next-v2, `peopl.testnet` on
 /// previewnet. It is the product id a personhood app is opened under on that
 /// network, so the keys derived here are the ones such an app owns through
-/// the RFC-0024 registry. Requires a supported dotNS suffix from validated configuration.
+/// the RFC-0024 registry. Requires the TLD of a validated stack.
 pub fn personhood_product_id(network_suffix: &str) -> ProductId {
 	format!("{PERSONHOOD_LABEL}.{network_suffix}").parse().expect(
 		"reserved personhood label and validated network suffix form a valid product id; qed",

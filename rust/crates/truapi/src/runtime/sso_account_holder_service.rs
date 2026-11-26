@@ -27,7 +27,9 @@ use crate::{
 		sso_wire::ResponseOutcome,
 	},
 	host_logic::product_account::product_public_key_to_address,
-	platform::{Platform, ResourceAllocationReview, SignVrfReview, UserConfirmationReview},
+	platform::{
+		Platform, ProductId, ResourceAllocationReview, SignVrfReview, UserConfirmationReview,
+	},
 	runtime::{
 		authority::{
 			AccountHolder, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
@@ -60,6 +62,11 @@ impl SsoAccountHolderService {
 	}
 
 	/// Run the wallet's `operation` only once the user confirms the paired host's request.
+	///
+	/// A request whose review names a product the stack does not serve is
+	/// refused before the user is asked, because the wallet would refuse it
+	/// anyway. Each handler serves the relayed caller and the products its
+	/// payload names before the wallet sees them.
 	async fn confirmed<'a, T, F>(
 		&self,
 		invocation: AccountInvocation<'a>,
@@ -69,6 +76,7 @@ impl SsoAccountHolderService {
 	where
 		F: Future<Output = Result<T, AuthorityError>>,
 	{
+		let review = self.wallet.serve(review)?.into_inner();
 		self.consent
 			.review(invocation.call, invocation.caller.clone(), self.platform.as_ref(), review)
 			.await?;
@@ -121,26 +129,30 @@ impl SsoAccountHolderService {
 		request: SignRequest,
 	) -> Result<api::HostSignPayloadResponse, String> {
 		let watermarked = matches!(request, SignRequest::Raw(_));
-		match request {
-			SignRequest::Payload(request) => {
-				// A relayed request carries no caller identity, and this role
-				// confirms every one of them anyway.
-				let invocation = cx.account_invocation(None);
-				let request = SignPayloadAuthorityRequest::Product(*request);
-				let review = request.review(&invocation.caller);
-				self.confirmed(invocation, review, |invocation| {
-					self.wallet.sign_payload(invocation, request)
-				})
-				.await
-			},
-			SignRequest::Raw(raw) | SignRequest::RawUnwatermarkedDeprecated(raw) => {
-				self.serve_sign_raw(cx, SignRawAuthorityRequest::Product(raw), watermarked)
+		async {
+			match request {
+				SignRequest::Payload(request) => {
+					// A relayed request carries no caller identity, and this role
+					// confirms every one of them anyway.
+					let invocation = cx.account_invocation(None);
+					let request =
+						SignPayloadAuthorityRequest::Product(self.wallet.serve(*request)?);
+					let review = request.review(&invocation.caller);
+					self.confirmed(invocation, review, |invocation| {
+						self.wallet.sign_payload(invocation, request)
+					})
 					.await
-			},
-			SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
-				self.serve_sign_raw_with_legacy_account(cx, request, false).await
-			},
+				},
+				SignRequest::Raw(raw) | SignRequest::RawUnwatermarkedDeprecated(raw) => {
+					let request = SignRawAuthorityRequest::Product(self.wallet.serve(raw)?);
+					self.serve_sign_raw(cx, request, watermarked).await
+				},
+				SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
+					self.serve_sign_raw_with_legacy_account(cx, request, false).await
+				},
+			}
 		}
+		.await
 		.map_err(|error| error.to_string())
 	}
 
@@ -282,12 +294,9 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountGetAliasRequest>,
 	) -> GetAccountAliasResponse {
-		self.wallet
-			.account_alias(
-				cx.account_invocation(Some(&request.calling_product_id)),
-				request.payload,
-			)
-			.await
+		let caller = self.wallet.serve(request.calling_product_id)?;
+		let payload = self.wallet.serve(request.payload)?;
+		self.wallet.account_alias(cx.account_invocation(Some(&caller)), payload).await
 	}
 
 	/// Allocate SSO-backed resources for a product.
@@ -299,9 +308,13 @@ impl SsoAccountHolderService {
 		let mut failures = Vec::new();
 		let payload = async {
 			let count = request.resources.len();
-			let invocation = cx.account_invocation(Some(&request.calling_product_id));
+			let caller = self
+				.wallet
+				.serve(request.calling_product_id)
+				.map_err(|error| error.to_string())?;
+			let invocation = cx.account_invocation(Some(&caller));
 			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-				calling_product_id: request.calling_product_id.clone(),
+				calling_product_id: ProductId::clone(&caller),
 				resources: request.resources.clone(),
 			});
 			let allocation = |invocation| {
@@ -372,7 +385,10 @@ impl SsoAccountHolderService {
 		request: CreateTransactionRequest,
 	) -> CreateTransactionResponse {
 		let CreateTransactionPayload::V1(payload) = request.payload;
-		let payload = payload.into_product_payload();
+		let payload = self
+			.wallet
+			.serve(payload.into_product_payload())
+			.map_err(AuthorityError::into_sso_reason)?;
 		self.serve_create_transaction(cx, CreateTransactionAuthorityRequest::Product(payload))
 			.await
 	}
@@ -412,9 +428,9 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountCreateProofRequest>,
 	) -> CreateAccountProofResponse {
-		self.wallet
-			.create_proof(cx.account_invocation(Some(&request.calling_product_id)), request.payload)
-			.await
+		let caller = self.wallet.serve(request.calling_product_id)?;
+		let payload = self.wallet.serve(request.payload)?;
+		self.wallet.create_proof(cx.account_invocation(Some(&caller)), payload).await
 	}
 
 	/// Sign an RFC-0023 VRF transcript.
@@ -423,16 +439,17 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountSignVrfRequest>,
 	) -> SignVrfResponse {
-		let invocation = cx.account_invocation(Some(&request.calling_product_id));
 		async {
+			let caller = self.wallet.serve(request.calling_product_id)?;
 			validate_vrf_transcript(&request.payload)
 				.map_err(|reason| AuthorityError::Unknown { reason })?;
+			let payload = self.wallet.serve(request.payload)?.into_inner();
 			let review = UserConfirmationReview::SignVrf(SignVrfReview {
-				calling_product_id: request.calling_product_id.clone(),
-				request: request.payload.clone(),
+				calling_product_id: ProductId::clone(&caller),
+				request: payload.clone(),
 			});
-			self.confirmed(invocation, review, |invocation| {
-				self.wallet.sign_vrf(invocation, request.payload)
+			self.confirmed(cx.account_invocation(Some(&caller)), review, |invocation| {
+				self.wallet.sign_vrf(invocation, payload)
 			})
 			.await
 		}
@@ -446,8 +463,9 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
+		let product_id = self.wallet.serve(request.product_id).map_err(|err| err.to_string())?;
 		self.wallet
-			.product_subtree_public_key(cx.account_invocation(None), &request.product_id)
+			.product_subtree_public_key(cx.account_invocation(None), &product_id)
 			.await
 			.map_err(|err| err.to_string())?
 			.resolve()
@@ -461,11 +479,9 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountRegisterRingVrfKeyRequest>,
 	) -> RegisterRingVrfKeyResponse {
+		let caller = self.wallet.serve(request.calling_product_id)?;
 		self.wallet
-			.register_ring_vrf_key(
-				cx.account_invocation(Some(&request.calling_product_id)),
-				request.payload,
-			)
+			.register_ring_vrf_key(cx.account_invocation(Some(&caller)), request.payload)
 			.await
 	}
 
@@ -475,11 +491,10 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
 	) -> ListRingVrfKeysResponse {
+		let caller = self.wallet.serve(request.calling_product_id)?;
+		let payload = self.wallet.serve(request.payload)?;
 		self.wallet
-			.list_ring_vrf_keys(
-				cx.account_invocation(Some(&request.calling_product_id)),
-				request.payload,
-			)
+			.list_ring_vrf_keys(cx.account_invocation(Some(&caller)), payload)
 			.await
 	}
 
@@ -489,12 +504,9 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountRingVrfSignRequest>,
 	) -> RingVrfSignResponse {
-		self.wallet
-			.ring_vrf_sign(
-				cx.account_invocation(Some(&request.calling_product_id)),
-				request.payload,
-			)
-			.await
+		let caller = self.wallet.serve(request.calling_product_id)?;
+		let payload = self.wallet.serve(request.payload)?;
+		self.wallet.ring_vrf_sign(cx.account_invocation(Some(&caller)), payload).await
 	}
 }
 
