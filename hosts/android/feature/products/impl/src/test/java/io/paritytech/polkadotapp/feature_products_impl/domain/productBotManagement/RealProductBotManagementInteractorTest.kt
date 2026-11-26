@@ -155,7 +155,7 @@ class RealProductBotManagementInteractorTest {
             cardId = PocketCardId("loyalty"),
             title = "Loyalty",
             previewUrl = "http://127.0.0.1:5173/face.json",
-            faceShown = true,
+            startsCovered = false,
         )
     }
 }

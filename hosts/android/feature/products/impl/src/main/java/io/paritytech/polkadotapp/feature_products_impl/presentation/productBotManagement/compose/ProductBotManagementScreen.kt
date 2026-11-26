@@ -65,7 +65,7 @@ fun ProductBotManagementScreen(contract: ProductBotManagementContract) {
         onCardTitleChanged = contract::onCardTitleChanged,
         onPreviewUrlChanged = contract::onPreviewUrlChanged,
         onAppUrlChanged = contract::onAppUrlChanged,
-        onOpenWithFaceAwayChanged = contract::onOpenWithFaceAwayChanged,
+        onStartsCoveredChanged = contract::onStartsCoveredChanged,
         onDialogConfirm = contract::onDialogConfirm,
     )
 }
@@ -86,7 +86,7 @@ private fun ProductBotManagementScreenInternal(
     onCardTitleChanged: (String) -> Unit,
     onPreviewUrlChanged: (String) -> Unit,
     onAppUrlChanged: (String) -> Unit,
-    onOpenWithFaceAwayChanged: (Boolean) -> Unit,
+    onStartsCoveredChanged: (Boolean) -> Unit,
     onDialogConfirm: () -> Unit,
 ) {
     PolkadotSurface {
@@ -156,7 +156,7 @@ private fun ProductBotManagementScreenInternal(
             onCardTitleChanged = onCardTitleChanged,
             onPreviewUrlChanged = onPreviewUrlChanged,
             onAppUrlChanged = onAppUrlChanged,
-            onOpenWithFaceAwayChanged = onOpenWithFaceAwayChanged,
+            onStartsCoveredChanged = onStartsCoveredChanged,
             onConfirm = onDialogConfirm,
         )
     }
@@ -220,7 +220,7 @@ private fun ProductFormDialog(
     onCardTitleChanged: (String) -> Unit,
     onPreviewUrlChanged: (String) -> Unit,
     onAppUrlChanged: (String) -> Unit,
-    onOpenWithFaceAwayChanged: (Boolean) -> Unit,
+    onStartsCoveredChanged: (Boolean) -> Unit,
     onConfirm: () -> Unit,
 ) {
     val isEditing = state.productId != null
@@ -314,12 +314,12 @@ private fun ProductFormDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     NovaText(
                         modifier = Modifier.weight(1f),
-                        text = stringResource(RCommon.string.product_bot_management_face_away_label),
+                        text = stringResource(RCommon.string.product_bot_management_starts_covered_label),
                         style = PolkadotTheme.typography.body.large,
                         color = PolkadotTheme.colors.fg.primary,
                     )
 
-                    NovaSwitch(checked = state.openWithFaceAway, onCheckedChange = onOpenWithFaceAwayChanged)
+                    NovaSwitch(checked = state.startsCovered, onCheckedChange = onStartsCoveredChanged)
                 }
 
                 VerticalSpacer { large }
@@ -381,7 +381,7 @@ private fun ProductBotManagementScreenPreview() {
             onCardTitleChanged = {},
             onPreviewUrlChanged = {},
             onAppUrlChanged = {},
-            onOpenWithFaceAwayChanged = {},
+            onStartsCoveredChanged = {},
             onDialogConfirm = {},
         )
     }

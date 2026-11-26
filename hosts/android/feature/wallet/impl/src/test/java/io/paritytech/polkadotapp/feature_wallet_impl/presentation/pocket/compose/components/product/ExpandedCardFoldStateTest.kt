@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.snapshots.Snapshot
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.CardCoverAnswer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -84,11 +84,11 @@ class ExpandedCardFoldStateTest {
     /** The page asking for the card back or away is the point of the feature: the fold must follow it. */
     @Test
     fun `the page can fold the card away and back`() = runTest(SteppingFrameClock) {
-        assertEquals(FaceShownAnswer.APPLIED, state.showFace(shown = false))
+        assertEquals(CardCoverAnswer.APPLIED, state.cover(covered = true))
         advanceUntilIdle()
         assertEquals(CARD_HEIGHT, state.foldedPx, 0f)
 
-        assertEquals(FaceShownAnswer.APPLIED, state.showFace(shown = true))
+        assertEquals(CardCoverAnswer.APPLIED, state.cover(covered = false))
         advanceUntilIdle()
         assertEquals(0f, state.foldedPx, 0f)
     }
@@ -99,7 +99,7 @@ class ExpandedCardFoldStateTest {
         state.beginDrag()
         state.drag(-100f)
 
-        assertEquals(FaceShownAnswer.USER_MOVING, state.showFace(shown = false))
+        assertEquals(CardCoverAnswer.USER_MOVING, state.cover(covered = true))
         advanceUntilIdle()
 
         assertEquals(100f, state.foldedPx, 0f)
@@ -115,7 +115,7 @@ class ExpandedCardFoldStateTest {
             val release = async { state.endDrag() }
             advanceTimeBy(FRAME_NANOS / 1_000_000)
 
-            assertEquals(FaceShownAnswer.USER_MOVING, state.showFace(shown = false))
+            assertEquals(CardCoverAnswer.USER_MOVING, state.cover(covered = true))
             release.await()
 
             assertEquals(0f, state.foldedPx, 0f)
@@ -125,13 +125,13 @@ class ExpandedCardFoldStateTest {
     @Test
     fun `a request before the card is measured waits and then applies`() = runTest(SteppingFrameClock) {
         val unmeasured = ExpandedCardFoldState()
-        val answer = async { unmeasured.showFace(shown = false) }
+        val answer = async { unmeasured.cover(covered = true) }
         runCurrent()
         assertEquals(false, answer.isCompleted)
 
         unmeasured.maxFoldPx = CARD_HEIGHT
         Snapshot.sendApplyNotifications()
-        assertEquals(FaceShownAnswer.APPLIED, answer.await())
+        assertEquals(CardCoverAnswer.APPLIED, answer.await())
         advanceUntilIdle()
 
         assertEquals(CARD_HEIGHT, unmeasured.foldedPx, 0f)
@@ -140,7 +140,7 @@ class ExpandedCardFoldStateTest {
     // The user's drag always wins: a fold the page started must stop the moment a finger lands.
     @Test
     fun `a drag started during a page-driven fold takes over`() = runTest(SteppingFrameClock) {
-        state.showFace(shown = false)
+        state.cover(covered = true)
         advanceTimeBy(FRAME_NANOS / 1_000_000 * 3)
         val midFold = state.foldedPx
         assertEquals(true, midFold > 0f && midFold < CARD_HEIGHT)

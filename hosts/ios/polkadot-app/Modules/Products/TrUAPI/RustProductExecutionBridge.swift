@@ -41,16 +41,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
-    /// Weak because the face owns the runtime that retains this bridge.
-    private weak var cardFace: (any ExpandedCardFaceShowing)?
+    /// Weak because the card owns the runtime that retains this bridge.
+    private weak var card: (any ExpandedCardCovering)?
     private let cachedTheme = OSAllocatedUnfairLock(
         uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
     )
     private var themeObservation: Task<Void, Never>?
 
-    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
+    init(dependencies: Dependencies, card: (any ExpandedCardCovering)? = nil) {
         self.dependencies = dependencies
-        self.cardFace = cardFace
+        self.card = card
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -178,10 +178,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         cachedTheme.withLock { $0 }
     }
 
-    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
-        guard let cardFace else { return .notPresented }
+    func setExpandedCardCovered(covered: Bool) async throws -> ExpandedCardCoverOutcome {
+        guard let card else { return .notPresented }
 
-        return await cardFace.setFaceShown(shown)
+        return await card.setCardCovered(covered)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {

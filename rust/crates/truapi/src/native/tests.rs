@@ -102,8 +102,8 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
-	pub face_requests: Mutex<Vec<bool>>,
-	pub back_requests: Mutex<Vec<bool>>,
+	pub cover_requests: Mutex<Vec<bool>>,
+	pub turn_requests: Mutex<Vec<truapi::latest::PocketCardSide>>,
 	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
@@ -192,19 +192,19 @@ impl EventCallbacks {
 			remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
-			face_requests: Mutex::new(Vec::new()),
-			back_requests: Mutex::new(Vec::new()),
+			cover_requests: Mutex::new(Vec::new()),
+			turn_requests: Mutex::new(Vec::new()),
 		}
 	}
 
-	/// The face visibilities this execution's card was asked for, in order.
-	pub fn face_requests(&self) -> Vec<bool> {
-		self.face_requests.lock().expect("face requests mutex poisoned").clone()
+	/// Whether this execution's card was asked to be covered, in order.
+	pub fn cover_requests(&self) -> Vec<bool> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").clone()
 	}
 
 	/// The sides this execution's card was asked to turn to, in order.
-	pub fn back_requests(&self) -> Vec<bool> {
-		self.back_requests.lock().expect("back requests mutex poisoned").clone()
+	pub fn turn_requests(&self) -> Vec<truapi::latest::PocketCardSide> {
+		self.turn_requests.lock().expect("turn requests mutex poisoned").clone()
 	}
 }
 
@@ -283,18 +283,18 @@ impl HostCallbacks for EventCallbacks {
 			DevicePermissionStatus::NotApplicable
 		})
 	}
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").push(covered);
+		Ok(crate::platform::ExpandedCardCoverOutcome::Applied)
 	}
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: truapi::latest::PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
-		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
+		self.turn_requests.lock().expect("turn requests mutex poisoned").push(side);
 		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
@@ -2268,15 +2268,15 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
+		async fn turn_expanded_card(
 			&self,
-			_shown: bool,
+			_side: truapi::latest::PocketCardSide,
 		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
@@ -2464,15 +2464,15 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
+		async fn turn_expanded_card(
 			&self,
-			_shown: bool,
+			_side: truapi::latest::PocketCardSide,
 		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
@@ -3412,8 +3412,12 @@ fn expanded_card_calls_log_registered_markers() {
 	let (callbacks, _events, platform) = event_platform();
 
 	futures::executor::block_on(async {
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_covered(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::turn_expanded_card(
+			&platform,
+			truapi::latest::PocketCardSide::Back,
+		)
+		.await;
 	});
 
 	let classes: Vec<_> = callbacks
@@ -3532,7 +3536,7 @@ fn the_deepest_face_with_materials_reads_back_once_kept() {
 		futures::executor::block_on(cards.face(
 			product,
 			"stamps".into(),
-			crate::pocket_cards::PocketCardSide::Front,
+			truapi::latest::PocketCardSide::Front,
 		))
 		.unwrap(),
 		Some(deepest)
