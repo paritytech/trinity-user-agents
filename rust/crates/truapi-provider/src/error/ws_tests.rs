@@ -18,11 +18,11 @@ fn a_username_without_a_password_is_stripped_too() {
 	assert!(!redacted(&url).contains("token"));
 }
 
-/// A URL with no userinfo is the common case and must survive verbatim, so
-/// the diagnostic keeps its path and port.
+/// Providers put API keys in the path or under query names of their own, so
+/// neither survives, while the host and port still name the node.
 #[test]
-fn a_url_without_credentials_is_unchanged() {
-	let url = url::Url::parse("wss://node.example:9944/ws").expect("parse");
+fn the_path_and_query_are_dropped() {
+	let url = url::Url::parse("wss://node.example:9944/v1/PATHKEY?apikey=SECRET").expect("parse");
 
-	assert_eq!(redacted(&url), url.to_string());
+	assert_eq!(redacted(&url), "wss://node.example:9944");
 }

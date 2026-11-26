@@ -31,7 +31,7 @@ pub enum ProviderError {
 	/// The WebSocket handshake with a remote node failed.
 	#[display("WebSocket handshake with {url} failed: {reason}")]
 	Handshake {
-		/// The node URL.
+		/// The node's scheme, host and port, without its path or query.
 		url: String,
 		/// The underlying failure.
 		reason: String,
@@ -137,25 +137,14 @@ impl From<StorageClientError> for ProviderError {
 	}
 }
 
-/// `url` without its userinfo, for an error that will be logged.
+/// `url` reduced to its scheme, host and port, for an error that will be logged.
 ///
-/// [`ProviderError::Handshake`] prints the URL in its `Display`, so a node
-/// address carrying `user:pass@` would otherwise leak the credentials into
-/// every log line and error report that touches it.
+/// [`ProviderError::Handshake`] prints the URL in its `Display`. A node address
+/// can carry a credential as `user:pass@`, in its path, or in its query under
+/// any parameter name, so only the part that names the node is kept.
 #[cfg(feature = "ws")]
 pub fn redacted(url: &url::Url) -> String {
-	if url.username().is_empty() && url.password().is_none() {
-		return url.to_string();
-	}
-
-	// Both setters reject only a URL with no host, an empty domain, or the
-	// `file` scheme. None of those can carry userinfo, so any URL reaching here
-	// has already returned above and the discarded results cannot hide a
-	// credential.
-	let mut stripped = url.clone();
-	let _ = stripped.set_username("");
-	let _ = stripped.set_password(None);
-	stripped.to_string()
+	url.origin().ascii_serialization()
 }
 
 /// JSON-RPC internal-error code (per the spec's reserved range).
