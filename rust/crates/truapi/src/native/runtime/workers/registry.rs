@@ -5,9 +5,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::channel::mpsc;
 
-use super::{NativeProductExecution, NativeWorkerExecutionState, StartedAttempt};
+use super::{attempt::StartedAttempt, observer::NativeWorkerExecutionState};
 use crate::{
-	background_task::BackgroundTask, native::subscribers::Subscribers, platform::ProductId,
+	background_task::BackgroundTask,
+	native::{runtime::NativeProductExecution, subscribers::Subscribers},
+	platform::ProductId,
 };
 
 impl NativeProductExecution {
@@ -31,8 +33,8 @@ pub enum Signal {
 enum Phase {
 	Starting {
 		stage: Stage,
-		/// Fails the attempt if it is still starting after [`super::STARTUP_DEADLINE`]. Dropped,
-		/// and so cancelled, with this phase.
+		/// Fails the attempt if it is still starting after [`super::session::STARTUP_DEADLINE`].
+		/// Dropped, and so cancelled, with this phase.
 		_timeout: BackgroundTask,
 	},
 	Running(Arc<NativeProductExecution>),
