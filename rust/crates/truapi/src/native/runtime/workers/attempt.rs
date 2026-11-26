@@ -54,11 +54,10 @@ impl NativeWorkerAttempt {
 		session.registry.attach(&self.product, open).ok_or_else(stale)
 	}
 
-	/// Acknowledge that the module of this attempt's execution started. Its authenticated
-	/// transport may connect later.
+	/// Acknowledge that the module of this attempt's execution started.
 	///
-	/// Returns false unless this attempt is current, has opened its execution and is still
-	/// starting.
+	/// Its connection may come later. Returns false unless this attempt is current, has opened its
+	/// execution and is still starting.
 	pub fn module_started(&self) -> bool {
 		self.update_readiness(Signal::ModuleStarted)
 	}
@@ -122,12 +121,12 @@ impl NativeWorkerAttempt {
 		self.fail("worker startup timed out", Registry::time_out);
 	}
 
-	/// Publish a worker when its authenticated bridge can receive calls.
+	/// Record a live connection, publishing the worker if its module has started.
 	pub fn connected(&self) {
 		self.update_readiness(Signal::Connected);
 	}
 
-	/// Withdraw a disconnected worker until it authenticates a new connection.
+	/// Withdraw a disconnected worker until its execution has a new connection.
 	pub fn disconnected(self: &Arc<Self>) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
 		if let Some(mut session) = self.current(&runtime) {

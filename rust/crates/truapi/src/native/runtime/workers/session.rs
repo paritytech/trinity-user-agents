@@ -18,9 +18,8 @@ use crate::{
 
 /// How long an attempt may take to start running.
 ///
-/// An attempt runs once its module has started and its bridge connection is authenticated. The
-/// time counts from the attempt's start, and again each time a running attempt loses its
-/// connection.
+/// An attempt runs once its module has started and its execution has a live connection. The time
+/// counts from the attempt's start, and again each time a running attempt loses its connection.
 pub const STARTUP_DEADLINE: Duration = Duration::from_secs(90);
 
 /// The session's worker state and the platform services its controller uses.

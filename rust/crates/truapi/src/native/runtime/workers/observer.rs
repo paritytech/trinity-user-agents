@@ -11,7 +11,7 @@ pub enum NativeWorkerExecutionState {
 	Idle,
 	/// The worker is starting, reconnecting, or waiting for its next start after a failure.
 	Pending,
-	/// The module started and its authenticated transport can accept host calls.
+	/// The module started and a live connection can accept host calls.
 	Running {
 		/// Consumer operations on this execution.
 		execution: Arc<dyn NativeWorkerExecution>,
