@@ -63,7 +63,7 @@ final class CollectiblesBookReturn: NSObject, UIViewControllerAnimatedTransition
         /// The page shrinks or fades with the finger, and the book flies back by `offset` once a release commits.
         case page(UIViewControllerContextTransitioning, offset: CGPoint)
         /// The whole screen fades over the Pocket, with the backdrop that covers the Pocket under it.
-        case fade(UIViewControllerContextTransitioning, backdrop: UIView)
+        case fade(UIViewControllerContextTransitioning, PocketFadeScrub)
 
         var context: UIViewControllerContextTransitioning {
             switch self {
@@ -142,9 +142,7 @@ extension CollectiblesBookReturn: BackSwipeScrubbing {
             scrub = .page(context, offset: offset)
         case .fade,
              .crossfade:
-            origin?.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
-            let backdrop = PocketFlight.insertBackdrop(below: screen.view, in: container)
-            scrub = .fade(context, backdrop: backdrop)
+            scrub = .fade(context, PocketFadeScrub(context, screen: screen, origin: origin))
         }
         update(progress: 0)
 
@@ -160,9 +158,8 @@ extension CollectiblesBookReturn: BackSwipeScrubbing {
         switch scrub {
         case .page:
             screen.scrub(to: progress)
-        case let .fade(_, backdrop):
-            screen.view.alpha = 1 - progress
-            backdrop.alpha = 1 - progress
+        case let .fade(_, fade):
+            fade.update(progress: progress)
         }
         scrub.context.updateInteractiveTransition(progress)
     }
@@ -184,8 +181,10 @@ extension CollectiblesBookReturn: BackSwipeScrubbing {
         switch scrub {
         case let .page(context, offset):
             releasePage(context, offset: offset, commits: commits)
-        case let .fade(context, backdrop):
-            releaseFade(context, backdrop: backdrop, progress: progress, commits: commits)
+        case let .fade(context, fade):
+            fade.release(progress: progress, commits: commits) {
+                context.completeTransition(commits)
+            }
         }
     }
 }
@@ -224,29 +223,6 @@ private extension CollectiblesBookReturn {
                 flyBack(to: offset, context)
             }
         }
-    }
-
-    func releaseFade(
-        _ context: UIViewControllerContextTransitioning,
-        backdrop: UIView,
-        progress: CGFloat,
-        commits: Bool
-    ) {
-        let remaining = commits ? 1 - progress : progress
-        let alpha: CGFloat = commits ? 0 : 1
-        let fade = UIViewPropertyAnimator(
-            duration: PocketFlight.crossfadeDuration * Double(remaining),
-            curve: .easeInOut
-        )
-        fade.addAnimations { [self] in
-            screen.view.alpha = alpha
-            backdrop.alpha = alpha
-        }
-        fade.addCompletion { _ in
-            backdrop.removeFromSuperview()
-            context.completeTransition(commits)
-        }
-        fade.startAnimation()
     }
 }
 
