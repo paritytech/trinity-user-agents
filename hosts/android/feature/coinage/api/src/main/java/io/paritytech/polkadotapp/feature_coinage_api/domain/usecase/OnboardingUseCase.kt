@@ -17,7 +17,7 @@ interface OnboardingUseCase {
      * One attempt, reported only as whether it was registered. What becomes of each voucher afterwards is
      * left to the recovery pass, and nothing retries the ones that fail.
      *
-     * For callers that onboard the same money again on their own terms — a faucet tap, a deposit the
+     * For callers that onboard the same money again on their own terms, such as a deposit the
      * converter re-observes. Anything that must onboard a given sum exactly once belongs on [onboardDurably].
      */
     suspend fun onboard(

@@ -11,9 +11,6 @@ import kotlinx.collections.immutable.ImmutableMap
 @Immutable
 data class CoinageUiState(
     val tokensState: TokensState,
-    val autoFundAvailable: Boolean,
-    val fundInProgress: Boolean,
-    val actionsEnabled: Boolean,
     /**
      * Gates the log-sharing button inside the debug card, on top of the card's own gate: sharing a log file
      * is testnet support tooling, and a build that shows the debug card need not offer it.

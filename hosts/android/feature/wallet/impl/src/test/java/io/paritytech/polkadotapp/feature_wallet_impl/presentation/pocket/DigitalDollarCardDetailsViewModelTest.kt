@@ -1,11 +1,9 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageTestnetFundUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
@@ -35,7 +33,6 @@ import org.mockito.Mockito.mock
 @OptIn(ExperimentalCoroutinesApi::class)
 class DigitalDollarCardDetailsViewModelTest {
     private val chainAssetProvider: ChainAssetProvider = mock(ChainAssetProvider::class.java)
-    private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase = mock(CoinageTestnetFundUseCase::class.java)
     private val coinageBackupService: CoinageBackupService = mock(CoinageBackupService::class.java)
     private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mock(ShareCoinageLogsUseCase::class.java)
     private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mock(CoinageHoldingsUseCase::class.java)
@@ -48,8 +45,6 @@ class DigitalDollarCardDetailsViewModelTest {
 
     private val interactor = DigitalDollarCardDetailsInteractor(
         chainAssetProvider = chainAssetProvider,
-        environment = TestnetEnvironment.PRODUCTION,
-        coinageTestnetFundUseCase = coinageTestnetFundUseCase,
         coinageBackupService = coinageBackupService,
         shareCoinageLogsUseCase = shareCoinageLogsUseCase,
         fundingDomainProvider = fundingDomainProvider,

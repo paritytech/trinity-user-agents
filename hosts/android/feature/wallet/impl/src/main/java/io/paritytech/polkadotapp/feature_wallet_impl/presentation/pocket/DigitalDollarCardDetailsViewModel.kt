@@ -42,7 +42,6 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val router: PocketRouter,
     private val tokenAmountMapper: TokenAmountMapper
 ) : BaseViewModel() {
-    private val fundInProgress = MutableStateFlow(false)
     private val fundingSheetInProgress = MutableStateFlow(false)
 
     /**
@@ -77,18 +76,13 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
 
     val coinageState: StateFlow<LoadingState<CoinageUiState>> = combine(
         holdingsFlow,
-        fundInProgress,
-        interactor.observeActionsEnabled(),
         presentation
-    ) { holdingsResult, inProgress, actionsEnabled, shown ->
+    ) { holdingsResult, shown ->
         val asset = interactor.asset()
 
         holdingsResult.map { holdings ->
             CoinageUiState(
                 tokensState = shown.debug.testData.applied(holdings.toTokensState(asset)),
-                autoFundAvailable = interactor.autoFundAvailable(),
-                fundInProgress = inProgress,
-                actionsEnabled = actionsEnabled,
                 shareLogsEnabled = BuildConfig.TESTNET_FUND_ENABLED,
                 detailsVisible = shown.expanded,
                 focusedCoin = shown.focused,
@@ -125,14 +119,6 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
 
     fun onSendClick() {
         router.openSendPayment()
-    }
-
-    fun onAutoFundClick() = launchUnit {
-        if (fundInProgress.value) return@launchUnit
-        fundInProgress.enable()
-        interactor.testnetFund()
-            .onFailure { showPresentationError(AutoFundFailedPresentationError(it)) }
-        fundInProgress.disable()
     }
 
     fun onBackupUpdateClick() {
