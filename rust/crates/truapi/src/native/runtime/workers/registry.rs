@@ -7,7 +7,7 @@ use futures::channel::mpsc;
 
 use super::{attempt::StartedAttempt, observer::NativeWorkerExecutionState};
 use crate::{
-	background_task::BackgroundTask,
+	BackgroundTask,
 	native::{runtime::NativeProductExecution, subscribers::Subscribers},
 	platform::ProductId,
 };

@@ -11,7 +11,7 @@ use super::{
 	session::Session,
 };
 use crate::{
-	background_task::BackgroundTask,
+	BackgroundTask,
 	native::runtime::{
 		ExecutionCallbacks, HostRejection, NativeProductExecution, NativeTrUApiHostRuntime,
 	},
@@ -77,7 +77,7 @@ impl NativeWorkerAttempt {
 		after: Duration,
 	) -> BackgroundTask {
 		let attempt = self.clone();
-		BackgroundTask::spawn(&runtime.spawner, async move {
+		runtime.spawner.create_task(async move {
 			tokio::time::sleep(after).await;
 			attempt.startup_timeout();
 		})
