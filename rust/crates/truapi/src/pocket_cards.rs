@@ -23,7 +23,7 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Type};
 use truapi::latest::{
 	GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-	HostPocketRemoveCardRequest, PocketCard, RendererNode,
+	HostPocketRemoveCardRequest, PocketCard, PocketCardSide, RendererNode,
 };
 
 use crate::{
@@ -72,21 +72,10 @@ pub struct PocketEntry {
 	pub privileged: bool,
 }
 
-/// The side of a card a face is drawn on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum PocketCardSide {
-	/// The face the card shows unless it is turned over.
-	Front,
-	/// The face drawn for `PocketCardBack`, shown when the card is turned over.
-	Back,
-}
-
-impl PocketCardSide {
-	fn column(self) -> &'static str {
-		match self {
-			Self::Front => "FRONT",
-			Self::Back => "BACK",
-		}
+fn side_column(side: PocketCardSide) -> &'static str {
+	match side {
+		PocketCardSide::Front => "FRONT",
+		PocketCardSide::Back => "BACK",
 	}
 }
 
@@ -242,7 +231,7 @@ impl PocketCards {
 				let params = named_params! {
 					":product": product_id.as_str(),
 					":card": card_id,
-					":side": side.column(),
+					":side": side_column(side),
 				};
 				Ok(conn.prepare_cached(FACE)?.query_row(params, |row| row.get(0)).optional()?)
 			})
@@ -423,7 +412,7 @@ fn upsert_face(
 	tx.prepare_cached(UPSERT_FACE)?.execute(named_params! {
 		":product": product_id.as_str(),
 		":card": card_id,
-		":side": side.column(),
+		":side": side_column(side),
 		":face": face.encode(),
 		":draw_order": draw_order,
 	})?;

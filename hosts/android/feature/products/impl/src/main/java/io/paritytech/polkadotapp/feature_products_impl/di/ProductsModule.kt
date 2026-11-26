@@ -27,7 +27,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Me
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardCoverOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
@@ -131,7 +131,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocke
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PrefsDebugPocketCards
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardFaceOnOpen
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardCoverOnOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
@@ -246,7 +246,7 @@ internal interface ProductsModule {
     fun bindPocketFaceSource(impl: RealPocketFaceSource): PocketFaceSource
 
     @Binds
-    fun bindPocketCardFaceOnOpen(impl: RealPocketCardFaceOnOpen): PocketCardFaceOnOpen
+    fun bindPocketCardCoverOnOpen(impl: RealPocketCardCoverOnOpen): PocketCardCoverOnOpen
 
     @Binds
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
