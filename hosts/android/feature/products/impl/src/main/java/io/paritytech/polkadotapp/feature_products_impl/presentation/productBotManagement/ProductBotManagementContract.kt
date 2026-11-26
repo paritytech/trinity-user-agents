@@ -30,7 +30,7 @@ interface ProductBotManagementContract {
 
     fun onAppUrlChanged(url: String)
 
-    fun onOpenWithFaceAwayChanged(faceAway: Boolean)
+    fun onStartsCoveredChanged(startsCovered: Boolean)
 
     fun onDialogConfirm()
 }

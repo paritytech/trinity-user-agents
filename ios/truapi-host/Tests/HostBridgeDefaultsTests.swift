@@ -3,15 +3,15 @@ import Testing
 import TrUAPIHost
 
 struct HostBridgeDefaultsTests {
-    /// An app that never implemented cards must say so, not pretend it moved or turned one.
+    /// An app that never implemented cards must say so, not pretend it covered or turned one.
     @Test
     func defaultExpandedCardIsUnsupported() async throws {
         let bridge: HostBridge = StubHostBridge()
 
-        let face = try await bridge.setExpandedCardFaceShown(shown: false)
-        let back = try await bridge.setExpandedCardBackShown(shown: true)
+        let cover = try await bridge.setExpandedCardCovered(covered: true)
+        let turn = try await bridge.turnExpandedCard(side: .back)
 
-        #expect(face == .unsupported && back == .unsupported)
+        #expect(cover == .unsupported && turn == .unsupported)
     }
 
     /// A host that resolves and picks contacts but never lists usernames must

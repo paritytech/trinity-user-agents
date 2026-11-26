@@ -12,7 +12,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.CardCoverRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
@@ -76,13 +76,13 @@ class TrUAPISpaHost @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        val cardFaceRequests = if (underCard) CardFaceRequests() else null
+        val cardCoverRequests = if (underCard) CardCoverRequests() else null
         val bridge = sessionStarter.start(
             webViewProvider,
             pageUrl,
             scope,
             hostApiNavigation,
-            card = cardFaceRequests,
+            card = cardCoverRequests,
             explicitProductId = fixedProductId,
         )
 
@@ -114,7 +114,7 @@ class TrUAPISpaHost @Inject constructor(
             titleFlow,
             webViewProvider,
             bridge,
-            cardFaceRequests?.requests ?: emptyFlow(),
+            cardCoverRequests?.requests ?: emptyFlow(),
         )
     }
 
@@ -135,7 +135,7 @@ private class TrUAPISpaHostSession(
     override val title: StateFlow<String>,
     private val provider: BrowserWebViewProvider,
     private val bridge: ProductTrUAPIHostBridge,
-    override val faceShownRequests: Flow<FaceShownRequest>,
+    override val cardCoverRequests: Flow<CardCoverRequest>,
 ) : SpaHostSession {
     override val isPageRevealed: StateFlow<Boolean> = provider.isPageRevealed
 

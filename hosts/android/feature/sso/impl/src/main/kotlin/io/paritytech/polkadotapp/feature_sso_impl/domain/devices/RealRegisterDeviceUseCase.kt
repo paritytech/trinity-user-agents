@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_sso_impl.domain.model.SsoSessionData
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.OnExistingAllocationStrategy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import timber.log.Timber
@@ -38,7 +39,13 @@ class RealRegisterDeviceUseCase @Inject constructor(
         // No region for the Verifying/Registering phases themselves - `ProgressCard` on the pair screen already names
         // them, so the report only covers the steps that progress model cannot see
         ssoHandshakeUseCase.respondToOffer(offer, HandshakeResponse.AllowanceAllocation)
-            .flatMap { slotAllocator.allocate(deviceStatementAccountId, strategy = OnExistingAllocationStrategy.INCREASE, priority = SlotPriority.High) }
+            .flatMap {
+                slotAllocator.allocate(
+                    holder = StatementStoreSlotHolder.Remote(deviceStatementAccountId),
+                    strategy = OnExistingAllocationStrategy.INCREASE,
+                    priority = SlotPriority.High,
+                )
+            }
             .flatMap { persistDeviceSession(offer) }
             .flatMap {
                 emit(RegisterDeviceProgress.Registering)
