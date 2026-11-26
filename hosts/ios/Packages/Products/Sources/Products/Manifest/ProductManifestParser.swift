@@ -236,7 +236,7 @@ private extension ProductManifestParser {
             id: screening.id(rawId),
             title: screening.title(title),
             preview: .archive(path: preview),
-            faceShown: dto.faceShown ?? true
+            startsCovered: dto.startsCovered ?? false
         )
     }
 }

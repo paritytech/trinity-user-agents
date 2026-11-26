@@ -19,6 +19,7 @@ use truapi::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
 		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
 	},
+	latest::PocketCardSide,
 	v02,
 	versioned::{
 		account::{
@@ -41,8 +42,9 @@ use truapi::{
 		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::{
-			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
-			HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownRequest,
+			HostExpandedCardSetCardCoveredError, HostExpandedCardSetCardCoveredRequest,
+			HostExpandedCardSetCardCoveredResponse, HostExpandedCardTurnCardError,
+			HostExpandedCardTurnCardRequest, HostExpandedCardTurnCardResponse,
 		},
 		game::{
 			HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
@@ -1842,6 +1844,55 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
+/// A call that ignores a withdrawal is dropped after a two-second grace.
+/// People's connection can take half a minute to open, while the host redials
+/// or the genesis check waits out a halted chain, so the wait for it watches
+/// the withdrawal and the product is answered at once. The call is polled by
+/// hand, so it has to end in the poll after the withdrawal, before any grace
+/// could pass: the error alone reads the same either way.
+#[test]
+fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		chain_connect_pending: true,
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("sign-raw-connecting".to_string(), cancel.clone());
+	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+		account: account_id("myapp.dot", 0),
+		payload: raw_payload(),
+	});
+	let mut call = Box::pin(host.sign_raw(&cx, request));
+	let dialled = || {
+		assert!(call.as_mut().now_or_never().is_none(), "the call waits for People");
+		!platform.chain_connects.lock().unwrap().is_empty()
+	};
+	wait_until(dialled, "People is dialled");
+
+	cancel.cancel();
+	let answer = call.as_mut().now_or_never();
+
+	let Some(Err(CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown {
+		reason,
+	})))) = answer
+	else {
+		panic!("expected the call to end on the withdrawal at once, got {answer:?}");
+	};
+	assert!(
+		reason.contains("cancelled") && reason.contains("sign-raw-connecting"),
+		"expected the withdrawal of this call, got {reason}"
+	);
+	assert_eq!(
+		platform.chain_connects.lock().unwrap().clone(),
+		vec![paseo_test_stack().chains().people],
+		"the call was waiting on People"
+	);
+}
+
 /// `message_id`s every `Cancel` this host has published names, oldest first.
 pub fn withdrawn_requests(platform: &Arc<StubPlatform>, session: &SessionInfo) -> Vec<String> {
 	submitted_remote_messages(platform, session)
@@ -2766,59 +2817,62 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
 	assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// Records the face visibility and card sides the host is asked for and
-/// answers both with a configured result.
+/// Records the covering and card sides the host is asked for and answers both
+/// with a configured result.
 struct RecordingExpandedCardHost {
-	face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	cover_answer: Result<crate::platform::ExpandedCardCoverOutcome, truapi::latest::GenericError>,
 	turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
-	requested: Mutex<Vec<bool>>,
-	turned: Mutex<Vec<bool>>,
+	covered: Mutex<Vec<bool>>,
+	turned: Mutex<Vec<PocketCardSide>>,
 }
 
 impl RecordingExpandedCardHost {
 	fn answering(
-		face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		cover_answer: Result<
+			crate::platform::ExpandedCardCoverOutcome,
+			truapi::latest::GenericError,
+		>,
 		turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	) -> Arc<Self> {
 		Arc::new(Self {
-			face_answer,
+			cover_answer,
 			turn_answer,
-			requested: Mutex::new(Vec::new()),
+			covered: Mutex::new(Vec::new()),
 			turned: Mutex::new(Vec::new()),
 		})
 	}
 
 	fn applying() -> Arc<Self> {
 		Self::answering(
-			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			Ok(crate::platform::ExpandedCardCoverOutcome::Applied),
 			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
 		)
 	}
 
-	fn requested(&self) -> Vec<bool> {
-		self.requested.lock().expect("requested mutex poisoned").clone()
+	fn covered(&self) -> Vec<bool> {
+		self.covered.lock().expect("covered mutex poisoned").clone()
 	}
 
-	fn turned(&self) -> Vec<bool> {
+	fn turned(&self) -> Vec<PocketCardSide> {
 		self.turned.lock().expect("turned mutex poisoned").clone()
 	}
 }
 
 #[async_trait::async_trait]
 impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
-		self.requested.lock().expect("requested mutex poisoned").push(shown);
-		self.face_answer.clone()
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, truapi::latest::GenericError> {
+		self.covered.lock().expect("covered mutex poisoned").push(covered);
+		self.cover_answer.clone()
 	}
 
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError> {
-		self.turned.lock().expect("turned mutex poisoned").push(shown);
+		self.turned.lock().expect("turned mutex poisoned").push(side);
 		self.turn_answer.clone()
 	}
 }
@@ -2833,58 +2887,60 @@ fn expanded_card_host(
 	})
 }
 
-fn set_face_shown(
+fn set_card_covered(
 	host: &ProductRuntimeHost<RemoteAccountHolder>,
-	shown: bool,
-) -> Result<
-	truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse,
-	CallError<truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError>,
-> {
-	futures::executor::block_on(ExpandedCard::set_face_shown(
+	covered: bool,
+) -> Result<HostExpandedCardSetCardCoveredResponse, CallError<HostExpandedCardSetCardCoveredError>>
+{
+	futures::executor::block_on(ExpandedCard::set_card_covered(
 		host,
 		&CallContext::default(),
-		HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest { shown }),
+		HostExpandedCardSetCardCoveredRequest::V1(
+			truapi::latest::HostExpandedCardSetCardCoveredRequest { covered },
+		),
 	))
 }
 
-fn set_back_shown(
+fn turn_card(
 	host: &ProductRuntimeHost<RemoteAccountHolder>,
-	shown: bool,
-) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>> {
-	futures::executor::block_on(ExpandedCard::set_back_shown(
+	side: PocketCardSide,
+) -> Result<HostExpandedCardTurnCardResponse, CallError<HostExpandedCardTurnCardError>> {
+	futures::executor::block_on(ExpandedCard::turn_card(
 		host,
 		&CallContext::default(),
-		HostExpandedCardSetBackShownRequest::V1(v01::HostExpandedCardSetBackShownRequest { shown }),
+		HostExpandedCardTurnCardRequest::V1(truapi::latest::HostExpandedCardTurnCardRequest {
+			side,
+		}),
 	))
 }
 
-/// The host must see exactly what the Widget asked for, in order, so a hide
-/// followed by a show, or a turn and a turn back, never collapses into one
+/// The host must see exactly what the Widget asked for, in order, so a cover
+/// followed by an uncover, or a turn and a turn back, never collapses into one
 /// state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
 	let card = RecordingExpandedCardHost::applying();
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
 
-	for shown in [false, true, false] {
+	for covered in [true, false, true] {
 		assert!(matches!(
-			set_face_shown(&host, shown),
-			Ok(truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse::V1)
+			set_card_covered(&host, covered),
+			Ok(HostExpandedCardSetCardCoveredResponse::V1)
 		));
 	}
 
-	for shown in [true, false] {
-		assert!(matches!(
-			set_back_shown(&host, shown),
-			Ok(HostExpandedCardSetBackShownResponse::V1)
-		));
+	for side in [PocketCardSide::Back, PocketCardSide::Front] {
+		assert!(matches!(turn_card(&host, side), Ok(HostExpandedCardTurnCardResponse::V1)));
 	}
 
-	assert_eq!((card.requested(), card.turned()), (vec![false, true, false], vec![true, false]));
+	assert_eq!(
+		(card.covered(), card.turned()),
+		(vec![true, false, true], vec![PocketCardSide::Back, PocketCardSide::Front])
+	);
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind
-/// filter, so only a Widget may move a face or turn a card, and nothing else
+/// filter, so only a Widget may cover or turn a card, and nothing else
 /// reaches the host.
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
@@ -2892,9 +2948,9 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 		let card = RecordingExpandedCardHost::applying();
 		let host = expanded_card_host(kind, Some(card.clone()));
 
-		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
-		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
-		assert!(card.requested().is_empty() && card.turned().is_empty());
+		assert!(matches!(set_card_covered(&host, true), Err(CallError::Denied)));
+		assert!(matches!(turn_card(&host, PocketCardSide::Back), Err(CallError::Denied)));
+		assert!(card.covered().is_empty() && card.turned().is_empty());
 	}
 }
 
@@ -2905,16 +2961,15 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
-	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
-	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
+	assert!(matches!(set_card_covered(&host, true), Err(CallError::Unsupported)));
+	assert!(matches!(turn_card(&host, PocketCardSide::Back), Err(CallError::Unsupported)));
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
 /// `Unsupported` in particular has to stay distinguishable from a failure.
 #[test]
 fn expanded_card_host_outcomes_map_to_wire_answers() {
-	use crate::platform::ExpandedCardFaceOutcome;
-	use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
+	use crate::platform::ExpandedCardCoverOutcome;
 
 	let answer = |outcome| {
 		let card = RecordingExpandedCardHost::answering(
@@ -2922,24 +2977,28 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
 		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
-		set_face_shown(&host, false)
+		set_card_covered(&host, true)
 	};
 
 	assert!(matches!(
-		answer(Ok(ExpandedCardFaceOutcome::Unsupported)),
+		answer(Ok(ExpandedCardCoverOutcome::Unsupported)),
 		Err(CallError::Unsupported)
 	));
 	assert!(matches!(
-		answer(Ok(ExpandedCardFaceOutcome::NotPresented)),
-		Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::NotPresented)))
+		answer(Ok(ExpandedCardCoverOutcome::NotPresented)),
+		Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V1(
+			truapi::latest::HostExpandedCardSetCardCoveredError::NotPresented
+		)))
 	));
 	assert!(matches!(
-		answer(Ok(ExpandedCardFaceOutcome::UserMoving)),
-		Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::UserMoving)))
+		answer(Ok(ExpandedCardCoverOutcome::UserMoving)),
+		Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V1(
+			truapi::latest::HostExpandedCardSetCardCoveredError::UserMoving
+		)))
 	));
-	let Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::Unknown {
-		reason,
-	}))) = answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() }))
+	let Err(CallError::Domain(HostExpandedCardSetCardCoveredError::V1(
+		truapi::latest::HostExpandedCardSetCardCoveredError::Unknown { reason },
+	))) = answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() }))
 	else {
 		panic!("a host failure is reported as an unknown domain error");
 	};
@@ -2951,18 +3010,18 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 #[test]
 fn expanded_card_back_outcomes_map_to_wire_answers() {
 	use crate::platform::ExpandedCardTurnOutcome;
-	use v01::HostExpandedCardSetBackShownError as Answer;
+	use truapi::latest::HostExpandedCardTurnCardError as Answer;
 
 	let answer = |outcome| {
 		let card = RecordingExpandedCardHost::answering(
-			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			Ok(crate::platform::ExpandedCardCoverOutcome::Applied),
 			outcome,
 		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
-		set_back_shown(&host, true)
+		turn_card(&host, PocketCardSide::Back)
 	};
 	let domain = |outcome| match answer(Ok(outcome)) {
-		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(error))) => Some(error),
+		Err(CallError::Domain(HostExpandedCardTurnCardError::V1(error))) => Some(error),
 		_ => None,
 	};
 
@@ -2980,7 +3039,7 @@ fn expanded_card_back_outcomes_map_to_wire_answers() {
 	));
 	assert!(matches!(
 		answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() })),
-		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(Answer::Unknown { reason })))
+		Err(CallError::Domain(HostExpandedCardTurnCardError::V1(Answer::Unknown { reason })))
 			if reason == "drawer crashed"
 	));
 }
@@ -6993,7 +7052,10 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	install_pairing_session(&host, session);
 	let mut cx = CallContext::with_request_id(message_id.to_string());
-	cx.set_timeout(std::time::Duration::from_millis(1));
+	// The People connection is dialled in a task of its own, so the timeout
+	// leaves it time to subscribe. No allocation response is scripted, so the
+	// call still ends by the timeout.
+	cx.set_timeout(std::time::Duration::from_millis(500));
 
 	let err = futures::executor::block_on(ResourceAllocation::request(
 		&host,
@@ -7008,7 +7070,7 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 		)) => {
 			assert_eq!(
 				reason,
-				"Account authority request timed out after 1ms for allocation-timeout"
+				"Account authority request timed out after 500ms for allocation-timeout"
 			)
 		},
 		other => panic!("expected resource-allocation timeout, got {other:?}"),

@@ -32,8 +32,8 @@ pub use crate::{
 	product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError},
 	stack::{
 		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
-		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackRecords,
-		StackRefresh, StackRefreshOutcome, StackStatus,
+		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,
+		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 };
 
@@ -55,8 +55,8 @@ use truapi::{
 		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, LegacyAccountTxPayload,
-		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
-		RemotePermission, RemotePermissionRequest, RingLocation,
+		NftPurseOwner, PocketCardSide, ProductAccountId, ProductAccountTxPayload,
+		ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -101,7 +101,8 @@ pub struct SigningHostConfig {
 	pub host: HostIdentity,
 	/// The stack the host runs. Every reserved RFC-0022 identity the wallet
 	/// derives ends in its TLD, which has to equal the People chain's
-	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
+	/// `NetworkSuffix.NetworkSuffix`. For a stack a [`StackRefresh`] handed out
+	/// the core reports a difference in [`StackStatus::mismatches`].
 	pub stack: Stack,
 	/// Whether the host draws materials. Off by default: `new` leaves it off.
 	pub materials_enabled: bool,
@@ -2416,11 +2417,11 @@ pub trait PermissionStatusHost: Send + Sync {
 	) -> Result<DevicePermissionStatus, GenericError>;
 }
 
-/// What the host did with a request to cover or uncover the expanded card face.
+/// What the host did with a request to cover or uncover the expanded card.
 #[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ExpandedCardFaceOutcome {
-	/// The face is now in the requested state, including when it already was.
+pub enum ExpandedCardCoverOutcome {
+	/// The card is now in the requested state, including when it already was.
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
@@ -2453,17 +2454,16 @@ pub enum ExpandedCardTurnOutcome {
 /// `Unsupported`.
 #[async_trait::async_trait]
 pub trait ExpandedCardHost: Send + Sync {
-	/// Uncover (`true`) or cover (`false`) the face under the calling Widget.
-	async fn set_expanded_card_face_shown(
+	/// Cover (`true`) or uncover (`false`) the card under the calling Widget.
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<ExpandedCardFaceOutcome, GenericError>;
+		covered: bool,
+	) -> Result<ExpandedCardCoverOutcome, GenericError>;
 
-	/// Turn the card above the calling Widget so its back (`true`) or its
-	/// front (`false`) is up.
-	async fn set_expanded_card_back_shown(
+	/// Turn the card above the calling Widget so `side` is up.
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: PocketCardSide,
 	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 

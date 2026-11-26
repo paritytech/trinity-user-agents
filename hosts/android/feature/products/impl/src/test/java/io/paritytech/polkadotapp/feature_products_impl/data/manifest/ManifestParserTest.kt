@@ -180,7 +180,7 @@ class ManifestParserTest {
             PocketCardId("loyalty"),
             "Loyalty",
             PocketCardPreview.Archive("faces/loyalty.json"),
-            faceShown = true,
+            startsCovered = false,
         )
         assertEquals(listOf(expected), worker?.pocketCards)
     }
@@ -229,15 +229,15 @@ class ManifestParserTest {
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A"}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"","preview":"a.json"}]}"""))
         publishesNoCards(worker("""{}"""))
-        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
-        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","startsCovered":"no"}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","startsCovered":0}]}"""))
         // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
         publishesNoCards(
-            worker("""{"cards":[{"id":"a","title":"A","preview":"a.json"},{"id":"b","title":"B","preview":"b.json","faceShown":"no"}]}""")
+            worker("""{"cards":[{"id":"a","title":"A","preview":"a.json"},{"id":"b","title":"B","preview":"b.json","startsCovered":"no"}]}""")
         )
     }
 
-    private fun faceShownOf(cardJson: String): Boolean? {
+    private fun startsCoveredOf(cardJson: String): Boolean? {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
                "pocket":{"cards":[$cardJson]}}""",
@@ -245,29 +245,29 @@ class ManifestParserTest {
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
-        return worker?.pocketCards?.singleOrNull()?.faceShown
+        return worker?.pocketCards?.singleOrNull()?.startsCovered
     }
 
     @Test
-    fun `a card that does not say faceShown opens with its face shown`() {
-        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json"}"""))
+    fun `a card that does not say startsCovered opens uncovered`() {
+        assertEquals(false, startsCoveredOf("""{"id":"a","title":"A","preview":"a.json"}"""))
     }
 
     // iOS decodes the field as an optional boolean, so a null there is an absent field; both hosts
     // must publish the same cards from one manifest.
     @Test
-    fun `a card with a null faceShown opens with its face shown, as when the field is absent`() {
-        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":null}"""))
+    fun `a card with a null startsCovered opens uncovered, as when the field is absent`() {
+        assertEquals(false, startsCoveredOf("""{"id":"a","title":"A","preview":"a.json","startsCovered":null}"""))
     }
 
     @Test
-    fun `a card can ask to open with its face away`() {
-        assertEquals(false, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":false}"""))
+    fun `a card can ask to open covered`() {
+        assertEquals(true, startsCoveredOf("""{"id":"a","title":"A","preview":"a.json","startsCovered":true}"""))
     }
 
     @Test
-    fun `a card can state that its face is shown`() {
-        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":true}"""))
+    fun `a card can state that it opens uncovered`() {
+        assertEquals(false, startsCoveredOf("""{"id":"a","title":"A","preview":"a.json","startsCovered":false}"""))
     }
 
     /**
