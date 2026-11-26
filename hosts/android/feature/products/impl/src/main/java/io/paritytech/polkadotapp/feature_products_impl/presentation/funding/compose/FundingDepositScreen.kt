@@ -304,7 +304,7 @@ private fun WaitingPill(modifier: Modifier = Modifier) {
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall),
+            horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall, Alignment.CenterHorizontally),
         ) {
             NovaCircularProgressIndicator(modifier = Modifier.size(SMALL_INDICATOR_SIZE), strokeWidth = INDICATOR_STROKE)
             NovaText(
