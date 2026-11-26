@@ -8,8 +8,8 @@ import SwiftyBeaver
 ///
 /// Each tag sends at most `linesPerWindow` host lines per `window`. A `truapi.core` line counts against its
 /// marker rather than the whole tag, so one noisy marker cannot hide the others. The first line after a
-/// window that dropped lines is preceded by one line that counts them, so a product or connection stuck in
-/// a loop sends at most that many lines a minute plus the count. A count that no later line follows, because
+/// window that dropped lines is preceded by one line that counts them, so a tagged line or core marker stuck
+/// in a loop sends at most that many lines a minute plus the count. A count that no later line follows, because
 /// the tag went quiet or the app stopped, is never sent. Core events are not limited here, as on Android.
 final class HostLogSinkDestination: BaseDestination {
     static let linesPerWindow = 60

@@ -5,8 +5,10 @@ package io.paritytech.polkadotapp.feature_statement_store_impl.data.extension
 import androidx.annotation.Keep
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.Scale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.annotations.AsTuple
+import io.novasama.substrate_sdk_android.koltinx_serialization_scale.annotations.TransientStruct
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.encode
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchProof
+import io.paritytech.polkadotapp.common.data.substrate.model.MultiSignature
 import io.paritytech.polkadotapp.common.utils.scale.ToDynamicScaleInstance
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingIndex
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingRevision
@@ -32,6 +34,12 @@ sealed class AsResourcesInfoScale : ToDynamicScaleInstance {
         val ringIndex: RingIndex,
         val revision: RingRevision,
         val collection: MembershipCollectionScale,
+    ) : AsResourcesInfoScale()
+
+    @Serializable
+    @TransientStruct
+    class ReplaceStatementStoreAccount(
+        val holderSignature: MultiSignature,
     ) : AsResourcesInfoScale()
 }
 

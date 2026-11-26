@@ -7,17 +7,25 @@ use std::{
 	time::Instant,
 };
 
-use truapi::latest::GenericError;
+use parity_scale_codec::Encode;
+use sp_crypto_hashing::twox_128;
+use truapi::{CallContext, latest::GenericError};
 
 use super::*;
 use crate::{
-	platform::HostInfo,
-	runtime::services::RuntimeServices,
+	host_logic::root_entropy::RootEntropy,
+	platform::{HostInfo, ProductContext, ProductId},
+	runtime::{
+		HostRole, LocalActivation, SigningHost, StatementRenewalTarget,
+		services::RuntimeServices,
+		statement_allowance::{self, ChainClient, StatementAllowanceError, slot::SlotError},
+	},
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
 		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, finish, on_testnet,
-		published_test_descriptor, published_test_descriptor_at, refused_for_its_tld,
-		sign_test_descriptor, stack_status, stored_test_record, wait_until, without_bulletin,
+		published_test_descriptor, published_test_descriptor_at, recorded_rpc_method_count,
+		refused_for_its_tld, sign_test_descriptor, stack_status, stored_test_record, wait_until,
+		without_bulletin,
 	},
 	time::ManualTimer,
 };
@@ -273,11 +281,11 @@ fn start_loaded(
 /// A connection opened for People reached a chain with the genesis hash
 /// `answered`.
 fn people_answers(refresh: &StackRefresh, answered: [u8; 32]) {
-	let check = refresh
-		.stack()
+	let stack = refresh.stack();
+	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
+	checks
 		.genesis_check()
-		.expect("a refreshed stack has its chains checked");
-	check.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered });
+		.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered });
 }
 
 fn people_gave(answered: [u8; 32]) -> Vec<StackMismatch> {
@@ -994,27 +1002,70 @@ fn dropping_the_refresh_stops_the_reports() {
 	assert_eq!(statuses.recv_timeout(ANSWER_WAIT), Err(RecvTimeoutError::Disconnected));
 }
 
-/// The checks reach the chains only through the stack the refresh hands out.
-/// A runtime built on that stack has to put the connections it opens through
-/// them, or a wiped chain would be read as the one the descriptor names.
-#[test]
-fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
-	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let wiped_node = Arc::new(StubPlatform {
-		rpc_responder: Some(Arc::new(|request| {
+/// The People metadata an allowance reads before People's suffix.
+const PEOPLE_METADATA: &[u8] =
+	include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
+
+/// The Asset Hub of [`published_test_descriptor`].
+const TEST_STACK_ASSET_HUB: [u8; 32] = [0xcc; 32];
+
+/// A runtime on the stack `refresh` hands out, over nodes that each name the
+/// chain they were dialled for, apart from People's, which names `genesis`.
+/// Each node serves a runtime version. People also serves its metadata and
+/// `suffix` as its `NetworkSuffix`, or no suffix when `suffix` is `None`,
+/// which is what an allowance reads first. Any other storage is empty, and any
+/// other request gets a JSON-RPC error. Asset Hub is out of reach, so
+/// activating a wallet looks up no username.
+fn runtime_on(
+	refresh: &StackRefresh,
+	genesis: [u8; 32],
+	suffix: Option<&'static str>,
+) -> (Arc<RuntimeServices>, Arc<StubPlatform>) {
+	let suffix_key = [twox_128(b"NetworkSuffix"), twox_128(b"NetworkSuffix")].concat();
+	let suffix_key = format!("0x{}", hex::encode(suffix_key));
+	let node = Arc::new(StubPlatform {
+		chain_rpc_responder: Some(Arc::new(move |chain, request| {
 			let request: serde_json::Value =
 				serde_json::from_str(request).expect("the core sends JSON-RPC");
-			assert_eq!(request["method"], "chainSpec_v1_genesisHash");
-			let genesis = format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE));
-			vec![
-				serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": genesis})
-					.to_string(),
-			]
+			let people = chain == TEST_STACK_PEOPLE;
+			let named = if people { genesis } else { chain };
+			let as_hex = |bytes: &[u8]| serde_json::json!(format!("0x{}", hex::encode(bytes)));
+			let answer = match (request["method"].as_str(), request["params"][0].as_str()) {
+				(Some("chainSpec_v1_genesisHash" | "chain_getBlockHash"), _) => Ok(as_hex(&named)),
+				(Some("state_getRuntimeVersion"), _) => {
+					Ok(serde_json::json!({"specVersion": 1, "transactionVersion": 1}))
+				},
+				(Some("state_call"), Some("Metadata_metadata_at_version")) if people => {
+					Ok(as_hex(&Some(PEOPLE_METADATA.to_vec()).encode()))
+				},
+				(Some("state_getStorage"), Some(key)) if people && key == suffix_key => {
+					let stored = suffix.map(|suffix| as_hex(&suffix.as_bytes().to_vec().encode()));
+					Ok(stored.unwrap_or(serde_json::Value::Null))
+				},
+				(Some("state_getStorage"), _) => Ok(serde_json::Value::Null),
+				(method, _) => Err(format!("the node serves no {method:?}")),
+			};
+			// An error, not a panic: a panic would end the node's answers, and
+			// the call waiting on one would never finish.
+			let frame = match answer {
+				Ok(answer) => serde_json::json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"result": answer,
+				}),
+				Err(message) => serde_json::json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"error": {"code": -32601, "message": message},
+				}),
+			};
+			vec![frame.to_string()]
 		})),
+		unreachable_genesis: Some(TEST_STACK_ASSET_HUB),
 		..Default::default()
 	});
 	let services = RuntimeServices::new(
-		wiped_node,
+		node.clone(),
 		HostInfo {
 			name: "Stack test".into(),
 			icon: None,
@@ -1024,11 +1075,205 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 		refresh.stack(),
 		Spawner::for_test(),
 	);
+	(services, node)
+}
 
-	let people = finish(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
+/// The checks reach the chains only through the stack the refresh hands out.
+/// A runtime built on that stack has to put the connections it opens through
+/// them, or a wiped chain would be read as the one the descriptor names.
+#[test]
+fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_WIPED_PEOPLE, Some("paseo"));
+
+	let people = finish(ANSWER_WAIT, services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
 
 	assert!(people.is_err(), "the restarted chain is not handed out");
 	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));
+}
+
+/// A signing host's allowance work builds its proof contexts with People's
+/// suffix. The suffix that work reads is what the host is told about, at no
+/// extra request to People, and the work goes on with the suffix People gave.
+#[test]
+fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
+
+	let read = finish(ANSWER_WAIT, async {
+		let people = services.statement_store.chain_client("test").await.ok()?;
+		services.people_network_suffix(&people).await.ok()
+	});
+
+	assert_eq!(
+		(
+			read,
+			refresh.status().mismatches,
+			recorded_rpc_method_count(&node.sent_rpc, "state_getStorage"),
+		),
+		(Some(b"testnet".to_vec()), testnet_suffix_listed(), 1)
+	);
+}
+
+/// Asset Hub holds a `NetworkSuffix` too, which a PGAS claim proves with. The
+/// `tld` check is on People's, so a suffix read over a client the host routes
+/// by another chain's genesis hash comes back without the host hearing of it.
+#[test]
+fn a_suffix_read_over_another_chains_client_is_not_reported() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
+
+	let read = finish(ANSWER_WAIT, async {
+		// The fixture's Asset Hub is out of reach, so People's node answers for it.
+		let node = services.chain.rpc_client("test", &TEST_STACK_PEOPLE).await.ok()?;
+		let asset_hub = ChainClient::new(
+			statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(node)),
+			TEST_STACK_ASSET_HUB,
+		);
+		services.people_network_suffix(&asset_hub).await.ok()
+	});
+
+	assert_eq!((read, refresh.status().mismatches), (Some(b"testnet".to_vec()), vec![]));
+}
+
+/// What the host is told once People has given `testnet` as its suffix.
+fn testnet_suffix_listed() -> Vec<StackMismatch> {
+	vec![StackMismatch::NetworkSuffix {
+		named: "paseo".to_string(),
+		answered: "testnet".to_string(),
+	}]
+}
+
+/// What reading People's suffix comes to over a People node that holds
+/// `suffix`, on a runtime whose host was told of `testnet` before, and what
+/// the host is told after the read.
+fn read_after_testnet_was_listed(
+	suffix: Option<&'static str>,
+) -> (Option<Result<Vec<u8>, StatementAllowanceError>>, Vec<StackMismatch>) {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, suffix);
+	let stack = refresh.stack();
+	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
+	checks.people_suffix_answered(b"testnet");
+
+	let read = finish(ANSWER_WAIT, async {
+		let people = services.statement_store.chain_client("test").await.ok()?;
+		Some(services.people_network_suffix(&people).await)
+	});
+	(read, refresh.status().mismatches)
+}
+
+/// A People chain that holds a suffix that is not one to sixteen bytes long
+/// fails the read with that error. A failed read says nothing about the
+/// suffix People holds, so a suffix listed before stays listed.
+#[test]
+fn a_people_suffix_of_the_wrong_length_leaves_the_listing_as_it_was() {
+	let (read, listed) = read_after_testnet_was_listed(Some(""));
+
+	assert!(
+		matches!(
+			read,
+			Some(Err(StatementAllowanceError::Slot(SlotError::InvalidNetworkSuffixLength {
+				len: 0
+			})))
+		),
+		"the empty suffix fails the read: {read:?}"
+	);
+	assert_eq!(listed, testnet_suffix_listed());
+}
+
+/// A People chain that holds no suffix at all fails the read outright, and
+/// that changes nothing the host is told either.
+#[test]
+fn a_people_suffix_that_is_missing_leaves_the_listing_as_it_was() {
+	let (read, listed) = read_after_testnet_was_listed(None);
+
+	assert!(
+		matches!(read, Some(Err(StatementAllowanceError::Slot(SlotError::MissingNetworkSuffix)))),
+		"the missing suffix fails the read: {read:?}"
+	);
+	assert_eq!(listed, testnet_suffix_listed());
+}
+
+/// A signing host with an active wallet, on a runtime over [`runtime_on`]'s
+/// nodes where People gives `testnet` as its suffix, and the refresh whose
+/// stack it runs. Past the suffix the nodes give only empty storage and
+/// errors, so any allowance work the host starts fails after reading it.
+fn signing_host_over_a_testnet_suffix() -> (StackRefresh, Arc<SigningHost>) {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
+	let signing_host = SigningHost::new(services);
+	finish(ANSWER_WAIT, signing_host.activate_local_session(RootEntropy::new([0xab; 16])))
+		.expect("activation succeeds");
+	(refresh, signing_host)
+}
+
+fn test_product() -> ProductContext {
+	ProductContext::new(ProductId::for_test("myapp.paseo"))
+}
+
+/// The allowance work is where a signing host reads People's suffix, so each
+/// allowance has to report it. One that read the suffix past the checks would
+/// build proofs with a suffix the host never hears of.
+#[test]
+fn a_statement_store_allowance_reports_a_people_suffix_that_is_not_the_tld() {
+	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
+	let accounts = signing_host.accounts();
+	let session = accounts.current_session().expect("a session is active");
+
+	let allocated = finish(
+		ANSWER_WAIT,
+		accounts.statement_store_allowance_key(&CallContext::default(), &session, &test_product()),
+	);
+
+	assert_eq!((allocated.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
+}
+
+/// A Bulletin allowance proves with People's suffix too, read after Bulletin's
+/// own authorization.
+#[test]
+fn a_bulletin_allowance_reports_a_people_suffix_that_is_not_the_tld() {
+	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
+	let accounts = signing_host.accounts();
+	let session = accounts.current_session().expect("a session is active");
+
+	let allocated = finish(
+		ANSWER_WAIT,
+		accounts.bulletin_allowance_key(&CallContext::default(), &session, &test_product()),
+	);
+
+	assert_eq!((allocated.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
+}
+
+/// A renewal pass proves with People's suffix for each statement account it
+/// keeps allowed, with no product asking.
+#[test]
+fn a_statement_store_renewal_reports_a_people_suffix_that_is_not_the_tld() {
+	let (refresh, signing_host) = signing_host_over_a_testnet_suffix();
+	finish(
+		ANSWER_WAIT,
+		signing_host.track_statement_renewal_targets(vec![StatementRenewalTarget::WalletSso]),
+	)
+	.expect("the wallet's own statement account is tracked");
+
+	let renewed = finish(ANSWER_WAIT, signing_host.renew_statement_allowances());
+
+	assert_eq!((renewed.is_ok(), refresh.status().mismatches), (false, testnet_suffix_listed()));
+}
+
+/// The host is told of a wrong suffix the way it is told of a wrong chain:
+/// through the status its refresh reports, even while a fetch is out.
+#[test]
+fn the_host_is_told_of_a_people_suffix_that_is_not_the_tld() {
+	let started = start(Arc::default(), vec![]);
+	let _at_start = started.next_status();
+	started.wait_for_fetches(1);
+	let stack = started.refresh.stack();
+	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
+
+	checks.people_suffix_answered(b"testnet");
+
+	assert_eq!(started.next_status().mismatches, testnet_suffix_listed());
 }
 
 /// Which stack a host runs is its chains, network and TLD. Whether a refresh
