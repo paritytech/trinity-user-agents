@@ -203,7 +203,8 @@ export type CoreStorageKey =
    * Hosts must back this slot with storage scoped to the install, outliving
    * logout and any per-user namespacing: once it changes, peers addressing
    * the previous key can no longer reach this device. A host that runs more
-   * than one stack keeps one key per stack, like every other slot.
+   * than one stack gives each stack its own `CoreStorage`, so each has its own
+   * key.
    */
   | { tag: "DeviceEncryptionKey"; value?: undefined }
   /**
