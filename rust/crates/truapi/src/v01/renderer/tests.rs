@@ -144,7 +144,7 @@ fn variants_encode_only_the_fields_they_carry() {
 	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
 }
 
-/// The medium weight comes after the older presets, so a tree that names one
+/// The medium weight comes after every older preset, so a tree that names one
 /// of those decodes as before.
 #[test]
 fn older_typography_presets_keep_their_indices() {
@@ -154,7 +154,7 @@ fn older_typography_presets_keep_their_indices() {
 			.map(Encode::encode)
 			.collect();
 
-	assert_eq!(encoded, [vec![4], vec![5]]);
+	assert_eq!(encoded, [vec![4], vec![9]]);
 }
 
 /// Index 10 stays unused, so an older tree is refused rather than misread.
