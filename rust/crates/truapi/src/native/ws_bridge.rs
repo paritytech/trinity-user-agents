@@ -118,7 +118,10 @@ pub type BridgeLogger = Arc<dyn Fn(&str, &str) + Send + Sync>;
 /// connection.
 pub trait WsProductRuntimeFactory: Send + Sync {
 	/// Create a runtime that emits outgoing frames into `sink`.
-	fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> ProductRuntime;
+	///
+	/// `None` when what the registration connects to is gone. The bridge then closes the
+	/// connection.
+	fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> Option<ProductRuntime>;
 
 	/// Notify the embedding after a connection has disposed its control channel.
 	fn disconnected(&self) {}
@@ -126,9 +129,9 @@ pub trait WsProductRuntimeFactory: Send + Sync {
 
 impl<F> WsProductRuntimeFactory for F
 where
-	F: Fn(Arc<dyn FrameSink>) -> ProductRuntime + Send + Sync,
+	F: Fn(Arc<dyn FrameSink>) -> Option<ProductRuntime> + Send + Sync,
 {
-	fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> ProductRuntime {
+	fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> Option<ProductRuntime> {
 		self(sink)
 	}
 }
@@ -770,7 +773,11 @@ async fn connection_lifecycle(
 	let (mut sink, mut source) = ws.split();
 	let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(OUTBOUND_QUEUE_CAP);
 	let frame_sink = Arc::new(WsFrameSink::new(out_tx));
-	let product_runtime = Arc::new(entry.runtime_factory.product_runtime(frame_sink));
+	let Some(product_runtime) = entry.runtime_factory.product_runtime(frame_sink) else {
+		logger(markers::WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP.target, &peer.to_string());
+		return;
+	};
+	let product_runtime = Arc::new(product_runtime);
 	let dispose_guard =
 		DisposeGuard { runtime: product_runtime.clone(), factory: entry.runtime_factory.as_ref() };
 
