@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -144,10 +145,10 @@ private fun Presets(
                 onClick = { onPreset(preset.value) },
             ) {
                 NovaText(
+                    modifier = Modifier.wrapContentSize(),
                     text = preset.label,
                     style = PolkadotTheme.typography.body.mediumEmphasized,
                     color = PolkadotTheme.colors.fg.primary,
-                    textAlign = TextAlign.Center,
                 )
             }
         }

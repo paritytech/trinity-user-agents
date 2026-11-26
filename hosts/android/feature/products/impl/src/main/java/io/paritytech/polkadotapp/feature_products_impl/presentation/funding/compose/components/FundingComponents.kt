@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -170,10 +171,10 @@ fun FundingCryptoIconImage(
             contentAlignment = Alignment.Center,
         ) {
             NovaText(
+                modifier = Modifier.wrapContentSize(),
                 text = icon.monogram,
                 style = PolkadotTheme.typography.title.small,
                 color = PolkadotTheme.colors.fg.primary,
-                textAlign = TextAlign.Center,
             )
         }
     }
