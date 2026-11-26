@@ -37,6 +37,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     /// gives back exactly what start asked for and never more.
     private var workerClaim: NativeWorkerClaim?
     private var roomsForwardingTask: Task<Void, Never>?
+    private var messageDeliveries: [Task<Void, Error>] = []
     /// Renders still waiting for the worker or drawing, ended by dispose.
     private var renders: [UUID: Task<Void, Never>] = [:]
     private var started = false
@@ -80,11 +81,26 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     func onUserMessage(text: String, roomId: String?) async throws {
         try checkNotDisposed()
         guard let roomId else { throw ChatSeamError.roomlessChat }
-        try await requireExecution().publishChatAction(action: HostChatActionSubscribeItem(
-            roomId: roomId,
-            peer: "native",
-            payload: .messagePosted(.text(text: text))
-        ))
+        guard workerClaim != nil else { throw ChatSeamError.notStarted }
+
+        let previous = messageDeliveries.last
+        let delivery = Task {
+            _ = await previous?.result
+            defer { messageDeliveries.removeFirst() }
+            guard let execution = try await executionWhenRunning() else { throw CancellationError() }
+            try Task.checkCancellation()
+            try execution.publishChatAction(action: HostChatActionSubscribeItem(
+                roomId: roomId,
+                peer: "native",
+                payload: .messagePosted(.text(text: text))
+            ))
+        }
+        messageDeliveries.append(delivery)
+        try await withTaskCancellationHandler {
+            try await delivery.value
+        } onCancel: {
+            delivery.cancel()
+        }
     }
 
     func renderMessage(
@@ -175,6 +191,9 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         disposed = true
 
         roomsForwardingTask?.cancel()
+        for delivery in messageDeliveries {
+            delivery.cancel()
+        }
         for render in renders.values {
             render.cancel()
         }

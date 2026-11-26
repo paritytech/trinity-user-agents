@@ -82,6 +82,19 @@ private func disposing(_ runtime: TrUAPIChatHandler, _ body: () async throws -> 
     await runtime.dispose()
 }
 
+private extension TrUAPIChatHandler {
+    /// Return after the send has entered Chat's actor and yielded it to the test.
+    func beginSending(_ text: String) async -> Task<Void, Error> {
+        let entered = AsyncStream<Void>.makeStream()
+        let send = Task {
+            entered.continuation.finish()
+            try await onUserMessage(text: text, roomId: "room")
+        }
+        for await _ in entered.stream {}
+        return send
+    }
+}
+
 /// A manager whose worker is already up, which is what chat finds whenever
 /// something else, a card on screen, got there first.
 private func workersRunning(_ execution: MockProductExecution) -> StubWorkerRuntime {
@@ -204,33 +217,62 @@ struct ChatRuntimeTests {
         await live.dispose()
     }
 
-    /// The bot posts its welcome message the moment `start` returns, so `start`
-    /// has to wait for the worker rather than return onto an execution that is
-    /// not there yet.
-    /// The core starts the worker and decides when to give up on it, so start
-    /// asks for it and returns, and the session reaches the worker once it runs.
-    @Test func rustRuntimeStartDoesNotWaitForTheWorker() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func chatStartsBeforeTheWorkerAndDeliversPendingMessagesInOrder() async throws {
         let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
+        var states = workers.executionsDelivered.makeAsyncIterator()
 
         try await disposing(runtime) {
-            try await withTimeout(.hangGuard) {
-                try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-            }
+            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            _ = await states.next()
             #expect(workers.references.acquired == [chatProduct])
 
+            let first = await runtime.beginSending("first")
+            _ = await states.next()
+            let second = await runtime.beginSending("second")
             workers.publish([chatProduct: execution])
-            try await runtime.onUserMessage(text: "hi", roomId: "room")
-            #expect(execution.publishedChatActions.count == 1)
+
+            try await first.value
+            try await second.value
+            #expect(execution.publishedChatActions == ["first", "second"].map {
+                HostChatActionSubscribeItem(roomId: "room", peer: "native", payload: .messagePosted(.text(text: $0)))
+            })
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func closingChatCancelsAPendingSendWhilePocketStillHoldsTheWorker() async throws {
+        let workers = StubWorkerRuntime()
+        let pocket = workers.claimWorker(productId: chatProduct)
+        defer { pocket.release() }
+        let execution = MockProductExecution()
+        let runtime = makeRustRuntime(workers: workers)
+        var states = workers.executionsDelivered.makeAsyncIterator()
+        let completed = AsyncStream<Void>.makeStream()
+
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        _ = await states.next()
+        let send = Task {
+            defer { completed.continuation.finish() }
+            try await runtime.onUserMessage(text: "closed", roomId: "room")
+        }
+        _ = await states.next()
+        await runtime.dispose()
+        try await withTimeout(.hangGuard) { for await _ in completed.stream {} }
+
+        #expect(workers.references.releaseCounts == [0, 1])
+        workers.publish([chatProduct: execution])
+        await #expect(throws: CancellationError.self) { try await send.value }
+        #expect(execution.publishedChatActions.isEmpty)
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
     /// from a real failure.
-    @Test func rustRuntimeChatSeamsFailBeforeTheWorkerIsUp() async {
+    @Test func chatCannotSendBeforeStartingEvenWhenTheWorkerIsRunning() async {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: StubWorkerRuntime())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
 
         await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
             try await runtime.onUserMessage(text: "hi", roomId: "room")
