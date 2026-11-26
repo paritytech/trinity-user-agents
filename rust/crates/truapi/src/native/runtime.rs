@@ -1490,7 +1490,7 @@ impl NativeProductExecution {
 /// applied here instead. Both bridge loggers route through this, the listener's
 /// and each execution's. An unlisted marker is dropped, because nothing
 /// downstream knows what its detail carries.
-pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
+pub fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
 	if markers::class_of(marker).is_none() {
 		return;
 	}
