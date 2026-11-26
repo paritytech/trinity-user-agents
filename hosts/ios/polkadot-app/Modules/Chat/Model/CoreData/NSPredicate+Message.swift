@@ -228,7 +228,8 @@ extension NSPredicate {
         )
     }
 
-    /// A finalized or failed transfer never re-enters the monitor; a best-head `claimed` still does.
+    /// A terminal transfer (finalized claim or reclaim, failure) never re-enters the monitor; a best-head
+    /// `claimed` or `reclaimed` and a payment returned to its sender still do.
     static func withoutTerminalTransferState(_ relationship: String, terminal: [Int16]) -> NSPredicate {
         NSPredicate(
             format: "%K == nil OR NOT (%K IN %@)",
