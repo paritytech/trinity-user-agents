@@ -202,12 +202,11 @@ An opened card shows its product's page under the face, and that page can fold t
 back. To try it with the sample worker in `feature/products/product-sample/pocket-worker` (its README
 has the details):
 
-1. Turn **TrUAPI runtime (products)** on in the debug menu.
-2. Build the sample and serve its `dist/` on port 5173, then `adb reverse tcp:5173 tcp:5173`.
-3. In the product form set Script URL `http://127.0.0.1:5173/worker.js`, face URL
+1. Build the sample and serve its `dist/` on port 5173, then `adb reverse tcp:5173 tcp:5173`.
+2. In the product form set Script URL `http://127.0.0.1:5173/worker.js`, face URL
    `http://127.0.0.1:5173/faces/loyalty.json` and App URL `http://127.0.0.1:5173/index.html`. Add
    `?hideOnLoad` to the App URL to test a call made as the page loads.
-4. Add the card and open it.
+3. Add the card and open it.
 
 The page has buttons that call `truapi.expandedCard.setFaceShown({ shown })` and a log of each
 answer, plus its own height and a red bar pinned to its bottom edge. The call answers `UserMoving`

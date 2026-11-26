@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -37,10 +36,7 @@ class ProductContentRoutingTest {
         coEvery { resolveToLocalUri(any()) } returns Result.success(archiveUri)
     }
     private val serving = ProductServingHostResolver(products, tldProvider)
-    private val runtime: ProductRuntimeSettings = mockk {
-        every { isTrUAPIRuntimeEnabled() } returns true
-    }
-    private val warmUp = RealProductContentWarmUp(dotNs, serving, runtime)
+    private val warmUp = RealProductContentWarmUp(dotNs, serving)
 
     @Test
     fun `normalized product URLs fetch the published executable archive`() {

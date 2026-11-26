@@ -26,7 +26,7 @@ You audit a diff for violations of PolkadotApp architecture and code rules. **Do
 
 4. **Identify subsystems touched** from file paths, and load architecture/code docs only for *additional rationale* when the checklist alone doesn't cover the case:
    - `feature/chats/` or `feature/videogame/` or `ChatExtension`/`ChatBot` → `architecture/chat-extension.md`.
-   - `feature/products/` or `HostCallHandlerGroup`/`HostApiSession`/`ProductTrUAPIHostBridge`/`HostApiInteractor`/`SpaHost` → `architecture/host-api-products.md`.
+   - `feature/products/` or `ProductTrUAPIHostBridge`/`HostApiInteractor`/`SpaHost` → `architecture/host-api-products.md`.
    - `feature/transactions/`, `feature/people/`, `feature/coinage/`, `TransactionOrigin`/`TransactionExtension` → `architecture/transactions.md`.
    - `feature/coinage/`, `ExternalPaymentService`, RFC-0006 → `architecture/coinage.md`.
    - `feature/statement-store/`, `CommunicationSession`, statements → `architecture/statement-store-communication.md`.

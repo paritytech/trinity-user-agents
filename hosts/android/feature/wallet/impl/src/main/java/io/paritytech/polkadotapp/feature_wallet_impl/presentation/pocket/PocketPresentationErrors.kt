@@ -22,10 +22,6 @@ class WithdrawUnavailablePresentationError(cause: Throwable) : PresentationThrow
     }
 }
 
-class AutoFundFailedPresentationError(cause: Throwable) :
-    PresentationThrowable(cause),
-    PresentationError by StringResPresentationError(RCommon.string.pocket_error_auto_fund_failed)
-
 class ShareCoinageLogsFailedPresentationError(cause: Throwable) :
     PresentationThrowable(cause),
     PresentationError by StringResPresentationError(RCommon.string.pocket_error_share_coinage_logs_failed)

@@ -47,19 +47,6 @@ interface ProductWorkerReference {
     fun release()
 }
 
-suspend fun <R> ProductWorkerRefCounter.withWorkerAcquired(
-    productId: ProductId,
-    label: String,
-    block: suspend (ProductWorkerReference) -> R,
-): R {
-    val reference = acquire(productId, label)
-    return try {
-        block(reference)
-    } finally {
-        reference.release()
-    }
-}
-
 @Singleton
 class RealProductWorkerRefCounter @Inject constructor(
     private val hostApiInteractor: HostApiInteractor,

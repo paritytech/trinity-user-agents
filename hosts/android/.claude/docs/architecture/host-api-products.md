@@ -1,36 +1,34 @@
 # Products / Host runtimes / ChatExtension
 
-Three distinct concepts. Don't conflate. Products run on one of **two host
-runtimes** — the native JS-bridge HostApi or the Rust TrUAPI core — selected
-per session by `ProductRuntimeSettings` (debug toggle, default TrUAPI).
+Three distinct concepts. Don't conflate. Products run on the Rust TrUAPI core
+in every build.
 
 ## Rules at a glance
 
-1. **`blocking`** — A new host call added without a referenced RFC stating its permission model. New host calls are protocol: they live in the Rust core (`paritytech/trinity-user-agents`) and, on the native runtime, in a `HostCallHandlerGroup`. If no RFC or the RFC is silent on permissions, escalate to the user; don't invent a policy.
+1. **`blocking`** — A new host call added without a referenced RFC stating its permission model. New host calls are protocol: they live in the Rust core (`paritytech/trinity-user-agents`). If no RFC or the RFC is silent on permissions, escalate to the user; don't invent a policy.
 2. **`blocking`** — `ProductId` constructed from arbitrary strings. Always `ProductId.fromUrl(uri)` / `fromStoredValue(...)`.
 3. **`blocking`** — WebView ownership ambiguity: two classes both call `destroy()` on the same WebView. Single owner.
-4. **`major`** — Container script loading split inconsistently across environments. Use `ContainerInjectionStrategy` uniformly.
-5. **`major`** — Handler group reaching for a global "current product" instead of an injected `CallingProductIdProvider`.
+4. **`major`** — Product bootstrap installed anywhere other than `TrUAPISessionStarter` / `TrUAPIBootstrapInstaller`.
+5. **`major`** — Host code reaching for a global "current product" instead of an injected `CallingProductIdProvider`.
 6. **`major`** — `NavigationPolicy` branching on URL string inside the policy. Classification is external (`DotNsUtils.classifyNavigation`).
 7. **`major`** — Multi-room product implemented as multiple `ChatExtension`s instead of a single `ProductChatExtension` (see `chat-extension.md`).
 8. **`major`** — Factory-of-factory-of-factory chain — collapse to single `Factory.create(scope, config)`.
 9. **`major`** — TrUAPI bridge logic reimplemented on the Android side instead of delegated to `HostApiInteractor` (signing, permissions, chain, theme). `ProductTrUAPIHostBridge` is a thin adapter, not a second dispatch layer.
 10. **`major`** — A `HostBridge` callback violating the threading contract: prompt-driven suspend callbacks may stay pending on a user decision; dispatcher-thread callbacks must return promptly and never block (see § Threading contract).
 11. **`major`** — A `UserConfirmationReview` variant mapped in `ConfirmationReviewMapping` without coverage in `ConfirmationReviewMappingTest`, or a non-signing variant routed anywhere except the fail-closed `null` path.
-12. **`major`** — Runtime selection decided anywhere other than `ProductRuntimeSettings` read at session creation (no mid-session switching, no per-feature overrides).
-13. **`minor`** — Inlining "derive product id from URL" at a call site when the `CallingProductIdProvider` abstraction is already in scope.
+12. **`minor`** — Inlining "derive product id from URL" at a call site when the `CallingProductIdProvider` abstraction is already in scope.
 
 
 
 | | **Product** | **Host runtime** | **ChatExtension** |
 |---|---|---|---|
-| What it is | A web-based mini-app | Native HostApi (JS↔Kotlin bridge) **or** the Rust TrUAPI core | A native chat plug-in |
-| Where it lives | Loaded into a WebView from `.dot` script | `feature/products/impl/.../hostApi/` (native) / `.../domain/truapi/` + `:bindings:truapi-host` (TrUAPI) | `feature/chats/api` + per-feature impls |
+| What it is | A web-based mini-app | The Rust TrUAPI core | A native chat plug-in |
+| Where it lives | Loaded into a WebView from `.dot` script | `feature/products/impl/.../domain/truapi/` + `:bindings:truapi-host` | `feature/chats/api` + per-feature impls |
 | Identified by | `ProductId` (from `.dot` domain) | n/a — serves whoever's connected | `ChatExtensionId` |
-| Lifecycle | Per-WebView session | Per `HostApiSession` / per `ProductTrUAPIHostBridge` (scoped to a WebView lifetime) | Hilt singleton |
-| Composition | Selected by navigation; loaded from DotNs | `HostCallHandlerGroup`s in `HostApiEnvironment` (native); Rust core dispatches, Kotlin implements `HostBridge` callbacks (TrUAPI) | `@IntoSet` Dagger multibinding |
+| Lifecycle | Per-WebView session | Per `ProductTrUAPIHostBridge` (scoped to a WebView lifetime) | Hilt singleton |
+| Composition | Selected by navigation; loaded from DotNs | Rust core dispatches, Kotlin implements `HostBridge` callbacks | `@IntoSet` Dagger multibinding |
 
-A product can *integrate* with chat (see `chat-extension.md § Products and chat`). That integration produces a `ProductChatExtension` — a single `ChatExtension` that hosts the product's JS in a hidden WebView and forwards `ChatHostCalls`. Chat products run the **native runtime only**; the core has no chat host yet.
+A product can *integrate* with chat (see `chat-extension.md § Products and chat`). That integration produces a `ProductChatExtension` — a single `ChatExtension` that drives the product's worker on the core through `TrUAPIChatWorker`.
 
 ---
 
@@ -55,13 +53,13 @@ data class Product(
 
 Three environments where products run:
 
-| Env | Where | Rendering | Navigation | Runtimes |
-|---|---|---|---|---|
-| **SPA Browser** | Full-screen WebView | Visible | Inline (same .dot and cross-.dot stays in WebView) | native / TrUAPI |
-| **Explore** | Catalog → product list | Visible | Same .dot in WebView; cross-.dot opens a new SPA browser | native / TrUAPI |
-| **Chat** | Hidden WebView under a `ProductChatExtension` | Invisible | Disabled (rejects all navigation) | native only |
+| Env | Where | Rendering | Navigation |
+|---|---|---|---|
+| **SPA Browser** | Full-screen WebView | Visible | Inline (same .dot and cross-.dot stays in WebView) |
+| **Explore** | Catalog → product list | Visible | Same .dot in WebView; cross-.dot opens a new SPA browser |
+| **Chat** | Hidden worker WebView under a `ProductChatExtension` | Invisible | Through `ChatWorkerNavigation`, only while the chat is open |
 
-On the native runtime each environment composes a different `HostApiEnvironment`; on TrUAPI each builds a `ProductTrUAPIHostBridge` via `TrUAPISessionStarter`.
+Each environment builds a `ProductTrUAPIHostBridge` via `TrUAPISessionStarter`.
 
 ### ProductRepository / installation
 
@@ -71,72 +69,7 @@ Products are stored in the Room DB and resolved via `ProductRepository`. Scripts
 
 ---
 
-## Runtime selection
-
-`ProductRuntimeSettings` (`feature/products/api/.../domain/runtime/`) is the single switch: a prefs-backed, **debug-only** toggle defaulting to the TrUAPI core (release builds always run native), surfaced in the debug menu. It is read **once per session creation** — flipping it affects the next session, never a live one. The seams that read it:
-
-- `RuntimeSelectingSpaHost` — the `SpaHost` binding; picks `NativeSpaHost` or `TrUAPISpaHost` per `createSession`.
-- `ProductTabSessionFactory` — picks `NativeProductTabSessionFactory` or `TrUAPIProductTabSessionFactory` per browser tab.
-- `ExploreProductsViewModel` — forks its `SessionComponents` per Explore session.
-
-Don't add a fourth decision point without wiring it through `ProductRuntimeSettings` the same way.
-
-Flipping the toggle prompts a restart (`RestartAppUseCase`, cancel reverts the
-flag) because the two runtimes namespace product storage differently and keep
-their permission memory in different places: a product switched mid-session
-reads an empty store, and anything already open keeps the runtime it booted
-with. Restarting makes the switch a clean boot rather than a half-migrated one.
-Matches `polkadot-app-ios-v2`, which prompts and calls `exit(0)`.
-
----
-
-## HostApi — the native runtime
-
-The JS↔Kotlin bridge. Products call JS methods that route through to Kotlin handlers.
-
-### `ContainerBridge`
-
-`feature/products/impl/.../jsEngine/ContainerBridge.kt`:
-
-Generic request/response + subscription handler registry. Message format:
-```json
-{ "type": "request" | "subscribe" | "unsubscribe", "id": "...", "method": "...", "params": {...} }
-```
-
-`bridge.registerHandler<P, R>(method) { params -> ... }` for request/response.
-`bridge.registerSubscription<P, E>(method) { params, emit -> ... }` for streams.
-
-### `HostApiSession`
-
-Orchestrates runtime + bridge + handlers for one product instance, scoped to a `CoroutineScope`. Auto-disposes when scope cancels.
-
-### `HostApiEnvironment` — composition
-
-```kotlin
-class HostApiEnvironment(
-    val navigationPolicy: NavigationPolicy,
-    val injectionStrategy: ContainerInjectionStrategy,
-    val handlerGroups: List<HostCallHandlerGroup>,
-)
-```
-
-Three orthogonal axes (navigation, injection, handlers), composed per environment.
-
-### `HostCallHandlerGroup` — the modular handler unit
-
-```kotlin
-interface HostCallHandlerGroup {
-    fun registerOn(bridge: ContainerBridge)
-}
-```
-
-Handler groups in code (today):
-
-**Shared across all environments**: `AccountHostCalls`, `ChainHostCalls`, `SigningHostCalls`, `NavigationHostCalls`, `PaymentHostCalls`, `PermissionHostCalls`, `StatementHostCalls`, `PreimageHostCalls`, `AllowanceHostCalls`, `EntropyHostCalls`, `NotificationHostCalls`, `UserIdHostCalls`, `StorageHostCalls`.
-
-**Chat-only**: `ChatHostCalls`.
-
-`HostCallGroupFactory.createShared(...)` builds the shared list; `createChatGroup(...)` adds chat-specific calls.
+## Host calls
 
 ### Adding a new host call — **always RFC-first**
 
@@ -147,20 +80,16 @@ A new host call is a public protocol surface. New host calls **require an RFC** 
 
 If an RFC doesn't exist or doesn't address the permission model: **stop and ask the user**. Do not invent a permission policy on the fly.
 
-On the native runtime the call is implemented as a `HostCallHandlerGroup` (register in `HostCallGroupFactory.createShared`, or `createChatGroup` if chat-only, and add the matching `ProductsBotApi` method). On TrUAPI the call is implemented in the `truapi` runtime; the Android side only implements any new `HostBridge` platform callback it needs.
+The call is implemented in the `truapi` runtime; the Android side only implements any new `HostBridge` platform callback it needs.
 
 ### `CallingProductIdProvider`
 
-Each handler group needs to know **which product** made the call.
+Host code that acts for a product needs to know **which product** made the call.
 
 - **Chat**: `FixedProductId(productId)` — constant for the extension's lifetime.
 - **SPA / Explore**: `UrlDerivedProductId { webView.url }` — extracted from current WebView URL.
 
-Always inject the provider; never let the handler reach into a global "current product".
-
-### Permission gating
-
-`PermissionHostCalls` is the centralized permission gate on the native runtime. Sensitive calls (signing, payments, account access, push) route through it. The exact list of "sensitive" categories is whatever the RFC for each call declares.
+Always inject the provider; never reach into a global "current product".
 
 ---
 
@@ -190,8 +119,8 @@ per product connection, and the Android side mirrors that split:
   re-activates the local session when the wallet account changes.
 - `ProductTrUAPIHostBridge` (`feature/products/impl/.../domain/truapi/`) opens
   one execution per product WebView with a product-scoped `HostBridge` and
-  delegates every wired callback to `HostApiInteractor` — the same facade the
-  native handler groups sit on. Do not reimplement dispatch on the Kotlin side.
+  delegates every wired callback to `HostApiInteractor`. Do not reimplement
+  dispatch on the Kotlin side.
   Closing the bridge closes its execution; the runtime stays up.
 
 `TrUAPISessionStarter` owns the boot sequence for all consumers: resolve the
@@ -264,35 +193,15 @@ namespaced per product. Don't bypass them. The `Prefs*` pair in the binding's
 
 ---
 
-## JsRuntime — abstraction over the JS engine (native runtime)
+## JsRuntime — abstraction over the JS engine
 
-`feature/products/impl/.../jsRuntime/JsRuntime.kt`:
-
-```kotlin
-interface JsRuntime {
-    suspend fun initialize()
-    suspend fun loadInitialPage(content: PageContent)
-    fun evaluate(script: String)
-    fun evaluateAsModule(script: String)
-    suspend fun waitForReady(): JsRuntime  // returns self once ready
-    // ...
-}
-```
-
-Today there's `WebViewRuntime` (Android WebView). Future work may add a QuickJS-backed runtime. **Code consuming a `JsRuntime` must not assume WebView semantics.**
-
-### `ContainerInjectionStrategy`
-
-Two strategies based on environment:
-
-| Strategy | Used by | Behavior |
-|---|---|---|
-| `ExplicitInjection` | Chat | Load empty page → wait ready → eval bridge + container scripts once. |
-| `PageLoadInjection` | SPA / Explore | Hook `onPageStarted` → inject bridge + container scripts on every page load (refresh-safe). |
+`feature/products/impl/.../jsRuntime/JsRuntime.kt` runs a product's worker in the hidden WebView that
+`TrUAPIWorkerSupervisor` drives. Today there's `WebViewRuntime` (Android WebView). **Code consuming a
+`JsRuntime` must not assume WebView semantics.**
 
 ### WebView ownership
 
-**One owner per WebView.** `BrowserWebViewProvider` owns the WebView lifecycle; UI subscribes to a read-only `StateFlow<WebView?>` to render. UI must not also call `destroy()`. `PageLifecycleSource` (implemented by the provider) is the narrow interface callers use to observe `onPageStarted` / `onPageFinished` without holding the full provider.
+**One owner per WebView.** `BrowserWebViewProvider` owns the WebView lifecycle; UI subscribes to a read-only `StateFlow<WebView?>` to render. UI must not also call `destroy()`.
 
 ---
 
@@ -311,7 +220,7 @@ sealed interface NavigationPolicy {
 }
 ```
 
-Classification is external and shared by **both runtimes**:
+Classification is external:
 `CoreNavigateClassifier.classify(origin, destination)` wraps the core's
 `parse_navigate` so every TrUAPI platform categorizes `.dot` navigation
 identically. A `null` result means the core rejected the input — it must be
@@ -322,7 +231,7 @@ branch on URL inside the policy. (`DotNsUtils.classifyNavigation` is gone.)
 
 ## Per-product storage isolation
 
-Native runtime: `StorageHostCalls` provides a per-product key-value store namespaced by `ProductId`. TrUAPI: the core namespaces per product over the prefs-backed stores. Either way, two products cannot read each other's storage — don't bypass it.
+The core namespaces product storage per product over the encrypted stores, so two products cannot read each other's storage — don't bypass it.
 
 ---
 
@@ -371,11 +280,10 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
   served the product's `widget` executable, or its app when the product publishes no widget.
 
 Core side (`feature/products/impl/.../domain/truapi/`):
-- Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
   `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
-  down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
+  down.
 - `TrUAPIPocketFaceStreams` takes one `claimWorker` claim per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
   renderer actions. The core serves a product's Pocket calls from its own collection, so the worker's execution takes
@@ -402,12 +310,10 @@ and the product registers its rooms through its own `createRoom`. A host-placed 
 
 | Concept | Goes in |
 |---|---|
-| New host call (native runtime) | `feature/products/impl/.../hostApi/handlerGroups/<Name>HostCalls.kt` + `ProductsBotApi` method |
-| New host call (TrUAPI) | RFC + implementation in `paritytech/trinity-user-agents` (the `truapi` runtime); a `HostBridge` callback here only if a new native capability is needed |
+| New host call | RFC + implementation in `paritytech/trinity-user-agents` (the `truapi` runtime); a `HostBridge` callback here only if a new native capability is needed |
 | New `HostBridge` callback wiring | `feature/products/impl/.../domain/truapi/ProductTrUAPIHostBridge.kt`, delegating to `HostApiInteractor` |
 | New review-variant mapping | `feature/products/impl/.../domain/truapi/ConfirmationReviewMapping.kt` + `ConfirmationReviewMappingTest` |
 | New `NavigationPolicy` variant | `feature/products/impl/.../hostApi/navigation/NavigationPolicy.kt` |
-| New product runtime mode | the consuming feature (SPA Browser VM, Explore VM, ChatExtension) — keep construction close to the user-facing entry point, selected via `ProductRuntimeSettings` |
 
 ---
 
@@ -415,26 +321,24 @@ and the product registers its rooms through its own `createRoom`. A host-placed 
 
 - **RFC-0020 `host_create_transaction`** — the canonical extrinsic-creation host call. New transaction-shaped host calls compose with it rather than duplicating signing/origin logic.
 - **RFC-first host calls** — every new host call carries a referenced RFC stating its permission model before implementation. The `host-api-products.md § Adding a new host call` rule is the gate (already `blocking` in the Rules at a glance).
-- **The TrUAPI runtime replaces the native one** — dual-runtime is a transition state, native is the compatibility path. New host-side capability lands in the core first; the native HostApi gets fixes, not features.
+- **Core-first** — new host-side capability lands in the core; the Android side adds only the platform callbacks it needs.
 - **Thin native bridge** — `ProductTrUAPIHostBridge` adapts `HostBridge` callbacks to `HostApiInteractor`; it does not re-implement dispatch or business logic.
-- **Composable `HostApiEnvironment`** — the three axes (`navigationPolicy`, `injectionStrategy`, `handlerGroups`) are orthogonal and remain so. New product modes pick a triple; don't introduce a fourth axis without a design discussion.
 - **One owner per WebView** — the provider owns the lifecycle. Treat any drift back toward UI-managed WebView destruction as a regression.
-- **Per-product storage isolation** — never bypass the namespaced stores on either runtime.
+- **Per-product storage isolation** — never bypass the namespaced stores.
 
 Probe questions on every host-API / host-bridge PR (named-but-not-blocking):
 - Does this host call have an RFC + documented permission model?
 - Does the change respect the `HostBridge` threading contract, and is any new review mapping covered by `ConfirmationReviewMappingTest`?
-- Does this proposal introduce a new orthogonal axis to `HostApiEnvironment`, or compose within the existing three?
 - Does this WebView interaction respect single ownership?
 
-A "no" on the first two or a "yes" on the third must be named in the architect plan.
+A "no" on any of them must be named in the architect plan.
 
 ## Anti-patterns flagged by past PRs
 
 - Factory soup — `SpaProductWebViewProvider` had a factory-of-factory-of-factory chain. Default to single `Factory.create(scope, config)` returning the working instance.
 - WebView ownership ambiguity — engine *and* UI both reaching `destroy()`. Single owner.
 - `ProductId` constructed from arbitrary strings — restrict construction via `ProductId.fromUrl(uri)` / `fromStoredValue(...)`.
-- Container script loading inconsistent across environments — unify via `ContainerInjectionStrategy`; don't have different layers in different envs.
+- Bootstrap installation inconsistent across environments — every environment boots through `TrUAPISessionStarter`.
 - Reaching into product-specific knowledge from `SessionManager` / generic services — generic services expose generic subscription APIs; specific knowledge lives at the calling site.
 - Reimplementing host-API dispatch on the Kotlin side instead of delegating to `HostApiInteractor` and letting the Rust core dispatch.
 - Adding new host calls without an RFC (per user direction) — **always require an RFC** that defines the permission model.

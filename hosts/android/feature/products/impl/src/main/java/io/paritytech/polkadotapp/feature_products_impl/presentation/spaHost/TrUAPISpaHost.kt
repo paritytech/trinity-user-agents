@@ -46,12 +46,10 @@ class TrUAPISpaHost @Inject constructor(
     private val productSources: ProductSources,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession =
-        createSession(initialUrl, underCard, productSources.ofSpaPage(initialUrl))
-
-    context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    fun createSession(initialUrl: String, underCard: Boolean, source: ProductSource?): SpaHostSession {
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
+
+        val source = productSources.ofSpaPage(initialUrl)
 
         val pageUrl = (source as? ProductSource.DevServer)?.product?.url ?: initialUrl
         val fixedProductId = source?.fixedProductId

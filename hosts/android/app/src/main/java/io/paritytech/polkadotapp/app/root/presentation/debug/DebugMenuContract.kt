@@ -38,10 +38,4 @@ interface DebugMenuContract {
     fun onClearJWTTokenClick()
 
     fun onCoinageDebugWidgetsToggled(enabled: Boolean)
-
-    fun onTruapiRuntimeToggled(enabled: Boolean)
-
-    fun onRuntimeRestartConfirmed()
-
-    fun onRuntimeRestartCancelled()
 }

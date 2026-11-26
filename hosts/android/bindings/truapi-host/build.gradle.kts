@@ -9,8 +9,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 // adapter shell.
 //
 // The module is NOT optional: `:feature:products:impl` depends on it in every
-// build variant, so the core (and JNA) ship in release APKs too, even though
-// the runtime toggle keeps release on the native host.
+// build variant, so the core (and JNA) ship in release APKs too.
 
 plugins {
     id("polkadotapp.android.rust")

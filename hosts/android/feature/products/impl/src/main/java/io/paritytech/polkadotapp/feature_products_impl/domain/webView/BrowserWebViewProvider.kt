@@ -26,7 +26,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.browser.firstParty
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import kotlinx.coroutines.CoroutineScope
@@ -41,8 +40,7 @@ import kotlin.time.Duration.Companion.seconds
  * Visible WebView provider for SPA browser and Explore environments.
  *
  * Handles WebView lifecycle, DotNs content serving, permission checks, and navigation.
- * Does NOT inject scripts — that responsibility belongs to [PageLoadInjection]
- * which hooks into this provider via [PageLifecycleSource].
+ * Does NOT inject scripts — the TrUAPI session installs its bootstrap at document start.
  *
  * Replaces [SpaProductWebViewProvider] and [SpaExplorerWebViewProvider].
  */
@@ -61,7 +59,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     @Assisted source: ProductSource?,
     @Assisted private val servedExecutable: ExecutableKind,
     @Assisted("waitForInitialTheme") private val waitForInitialTheme: Boolean,
-) : WebViewProvider(dispatchers), PageLifecycleSource {
+) : WebViewProvider(dispatchers) {
     @AssistedFactory
     interface Factory {
         fun create(

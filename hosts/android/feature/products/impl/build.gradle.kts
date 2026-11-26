@@ -11,54 +11,6 @@ android {
     namespace = "io.paritytech.polkadotapp.feature_products_impl"
 }
 
-val containerDir = rootProject.file("feature/products/product-container")
-val containerOutput = containerDir.resolve("dist/container.js")
-val assetsDir = project.file("src/main/assets")
-val isWindows = org.gradle.internal.os.OperatingSystem.current().isWindows
-
-fun Exec.runMultiplatformCommand(command: String) {
-    if (isWindows) {
-        commandLine("cmd", "/c", command)
-    } else {
-        commandLine("bash", "-lc", command)
-    }
-}
-
-val npmInstallContainer by tasks.registering(Exec::class) {
-    workingDir = containerDir
-    runMultiplatformCommand("npm install")
-
-    inputs.file(containerDir.resolve("package.json"))
-    inputs.file(containerDir.resolve("package-lock.json"))
-    outputs.dir(containerDir.resolve("node_modules"))
-}
-
-val buildContainerScript by tasks.registering(Exec::class) {
-    dependsOn(npmInstallContainer)
-    workingDir = containerDir
-    runMultiplatformCommand("npm run build")
-
-    inputs.dir(containerDir.resolve("src"))
-    // Bundled deps are inlined by esbuild, so a version bump alone must invalidate the output.
-    inputs.file(containerDir.resolve("package-lock.json"))
-    outputs.file(containerOutput)
-}
-
-val copyContainerScript by tasks.registering(Copy::class) {
-    dependsOn(buildContainerScript)
-    from(containerOutput)
-    into(assetsDir)
-}
-
-afterEvaluate {
-    tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-        dependsOn(copyContainerScript)
-    }
-    tasks.matching { "lint" in it.name.lowercase() }.configureEach {
-        dependsOn(copyContainerScript)
-    }
-}
-
 dependencies {
     api(project(":feature:products:api"))
 

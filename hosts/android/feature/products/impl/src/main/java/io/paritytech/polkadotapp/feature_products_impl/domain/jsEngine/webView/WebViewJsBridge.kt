@@ -15,8 +15,7 @@ fun interface JsNativeHandler {
  * JavaScript interface bridge for WebView.
  * Exposes native functions to JavaScript via @JavascriptInterface.
  *
- * Communication goes through the ContainerBridge pattern:
- * JS calls `Android.call("__container__", json)` -> dispatches to registered handlers.
+ * JS calls `Android.call(name, argsJson)`, which dispatches to the handler registered under that name.
  */
 class WebViewJsBridge {
     private val handlers = ConcurrentHashMap<String, JsNativeHandler>()

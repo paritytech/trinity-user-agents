@@ -45,8 +45,8 @@ enum class FeatureOption {
     BROWSE_TAB,
     TAB_BAR_CONNECTIVITY_INDICATOR,
 
-    // The "Debug features" card under the balance card: the holdings breakdown, the faucet top-up and
-    // log sharing. Off on release alone — hence its own BuildConfig field rather than SAFETY_MODE, which
+    // The "Debug features" card under the balance card: the holdings breakdown and log sharing.
+    // Off on release alone — hence its own BuildConfig field rather than SAFETY_MODE, which
     // is also set on safetynet builds, where the card is wanted.
     COINAGE_DEBUG_FEATURES,
 

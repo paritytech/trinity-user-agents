@@ -302,10 +302,6 @@
     <string name="debug_menu_clear_jwt_token">Clear JWT token (none)</string>
     <string name="debug_menu_clear_jwt_token_stored">Clear JWT token (stored)</string>
     <string name="debug_menu_coinage_debug_widgets">Coinage debug overlays</string>
-    <string name="debug_menu_truapi_runtime">TrUAPI Runtime (%1$s)</string>
-    <string name="debug_menu_runtime_restart_title">Restart required</string>
-    <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
-    <string name="debug_menu_runtime_restart_confirm">Restart</string>
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>
@@ -923,13 +919,11 @@
     <string name="splash_waiting_for_network_title">Waiting for network connection…</string>
     <string name="splash_waiting_for_network_message">Turn off Airplane Mode or check your internet</string>
 
-    <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>
     <string name="pocket_error_get_cash_unavailable">Get %1$s isn\'t available right now. Try again later.</string>
     <string name="pocket_error_withdraw_unavailable">Withdrawing %1$s isn\'t available right now. Try again later.</string>
-    <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
     <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
     <string name="pocket_pinned_card_humanity">Humanity</string>
     <string name="host_placed_chat_jollity">Jollity</string>

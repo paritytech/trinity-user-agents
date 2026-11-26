@@ -37,6 +37,8 @@ class ProductWorkerRefCounterTest {
     private class FakeWorker : ProductWorker {
         override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> = Result.success(Unit)
         override fun renderMessage(roomId: ProductChatIdParameter?, messageId: ChatMessageId, messageType: String, messageData: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
+        override fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
+        override fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) = Unit
         override fun dispatchEvent(event: JsUiEvent) = Unit
     }
 

@@ -19,7 +19,7 @@ class TrUAPISigningContext(
     override val signingRequestBody: SigningRequestBody,
     override val signingAccount: SigningAccount,
 ) : SigningContext {
-    // Matches the native host, which has no icon for a product either.
+    // The host has no icon for a product.
     override val requesterIconUrl: String = ""
 
     private val decision = CompletableDeferred<Boolean>()

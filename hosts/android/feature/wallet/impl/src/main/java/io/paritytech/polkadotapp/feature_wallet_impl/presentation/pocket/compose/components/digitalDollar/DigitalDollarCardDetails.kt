@@ -96,7 +96,6 @@ fun DigitalDollarCardDetails(
         state = state,
         onSendClick = viewModel::onSendClick,
         onGetCashClick = viewModel::onGetCashClick,
-        onAutoFundClick = viewModel::onAutoFundClick,
         onCoinTapped = viewModel::onCoinTapped,
         onCoinsFlickedDown = viewModel::onCoinsFlickedDown,
         onHeadingClicked = viewModel::onHeadingClicked,
@@ -117,7 +116,6 @@ private fun DigitalDollarCardDetailsContent(
     state: DigitalDollarCardDetailsUiState,
     onSendClick: () -> Unit,
     onGetCashClick: () -> Unit,
-    onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
     onCoinsFlickedDown: () -> Unit,
     onHeadingClicked: () -> Unit,
@@ -214,7 +212,6 @@ private fun DigitalDollarCardDetailsContent(
 
                 CoinageCardContent(
                     state = coinageState,
-                    onAutoFundClick = onAutoFundClick,
                     onCoinTapped = onCoinTapped,
                     onCoinsFlickedDown = onCoinsFlickedDown,
                     onHeadingClicked = onHeadingClicked,
@@ -334,9 +331,6 @@ private fun DigitalDollarCardDetailsPreview() {
                                 canSpendGainingPrivacy = true
                             )
                         ),
-                        autoFundAvailable = true,
-                        fundInProgress = false,
-                        actionsEnabled = true,
                         shareLogsEnabled = true,
                         detailsVisible = false,
                         focusedCoin = null,
@@ -349,7 +343,6 @@ private fun DigitalDollarCardDetailsPreview() {
                 ),
                 onSendClick = {},
                 onGetCashClick = {},
-                onAutoFundClick = {},
                 onCoinTapped = {},
                 onCoinsFlickedDown = {},
                 onHeadingClicked = {},

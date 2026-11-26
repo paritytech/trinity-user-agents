@@ -26,7 +26,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @Composable
 internal fun CoinageCardContent(
     state: CoinageUiState,
-    onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
     onCoinsFlickedDown: () -> Unit,
     onHeadingClicked: () -> Unit,
@@ -52,7 +51,6 @@ internal fun CoinageCardContent(
                 state = state,
                 onTestDataChange = onTestDataSelected,
                 onCoinSetChange = onCoinSetSelected,
-                onAutoFundClick = onAutoFundClick,
                 onShareLogsClick = onShareLogsClick
             )
         }
@@ -65,7 +63,6 @@ private fun DebugFeaturesCard(
     state: CoinageUiState,
     onTestDataChange: (CoinageTestDataMode) -> Unit,
     onCoinSetChange: (CoinageScene.CoinSet) -> Unit,
-    onAutoFundClick: () -> Unit,
     onShareLogsClick: () -> Unit
 ) {
     CoinageWidgetCard(
@@ -80,17 +77,6 @@ private fun DebugFeaturesCard(
         }
 
         BalanceBreakdownTable(breakdown = state.tokensState.breakdown)
-
-        if (state.autoFundAvailable) {
-            PolkadotTextButton(
-                modifier = Modifier.fillMaxWidth(),
-                text = stringResource(RCommon.string.pocket_digital_dollar_faucet_top_up),
-                style = PolkadotButtonStyle.secondary(),
-                enabled = state.actionsEnabled,
-                loading = state.fundInProgress,
-                onClick = onAutoFundClick
-            )
-        }
 
         if (state.shareLogsEnabled) {
             PolkadotTextButton(

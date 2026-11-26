@@ -372,10 +372,10 @@ instead. Change them there if your fork needs a different cut.
 
 | Field | `debug` | `nightly` | `safetynet` | `release` | Effect |
 |-------|---------|-----------|-------------|-----------|--------|
-| `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also picks the Trinity stack the TrUAPI core runs (`TESTNET` previewnet, `NIGHTLY` paseo-next-v2, `PRODUCTION` Polkadot) and enables the faucet top-up outside `PRODUCTION`. |
+| `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also picks the Trinity stack the TrUAPI core runs (`TESTNET` previewnet, `NIGHTLY` paseo-next-v2, `PRODUCTION` Polkadot). |
 | `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, collectibles. |
 | `TAB_BAR_CONNECTIVITY_INDICATOR` | on | on | on | on | Chain-health indicators in the tab bar. The docklet has four item slots, so the browse tab shows only when this is off; it is the switch that brings the browse tab back. |
-| `COINAGE_DEBUG_FEATURES` | on | on | on | off | "Debug features" card under the balance card (breakdown, faucet top-up, log sharing). |
+| `COINAGE_DEBUG_FEATURES` | on | on | on | off | "Debug features" card under the balance card (breakdown, log sharing). |
 | `TESTNET_FUND_ENABLED` | on | on | on | off | Log-sharing action on the Coinage card. |
 | `SAMPLE_BOT` | on | off | off | off | Sample bot chat pre-created for a new account. |
 

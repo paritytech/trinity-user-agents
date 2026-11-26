@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
@@ -13,8 +14,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAsset
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.DerivationIndexWire
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.toDomain
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -220,7 +219,7 @@ class RealExecuteTopUpUseCaseTest {
         useCase.execute(fixture.operation, resolved(fixture.source)).toList()
 
     private fun onboardOperation(startedAt: Instant = OPENED) = operation(
-        source = PaymentTopUpSource.ProductAccount(DerivationIndexWire.Plain(0u).toDomain().getOrThrow()),
+        source = PaymentTopUpSource.ProductAccount(DerivationIndex32.fromUInt(0u)),
         startedAt = startedAt,
     )
 

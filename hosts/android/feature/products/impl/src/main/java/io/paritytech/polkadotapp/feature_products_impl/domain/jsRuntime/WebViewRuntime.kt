@@ -1,9 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime
 
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import io.paritytech.polkadotapp.common.utils.evaluateJavascript
-import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.ContainerTransport
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.webView.WebViewJsBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebViewProvider
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -84,34 +81,8 @@ class WebViewRuntime(
         }
     }
 
-    override suspend fun injectDocumentStartScript(js: String, allowedOriginRules: Set<String>): Boolean {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return false
-
-        webViewProvider.addWebViewSetup {
-            WebViewCompat.addDocumentStartJavaScript(it, js, allowedOriginRules)
-        }
-        return true
-    }
-
     override suspend fun waitForReady() {
         state.first { it == RuntimeState.Ready }
-    }
-
-    /**
-     * Creates a [ContainerTransport] backed by this runtime's WebView.
-     * Used to construct a [ContainerBridge] that communicates through this runtime.
-     */
-    fun createTransport(): ContainerTransport = object : ContainerTransport {
-        override fun registerIncomingHandler(handler: (json: String) -> Unit) {
-            jsBridge.registerFunction("__container__") { argsJson ->
-                handler(argsJson)
-                ""
-            }
-        }
-
-        override suspend fun evaluateJs(script: String) {
-            evaluate(script)
-        }
     }
 
     override fun dispose() {

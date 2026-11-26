@@ -31,7 +31,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFa
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.TransactionSponsoring
@@ -42,11 +41,9 @@ import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigF
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.CorePocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
-import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductFundingOperationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealBrowserTabRepository
-import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealProductFundingOperationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealRingVrfKeyRegistrationRepository
@@ -55,11 +52,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.RingVrfKe
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.RealScheduledProductNotificationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
-import io.paritytech.polkadotapp.feature_products_impl.data.storage.AssetContainerScriptProvider
-import io.paritytech.polkadotapp.feature_products_impl.data.storage.ContainerScriptProvider
-import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductLocalStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
-import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealProductLocalStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealTopUpSourceStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
@@ -90,8 +83,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring
 import io.paritytech.polkadotapp.feature_products_impl.domain.image.BulletinImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.RealProductNotificationScheduler
-import io.paritytech.polkadotapp.feature_products_impl.domain.operation.ProductOperationService
-import io.paritytech.polkadotapp.feature_products_impl.domain.operation.RealProductOperationService
 import io.paritytech.polkadotapp.feature_products_impl.domain.origin.ProductAccountOrigins
 import io.paritytech.polkadotapp.feature_products_impl.domain.origin.RealProductAccountOrigins
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RealRequestPaymentUseCase
@@ -135,7 +126,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.profile.CorePublicProfileAvatarSource
-import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.ScaleWidgetSerializer
@@ -156,11 +146,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
-import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.TrUAPISpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import okhttp3.Call
@@ -198,7 +187,7 @@ internal interface ProductsModule {
 
     @Binds
     @Singleton
-    fun bindSpaHost(impl: RuntimeSelectingSpaHost): SpaHost
+    fun bindSpaHost(impl: TrUAPISpaHost): SpaHost
 
     @Binds
     @Singleton
@@ -249,10 +238,6 @@ internal interface ProductsModule {
 
     @Binds
     @Singleton
-    fun bindContainerScriptProvider(impl: AssetContainerScriptProvider): ContainerScriptProvider
-
-    @Binds
-    @Singleton
     fun bindProductBotManagementInteractor(impl: RealProductBotManagementInteractor): ProductBotManagementInteractor
 
     @Binds
@@ -275,9 +260,6 @@ internal interface ProductsModule {
     fun bindPocketDeepLinkHandler(impl: PocketDeepLinkHandler): DeepLinkHandler
 
     @Binds
-    fun bindProductLocalStorage(impl: RealProductLocalStorage): ProductLocalStorage
-
-    @Binds
     fun bindTopUpSourceStorage(impl: RealTopUpSourceStorage): TopUpSourceStorage
 
     @Binds
@@ -292,17 +274,6 @@ internal interface ProductsModule {
 
     @Binds
     fun bindWorkerBootFactory(impl: RealWorkerBootFactory): WorkerBootFactory
-
-    @Binds
-    @Singleton
-    fun bindProductOperationService(impl: RealProductOperationService): ProductOperationService
-
-    @Binds
-    fun bindProductFundingOperationRepository(impl: RealProductFundingOperationRepository): ProductFundingOperationRepository
-
-    @Binds
-    @IntoSet
-    fun bindProductWorkerInitializer(impl: ProductWorkerInitializer): AppInitializer
 
     @Binds
     @IntoSet
@@ -465,14 +436,6 @@ internal interface ProductsModule {
         fun provideDebugPocketCards(@ApplicationContext context: Context): DebugPocketCards =
             PrefsDebugPocketCards(
                 prefs = context.getSharedPreferences("debug_pocket_cards", Context.MODE_PRIVATE),
-                isDebugBuild = BuildConfig.DEBUG,
-            )
-
-        @Provides
-        @Singleton
-        fun provideProductRuntimeSettings(@ApplicationContext context: Context): ProductRuntimeSettings =
-            PrefsProductRuntimeSettings(
-                prefs = context.getSharedPreferences("product_runtime_settings", Context.MODE_PRIVATE),
                 isDebugBuild = BuildConfig.DEBUG,
             )
 
