@@ -1,7 +1,9 @@
 //! The fields no other copy of a stack's descriptor may change.
 //!
-//! [`Pinned`] holds the copy the build bundles, and
-//! [`Pinned::refuse_change`] checks stored and fetched copies against it.
+//! [`Pinned`] holds the copy the build bundles.
+//! [`Pinned::refuse_change`] checks stored and fetched copies against it, and
+//! [`Pinned::keep_bundled_relay_light_spec`] gives a copy the core runs the
+//! bundled relay light spec.
 
 use std::collections::BTreeMap;
 
@@ -18,10 +20,11 @@ use super::{ReservedValuesPolicy, StackError};
 ///
 /// A stack its build allows reserved values pins more of what its descriptor
 /// names: the chain roles and each one's genesis hash, `assets`, `contracts`,
-/// `dotns`, `coinage`, and the digest of the relay's light spec, the file
-/// that carries the relay's sync checkpoint. The pins fix what the descriptor
-/// says, not what a chain answers: the core does not check a genesis hash
-/// against the chain it reads.
+/// `dotns` and `coinage`. The pins fix what the descriptor says, not what a
+/// chain answers: the core does not check a genesis hash against the chain it
+/// reads. Such a stack also runs the relay light spec its bundled copy names,
+/// whatever a newer copy names, so a light client starts from the sync
+/// checkpoint the build ships.
 #[derive(Clone)]
 pub struct Pinned {
 	bundled: Descriptor,
@@ -56,6 +59,29 @@ impl Pinned {
 		}
 	}
 
+	/// `copy` with the relay light spec the bundled copy names, or none when
+	/// it names none, on a stack `reserved_values` allows reserved values.
+	/// Any other stack runs `copy` as it is.
+	///
+	/// The relay light spec carries the sync checkpoint a light client starts
+	/// from. An operator publishes a fresher one from time to time, so a copy
+	/// that names another is not refused: the core keeps the bundled spec and
+	/// takes the rest of the copy.
+	pub fn keep_bundled_relay_light_spec(
+		&self,
+		mut copy: Descriptor,
+		reserved_values: &ReservedValuesPolicy,
+	) -> Descriptor {
+		if !reserved_values.allowed {
+			return copy;
+		}
+		let Some(bundled_relay) = self.bundled.relay() else { return copy };
+		if let Some(relay) = copy.chains.iter_mut().find(|chain| chain.role == bundled_relay.role) {
+			relay.light_spec = bundled_relay.light_spec.clone();
+		}
+		copy
+	}
+
 	/// The first field a stack allowed reserved values pins besides its TLD
 	/// that `copy` changes, or `None` when it changes none.
 	fn changed_reserved_field(&self, copy: &Descriptor) -> Option<&'static str> {
@@ -67,10 +93,6 @@ impl Pinned {
 			("contracts", non_empty(&bundled.contracts) != non_empty(&copy.contracts)),
 			("dotns", non_empty(&bundled.dotns) != non_empty(&copy.dotns)),
 			("coinage", bundled.coinage != copy.coinage),
-			(
-				"the relay's lightSpec.sha256",
-				relay_light_spec_digest(bundled) != relay_light_spec_digest(copy),
-			),
 		]
 		.into_iter()
 		.find_map(|(field, changed)| changed.then_some(field))
@@ -109,13 +131,6 @@ fn assets_by_role(descriptor: &Descriptor) -> BTreeMap<&str, &Asset> {
 /// left out.
 fn non_empty(map: &Option<BTreeMap<String, String>>) -> Option<&BTreeMap<String, String>> {
 	map.as_ref().filter(|map| !map.is_empty())
-}
-
-/// The digest of the relay's light spec, or `None` when the relay names no
-/// light spec. The spec's URL is not pinned: the digest fixes what any server
-/// may serve.
-fn relay_light_spec_digest(descriptor: &Descriptor) -> Option<&str> {
-	Some(descriptor.relay()?.light_spec.as_ref()?.sha256.as_str())
 }
 
 #[cfg(test)]

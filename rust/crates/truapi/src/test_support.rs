@@ -589,10 +589,10 @@ pub fn test_light_spec(digest: u8) -> serde_json::Value {
 
 /// A stack on the reserved `dot` TLD as published at `sequence`, which starts
 /// only under a build that allows it reserved values. It sets every field
-/// such a stack pins: the relay's light spec, two `assets`, `contracts`,
-/// `dotns` and `coinage`. Its chains are `Collectives`, a role the core never
-/// reads, listed ahead of the Relay with a light spec of its own, then those
-/// of [`published_test_descriptor`].
+/// such a stack pins, two `assets`, `contracts`, `dotns` and `coinage`, and
+/// the relay light spec it runs from the bundled copy. Its chains are
+/// `Collectives`, a role the core never reads, listed ahead of the Relay with
+/// a light spec of its own, then those of [`published_test_descriptor`].
 pub fn reserved_test_descriptor(sequence: u32) -> serde_json::Value {
 	let mut descriptor = test_descriptor("dot", TEST_STACK_PEOPLE, [0xbb; 32], [0xcc; 32]);
 	descriptor["sequence"] = sequence.into();

@@ -26,7 +26,8 @@ impl HeldCopy {
 
 /// What a copy must pass before the core runs it: it verifies under the
 /// stack's pointer, names a stack the core can run, and keeps the pinned
-/// fields.
+/// fields. On a stack allowed reserved values the copy the core holds keeps
+/// the bundled relay light spec.
 #[derive(Clone)]
 pub struct CopyRules {
 	pointer: Pointer,
@@ -64,7 +65,10 @@ impl CopyRules {
 		let stack =
 			Stack::from_descriptor(&self.pointer, &verified.descriptor, &self.reserved_values)?;
 		self.pinned.refuse_change(&verified.descriptor, &self.reserved_values)?;
-		Ok(HeldCopy { descriptor: verified.descriptor, stack })
+		let descriptor = self
+			.pinned
+			.keep_bundled_relay_light_spec(verified.descriptor, &self.reserved_values);
+		Ok(HeldCopy { descriptor, stack })
 	}
 
 	/// The copy in `record`, a record from the stack's store.

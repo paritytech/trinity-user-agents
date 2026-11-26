@@ -74,9 +74,9 @@ To add a stack to the list, open a pull request that:
 Users get the stack with the next release of `@parity/trinity-stack` and the crate.
 
 A host build that sets `reservedValues.allowed`, as a Polkadot build does, pins its stack to the copy it bundles: the
-chain roles and their genesis hashes, `assets`, `contracts`, `dotns`, `coinage` and the `sha256` of the relay's
-`lightSpec`. Refresh the stack's copy in `stacks/` with `scripts/update-stacks.sh` before such a build is released, so
-the copy it bundles has the published values of those fields. Run the script with a `truapi-host` built from the same
+chain roles and their genesis hashes, `assets`, `contracts`, `dotns` and `coinage`. It also runs the relay's `lightSpec`
+from that copy whatever a newer descriptor names, so its light client starts from the checkpoint the build ships. Refresh the stack's copy in `stacks/` with `scripts/update-stacks.sh` before such a build is released, so
+the copy it bundles has the published values of those fields and a fresh relay checkpoint. Run the script with a `truapi-host` built from the same
 tree, `TRUAPI_HOST=target/debug/truapi-host` after `cargo build -p truapi-host-cli`. The script and the daily
 `update-chain-specs.yml` otherwise run the installed release, which can be older than the tree and keep a copy whose
 only change is to a pinned field.

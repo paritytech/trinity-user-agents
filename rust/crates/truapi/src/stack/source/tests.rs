@@ -6,7 +6,8 @@ use crate::{
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
 		redeployed_reserved_test_descriptor, refused_for_pinned, reserved_test_descriptor,
-		sign_test_descriptor, stack_status, stored_test_record, test_chain, without_bulletin,
+		sign_test_descriptor, stack_status, stored_test_record, test_chain, test_light_spec,
+		without_bulletin,
 	},
 };
 
@@ -543,6 +544,32 @@ fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
 			None,
 			stack_status(&bundled, refused_for_pinned("dotns"))
 		)
+	);
+}
+
+/// An operator publishes a fresher relay light spec from time to time. A
+/// stack allowed reserved values takes such a copy, stores it and follows the
+/// rest of it, such as a moved endpoint, but runs the relay light spec its
+/// build ships, also after a restart from the stored copy.
+#[test]
+fn a_reserved_stack_takes_a_fresher_relay_light_spec_and_runs_its_bundled_one() {
+	let bundled = reserved_test_descriptor(1);
+	let with_relay_spec = |light_spec| {
+		let mut copy = reserved_test_descriptor(2);
+		test_chain(&mut copy, "People")["rpc"] = serde_json::json!(["wss://moved.test.invalid"]);
+		test_chain(&mut copy, "Relay")["lightSpec"] = light_spec;
+		copy
+	};
+	let fresher = with_relay_spec(test_light_spec(0xee));
+	let runs = with_relay_spec(test_chain(&mut bundled.clone(), "Relay")["lightSpec"].clone());
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+
+	let record = serve_stored(&mut source, &fresher, START).expect("the fresher copy is stored");
+	let restarted = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+
+	assert_eq!(
+		(source.status(), restarted.status()),
+		(stack_status(&runs, Some(StackRefreshOutcome::Current)), stack_status(&runs, None))
 	);
 }
 

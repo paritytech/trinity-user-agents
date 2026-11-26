@@ -80,16 +80,18 @@ export type LogLevel = string;
  * A `stack` that is allowed reserved values is pinned to its bundled
  * descriptor. A copy the core stored or fetched is refused when it gives a
  * chain role another genesis hash, adds or drops a chain role, or changes
- * `assets`, `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
- * `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
- * build changes what the descriptor names for those. A `testStack` has no
- * descriptor and pins nothing.
+ * `assets`, `contracts`, `dotns` or `coinage`. Only a new build changes what
+ * the descriptor names for those. The core also runs the relay's `lightSpec`
+ * the bundled descriptor names, the file that carries the relay's sync
+ * checkpoint, in place of the one a newer copy names, and takes the rest of
+ * that copy. A `testStack` has no descriptor and pins nothing.
  *
  * The pins cover the descriptor, not the chains. The core does not check a
  * genesis hash against the chain a host reads, so what a host reads over the
  * descriptor's endpoints is protected only by a light client that starts from
- * the pinned relay light spec, and that protects the relay alone: a parachain's
- * `paraId` and `lightSpec` are not pinned.
+ * the bundled relay light spec, and that protects the relay alone: a
+ * parachain's `paraId` and `lightSpec` are not pinned. `network` and
+ * `services` are not pinned either.
  */
 export interface ReservedValuesPolicy {
   /**
@@ -195,7 +197,9 @@ export type StackMismatch =
 export interface StackStatus {
   /**
    * The verified descriptor the core runs, as plain descriptor JSON. The
-   * host's own features read their chains and services from it.
+   * host's own features read their chains and services from it. On a `stack`
+   * allowed reserved values its relay `lightSpec` is the bundled
+   * descriptor's.
    */
   descriptor: string;
   /**

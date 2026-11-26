@@ -310,14 +310,25 @@ the record fails.
 
 On a stack whose build allows it reserved values the core pins more of the
 bundled copy: the set of chain roles and each role's genesis hash, `assets`,
-`contracts`, `dotns`, `coinage`, and the `sha256` of the relay's `lightSpec`,
-which carries the relay's sync checkpoint. A descriptor that changes one is
-refused the same way. A fresher relay checkpoint, and a fork made again from a
-later block, change the relay's `lightSpec` and so need a new build. So does a
-wipe: a stack whose build allows it reserved values, such as pcf-devnet in
-dotli, cannot follow a wipe of its chains, because the new genesis hashes are
-pinned. The core refuses the new descriptor and stays on the wiped chains until
-a host build that bundles the new descriptor replaces the running one.
+`contracts`, `dotns` and `coinage`. A descriptor that changes one is refused
+the same way.
+
+Such a stack also runs the relay's `lightSpec` from the bundled copy, the file
+that carries the relay's sync checkpoint. A newer descriptor that names a
+fresher one is taken, and its other changes, such as moved endpoints, are
+followed, but the descriptor the core runs and reports in `StackStatus` keeps
+the bundled relay light spec. A light client therefore starts from the
+checkpoint the build ships, which a stolen descriptor key cannot replace. The
+checkpoint ages until a new build bundles a fresher one, which only makes the
+first sync longer, and the relay's bootnodes come from that same file. The
+operator has to keep serving the bundled spec at its URL, which names the
+spec's digest on Polkadot.
+
+A wipe needs a new build: a stack whose build allows it reserved values, such
+as pcf-devnet in dotli, cannot follow a wipe of its chains, because the new
+genesis hashes are pinned. The core refuses the new descriptor and stays on the
+wiped chains until a host build that bundles the new descriptor replaces the
+running one.
 
 The pins fix what the descriptor names for those fields, so a stolen
 descriptor key cannot name other genesis hashes, assets or contracts for such a
@@ -325,9 +336,9 @@ stack.
 They do not cover what a host reads from the chains. The descriptor's
 endpoints are not pinned, and the genesis hash the core checks is the one an
 endpoint reports, so those reads are protected only by a light client that
-starts from the pinned relay light spec, and that protects the relay alone: a
-parachain's `paraId` and `lightSpec` are not pinned. A host that reads over RPC
-has no such protection.
+starts from the bundled relay light spec, and that protects the relay alone: a
+parachain's `paraId` and `lightSpec` are not pinned, nor are `network` and
+`services`. A host that reads over RPC has no such protection.
 
 A newer descriptor the core takes that changes the genesis hash of the relay,
 Asset Hub, People or Bulletin chain, the network, the `generation` or the

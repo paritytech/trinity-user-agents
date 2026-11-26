@@ -36,7 +36,7 @@ struct PinnedChange {
 }
 
 /// One change or more to each field a stack allowed reserved values pins.
-const PINNED_FIELD_CHANGES: [PinnedChange; 22] = [
+const PINNED_FIELD_CHANGES: [PinnedChange; 19] = [
 	PinnedChange { make: |copy| copy["tld"] = "paseo".into(), field: "tld" },
 	PinnedChange {
 		make: |copy| chains(copy).push(test_descriptor_chain("Coretime", [0xa9; 32], Some(1005))),
@@ -85,21 +85,6 @@ const PINNED_FIELD_CHANGES: [PinnedChange; 22] = [
 	PinnedChange { make: |copy| remove(copy, "dotns"), field: "dotns" },
 	PinnedChange { make: |copy| copy["coinage"]["instance"] = 1.into(), field: "coinage" },
 	PinnedChange { make: |copy| copy["coinage"]["chain"] = "AssetHub".into(), field: "coinage" },
-	PinnedChange {
-		make: |copy| test_chain(copy, "Relay")["lightSpec"] = test_light_spec(0xee),
-		field: "the relay's lightSpec.sha256",
-	},
-	PinnedChange {
-		make: |copy| remove(test_chain(copy, "Relay"), "lightSpec"),
-		field: "the relay's lightSpec.sha256",
-	},
-	PinnedChange {
-		make: |copy| {
-			test_chain(copy, "Relay")["lightSpec"] = test_light_spec(0xee);
-			test_chain(copy, "Collectives")["lightSpec"] = test_light_spec(0x5a);
-		},
-		field: "the relay's lightSpec.sha256",
-	},
 ];
 
 /// The TLD is pinned because accounts derive under it. Anything else may
@@ -137,21 +122,63 @@ fn a_stack_allowed_reserved_values_pins_its_chains_assets_and_contracts() {
 	);
 }
 
-/// A relay light spec carries the checkpoint a light client starts from. A
-/// bundled copy that names none pins that too: a newer copy cannot hand the
-/// light client a checkpoint the build never saw.
+/// A relay light spec carries the sync checkpoint a light client starts from,
+/// and an operator publishes a fresher one from time to time. A stack allowed
+/// reserved values runs the one its build ships, so a key that signs a newer
+/// copy cannot hand its light clients a checkpoint the build never saw, and
+/// the rest of that copy is still taken. A copy that names none, or a bundled
+/// copy that names none, leaves the relay with the bundled copy's.
 #[test]
-fn a_relay_light_spec_the_bundled_copy_does_not_name_is_refused() {
-	let mut bundled = reserved_test_descriptor(1);
-	remove(test_chain(&mut bundled, "Relay"), "lightSpec");
-	let pinned = Pinned::new(descriptor(&bundled));
+fn a_stack_allowed_reserved_values_keeps_its_bundled_relay_light_spec() {
+	let bundled_spec = test_light_spec(0x5a);
+	let fresher_spec = test_light_spec(0xee);
+	let with_relay_spec = |sequence, light_spec: &Option<serde_json::Value>| {
+		let mut copy = reserved_test_descriptor(sequence);
+		test_chain(&mut copy, "People")["rpc"] = serde_json::json!(["wss://moved.test.invalid"]);
+		let relay = test_chain(&mut copy, "Relay");
+		match light_spec {
+			Some(spec) => relay["lightSpec"] = spec.clone(),
+			None => remove(relay, "lightSpec"),
+		}
+		descriptor(&copy)
+	};
+	let held = |bundled: &Option<serde_json::Value>, fetched: &Option<serde_json::Value>| {
+		let pinned = Pinned::new(with_relay_spec(1, bundled));
+		let copy = with_relay_spec(2, fetched);
+		let allowed = ReservedValuesPolicy::ALLOWED;
+		(
+			pinned.refuse_change(&copy, &allowed),
+			pinned.keep_bundled_relay_light_spec(copy, &allowed),
+		)
+	};
+	let (bundled_spec, fresher_spec) = (Some(bundled_spec), Some(fresher_spec));
 
 	assert_eq!(
-		pinned.refuse_change(
-			&descriptor(&reserved_test_descriptor(2)),
-			&ReservedValuesPolicy::ALLOWED
-		),
-		Err(StackError::PinnedFieldChanged { field: "the relay's lightSpec.sha256" })
+		[
+			held(&bundled_spec, &fresher_spec),
+			held(&bundled_spec, &None),
+			held(&None, &fresher_spec)
+		],
+		[
+			(Ok(()), with_relay_spec(2, &bundled_spec)),
+			(Ok(()), with_relay_spec(2, &bundled_spec)),
+			(Ok(()), with_relay_spec(2, &None)),
+		]
+	);
+}
+
+/// A stack without reserved values runs each copy's relay light spec, so it
+/// follows a fresher checkpoint without a new build.
+#[test]
+fn a_stack_without_reserved_values_runs_the_copys_relay_light_spec() {
+	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
+	let mut fresher = reserved_test_descriptor(2);
+	test_chain(&mut fresher, "Relay")["lightSpec"] = test_light_spec(0xee);
+
+	assert_eq!(
+		pinned
+			.keep_bundled_relay_light_spec(descriptor(&fresher), &ReservedValuesPolicy::default()),
+		descriptor(&fresher)
 	);
 }
 
@@ -173,14 +200,15 @@ fn a_stack_without_reserved_values_pins_only_its_tld() {
 }
 
 /// The operator of a stack allowed reserved values still republishes, moves
-/// endpoints and names a new `generation` without a new build, as long as no
+/// endpoints, publishes a fresher relay light spec and names a new
+/// `generation` without a new build, as long as no
 /// pinned field changes. Listing chains or assets in another order changes
 /// none.
 #[test]
 fn a_stack_allowed_reserved_values_follows_every_other_change() {
 	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
 	let allowed = ReservedValuesPolicy::ALLOWED;
-	let unpinned_changes: [fn(&mut serde_json::Value); 10] = [
+	let unpinned_changes: [fn(&mut serde_json::Value); 11] = [
 		|_unchanged| {},
 		|copy| chains(copy).reverse(),
 		|copy| copy["assets"].as_array_mut().expect("assets is an array").reverse(),
@@ -192,6 +220,7 @@ fn a_stack_allowed_reserved_values_follows_every_other_change() {
 			test_chain(copy, "Relay")["lightSpec"]["url"] =
 				"https://moved.test.invalid/relay.json".into()
 		},
+		|copy| test_chain(copy, "Relay")["lightSpec"] = test_light_spec(0xee),
 		|copy| test_chain(copy, "People")["lightSpec"] = test_light_spec(0xee),
 		|copy| test_chain(copy, "Collectives")["lightSpec"] = test_light_spec(0xee),
 	];

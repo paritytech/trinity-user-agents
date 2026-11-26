@@ -126,17 +126,19 @@ impl<D> From<UnservedProduct> for CallError<D> {
 /// A stack that [`StackRefresh::load`] resolves and that is allowed reserved
 /// values is pinned to its bundled copy. A copy the core stored or fetched is
 /// refused when it gives a chain role another genesis hash, adds or drops a
-/// chain role, or changes `assets`, `contracts`, `dotns`, `coinage` or the
-/// `sha256` of the relay's `lightSpec`, the file that carries the relay's sync
-/// checkpoint. Only a new build changes what the descriptor names for those.
-/// The core pins nothing for a stack from [`Stack::new`], such as a
-/// `testStack`.
+/// chain role, or changes `assets`, `contracts`, `dotns` or `coinage`. Only a
+/// new build changes what the descriptor names for those. The core also runs
+/// the relay's `lightSpec` the bundled copy names, the file that carries the
+/// relay's sync checkpoint, in place of the one a newer copy names, and takes
+/// the rest of that copy. The core pins nothing for a stack from
+/// [`Stack::new`], such as a `testStack`.
 ///
 /// The pins cover the descriptor, not the chains. The core does not check a
 /// genesis hash against the chain a host reads, so what a host reads over
 /// the descriptor's endpoints is protected only by a light client that
-/// starts from the pinned relay light spec, and that protects the relay
-/// alone: a parachain's `paraId` and `lightSpec` are not pinned.
+/// starts from the bundled relay light spec, and that protects the relay
+/// alone: a parachain's `paraId` and `lightSpec` are not pinned. `network`
+/// and `services` are not pinned either.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
