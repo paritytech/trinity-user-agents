@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.common.data.telemetry
 
 import io.paritytech.polkadotapp.common.utils.logFailure
+import uniffi.truapi.truapiHostVersion
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -27,14 +28,13 @@ data class HostPageOpen(
 
 /**
  * The host session of one product page: [id] is what the page reads; [open] is the ask its load is timed from.
- * [isRetry] marks a session that picked an ask back up after the session that first took it ended before its
- * page was shown.
+ * [loadAttempt] counts loads from 1, including retries after a session ended before its page was shown.
  */
 data class HostPageSession(
     val productId: String,
     val id: String,
     val open: HostPageOpen?,
-    val isRetry: Boolean,
+    val loadAttempt: Int,
 )
 
 @Singleton
@@ -51,7 +51,7 @@ class HostPageOpens @Inject constructor(
     private val live = ConcurrentHashMap<String, HostPageSession>()
 
     // Asks whose session ended before its page was shown, for the product's next session to pick up.
-    private val unfinished = ConcurrentHashMap<String, HostPageOpen>()
+    private val unfinished = ConcurrentHashMap<String, HostPageSession>()
     private val shown = ConcurrentHashMap.newKeySet<HostPageSession>()
 
     /** A new ask, read now. */
@@ -73,11 +73,11 @@ class HostPageOpens @Inject constructor(
         val session = if (open != null) {
             unfinished.remove(productId)
             report(open, open.sessionId, reused = false)
-            HostPageSession(productId, open.sessionId, open.takeIf(::isRecent), isRetry = false)
+            HostPageSession(productId, open.sessionId, open.takeIf(::isRecent), loadAttempt = 1)
         } else {
-            unfinished.remove(productId)?.takeIf(::isRecent)
-                ?.let { HostPageSession(productId, it.sessionId, it, isRetry = true) }
-                ?: HostPageSession(productId, UUID.randomUUID().toString(), open = null, isRetry = false)
+            unfinished.remove(productId)?.takeIf { it.open?.let(::isRecent) == true }
+                ?.let { it.copy(loadAttempt = it.loadAttempt + 1) }
+                ?: HostPageSession(productId, UUID.randomUUID().toString(), open = null, loadAttempt = 1)
         }
         live[productId] = session
         return session
@@ -94,7 +94,7 @@ class HostPageOpens @Inject constructor(
      */
     fun sessionEnded(session: HostPageSession) {
         live.remove(session.productId, session)
-        if (!shown.remove(session) && session.open != null) unfinished[session.productId] = session.open
+        if (!shown.remove(session) && session.open != null) unfinished[session.productId] = session
     }
 
     /**
@@ -119,7 +119,15 @@ class HostPageOpens @Inject constructor(
 
     private fun report(open: HostPageOpen, sessionId: String, reused: Boolean) {
         runCatching {
-            capture.capture { originProvider.current().pocketOpened(open, sessionId, reused) }
+            capture.capture {
+                originProvider.current().pocketOpened(
+                    open = open,
+                    sessionId = sessionId,
+                    reused = reused,
+                    hostVersion = truapiHostVersion(),
+                    monotonicMs = clock.nowMillis(),
+                )
+            }
         }.logFailure("Failed to capture native host Pocket open event")
     }
 

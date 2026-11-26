@@ -42,6 +42,7 @@ class HostWebViewCreatedTelemetry @Inject internal constructor(
                 originProvider.current().pageVisible(
                     session = session,
                     webViewMs = nowMs - webViewCreatedAtMs,
+                    hostVersion = truapiHostVersion(),
                     monotonicMs = nowMs,
                 )
             }
@@ -61,31 +62,28 @@ private fun HostEventOrigin.webViewCreated(
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.EVENT_NAME,
     tags = baseTags() + ("truapi.host_version" to hostVersion) + session.tags(),
-    extras = baseExtras() + mapOf("event.monotonic_ms" to monotonicMs) +
-        listOfNotNull(session.open?.tapMs(monotonicMs)),
+    extras = baseExtras() + session.extras(monotonicMs),
     isFailure = false,
 )
 
 private fun HostEventOrigin.pageVisible(
     session: HostPageSession,
     webViewMs: Long,
+    hostVersion: String,
     monotonicMs: Long,
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.VISIBLE_EVENT_NAME,
-    tags = baseTags() + session.tags(),
-    extras = baseExtras() + mapOf("webview_ms" to webViewMs) +
-        listOfNotNull(session.open?.tapMs(monotonicMs)),
+    tags = baseTags() + ("truapi.host_version" to hostVersion) + session.tags(),
+    extras = baseExtras() + session.extras(monotonicMs) + ("webview_ms" to webViewMs),
     isFailure = false,
 )
 
-// open.retry only on a retry, so the tap's time, which includes the failed first load, can be told apart.
 private fun HostPageSession.tags(): Map<String, String> = mapOf("host.session_id" to id) +
-    listOfNotNull(
-        open?.let { "open.source" to it.source.tag },
-        ("open.retry" to "true").takeIf { isRetry },
-    )
+    listOfNotNull(open?.takeIf { loadAttempt == 1 }?.let { "open.source" to it.source.tag })
 
-// Both readings are the monotonic clock, so a wall clock change cannot move the gap. A negative gap would be
-// a bug, and is left out rather than sent as a clamped zero that reads as the fastest possible open.
-private fun HostPageOpen.tapMs(monotonicMs: Long) =
-    (monotonicMs - this.monotonicMs).takeIf { it >= 0 }?.let { "tap_ms" to it }
+private fun HostPageSession.extras(monotonicMs: Long): Map<String, Any> = mapOf(
+    "event.monotonic_ms" to monotonicMs,
+    "load.attempt" to loadAttempt,
+) + listOfNotNull(open?.takeIf { loadAttempt == 1 }?.tapMs(monotonicMs))
+
+private fun HostPageOpen.tapMs(monotonicMs: Long) = "tap_ms" to (monotonicMs - this.monotonicMs)

@@ -204,8 +204,8 @@ class HostWebViewCreatedTelemetryTest {
         verifyCaptureAttempted(capture)
     }
 
-    private fun session(id: String, open: HostPageOpen? = null, isRetry: Boolean = false) =
-        HostPageSession(productId = "product.paseo", id = id, open = open, isRetry = isRetry)
+    private fun session(id: String, open: HostPageOpen? = null, loadAttempt: Int = 1) =
+        HostPageSession(productId = "product.paseo", id = id, open = open, loadAttempt = loadAttempt)
 
     private fun reporter(capture: HostEventCapture) = HostWebViewCreatedTelemetry(
         originProvider = HostEventOriginProvider { origin },

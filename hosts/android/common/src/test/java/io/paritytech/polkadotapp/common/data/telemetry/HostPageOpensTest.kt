@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.common.data.telemetry
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -16,6 +17,29 @@ class HostPageOpensTest {
     private val link = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_500L, monotonicMs = 1_500L, sessionId = "link-session")
 
     @Test
+    fun `does not read event metadata when Pocket capture is disabled`() {
+        var originRead = false
+        var timeRead = false
+        val disabledOpens = HostPageOpens(
+            originProvider = {
+                originRead = true
+                origin
+            },
+            capture = {},
+            clock = {
+                timeRead = true
+                nowMs
+            },
+        )
+        disabledOpens.hold("loyalty.dot", tap)
+
+        disabledOpens.giveUp("loyalty.dot")
+
+        assertFalse(originRead)
+        assertFalse(timeRead)
+    }
+
+    @Test
     fun `an open is not reported until something settles it`() {
         opens.hold("loyalty.dot", tap)
 
@@ -26,7 +50,7 @@ class HostPageOpensTest {
     fun `a session taking an open reports it as a fresh open and adopts the id minted at the tap`() {
         opens.hold("loyalty.dot", tap)
 
-        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap, isRetry = false), opens.startSession("loyalty.dot"))
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap, loadAttempt = 1), opens.startSession("loyalty.dot"))
 
         assertEquals(
             HostEvent(
@@ -71,6 +95,8 @@ class HostPageOpensTest {
         assertEquals("deeplink", reused.tags["open.source"])
         assertEquals("true", reused.tags["open.reused"])
         assertEquals(page.id, reused.tags["host.session_id"])
+        assertEquals(truapiHostVersion(), reused.tags["truapi.host_version"])
+        assertEquals(nowMs, reused.extras["event.monotonic_ms"])
     }
 
     @Test
@@ -158,7 +184,7 @@ class HostPageOpensTest {
 
         val session = opens.startSession("loyalty.dot")
 
-        assertEquals(HostPageSession("loyalty.dot", "tap-session", open = null, isRetry = false), session)
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", open = null, loadAttempt = 1), session)
         assertEquals("tap-session", events.single().tags["host.session_id"])
     }
 
@@ -170,7 +196,7 @@ class HostPageOpensTest {
 
         val retry = opens.startSession("loyalty.dot")
 
-        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap, isRetry = true), retry)
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap, loadAttempt = 2), retry)
         // The open itself was reported once, by the session that took it.
         assertEquals(1, events.size)
         // Only once: a third session has nothing to retry while the second runs.
@@ -183,7 +209,12 @@ class HostPageOpensTest {
         opens.sessionEnded(opens.startSession("loyalty.dot"))
         opens.sessionEnded(opens.startSession("loyalty.dot"))
 
-        assertEquals(tap, opens.startSession("loyalty.dot").open)
+        val third = opens.startSession("loyalty.dot")
+
+        assertEquals(tap, third.open)
+        assertEquals(3, third.loadAttempt)
+        assertEquals("tap-session", third.id)
+        assertEquals(1, events.size)
     }
 
     @Test
@@ -196,6 +227,7 @@ class HostPageOpensTest {
         val next = opens.startSession("loyalty.dot")
 
         assertNull(next.open)
+        assertEquals(1, next.loadAttempt)
         assertNotEquals("tap-session", next.id)
     }
 
@@ -206,7 +238,7 @@ class HostPageOpensTest {
 
         opens.hold("loyalty.dot", link)
 
-        assertEquals(HostPageSession("loyalty.dot", "link-session", link, isRetry = false), opens.startSession("loyalty.dot"))
+        assertEquals(HostPageSession("loyalty.dot", "link-session", link, loadAttempt = 1), opens.startSession("loyalty.dot"))
         assertNull(opens.startSession("loyalty.dot").open)
     }
 
@@ -219,6 +251,7 @@ class HostPageOpensTest {
         val next = opens.startSession("loyalty.dot")
 
         assertNull(next.open)
+        assertEquals(1, next.loadAttempt)
         assertNotEquals("tap-session", next.id)
     }
 

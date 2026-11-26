@@ -115,7 +115,7 @@ class RealProductSessionControllerTest {
 
         controller.openUrl(product.toUrl())
 
-        assertEquals(HostPageSession(product.value, "link-session", link, isRetry = false), sessions.single())
+        assertEquals(HostPageSession(product.value, "link-session", link, loadAttempt = 1), sessions.single())
         val opened = events.single()
         assertEquals("false", opened.tags["open.reused"])
         assertEquals("link-session", opened.tags["host.session_id"])

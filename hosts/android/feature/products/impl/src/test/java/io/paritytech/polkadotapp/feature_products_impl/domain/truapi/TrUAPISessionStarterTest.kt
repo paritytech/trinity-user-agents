@@ -212,7 +212,7 @@ class TrUAPISessionStarterTest {
 
         assertEquals(listOf(tap, tap), installerOpens)
         assertEquals("open-session", installerSessionId.captured)
-        assertEquals(HostPageSession(PRODUCT_ID.value, "open-session", tap, isRetry = true), reportedSession.captured)
+        assertEquals(HostPageSession(PRODUCT_ID.value, "open-session", tap, loadAttempt = 2), reportedSession.captured)
         // The open was reported once, by the session that first took it.
         assertEquals(1, events.count { it.name == "host.pocket.opened" })
     }

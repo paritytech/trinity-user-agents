@@ -50,14 +50,21 @@ fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
     isFailure = false,
 )
 
-fun HostEventOrigin.pocketOpened(open: HostPageOpen, sessionId: String, reused: Boolean) = HostEvent(
+fun HostEventOrigin.pocketOpened(
+    open: HostPageOpen,
+    sessionId: String,
+    reused: Boolean,
+    hostVersion: String,
+    monotonicMs: Long,
+) = HostEvent(
     name = "host.pocket.opened",
     tags = baseTags() + mapOf(
+        "truapi.host_version" to hostVersion,
         "open.source" to open.source.tag,
         "host.session_id" to sessionId,
         "open.reused" to reused.toString(),
     ),
-    extras = baseExtras(),
+    extras = baseExtras() + ("event.monotonic_ms" to monotonicMs),
     isFailure = false,
 )
 
