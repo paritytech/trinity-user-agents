@@ -9,7 +9,7 @@ struct DebugPocketCardsTests {
     // MARK: - The page a card opens
 
     /// The page is loaded as typed, and the card query is how it learns which
-    /// card it sits under. Its own query, such as the test page's `hideOnLoad`,
+    /// card it sits under. Its own query, such as the test page's `coverOnLoad`,
     /// reaches it encoded as typed (decoded, `a%2Bb` would read as `a b`), and a
     /// stale card query typed into the address must not shadow the real one.
     /// The card is found under the id its product resolved to, whatever the
@@ -17,8 +17,8 @@ struct DebugPocketCardsTests {
     /// another of the same product.
     @Test(arguments: [
         ("index.html", "index.html?card=loyalty"),
-        ("index.html?hideOnLoad", "index.html?hideOnLoad&card=loyalty"),
-        ("index.html?card=other&hideOnLoad", "index.html?hideOnLoad&card=loyalty"),
+        ("index.html?coverOnLoad", "index.html?coverOnLoad&card=loyalty"),
+        ("index.html?card=other&coverOnLoad", "index.html?coverOnLoad&card=loyalty"),
         ("index.html?x=a%2Bb", "index.html?x=a%2Bb&card=loyalty")
     ])
     func opensTheWidgetPageForTheCardItSitsUnder(typed: String, opened: String) throws {
@@ -41,11 +41,11 @@ struct DebugPocketCardsTests {
     @Test
     func handsTheWidgetPageALinksPageParams() throws {
         let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
-        store.save(card(widgetUrl: URL(string: "http://127.0.0.1:5173/?hideOnLoad")))
+        store.save(card(widgetUrl: URL(string: "http://127.0.0.1:5173/?coverOnLoad")))
 
         let url = try #require(store.widgetURL(for: loyaltyKey, pageQuery: "open=scratch"))
 
-        #expect(url.absoluteString == "http://127.0.0.1:5173/?hideOnLoad&card=loyalty&open=scratch")
+        #expect(url.absoluteString == "http://127.0.0.1:5173/?coverOnLoad&card=loyalty&open=scratch")
     }
 
     // MARK: - Cards typed in before
@@ -67,7 +67,7 @@ struct DebugPocketCardsTests {
             id: PocketCardId(value: "loyalty"),
             title: "Loyalty",
             preview: .url(faceUrl),
-            faceShown: true
+            startsCovered: false
         ))
         #expect(store.widgetURL(for: loyaltyKey) == nil)
     }
@@ -90,6 +90,6 @@ private func card(
         title: "Loyalty",
         faceUrl: faceUrl,
         widgetUrl: widgetUrl,
-        faceShown: nil
+        startsCovered: nil
     )
 }

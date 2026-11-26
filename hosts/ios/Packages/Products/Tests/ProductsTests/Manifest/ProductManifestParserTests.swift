@@ -254,26 +254,26 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.isEmpty)
     }
 
-    /// The request is the card's own, so one card asking for its face away
-    /// leaves its sibling opening with its face shown, as every card published
-    /// before the field existed does.
-    @Test func opensOnlyTheCardThatAsksWithItsFaceAway() throws {
+    /// The request is the card's own, so one card asking to start covered
+    /// leaves its sibling opening uncovered, as every card published before
+    /// the field existed does.
+    @Test func coversOnlyTheCardThatAsksToStartCovered() throws {
         let cards = """
-        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":false},
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","startsCovered":true},
          {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
         """
         let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
 
-        #expect(worker.pocketCards.map(\.faceShown) == [false, true])
+        #expect(worker.pocketCards.map(\.startsCovered) == [true, false])
     }
 
     /// Android reads a null as the field left out, and both hosts must open the
     /// same manifest the same way.
-    @Test func readsANullFaceShownAsLeftOut() throws {
-        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":null}]"#
+    @Test func readsANullStartsCoveredAsLeftOut() throws {
+        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","startsCovered":null}]"#
         let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
 
-        #expect(worker.pocketCards.map(\.faceShown) == [true])
+        #expect(worker.pocketCards.map(\.startsCovered) == [false])
     }
 
     /// Guessing what a value that is not a boolean meant would open a card in
@@ -282,9 +282,9 @@ struct ProductManifestParserTests {
     /// The RFC drops every card over one invalid definition, so a valid card
     /// beside the bad one goes with it.
     @Test(arguments: [#""no""#, "0"])
-    func publishesNoCardsWhenFaceShownIsNotABoolean(_ faceShown: String) throws {
+    func publishesNoCardsWhenStartsCoveredIsNotABoolean(_ startsCovered: String) throws {
         let cards = """
-        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":\(faceShown)},
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","startsCovered":\(startsCovered)},
          {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
         """
         let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
