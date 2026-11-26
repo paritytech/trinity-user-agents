@@ -129,10 +129,11 @@ The [permission model](docs/rfcs/0002-permission-model.md) separates outbound do
 Android permission prompts belong to one request and close when it finishes or is cancelled,
 including cancellation while the app is backgrounded.
 
-The shared Rust core asks trusted products (`peopl`, `dim2` and `stash`,
-on every supported network) only for legacy-account signing other than
-watermarked raw bytes. All other operations it handles bypass permission prompts
-and recorded decisions. Device permissions still need the OS grant.
+The shared Rust core asks privileged products (`PrivilegedProduct`: `peopl`,
+`dim2` and `stash`, on every supported network) only for legacy-account
+signing other than watermarked raw bytes. All other operations it handles
+bypass permission prompts and recorded decisions. Device permissions still need
+the OS grant.
 
 ## Repository layout
 

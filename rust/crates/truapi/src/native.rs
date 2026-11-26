@@ -25,6 +25,7 @@ mod executor;
 mod funding;
 mod funding_feed;
 mod funding_page;
+mod host_placed_chat;
 mod materials;
 mod platform;
 mod pocket;
@@ -62,6 +63,7 @@ pub use funding_page::{
 	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,
 	funding_page_origin,
 };
+pub use host_placed_chat::{HostPlacedChat, host_placed_chats};
 pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
 pub use product_archive::{ArchiveFile, archive_files};
@@ -81,7 +83,9 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns, stack::Stack};
+use crate::{
+	PairingProposal, PrivilegedProduct, ProductId, ProductIdError, host_logic::dotns, stack::Stack,
+};
 
 /// The stack a host build bundles, opened before the runtime starts.
 ///
@@ -166,6 +170,33 @@ pub fn product_id_from_name(
 	network_suffix: String,
 ) -> Result<ProductId, ProductIdError> {
 	ProductId::from_name(&name, &network_suffix)
+}
+
+/// The id of `product` on the network with `network_suffix`.
+///
+/// Fails when `network_suffix` is not a dotNS TLD.
+#[uniffi::export]
+pub fn privileged_product_id(
+	product: PrivilegedProduct,
+	network_suffix: String,
+) -> Result<ProductId, ProductIdError> {
+	product.product_id(&network_suffix)
+}
+
+/// The dotNS label reserved for `product` on every network, without a TLD.
+#[uniffi::export]
+pub fn privileged_product_label(product: PrivilegedProduct) -> String {
+	product.label().to_owned()
+}
+
+/// The cards every host pins in the Pocket on the network with
+/// `network_suffix`. The runtime pins them itself; a host reads them to draw
+/// a pinned card before the runtime lists it.
+///
+/// Fails when `network_suffix` is not a dotNS TLD.
+#[uniffi::export]
+pub fn pinned_pocket_cards(network_suffix: String) -> Result<Vec<PinnedPocketCard>, ProductIdError> {
+	PinnedPocketCard::privileged(&network_suffix)
 }
 
 /// The complete dotNS name above the network suffix, including nested labels.
