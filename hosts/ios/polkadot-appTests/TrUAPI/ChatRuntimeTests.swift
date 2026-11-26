@@ -3,8 +3,6 @@ import Keystore_iOS
 import os
 import PolkadotUI
 import Products
-import StructuredConcurrency
-import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 import UIKitExt
@@ -184,20 +182,6 @@ struct ChatRuntimeTests {
         #expect(execution.stopWsBridgeCallCount == 0)
     }
 
-    /// A runtime that never started took no reference, so it must give none
-    /// back: an unpaired release drops the count of a worker somebody else is
-    /// holding, and the core stops it under them.
-    @Test func rustRuntimeDisposeBeforeStartTakesAndGivesBackNothing() async {
-        let workers = StubWorkerRuntime()
-        let runtime = makeRustRuntime(workers: workers)
-
-        await runtime.dispose()
-        await runtime.dispose()
-
-        #expect(workers.references.acquired.isEmpty)
-        #expect(workers.references.released.isEmpty)
-    }
-
     /// Every product repository emission builds fresh bots, and the store keeps
     /// the existing one and drops the duplicate. The duplicate's runtime never
     /// started, but its dispose runs, and the chat surface it would clear is the
@@ -211,7 +195,9 @@ struct ChatRuntimeTests {
 
         try await live.start(messagingSupport: .init(bot: nil, context: nil))
         await duplicate.dispose()
+        await duplicate.dispose()
 
+        #expect(workers.references.releaseCounts == [0])
         #expect(contexts.context(for: chatProduct).chat.currentMessaging != nil)
 
         await live.dispose()
@@ -227,7 +213,6 @@ struct ChatRuntimeTests {
         try await disposing(runtime) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
             _ = await states.next()
-            #expect(workers.references.acquired == [chatProduct])
 
             let first = await runtime.beginSending("first")
             _ = await states.next()
@@ -249,22 +234,23 @@ struct ChatRuntimeTests {
         defer { pocket.release() }
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
-        var states = workers.executionsDelivered.makeAsyncIterator()
-        let completed = AsyncStream<Void>.makeStream()
-
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-        _ = await states.next()
-        let send = Task {
-            defer { completed.continuation.finish() }
-            try await runtime.onUserMessage(text: "closed", roomId: "room")
+        _ = await workers.executionsDelivered.first { _ in true }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                _ = await workers.executionsDelivered.first { _ in true }
+                await runtime.dispose()
+            }
+            await #expect(throws: CancellationError.self) {
+                try await runtime.onUserMessage(text: "pending", roomId: "room")
+            }
         }
-        _ = await states.next()
-        await runtime.dispose()
-        try await withTimeout(.hangGuard) { for await _ in completed.stream {} }
 
         #expect(workers.references.releaseCounts == [0, 1])
         workers.publish([chatProduct: execution])
-        await #expect(throws: CancellationError.self) { try await send.value }
+        await #expect(throws: CancellationError.self) {
+            try await runtime.onUserMessage(text: "after close", roomId: "room")
+        }
         #expect(execution.publishedChatActions.isEmpty)
     }
 
@@ -280,18 +266,6 @@ struct ChatRuntimeTests {
         #expect(execution.publishedChatActions.isEmpty)
 
         await runtime.dispose()
-    }
-
-    @Test func rustRuntimeChatSeamsFailAfterDispose() async throws {
-        let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: workersRunning(execution))
-        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-        await runtime.dispose()
-
-        await #expect(throws: CancellationError.self) {
-            try await runtime.onUserMessage(text: "hi", roomId: "room")
-        }
-        #expect(execution.publishedChatActions.isEmpty)
     }
 
     /// Anything that is not a startup race is terminal: surface it on the first
@@ -314,83 +288,53 @@ struct ChatRuntimeTests {
     }
 
     /// A worker that never comes up must not leave the cell waiting forever.
-    @Test func rustRuntimeFailsPendingRendersOnDispose() async throws {
-        let runtime = makeRustRuntime(workers: StubWorkerRuntime())
-
-        let render = Task {
-            await runtime.renderMessage(
-                roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
-            )
-        }
+    @Test(.timeLimit(.minutes(1)))
+    func rustRuntimeFailsPendingRendersOnDispose() async throws {
+        let workers = StubWorkerRuntime()
+        let runtime = makeRustRuntime(workers: workers)
+        let render = await runtime.renderMessage(
+            roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
+        )
+        _ = await workers.executionsDelivered.first { _ in true }
         await runtime.dispose()
 
         await #expect(throws: CancellationError.self) {
-            for try await _ in await render.value {}
-        }
-    }
-
-    @Test func rustRuntimeYieldsTypedNodesToTheConsumer() async throws {
-        let execution = MockProductExecution()
-        execution.renderNodes = [.string(text: "hello")]
-        let runtime = makeRustRuntime(workers: workersRunning(execution))
-        try await disposing(runtime) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-
-            var outputs: [ChatRendererOutput] = []
-            for try await output in await runtime.renderMessage(
-                roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
-            ) {
-                outputs.append(output)
-            }
-
-            #expect(outputs.count == 1)
-            if case let .native(node) = outputs.first, case let .string(text: text) = node {
-                #expect(text == "hello")
-            } else {
-                Issue.record("the rust runtime must yield typed nodes, not SCALE hex")
-            }
-
-            if case let .chatMessage(roomId, messageId, messageType) =
-                execution.renderRequests.first?.context {
-                #expect(roomId == "room")
-                #expect(messageId == "m1")
-                #expect(messageType == "t")
-            } else {
-                Issue.record("a chat body must be rendered under a chatMessage context")
-            }
+            for try await _ in render {}
         }
     }
 
     /// A cell can decode before the product's worker is up. The render waits for
     /// the worker: failing once would leave the cell dead for the session,
     /// because `ProductMessageDecoder` never evicts.
-    @Test func rustRuntimeRenderWaitsForTheWorkerToComeUp() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func rustRuntimeRenderWaitsForTheWorkerToComeUp() async throws {
         let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
         let runtime = makeRustRuntime(workers: workers)
 
         try await disposing(runtime) {
-            let render = Task {
-                await runtime.renderMessage(
-                    roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
-                )
-            }
-            try await withTimeout(.hangGuard) {
-                var checks = workers.readinessChecks.makeAsyncIterator()
-                _ = await checks.next()
-            }
-
+            let render = await runtime.renderMessage(
+                roomId: "room", messageId: "m1", messageType: "t", messageData: Data([1])
+            )
+            _ = await workers.executionsDelivered.first { _ in true }
             workers.publish([chatProduct: execution])
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
-            var outputs: [ChatRendererOutput] = []
-            for try await output in await render.value {
-                outputs.append(output)
+            var texts: [String] = []
+            for try await output in render {
+                guard case let .native(.string(text)) = output else {
+                    Issue.record("Expected a native text node")
+                    continue
+                }
+                texts.append(text)
             }
 
-            #expect(outputs.count == 1)
-            #expect(execution.renderRequests.count == 1)
+            #expect(texts == ["late"])
+            #expect(execution.renderRequests == [ProductRendererRenderRequest(
+                context: .chatMessage(roomId: "room", messageId: "m1", messageType: "t"),
+                payload: Data([1])
+            )])
         }
     }
 
@@ -434,12 +378,25 @@ struct ChatRuntimeTests {
         try await disposing(runtime) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
+            try await runtime.onUserMessage(text: "before", roomId: "room")
             let restarted = MockProductExecution()
             workers.publish([chatProduct: restarted])
-            try await runtime.onUserMessage(text: "hi", roomId: "room")
+            try await runtime.onUserMessage(text: "after", roomId: "room")
+            await runtime.dispatchEvent(
+                roomId: "room", messageId: "m1", messageType: "t", actionId: "join", payload: "p"
+            )
 
-            #expect(restarted.publishedChatActions.count == 1)
-            #expect(previous.publishedChatActions.isEmpty)
+            #expect(previous.publishedChatActions == [HostChatActionSubscribeItem(
+                roomId: "room", peer: "native", payload: .messagePosted(.text(text: "before"))
+            )])
+            #expect(previous.publishedRendererActions.isEmpty)
+            #expect(restarted.publishedChatActions == [HostChatActionSubscribeItem(
+                roomId: "room", peer: "native", payload: .messagePosted(.text(text: "after"))
+            )])
+            #expect(restarted.publishedRendererActions == [HostRendererActionSubscribeItem(
+                context: .chatMessage(roomId: "room", messageId: "m1", messageType: "t"),
+                actionId: "join", payload: Data("p".utf8)
+            )])
             #expect(workers.references.acquired == [chatProduct])
             #expect(workers.references.released.isEmpty)
         }
@@ -485,45 +442,6 @@ struct ChatRuntimeTests {
         #expect(await firstUpdates.next() == nil)
         #expect(workers.readinessObservations == (started: 1, cancelled: 1))
         #expect(workers.references.released == [chatProduct])
-    }
-
-    @Test func rustRuntimeForwardsUserMessagesAndActions() async throws {
-        let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: workersRunning(execution))
-        try await disposing(runtime) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-
-            try await runtime.onUserMessage(text: "hi", roomId: "room")
-            await runtime.dispatchEvent(
-                roomId: "room", messageId: "m1", messageType: "t", actionId: "a1", payload: "p"
-            )
-
-            // A user message is a chat action; a press inside a product-drawn body is
-            // a renderer action. Two different surfaces.
-            #expect(execution.publishedChatActions.count == 1)
-            #expect(execution.publishedChatActions[0].peer == "native")
-            #expect(execution.publishedChatActions[0].roomId == "room")
-
-            if case let .messagePosted(content) = execution.publishedChatActions[0].payload,
-               case let .text(text) = content {
-                #expect(text == "hi")
-            } else {
-                Issue.record("the user message should be a posted text message")
-            }
-
-            #expect(execution.publishedRendererActions.count == 1)
-            let rendererAction = try #require(execution.publishedRendererActions.first)
-            #expect(rendererAction.actionId == "a1")
-            #expect(rendererAction.payload == Data("p".utf8))
-
-            if case let .chatMessage(roomId, messageId, messageType) = rendererAction.context {
-                #expect(roomId == "room")
-                #expect(messageId == "m1")
-                #expect(messageType == "t")
-            } else {
-                Issue.record("the action should be addressed by a chatMessage context")
-            }
-        }
     }
 
     @Test func rustRuntimeRendersADockedFooterCardUnderTheFooterContext() async throws {

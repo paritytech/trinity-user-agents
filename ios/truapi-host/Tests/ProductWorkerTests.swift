@@ -7,6 +7,7 @@ struct ProductWorkerTests {
     func chatReleasesOnlyItsOwnClaimWhilePocketKeepsUsingTheWorker() async throws {
         let host = RecordingWebViews()
         let runtime = try makeRuntime(host)
+        defer { runtime.shutdownProductWorkers() }
         let product = try ProductId("worker.dot")
         var starts = host.starts.stream.makeAsyncIterator()
         var stops = host.stops.stream.makeAsyncIterator()
@@ -24,18 +25,17 @@ struct ProductWorkerTests {
         #expect(attempt.moduleStarted())
         let execution = try #require(await executions.next())
         let render = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "live"), payload: Data()))
-        defer { withExtendedLifetime(render) {} }
-        chat.release()
         chat.release()
         try execution.publishRendererAction(item: HostRendererActionSubscribeItem(
             context: .pocketCard(cardId: "live"), actionId: "tap", payload: Data()
         ))
-        pocket.release()
+        withExtendedLifetime(render) { pocket.release() }
         #expect(await stops.next() == attempt.id())
         var states = runtime.workerExecutionState(productId: product).makeAsyncIterator()
-        if case .running = await states.next() { Issue.record("a worker nobody claims is still published") }
-        #expect(!attempt.moduleStarted())
-        runtime.shutdownProductWorkers()
+        guard case .idle? = await states.next() else {
+            Issue.record("Releasing the last claim must return the worker to idle")
+            return
+        }
     }
 
     private func connect(_ owner: TrUAPIProductExecution) throws -> URLSessionWebSocketTask {

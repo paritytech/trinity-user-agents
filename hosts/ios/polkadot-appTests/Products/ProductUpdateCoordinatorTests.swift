@@ -7,7 +7,7 @@ import UIKit
 @testable import polkadot_app
 
 @MainActor
-struct ProductUpdateCoordinatorTests {
+final class ProductUpdateCoordinatorTests {
     private static let productId = try! ProductId("shop.dot")
     private nonisolated static let appId = try! ProductId("app.shop.dot")
     private static let workerId = try! ProductId("worker.shop.dot")
@@ -19,34 +19,9 @@ struct ProductUpdateCoordinatorTests {
     private let notice = StubProductUpdateNoticePresenter()
     private let hostPlaced = StubHostPlacedProducts()
     private let notificationCenter = NotificationCenter()
-    private let coordinator: ProductUpdateCoordinator
+    private lazy var coordinator = makeCoordinator(loader: loader) { [workerReloader] in workerReloader }
     private let first = StubSPAProductReloader()
     private let second = StubSPAProductReloader()
-
-    init() {
-        coordinator = ProductUpdateCoordinator(
-            contentLoader: loader,
-            currentWorkerReloader: { [workerReloader] in workerReloader },
-            noticePresenter: notice,
-            refreshSources: ProductUpdateCoordinator.RefreshSources(
-                applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: notificationCenter),
-                hostPlacedProducts: hostPlaced
-            ),
-            logger: Logger.shared
-        )
-    }
-
-    @Test func workerUpdateIsAppliedAndReloadsTheWorker() async {
-        let update = Self.makeUpdate(contentId: Self.workerId)
-        coordinator.start()
-
-        loader.simulate(update: update)
-        await workerReloader.waitForReloads(1)
-
-        #expect(loader.appliedUpdates == [update])
-        #expect(workerReloader.reloadedIds == [Self.productId])
-        #expect(notice.shownProductNames.isEmpty)
-    }
 
     @Test(arguments: [true, false])
     func workerUpdateUsesTheSessionActiveWhenApplyFinishes(replacementIsSignedIn: Bool) async {
@@ -54,16 +29,8 @@ struct ProductUpdateCoordinatorTests {
         let loader = StubProductContentLoader(applyGate: gate.stream)
         let replacement = StubProductWorkerReloader()
         var active: StubProductWorkerReloader? = workerReloader
-        let coordinator = ProductUpdateCoordinator(
-            contentLoader: loader,
-            currentWorkerReloader: { active },
-            noticePresenter: notice,
-            refreshSources: ProductUpdateCoordinator.RefreshSources(
-                applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: notificationCenter),
-                hostPlacedProducts: hostPlaced
-            ),
-            logger: Logger.shared
-        )
+        let coordinator = makeCoordinator(loader: loader) { active }
+        _ = coordinator.register(productId: Self.productId, contentId: Self.appId, displayName: "Shop", reloader: first)
         let update = Self.makeUpdate(contentId: Self.workerId)
         coordinator.start()
 
@@ -74,6 +41,7 @@ struct ProductUpdateCoordinatorTests {
         await loader.waitForRemovals(2)
 
         #expect(loader.appliedUpdates == [update])
+        #expect(notice.shownProductNames.isEmpty)
         #expect(workerReloader.reloadedIds.isEmpty)
         #expect(replacement.reloadedIds == (replacementIsSignedIn ? [Self.productId] : []))
     }
@@ -84,30 +52,16 @@ struct ProductUpdateCoordinatorTests {
 
         await deliver(update)
 
-        #expect(loader.appliedUpdates.first == update)
+        #expect(loader.appliedUpdates == [update])
         #expect(workerReloader.reloadedIds.isEmpty)
     }
 
     @Test func legacyBaseNameUpdateReloadsTheWorker() async {
         coordinator.start()
 
-        loader.simulate(update: Self.makeUpdate(contentId: Self.productId))
-        await workerReloader.waitForReloads(1)
+        await deliver(Self.makeUpdate(contentId: Self.productId))
 
         #expect(workerReloader.reloadedIds == [Self.productId])
-    }
-
-    @Test func updateForAnOpenProductShowsTheNoticeInsteadOfApplying() async {
-        register(first)
-        coordinator.start()
-
-        loader.simulate(update: Self.makeUpdate())
-        await notice.waitForShows(1)
-
-        #expect(notice.shownProductNames == ["Shop"])
-        #expect(notice.shownProductIds == [Self.productId])
-        #expect(loader.appliedUpdates.isEmpty)
-        #expect(first.serveCount == 0)
     }
 
     @Test func tappingUpdateAppliesAndReloadsEveryOpenSPA() async {
@@ -118,6 +72,12 @@ struct ProductUpdateCoordinatorTests {
         let update = Self.makeUpdate()
         loader.simulate(update: update)
         await notice.waitForShows(1)
+
+        #expect(notice.shownProductNames == ["Shop"])
+        #expect(notice.shownProductIds == [Self.productId])
+        #expect(loader.appliedUpdates.isEmpty)
+        #expect(first.serveCount == 0)
+        #expect(second.serveCount == 0)
 
         notice.simulateUpdate()
         await loader.waitForApplies(1)
@@ -145,24 +105,11 @@ struct ProductUpdateCoordinatorTests {
         #expect(!loader.appliedUpdates.contains(update))
 
         coordinator.unregister(secondId)
-        // Both releases `deliver` sent are applied too, in either order.
-        await loader.waitForApplies(3)
+        await loader.waitForApplies(2)
 
         #expect(loader.appliedUpdates.contains(update))
         #expect(first.serveCount == 0)
         #expect(second.serveCount == 0)
-    }
-
-    @Test func updateOfAnotherExecutableOfAnOpenProductIsApplied() async {
-        register(first)
-        coordinator.start()
-
-        let update = Self.makeUpdate(contentId: Self.workerId)
-        loader.simulate(update: update)
-        await workerReloader.waitForReloads(1)
-
-        #expect(loader.appliedUpdates == [update])
-        #expect(notice.shownProductNames.isEmpty)
     }
 
     @Test func refreshWithAPendingUpdateAppliesIt() async {
@@ -213,18 +160,32 @@ struct ProductUpdateCoordinatorTests {
 }
 
 private extension ProductUpdateCoordinatorTests {
+    func makeCoordinator(
+        loader: StubProductContentLoader,
+        currentWorkerReloader: @escaping () -> ProductWorkerReloading?
+    ) -> ProductUpdateCoordinator {
+        ProductUpdateCoordinator(
+            contentLoader: loader,
+            currentWorkerReloader: currentWorkerReloader,
+            noticePresenter: notice,
+            refreshSources: .init(
+                applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: notificationCenter),
+                hostPlacedProducts: hostPlaced
+            ),
+            logger: Logger.shared
+        )
+    }
+
     @discardableResult
     func register(_ reloader: StubSPAProductReloader) -> UUID {
         coordinator.register(productId: Self.productId, contentId: Self.appId, displayName: "Shop", reloader: reloader)
     }
 
-    /// Updates are handled in arrival order, so applying the next one means `update` was handled.
     func deliver(_ update: ExecutableRelease) async {
-        let applied = loader.appliedUpdates.count
-
+        await loader.waitForRemovals(1)
+        let removals = loader.keptHashesOnRemoval.count
         loader.simulate(update: update)
-        loader.simulate(update: Self.makeUpdate(contentId: Self.otherAppId))
-        await loader.waitForApplies(applied + 1)
+        await loader.waitForRemovals(removals + 1)
     }
 
     static func makeUpdate(contentId: ProductId = appId) -> ExecutableRelease {

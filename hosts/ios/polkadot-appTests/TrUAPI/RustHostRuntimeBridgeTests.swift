@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import ChainRegistry
 import Keystore_iOS
-import KeyDerivation
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -145,10 +144,12 @@ private func makeDatabaseDirectory() throws -> String {
 
 struct TrUAPIHostRuntimeProviderConfigTests {
     @Test func aWorkerUpdateLeavesAnUnopenedSessionRuntimeUnopened() throws {
-        let entropy = UnavailableRootEntropy()
         let provider = TrUAPIHostRuntimeProvider(
             chainRegistry: MockChainRegistry(),
-            entropyManager: entropy,
+            entropyManager: FixedRootEntropyManager {
+                Issue.record("A worker update requested the session's root entropy")
+                throw CancellationError()
+            },
             settingsManager: InMemorySettingsManager(),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
             confirmationRouterFacade: ProductRoutersFacade.worker(),
@@ -157,8 +158,6 @@ struct TrUAPIHostRuntimeProviderConfigTests {
         )
 
         try provider.reloadWorker(of: ProductId("shop.dot"))
-
-        #expect(entropy.reads == 0)
     }
 
     /// The core verifies the bundled descriptor under the build's stack link
@@ -189,16 +188,4 @@ struct TrUAPIHostRuntimeProviderConfigTests {
 
         _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config, workerEngine: NoWorkerEngine())
     }
-}
-
-private final class UnavailableRootEntropy: RootEntropyManaging {
-    private(set) var reads = 0
-
-    func fetchRootEntropy() throws -> Data {
-        reads += 1
-        throw CancellationError()
-    }
-
-    func createRootEntropy(_: Data) throws { throw CancellationError() }
-    func hasRootEntropy() throws -> Bool { false }
 }
