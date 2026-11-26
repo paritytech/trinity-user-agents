@@ -12,23 +12,20 @@ A product-drawn body declares how it moves, once, inside its tree: values the ho
 move them (a tap, a drag, a scratch that erases a node to reveal what is under it), and drives that compute node
 properties and material arguments from a value, the device's tilt or a clock every frame. A transition animates a node
 in, out or between trees. The core decides every outcome a product can observe, the host draws every frame, and the
-product hears discrete events on the [Unified Renderer](unified-renderer.md)'s action stream. A Pocket card turn becomes
-an ordinary product tree, and the card back leaves the protocol.
+product receives discrete events on the [Unified Renderer](unified-renderer.md)'s action stream.
 
 ## Motivation
 
-Products ask for four kinds of motion: a state change that animates, a gesture such as a tap or a pan that moves part of
-the card, a material whose look follows the device's tilt and time, and content hidden under a cover that a tap or a
-scratch reveals. Today a product gets one of them, the Pocket card turn, and only because the host owns all of it: the
-back is a second body on its own context, and the host keeps which side is up, runs the turn physics on each platform
-and serves `ExpandedCard::set_back_shown`.
+Products several kinds of motion usecases: a state change that animates, a gesture such as a tap or a pan that moves
+part of the card, a material whose look follows the device's tilt and time, and content hidden under a cover that a tap
+or a scratch reveals.
 
-A product cannot drive any of them itself, because a frame cannot wait for the product. A worker reaches the core
-asynchronously, today across a process boundary, so a tree redrawn per finger move lags the finger, and every round trip
-a gesture needs adds latency the person feels. Building each effect into the host instead gives every host every effect,
-each with its own rules both platforms must match exactly, and the protocol grows with every new effect.
+A product cannot drive any of them itself, because a rendering frame cannot wait for the product. A worker reaches the
+core asynchronously, today across a process boundary, so a tree redrawn per finger move lags the finger, and every round
+trip a gesture needs adds latency the person feels. Building each effect into the host instead gives every host every
+effect, each with its own rules both platforms must match exactly, and the protocol grows with every new effect.
 
-The four kinds share one shape: something on the device changes every frame (a finger, the tilt, a clock), a node
+The usecases however share one shape: something on the device changes every frame (a finger, the tilt, a clock), a node
 property follows it, and the product needs only the outcome.
 
 ## Requirements
@@ -37,20 +34,6 @@ property follows it, and the product needs only the outcome.
 - **Product-owned:** the product owns every state an input changes, and the host keeps only what is in flight.
 - **Generic:** the host draws motion without knowing what it means, such as a card, a side or a prize.
 - **Consistent:** the same input reaches the same outcome on every host, because one implementation decides it.
-- **Incremental:** a host can ship the model in parts, and a product can ask which parts a host draws.
-
-## Approach
-
-The design has eight parts:
-
-- The model: inputs move values, drives read sources and set targets, and events report outcomes.
-- Values and their inputs.
-- Scratching.
-- Drives, their sources and their targets.
-- Transitions.
-- Events and capabilities.
-- What the core decides and what the host draws.
-- The flows of a value and of a driven material argument.
 
 ### Model
 
@@ -296,6 +279,42 @@ act after layout, about the node's center, and opacity multiplies the node's own
 perspective from three times its longer side, from its center, on every host. A node whose effective opacity is 0 takes
 no touches, so a hidden face cannot be pressed.
 
+A drag moves a value, drives follow it every frame, and the value settles. Only `Began` and `Settled` reach the worker,
+on the action stream, and the tree the worker sends back confirms the rest.
+
+```mermaid
+sequenceDiagram
+  participant Person
+  participant Host
+  participant Core as Core (one object per body)
+  participant Worker
+
+  Worker->>Core: tree: Value "turn" = 0 with a Drag, Drives from "turn"
+  Core->>Host: checked tree, set "turn" to 0
+  Person->>Host: finger down, moves along the drag's axis
+  Host->>Core: drag began on "turn"
+  Core-->>Worker: Began
+  loop every finger move
+    Host->>Core: drag moved: travel, node size
+    Core->>Host: draw "turn" at 0.37
+    Note over Host: evaluates every drive at 0.37 and draws the frame
+  end
+  Person->>Host: finger up
+  Host->>Core: drag ended: travel, node size
+  Core->>Host: animate "turn" to 1 with its animation
+  loop every frame until the animation ends
+    Note over Host: plays the animation, evaluates the drives, draws
+  end
+  Host->>Core: animation to 1 finished
+  Core-->>Worker: Settled { value: 1 }
+  Worker->>Core: tree: Value "turn" = 1
+  Core->>Host: nothing to move, the value already rests on 1
+```
+
+A tap, a scratch reaching `step_at`, an accessibility action and a declared change all join this flow at the animation
+step: the core answers with the rest to animate to, and the host reports when it finishes. A declared change reports
+`Settled` too, and the tree that follows confirms it.
+
 A material argument is a drive target too. The [Materials](materials.md) `Parameter` enum gains one variant, which fills
 a `float` parameter every frame:
 
@@ -315,6 +334,29 @@ pub enum Parameter {
 A layer with a `Driven` argument whose source is a value draws when the value moves, and one whose source is the tilt or
 a clock draws every frame, under the materials step-down rules. A material that reads `sl_tilt` or `sl_time` itself
 keeps doing so.
+
+A material argument follows a source on the host alone. The core resolves the material with the tree, and the worker
+hears nothing while the argument moves.
+
+```mermaid
+sequenceDiagram
+  participant Worker
+  participant Core
+  participant Host
+  participant Sensor as Motion sensor
+  participant GPU
+
+  Worker->>Core: tree: Materials layer, argument Driven { Tilt Horizontal, keyframes }
+  Core->>Core: check the tree, fetch and check the material, translate it for the platform
+  Core->>Host: checked tree and resolved material
+  Host->>GPU: compile the material
+  loop every frame while the node is on screen
+    Sensor->>Host: tilt
+    Note over Host: evaluates the keyframes at the tilt into one float
+    Host->>GPU: set the parameter, draw the layer
+  end
+  Note over Host,GPU: a Driven argument from a value draws only when the value moves
+```
 
 With reduced motion on, the tilt reads 0 and a clock reads 0, as material inputs do.
 
@@ -443,75 +485,23 @@ as a drag's travel or a finger's sample over a scratched node, and the object an
 to animate to, and the actions to send. The host reports when an animation finishes, and the core decides whether that
 is a `Settled`.
 
-The core checks each tree before a host draws it, beside its check of inline images. A drive or argument naming an
-unknown value, a repeated id, unsorted keyframes, a number that is not finite, a Bézier `x1` or `x2` outside `[0, 1]`, a
-zero `period`, `distance` or clock period, a second input of one kind or a scratch beside a drag, or anything past 4
-values, 32 drives, 16 keyframes per drive or 16 transitions is dropped, and the tree draws without it rather than
-failing the stream.
+The core checks each tree before a host draws it, beside its check of inline images, visiting nodes depth first, parents
+before children, values before the drives that read them. What fails a check is dropped, and the tree draws without it
+rather than failing the stream:
+
+- A value is dropped when its id repeats an earlier value's, when its `period` is 0, or past the first 8 values.
+- An input is dropped when its value already has an input of that kind, when it is a scratch on a value with a drag or a
+  drag on a value with a scratch, when it is a drag with a `distance` of 0, or when it is a scratch with a `step_at` of
+  0 or above 1000.
+- A drive is dropped when its source names no remaining value, when its source is a clock with a period of 0, when its
+  keyframes are empty, more than 16 or not strictly ascending in `at`, when a number in it is not finite, when a Bézier
+  `x1` or `x2` lies outside `[0, 1]`, or past the first 32 drives.
+- A `Driven` argument that fails a drive's check makes its `Materials` node fall back with `InvalidStack`, as any wrong
+  argument does.
+- A transition is dropped when its id repeats an earlier transition's, or past the first 16 transitions.
 
 A host may decline an input on a surface, or on one axis where the host owns that axis, such as the expanded card's pull
 to close or a scrolling list. The tree then draws at its declared values, and accessibility actions still work.
-
-### Flows
-
-A drag moves a value, drives follow it every frame, and the value settles. Only `Began` and `Settled` reach the worker,
-on the action stream, and the tree the worker sends back confirms the rest.
-
-```mermaid
-sequenceDiagram
-  participant Person
-  participant Host
-  participant Core as Core (one object per body)
-  participant Worker
-
-  Worker->>Core: tree: Value "turn" = 0 with a Drag, Drives from "turn"
-  Core->>Host: checked tree, set "turn" to 0
-  Person->>Host: finger down, moves along the drag's axis
-  Host->>Core: drag began on "turn"
-  Core-->>Worker: Began
-  loop every finger move
-    Host->>Core: drag moved: travel, node size
-    Core->>Host: draw "turn" at 0.37
-    Note over Host: evaluates every drive at 0.37 and draws the frame
-  end
-  Person->>Host: finger up
-  Host->>Core: drag ended: travel, node size
-  Core->>Host: animate "turn" to 1 with its animation
-  loop every frame until the animation ends
-    Note over Host: plays the animation, evaluates the drives, draws
-  end
-  Host->>Core: animation to 1 finished
-  Core-->>Worker: Settled { value: 1 }
-  Worker->>Core: tree: Value "turn" = 1
-  Core->>Host: nothing to move, the value already rests on 1
-```
-
-A tap, a scratch reaching `step_at`, an accessibility action and a declared change all join this flow at the animation
-step: the core answers with the rest to animate to, and the host reports when it finishes. A declared change reports
-`Settled` too, and the tree that follows confirms it.
-
-A material argument follows a source on the host alone. The core resolves the material with the tree, and the worker
-hears nothing while the argument moves.
-
-```mermaid
-sequenceDiagram
-  participant Worker
-  participant Core
-  participant Host
-  participant Sensor as Motion sensor
-  participant GPU
-
-  Worker->>Core: tree: Materials layer, argument Driven { Tilt Horizontal, keyframes }
-  Core->>Core: check the tree, fetch and check the material, translate it for the platform
-  Core->>Host: checked tree and resolved material
-  Host->>GPU: compile the material
-  loop every frame while the node is on screen
-    Sensor->>Host: tilt
-    Note over Host: evaluates the keyframes at the tilt into one float
-    Host->>GPU: set the parameter, draw the layer
-  end
-  Note over Host,GPU: a Driven argument from a value draws only when the value moves
-```
 
 ## Appendix: product examples
 
