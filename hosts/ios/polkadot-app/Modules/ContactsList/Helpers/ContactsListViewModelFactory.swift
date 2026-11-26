@@ -221,7 +221,8 @@ private extension ContactsListViewModelFactory {
                 for: content.totalValue,
                 tokenFormatter: _tokenFormatter!,
                 messageStatus: message.status,
-                peerName: peerMetadata.name
+                peerName: peerMetadata.name,
+                transferState: content.state
             )
 
         case .contactAdded:
@@ -346,17 +347,34 @@ private extension ContactsListViewModelFactory {
         for amount: Balance,
         tokenFormatter: TransferAmountViewModelFactoryProtocol,
         messageStatus: Chat.LocalMessage.Status,
-        peerName: String
+        peerName: String,
+        transferState: Chat.LocalMessage.Content.Transfer.State? = nil
     ) -> String {
         let formattedAmount = tokenFormatter.amount(from: amount)
+        let reclaimedAmount = transferState?.reclaimedValue.map { tokenFormatter.amount(from: $0) }
         let message =
             switch messageStatus {
+            case .incoming where transferState?.isReturnedToSender == true:
+                String(localized: .chatTransferReturnedToSender(username: peerName, amount: formattedAmount))
             case .incoming:
                 String(localized: .chatTransferReceived(contact: peerName, amount: formattedAmount))
             case .outgoing:
-                String(localized: .chatTransferSent(amount: formattedAmount))
+                reclaimedAmount.map { String(localized: .chatTransferReclaimed(amount: $0)) }
+                    ?? String(localized: .chatTransferSent(amount: formattedAmount))
             }
 
         return message
+    }
+}
+
+private extension Chat.LocalMessage.Content.Transfer.State {
+    var isReturnedToSender: Bool {
+        guard case let .incoming(incoming) = self else { return false }
+        return incoming.status == .returnedToSender
+    }
+
+    var reclaimedValue: Balance? {
+        guard case let .outgoing(outgoing) = self, outgoing.status.isReclaimed else { return nil }
+        return outgoing.actualValue
     }
 }

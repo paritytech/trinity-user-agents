@@ -47,9 +47,10 @@ public extension ChatTransferMessageConfiguration {
         state: ChatTransferMessageConfiguration.OutgoingState,
         statusConfiguration: ChatMessageStatusViewConfiguration,
         addReaction: ChatMessageContainerConfiguration.AddReactionViewModel? = nil,
-        messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel? = nil
+        messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel? = nil,
+        reclaimAction: ChatTransferMessageConfiguration.ReclaimAction? = nil
     ) -> ChatMessageContainerConfiguration {
-        let configuration = ChatTransferMessageConfiguration(
+        var configuration = ChatTransferMessageConfiguration(
             title: String(localized: .chatTransferOutbox),
             amountText: amount,
             tokenSymbol: tokenSymbol,
@@ -65,6 +66,7 @@ public extension ChatTransferMessageConfiguration {
             side: .trailing,
             peerName: username
         )
+        configuration.reclaimAction = reclaimAction
 
         return ChatMessageContainerConfiguration(
             innerContent: configuration,
@@ -82,7 +84,8 @@ private extension ChatTransferMessageConfiguration.IncomingState {
     func inboxTitle(username: String) -> String {
         switch self {
         case .claimed,
-             .failed:
+             .failed,
+             .returnedToSender:
             String(localized: .chatTransferInbox(username: username))
         case .detecting,
              .claiming:

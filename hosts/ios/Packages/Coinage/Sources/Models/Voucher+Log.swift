@@ -24,7 +24,7 @@ extension Voucher.OnChainState: CustomDebugStringConvertible {
 
 extension Voucher.Recycler: CustomDebugStringConvertible {
     public var debugDescription: String {
-        "index=\(index), ringMembers=\(membersCount)"
+        "index=\(index), ringMembers=\(membersCount), unloaded=\(unloadedCount.map { String($0) } ?? "nil")"
     }
 }
 

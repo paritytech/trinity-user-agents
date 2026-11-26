@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.32.0"
+version = "0.33.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -102,7 +102,7 @@ truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true }
 async-lock = { workspace = true, optional = true }
 async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
+derive_more = { workspace = true, features = ["debug", "display", "eq", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
 # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number

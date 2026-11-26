@@ -116,12 +116,18 @@ Transfer plans determine how coins are spent:
 `CoinageTransferMonitor` writes one row per coinage message (`CDIncomingTransferState` /
 `CDOutgoingTransferState`, `Modules/Coinage/Model/TransferState.swift`) and subscribes to every message whose
 row is not terminal (`NSPredicate.withoutTerminalTransferState`). Statuses come in best-head and finalized pairs:
-incoming `claimed` → `claimedFinalized`, outgoing `sent` → `sentFinalized` and `claimed` → `claimedFinalized`.
-A best-head reading is one a fork can still undo, so only `claimedFinalized` and `failed` are terminal — an
-explicit set (`Status.terminal`). A relaunch while a row is `claimed`/`sent` therefore tracks the message again until the finalized chain
-agrees; the bubbles render a finalized status like its best-head twin. Per coin, the package ladder
-(`CoinageTransferStatusService.transferStatus`) reports `awaitingClaim(finalized:)` / `claimed(finalized:)` from the
-finalized head's presence map.
+incoming `claimed` → `claimedFinalized`, outgoing `sent` → `sentFinalized`, `claimed` → `claimedFinalized` and
+`reclaimed` → `reclaimedFinalized`. A best-head reading is one a fork can still undo, so only the finalized
+variants and `failed` are terminal — an explicit set (`Status.terminal`). A relaunch while a row is
+`claimed`/`sent`/`reclaimed` therefore tracks the message again until the finalized chain agrees; the bubbles
+render a finalized status like its best-head twin. The incoming `returnedToSender` (coins absent after the
+6h claim window, from the claim's `noCoinsOnChain` look or its give-up) is not terminal either: the claim keeps
+running, so a late mint still turns it into a claim. Outgoing `unclaimed`, `reclaiming` and `reclaimFailed` are
+best-head readings too. Per coin, the package ladder (`CoinageTransferStatusService.status`) routes a coin with
+a live or landed consumer, or a failed reclaim still on chain, to reclaim tracking (`reclaiming`,
+`reclaimed(finalized:)`, `reclaimFailed`); everything else goes through the presence ladder
+(`awaitingClaim(finalized:)` / `claimed(finalized:)` from the finalized head's presence map). Failed reclaims are
+read from the `chat-reclaim:<messageId>` group, because coin state keeps no failed consumer.
 
 ## Submission Policies (retries)
 
