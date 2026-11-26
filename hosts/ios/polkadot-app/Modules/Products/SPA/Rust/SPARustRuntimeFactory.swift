@@ -51,7 +51,7 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
                 resolver: environment.productResolver
             ),
             schemeHandlerProxy: environment.schemeHandlerProxy,
-            logger: environment.rust.logger,
+            logger: environment.rust.services.logger,
             hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
         )
     }

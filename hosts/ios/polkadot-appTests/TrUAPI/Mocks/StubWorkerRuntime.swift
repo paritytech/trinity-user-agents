@@ -7,12 +7,12 @@ import TrUAPIHost
 
 final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
     private let states = AsyncCurrentValueSubject<[ProductId: NativeWorkerExecutionState]>([:])
-    private let entered = AsyncStream<Void>.makeStream()
+    private let observations = OSAllocatedUnfairLock(initialState: (started: 0, cancelled: 0))
     private let delivered = AsyncStream<Void>.makeStream()
 
     let references = StubWorkerReferences()
 
-    var readinessChecks: AsyncStream<Void> { entered.stream }
+    var readinessObservations: (started: Int, cancelled: Int) { observations.withLock { $0 } }
     var executionsDelivered: AsyncStream<Void> { delivered.stream }
 
     func claimWorker(productId: ProductId) -> NativeWorkerClaim {
@@ -24,12 +24,14 @@ final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
     }
 
     func workerExecutionState(productId: ProductId) -> AsyncStream<NativeWorkerExecutionState> {
-        entered.continuation.yield(())
+        observations.withLock { $0.started += 1 }
         let iterator = StateIterator(states.makeAsyncIterator())
         return AsyncStream(unfolding: { [delivered] in
             guard let snapshot = await iterator.next() else { return nil }
             delivered.continuation.yield(())
             return snapshot[productId] ?? .pending
+        }, onCancel: { [observations] in
+            observations.withLock { $0.cancelled += 1 }
         })
     }
 }
@@ -56,20 +58,16 @@ private final class StateIterator<Iterator: AsyncIteratorProtocol>: @unchecked S
 /// threads is a data race, and the test that reads it fails at random.
 final class StubWorkerReferences: @unchecked Sendable {
     private let records = OSAllocatedUnfairLock(
-        initialState: (acquired: [ProductId](), released: [ProductId](), log: [String](), releaseCounts: [Int]())
+        initialState: (acquired: [ProductId](), released: [ProductId](), releaseCounts: [Int]())
     )
 
     var releaseCounts: [Int] { records.withLock { $0.releaseCounts } }
     var acquired: [ProductId] { records.withLock { $0.acquired } }
     var released: [ProductId] { records.withLock { $0.released } }
-    /// Both in the order they happened. A release reaching the core before its
-    /// acquire drops the count of a worker another holder is drawing from.
-    var log: [String] { records.withLock { $0.log } }
 
     func claim(_ productId: ProductId) -> NativeWorkerClaim {
         let index = records.withLock {
             $0.acquired.append(productId)
-            $0.log.append("acquire \(productId)")
             $0.releaseCounts.append(0)
             return $0.releaseCounts.count - 1
         }
@@ -77,7 +75,6 @@ final class StubWorkerReferences: @unchecked Sendable {
             records.withLock {
                 $0.releaseCounts[index] += 1
                 $0.released.append(productId)
-                $0.log.append("release \(productId)")
             }
         }
     }

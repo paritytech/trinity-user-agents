@@ -33,7 +33,7 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
         var claim: NativeWorkerClaim?
         var following: Task<Void, Never>?
         /// The execution of the worker while it runs, which presses go to.
-        var execution: TrUAPIWorkerOperations?
+        var execution: NativeWorkerExecution?
         var disposed = false
     }
 
@@ -92,7 +92,7 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
 
         do {
             try execution.publishRendererAction(
-                HostRendererActionSubscribeItem(
+                item: HostRendererActionSubscribeItem(
                     context: .pocketCard(cardId: key.cardId.value),
                     actionId: action,
                     payload: payload

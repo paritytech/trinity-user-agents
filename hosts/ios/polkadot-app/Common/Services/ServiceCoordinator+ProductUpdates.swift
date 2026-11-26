@@ -6,7 +6,6 @@ import Products
 extension ServiceCoordinator {
     static func registerProductUpdates(
         contentLoader: ProductContentLoading,
-        workerReloader: ProductWorkerReloading,
         iconFactory: ProductIconViewModelMaking,
         logger: LoggerProtocol
     ) {
@@ -17,7 +16,7 @@ extension ServiceCoordinator {
 
             let coordinator = ProductUpdateCoordinator(
                 contentLoader: contentLoader,
-                workerReloader: workerReloader,
+                currentWorkerReloader: { RootDependencyLocator.getDependency() as TrUAPIHostRuntimeProviding? },
                 noticePresenter: ProductUpdateNoticePresenter(application: .shared, iconFactory: iconFactory),
                 refreshSources: ProductUpdateCoordinator.RefreshSources(
                     applicationStateStreams: ApplicationStateStreamFactory(),

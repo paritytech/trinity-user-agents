@@ -32,10 +32,12 @@ struct WebViewWorkerHostTests {
         try await withTimeout(.hangGuard) { for await _ in entered.stream {} }
         host.stop(productId: product, attemptId: first.id())
         host.start(productId: product, attempt: second)
-        try await withTimeout(.hangGuard) { for await _ in replacement.loaded.stream {} }
+        #expect(try await second.nextEvent() == .started)
         gate.continuation.finish()
         try await withTimeout(.hangGuard) { await slow.execution.awaitClose() }
 
+        first.events.continuation.finish()
+        #expect(try await first.nextEvent() == nil)
         #expect(slow.engine.evaluatedScripts.isEmpty)
         #expect(replacement.execution.closeCallCount == 0)
         host.stop(productId: product, attemptId: second.id())
@@ -49,14 +51,23 @@ struct WebViewWorkerHostTests {
         let attempt = Attempt(3)
         let host = WebViewWorkerHost { _, _ in view.runtime() }
         host.start(productId: product, attempt: attempt)
-        try await withTimeout(.hangGuard) { for await _ in view.loaded.stream {} }
+        #expect(try await attempt.nextEvent() == .started)
 
         view.engine.terminate()
-        let reason = try await withTimeout(.hangGuard) {
-            var failures = attempt.failures.stream.makeAsyncIterator()
-            return await failures.next()
-        }
-        #expect(reason == "WebView process terminated")
+        #expect(try await attempt.nextEvent() == .failed("WebView process terminated"))
+        host.stop(productId: product, attemptId: attempt.id())
+        try await withTimeout(.hangGuard) { await view.execution.awaitClose() }
+    }
+
+    @Test
+    func reportsAModuleLoadErrorBeforeAcknowledgingStartup() async throws {
+        let view = WebViewFixture()
+        view.engine.moduleLoadFails = true
+        let attempt = Attempt(1)
+        let host = WebViewWorkerHost { _, _ in view.runtime() }
+        host.start(productId: product, attempt: attempt)
+
+        #expect(try await attempt.nextEvent() == .failed(String(describing: JSEngineError.moduleLoadFailed)))
         host.stop(productId: product, attemptId: attempt.id())
         try await withTimeout(.hangGuard) { await view.execution.awaitClose() }
     }
@@ -68,17 +79,18 @@ struct WebViewWorkerHostTests {
         let attempt = Attempt(4)
         let host = WebViewWorkerHost { _, _ in throw MissingWorker() }
         host.start(productId: product, attempt: attempt)
-        let reason = try await withTimeout(.hangGuard) {
-            var failures = attempt.failures.stream.makeAsyncIterator()
-            return await failures.next()
-        }
-        #expect(reason == String(describing: MissingWorker()))
+        #expect(try await attempt.nextEvent() == .failed(String(describing: MissingWorker())))
         host.stop(productId: product, attemptId: attempt.id())
     }
 }
 
 private final class Attempt: NativeWorkerAttempt, @unchecked Sendable {
-    let failures = AsyncStream<String>.makeStream()
+    enum Event: Equatable, Sendable {
+        case started
+        case failed(String)
+    }
+
+    let events = AsyncStream<Event>.makeStream()
     private let value: UInt64
 
     init(_ value: UInt64) {
@@ -91,13 +103,24 @@ private final class Attempt: NativeWorkerAttempt, @unchecked Sendable {
     }
 
     override func id() -> UInt64 { value }
-    override func failed(reason: String) { failures.continuation.yield(reason) }
+    override func moduleStarted() -> Bool {
+        events.continuation.yield(.started)
+        return true
+    }
+
+    override func failed(reason: String) { events.continuation.yield(.failed(reason)) }
+
+    func nextEvent() async throws -> Event? {
+        try await withTimeout(.hangGuard) { [events] in
+            var iterator = events.stream.makeAsyncIterator()
+            return await iterator.next()
+        }
+    }
 }
 
 private struct WebViewFixture: Sendable {
     let execution = MockProductExecution()
     let engine = MockJSEngine()
-    let loaded = AsyncStream<Void>.makeStream()
 
     func runtime() -> TrUAPIWorkerRuntime {
         TrUAPIWorkerRuntime(
@@ -105,8 +128,7 @@ private struct WebViewFixture: Sendable {
             executionModel: .init(
                 execution: execution,
                 chainConnections: MockChainConnections(),
-                osPermissionAsker: OSPermissionAsker(),
-                acknowledgeStartup: { loaded.continuation.finish(); return true }
+                osPermissionAsker: OSPermissionAsker()
             ),
             engineFactory: { engine }
         )

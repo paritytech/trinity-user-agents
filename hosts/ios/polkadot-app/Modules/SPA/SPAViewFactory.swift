@@ -7,9 +7,7 @@ import Individuality
 import SubstrateSdk
 import SubstrateStorageQuery
 import ChainRegistry
-import BulletinChain
 import TrUAPIHost
-import DesignSystem
 
 enum SPAViewFactory {
     @MainActor
@@ -241,13 +239,11 @@ extension SPAViewFactory {
 
         return RustRuntimeEnvironment(
             runtime: runtime,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            notificationScheduler: ProductNotificationScheduler.shared,
-            gameReminders: RootDependencyLocator.getDependency(),
-            ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-            hostProvider: hostProvider,
-            themeManager: ThemeManager.shared,
-            logger: Logger.shared
+            services: ProductExecutionServices(
+                hostProvider: hostProvider,
+                gameReminders: RootDependencyLocator.getDependency(),
+                logger: Logger.shared
+            )
         )
     }
 }

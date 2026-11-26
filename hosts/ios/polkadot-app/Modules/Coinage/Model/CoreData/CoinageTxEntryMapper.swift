@@ -46,6 +46,12 @@ struct CoinageTxRowObserver: DurableTxRowObserving {
 /// Coinage's input/output rows on a `CDDurableTx`: reading them back, writing them at registration,
 /// and signalling the assets they link to.
 enum CoinageTxAssetRows {
+    /// How a coin-linked input row was spent; the link alone cannot tell a reclaim from an ordinary own spend.
+    enum InputKind: Int16 {
+        case own = 0
+        case reclaimed = 1
+    }
+
     static func transformInputs(from rows: NSSet?) throws -> [CoinageTxInput] {
         guard let rows = rows as? Set<CDCoinageTxInput> else { return [] }
         return try rows.compactMap { row in
@@ -53,7 +59,10 @@ enum CoinageTxAssetRows {
                 return try .coin(.received(Data(hexString: hex)))
             }
             if let coin = row.coin {
-                return try .coin(.own(coin.keyIndex(), publicKey(coin.publicKey)))
+                let keyIndex = try coin.keyIndex()
+                let key = try publicKey(coin.publicKey)
+                let isReclaimed = InputKind(rawValue: row.kind) == .reclaimed
+                return .coin(isReclaimed ? .reclaimed(keyIndex, key) : .own(keyIndex, key))
             }
             if let voucher = row.voucher {
                 return try .recyclerVoucher(voucher.keyIndex(), publicKey(voucher.publicKey))
@@ -130,11 +139,13 @@ private extension CoinageTxAssetRows {
             switch input {
             case let .coin(coinInput):
                 switch coinInput {
-                case .own:
+                case .own,
+                     .reclaimed:
                     guard let coin = CoinageTxAssetLinker.coin(for: input, in: context) else {
                         throw CoreDataMapperError.missingRequiredData(keyPath: #keyPath(CDCoinageTxInput.coin))
                     }
                     row.coin = coin
+                    row.kind = (input.isReclaimed ? InputKind.reclaimed : .own).rawValue
                 case let .received(accountId):
                     row.receivedPubKey = accountId.toHex()
                 }

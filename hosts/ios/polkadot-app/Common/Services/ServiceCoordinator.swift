@@ -19,10 +19,11 @@ import Individuality
 import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
-import DesignSystem
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
+    var fundingService: FundingServiceProtocol { get }
+    var fundingActivityCenter: FundingActivityCenterProtocol { get }
     var polkadotHandshakeService: PolkadotHandshakeServicing { get }
     var chatExtensionsRegistry: ChatExtensionsRegistering { get }
     var signInHostCoordinator: MessageExchangeSignInHostCoordinating { get }
@@ -46,6 +47,8 @@ protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
 final class ServiceCoordinator {
     let chatCoordinator: MessageExchangeChatCoordinating
     let depositService: DepositServiceProtocol
+    let fundingService: FundingServiceProtocol
+    let fundingActivityCenter: FundingActivityCenterProtocol
     let polkadotHandshakeService: PolkadotHandshakeServicing
     let signInHostCoordinator: MessageExchangeSignInHostCoordinating
     let chatExtensionsRegistry: ChatExtensionsRegistering
@@ -93,6 +96,8 @@ final class ServiceCoordinator {
     init(
         chatCoordinator: MessageExchangeChatCoordinating,
         depositService: DepositServiceProtocol,
+        fundingService: FundingServiceProtocol,
+        fundingActivityCenter: FundingActivityCenterProtocol,
         polkadotHandshakeService: PolkadotHandshakeServicing,
         signInHostCoordinator: MessageExchangeSignInHostCoordinating,
         chatExtensionsRegistry: ChatExtensionsRegistering,
@@ -125,6 +130,8 @@ final class ServiceCoordinator {
     ) {
         self.chatCoordinator = chatCoordinator
         self.depositService = depositService
+        self.fundingService = fundingService
+        self.fundingActivityCenter = fundingActivityCenter
         self.polkadotHandshakeService = polkadotHandshakeService
         self.signInHostCoordinator = signInHostCoordinator
         self.chatExtensionsRegistry = chatExtensionsRegistry
@@ -234,32 +241,29 @@ extension ServiceCoordinator {
             contentHashCache: ContentHashCache.shared
         )
 
-        // The worker engine builds its WebViews with the provider's runtime, and the provider is
-        // built with its engine, so the engine reaches the provider through this reference.
-        let runtimeProvider = LateReference<TrUAPIHostRuntimeProvider>()
-        let runtime: @Sendable () throws -> TrUAPIHostRuntime = {
-            guard let provider = runtimeProvider.object else { throw CancellationError() }
-            return try provider.sharedRuntime()
-        }
-        let contexts = ProductWorkerContexts { runtimeProvider.object?.presentationView }
-        let workerBuilder = TrUAPIWorkerBuilder(
-            runtime: runtime,
-            flowState: spaFlowState,
-            productFileProvider: productFileProvider,
+        let confirmationRouter = ProductRoutersFacade.sso()
+        let contexts = ProductWorkerContexts { [router = confirmationRouter.productsRouter] in router.presentationView }
+        let workerServices = ProductExecutionServices(
+            hostProvider: spaFlowState.hostProvider,
             gameReminders: gameReminders,
-            themeManager: ThemeManager.shared,
             logger: logger
+        )
+        let workerBuilder = TrUAPIWorkerBuilder(
+            contentLoader: spaFlowState.contentLoader,
+            dotNsResolver: spaFlowState.dotNsResolver,
+            productFileProvider: productFileProvider
         )
         let webViewHost = WebViewWorkerHost { productId, attempt in
             try await workerBuilder.makeRuntime(
                 productId: productId,
                 context: contexts.context(for: productId),
-                attempt: attempt
+                attempt: attempt,
+                services: workerServices
             )
         }
-        // Single process-wide TrUAPI runtime provider. Registered in the root
-        // locator so the static SPA factory reaches the same instance the
-        // chat bot factory does — one shared runtime across all products.
+        let fundingService = FundingService(logger: logger)
+        // The root locator lets the SPA factory and product updates reach
+        // the same dashboard session as Chat.
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
@@ -268,12 +272,16 @@ extension ServiceCoordinator {
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
-            confirmationRouterFacade: ProductRoutersFacade.sso(),
+            confirmationRouterFacade: confirmationRouter,
             workerEngine: webViewHost,
+            fundingHandler: fundingService,
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
-        runtimeProvider.object = truapiRuntimeProvider
+        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak truapiRuntimeProvider] in
+            guard let truapiRuntimeProvider else { throw CancellationError() }
+            return try truapiRuntimeProvider.sharedRuntime()
+        }
 
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
         RootDependencyLocator.setDependency(
@@ -343,7 +351,14 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
-        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
+        Task { [logger] in
+            do {
+                try await fundingService.attach(runtime: truapiRuntimeProvider.setup())
+            } catch {
+                logger.error("[truapi] building the runtime at startup failed: \(error)")
+            }
+        }
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -362,7 +377,6 @@ extension ServiceCoordinator {
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(runtime: runtime),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )
@@ -421,6 +435,8 @@ extension ServiceCoordinator {
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
             depositService: depositService,
+            fundingService: fundingService,
+            fundingActivityCenter: FundingActivityCenter(service: fundingService, logger: logger),
             polkadotHandshakeService: PolkadotHandshakeService(
                 rootWallet: DynamicDerivedWallet(derivationPath: nil),
                 identityWallet: mainWallet,
@@ -632,10 +648,4 @@ private extension ServiceCoordinator {
 
         return providers
     }
-}
-
-/// A reference set once the object it points to exists, for two objects that are each built
-/// with the other. Set during startup, before anything reads it.
-private final class LateReference<Object: AnyObject>: @unchecked Sendable {
-    weak var object: Object?
 }

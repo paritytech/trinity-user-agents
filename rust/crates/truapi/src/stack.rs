@@ -6,7 +6,10 @@
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
 //! the same policy, and a copy on another TLD than the bundled one is refused.
-//! It resolves the [`Stack`] the core runs on.
+//! It resolves the [`Stack`] the core runs on. A runtime built on that
+//! [`Stack`] also checks the genesis hash of each chain it connects to and, on
+//! a signing host, People's `NetworkSuffix`. The refresh reports what differs
+//! from the descriptor.
 
 mod held;
 mod pinned;
@@ -22,8 +25,10 @@ use truapi::latest::{
 use crate::dotns_name::DOTNS_TLDS;
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
-pub use refresh::{StackHost, StackRefresh};
-pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
+pub use refresh::{StackChecks, StackHost, StackRefresh};
+pub use source::{
+	StackFetchRequest, StackFetchResponse, StackMismatch, StackRefreshOutcome, StackStatus,
+};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -137,13 +142,19 @@ impl ReservedValuesPolicy {
 /// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
 /// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
 /// and the Asset Hub contracts the core reads.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
+/// hands out also carries the checks of its chains, which equality ignores.
+#[derive(derive_more::Debug, Clone, derive_more::PartialEq, derive_more::Eq)]
 pub struct Stack {
 	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
+	#[debug(skip)]
+	#[partial_eq(skip)]
+	checks: Option<StackChecks>,
 }
 
 /// A stack's id and the generation of its chains.
@@ -351,7 +362,7 @@ impl Stack {
 		}
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
-		Ok(Self { identity, network, tld, chains, account_data_store: None })
+		Ok(Self { identity, network, tld, chains, account_data_store: None, checks: None })
 	}
 
 	/// The stack's identity. See [`StackIdentity::id`].
@@ -415,6 +426,14 @@ impl Stack {
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
 	}
+}
+
+/// The checks of `stack`'s chains against its descriptor.
+///
+/// `None` unless a [`StackRefresh`] handed the stack out: the core does not
+/// check the chains of a stack built any other way.
+pub fn checks(stack: &Stack) -> Option<&StackChecks> {
+	stack.checks.as_ref()
 }
 
 /// The `AccountDataStore` address `descriptor` names, or `None` when it names

@@ -74,7 +74,8 @@ struct TrUAPIPocketHandlerTests {
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
         #expect(first.renderRequests.count == 1)
-        #expect(workers.references.log == ["acquire \(gameProductId)"])
+        #expect(workers.references.acquired == [gameProductId])
+        #expect(workers.references.releaseCounts == [0])
     }
 }
 

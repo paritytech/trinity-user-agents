@@ -8,7 +8,7 @@ pub use workers::{
 };
 
 use std::sync::{
-	Arc, Mutex, OnceLock,
+	Arc, Mutex, OnceLock, Weak,
 	atomic::{AtomicBool, Ordering},
 };
 
@@ -306,7 +306,7 @@ impl NativeTrUApiHostRuntime {
 			renderer_failures: Arc::new(crate::runtime::ActionChannel::renderer_failures()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
-			product_control: Arc::new(Mutex::new(None)),
+			product_control: Mutex::new(None),
 		})
 	}
 }
@@ -692,17 +692,17 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// The stack the runtime runs: its verified descriptor, whether it is
-	/// stale or has shut down, and whether a newer copy waits for the next
-	/// start.
+	/// stale or has shut down, whether a newer copy waits for the next
+	/// start, and where its chains answered differently from the descriptor.
 	pub fn stack_status(&self) -> StackStatus {
 		self.stack_refresh.status()
 	}
 
 	/// Fetch the stack's descriptor now instead of when the copy is an hour
-	/// old, as when the app returns to the foreground or a chain answers with
-	/// another genesis hash. Returns at once; the result arrives through
-	/// [`NativeStackCallbacks::stack_changed`]. Nothing is fetched until
-	/// [`Self::set_stack_callbacks`] installed the callbacks.
+	/// old, as when the app returns to the foreground. Returns at once; the
+	/// result arrives through [`NativeStackCallbacks::stack_changed`].
+	/// Nothing is fetched until [`Self::set_stack_callbacks`] installed the
+	/// callbacks.
 	pub fn refresh_stack(&self) {
 		self.stack_refresh.refresh_now();
 	}
@@ -1179,7 +1179,7 @@ pub struct NativeProductExecution {
 	closed: AtomicBool,
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
-	product_control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
+	product_control: Mutex<Option<crate::ProductRuntimeControl>>,
 }
 
 impl NativeProductExecution {
@@ -1196,6 +1196,20 @@ impl NativeProductExecution {
 			expanded_card: Some(self.expanded_card.clone()),
 			game_platform: self.game.clone(),
 		}
+	}
+
+	/// Connect the product, which receives its frames through `sink`.
+	///
+	/// Host calls on the execution then reach the product through this connection.
+	fn connect(&self, sink: Arc<dyn crate::FrameSink>) -> crate::ProductRuntime {
+		let connection =
+			self.runtime.product_runtime_with(self.product.clone(), self.adapters(), sink);
+		*self.product_control.lock().expect("native product control mutex poisoned") =
+			Some(connection.control());
+		if let Some(attempt) = &self.worker_attempt {
+			attempt.connected();
+		}
+		connection
 	}
 
 	fn admin(&self) -> crate::HostAdmin {
@@ -1476,7 +1490,7 @@ impl NativeProductExecution {
 /// applied here instead. Both bridge loggers route through this, the listener's
 /// and each execution's. An unlisted marker is dropped, because nothing
 /// downstream knows what its detail carries.
-pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
+pub fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
 	if markers::class_of(marker).is_none() {
 		return;
 	}
@@ -1486,29 +1500,15 @@ pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, d
 	);
 }
 
-struct ExecutionConnections {
-	runtime: Arc<HostRuntime<SigningHost>>,
-	product: ProductContext,
-	adapters: crate::host_core::ConnectionAdapters,
-	control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
-	attempt: Option<Arc<NativeWorkerAttempt>>,
-}
-
-impl super::ws_bridge::WsProductRuntimeFactory for ExecutionConnections {
-	fn product_runtime(&self, sink: Arc<dyn crate::FrameSink>) -> crate::ProductRuntime {
-		let connection =
-			self.runtime
-				.product_runtime_with(self.product.clone(), self.adapters.clone(), sink);
-		*self.control.lock().expect("native product control mutex poisoned") =
-			Some(connection.control());
-		if let Some(attempt) = &self.attempt {
-			attempt.connected();
-		}
-		connection
+/// The bridge holds the execution weakly: the execution's drop is what ends its registration.
+impl super::ws_bridge::WsProductRuntimeFactory for Weak<NativeProductExecution> {
+	fn product_runtime(&self, sink: Arc<dyn crate::FrameSink>) -> Option<crate::ProductRuntime> {
+		Some(self.upgrade()?.connect(sink))
 	}
 
 	fn disconnected(&self) {
-		if let Some(attempt) = &self.attempt {
+		let attempt = self.upgrade().and_then(|execution| execution.worker_attempt.clone());
+		if let Some(attempt) = attempt {
 			attempt.disconnected();
 		}
 	}
@@ -1518,7 +1518,10 @@ impl super::ws_bridge::WsProductRuntimeFactory for ExecutionConnections {
 impl NativeProductExecution {
 	/// Register this execution with its own token on the host's shared listener.
 	/// `bind_port` applies only when the listener first starts.
-	pub fn start_ws_bridge(&self, bind_port: u16) -> Result<WsBridgeEndpoint, WsBridgeStartError> {
+	pub fn start_ws_bridge(
+		self: &Arc<Self>,
+		bind_port: u16,
+	) -> Result<WsBridgeEndpoint, WsBridgeStartError> {
 		if self.closed.load(Ordering::Acquire) {
 			return Err(WsBridgeStartError::Io("product execution is closed".to_string()));
 		}
@@ -1532,14 +1535,8 @@ impl NativeProductExecution {
 				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			})
 		};
-		let runtime_factory = Arc::new(ExecutionConnections {
-			runtime: self.runtime.clone(),
-			product: self.product.clone(),
-			adapters: self.adapters(),
-			control: self.product_control.clone(),
-			attempt: self.worker_attempt.clone(),
-		});
-		let endpoint = self.ws_bridge.register(bind_port, runtime_factory, logger)?;
+		let endpoint =
+			self.ws_bridge.register(bind_port, Arc::new(Arc::downgrade(self)), logger)?;
 		*guard = Some(endpoint.token.clone());
 		Ok(endpoint)
 	}

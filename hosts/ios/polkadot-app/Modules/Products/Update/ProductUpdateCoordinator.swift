@@ -11,7 +11,7 @@ protocol SPAProductReloading: AnyObject {
 }
 
 protocol ProductWorkerReloading {
-    func reloadWorker(of productId: ProductId) async
+    func reloadWorker(of productId: ProductId)
 }
 
 @MainActor
@@ -43,7 +43,7 @@ final class ProductUpdateCoordinator {
     }
 
     private let contentLoader: ProductContentLoading
-    private let workerReloader: ProductWorkerReloading
+    private let currentWorkerReloader: () -> ProductWorkerReloading?
     private let noticePresenter: ProductUpdateNoticePresenting
     private let refreshSources: RefreshSources
     private let logger: LoggerProtocol
@@ -57,13 +57,13 @@ final class ProductUpdateCoordinator {
 
     init(
         contentLoader: ProductContentLoading,
-        workerReloader: ProductWorkerReloading,
+        currentWorkerReloader: @escaping () -> ProductWorkerReloading?,
         noticePresenter: ProductUpdateNoticePresenting,
         refreshSources: RefreshSources,
         logger: LoggerProtocol
     ) {
         self.contentLoader = contentLoader
-        self.workerReloader = workerReloader
+        self.currentWorkerReloader = currentWorkerReloader
         self.noticePresenter = noticePresenter
         self.refreshSources = refreshSources
         self.logger = logger
@@ -164,7 +164,7 @@ private extension ProductUpdateCoordinator {
 
         logger.debug("Applying the update of \(contentId), reloading open SPAs: \(reloadingPresentations)")
 
-        Task { [weak self, contentLoader, workerReloader] in
+        Task { [weak self, contentLoader, currentWorkerReloader] in
             await contentLoader.apply(update)
 
             if reloadingPresentations {
@@ -172,7 +172,7 @@ private extension ProductUpdateCoordinator {
             }
 
             if let productId = Self.productIdOfWorker(servedFrom: contentId) {
-                await workerReloader.reloadWorker(of: productId)
+                currentWorkerReloader()?.reloadWorker(of: productId)
             }
 
             await self?.removeSupersededContent()

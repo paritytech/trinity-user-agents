@@ -7,6 +7,7 @@ public struct DSButtonStyle: ButtonStyle {
     public enum Style {
         case primary
         case secondary
+        case secondaryInverted
         case tertiary
         case destructive
         case ghost
@@ -28,11 +29,13 @@ public struct DSButtonStyle: ButtonStyle {
     let style: Style
     let shape: Shape
     let size: Size
+    let horizontalPadding: CGFloat?
 
-    public init(style: Style, shape: Shape, size: Size) {
+    public init(style: Style, shape: Shape, size: Size, horizontalPadding: CGFloat? = nil) {
         self.style = style
         self.shape = shape
         self.size = size
+        self.horizontalPadding = horizontalPadding
     }
 
     @Environment(\.isEnabled) private var isEnabled
@@ -42,6 +45,7 @@ public struct DSButtonStyle: ButtonStyle {
             style: style,
             shape: shape,
             size: size,
+            horizontalPadding: horizontalPadding,
             isEnabled: isEnabled,
             isPressed: configuration.isPressed,
             label: configuration.label
@@ -55,6 +59,7 @@ private struct DSButtonLabel<Label: View>: View {
     let style: DSButtonStyle.Style
     let shape: DSButtonStyle.Shape
     let size: DSButtonStyle.Size
+    let horizontalPadding: CGFloat?
     let isEnabled: Bool
     let isPressed: Bool
     let label: Label
@@ -64,7 +69,7 @@ private struct DSButtonLabel<Label: View>: View {
             .typography(size.typography)
             .foregroundStyle(isEnabled ? style.foregroundColor : Color.fgDisabled)
             .padding(.vertical, size.verticalPadding)
-            .padding(.horizontal, size.horizontalPadding)
+            .padding(.horizontal, horizontalPadding ?? size.horizontalPadding)
             .background(fillColor, in: clipShape)
             .contentShape(clipShape)
             .scaleEffect(isPressed ? 0.98 : 1)
@@ -87,9 +92,10 @@ public extension ButtonStyle where Self == DSButtonStyle {
     static func ds(
         style: DSButtonStyle.Style,
         shape: DSButtonStyle.Shape,
-        size: DSButtonStyle.Size
+        size: DSButtonStyle.Size,
+        horizontalPadding: CGFloat? = nil
     ) -> DSButtonStyle {
-        DSButtonStyle(style: style, shape: shape, size: size)
+        DSButtonStyle(style: style, shape: shape, size: size, horizontalPadding: horizontalPadding)
     }
 }
 
@@ -100,6 +106,7 @@ extension DSButtonStyle.Style {
         switch self {
         case .primary: .bgActionPrimary
         case .secondary: .bgActionSecondary
+        case .secondaryInverted: .bgActionSecondaryInverted
         case .tertiary: .bgActionTertiary
         case .destructive: .bgStatusError
         case .ghost: .clear
@@ -115,7 +122,8 @@ extension DSButtonStyle.Style {
 
     var foregroundColor: Color {
         switch self {
-        case .primary: .fgPrimaryInverted
+        case .primary,
+             .secondaryInverted: .fgPrimaryInverted
         case .destructive: .fgStaticWhite
         default: .fgPrimary
         }

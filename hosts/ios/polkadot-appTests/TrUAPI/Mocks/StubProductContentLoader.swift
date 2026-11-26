@@ -26,9 +26,11 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     private let updateStream = AsyncStream<ExecutableRelease>.makeStream()
 
     private let product: ResolvedProduct?
+    private let applyGate: AsyncStream<Void>?
 
-    init(product: ResolvedProduct? = nil) {
+    init(product: ResolvedProduct? = nil, applyGate: AsyncStream<Void>? = nil) {
         self.product = product
+        self.applyGate = applyGate
     }
 
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
@@ -111,6 +113,9 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
 
         ready.forEach { $0.continuation.resume() }
+        if let applyGate {
+            for await _ in applyGate {}
+        }
     }
 
     func waitForApplies(_ count: Int) async {

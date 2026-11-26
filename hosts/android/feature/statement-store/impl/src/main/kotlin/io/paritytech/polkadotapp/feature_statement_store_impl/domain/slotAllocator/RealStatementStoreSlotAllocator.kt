@@ -9,11 +9,11 @@ import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.CurrentTimeContext
 import io.paritytech.polkadotapp.common.utils.coerceToUnit
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.common.utils.mapError
 import io.paritytech.polkadotapp.common.utils.mapErrorNotInstance
 import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
 import io.paritytech.polkadotapp.common.utils.progressStallReport.markRegion
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.api.resourcesCalls
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.api.setStatementStoreAccount
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
@@ -23,13 +23,14 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocato
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlot
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocationError
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlots
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.canBeEvictedBy
-import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.filterReplaceableSlots
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.findFreeSlot
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.hasSlotFor
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.takenCount
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.takenSlots
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.totalCount
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.StatementStoreSlotAllocationRepository
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.StatementStoreSlotRepository
@@ -54,10 +55,11 @@ class RealStatementStoreSlotAllocator @Inject constructor(
     private val renewalLock: StatementStoreSlotRenewalLock,
     private val currentTimeContext: CurrentTimeContext,
     private val currentPeriodProvider: CurrentPeriodProvider,
+    private val slotReplacer: StatementStoreSlotReplacer,
 ) : StatementStoreSlotAllocator {
     context(diagnostics: StalenessReportCollector)
     override suspend fun allocate(
-        target: AccountId,
+        holder: StatementStoreSlotHolder,
         strategy: OnExistingAllocationStrategy,
         priority: SlotPriority,
         tag: StatementStoreSlotTag?,
@@ -69,8 +71,8 @@ class RealStatementStoreSlotAllocator @Inject constructor(
                 Timber.d("Resolved context: period=${context.period}, collections=${context.availableCollections}")
 
                 renewalLock.withLock {
-                    renewIfStale(context, target).flatMap {
-                        runAllocate(context, target, strategy, priority, tag)
+                    renewIfStale(context, holder.accountId).flatMap {
+                        runAllocate(context, holder, strategy, priority, tag)
                     }
                 }
             }
@@ -133,7 +135,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
     context(diagnostics: StalenessReportCollector)
     private suspend fun runAllocate(
         context: AllocateContext,
-        target: AccountId,
+        holder: StatementStoreSlotHolder,
         strategy: OnExistingAllocationStrategy,
         priority: SlotPriority,
         tag: StatementStoreSlotTag?,
@@ -141,24 +143,77 @@ class RealStatementStoreSlotAllocator @Inject constructor(
         return loadSlots(context).flatMap { slots ->
             Timber.i("allocate: ${slots.takenCount()}/${slots.totalCount()} seqs already claimed in period ${context.period}")
 
-            if (strategy == OnExistingAllocationStrategy.IGNORE && slots.hasSlotFor(target)) {
+            if (strategy == OnExistingAllocationStrategy.IGNORE && slots.hasSlotFor(holder.accountId)) {
                 Timber.i("allocate: target already has an active slot; strategy=IGNORE — skipping")
                 Result.success(Unit)
             } else {
-                pickSeq(context, slots, target, priority)
-                    .mapError { StatementStoreSlotAllocationError.NoAllocationAvailable(it) }
-                    .flatMap { pick -> submitAndRecord(context, pick, target, priority, tag) }
+                claimSlot(context, slots, holder.accountId, priority)
+                    .mapCatching { pick -> recordAllocation(context, pick, holder, priority, tag) }
             }
         }
     }
 
     context(diagnostics: StalenessReportCollector)
-    private suspend fun submitAndRecord(
+    private suspend fun claimSlot(
+        context: AllocateContext,
+        slots: StatementStoreSlots,
+        target: AccountId,
+        callerPriority: SlotPriority,
+    ): Result<SlotPick> {
+        slots.findFreeSlot()?.let { free ->
+            val pick = SlotPick(seq = free.slot.seq, collection = free.collection, evictedAccount = null)
+            return submitWithProof(context, pick, target).map { pick }
+        }
+
+        return evictionCandidates(context, slots, target, callerPriority)
+            .flatMap { candidates -> evict(context, candidates, target) }
+            .map { evicted -> SlotPick(seq = evicted.slot.seq, collection = evicted.collection, evictedAccount = evicted.slot.accountId) }
+    }
+
+    context(diagnostics: StalenessReportCollector)
+    private suspend fun evict(
+        context: AllocateContext,
+        candidates: List<CollectionSlot<StatementStoreSlot.Taken>>,
+        target: AccountId,
+    ): Result<CollectionSlot<StatementStoreSlot.Taken>> {
+        if (candidates.isEmpty()) {
+            return Result.failure(StatementStoreSlotAllocationError.NoAllocationAvailable(IllegalStateException("No free slot and no evictable slot")))
+        }
+
+        return statementStoreSlotRepository.supportsSlotReplacement().flatMap { supportsReplacement ->
+            Timber.i("allocate: no free seq; ${candidates.size} eviction candidates, supportsReplacement=$supportsReplacement")
+            if (supportsReplacement) {
+                slotReplacer.replaceFirstAvailable(context, candidates, target)
+            } else {
+                evictWithProof(context, candidates, target)
+            }
+        }
+    }
+
+    context(diagnostics: StalenessReportCollector)
+    private suspend fun evictWithProof(
+        context: AllocateContext,
+        candidates: List<CollectionSlot<StatementStoreSlot.Taken>>,
+        target: AccountId,
+    ): Result<CollectionSlot<StatementStoreSlot.Taken>> {
+        return statementStoreSlotRepository.replacementCooldown().flatMap { cooldown ->
+            val now = currentTimeContext.currentTime()
+            val victim = candidates.firstOrNull { now - it.slot.since >= cooldown }
+
+            if (victim == null) {
+                Result.failure(EvictionNotYetAllowedException("No evictable slot is past the replacement cooldown $cooldown"))
+            } else {
+                val pick = SlotPick(seq = victim.slot.seq, collection = victim.collection, evictedAccount = victim.slot.accountId)
+                submitWithProof(context, pick, target).map { victim }
+            }
+        }
+    }
+
+    context(diagnostics: StalenessReportCollector)
+    private suspend fun submitWithProof(
         context: AllocateContext,
         pick: SlotPick,
         target: AccountId,
-        priority: SlotPriority,
-        tag: StatementStoreSlotTag?,
     ): Result<Unit> = diagnostics.markRegion(RCommon.string.stall_submitting_transaction) {
         Timber.i("allocate: picked seq=${pick.seq} in ${pick.collection}, evictedAccount=${pick.evictedAccount}; submitting")
         statementStoreOrigins.asResourcesStatementStoreSlot(context.period, pick.seq, pick.collection)
@@ -169,53 +224,49 @@ class RealStatementStoreSlotAllocator @Inject constructor(
                     .flattenExecutionFailure()
                     .coerceToUnit()
             }
-            .mapCatching {
-                pick.evictedAccount?.let { evicted ->
-                    allocationRepository.deleteSlot(context.chain.id, pick.collection, evicted, pick.seq)
-                }
-                allocationRepository.insert(
-                    chainId = context.chain.id,
-                    collection = pick.collection,
-                    accountId = target,
-                    seq = pick.seq,
-                    latestRenewedPeriod = context.period,
-                    since = currentTimeContext.currentTime(),
-                    priority = priority,
-                    tag = tag,
-                )
-                Timber.i("allocate: extrinsic executed for seq=${pick.seq} in ${pick.collection}; DB delta applied")
-            }
     }
 
-    private suspend fun pickSeq(
+    private suspend fun recordAllocation(
+        context: AllocateContext,
+        pick: SlotPick,
+        holder: StatementStoreSlotHolder,
+        priority: SlotPriority,
+        tag: StatementStoreSlotTag?,
+    ) {
+        pick.evictedAccount?.let { evicted ->
+            allocationRepository.deleteSlot(context.chain.id, pick.collection, evicted, pick.seq)
+        }
+        allocationRepository.insert(
+            chainId = context.chain.id,
+            collection = pick.collection,
+            holder = holder,
+            seq = pick.seq,
+            latestRenewedPeriod = context.period,
+            since = currentTimeContext.currentTime(),
+            priority = priority,
+            tag = tag,
+        )
+        Timber.i("allocate: extrinsic executed for seq=${pick.seq} in ${pick.collection}; DB delta applied")
+    }
+
+    private suspend fun evictionCandidates(
         context: AllocateContext,
         slots: StatementStoreSlots,
         target: AccountId,
         callerPriority: SlotPriority,
-    ): Result<SlotPick> {
-        slots.findFreeSlot()?.let { free ->
-            return Result.success(SlotPick(seq = free.slot.seq, collection = free.collection, evictedAccount = null))
-        }
+    ): Result<List<CollectionSlot<StatementStoreSlot.Taken>>> = runCancellableCatching {
+        val takenByOthers = slots.takenSlots().filter { it.slot.accountId != target }
 
-        return statementStoreSlotRepository.replacementCooldown().mapCatching { cooldown ->
-            val candidates = with(currentTimeContext) { slots.filterReplaceableSlots(cooldown) }
-                .filter { it.slot.accountId != target }
+        val priorityByAccount = allocationRepository.maxPriorityLevelsFor(
+            context.chain.id,
+            takenByOthers.mapToSet { it.slot.accountId },
+        )
 
-            val priorityByAccount = allocationRepository.maxPriorityLevelsFor(
-                context.chain.id,
-                candidates.mapToSet { it.slot.accountId },
-            )
-
-            val evictableWithPriority = candidates
-                .map { it to priorityByAccount.getPriorityOrNormal(it.slot.accountId) }
-                .filter { (_, effective) -> effective.canBeEvictedBy(callerPriority) }
-
-            val victim = evictableWithPriority.minWithOrNull(evictionComparator())?.first
-                ?: error("No free slot and no evictable slot (cooldown=$cooldown, callerPriority=$callerPriority)")
-
-            Timber.i("allocate: evicting seq=${victim.slot.seq} in ${victim.collection} (since=${victim.slot.since})")
-            SlotPick(seq = victim.slot.seq, collection = victim.collection, evictedAccount = victim.slot.accountId)
-        }
+        takenByOthers
+            .map { it to priorityByAccount.getPriorityOrNormal(it.slot.accountId) }
+            .filter { (_, effective) -> effective.canBeEvictedBy(callerPriority) }
+            .sortedWith(evictionComparator())
+            .map { (candidate, _) -> candidate }
     }
 
     private fun Map<AccountId, SlotPriority>.getPriorityOrNormal(accountId: AccountId): SlotPriority {

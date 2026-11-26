@@ -13,8 +13,9 @@ public struct CoinageTxRegistrationValidator {
     /// Validates the registration invariants across `registrations`, in order:
     /// 1. Non-empty entry (consumes or mints something)
     /// 2. Fresh outputs — not minted by another entry, not a key received from a peer, unique in batch
-    /// 3. Blocked handoff — no input carrying a handoff mark
-    /// 4. Unique consumer — no input already claimed by a non-failure entry, unique in batch
+    /// 3. Blocked handoff — no input carrying a handoff mark, except a reclaimed input
+    /// 4. Reclaim only of handed-off coins — every reclaimed input carries a handoff mark
+    /// 5. Unique consumer — no input already claimed by a non-failure entry, unique in batch
     public func validate(
         _ registrations: [CoinageAssetRegistration],
         transaction: CoinageTxValidationContextProtocol
@@ -24,7 +25,8 @@ public struct CoinageTxRegistrationValidator {
         }
 
         let outputKeys = registrations.flatMap { $0.outputs.map(\.publicKey) }
-        let inputKeys = registrations.flatMap { $0.inputs.map(\.publicKey) }
+        let inputs = registrations.flatMap(\.inputs)
+        let inputKeys = inputs.map(\.publicKey)
 
         let notFresh = try transaction.filterMinted(Set(outputKeys))
             .union(transaction.filterReceived(Set(outputKeys)))
@@ -34,8 +36,14 @@ public struct CoinageTxRegistrationValidator {
         }
 
         let handedOff = try transaction.filterHandedOff(Set(inputKeys))
-        if let key = inputKeys.first(where: { handedOff.contains($0) }) {
+        let blockedKeys = inputs.filter { !$0.isReclaimed }.map(\.publicKey)
+        if let key = blockedKeys.first(where: { handedOff.contains($0) }) {
             throw CoinageTxError.inputHandedOff(key.toHex())
+        }
+
+        let reclaimedKeys = inputs.filter(\.isReclaimed).map(\.publicKey)
+        if let key = reclaimedKeys.first(where: { !handedOff.contains($0) }) {
+            throw CoinageTxError.reclaimedInputNotHandedOff(key.toHex())
         }
 
         let claimed = try transaction.filterClaimed(Set(inputKeys)).union(inputKeys.duplicateKeys())

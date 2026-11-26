@@ -36,10 +36,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     /// What this session holds of the product's worker request, so dispose
     /// gives back exactly what start asked for and never more.
     private var workerClaim: NativeWorkerClaim?
-    private var workerFollowingTask: Task<Void, Never>?
     private var roomsForwardingTask: Task<Void, Never>?
-    /// The native room list, told to each execution the worker runs on.
-    private var rooms: [ChatRoom]?
+    private var messageDeliveries: [Task<Void, Error>] = []
     /// Renders still waiting for the worker or drawing, ended by dispose.
     private var renders: [UUID: Task<Void, Never>] = [:]
     private var started = false
@@ -83,11 +81,26 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     func onUserMessage(text: String, roomId: String?) async throws {
         try checkNotDisposed()
         guard let roomId else { throw ChatSeamError.roomlessChat }
-        try await requireExecution().publishChatAction(HostChatActionSubscribeItem(
-            roomId: roomId,
-            peer: "native",
-            payload: .messagePosted(.text(text: text))
-        ))
+        guard workerClaim != nil else { throw ChatSeamError.notStarted }
+
+        let previous = messageDeliveries.last
+        let delivery = Task {
+            _ = await previous?.result
+            defer { messageDeliveries.removeFirst() }
+            guard let execution = try await executionWhenRunning() else { throw CancellationError() }
+            try Task.checkCancellation()
+            try execution.publishChatAction(action: HostChatActionSubscribeItem(
+                roomId: roomId,
+                peer: "native",
+                payload: .messagePosted(.text(text: text))
+            ))
+        }
+        messageDeliveries.append(delivery)
+        try await withTaskCancellationHandler {
+            try await delivery.value
+        } onCancel: {
+            delivery.cancel()
+        }
     }
 
     func renderMessage(
@@ -177,10 +190,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // point observes it and unwinds.
         disposed = true
 
-        workerFollowingTask?.cancel()
-        workerFollowingTask = nil
         roomsForwardingTask?.cancel()
-        roomsForwardingTask = nil
+        for delivery in messageDeliveries {
+            delivery.cancel()
+        }
         for render in renders.values {
             render.cancel()
         }
@@ -195,6 +208,9 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // the same worker, and the core stops it once the last request goes.
         workerClaim?.release()
         workerClaim = nil
+
+        await roomsForwardingTask?.value
+        roomsForwardingTask = nil
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }
@@ -252,52 +268,39 @@ private extension TrUAPIChatHandler {
         renders[id] = nil
     }
 
-    func executionWhenRunning() async throws -> TrUAPIWorkerOperations? {
+    func executionWhenRunning() async throws -> NativeWorkerExecution? {
         try checkNotDisposed()
         return try await runtime().executionWhenRunning(productId)
     }
 
     func publishRendererAction(_ context: RenderContext, actionId: String, payload: String?) async throws {
-        try await requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+        try await requireExecution().publishRendererAction(item: HostRendererActionSubscribeItem(
             context: context,
             actionId: actionId,
             payload: payload.map { Data($0.utf8) } ?? Data()
         ))
     }
 
-    func requireExecution() async throws -> TrUAPIWorkerOperations {
+    func requireExecution() async throws -> NativeWorkerExecution {
         guard let execution = await (try? runtime())?.runningExecution(productId) else {
             throw ChatSeamError.notStarted
         }
         return execution
     }
 
-    /// Mirror the native room list into the core so product-side
-    /// `chat.listSubscribe` sees native changes as they happen. Each execution
-    /// the worker runs on is told the list too, so one that starts after the
-    /// list was read, or restarts under this session, does not miss it.
     func startRoomsForwarding(_ host: any ProductWorkerRuntime) {
-        roomsForwardingTask = Task { [weak self, logger, chat = context.chat] in
-            do {
-                for try await rooms in try await chat.subscribeRooms() {
-                    guard !Task.isCancelled else { return }
-                    await self?.roomsChanged(to: rooms.map { $0.toChatRoom() }, on: host)
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                logger.error("Rust chat runtime rooms forwarding ended: \(error)")
-            }
-        }
-        workerFollowingTask = Task { [weak self, productId] in
+        roomsForwardingTask = Task { [productId, logger, chat = context.chat] in
             await host.withRunningWorker(productId) { execution in
-                guard let rooms = await self?.rooms else { return }
-                execution.notifyChatRoomsChanged(rooms: rooms)
+                do {
+                    for try await rooms in try await chat.subscribeRooms() {
+                        try Task.checkCancellation()
+                        execution.notifyChatRoomsChanged(rooms: rooms.map { $0.toChatRoom() })
+                    }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    logger.error("Rust chat runtime rooms forwarding ended: \(error)")
+                }
             }
         }
-    }
-
-    func roomsChanged(to rooms: [ChatRoom], on host: any ProductWorkerRuntime) async {
-        self.rooms = rooms
-        await host.runningExecution(productId)?.notifyChatRoomsChanged(rooms: rooms)
     }
 }

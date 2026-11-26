@@ -34,6 +34,7 @@ final class WebViewWorkerHost: NativeWorkerEngine, Sendable {
                         return
                     }
                     try await view.start { attempt.failed(reason: "WebView process terminated") }
+                    _ = attempt.moduleStarted()
                 } catch {
                     attempt.failed(reason: String(describing: error))
                 }

@@ -143,6 +143,24 @@ private func makeDatabaseDirectory() throws -> String {
 }
 
 struct TrUAPIHostRuntimeProviderConfigTests {
+    @Test func aWorkerUpdateLeavesAnUnopenedSessionRuntimeUnopened() throws {
+        let provider = TrUAPIHostRuntimeProvider(
+            chainRegistry: MockChainRegistry(),
+            entropyManager: FixedRootEntropyManager {
+                Issue.record("A worker update requested the session's root entropy")
+                throw CancellationError()
+            },
+            settingsManager: InMemorySettingsManager(),
+            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+            confirmationRouterFacade: ProductRoutersFacade.worker(),
+            workerEngine: NoWorkerEngine(),
+            fundingHandler: FundingService(logger: MockLogger()),
+            logger: Logger.shared
+        )
+
+        try provider.reloadWorker(of: ProductId("shop.dot"))
+    }
+
     /// The core verifies the bundled descriptor under the build's stack link
     /// before it starts, so a config the core refuses leaves the app with no
     /// runtime and no product can open.

@@ -25,29 +25,21 @@ public actor JSESModuleBridge {
     }
 
     /// Load an ES module script by injecting a `<script type="module">` tag.
-    public func executeScript(url: URL, isWorkerEntry: Bool = false) async throws {
+    public func executeScript(url: URL) async throws {
         let moduleId = UUID().uuidString
         let escapedURL = url.absoluteString.jsEscaped
-        // The module can await an action from its consumer. Script load marks evaluation started.
-        let catchEvaluationError = isWorkerEntry ? "window.addEventListener('error', failed);" : ""
+
         let js = """
         (function() {
             var s = document.createElement('script');
-            var done = false;
-            function settle(callback) {
-                if (done) return;
-                done = true;
-                window.removeEventListener('error', failed);
-                callback();
-            }
-            function failed() {
-                settle(() => window.webkit.messageHandlers.__module_error__.postMessage('\(moduleId)'));
-            }
             s.type = 'module';
             s.src = '\(escapedURL)';
-            s.onload = () => settle(() => window.webkit.messageHandlers.__module_complete__.postMessage('\(moduleId)'));
-            s.onerror = failed;
-            \(catchEvaluationError)
+            s.onload = function() {
+                window.webkit.messageHandlers.__module_complete__.postMessage('\(moduleId)');
+            };
+            s.onerror = function() {
+                window.webkit.messageHandlers.__module_error__.postMessage('\(moduleId)');
+            };
             document.body.appendChild(s);
         })();
         """

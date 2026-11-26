@@ -1,7 +1,5 @@
 import Foundation
 import BulletinChain
-import ChainRegistry
-import DesignSystem
 @preconcurrency import Products
 import TrUAPIHost
 
@@ -18,49 +16,33 @@ enum TrUAPIWorkerError: Error, CustomStringConvertible {
 /// Assembles one product's worker: its archive, its Worker execution, and the
 /// headless engine its entry module runs in.
 struct TrUAPIWorkerBuilder {
-    private let environment: @Sendable () throws -> RustRuntimeEnvironment
-    private let contentLoader: any ProductContentLoading
-    private let dotNsResolver: any DotNsResolverProtocol
-    private let productFileProvider: any ChatProductFileProviding
-    private let logger: LoggerProtocol
-
-    init(
-        environment: @escaping @Sendable () throws -> RustRuntimeEnvironment,
-        contentLoader: any ProductContentLoading,
-        dotNsResolver: any DotNsResolverProtocol,
-        productFileProvider: any ChatProductFileProviding,
-        logger: LoggerProtocol = Logger.shared
-    ) {
-        self.environment = environment
-        self.contentLoader = contentLoader
-        self.dotNsResolver = dotNsResolver
-        self.productFileProvider = productFileProvider
-        self.logger = logger
-    }
+    let contentLoader: any ProductContentLoading
+    let dotNsResolver: any DotNsResolverProtocol
+    let productFileProvider: any ChatProductFileProviding
 
     func makeRuntime(
         productId: ProductId,
         context: ProductWorkerContext,
-        attempt: NativeWorkerAttempt
+        attempt: NativeWorkerAttempt,
+        services: ProductExecutionServices
     ) async throws -> TrUAPIWorkerRuntime {
         let (source, files) = try await workerSource(for: productId)
 
         let engine = try ChatProductEngineFactory.makeContext(
             source: source,
             productFileProvider: files,
-            logger: logger
+            logger: services.logger
         )
 
         return try TrUAPIWorkerRuntime(
             productUrl: engine.productUrl,
-            executionModel: environment().makeWorkerExecution(
+            executionModel: services.makeExecution(
                 productId: productId,
                 routers: context.routers,
-                chatMessaging: context.chat,
-                attempt: attempt
+                purpose: .worker(chatMessaging: context.chat, attempt: attempt)
             ),
             engineFactory: engine.engineFactory,
-            logger: logger
+            logger: services.logger
         )
     }
 
@@ -99,35 +81,5 @@ struct TrUAPIWorkerBuilder {
         }
 
         return installed
-    }
-}
-
-extension TrUAPIWorkerBuilder {
-    init(
-        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime,
-        flowState: SPAFlowState,
-        productFileProvider: any ChatProductFileProviding,
-        gameReminders: any ProductGameReminderScheduling,
-        themeManager: any ThemeManagerProtocol,
-        logger: CoreEventLoggerProtocol
-    ) {
-        self.init(
-            environment: {
-                try RustRuntimeEnvironment(
-                    runtime: runtime(),
-                    chainRegistry: ChainRegistryFacade.sharedRegistry,
-                    notificationScheduler: ProductNotificationScheduler.shared,
-                    gameReminders: gameReminders,
-                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-                    hostProvider: flowState.hostProvider,
-                    themeManager: themeManager,
-                    logger: logger
-                )
-            },
-            contentLoader: flowState.contentLoader,
-            dotNsResolver: flowState.dotNsResolver,
-            productFileProvider: productFileProvider,
-            logger: logger
-        )
     }
 }
