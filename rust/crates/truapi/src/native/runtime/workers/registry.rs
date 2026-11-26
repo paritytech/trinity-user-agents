@@ -181,8 +181,8 @@ impl Registry {
 	///
 	/// A starting attempt runs once its module started and its connection is live. A running one
 	/// that gains a live connection is announced to observers again. Returns false when the
-	/// signal changes nothing: the product has no active attempt, the attempt has no execution
-	/// or one that was shut down, or it runs and the signal is not a live connection.
+	/// attempt cannot take the signal: the product has no active attempt, the attempt has no
+	/// execution or one that was shut down, or it runs and the signal is not a live connection.
 	pub fn ready(&mut self, product: &ProductId, signal: Signal) -> bool {
 		let Some(Entry::Active { phase, .. }) = self.entries.get_mut(product) else {
 			return false;
@@ -192,16 +192,15 @@ impl Registry {
 				if matches!(signal, Signal::Connected) && owner.has_live_transport() => {},
 			Phase::Running(_) => return false,
 			Phase::Starting { stage, .. } => {
-				let owner = match (&*stage, signal) {
-					(Stage::Loading(owner), Signal::ModuleStarted) |
-					(Stage::Connecting(owner), _) => owner.clone(),
-					(Stage::Loading(owner), Signal::Connected) => {
-						return !owner.closed.load(Ordering::Acquire);
-					},
-					(Stage::Opening, _) => return false,
+				let owner = match &*stage {
+					Stage::Opening => return false,
+					Stage::Loading(owner) | Stage::Connecting(owner) => owner.clone(),
 				};
 				if owner.closed.load(Ordering::Acquire) {
 					return false;
+				}
+				if matches!((&*stage, signal), (Stage::Loading(_), Signal::Connected)) {
+					return true;
 				}
 				if !owner.has_live_transport() {
 					*stage = Stage::Connecting(owner);

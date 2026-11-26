@@ -67,8 +67,8 @@ struct CrashRun {
 	last_exit_ms: u64,
 }
 
-/// The holds on one product's worker, the attempt started for them and the
-/// crashes they have seen.
+/// The holds on one product's worker, the attempt started for them and its
+/// current run of crashes.
 struct Demand {
 	/// Live [`crate::WorkerHold`]s. Core operations and host modalities each
 	/// take their own, so the first one starts the worker and dropping the
@@ -79,8 +79,9 @@ struct Demand {
 	attempt_id: u64,
 	/// Whether that attempt has run, as [`WorkerLedger::running`] reported.
 	ran: bool,
-	/// The run of crashes these holds have seen, if any. Ends with the last
-	/// hold or a reload.
+	/// The current run of crashes, if any. It ends with the last hold or a
+	/// reload, and [`WorkerLedger::exited`] starts a new one after a quiet
+	/// [`CRASH_RUN_WINDOW_MS`].
 	crash_run: Option<CrashRun>,
 }
 

@@ -174,7 +174,7 @@ fn a_reload_ends_the_run_of_crashes() {
 	let product = ProductId::for_test("a.dot");
 	ledger.acquire(&product);
 	let exited = |now_ms| ledger.exited(&product, current(&ledger, &product), now_ms);
-	assert_eq!((exited(0), exited(1)), (None, Some(1_000)));
+	assert_eq!((exited(0), exited(1)), (None, Some(1_000)), "the second crash of a run waits");
 	ledger.reload(&product);
 	assert_eq!(exited(2), None, "the reloaded worker's first crash restarts at once");
 }
