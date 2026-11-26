@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -22,8 +23,30 @@ import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.TextProps
+import uniffi.truapi.TypographyStyle
 
 class RendererNodeMappingTest {
+    @Test
+    fun `text keeps its own size when it names a style between headline large and title medium`() {
+        val expected = mapOf(
+            TypographyStyle.HEADLINE_MEDIUM to JsTypographyStyle.HEADLINE_MEDIUM,
+            TypographyStyle.HEADLINE_SMALL to JsTypographyStyle.HEADLINE_SMALL,
+            TypographyStyle.TITLE_EXTRA_LARGE to JsTypographyStyle.TITLE_EXTRA_LARGE,
+            TypographyStyle.TITLE_LARGE to JsTypographyStyle.TITLE_LARGE,
+        )
+
+        val mapped = expected.keys.associateWith { style ->
+            val node = RendererNode.Text(
+                modifiers = emptyList(),
+                props = TextProps(style = style, color = null),
+                children = listOf(RendererNode.String("Score")),
+            )
+            (node.toJsWidget() as JsWidget.Text).style
+        }
+
+        assertEquals(expected, mapped)
+    }
+
     @Test
     fun `a streamed tree maps like a decoded preview, so both faces draw alike`() {
         val node = RendererNode.Column(

@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchAlias
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import io.paritytech.polkadotapp.chains.network.binding.BlockHash
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 
 interface NotificationSlotRepository {
@@ -21,4 +22,6 @@ interface NotificationSlotRepository {
         accounts: Collection<AccountId>,
         at: BlockHash?,
     ): Result<Map<AccountId, Boolean>>
+
+    suspend fun notificationStatementMaxSize(): Result<InformationSize?>
 }

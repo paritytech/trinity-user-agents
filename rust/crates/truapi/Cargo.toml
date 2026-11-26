@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.32.0"
+version = "0.33.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -80,6 +80,7 @@ runtime = [
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
+    "dep:const_format",
     "dep:itertools",
     "dep:binary-merkle-tree",
     "dep:hash-db",
@@ -98,7 +99,7 @@ truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true }
 async-lock = { workspace = true, optional = true }
 async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
+derive_more = { workspace = true, features = ["debug", "display", "eq", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
 # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
@@ -158,6 +159,8 @@ naga = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["float_roundtrip"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
+# Builds the durable ledger's SQL from shared fragments at compile time.
+const_format = { workspace = true, optional = true }
 itertools = { workspace = true, optional = true }
 # The clearing root of an NFT operation.
 binary-merkle-tree = { workspace = true, optional = true }

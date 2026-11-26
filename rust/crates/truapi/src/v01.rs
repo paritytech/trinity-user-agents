@@ -27,7 +27,6 @@ mod statement_store;
 mod system;
 mod theme;
 mod transaction;
-mod worker;
 
 pub use account::*;
 pub use chain::*;
@@ -56,4 +55,3 @@ pub use statement_store::*;
 pub use system::*;
 pub use theme::*;
 pub use transaction::*;
-pub use worker::*;

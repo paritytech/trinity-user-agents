@@ -204,7 +204,8 @@ The core resolves the `Materials` nodes of a message tree and writes their Metal
 | Seam                          | Where                                    | When to touch                        |
 |-------------------------------|------------------------------------------|--------------------------------------|
 | Product container bridge      | `Packages/Products/`                     | Adding new JS↔Swift bridge methods   |
-| Payment approval              | `Modules/Products/PaymentRequest/`       | Changing who sees the payment sheet (allowlist lives in `ProductAutoAllowList`) |
+| Payment approval              | `Modules/Products/PaymentRequest/`       | Changing who sees the payment sheet |
+| Funding overlay and history   | `Modules/Funding/`                       | The Add/Withdraw sheet the core's funding sessions start from, provider frames, the CASH card's funding history (read from the core with `fundingHistory()`) |
 | Product module sub-modules    | `polkadot-app/Modules/Products/`         | Adding new product screens           |
 | Deep link handlers            | `AppConfig/AppConfig.swift`              | Adding product deep links            |
 | SPA module                    | `polkadot-app/Modules/SPA/`             | Smart Proposal Agent changes         |

@@ -17,7 +17,8 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         deferred ones through their domain's submission policy, and its
+                         deferred ones through their domain's submission policy once the
+                         transactions they depend on take effect, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, the tracker of what they hold on
@@ -111,7 +112,8 @@ hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
 stacks/                    generated copies, which host builds bundle, of each signed known stack's
-                           link and descriptor; `scripts/update-stacks.sh` writes them from
+                           link and descriptor, and in `light-specs/` the light specs truapi-host
+                           ships for its built-ins; `scripts/update-stacks.sh` writes them from
                            `rust/crates/trinity-stack/known-stacks.json`
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
@@ -365,8 +367,8 @@ Two ways to lose work that involve no pushing at all:
 
 ## Comments
 
-Doc comments on `pub` items are required, per [Code style](#code-style). This is about the
-rest.
+Doc comments on `pub` Rust items are covered in [docs/rust-design.md](docs/rust-design.md#docs).
+This is about the rest.
 
 - An inline comment is the exception, not the default. It earns its place only
   where the code cannot be made to speak for itself, and then it is brief and
@@ -376,26 +378,6 @@ rest.
 - Documentation explains contracts and non-obvious invariants, not a history
   of how the change was developed.
 
-## Rust docs
-
-- A doc comment is a one-line `///` summary, a blank `///` line, then a short
-  body that states the contract, units and failure conditions. A summary with
-  no body on a non-trivial item is a smell.
-- Item-level notes go in `///` on the item. Use `//` only for line-local
-  reasoning, since `//` does not show in rustdoc or IDE hover.
-- Do not repeat trait docs on impls.
-- Every `pub mod` has a `//!` block with its purpose and entry point.
-- Put identifiers in backticks and intra-doc links in brackets. Use `Self::`
-  for siblings.
-- A link target that exists only under some cfg is plain code, not a link, so
-  the link does not break in the other configurations.
-- After rewrapping doc prose, check line starts. `+ `, `- ` and `1. ` turn a
-  line into a list item, and `[x]:` at the start of a paragraph is parsed as a
-  link definition and dropped.
-- After API, rename or cfg changes, run
-  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for each cfg and feature
-  combination. Check, clippy and tests do not catch broken intra-doc links.
-
 ## Code is read by people and only incidentally run
 
 - Write so a reader needs no comment to follow it. No single-character names,
@@ -403,71 +385,6 @@ rest.
 - Review what you just wrote and simplify it. Fewer lines is better. If a fix
   feels hacky, redo it as though you had known at the start what you know now.
   Skip this for small obvious changes; do not over-engineer.
-
-## Types and implementation
-
-- Do not alias primitive types. `type Counter = u64` adds another name to
-  remember without preventing a counter from being confused with any other
-  `u64`. Use the primitive directly, or a newtype when distinguishing values
-  or enforcing construction rules provides actual type safety.
-- Reuse canonical types, constants, and helpers. Do not introduce a second
-  representation or a new dependency just to convert to and from the type the
-  surrounding code already uses.
-- Keep one source of truth. If one field already determines a fact, do not
-  carry a second field describing it and add checks to keep them
-  synchronized. Fix the representation.
-- Add abstractions and derives for concrete needs, not possible future
-  callers. Keep fields private where they protect invariants; do not add
-  accessors that merely expose every implementation detail. 
-- Keep dependencies in the workspace and inherit them from member crates.
-- Prefer safe operations. 
-- Fix the underlying cause instead of suppressing a diagnostic or adding a
-  fallback that hides an error.
-
-- Do not derive `Copy`, `Clone`, `Debug`, `PartialEq` or `Eq`, and do not
-  require them as bounds, unless something uses them. Removing `Clone` is the
-  one change that can compile while changing behaviour: `.clone()` on a
-  reference clones the reference. Check every `.clone()` call site first.
-- Do not add a synthetic `Default` to a type with no natural default. Construct
-  the value at the boundary.
-- Do not add `#[inline]` to private or crate-internal functions. Use it only on
-  small public items that need cross-crate inlining.
-
-## Lints, unsafe and features
-
-- Treat warnings as errors. Fix the cause of a lint and never silence it with
-  `#[allow]` or `#[expect]`. A silencer keeps the defect and makes it look
-  intentional. The one exception is a signature fixed by a third-party trait,
-  such as tungstenite's callback, where the lint cannot be fixed in our code;
-  the allow then sits on that item with a comment naming the trait.
-- For cast lints, change the source type first, then widen the destination.
-  Prefer `try_from` over `as`.
-- After a bulk regex edit, reread every signature it touched.
-- Use a safe std API when one exists. Unsafe is a last resort.
-- Write one unsafe operation per `unsafe {}` block, each with its own
-  `// SAFETY:` comment that states the invariant and why it holds.
-- Do not mark a function `unsafe` if it can check its preconditions itself.
-- Cargo features are additive. A feature compiled in with no runtime opt-in
-  behaves like the feature off, because Cargo unifies features across the
-  build.
-- Build modes that change behaviour or ABI go behind `--cfg` (declared with
-  check-cfg), not a cargo feature.
-- Production builds carry no debug-only behaviour.
-
-## Establish visibility through module hierarchy
-
-Do not use scoped visibility modifiers such as `pub(crate)`, `pub(super)`, or
-`pub(in ...)`. Structure module hierarchies properly and expose the intended
-interface through focused public re-exports. Per-item modifiers require
-remembering the restriction on every type and item; a proper hierarchy
-establishes the boundary once. Scoped modifiers also make it easy to work
-around a poorly structured module tree instead of fixing it.
-
-Keep implementation modules private. An item can be `pub` within a private
-module without exposing it outside the crate. Re-export the items that belong
-to the public interface. Do not make an entire module public to expose one
-helper or to make a test compile. Prefer an inherent method when an operation
-belongs to an existing type rather than adding another free-standing export.
 
 ## Tests
 
@@ -486,38 +403,15 @@ belongs to an existing type rather than adding another free-standing export.
   possible, rather than hand-written fakes or Mockito. Instrumentation tests
   get it through `mockk-android`.
 
-## Editing existing Rust
-
-Preserve the local style. Do not add semicolons to `return`, `break` or
-`continue` where the file omits them, do not add braces to match arms or
-`if`/`else` written without them, and do not move operators between the end of
-one line and the start of the next, except where the repository formatter requires it. Format with `make fmt`; it uses the pinned nightly and includes the runtime module tree. Keep formatting limited to files you changed.
-
-## Rust style
-
-- Prefer `derive_more::Display` over a handwritten `fmt::Display`
-  implementation when the formatting is declarative. Use a manual
-  implementation only when deriving cannot express the behavior cleanly.
 ## Code style
 
-- Every `pub` Rust item (functions, methods, types, traits, modules, constants) carries a doc comment (`///` or `//!`).
-  Keep it short and focused on intent or invariants, not on what the signature already says.
+- How we write Rust (modules, types, traits, errors, lints, unsafe, docs, editing existing Rust) lives in [docs/rust-design.md](docs/rust-design.md). Read it before writing Rust, and run the `rust-design-reviewer` agent on any Rust diff before calling it done.
 - Do not add code comments or doc comments that narrate migrations, compatibility shims, or historical changes. Comments should describe only the current code.
 - Everything else about comments, including when an inline comment earns its place, is under [Comments](#comments). Shared-branch
-  hygiene, the scope of a change, tests, and editing existing Rust have their own sections above.
+  hygiene, the scope of a change and tests have their own sections above.
 - Remove legacy compatibility code by default. Keep or add it only when explicitly requested.
-- In Rust format strings, prefer inlined variables: `"log value: {value:?}"` over `"log value: {:?}", value`.
-- For Rust modules, prefer `foo.rs` plus an optional `foo/` directory for
-  child modules. Do not introduce new `foo/mod.rs` files unless preserving
-  generated output or an existing external convention.
-- In runtime Rust code, prefer `core::` over `std::` for types that are
-  available in `core` (`core::pin::Pin`, `core::task::Poll`, `core::fmt`, and
-  similar). Keep `std::` for std-only APIs, tests, and std-only programs such
-  as `truapi-codegen`.
 - **No `any` in TypeScript types**: If a type can't be expressed cleanly, stop and ask the user whether to (a) refactor or import the right type or (b) add a scoped `// eslint-disable-next-line @typescript-eslint/no-explicit-any` exception. Never silently leave `any`.
-- Don't introduce typealias chains that just rename a public type from another crate (e.g. `pub type StorageError = crate::v01::HostLocalStorageReadError`). Use the canonical name directly. A typealias is only worth its indirection when it captures a real abstraction.
 - After any code change, update `README.md` (and this file if the layout changed) so the top-level docs reflect what the repo actually contains. Stale docs are a regression. When moving or removing docs, `rg` for the old path and update or remove stale links in README files, agent notes, skills, comments, and design docs.
-- In codegen emitters, prefer `indoc::writedoc!` / `formatdoc!` over chains of `writeln!`. A single `writedoc!` with a multi-line raw string keeps the emitted shape visible in source instead of fragmenting it across one-line `writeln!` calls. Reserve `writeln!` for the genuinely-one-line case (a single import, a single statement inside a loop).
 - In PR descriptions, issue comments, and other artifacts that outlive the conversation: describe the resulting state, not the transition between commits. Avoid "previously X, now Y", "we removed", "the old shim is gone", "this PR replaces", those read as ephemeral history once the PR is squash-merged. Write what the system _does_ after the change, not what each commit _changed_ on the way there. (Commit messages are the place for transition narrative; they survive in `git log` even after the squash.)
 
 ## Explanation style

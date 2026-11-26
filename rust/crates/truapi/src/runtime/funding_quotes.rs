@@ -18,7 +18,7 @@
 use std::{
 	collections::HashMap,
 	sync::{
-		Arc, Mutex, Weak,
+		Arc, Mutex,
 		atomic::{AtomicBool, Ordering},
 	},
 };
@@ -37,6 +37,7 @@ use truapi::latest::{
 };
 
 use super::{
+	WorkerHold,
 	funding::lock,
 	funding_telemetry::{self, FundingAttributes as _, QuotesSettled, Region},
 	services::RuntimeServices,
@@ -702,38 +703,6 @@ impl RuntimeServices {
 			max: max.map(limit),
 			learned_at_ms: now_ms,
 		});
-	}
-}
-
-/// A reference on a provider's worker while the core needs it: for a quote,
-/// while a session's overlay is up, or while the provider serves a session.
-/// Released when dropped, so a call dropped while it waits leaves none
-/// behind. Taking and releasing one calls into the host, so neither happens
-/// under a lock.
-pub struct WorkerHold {
-	services: Weak<RuntimeServices>,
-	provider: ProductId,
-}
-
-impl WorkerHold {
-	/// Hold `provider`'s worker, so the host runs it to answer.
-	pub fn acquire(services: &Arc<RuntimeServices>, provider: &ProductId) -> Self {
-		services.worker_ledger.acquire(provider);
-		Self { services: Arc::downgrade(services), provider: provider.clone() }
-	}
-
-	/// The provider whose worker this holds.
-	pub fn provider(&self) -> &ProductId {
-		&self.provider
-	}
-}
-
-impl Drop for WorkerHold {
-	fn drop(&mut self) {
-		// Services that are gone took their ledger with them.
-		if let Some(services) = self.services.upgrade() {
-			services.worker_ledger.release(&self.provider);
-		}
 	}
 }
 
