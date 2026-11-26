@@ -27,7 +27,7 @@ struct ProductWorkerTests {
         defer { withExtendedLifetime(render) {} }
         chat.release()
         chat.release()
-        try execution.publishRendererAction(HostRendererActionSubscribeItem(
+        try execution.publishRendererAction(item: HostRendererActionSubscribeItem(
             context: .pocketCard(cardId: "live"), actionId: "tap", payload: Data()
         ))
         pocket.release()

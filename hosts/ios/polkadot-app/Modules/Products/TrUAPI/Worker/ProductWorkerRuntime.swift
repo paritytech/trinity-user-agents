@@ -20,7 +20,7 @@ extension NativeWorkerExecutionState {
 
 extension ProductWorkerRuntime {
     /// The execution of the product's worker if it runs now.
-    func runningExecution(_ productId: ProductId) async -> TrUAPIWorkerOperations? {
+    func runningExecution(_ productId: ProductId) async -> NativeWorkerExecution? {
         var states = workerExecutionState(productId: productId).makeAsyncIterator()
         return await states.next()?.execution
     }
@@ -28,7 +28,7 @@ extension ProductWorkerRuntime {
     /// The execution of the product's worker once it runs, however long that
     /// takes. `nil` if the core stops reporting the worker, which is at session
     /// end, or the caller is cancelled first.
-    func executionWhenRunning(_ productId: ProductId) async -> TrUAPIWorkerOperations? {
+    func executionWhenRunning(_ productId: ProductId) async -> NativeWorkerExecution? {
         for await worker in workerExecutionState(productId: productId) {
             if let execution = worker.execution { return execution }
         }
@@ -40,7 +40,7 @@ extension ProductWorkerRuntime {
     /// the worker, which is at session end, or when the caller is cancelled.
     func withRunningWorker(
         _ productId: ProductId,
-        _ body: @escaping @Sendable (TrUAPIWorkerOperations) async -> Void
+        _ body: @escaping @Sendable (NativeWorkerExecution) async -> Void
     ) async {
         var running: Task<Void, Never>?
         defer { running?.cancel() }
@@ -85,7 +85,7 @@ extension ProductWorkerRuntime {
 /// new render is only opened when the worker is published again, and a render
 /// that stops publishes nothing.
 private func reopening(
-    _ execution: TrUAPIWorkerOperations,
+    _ execution: NativeWorkerExecution,
     _ request: ProductRendererRenderRequest,
     logger: LoggerProtocol,
     yield: @Sendable (RendererNode) -> Void

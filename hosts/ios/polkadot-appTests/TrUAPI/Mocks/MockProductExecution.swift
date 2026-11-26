@@ -86,6 +86,10 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
         closeSignal.yield()
     }
 
+    func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
+        try publishChatAction(action: action)
+    }
+
     override func publishChatAction(action: HostChatActionSubscribeItem) throws {
         publishedChatActions.append(action)
     }
@@ -106,6 +110,10 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
         if !keepsRenderStreamOpen { observer.onComplete() }
         renderSignal.yield()
         return subscription
+    }
+
+    func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
+        try publishRendererAction(item: item)
     }
 
     override func publishRendererAction(item: HostRendererActionSubscribeItem) throws {

@@ -1676,19 +1676,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 }
 
-/// Operations available to a consumer sharing the product's worker.
-public protocol TrUAPIWorkerOperations: AnyObject, Sendable {
-    func publishChatAction(_ action: HostChatActionSubscribeItem) throws
-    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
-    func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
-    func notifyChatRoomsChanged(rooms: [ChatRoom])
-}
-
 /// Testable surface for one connection-scoped product execution.
-public protocol TrUAPIProductExecutionProtocol: TrUAPIWorkerOperations {
+public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
     func close()
+    func publishChatAction(_ action: HostChatActionSubscribeItem) throws
+    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
+    func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
@@ -1703,6 +1698,7 @@ public protocol TrUAPIProductExecutionProtocol: TrUAPIWorkerOperations {
     func notifyPreimageChanged(key: Data, value: Data?)
     func notifyChainResponse(connectionId: UInt32, json: String)
     func notifyChainClosed(connectionId: UInt32)
+    func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
 }
 
@@ -1838,19 +1834,11 @@ extension NativeWorkerAttempt {
     }
 }
 
-extension NativeWorkerExecution: TrUAPIWorkerOperations {
-    public func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
-        try publishChatAction(action: action)
-    }
-
+extension NativeWorkerExecution {
     public func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
         try observedStream(RendererStreamObserver.init(continuation:)) { observer in
             try render(request: request, observer: observer)
         }
-    }
-
-    public func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
-        try publishRendererAction(item: item)
     }
 }
 

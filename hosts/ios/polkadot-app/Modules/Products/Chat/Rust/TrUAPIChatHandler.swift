@@ -83,7 +83,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     func onUserMessage(text: String, roomId: String?) async throws {
         try checkNotDisposed()
         guard let roomId else { throw ChatSeamError.roomlessChat }
-        try await requireExecution().publishChatAction(HostChatActionSubscribeItem(
+        try await requireExecution().publishChatAction(action: HostChatActionSubscribeItem(
             roomId: roomId,
             peer: "native",
             payload: .messagePosted(.text(text: text))
@@ -252,20 +252,20 @@ private extension TrUAPIChatHandler {
         renders[id] = nil
     }
 
-    func executionWhenRunning() async throws -> TrUAPIWorkerOperations? {
+    func executionWhenRunning() async throws -> NativeWorkerExecution? {
         try checkNotDisposed()
         return try await runtime().executionWhenRunning(productId)
     }
 
     func publishRendererAction(_ context: RenderContext, actionId: String, payload: String?) async throws {
-        try await requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+        try await requireExecution().publishRendererAction(item: HostRendererActionSubscribeItem(
             context: context,
             actionId: actionId,
             payload: payload.map { Data($0.utf8) } ?? Data()
         ))
     }
 
-    func requireExecution() async throws -> TrUAPIWorkerOperations {
+    func requireExecution() async throws -> NativeWorkerExecution {
         guard let execution = await (try? runtime())?.runningExecution(productId) else {
             throw ChatSeamError.notStarted
         }
