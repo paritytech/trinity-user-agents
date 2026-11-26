@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
 import io.paritytech.polkadotapp.common.utils.Urls
-import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
