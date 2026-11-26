@@ -16,9 +16,9 @@ product receives discrete events on the [Unified Renderer](unified-renderer.md)'
 
 ## Motivation
 
-Products have several kinds of motion usecases: a state change that animates, a gesture such as a tap or a pan that moves
-part of the card, a material whose look follows the device's tilt and time, and content hidden under a cover that a tap
-or a scratch reveals.
+Products have several kinds of motion usecases: a state change that animates, a gesture such as a tap or a pan that
+moves part of the card, a material whose look follows the device's tilt and time, and content hidden under a cover that
+a tap or a scratch reveals.
 
 A product cannot drive any of them itself, because a rendering frame cannot wait for the product. A worker reaches the
 core asynchronously, today across a process boundary, so a tree redrawn per finger move lags the finger, and every round
@@ -361,6 +361,18 @@ With reduced motion on, the tilt reads 0 and a clock reads 0, as material inputs
 
 ### Transitions
 
+A product's state changes often show up as a node that appears, a node that goes, or a colour that changes, such as a
+badge shown when a payment starts, a row removed from a list, or a status turning from pending to paid. Values and
+drives cannot animate these. A drive moves a node the tree keeps, so a node the product drops has nothing left to drive,
+and the host must keep drawing it to animate it out. A node a tree adds has no earlier state for a value to start from.
+A drive sets numbers, so a colour cannot follow it. Without transitions, a product would keep every node that might
+appear in each tree, hidden at opacity 0 and still taking room in the layout, and stack copies of a node in each colour
+to cross-fade between them.
+
+A transition covers these three changes for one node. The product only sends trees. The host compares each new tree with
+the one before, finds the node by its transition's `id`, and animates the difference. Nothing is reported to the
+product.
+
 ```rust
 /// How a node enters, leaves and changes between trees.
 pub struct Transition {
@@ -378,11 +390,11 @@ pub struct Transition {
 
 /// The pose a node enters from or exits to.
 pub enum TransitionEffect {
-    /// Transparent.
+    /// Opacity 0.
     Fade,
-    /// Scaled about its center, in per mille.
+    /// Scaled about its center to this per mille of its size.
     Scale(u16),
-    /// Past one edge of its parent.
+    /// Moved along one axis until it lies just past this edge of its parent.
     Slide(Edge),
 }
 
@@ -399,13 +411,46 @@ pub enum Edge {
 }
 ```
 
-A node leaving is drawn as it last drew and takes no touches while it exits. With `change`, the node's opacity,
-background and border move from the previous tree's to the new tree's; a change of layout or content jumps. With reduced
-motion on, enter and exit fade and changes jump.
+The host matches a transition by its `id` anywhere in the tree, so a node keeps its identity when it moves to another
+parent. Comparing two trees, the host plays one of three things for each id:
 
-When a node with a transition enters or leaves inside another that is entering or leaving in the same tree, only the
-outermost one plays its effect, and the nodes inside it move with it. A node that enters while its previous drawing is
-still exiting starts its enter from where the exit had reached.
+| The id is in              | The host plays                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| The new tree only         | `enter`: the node starts in the effect's pose and moves to how the tree draws it |
+| The previous tree only    | `exit`: the node moves from how it last drew to the effect's pose, then goes     |
+| Both, with a drawn change | With `change`, the change; otherwise it jumps                                    |
+
+Entering:
+
+- The node takes its place in the layout at once, and its siblings move to make room without animating.
+- It takes touches from the first frame, in the place the tree puts it.
+- The first tree on a render stream plays no `enter`, so a body coming on screen is drawn as it is, as values start at
+  their declared rest.
+
+Leaving:
+
+- The host keeps drawing the node as it last drew, at its last place and in its last order among its siblings, while
+  `exit` plays, then removes it.
+- The node leaves the layout at once, so its siblings close the gap without animating while it exits over them.
+- It takes no touches while it exits.
+
+Changing:
+
+- `change` animates every modifier of the node whose value differs between the two trees, from the previous tree's value
+  to the new one.
+- A change of content, such as text, an image or children, jumps.
+
+Timing and interruption:
+
+- `animation` times all three. A `Timed` curve and a `Spring` move the node as they move a value.
+- A new tree that arrives while a transition plays starts the next one from what the host draws at that moment, so the
+  node never jumps back. A node that enters while its previous drawing still exits starts its `enter` from where the
+  exit had reached.
+- When a node with a transition enters or leaves inside another that enters or leaves in the same tree, only the
+  outermost one plays its effect, and the nodes inside it move with it.
+
+A transition composes with drives on the same node: opacity and scale multiply, and offsets add. With reduced motion on,
+`enter` and `exit` fade whatever their effect, and changes jump.
 
 ### Events and capabilities
 
