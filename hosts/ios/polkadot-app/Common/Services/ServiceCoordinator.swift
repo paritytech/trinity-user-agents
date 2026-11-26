@@ -213,23 +213,10 @@ extension ServiceCoordinator {
             tokenProvider: JWTTokenManager.shared
         )
 
-        let resourceKeyManager = ProductResourceKeyManager(
-            keychain: Keychain(),
-            userDefaults: SharedContainerGroup.userDefaults
-        )
-
         let sponsorVrfRepo: BandersnatchManagerRepositoryProtocol = .shared
         guard let personKeyResolver = try? sponsorVrfRepo.keyResolver() else {
             return nil
         }
-
-        let sponsorFactory = HostTransactionSponsorFactory(
-            accountManager: accountManager,
-            resourceKeyManager: resourceKeyManager,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            keyResolver: personKeyResolver,
-            logger: logger
-        )
 
         // Single process-wide TrUAPI runtime provider. Registered in the root
         // locator so the static SPA factory reaches the same instance the
@@ -290,8 +277,6 @@ extension ServiceCoordinator {
             let signInHostCoordinator = createSignInHostCoordinator(
                 factory: chatCoordinatorFactory,
                 runtimeProvider: truapiRuntimeProvider,
-                accountManager: accountManager,
-                sponsorFactory: sponsorFactory,
                 logger: logger
             ),
             let chatCoordinator = createChatCoordinator(factory: chatCoordinatorFactory, logger: logger),
@@ -359,9 +344,6 @@ extension ServiceCoordinator {
             productFileProvider: productFileProvider,
             pocket: pocket
         )
-        // Registered so the SPA screen, opened outside this assembly, resolves the
-        // same facade.
-        RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
             workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
@@ -477,24 +459,13 @@ private extension ServiceCoordinator {
         }
     }
 
-    /// - Note: The runtime flag is read once at coordinator creation (app start), so toggling it
-    ///   takes effect on the next launch. An unset flag means TrUAPI — see `isTrUAPIRuntimeEnabled`.
     static func createSignInHostCoordinator(
         factory: MessageExchangeCoordinatorMaking,
         runtimeProvider: TrUAPIHostRuntimeProviding,
-        accountManager: ProductsAccountManaging,
-        sponsorFactory: TransactionSponsorMaking,
         logger: LoggerProtocol
     ) -> MessageExchangeSignInHostCoordinating? {
         do {
-            if SettingsManager.shared.isTrUAPIRuntimeEnabled {
-                return try factory.makeTrUAPIHostCoordinator(runtimeProvider: runtimeProvider)
-            }
-
-            return try factory.makeNativeHostCoordinator(
-                accountManager: accountManager,
-                sponsorFactory: sponsorFactory
-            )
+            return try factory.makeTrUAPIHostCoordinator(runtimeProvider: runtimeProvider)
         } catch {
             logger.error("Message exchange sign in host coordinator error: \(error)")
             return nil

@@ -97,12 +97,6 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
             for: .valueChanged
         )
 
-        rootView.truApiRuntimeSwitch.addTarget(
-            self,
-            action: #selector(actionToggleTruApiRuntime),
-            for: .valueChanged
-        )
-
         rootView.hostPlacedSwitch.addTarget(
             self,
             action: #selector(actionToggleHostPlacement),
@@ -181,10 +175,6 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         presenter.toggleStrategyDebug()
     }
 
-    @objc func actionToggleTruApiRuntime() {
-        presenter.toggleTruApiRuntime()
-    }
-
     @objc func actionToggleHostPlacement() {
         presenter.toggleHostPlacement()
     }
@@ -230,9 +220,5 @@ extension DebugSettingsViewController: DebugSettingsViewProtocol {
 
     func didReceive(hostPlacementEnabled: Bool) {
         rootView.hostPlacedSwitch.isOn = hostPlacementEnabled
-    }
-
-    func didReceive(truApiRuntimeEnabled: Bool) {
-        rootView.truApiRuntimeSwitch.isOn = truApiRuntimeEnabled
     }
 }

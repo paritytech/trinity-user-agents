@@ -33,7 +33,6 @@ extension DebugSettingsInteractor: DebugSettingsInteractorInputProtocol {
             provideClearReferral()
             provideJWTTokenState()
             provideStrategyDebugState()
-            provideTruApiRuntimeState()
             provideHostPlacementState()
         }
     }
@@ -81,12 +80,6 @@ extension DebugSettingsInteractor: DebugSettingsInteractorInputProtocol {
         let current = SettingsManager.shared.bool(for: SettingsKey.showTransferStrategyDebug.rawValue) ?? true
         SettingsManager.shared.set(value: !current, for: SettingsKey.showTransferStrategyDebug.rawValue)
         provideStrategyDebugState()
-    }
-
-    func toggleTruApiRuntime() {
-        let current = SettingsManager.shared.isTrUAPIRuntimeEnabled
-        SettingsManager.shared.set(value: !current, for: .truApiRuntimeEnabled)
-        provideTruApiRuntimeState()
     }
 
     func toggleHostPlacement() {
@@ -138,13 +131,6 @@ private extension DebugSettingsInteractor {
         let enabled = SettingsManager.shared.bool(for: SettingsKey.showTransferStrategyDebug.rawValue) ?? true
         Task { @MainActor [weak presenter] in
             presenter?.didReceive(strategyDebugEnabled: enabled)
-        }
-    }
-
-    func provideTruApiRuntimeState() {
-        let enabled = SettingsManager.shared.isTrUAPIRuntimeEnabled
-        Task { @MainActor [weak presenter] in
-            presenter?.didReceive(truApiRuntimeEnabled: enabled)
         }
     }
 

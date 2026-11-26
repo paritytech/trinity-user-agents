@@ -12,9 +12,8 @@
         static let playgroundName: String = "truapi-playground"
         static let playgroundURL = URL(string: "http://localhost:3000")
 
-        /// The playground as a direct-URL rust-runtime SPA. Forces rust mode
-        /// (no flag read); the shared runtime and its production session are
-        /// sourced from the process-wide provider inside `createRustView`.
+        /// The playground as a direct-URL SPA; the shared runtime and its production session are
+        /// sourced from the process-wide provider inside `SPAViewFactory.createView`.
         @MainActor
         static func createView(
             flowStateProvider: any SPAFlowStateProviding
@@ -37,7 +36,7 @@
                 contentSource: .directURL(url)
             )
 
-            return SPAViewFactory.createRustView(
+            return SPAViewFactory.createView(
                 configuration: configuration,
                 flowState: flowState
             )

@@ -90,27 +90,8 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         interactor.toggleStrategyDebug()
     }
 
-    func toggleTruApiRuntime() {
-        interactor.toggleTruApiRuntime()
-
-        let viewModel = AlertPresentableViewModel(
-            title: "Restart Required",
-            message: "TrUAPI runtime changed. Restart the app to apply the new runtime.",
-            actions: [
-                AlertPresentableAction(title: "Restart") { [weak self] in
-                    self?.interactor.restartApp()
-                },
-                AlertPresentableAction(title: "Cancel", style: .cancel) { [weak self] in
-                    self?.interactor.toggleTruApiRuntime()
-                }
-            ]
-        )
-
-        wireframe.present(viewModel: viewModel, style: .alert, from: view)
-    }
-
-    /// Same restart as the runtime switch, and for the same reason: the bot list is rebuilt when
-    /// the product stream emits, which a settings write does not make it do.
+    /// Asks for a restart: the bot list is rebuilt when the product stream emits, which a settings
+    /// write does not make it do.
     func toggleHostPlacement() {
         interactor.toggleHostPlacement()
 
@@ -177,9 +158,5 @@ extension DebugSettingsPresenter: DebugSettingsInteractorOutputProtocol {
 
     func didReceive(hostPlacementEnabled: Bool) {
         view?.didReceive(hostPlacementEnabled: hostPlacementEnabled)
-    }
-
-    func didReceive(truApiRuntimeEnabled: Bool) {
-        view?.didReceive(truApiRuntimeEnabled: truApiRuntimeEnabled)
     }
 }

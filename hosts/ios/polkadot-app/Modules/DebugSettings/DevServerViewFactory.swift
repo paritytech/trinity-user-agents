@@ -6,8 +6,7 @@
     /// Debug-only assembly for a product served from a development server on the developer's
     /// machine. Presentation belongs to ``DebugSettingsWireframe``.
     enum DevServerViewFactory {
-        /// Always the rust runtime, like the playground: the core runs the product under the
-        /// identifier it gave it, whichever runtime the debug toggle selects.
+        /// The core runs the product under the identifier it gave it.
         /// Throws the core's ``DevServerError`` when `address` is not a development server or its
         /// `product_id` is refused, and the TLD lookup's error when the network has no TLD yet.
         @MainActor
@@ -39,7 +38,7 @@
                 contentSource: .devServer(url: url, productId: product.productId)
             )
 
-            return SPAViewFactory.createRustView(
+            return SPAViewFactory.createView(
                 configuration: configuration,
                 flowState: flowState
             )

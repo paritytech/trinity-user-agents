@@ -6,7 +6,6 @@ protocol DebugSettingsViewProtocol: ControllerBackedProtocol {
     func didReceive(canClearReferral: Bool)
     func didReceive(hasJWTToken: Bool)
     func didReceive(strategyDebugEnabled: Bool)
-    func didReceive(truApiRuntimeEnabled: Bool)
     func didReceive(hostPlacementEnabled: Bool)
 }
 
@@ -22,7 +21,6 @@ protocol DebugSettingsPresenterProtocol: AnyObject {
     func replaceWithRandomEntropy()
     func showThemeSelection()
     func toggleStrategyDebug()
-    func toggleTruApiRuntime()
     func toggleHostPlacement()
     func openTrUAPIPlayground()
     #if DEBUG
@@ -41,7 +39,6 @@ protocol DebugSettingsInteractorInputProtocol: AnyObject {
     func makeLogsDraft() -> EmailDraft?
     func replaceWithRandomEntropy()
     func toggleStrategyDebug()
-    func toggleTruApiRuntime()
     func toggleHostPlacement()
     func restartApp()
     func resetTips()
@@ -53,7 +50,6 @@ protocol DebugSettingsInteractorOutputProtocol: AnyObject {
     func didReceive(canClearReferral: Bool)
     func didReceive(hasJWTToken: Bool)
     func didReceive(strategyDebugEnabled: Bool)
-    func didReceive(truApiRuntimeEnabled: Bool)
     func didReceive(hostPlacementEnabled: Bool)
 }
 

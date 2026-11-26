@@ -6,20 +6,9 @@ import SubstrateSdk
 struct PolkadotHostRemoteMessage {
     let messageId: String
     let versionedContent: VersionedContent
-
-    func latestContent() -> LatestContent? {
-        switch versionedContent {
-        case let .v1(contentV1):
-            contentV1
-        }
-    }
 }
 
-typealias OpaquePolkadotHostRemoteMessage = OpaqueMessageWrapper<PolkadotHostRemoteMessage>
-
 extension PolkadotHostRemoteMessage {
-    typealias LatestContent = ContentV1
-
     enum VersionedContent {
         // swiftlint:disable:next identifier_name
         case v1(ContentV1)

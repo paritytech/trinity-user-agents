@@ -6,24 +6,13 @@ import Products
 enum SPAContentSource {
     /// Resolve the dotNs product and serve it via the polkadot:// scheme handler.
     case dotNs
-    /// Debug: load the URL as-is, skipping resolution. Rust runtime only.
+    /// Debug: load the URL as-is, skipping resolution.
     case directURL(URL)
     #if DEBUG
         /// Debug: a product served from a development server on the developer's machine, loaded from
-        /// `url` and run under the identifier the core gave it. Rust runtime only.
+        /// `url` and run under the identifier the core gave it.
         case devServer(url: URL, productId: ProductId)
     #endif
-
-    /// Whether only the rust runtime can serve it.
-    var isRustOnly: Bool {
-        switch self {
-        case .dotNs: false
-        case .directURL: true
-        #if DEBUG
-            case .devServer: true
-        #endif
-        }
-    }
 }
 
 /// Where an SPA screen lives, which decides its chrome.

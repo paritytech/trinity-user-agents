@@ -31,7 +31,6 @@ extension ServiceCoordinator {
         tldProvider.refresh()
 
         chatCoordinator.setup()
-        productWorkerFacade.setup()
         chatExtensionsRegistry.discover()
         chatRequestCoordinator.setup()
         attachmentUploadService.setup()
