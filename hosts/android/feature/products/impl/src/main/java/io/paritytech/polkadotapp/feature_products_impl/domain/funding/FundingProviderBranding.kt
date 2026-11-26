@@ -6,14 +6,12 @@ import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
-/** How a provider is shown: its product's display name and icon. */
 data class FundingProviderBrand(
     val providerId: ProductId,
     val name: String,
     val iconUrl: String?,
 )
 
-/** Reads a provider's brand from its product's root manifest; the bare id stands in until it resolves. */
 class FundingProviderBranding @Inject constructor(
     private val resolveProductUseCase: ResolveProductUseCase,
     private val ipfsContentLookup: IpfsContentLookup,

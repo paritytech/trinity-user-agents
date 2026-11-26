@@ -4,14 +4,13 @@ import java.text.Collator
 import java.util.Currency
 import java.util.Locale
 
-/** A country the user can pay from, as ISO 3166-1 alpha-2, with the currency a card or bank payment there uses. */
 data class FundingCountry(
     val code: String,
     val name: String,
     val currencyCode: String?,
     val currencyName: String?,
 ) {
-    /** The regional-indicator pair for the code, which the platform draws as the country's flag. */
+    // Regional-indicator pair, which the platform draws as the country's flag.
     val flag: String
         get() = buildString {
             code.forEach { appendCodePoint(REGIONAL_INDICATOR_OFFSET + it.code) }

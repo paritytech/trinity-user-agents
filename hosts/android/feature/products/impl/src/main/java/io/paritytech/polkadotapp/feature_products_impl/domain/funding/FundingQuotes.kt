@@ -10,25 +10,32 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The quotes of each session: what the user asked to be quoted, and the core's list for the latest ask. */
 interface FundingQuotes {
-    /** Asks every provider for the reported selection to quote [amount], or drops the quotes on screen when `null`. */
+    // Sessions whose quotes changed. Never ends.
+    val updates: Flow<FundingIntentId>
+
+    // `null` drops the quotes on screen.
     fun quote(amount: Balance?, intentId: FundingIntentId)
+
+    fun latestAsk(intentId: FundingIntentId): FundingQuotesShown?
+
+    fun quoteId(intentId: FundingIntentId, provider: ProductId): String?
+
+    // Starts on the best quote of the latest ask, and of every ask after it, once every provider answered.
+    suspend fun startOnBest(intentId: FundingIntentId): Result<Unit>
+
+    // The session's screens are gone: drops its asks and any start on the best quote, on this side only.
+    fun forget(intentId: FundingIntentId)
 }
 
-/** The latest ask on a session and what came of it. */
 data class FundingQuotesShown(
     val amount: Balance?,
-    /** The core's list for [amount]; `null` from a new ask until its first list. */
+    // `null` from a new ask until its first list.
     val list: FundingQuoteList?,
-    /** The ask did not reach the core, or its list could not be read. */
     val failed: Boolean,
 )
 
-/**
- * Keeps each session's asks and matches the core's lists to the latest one. Asks and read-backs run on the shared
- * [FundingCoreCalls] queue, so a list is only ever matched against the ask the core last answered.
- */
+// Asks and read-backs share the FundingCoreCalls queue, so a list is only matched against the ask the core last answered.
 @Singleton
 class RealFundingQuotes @Inject constructor(
     private val core: FundingCore,
@@ -38,8 +45,7 @@ class RealFundingQuotes @Inject constructor(
     private val asks = mutableMapOf<FundingIntentId, QuoteAsk>()
     private val changes = MutableSharedFlow<FundingIntentId>(extraBufferCapacity = CHANGE_BUFFER, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    /** The sessions whose quotes changed, as they do. Never ends. */
-    val updates: Flow<FundingIntentId> = changes
+    override val updates: Flow<FundingIntentId> = changes
 
     override fun quote(amount: Balance?, intentId: FundingIntentId) {
         if (amount == null) {
@@ -57,51 +63,38 @@ class RealFundingQuotes @Inject constructor(
                 requested.fold(onSuccess = { ask?.take(it, number) }, onFailure = { ask?.fail(number) }) == true
             }
             readList(intentId)
-            if (startsNow) startWhenQuoted(intentId)
+            if (startsNow) startWhenQuoted(intentId).logFailure("Funding auto-start failed")
         }
     }
 
-    /** What is shown for [intentId]'s latest ask; `null` while it has none. */
-    fun shown(intentId: FundingIntentId): FundingQuotesShown? = synchronized(lock) { asks[intentId]?.shown() }
+    override fun latestAsk(intentId: FundingIntentId): FundingQuotesShown? = synchronized(lock) { asks[intentId]?.shown() }
 
-    /** The core says [intentId]'s list changed. */
     fun onQuotesChanged(intentId: FundingIntentId) {
         calls.launch { readList(intentId) }
     }
 
-    /** The quote [provider] gave for the list on screen. */
-    fun quoteId(intentId: FundingIntentId, provider: ProductId): String? = synchronized(lock) {
+    override fun quoteId(intentId: FundingIntentId, provider: ProductId): String? = synchronized(lock) {
         asks[intentId]?.list?.rows?.firstOrNull { it.providerId == provider }?.state?.quote?.quoteId
     }
 
-    /** Hands the session to the latest ask's best quote, now and for any ask after it, once every provider answered. */
-    suspend fun startOnBest(intentId: FundingIntentId) {
+    override suspend fun startOnBest(intentId: FundingIntentId): Result<Unit> {
         synchronized(lock) { asks.getOrPut(intentId) { QuoteAsk() }.startsWhenQuoted = true }
-        calls.run { startWhenQuoted(intentId) }
+        return calls.run { startWhenQuoted(intentId) }
     }
 
-    fun isStartingOnBest(intentId: FundingIntentId): Boolean = synchronized(lock) { asks[intentId]?.startsWhenQuoted == true }
-
-    /** The core started the session on a best quote, so nothing is armed any more. */
-    fun startedOnBest(intentId: FundingIntentId) {
-        synchronized(lock) { asks[intentId]?.startsWhenQuoted = false }
+    override fun forget(intentId: FundingIntentId) {
+        synchronized(lock) { asks.remove(intentId) }
     }
 
-    /** The user left the screen that started the session on its best quote: the core no longer starts it. */
-    fun stopStarting(intentId: FundingIntentId) {
-        if (disarm(intentId)) calls.launch { core.cancelAutoStart(intentId).logFailure("Funding auto-start cancel failed") }
+    // Runs on the call queue. A failed start leaves nothing armed, so a later ask does not start the session unasked.
+    private suspend fun startWhenQuoted(intentId: FundingIntentId): Result<Unit> {
+        val requestId = synchronized(lock) { asks[intentId]?.armedRequest() } ?: return Result.success(Unit)
+        return core.startWhenQuoted(intentId, requestId).onFailure {
+            synchronized(lock) { asks[intentId]?.stopStarting() }
+        }
     }
 
-    /** Forgets, on this side only, that session [intentId] starts on its best quote. Returns whether it did. */
-    fun disarm(intentId: FundingIntentId): Boolean = synchronized(lock) { asks[intentId]?.stopStarting() ?: false }
-
-    /** Runs on the call queue. */
-    private suspend fun startWhenQuoted(intentId: FundingIntentId) {
-        val requestId = synchronized(lock) { asks[intentId]?.armedRequest() } ?: return
-        core.startWhenQuoted(intentId, requestId).logFailure("Funding auto-start failed")
-    }
-
-    /** Runs on the call queue. */
+    // Runs on the call queue.
     private suspend fun readList(intentId: FundingIntentId) {
         val read = core.quotes(intentId).logFailure("Funding quotes read failed")
         synchronized(lock) {
@@ -111,14 +104,13 @@ class RealFundingQuotes @Inject constructor(
         changes.tryEmit(intentId)
     }
 
-    /** The asks of one session: only the latest one's list is shown. Guarded by the lock. */
+    // Guarded by the lock. Only the latest ask's list is shown.
     private class QuoteAsk {
         private var number = 0
 
-        /** The core's id for the latest ask, once it returned it. */
         private var requestId: ULong? = null
 
-        /** The ask the core was last told to start the session on. */
+        // The request the core was last told to start the session on.
         private var startedOn: ULong? = null
 
         private var awaiting = false
@@ -130,7 +122,6 @@ class RealFundingQuotes @Inject constructor(
         var list: FundingQuoteList? = null
             private set
 
-        /** The session is handed to the latest ask's best quote once every provider answered. */
         var startsWhenQuoted = false
 
         fun shown(): FundingQuotesShown? = amount?.let { FundingQuotesShown(it, list, failed) }
@@ -153,10 +144,7 @@ class RealFundingQuotes @Inject constructor(
             requestId = null
         }
 
-        /**
-         * Takes the core's id for ask [ofAsk] unless a later ask replaced it; `null` is the core naming no asset for
-         * the selection, so nothing is asked. Answers whether to start on it now.
-         */
+        // A `null` id is the core naming no asset for the selection, so nothing was asked. Answers whether to start now.
         fun take(id: ULong?, ofAsk: Int): Boolean {
             if (ofAsk != number) return false
             if (id == null) {
@@ -167,7 +155,6 @@ class RealFundingQuotes @Inject constructor(
             return startsWhenQuoted
         }
 
-        /** Ask [ofAsk] did not reach the core: it stays on screen as failed. Answers that nothing starts on it. */
         fun fail(ofAsk: Int): Boolean {
             if (ofAsk == number) {
                 awaiting = false
@@ -176,10 +163,7 @@ class RealFundingQuotes @Inject constructor(
             return false
         }
 
-        /**
-         * The core's latest list: shown when it answers the latest ask. None while an ask waits for its first list is
-         * the list not being there yet; none after it is a selection having withdrawn it.
-         */
+        // No list while an ask awaits its first one means it is not there yet; after that, a selection withdrew it.
         fun receive(received: FundingQuoteList?) {
             if (received == null) {
                 if (!awaiting && !failed) {
@@ -195,25 +179,21 @@ class RealFundingQuotes @Inject constructor(
             failed = false
         }
 
-        /** The list could not be read: the ask stays on screen as failed until a read succeeds. */
         fun readFailed() {
             if (amount == null) return
             awaiting = false
             failed = true
         }
 
-        /** The request to start on, once per request. */
         fun armedRequest(): ULong? {
             val request = requestId?.takeIf { startsWhenQuoted && it != startedOn } ?: return null
             startedOn = request
             return request
         }
 
-        fun stopStarting(): Boolean {
-            val was = startsWhenQuoted
+        fun stopStarting() {
             startsWhenQuoted = false
             startedOn = null
-            return was
         }
     }
 

@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import uniffi.truapi.FundingStatus
 
-/** The CASH card's line for the status the core gives a session. */
 internal fun FundingStatus.toActivityStatus(): FundingActivityStatus = when (this) {
     FundingStatus.WaitingForPayment -> inProgress(FundingActivityStep.WaitingForPayment)
     FundingStatus.WaitingForTransfer -> inProgress(FundingActivityStep.WaitingForTransfer)

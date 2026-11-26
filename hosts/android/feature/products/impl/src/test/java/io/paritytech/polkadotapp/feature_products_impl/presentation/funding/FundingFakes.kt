@@ -9,12 +9,14 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingInt
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderFrames
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotesShown
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.takeWhile
 import uniffi.truapi.CancelConfirmation
@@ -58,6 +60,16 @@ class FakeFunding : FundingSessions, FundingQuotes, FundingProviderFrames {
     override fun quote(amount: Balance?, id: FundingIntentId) {
         calls += "quote ${amount?.value}"
     }
+
+    override val updates: Flow<FundingIntentId> = emptyFlow()
+
+    override fun latestAsk(intentId: FundingIntentId): FundingQuotesShown? = null
+
+    override fun quoteId(intentId: FundingIntentId, provider: ProductId): String? = null
+
+    override suspend fun startOnBest(intentId: FundingIntentId): Result<Unit> = Result.success(Unit)
+
+    override fun forget(intentId: FundingIntentId) = Unit
 
     override suspend fun amountIssue(amount: Balance, spendable: Balance?, id: FundingIntentId): Result<FundingAmountIssue?> = Result.success(null)
 
