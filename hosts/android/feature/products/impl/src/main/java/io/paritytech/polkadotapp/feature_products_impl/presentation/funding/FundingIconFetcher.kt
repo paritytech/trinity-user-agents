@@ -42,7 +42,7 @@ internal class FundingIconFetcher(
     override suspend fun fetch(): FetchResult? {
         val file = dotNsTldProvider.getTld()
             .flatMap { tld -> fileOf(tld) }
-            // Coil reads a failed load from a throw; the screen keeps the monogram.
+            // Coil reads a failed load from a throw: the Fetcher seam in results-and-errors.md.
             .getOrThrow()
         val components = imageLoader.components
 
