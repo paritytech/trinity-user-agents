@@ -47,7 +47,7 @@ fn only_records_encrypted_under_the_seed_decrypt_and_each_installation_comes_bac
 fn the_data_store_account_and_record_key_match_the_apps() {
 	let mnemonic = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
 	let entropy = bip39::Mnemonic::parse(mnemonic).unwrap().to_entropy();
-	let keys = WalletKeys::new(RootEntropy::new(entropy), String::new());
+	let keys = WalletKeys::new(RootEntropy::new(entropy), crate::test_support::dot_test_stack());
 	let public_key: [u8; 32] =
 		bytes("0x82fde43d07766255566803c486f9427cfb7026328a3d87cddd34b362acbdb54d")
 			.try_into()

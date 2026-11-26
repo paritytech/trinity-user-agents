@@ -727,8 +727,11 @@ impl NativeTrUApiHostRuntime {
 	/// Chat modality pass `None`. `game_callbacks` does the same for game
 	/// reminders.
 	///
-	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
-	/// parse throws in Swift and Kotlin.
+	/// Fails when `execution_config.product_id` is not an id the stack
+	/// serves. For a name under `dot` on a stack with another TLD the reason
+	/// names the id to open instead. An
+	/// `execution_config.product_id` UniFFI cannot parse throws in Swift and
+	/// Kotlin the same way.
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
@@ -736,21 +739,22 @@ impl NativeTrUApiHostRuntime {
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
+		let ProductExecutionConfig { product_id, execution_kind } = execution_config;
+		let product = ProductContext::served_by(self.runtime.stack(), product_id, execution_kind)?;
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			game_callbacks,
-			execution_config.into(),
+			product,
 		))
 	}
 
 	/// Claim a product's worker while this consumer needs it.
 	///
-	/// Each call returns a separate claim on the worker.
+	/// Each call returns a separate claim on the worker. A product the stack
+	/// does not serve is logged, and its claim holds nothing.
 	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
-		Arc::new(NativeWorkerClaim {
-			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
-		})
+		Arc::new(NativeWorkerClaim { reference: Mutex::new(self.runtime.hold_worker(&product_id)) })
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1343,7 +1347,9 @@ impl NativeProductExecution {
 	/// Resolve a product's hard-subtree public key for hosts naming the account
 	/// a review will sign with. Answers from the cache, the persisted slot, or
 	/// the Account Holder, and `timeout_ms` bounds that wait. Exceeding it is
-	/// an error; `None` means no active session.
+	/// an error; `None` means no active session, which is answered before any
+	/// other check. A product the stack does not serve is an error, whatever
+	/// subtree was kept for it.
 	pub fn product_subtree_public_key(
 		&self,
 		product_id: ProductId,

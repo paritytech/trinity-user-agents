@@ -237,9 +237,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		latest::HostNftPurseListPursesResponse,
 		CallError<latest::HostNftPurseListPursesError>,
 	> {
+		let owner = self.connection.serve(request.owner)?;
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
-		let latest::HostNftPurseListPursesRequest { owner } = request;
 		if let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) {
 			let denied = latest::HostNftPurseListPursesError::Denied;
 			self.connection.require_remote_permission(grant, denied).await?;

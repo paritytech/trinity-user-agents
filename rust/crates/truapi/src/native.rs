@@ -75,19 +75,63 @@ pub use runtime::{
 pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
+use std::sync::Arc;
+
 use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
+use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns, stack::Stack};
 
-/// Classify a navigation input exactly like the core's internal navigate host
-/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
-/// normalized external, with everything else rejected. Pure and stateless;
-/// hosts call it on every webview-internal navigation.
+/// The stack a host build bundles, opened before the runtime starts.
+///
+/// A host opens it from the same [`BundledStack`] it passes in
+/// [`HostRuntimeConfig`], so its link and trust checks judge product ids by
+/// the build's stack even before the runtime is built. The runtime starts
+/// from that copy or from a newer one it stored, which
+/// [`StackStatus`](crate::platform::StackStatus) reports.
 #[uniffi::export]
-pub fn parse_navigate(input: String) -> NavigateDecision {
-	dotns::parse_navigate(&input)
+impl Stack {
+	/// Open the bundled copy alone, under the same checks the runtime applies
+	/// to it. Fails `Invalid` when the descriptor does not verify under the
+	/// pointer's key or breaks the build's reserved-value rule.
+	#[uniffi::constructor]
+	pub fn open_bundled(stack: BundledStack) -> Result<Arc<Self>, NativeRuntimeConfigError> {
+		let BundledStack { pointer, descriptor, reserved_values } = stack;
+		Ok(Arc::new(Self::bundled(&pointer, &descriptor, &reserved_values)?))
+	}
+
+	/// Classify a navigation input exactly like the core's internal navigate
+	/// host call: the Pocket deeplink first, then dotNS, then `localhost`, then
+	/// normalized external, with everything else rejected. A name is dotNS only
+	/// under a TLD this stack accepts, and the decision names its product by
+	/// the id the stack serves it under. Hosts call it on every
+	/// webview-internal navigation.
+	pub fn parse_navigate(&self, input: String) -> NavigateDecision {
+		dotns::parse_navigate(&input, self)
+	}
+
+	/// The id this stack serves the product a share host names under, when it
+	/// serves it: `game.paseo` on a `paseo` stack for `game.dot.li`.
+	pub fn parse_product_share_host(&self, input: String) -> Option<ProductId> {
+		ProductId::from_share_host(&input).and_then(|product_id| self.served_id(&product_id).ok())
+	}
+
+	/// Share domains of the TLDs this stack accepts product names under.
+	pub fn product_share_hosts(&self) -> Vec<String> {
+		dotns::product_share_hosts(self)
+	}
+
+	/// Whether `product_id` is a first-party product the host grants every
+	/// [`truapi::latest::RemotePermission`] without prompting: a trusted label
+	/// under an id this stack serves.
+	///
+	/// Trusted products bypass recorded permissions and permission prompts.
+	/// Device permissions still need the OS grant. Hosts mediating product
+	/// network access can use this check before storage.
+	pub fn has_trusted_remote_permissions(&self, product_id: ProductId) -> bool {
+		self.trusts(&product_id)
+	}
 }
 
 /// The canonical app scheme used for deeplinks and native handoffs.
@@ -163,22 +207,10 @@ pub fn parse_product_link(input: String, network_suffix: String) -> Option<Produ
 	ProductLink::parse(&input, &network_suffix)
 }
 
-/// Recognize a supported share host without consulting host configuration.
-#[uniffi::export]
-pub fn parse_product_share_host(input: String) -> Option<ProductId> {
-	ProductId::from_share_host(&input)
-}
-
 /// The public share host for this identity, excluding local development.
 #[uniffi::export]
 pub fn product_id_share_host(product_id: ProductId) -> Option<String> {
 	product_id.to_share_host()
-}
-
-/// Share domains recognized by the canonical Rust parser.
-#[uniffi::export]
-pub fn product_share_hosts() -> Vec<String> {
-	dotns::product_share_hosts()
 }
 
 /// The development product a debug build opens for an address the developer
@@ -366,17 +398,6 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 #[uniffi::export]
 pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
-}
-
-/// Whether `product_id` is a first-party product the host grants every
-/// [`truapi::latest::RemotePermission`] without prompting.
-///
-/// Trusted products bypass recorded permissions and permission prompts. Device
-/// permissions still need the OS grant. Hosts mediating product network access
-/// can use this check before storage.
-#[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
-	product_id.has_trusted_remote_permissions()
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for

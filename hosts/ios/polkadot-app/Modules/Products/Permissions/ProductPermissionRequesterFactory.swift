@@ -3,11 +3,17 @@ import Products
 import TrUAPIHost
 
 enum ProductPermissionRequesterFactory {
-    static func create(router: ProductPermissionRouting) -> ProductPermissionRequesting {
-        // `hasTrustedRemotePermissions` is the core's own answer, so the app and
-        // the protocol path cannot disagree about which products are trusted.
+    static func create(
+        router: ProductPermissionRouting,
+        stack: Stack? = TrUAPIBundledStack.opened
+    ) -> ProductPermissionRequesting {
+        // `hasTrustedRemotePermissions` is the core's own answer for the stack it
+        // runs, so the app and the protocol path cannot disagree about which
+        // products are trusted.
         TrustedRemoteProductPermissionRequester(
-            isTrustedForRemoteAccess: { hasTrustedRemotePermissions(productId: $0) },
+            isTrustedForRemoteAccess: { productId in
+                stack?.hasTrustedRemotePermissions(productId: productId) ?? false
+            },
             wrapped: ProductPermissionRequester(router: router)
         )
     }
