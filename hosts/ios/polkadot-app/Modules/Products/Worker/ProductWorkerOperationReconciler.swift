@@ -23,11 +23,13 @@ final class ProductWorkerOperationReconciler: @unchecked Sendable {
     private let logger: LoggerProtocol
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
 
-    init(
+    init?(
+        usingTrUAPI: Bool,
         store: ProductOperationStoring,
         manager: ProductWorkerManaging,
         logger: LoggerProtocol = Logger.shared
     ) {
+        guard !usingTrUAPI else { return nil }
         self.store = store
         self.manager = manager
         self.logger = logger

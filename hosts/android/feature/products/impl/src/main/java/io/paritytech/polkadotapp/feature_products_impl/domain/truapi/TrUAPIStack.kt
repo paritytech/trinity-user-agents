@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import android.content.Context
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import uniffi.truapi.BundledStack
+import uniffi.truapi.ReservedValuesPolicy
 
 /**
  * The Trinity stacks the app bundles, and which one each environment runs.
@@ -26,7 +27,7 @@ enum class TrUAPIStack(
         return BundledStack(
             pointer = read("link").decodeToString().trim(),
             descriptor = read("json"),
-            allowsReservedValues = allowsReservedValues,
+            reservedValues = ReservedValuesPolicy(allowed = allowsReservedValues),
         )
     }
 

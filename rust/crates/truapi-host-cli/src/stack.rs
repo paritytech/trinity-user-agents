@@ -2,6 +2,7 @@
 //! `trinity-stack` crate, the same rules the host core runs.
 
 use std::{
+	collections::BTreeMap,
 	fs,
 	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
@@ -11,8 +12,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use crossterm::style::Stylize;
 use trinity_stack::{
-	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, open,
-	render,
+	DEFAULT_LINK_BASE, Descriptor, Document, Fetched, Pointer, PublishState, Rendered, Status,
+	accept, open, render,
 };
 use zeroize::Zeroizing;
 
@@ -20,8 +21,8 @@ use crate::{
 	network::ensure_built_in_runnable,
 	platform,
 	stack_descriptor::{
-		FETCH_TIMEOUT, describe_pin_change, fetch, pointer_of, read_stack, reads_same, refused,
-		unix_now,
+		FETCH_TIMEOUT, bundles_same, describe_pin_change, fetch, light_client_chains, pointer_of,
+		read_stack, refused, unix_now,
 	},
 	terminal_ui::qr_rows,
 };
@@ -87,6 +88,11 @@ pub enum StackCommand {
 		/// fields truapi-host does not read.
 		#[arg(long)]
 		skip_same_projection: bool,
+		/// Also fetch and check the light specs of the relay, People, Asset Hub
+		/// and Bulletin, and write them to this file by their `sha256`, for the
+		/// light client to start from without their servers.
+		#[arg(long)]
+		light_specs: Option<PathBuf>,
 	},
 	/// Print the link that carries a pointer, and its QR code.
 	Link {
@@ -108,8 +114,8 @@ pub async fn run(command: StackCommand) -> Result<()> {
 			publish(&model, &generation, &out, secret, state.as_deref(), url.as_deref())
 		},
 		StackCommand::Verify { stack, key } => verify(&stack, key.as_deref()).await,
-		StackCommand::Bundle { stack, key, out, skip_same_projection } => {
-			bundle(&stack, key.as_deref(), &out, skip_same_projection).await
+		StackCommand::Bundle { stack, key, out, skip_same_projection, light_specs } => {
+			bundle(&stack, key.as_deref(), &out, skip_same_projection, light_specs.as_deref()).await
 		},
 		StackCommand::Link { url, key } => {
 			let link =
@@ -236,6 +242,7 @@ async fn bundle(
 	key: Option<&str>,
 	out: &Path,
 	skip_same_projection: bool,
+	light_specs_out: Option<&Path>,
 ) -> Result<()> {
 	let Some(pointer) = pointer_of(stack, key)?.filter(|pointer| pointer.key().is_some()) else {
 		bail!("bundle needs a signed stack: a link or URL with a key");
@@ -267,6 +274,7 @@ async fn bundle(
 	let descriptor = &accepted.stack.descriptor;
 	ensure_built_in_runnable(&pointer, descriptor)
 		.map_err(|error| anyhow!("not bundled: {error}"))?;
+	let mut is_current = false;
 	if let Some(bytes) = previous.as_deref() {
 		let stored_document = Document::parse(bytes).map_err(|error| {
 			anyhow!(
@@ -284,22 +292,58 @@ async fn bundle(
 				out.display()
 			);
 		}
-		let is_current = skip_same_projection &&
+		is_current = skip_same_projection &&
 			open(bytes, &pointer).is_ok() &&
-			reads_same(stored_descriptor, descriptor) &&
+			bundles_same(stored_descriptor, descriptor) &&
 			stored_descriptor.expires_at == descriptor.expires_at &&
 			stored_descriptor.valid_until == descriptor.valid_until;
-		if is_current {
-			println!(
-				"{} is current: {} sequence {} changes no field truapi-host reads",
-				out.display(),
-				descriptor.id,
-				descriptor.sequence
-			);
-			return Ok(());
-		}
+	}
+	// A copy left in place as current names the same light specs as the
+	// fetched one, so these are the specs of the copy at `out` either way.
+	if let Some(light_specs_out) = light_specs_out {
+		let specs = fetch_light_specs(descriptor)
+			.await
+			.map_err(|error| anyhow!("not bundled: {error}, {} is unchanged", out.display()))?;
+		let mut written = serde_json::to_vec_pretty(&specs)?;
+		written.push(b'\n');
+		write_atomically(light_specs_out, &written)?;
+		println!("wrote {}, {} light specs", light_specs_out.display(), specs.len());
+	}
+	if is_current {
+		println!(
+			"{} is current: {} sequence {} changes no field truapi-host reads",
+			out.display(),
+			descriptor.id,
+			descriptor.sequence
+		);
+		return Ok(());
 	}
 	write_atomically(out, &accepted.document)?;
 	println!("wrote {}, {} sequence {}", out.display(), descriptor.id, descriptor.sequence);
 	Ok(())
+}
+
+/// The light specs `descriptor` names for the chains the light client runs,
+/// by their `sha256`, each fetched and checked against the descriptor. Fails
+/// when one is not named, cannot be fetched or fails the check.
+async fn fetch_light_specs(descriptor: &Descriptor) -> Result<BTreeMap<String, String>> {
+	let mut specs = BTreeMap::new();
+	for chain in light_client_chains(descriptor) {
+		let role = &chain.role;
+		let named = chain
+			.light_spec
+			.as_ref()
+			.with_context(|| format!("{} names no lightSpec for {role}", descriptor.id))?;
+		let url = &named.url;
+		let bytes = fetch(url, FETCH_TIMEOUT).await.map_err(|cause| {
+			anyhow!("the light spec of {role} at {url} is unreachable: {cause}")
+		})?;
+		chain
+			.check_light_spec(&bytes)
+			.map_err(|error| anyhow!("the light spec of {role} at {url} is {}", refused(error)))?;
+		let spec = String::from_utf8(bytes)
+			.with_context(|| format!("the light spec of {role} at {url} is not UTF-8"))?;
+		specs.insert(named.sha256.clone(), spec);
+	}
+	Ok(specs)
 }

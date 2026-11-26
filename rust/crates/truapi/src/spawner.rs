@@ -8,6 +8,10 @@ use std::sync::atomic::Ordering;
 
 #[cfg(test)]
 use futures::future::BoxFuture;
+use futures::{
+	FutureExt,
+	future::{AbortHandle, Abortable},
+};
 
 /// Background executor bound to a native Tokio runtime or the local WASM executor.
 /// Native hosts retain ownership of their runtime; tasks submitted after its
@@ -51,6 +55,26 @@ impl Spawner {
 			#[cfg(test)]
 			Executor::Test(spawn) => spawn(Box::pin(task)),
 		}
+	}
+
+	/// Schedule `task` on this executor for as long as the returned handle lives.
+	///
+	/// Dropping the handle stops the task at its next await point.
+	#[must_use = "dropping the handle stops the task"]
+	pub fn create_task(&self, task: impl Future<Output = ()> + Send + 'static) -> BackgroundTask {
+		let (abort, registration) = AbortHandle::new_pair();
+		let abortable = Abortable::new(task, registration).map(|_| ());
+		self.spawn(abortable);
+		BackgroundTask(abort)
+	}
+}
+
+/// A task running on a [`Spawner`] until this handle is dropped.
+pub struct BackgroundTask(AbortHandle);
+
+impl Drop for BackgroundTask {
+	fn drop(&mut self) {
+		self.0.abort();
 	}
 }
 

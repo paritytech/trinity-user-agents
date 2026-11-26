@@ -78,11 +78,11 @@ A line travels two stages, and which one governs depends on who raised it.
  CORE (rust)                   BOUNDARY          HOST stage 1          HOST stage 2         SENTRY
  ---------------------------   ---------------   ------------------    -----------------    ------
  warn!/info!  --> HostSinkLayer --> on_core_log --> logCoreLine --> Timber / SwiftyBeaver --> logs
-  truapi.* or WARN+, capped,      (2 strings)      the table gives     SentryLogTree /
+  truapi.* or WARN+, capped,      (2 strings)      the table gives     HostLogSinkTree /
   unlisted target refused                          the severity        HostLogSinkDestination
                                                                        tag "truapi." + INFO+
 
- host-originated lines (truapi.auth, truapi.chain, truapi.product, truapi.payments)
+ host-originated lines (truapi.auth, truapi.chain, truapi.payments)
    join at stage 2 and never cross the boundary -----------------------> logs
 ```
 
@@ -90,9 +90,13 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 ## What this does not touch
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`SentryLogTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`).
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:30-31`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:35,47`).
 
-Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log.
+Both `HostLogSinkTree` and `HostLogSinkDestination` also limit each tag to 60 lines a minute, and each `truapi.core` marker to 60 of its own. The first line after a minute that dropped lines is preceded by one more that counts them, with the count as a `dropped` attribute and, on `truapi.core`, the marker as a `marker` attribute. A tagged line or core marker stuck in a loop sends at most 60 lines a minute per device plus that count, for as long as it loops. A count that no later line follows, because the tag went quiet or the app stopped, is never sent. Core events are not limited here, whether they reach the sink through `CoreEventLogger` on Android or carry a `CoreEventContext` on iOS.
+
+A product's console output never reaches the sink. `ProductWebChromeClient` on Android and `JSEngineLogger` on iOS log it untagged at its own level. Only a testing build keeps it on the device, in the Android debug log or the iOS testnet log file, and a release build drops it. A product reports to its own Sentry project.
+
+Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log. On Android the three are `HostProcessTelemetry`, `DeviceReadingsInitializer` and `SentryHostLogSink`, and both `HostLogSinkTree` and `CoreEventLogger` reach that last one through `HostLogSink`.
 
 **The web host has no core-log channel at all.** `on_core_log` is declared in `native/callbacks.rs:37`, inside `truapi::native`, which is `#[cfg(not(target_arch = "wasm32"))]` at `lib.rs:898`. There is no `onCoreLog` in any TypeScript source, and `truapi-codegen` walks the `platform` modules, never `native`. So Desktop and dot.li receive no core diagnostics, under any design.
 
@@ -183,7 +187,7 @@ An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `C
 
 `HostBridge` defaults the callback to nothing on both hosts, so a host carries structured traffic once it says it wants it.
 
-Both apps send a marker the table exports to Sentry at the table's severity, as a log whose body is the marker, tagged `truapi.core`, with each attribute beside the tag. A marker the table keeps local or does not list never reaches Sentry. On Android both bridges call one injected `CoreEventLogger`, which writes the event to the device log at debug and hands an exported marker to `CoreEventSink`, bound to `SentryCoreEventSink`, so Sentry logs there come from `SentryLogTree` and that sink. On iOS both bridges call `logCoreEvent` on the logger they already hold, typed `CoreEventLoggerProtocol`. It logs the event as a `[truapi.core]` line at the marker's level, or at debug when the marker is not exported, and carries the attributes as SwiftyBeaver context. `HostLogSinkDestination`, the one destination that holds the `HostLogSink`, forwards that line at info and above as the marker with the attributes as fields.
+Both apps send a marker the table exports to Sentry at the table's severity, as a log whose body is the marker, tagged `truapi.core`, with each attribute beside the tag. A marker the table keeps local or does not list never reaches Sentry. On Android both bridges call one injected `CoreEventLogger`, which writes the event to the device log at debug and hands an exported marker to `HostLogSink`, bound to `SentryHostLogSink`. `HostLogSinkTree` forwards the lines it matches to that same sink, so Sentry logs there leave from one place. On iOS both bridges call `logCoreEvent` on the logger they already hold, typed `CoreEventLoggerProtocol`. It logs the event as a `[truapi.core]` line at the marker's level, or at debug when the marker is not exported, and carries the attributes as SwiftyBeaver context. `HostLogSinkDestination`, the one destination that holds the `HostLogSink`, forwards that line at info and above as the marker with the attributes as fields.
 
 ## Trade-offs
 

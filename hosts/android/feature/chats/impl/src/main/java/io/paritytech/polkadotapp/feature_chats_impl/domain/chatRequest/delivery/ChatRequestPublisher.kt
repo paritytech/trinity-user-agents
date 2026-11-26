@@ -12,7 +12,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.OutgoingChatRequestPayload
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.OutgoingChatRequestService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.OutgoingChatRequestNotPending
-import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NOTIFICATION_STATEMENT_MAX_SIZE
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NotificationStatementMaxSizeProvider
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,12 +24,15 @@ class ChatRequestPublisher @Inject constructor(
     private val chatRequestRepository: ChatRequestRepository,
     private val contactsRepository: ContactsRepository,
     private val chatEngine: ChatEngine,
+    private val notificationStatementMaxSizeProvider: NotificationStatementMaxSizeProvider,
 ) {
     private val activePublishes = Counter<ChatRequestId>()
 
     suspend fun fitsNotificationStatement(request: ChatRequest, payload: OutgoingChatRequestPayload): Result<Boolean> {
-        return outgoingChatRequestService.fitsStatementSize(request, payload, NOTIFICATION_STATEMENT_MAX_SIZE)
-            .onSuccess { fits -> Timber.d("chatRequestPublisher: request ${request.id} fits $NOTIFICATION_STATEMENT_MAX_SIZE: $fits") }
+        return notificationStatementMaxSizeProvider.maxSize().flatMap { maxSize ->
+            outgoingChatRequestService.fitsStatementSize(request, payload, maxSize)
+                .onSuccess { fits -> Timber.d("chatRequestPublisher: request ${request.id} fits ${maxSize.inWholeBytes} bytes: $fits") }
+        }
     }
 
     suspend fun publishFirstDelivery(
@@ -56,7 +59,7 @@ class ChatRequestPublisher @Inject constructor(
     }
 
     suspend fun markUndeliverable(request: ChatRequest): Result<Unit> {
-        Timber.w("Chat request ${request.id} exceeds $NOTIFICATION_STATEMENT_MAX_SIZE; marking undeliverable")
+        Timber.w("Chat request ${request.id} exceeds the notification statement max size; marking undeliverable")
         return markFailed(request)
     }
 

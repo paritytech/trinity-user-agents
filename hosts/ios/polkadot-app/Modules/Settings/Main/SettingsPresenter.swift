@@ -62,6 +62,9 @@ private extension SettingsPresenter {
             onSelectPrivacyStrategy: { [weak self] strategy in
                 self?.didSelectPrivacyStrategy(strategy)
             },
+            onShowPrivacyInfo: { [weak self] in
+                self?.didTapPrivacyInfo()
+            },
             onToggleTabBarLabels: { [weak self] isEnabled in
                 self?.didToggleTabBarLabels(isEnabled)
             }
@@ -87,6 +90,10 @@ extension SettingsPresenter: SettingsPresenterProtocol {
         selectedPrivacyStrategy = strategy
         refreshContent()
         interactor.savePrivacyStrategy(strategy)
+    }
+
+    func didTapPrivacyInfo() {
+        wireframe.showPrivacyModeInfo(from: view)
     }
 
     func didTapCell(_ cell: SettingsViewModel.CellType) {
