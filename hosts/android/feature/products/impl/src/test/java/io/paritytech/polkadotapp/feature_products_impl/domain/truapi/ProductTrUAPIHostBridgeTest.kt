@@ -6,6 +6,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.HostBridge
+import io.parity.truapi.LightClient
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -51,6 +52,7 @@ class ProductTrUAPIHostBridgeTest {
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
+        lightClient = LightClient(storage = mockk(), chains = emptySet()),
         coreEventLogger = CoreEventLogger { _, _, _, _ -> },
         scope = scope,
     )

@@ -65,6 +65,9 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
         onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
         onRuntimeRestartCancelled = contract::onRuntimeRestartCancelled,
+        onLightClientToggled = contract::onLightClientToggled,
+        onLightClientRestartConfirmed = contract::onLightClientRestartConfirmed,
+        onLightClientRestartCancelled = contract::onLightClientRestartCancelled,
     )
 }
 
@@ -92,6 +95,9 @@ private fun DebugMenuScreenInternal(
     onTruapiRuntimeToggled: (Boolean) -> Unit,
     onRuntimeRestartConfirmed: () -> Unit,
     onRuntimeRestartCancelled: () -> Unit,
+    onLightClientToggled: (Boolean) -> Unit,
+    onLightClientRestartConfirmed: () -> Unit,
+    onLightClientRestartCancelled: () -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -123,6 +129,14 @@ private fun DebugMenuScreenInternal(
                 title = stringResource(RCommon.string.debug_menu_truapi_runtime, state.truapiHostVersion),
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
+            )
+
+            VerticalSpacer { large }
+
+            DebugMenuToggleItem(
+                title = stringResource(RCommon.string.debug_menu_light_client),
+                checked = state.lightClientEnabled,
+                onCheckedChange = onLightClientToggled
             )
 
             VerticalSpacer { extraLargeIncreased }
@@ -243,16 +257,26 @@ private fun DebugMenuScreenInternal(
     }
 
     if (state.runtimeRestartRevertsTo != null) {
-        RuntimeRestartDialog(
+        RestartDialog(
+            message = stringResource(RCommon.string.debug_menu_runtime_restart_message),
             onDismiss = onRuntimeRestartCancelled,
             onConfirm = onRuntimeRestartConfirmed,
+        )
+    }
+
+    if (state.lightClientRestartRevertsTo != null) {
+        RestartDialog(
+            message = stringResource(RCommon.string.debug_menu_light_client_restart_message),
+            onDismiss = onLightClientRestartCancelled,
+            onConfirm = onLightClientRestartConfirmed,
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RuntimeRestartDialog(
+private fun RestartDialog(
+    message: String,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -274,7 +298,7 @@ private fun RuntimeRestartDialog(
                 VerticalSpacer { mediumIncreased }
 
                 NovaText(
-                    text = stringResource(RCommon.string.debug_menu_runtime_restart_message),
+                    text = message,
                     style = PolkadotTheme.typography.body.large,
                     color = PolkadotTheme.colors.fg.secondary
                 )
@@ -419,6 +443,9 @@ private fun DebugMenuScreenPreview() {
             onTruapiRuntimeToggled = {},
             onRuntimeRestartConfirmed = {},
             onRuntimeRestartCancelled = {},
+            onLightClientToggled = {},
+            onLightClientRestartConfirmed = {},
+            onLightClientRestartCancelled = {},
         )
     }
 }

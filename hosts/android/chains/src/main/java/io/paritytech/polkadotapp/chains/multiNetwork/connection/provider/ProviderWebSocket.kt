@@ -4,6 +4,7 @@ import com.neovisionaries.ws.client.DetachedWebSocket
 import com.neovisionaries.ws.client.WebSocket
 import com.neovisionaries.ws.client.WebSocketFactory
 import io.parity.truapi.CleartextNotPermittedException
+import io.parity.truapi.LightClient
 import io.parity.truapi.describe
 import io.parity.truapi.dialRpcNode
 import io.parity.truapi.systemPermitsCleartext
@@ -15,22 +16,31 @@ import uniffi.truapi_provider.ChainProviderException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class ProviderWebSocketFactory(
-    private val genesisHash: ByteArray,
-    private val cleartextPermitted: (host: String) -> Boolean = ::systemPermitsCleartext,
+class ProviderWebSocketFactory private constructor(
+    private val open: (url: String, listener: ChainMessageListener) -> ChainConnection,
 ) : WebSocketFactory() {
-    override fun createSocket(uri: String): WebSocket = ProviderWebSocket(this, genesisHash, uri, cleartextPermitted)
+    override fun createSocket(uri: String): WebSocket = ProviderWebSocket(this, uri, open)
 
     override fun createSocket(uri: String, timeout: Int): WebSocket = createSocket(uri)
+
+    companion object {
+        fun forNodes(
+            genesisHash: ByteArray,
+            cleartextPermitted: (host: String) -> Boolean = ::systemPermitsCleartext,
+        ) = ProviderWebSocketFactory { url, listener -> dialRpcNode(genesisHash, url, listener, cleartextPermitted) }
+
+        // The node URL SocketService picks is ignored: the light client finds its own peers.
+        fun forLightClient(lightClient: LightClient, genesisHash: ByteArray) =
+            ProviderWebSocketFactory { _, listener -> lightClient.connect(genesisHash, listener) }
+    }
 }
 
 // The provider never reconnects: a failed dial or a dropped socket ends in CLOSED, so SocketService
 // reconnects as it does for any node.
 private class ProviderWebSocket(
     factory: WebSocketFactory,
-    private val genesisHash: ByteArray,
     private val url: String,
-    private val cleartextPermitted: (host: String) -> Boolean,
+    private val open: (url: String, listener: ChainMessageListener) -> ChainConnection,
 ) : DetachedWebSocket(factory), ChainMessageListener {
     private val lock = Any()
     private var connection: ChainConnection? = null
@@ -69,7 +79,7 @@ private class ProviderWebSocket(
 
     private fun dial() {
         val opened = try {
-            dialRpcNode(genesisHash, url, this, cleartextPermitted)
+            open(url, this)
         } catch (error: CleartextNotPermittedException) {
             fail(error)
             return

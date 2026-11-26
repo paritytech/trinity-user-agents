@@ -8,6 +8,7 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
+import io.parity.truapi.LightClient
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
@@ -115,6 +116,7 @@ class TrUAPIHostRuntimeProviderTest {
         context = context(),
         environment = environment,
         chainDirectory = mockk(relaxed = true),
+        lightClient = LightClient(storage = mockk(), chains = emptySet()),
         localSessionSource = mockk { coEvery { resolve() } returns Result.failure(IllegalStateException()) },
         accountRepository = mockk { every { walletAccountFlow() } returns emptyFlow() },
         dotNsTldProvider = mockk {

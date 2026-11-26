@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.neovisionaries.ws.client.WebSocketAdapter
 import com.neovisionaries.ws.client.WebSocketState
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.wsrpc.SocketService
 import io.novasama.substrate_sdk_android.wsrpc.executeAsync
 import io.novasama.substrate_sdk_android.wsrpc.networkStateFlow
@@ -12,6 +13,7 @@ import io.novasama.substrate_sdk_android.wsrpc.request.RequestExecutor
 import io.novasama.substrate_sdk_android.wsrpc.request.runtime.RuntimeRequest
 import io.novasama.substrate_sdk_android.wsrpc.state.SocketStateMachine.State
 import io.novasama.substrate_sdk_android.wsrpc.subscriptionFlow
+import io.parity.truapi.LightClient
 import io.paritytech.polkadotapp.common.data.network.WsConnectionLogger
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -41,7 +43,7 @@ class ProviderWebSocketTest {
     private val socketService = SocketService(
         jsonMapper = gson,
         logger = WsConnectionLogger(ignoreStateMachineLogs = true),
-        webSocketFactory = ProviderWebSocketFactory(ByteArray(GENESIS_SIZE)) { cleartextPermitted },
+        webSocketFactory = ProviderWebSocketFactory.forNodes(ByteArray(GENESIS_SIZE)) { cleartextPermitted },
         reconnector = Reconnector(),
         requestExecutor = RequestExecutor(),
     )
@@ -106,7 +108,7 @@ class ProviderWebSocketTest {
         )
         server.start()
         val events = LinkedBlockingQueue<String>()
-        val socket = ProviderWebSocketFactory(ByteArray(GENESIS_SIZE)) { true }
+        val socket = ProviderWebSocketFactory.forNodes(ByteArray(GENESIS_SIZE)) { true }
             .createSocket(server.url("/").toString().replaceFirst("http", "ws"))
             .addListener(recorder(events))
 
@@ -116,6 +118,28 @@ class ProviderWebSocketTest {
 
         assertTrue(released.await(TIMEOUT.inWholeSeconds, TimeUnit.SECONDS))
         assertEquals(listOf("CONNECTING", "CLOSED"), events.toList())
+    }
+
+    // The light client finds its own peers, so the node URL SocketService picks must never be dialled.
+    @Test
+    fun `a chain on the light client is answered by it rather than the picked node`() = runBlocking {
+        val lightClient = LightClient(storage = mockk(relaxed = true), chains = setOf(PREVIEWNET_RELAY))
+        val socketService = SocketService(
+            jsonMapper = gson,
+            logger = WsConnectionLogger(ignoreStateMachineLogs = true),
+            webSocketFactory = ProviderWebSocketFactory.forLightClient(lightClient, PREVIEWNET_RELAY.hexToByteArray()),
+            reconnector = Reconnector(),
+            requestExecutor = RequestExecutor(),
+        )
+        socketService.start(serve(node()), remainPaused = false)
+
+        val response = withTimeout(TIMEOUT) {
+            socketService.executeAsync(RuntimeRequest("chainSpec_v1_genesisHash", emptyList()))
+        }
+        socketService.stop()
+
+        assertEquals("0x$PREVIEWNET_RELAY", response.result)
+        assertEquals(0, server.requestCount)
     }
 
     private fun serve(listener: WebSocketListener): String {
@@ -175,6 +199,7 @@ class ProviderWebSocketTest {
         const val HEAD = "0x01"
         const val GOING_AWAY = 1001
         const val SLOW_HANDSHAKE_MILLIS = 500L
+        const val PREVIEWNET_RELAY = "48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6"
         val TIMEOUT = 10.seconds
     }
 }

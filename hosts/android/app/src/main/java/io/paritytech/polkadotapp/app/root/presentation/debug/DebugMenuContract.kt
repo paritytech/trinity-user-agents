@@ -44,4 +44,10 @@ interface DebugMenuContract {
     fun onRuntimeRestartConfirmed()
 
     fun onRuntimeRestartCancelled()
+
+    fun onLightClientToggled(enabled: Boolean)
+
+    fun onLightClientRestartConfirmed()
+
+    fun onLightClientRestartCancelled()
 }
