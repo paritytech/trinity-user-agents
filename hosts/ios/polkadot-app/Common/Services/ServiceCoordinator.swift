@@ -19,7 +19,6 @@ import Individuality
 import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
-import DesignSystem
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
@@ -234,27 +233,24 @@ extension ServiceCoordinator {
             contentHashCache: ContentHashCache.shared
         )
 
-        // The worker engine builds its WebViews with the provider's runtime, and the provider is
-        // built with its engine, so the engine reaches the provider through this reference.
-        let runtimeProvider = LateReference<TrUAPIHostRuntimeProvider>()
-        let runtime: @Sendable () throws -> TrUAPIHostRuntime = {
-            guard let provider = runtimeProvider.object else { throw CancellationError() }
-            return try provider.sharedRuntime()
-        }
-        let contexts = ProductWorkerContexts { runtimeProvider.object?.presentationView }
-        let workerBuilder = TrUAPIWorkerBuilder(
-            runtime: runtime,
-            flowState: spaFlowState,
-            productFileProvider: productFileProvider,
+        let confirmationRouter = ProductRoutersFacade.sso()
+        let contexts = ProductWorkerContexts { [router = confirmationRouter.productsRouter] in router.presentationView }
+        let workerServices = ProductExecutionServices(
+            hostProvider: spaFlowState.hostProvider,
             gameReminders: gameReminders,
-            themeManager: ThemeManager.shared,
             logger: logger
+        )
+        let workerBuilder = TrUAPIWorkerBuilder(
+            contentLoader: spaFlowState.contentLoader,
+            dotNsResolver: spaFlowState.dotNsResolver,
+            productFileProvider: productFileProvider
         )
         let webViewHost = WebViewWorkerHost { productId, attempt in
             try await workerBuilder.makeRuntime(
                 productId: productId,
                 context: contexts.context(for: productId),
-                attempt: attempt
+                attempt: attempt,
+                services: workerServices
             )
         }
         // Single process-wide TrUAPI runtime provider. Registered in the root
@@ -268,12 +264,15 @@ extension ServiceCoordinator {
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
-            confirmationRouterFacade: ProductRoutersFacade.sso(),
+            confirmationRouterFacade: confirmationRouter,
             workerEngine: webViewHost,
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
-        runtimeProvider.object = truapiRuntimeProvider
+        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak truapiRuntimeProvider] in
+            guard let truapiRuntimeProvider else { throw CancellationError() }
+            return try truapiRuntimeProvider.sharedRuntime()
+        }
 
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
         RootDependencyLocator.setDependency(
@@ -632,10 +631,4 @@ private extension ServiceCoordinator {
 
         return providers
     }
-}
-
-/// A reference set once the object it points to exists, for two objects that are each built
-/// with the other. Set during startup, before anything reads it.
-private final class LateReference<Object: AnyObject>: @unchecked Sendable {
-    weak var object: Object?
 }

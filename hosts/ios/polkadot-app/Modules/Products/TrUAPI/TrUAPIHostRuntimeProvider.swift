@@ -23,9 +23,6 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
 
-    /// The view the host's own prompts present from, once attached.
-    @MainActor var presentationView: ControllerBackedProtocol? { get }
-
     /// Stop this session's workers even when a consumer outlives sign-out.
     func shutdownProductWorkers()
 }
@@ -91,11 +88,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     @MainActor
     func setPresentationView(_ view: ControllerBackedProtocol) {
         confirmationRouterFacade.setPresentationView(view)
-    }
-
-    @MainActor
-    var presentationView: ControllerBackedProtocol? {
-        confirmationRouterFacade.productsRouter.presentationView
     }
 
     func shutdownProductWorkers() {

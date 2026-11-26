@@ -9,24 +9,14 @@ struct TrUAPIWorkerBuilderTests {
     func opensTheProductsContentThroughDotNs() async throws {
         let id = try ProductId("provider.dot")
         let loader = StubProductContentLoader()
-        let builder = makeBuilder(loader: loader, resolver: StubDotNsResolver())
+        let builder = TrUAPIWorkerBuilder(
+            contentLoader: loader,
+            dotNsResolver: StubDotNsResolver(),
+            productFileProvider: NoChatProductFiles()
+        )
 
         _ = try? await builder.workerSource(for: id)
 
         #expect(loader.openedWorkerIds == [id])
     }
-
-    private func makeBuilder(
-        loader: StubProductContentLoader,
-        resolver: StubDotNsResolver
-    ) -> TrUAPIWorkerBuilder {
-        TrUAPIWorkerBuilder(
-            environment: { throw NoEnvironment() },
-            contentLoader: loader,
-            dotNsResolver: resolver,
-            productFileProvider: NoChatProductFiles()
-        )
-    }
 }
-
-private struct NoEnvironment: Error {}
