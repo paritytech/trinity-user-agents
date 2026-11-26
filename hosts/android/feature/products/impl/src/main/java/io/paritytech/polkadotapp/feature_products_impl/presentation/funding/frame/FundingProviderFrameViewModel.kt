@@ -35,18 +35,12 @@ import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
 data class FundingProviderFrameUiState(
-    /** The session waits on a transfer the user makes outside the frame, as its progress says now. */
     val showsSentFunds: Boolean,
     val isContentVisible: Boolean,
     val failed: Boolean,
 )
 
-/**
- * A provider's own screen, for as long as the provider needs it: a route of its App, or an external https page such
- * as an onramp's widget. What it shows lives with the [FundingFrame], so backing out of the screen keeps the provider's
- * page where it was; the CASH card shows it again. Saying a bank transfer was sent answers `Closed`, and a page
- * reaching its return URL answers `Returned`.
- */
+// What it shows lives with the [FundingFrame], so backing out keeps the provider's page where it was.
 @HiltViewModel
 class FundingProviderFrameViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -59,19 +53,17 @@ class FundingProviderFrameViewModel @Inject constructor(
 ) : BaseViewModel() {
     private val frame: FundingFrame? = frames.get(FundingFrameRequestId(savedStateHandle.get<String>(FundingProviderFrameBottomSheet.REQUEST_ID).orEmpty()))
 
-    /** No frame waits under this screen, as after process death: it closes at once. */
+    // No frame waits under this screen after process death, so it closes at once.
     val isOrphaned: Boolean = frame == null
 
     val page: FundingExternalPage? = frame?.page
 
-    /** Nothing waits on this screen any more: it was answered, or the provider closed it, while another sat over it. */
+    // Answered, or closed by the provider, while another screen sat over it.
     val isAnswered: Boolean
         get() = frame == null || frames.get(frame.request.id) == null
 
-    /** The external page's WebView, which outlives this screen; `null` for the provider's App. */
     val pageView: WebView? = frame?.pageView()
 
-    /** The origin of the page the external WebView is on, which the frame's chrome names; `null` for the App. */
     val origin: StateFlow<String?> = frame?.pageOrigin ?: MutableStateFlow(null)
 
     val webView: StateFlow<WebView?> = frame?.appWebView ?: MutableStateFlow(null)
@@ -101,23 +93,20 @@ class FundingProviderFrameViewModel @Inject constructor(
         if (current != null && current.canGoBack()) current.goBack() else hide()
     }
 
-    /** Leaves the frame without answering, as backing out of it does. */
     fun onHide() = hide()
 
     fun onSentFunds() = finish(FundingFrameOutcome.Closed)
 
-    /** A main-frame load began, which clears a failed one; the chrome names wherever the page went. */
     fun onPageStarted(url: String) {
         frame?.pageOrigin?.value = originOf(url)
         frame?.pageProgress?.value = DotNsLoadProgress.Idle
     }
 
-    /** The main frame is on [url] now, which the chrome names. */
     fun onNavigated(url: String) {
         frame?.pageOrigin?.value = originOf(url)
     }
 
-    /** WebView finishes a load that failed too, and a failure stays until the next load starts. */
+    // WebView finishes a failed load too; the failure stays until the next load starts.
     fun onPageLoaded() {
         val progress = frame?.pageProgress ?: return
         if (progress.value !is DotNsLoadProgress.Failed) progress.value = DotNsLoadProgress.Completed
@@ -127,10 +116,7 @@ class FundingProviderFrameViewModel @Inject constructor(
         frame?.pageProgress?.value = DotNsLoadProgress.Failed(cause)
     }
 
-    /**
-     * The files the user picked for the page's `<input type="file">`, as a KYC check asks for an ID; `null` when the
-     * picker was dismissed or failed, which releases the input so it can open again. A failure is shown to the user.
-     */
+    // `null` when the picker was dismissed or failed, which releases the input so it can open again.
     suspend fun pickFiles(params: FileChooserParams): Array<Uri>? =
         runCancellableCatching { WebFileChooserExecutor(contextManager.requireActivity(), params, fileProvider).execute() }
             .flatMap { it }
@@ -139,7 +125,6 @@ class FundingProviderFrameViewModel @Inject constructor(
                 null
             }
 
-    /** The page reached its return URL; [url] carries the result in its query. */
     fun onPageReturned(url: String) = finish(FundingFrameOutcome.Returned(url))
 
     fun pauseConnections() {

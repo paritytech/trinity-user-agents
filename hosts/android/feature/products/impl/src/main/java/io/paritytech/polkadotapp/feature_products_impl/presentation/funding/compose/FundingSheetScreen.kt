@@ -32,7 +32,6 @@ private val SKELETON_FIGURE_HEIGHT = 64.dp
 private val SKELETON_ROW_HEIGHT = 48.dp
 private const val SKELETON_ROWS = 4
 
-/** The screen on top of the sheet's stack, each with a view model of its own for that visit. */
 @Composable
 fun FundingSheetScreen(sheet: FundingSheetViewModel) {
     val entry by sheet.screen.collectAsStateWithLifecycle()

@@ -106,7 +106,6 @@ private fun FundingFlowState.summaryProblem(start: FundingStartState, failure: F
 private fun FundingFlowState.noProviderProblem(): FundingSummaryProblem =
     quoteRefusedText()?.let(FundingSummaryProblem::QuoteRefused) ?: FundingSummaryProblem.NoProvider
 
-/** Why no provider quoted, when the core says they all gave the same reason: no answer in time, the country, or their own. */
 private fun FundingFlowState.quoteRefusedText(): FundingReasonText? = when (val refusal = list?.refusal) {
     FundingQuoteUnavailable.Timeout -> FundingReasonText.Res(RCommon.string.funding_error_quote_timeout)
     is FundingQuoteUnavailable.Refused -> when (val reason = refusal.reason) {
@@ -127,7 +126,7 @@ fun etaOf(seconds: ULong): FundingEta {
     return FundingEta.Days(ceil(hours.toDouble() / HOURS_PER_DAY).toInt())
 }
 
-/** Fees are counted in what the user pays: the ask's asset for value in, the balance for value out. */
+// Fees count in what the user pays: the ask's asset for value in, the balance for value out.
 fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val quote = selectedQuote ?: return null
     val inbound = direction == FundingDirection.IN
@@ -152,10 +151,9 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
 
 private fun FundingQuote.totalFee(): Balance = providerFee.balance() + networkFee.balance()
 
-/** What the user pays less the fees, in the unit of `sendAmount`. */
 private fun FundingQuote.netOfFees(): Balance = (sendAmount.balance() - totalFee()).atLeastZero()
 
-/** What one unit of the balance is worth in the provider-side asset, net of fees as the amount line. */
+// Net of fees, as the amount line.
 private fun FundingFlowState.rateOf(quote: FundingQuote): FundingRate? {
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
@@ -209,7 +207,6 @@ private fun FundingCountry.toUi(refused: Boolean, minimum: String?, selected: Bo
     selected = selected,
 )
 
-/** Counts down to the core's next refresh of the prices on screen; while it runs, the countdown holds at zero. */
 fun FundingFlowState.toProvidersUiState(
     brands: Map<ProductId, FundingProviderBrand>,
     now: Instant,
@@ -256,7 +253,6 @@ private fun FundingFlowState.providerBadge(state: FundingQuoteState, isBest: Boo
     }
 }
 
-/** A provider asked again keeps what its last price was for, with the price itself loading. */
 private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: FundingQuote?): FundingProviderPrice? = when (state) {
     FundingQuoteState.Pending -> stale?.let { FundingProviderPrice.Updating(forAmount = forAmount(it)) } ?: FundingProviderPrice.Pending
     is FundingQuoteState.Quoted -> {
@@ -277,7 +273,6 @@ private fun FundingFlowState.forAmount(quote: FundingQuote): String =
 private fun Map<ProductId, FundingProviderBrand>.brandOf(providerId: ProductId) =
     get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId.value, iconUrl = null)
 
-/** A network stays closed to amounts below the least the core says it takes. */
 fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = networks.map { id ->
     FundingNetworkRow(
         id = id,
@@ -354,10 +349,8 @@ fun FundingFlowState.toDepositUiState(
     )
 }
 
-/** The provider has the user's payment: the received milestone, or one past it. */
 private fun FundingProgress.hasReceived(): Boolean = steps.any { it.reachedAtMs != null && it.step != FundingStep.STARTED }
 
-/** The band line, worded per `FundingBand`'s docs for this session's rail and [asset]. */
 fun FundingFlowState.bandLine(band: FundingBand, asset: String?): FundingBandUi? {
     val crypto = rail == FundingRail.CRYPTO
     val inbound = direction == FundingDirection.IN
@@ -414,5 +407,4 @@ private fun FundingFlowState.cancelUi(cancel: FundingCancel): FundingCancelUiSta
 
 private fun FundingFlowState.cashLabel(units: U128): String = format.label(cashAmount(units.balance()))
 
-/** A core amount as a balance; zero when it is not a number. */
 private fun U128.balance(): Balance = toBalanceOrNull().orZero()

@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-/** A key on the funding keypad. */
 sealed interface FundingKey {
     data class Digit(val digit: Char) : FundingKey
 
@@ -9,7 +8,6 @@ sealed interface FundingKey {
     data object Delete : FundingKey
 }
 
-/** Edits a dollar amount of at most two decimals and [maximumIntegerDigits] whole digits. */
 fun String.applying(key: FundingKey, maximumIntegerDigits: Int = 7): String = when (key) {
     FundingKey.Delete -> dropLast(1)
     FundingKey.Point -> if (contains('.')) this else ifEmpty { "0" } + "."

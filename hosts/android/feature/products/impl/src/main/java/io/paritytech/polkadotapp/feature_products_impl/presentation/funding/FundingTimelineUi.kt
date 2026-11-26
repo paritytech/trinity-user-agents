@@ -9,12 +9,10 @@ import uniffi.truapi.FundingProgressStep
 import uniffi.truapi.FundingStep
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** Seven dots under a session's figure: three labelled milestones, with two dots between each pair for the band. */
+// Seven dots: three milestones, with two between each pair for the band.
 data class FundingTimelineUi(
     val dots: ImmutableList<FundingDotState>,
-    /** Under the milestone dots: first, middle and last. */
     @param:StringRes val labels: ImmutableList<Int>,
-    /** Which label is red: the milestone the session failed at. */
     val failedLabel: Int?,
 )
 
@@ -30,7 +28,6 @@ object FundingTimeline {
     const val MILESTONE_GAP = 3
     private const val MILESTONES = 3
 
-    /** Dots before [position] are done; the one at it is current, or failed when [failed]. */
     fun at(position: Int, failed: Boolean, labels: List<Int>): FundingTimelineUi = FundingTimelineUi(
         dots = List(DOTS) { index ->
             when {
@@ -50,7 +47,6 @@ object FundingTimeline {
         if (direction == FundingDirection.IN) RCommon.string.funding_step_added else RCommon.string.funding_step_sent,
     )
 
-    /** A live session: the milestones it reached, then how far the band has it towards the next one. */
     fun live(steps: List<FundingProgressStep>, band: FundingBand, direction: FundingDirection, failed: Boolean): FundingTimelineUi {
         val reached = steps.filter { it.reachedAtMs != null }.maxOfOrNull { it.step.milestone() + 1 } ?: 0
         val position = when (reached) {
@@ -61,14 +57,12 @@ object FundingTimeline {
         return at(position, failed, labels(direction))
     }
 
-    /** The milestone [this] step is: first, middle or last. */
     fun FundingStep.milestone(): Int = when (this) {
         FundingStep.STARTED -> 0
         FundingStep.RECEIVED -> 1
         FundingStep.ADDED, FundingStep.SENT -> 2
     }
 
-    /** The second dot between two milestones once the band has moved past the first. */
     private fun FundingBand.between(): Int = when (this) {
         FundingBand.CHECKING_PAYMENT, FundingBand.ADDING, FundingBand.SENDING -> 2
         else -> 1

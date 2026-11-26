@@ -37,7 +37,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESET_HEIGHT = 36.dp
 
-/** The overlay's first screen: which rail, and how much. */
 @Composable
 fun FundingAmountScreen(
     modifier: Modifier = Modifier,

@@ -33,9 +33,8 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.ProductId
 import kotlin.time.Instant
 
-/** The funding parts as plain state: each session's entries are pushed by the test, and every call is recorded. */
 class FakeFunding : FundingSessions, FundingQuotes, FundingProviderFrames {
-    /** Session "intent" as it changes; `null` ends what follows it. */
+    // `null` ends what follows it.
     val entry = MutableSharedFlow<FundingEntry?>(replay = 1)
     val calls = mutableListOf<String>()
     var startResult: Result<Unit> = Result.success(Unit)
@@ -98,10 +97,8 @@ class FakeFunding : FundingSessions, FundingQuotes, FundingProviderFrames {
 
     override val events: Flow<FundingFrameEvent> = eventQueue
 
-    /** Sessions whose provider waits for its screen to be opened. */
     val waitingFrames = mutableSetOf<FundingIntentId>()
 
-    /** Every session listed, as [entries] gives them. */
     val listed = MutableStateFlow<List<FundingEntry>>(emptyList())
 
     override suspend fun open(intentId: FundingIntentId): Result<Boolean> =
@@ -112,7 +109,6 @@ class FakeFunding : FundingSessions, FundingQuotes, FundingProviderFrames {
     override fun answer(request: FundingFrameRequest, outcome: FundingFrameOutcome) = Unit
 }
 
-/** The sheet as plain state, recording where its screens send it. */
 class FakeFundingSheet(state: FundingFlowState, entry: FundingEntry?) : FundingSheet {
     override val intentId = FundingIntentId("intent")
     override val entry = MutableStateFlow(entry)

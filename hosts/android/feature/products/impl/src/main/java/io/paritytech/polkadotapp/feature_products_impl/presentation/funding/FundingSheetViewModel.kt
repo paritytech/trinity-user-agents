@@ -39,10 +39,6 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/**
- * The funding sheet of one session: which of its screens is on top, what the user picked, and how the sheet follows the
- * session. A sheet whose session is gone, because the core dropped it or it was restored without one, closes itself.
- */
 @HiltViewModel
 class FundingSheetViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -59,7 +55,7 @@ class FundingSheetViewModel @Inject constructor(
     private val stack = MutableStateFlow<List<FundingScreenEntry>>(emptyList())
     private var visits = 0
 
-    /** Set once the sheet should be gone; one that could not close under another screen closes once back on top. */
+    // One that could not close under another screen closes once back on top.
     @Volatile
     var isClosed: Boolean = false
         private set
@@ -95,7 +91,6 @@ class FundingSheetViewModel @Inject constructor(
 
     override val now: StateFlow<Instant> = timeProvider.ticking(1.seconds).stateIn(this, WhileOnScreen, timeProvider.now())
 
-    /** The screen on top; `null` until the session first arrives. */
     val screen: StateFlow<FundingScreenEntry?> = stack.map { it.lastOrNull() }
         .stateIn(this, SharingStarted.Eagerly, null)
 
@@ -123,7 +118,6 @@ class FundingSheetViewModel @Inject constructor(
         if (top() == screen) pop()
     }
 
-    /** Back walks the sheet's own screens; from its first screen, or a started session's deposit, it leaves. */
     fun onBack() {
         val leavesStartedDeposit = entry.value?.hasStarted == true && top() == FundingScreen.DEPOSIT
         if (stack.value.size <= 1 || leavesStartedDeposit) close() else pop()
@@ -164,10 +158,7 @@ class FundingSheetViewModel @Inject constructor(
         }
     }
 
-    /**
-     * The session as the core holds it with the user's picks over it. The options stop changing once the session
-     * started; a session the user comes back to shows the rail, asset and provider it was started with.
-     */
+    // The options freeze once the session started; a resumed session shows the rail, asset and provider it started with.
     private fun stateOf(entry: FundingEntry?, picks: FundingPicks, wallet: FundingWallet?, previous: FundingFlowState?): FundingFlowState? {
         if (entry == null || wallet == null) return null
 
@@ -194,11 +185,7 @@ class FundingSheetViewModel @Inject constructor(
         return (shown ?: picked).withQuotes(entry.quotes, entry.askedAmount, entry.quotesFailed)
     }
 
-    /**
-     * Card top-ups are paid in the provider's own screen, so the sheet closes. The others follow the session on the
-     * deposit screen, which shows where to send once the provider reports it: a crypto provider serving another network
-     * than the app's own takes the payment in its own screen and reports none.
-     */
+    // Card top-ups are paid in the provider's own screen. A crypto provider on another network reports no address to send to.
     private fun started(rail: FundingRail) {
         when (rail) {
             FundingRail.CARD -> close()
@@ -206,7 +193,6 @@ class FundingSheetViewModel @Inject constructor(
         }
     }
 
-    /** Opens a new offer from the provider once, and closes the offer screen when the offer is gone. */
     private fun followCancel(previous: FundingCancel?, cancel: FundingCancel?) {
         if (cancel == previous) return
 
@@ -217,10 +203,6 @@ class FundingSheetViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Tells the core the rail, asset, network and country on screen whenever one changes; what they lead to comes back
-     * as options. The core ignores this once the session is no longer set up.
-     */
     private fun reportSelection() {
         flow.filterNotNull()
             .map { it.selection }

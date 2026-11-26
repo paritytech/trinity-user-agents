@@ -41,7 +41,6 @@ sealed interface FundingEndedText {
 
     data class Reason(val reason: FundingFailureReason) : FundingEndedText
 
-    /** Text shown as it is, such as an amount in the provider's asset. */
     data class Plain(val text: String) : FundingEndedText
 }
 

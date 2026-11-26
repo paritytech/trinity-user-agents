@@ -14,22 +14,15 @@ import io.paritytech.polkadotapp.common.R as RCommon
 private val JUST_NOW = 5.seconds
 private val ROUND_UP = 999.milliseconds
 
-/** One piece of the line under the band, joined with " · ". */
 sealed interface FundingLivePart {
-    /** A string resource; an argument may itself be a [FundingLivePart]. */
+    // An argument may itself be a [FundingLivePart].
     data class Res(@param:StringRes val id: Int, val args: List<Any>) : FundingLivePart
 
-    /** The provider's own text, shown as given. */
     data class Verbatim(val text: String) : FundingLivePart
 
-    /** A time, as "14:02" today or "Tue 14:02" otherwise, or as a day when [dayOnly]. */
     data class Moment(val at: Instant, val dayOnly: Boolean) : FundingLivePart
 }
 
-/**
- * The line under the band at [now]: the provider's latest [detail] for the current step, worded here,
- * or "Checked with the provider 12s ago" from [lastHeardAt]. Empty when there is neither.
- */
 fun fundingLiveParts(detail: FundingDetail?, lastHeardAt: Instant?, now: Instant): List<FundingLivePart> {
     val at = detail?.atMs?.let { Instant.fromEpochMilliseconds(it.toLong()) }
     val ago = at?.takeIf { it <= now }?.let { duration(now - it) }
@@ -69,7 +62,6 @@ private fun lastHeard(at: Instant, now: Instant): FundingLivePart.Res {
     }
 }
 
-/** "12s", "3 min" or "2 h". */
 private fun duration(length: Duration): FundingLivePart.Res = when {
     length < 1.minutes -> FundingLivePart.Res(RCommon.string.funding_duration_seconds, listOf(length.inWholeSeconds.toInt()))
     length < 1.hours -> FundingLivePart.Res(RCommon.string.funding_duration_minutes, listOf(length.inWholeMinutes.toInt()))

@@ -11,7 +11,6 @@ import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import kotlin.time.Instant
 
-/** The screens of the funding sheet, the amount screen at the root. */
 enum class FundingScreen {
     AMOUNT,
     SUMMARY,
@@ -47,7 +46,6 @@ data class FundingPreset(
     val label: String,
 )
 
-/** The line under the amount: a learned minimum, or why the amount cannot go ahead. */
 sealed interface FundingAmountNote {
     val isError: Boolean
 
@@ -84,7 +82,6 @@ data class FundingSummaryUiState(
     val isStarting: Boolean,
 )
 
-/** When the provider says the funds arrive, rounded up. */
 sealed interface FundingEta {
     data class Minutes(val count: Int) : FundingEta
 
@@ -98,13 +95,10 @@ sealed interface FundingSummaryProblem {
 
     data object NoProvider : FundingSummaryProblem
 
-    /** The quotes could not be asked for or read. */
     data object QuotesFailed : FundingSummaryProblem
 
-    /** Every provider gave the same reason for not quoting. */
     data class QuoteRefused(val text: FundingReasonText) : FundingSummaryProblem
 
-    /** The session ended without moving value. */
     data class Failed(val reason: FundingFailureReason) : FundingSummaryProblem
 
     data class Minimum(val amount: String) : FundingSummaryProblem
@@ -114,7 +108,7 @@ sealed interface FundingSummaryProblem {
 
 data class FundingFeesUiState(
     val payTitle: FundingPayTitle,
-    /** What the user pays before fees: with the fees it adds up to [pay]. */
+    // Before fees; with the fees it adds up to [pay].
     val amount: String,
     val providerFee: String,
     val networkFee: String,
@@ -140,11 +134,10 @@ data class FundingCountryUi(
     val name: String,
     val currencyName: String?,
     val refused: Boolean,
-    /** "$50 CASH" when the country takes no less than that and the amount is below it. */
     val minimum: String?,
     val selected: Boolean,
 ) {
-    /** A country below its minimum can still be picked; the amount sheet then asks for at least that. */
+    // A country below its minimum can still be picked; the amount sheet then asks for at least that.
     val enabled: Boolean
         get() = !refused
 }
@@ -163,15 +156,11 @@ data class FundingProvidersUiState(
     val now: Instant,
 )
 
-/** How long the prices on screen hold before the core asks every provider again. */
 sealed interface FundingCountdown {
-    /** No price has arrived yet. */
     data object Pending : FundingCountdown
 
-    /** The prices are being asked for again; the countdown holds at zero. */
     data object Refreshing : FundingCountdown
 
-    /** The core asks again at [at]; the screen counts down to it. */
     data class Until(val at: Instant) : FundingCountdown
 }
 
@@ -199,7 +188,6 @@ sealed interface FundingProviderBadge {
 sealed interface FundingProviderPrice {
     data object Pending : FundingProviderPrice
 
-    /** Asked again: what the last price was for stays, the price loads. */
     data class Updating(val forAmount: String) : FundingProviderPrice
 
     data class Quoted(val price: String, val forAmount: String) : FundingProviderPrice
@@ -230,13 +218,9 @@ data class FundingDepositUiState(
     val failed: Boolean,
     val isCancelling: Boolean,
     val cancel: FundingCancelUiState?,
-    /** The core's `FundingProgress.moneyMoved`, which the cancel sheet words its body by. */
     val moneyMoved: Boolean,
-    /** Whether the core lets the user cancel now, and whether that cancel ends the session at once. */
     val cancelAvailability: FundingCancelAvailability,
-    /** "$50 CASH", as the figure over the milestones. */
     val figure: String,
-    /** Once the session started: its milestones, what is happening now, and when the provider last reported. */
     val progress: FundingLiveProgressUi?,
     val content: FundingDepositContent,
     val now: Instant,
@@ -244,7 +228,6 @@ data class FundingDepositUiState(
     val canCancel: Boolean
         get() = started && !failed && cancelAvailability != FundingCancelAvailability.UNAVAILABLE
 
-    /** A second cancel ends the session at once, so it reads differently from the first. */
     val isSecondCancel: Boolean
         get() = cancelAvailability == FundingCancelAvailability.AVAILABLE_AGAIN
 }
@@ -253,35 +236,24 @@ data class FundingLiveProgressUi(
     val timeline: FundingTimelineUi,
     val band: FundingBandUi?,
     val lastHeardAt: Instant?,
-    /** The provider's latest fact for the current step, for the line under the band. */
     val detail: FundingDetail?,
 )
 
-/** The line under the milestones; amber when the provider is retrying or late. */
 data class FundingBandUi(
     @param:StringRes val text: Int,
     val arg: String?,
     val warning: Boolean,
 )
 
-/** Where the user's cancel stands once money has moved, so the provider decides it. */
 sealed interface FundingCancelUiState {
-    /** With the provider, which has not answered. */
     data object Requested : FundingCancelUiState
 
-    /** The provider will not cancel; the session carries on. */
     data class Refused(val reason: String) : FundingCancelUiState
 
-    /**
-     * The provider can cancel, keeping [fee] and returning [refund], both as "$1,000.25 CASH". Past [expiresAt] the
-     * offer has lapsed and can't be accepted.
-     */
     data class Offered(val fee: String, val refund: String, val expiresAt: Instant?) : FundingCancelUiState {
-        /** Whole seconds the offer stays open, or `null` when the provider set no deadline. */
         fun secondsLeft(now: Instant): Long? = expiresAt?.let { (it - now).inWholeSeconds.coerceAtLeast(0) }
     }
 
-    /** The user accepted and the provider is refunding them. */
     data object Cancelling : FundingCancelUiState
 }
 
@@ -303,15 +275,10 @@ sealed interface FundingDepositContent {
         val reference: String,
     ) : FundingDepositContent
 
-    /** Why there is no deposit: no provider, a failed start, or the session failed. */
     data class Problem(val problem: FundingSummaryProblem) : FundingDepositContent
 
-    /**
-     * A started crypto session with no address to show: the provider takes the payment in its own screen, has not
-     * reported the address yet, or already has the funds. The screen shows the session's progress only.
-     */
+    // The provider takes the payment in its own screen, has not reported the address yet, or already has the funds.
     data object ProgressOnly : FundingDepositContent
 
-    /** No deposit yet: a provider is being found, or the chosen one is preparing it. */
     data class Waiting(val preparing: Boolean, val card: Boolean) : FundingDepositContent
 }

@@ -22,10 +22,7 @@ import kotlinx.coroutines.flow.stateIn
 import uniffi.truapi.CancelOutcome
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/**
- * Asks to cancel a started session. Before money moves that ends it; after, it is a request the provider answers with
- * a refusal or an offer, which the deposit screen then shows.
- */
+// Before money moves a cancel ends the session; after, the provider answers it with a refusal or an offer.
 @HiltViewModel(assistedFactory = FundingCancelConfirmViewModel.Factory::class)
 class FundingCancelConfirmViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,

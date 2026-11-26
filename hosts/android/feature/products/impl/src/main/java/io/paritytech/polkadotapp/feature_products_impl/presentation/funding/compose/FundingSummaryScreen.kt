@@ -40,7 +40,6 @@ private val VALUE_SKELETON_HEIGHT = 16.dp
 private val ROW_LOGO_SIZE = 20.dp
 private val CHEVRON_SIZE = 12.dp
 
-/** What the chosen provider will charge and pay, before the session is handed to it. */
 @Composable
 fun FundingSummaryScreen(
     modifier: Modifier = Modifier,

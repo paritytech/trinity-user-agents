@@ -191,10 +191,9 @@ class FundingFlowStateTest {
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 
-    /** Asks for quotes of the amount on screen, as the funding service reports a new ask. */
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount, failed = false)
 
-    /** The ask's list, as the funding service reports it; none is the core withdrawing it, which drops the ask. */
+    // No list is the core withdrawing it, which drops the ask.
     private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() }, failed = false)
 
     private fun state(

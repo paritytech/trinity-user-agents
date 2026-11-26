@@ -20,7 +20,6 @@ class FundingTokenViewModel @AssistedInject constructor(
 ) : BaseViewModel() {
     val state: StateFlow<FundingTokensUiState?> = sheet.flow.map { it?.toTokensUiState() }.stateIn(this, WhileOnScreen, null)
 
-    /** On to the summary, as for card and bank: the user sees the provider, fees and total, and starts from there. */
     fun onTokenChosen(symbol: String) {
         if (sheet.flow.value == null) return
         sheet.update { it.withAsset(symbol) }

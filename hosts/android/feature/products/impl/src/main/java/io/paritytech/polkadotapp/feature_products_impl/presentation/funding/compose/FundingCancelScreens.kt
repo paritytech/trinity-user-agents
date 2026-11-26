@@ -24,7 +24,6 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** The provider's terms for cancelling: what it keeps and what comes back, for the user to accept or decline. */
 @Composable
 fun FundingCancelOfferScreen(
     modifier: Modifier = Modifier,
@@ -107,10 +106,6 @@ private fun OfferRow(title: String, value: String) {
     }
 }
 
-/**
- * Asks before cancelling. A crypto top-up's deposit address stops working; once money has moved, the provider decides
- * whether it can still cancel, and may charge a fee.
- */
 @Composable
 fun FundingCancelConfirmScreen(
     modifier: Modifier = Modifier,

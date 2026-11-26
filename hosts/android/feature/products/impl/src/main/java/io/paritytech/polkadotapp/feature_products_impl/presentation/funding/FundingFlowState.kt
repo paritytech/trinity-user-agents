@@ -47,7 +47,6 @@ data class FundingFlowState(
     val list: FundingQuoteList?,
     val quotesFailed: Boolean,
     val amountIssue: FundingAmountIssue?,
-    /** The core could not check the typed amount, which holds it back like an issue would. */
     val amountCheckFailed: Boolean,
     val spendableUnread: Boolean,
 ) {
@@ -119,7 +118,6 @@ data class FundingFlowState(
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
 
-    /** [units] of the balance, as the screens read them. */
     fun cashAmount(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
@@ -140,7 +138,6 @@ data class FundingFlowState(
     val isQuoting: Boolean
         get() = selectedQuote == null && (quoting || list?.complete == false)
 
-    /** An ask waits for its first list. */
     val quoting: Boolean
         get() = askedAmount != null && list == null && !quotesFailed
 
