@@ -327,7 +327,7 @@ private fun DockletSlotTarget.icon() = when (this) {
     DockletSlotTarget.NetworkStatus -> NovaIcons.NetworkStatus
 }
 
-/** Matches the iOS tab bar's accessibility identifiers, so one UI test flow drives both apps. */
+// The iOS tab bar's accessibility identifiers, so one UI test flow drives both apps.
 private fun DockletSlotTarget.testTag(): String? = when (this) {
     is DockletSlotTarget.Tab -> when (tab) {
         BottomTab.CHATS -> "tab_chat"

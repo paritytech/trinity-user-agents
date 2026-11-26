@@ -5,7 +5,7 @@ name: Settings and wallet smoke
 - launchApp
 # First-run tips can appear a few seconds in, over the screen, so each attempt closes them first.
 - retry:
-    maxRetries: 4
+    maxRetries: 3
     commands:
       - runFlow: flows/dismiss-tips.yaml
       - extendedWaitUntil:

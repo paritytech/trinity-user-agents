@@ -11,6 +11,8 @@ import { parseArgs } from "node:util";
 import { selectSimulator } from "../../scripts/lib/ios-simulator.mjs";
 
 const FLOW = join(dirname(fileURLToPath(import.meta.url)), "smoke.yaml");
+// A passing run takes a few minutes; this stops a hung device from holding the job.
+const FLOW_TIMEOUT_MS = 10 * 60_000;
 
 const { values: args } = parseArgs({
   options: {
@@ -53,17 +55,24 @@ const result = spawnSync(
     "--flatten-debug-output",
     FLOW,
   ],
-  { stdio: "inherit" },
+  { stdio: "inherit", timeout: FLOW_TIMEOUT_MS, killSignal: "SIGKILL" },
 );
 
+const timedOut = result.error?.code === "ETIMEDOUT";
 const passed = result.status === 0;
 logcat?.kill();
 if (!passed && args.platform === "android") saveAndroidDiagnostics();
 writeFileSync(
   join(out, "report.md"),
-  `### Native UI (${args.platform})\n\n${passed ? "Settings and wallet smoke passed." : "Settings and wallet smoke failed. The debug output in the uploaded results has a screenshot and the view hierarchy."}\n`,
+  `### Native UI (${args.platform})\n\n${summary()}\n`,
 );
 process.exit(passed ? 0 : 1);
+
+function summary() {
+  if (passed) return "Settings and wallet smoke passed.";
+  if (timedOut) return `Settings and wallet smoke timed out after ${FLOW_TIMEOUT_MS / 60_000} minutes.`;
+  return "Settings and wallet smoke failed. The debug output in the uploaded results has a screenshot and the view hierarchy.";
+}
 
 function streamLogcat() {
   const file = openSync(join(out, "logcat.txt"), "w");
