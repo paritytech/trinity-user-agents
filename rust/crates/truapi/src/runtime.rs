@@ -38,6 +38,7 @@ mod product_subtree;
 mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
+mod served;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
@@ -87,6 +88,7 @@ pub use host_accounts::HostAccounts;
 pub use pairing_host::PairingHost;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
+pub use served::{NamesProducts, Served, serve};
 pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
@@ -211,7 +213,7 @@ const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the
 
 #[derive(Clone)]
 enum LegacySigner {
-	Product(latest::ProductAccountId),
+	Product(Served<latest::ProductAccountId>),
 	Identity([u8; 32]),
 }
 
@@ -475,9 +477,14 @@ impl ProductConnection {
 	}
 
 	fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
-		PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
-			.with_status_host(self.permission_status.as_deref())
-			.with_temporary_permissions(self.temporary_permissions.clone())
+		PermissionsService::new(
+			self.platform.as_ref(),
+			self.platform.as_ref(),
+			&self.product,
+			self.services.stack(),
+		)
+		.with_status_host(self.permission_status.as_deref())
+		.with_temporary_permissions(self.temporary_permissions.clone())
 	}
 
 	/// Trusted executable kind attached to this product connection.
@@ -505,6 +512,13 @@ impl ProductConnection {
 		&self.product.product_id
 	}
 
+	/// `value` as [`Served`], naming each product by the id the stack serves
+	/// it under. A request that names a product the stack does not serve is
+	/// malformed, and nothing is looked up for it.
+	fn serve<T: NamesProducts, D>(&self, value: T) -> Result<Served<T>, CallError<D>> {
+		Ok(serve(self.services.stack(), value)?)
+	}
+
 	// Foreign reads must keep the authorized owner, not the calling product.
 	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
 		ProductStorageKey::new(owner.clone(), key).encode()
@@ -514,12 +528,37 @@ impl ProductConnection {
 		format!("c{}:{id}", self.core_instance)
 	}
 
+	/// Refuses a host's permission call that names a product by an id the
+	/// stack serves it under another: this connection's own product, or one a
+	/// request names.
+	///
+	/// A status under such a name is one no product reads, so a host that set
+	/// it would take the product that name runs as for changed. The error
+	/// names that product's id. An id the stack serves nothing under passes:
+	/// its record is all there is to administer.
+	fn refuse_names_served_under_another_id(
+		&self,
+		requests: &mut [PermissionAuthorizationRequest],
+	) -> Result<(), latest::GenericError> {
+		let stack = self.services.stack();
+		let named = requests.iter_mut().flat_map(NamesProducts::products);
+		for product_id in core::iter::once(self.product_id()).chain(named.map(|named| &*named)) {
+			if let Err(unserved) = stack.require_served(product_id) &&
+				unserved.served_as.is_some()
+			{
+				return Err(latest::GenericError { reason: unserved.to_string() });
+			}
+		}
+		Ok(())
+	}
+
 	/// Read stored authorization, including the current OS gate for device access.
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
 	pub async fn permission_authorization_status(
 		&self,
-		request: PermissionAuthorizationRequest,
+		mut request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
+		self.refuse_names_served_under_another_id(core::slice::from_mut(&mut request))?;
 		let service = self.permissions_service();
 		service.authorization_status(&request).await
 	}
@@ -528,8 +567,9 @@ impl ProductConnection {
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		requests: Vec<PermissionAuthorizationRequest>,
+		mut requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, latest::GenericError> {
+		self.refuse_names_served_under_another_id(&mut requests)?;
 		let service = self.permissions_service();
 		service.authorization_statuses(&requests).await
 	}
@@ -538,9 +578,10 @@ impl ProductConnection {
 	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		request: PermissionAuthorizationRequest,
+		mut request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), latest::GenericError> {
+		self.refuse_names_served_under_another_id(core::slice::from_mut(&mut request))?;
 		let service = self.permissions_service();
 		service.set_authorization_status(&request, status).await
 	}
@@ -830,23 +871,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		}
 	}
 
-	async fn legacy_slot_zero_public_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-	) -> Result<[u8; 32], AuthorityError> {
-		self.accounts
-			.product_account_public_key(
-				cx,
-				session,
-				&latest::ProductAccountId {
-					dot_ns_identifier: self.connection.product_id().clone(),
-					derivation_index: latest::DerivationIndex::Index(0),
-				},
-			)
-			.await
-	}
-
 	async fn classify_legacy_address_signer(
 		&self,
 		cx: &CallContext,
@@ -868,12 +892,17 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		if session.identity_account_id == Some(requested_key) {
 			return Ok(LegacySigner::Identity(requested_key));
 		}
-		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
-		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product(latest::ProductAccountId {
+		let slot_zero = serve(
+			self.connection.services.stack(),
+			latest::ProductAccountId {
 				dot_ns_identifier: self.connection.product_id().clone(),
 				derivation_index: latest::DerivationIndex::Index(0),
-			}));
+			},
+		)
+		.map_err(AuthorityError::from)?;
+		let public_key = self.accounts.product_account_public_key(cx, session, &slot_zero).await?;
+		if requested_key == public_key {
+			return Ok(LegacySigner::Product(slot_zero));
 		}
 		Err(LegacySignerError::Unavailable)
 	}
@@ -1959,7 +1988,7 @@ impl ProductRuntimeHost<RemoteAccountHolder> {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			crate::test_support::paseo_test_stack(),
+			crate::test_support::dot_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")

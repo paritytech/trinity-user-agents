@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use trinity_stack::Descriptor;
-use truapi::platform::DOTNS_TLDS;
 
 use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, built_in::built_in_name, namespace_of};
 use crate::{
@@ -16,10 +15,9 @@ use crate::{
 impl Stack {
 	/// The stack `descriptor` describes, read from the pointer whose identity
 	/// is `stack_id`, connected to over `chain_access`. Fails when People,
-	/// Asset Hub or Bulletin is missing, when the TLD is not one the core
-	/// serves, when the namespace is not a lowercase label or is the
-	/// `polkadot` one, when the stack has no `dub` service or no
-	/// `dotns.popController`, and on the light client as
+	/// Asset Hub or Bulletin is missing, when the namespace is not a lowercase
+	/// label or is the `polkadot` one, when the stack has no `dub` service or
+	/// no `dotns.popController`, and on the light client as
 	/// [`StackLightClient::new`] does. No two of its chains share a genesis
 	/// hash, which the descriptor's own rules refuse.
 	pub fn new(
@@ -43,12 +41,6 @@ impl Stack {
 				.with_context(|| format!("the {id} stack has no {role} chain"))?;
 			anyhow::Ok(ChainEndpoint { genesis: chain.genesis(), ws: chain.rpc[0].clone() })
 		})?;
-		ensure!(
-			DOTNS_TLDS.contains(&descriptor.tld.as_str()),
-			"the {id} stack's tld {} is not one the core serves ({})",
-			descriptor.tld,
-			DOTNS_TLDS.join(", ")
-		);
 		let dub = descriptor.service("dub").with_context(|| {
 			format!("the {id} stack has no dub service, which the CLI uses as its identity backend")
 		})?;

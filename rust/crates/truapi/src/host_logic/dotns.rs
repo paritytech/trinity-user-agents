@@ -6,8 +6,9 @@
 
 use crate::{
 	dotns_name::normalize_host,
-	platform::{ProductId, has_dotns_tld, normalize_chat_identifier},
+	platform::{ProductId, normalize_chat_identifier},
 	product_id::PRODUCT_SHARE_SUFFIX,
+	stack::Stack,
 };
 use url::{Url, form_urlencoded};
 
@@ -38,15 +39,15 @@ pub enum PocketDeeplinkAction {
 /// How the input URL should be opened. Kept in one enum rather than passing
 /// a raw string so the dispatcher can reject invalid input before reaching
 /// any platform callback. The open variants carry the ready-to-load canonical
-/// URL; `DotName` and `Localhost` keep the dotns/localhost identity visible so
-/// env-aware hosts can rewrite dotNS names for their active environment and
-/// re-parse without losing information.
+/// URL; `DotName` and `Localhost` also carry the product's id, the one the
+/// host opens it under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum NavigateDecision {
 	/// A dotNS identifier plus path/query/hash suffix (no leading `/`).
 	DotName {
-		/// Lower-cased dotNS host (e.g. `mytestapp.dot`).
+		/// The id the stack serves the named product under: `mytestapp.paseo`
+		/// on a `paseo` stack for a link to `mytestapp.dot`.
 		identifier: ProductId,
 		/// Path/query/hash suffix without a leading `/`.
 		path: String,
@@ -68,8 +69,8 @@ pub enum NavigateDecision {
 	/// `polkadotapp://pocket/<action>?product=<id>&card=<id>`. The deeplink is the
 	/// host's own, so no path of any product is read as one.
 	Pocket {
-		/// Normalized dotNS name of the product that backs the card, from the
-		/// `product` query parameter.
+		/// The id the stack serves the product that backs the card under, from
+		/// the `product` query parameter.
 		identifier: ProductId,
 		/// Requested Pocket action.
 		action: PocketDeeplinkAction,
@@ -128,11 +129,13 @@ impl ProductLink {
 			return None;
 		}
 		let hostname = parsed.host_str()?;
+		// Try the direct reading too: when the network's TLD is the share
+		// suffix, the share reading gives a name one label shorter than the
+		// product.
 		let identifier = ProductId::from_share_host(hostname)
-			.or_else(|| normalize_host(hostname).parse::<ProductId>().ok())?;
-		if !identifier.matches_network(network_suffix) {
-			return None;
-		}
+			.into_iter()
+			.chain(normalize_host(hostname).parse::<ProductId>())
+			.find(|identifier| identifier.matches_network(network_suffix))?;
 		let route = if parsed.path().is_empty() { "/" } else { parsed.path() };
 		let path = route.to_string() + &suffix(&parsed);
 		let canonical_url = format!("{HTTPS_SCHEME}://{identifier}{path}");
@@ -140,11 +143,11 @@ impl ProductLink {
 	}
 }
 
-/// Public share domains for the canonical dotNS networks.
-pub fn product_share_hosts() -> Vec<String> {
-	crate::dotns_name::DOTNS_TLDS
-		.iter()
-		.map(|suffix| format!("{suffix}{PRODUCT_SHARE_SUFFIX}"))
+/// Public share domains of the TLDs `stack` accepts product names under.
+pub fn product_share_hosts(stack: &Stack) -> Vec<String> {
+	stack
+		.accepted_tlds()
+		.map(|tld| format!("{tld}{PRODUCT_SHARE_SUFFIX}"))
 		.collect()
 }
 
@@ -154,17 +157,21 @@ fn join_url(scheme: &str, host: &str, path: &str) -> String {
 
 /// Classify a URL the way the host navigation handler does: try the Pocket
 /// deeplink first, then dotNS, then `localhost`, then normalize as external.
-pub fn parse_navigate(input: &str) -> NavigateDecision {
+///
+/// A name is dotNS only under a TLD the host's `stack` accepts, so any other
+/// host is external. A dotNS or Pocket decision names the product by
+/// [`Stack::served_id`].
+pub fn parse_navigate(input: &str, stack: &Stack) -> NavigateDecision {
 	let trimmed = input.trim();
 	if trimmed.is_empty() {
 		return NavigateDecision::Reject { reason: "empty input".to_string() };
 	}
 
-	if let Some(decision) = classify_pocket(trimmed) {
+	if let Some(decision) = classify_pocket(trimmed, stack) {
 		return decision;
 	}
 
-	if let Some(decision) = classify_dotns(trimmed) {
+	if let Some(decision) = classify_dotns(trimmed, stack) {
 		return decision;
 	}
 
@@ -178,12 +185,13 @@ pub fn parse_navigate(input: &str) -> NavigateDecision {
 	}
 }
 
-/// dotNS TLD check, applied to the [`normalize_host`] form so `Example.DOT`
-/// and the trailing-dot FQDN `example.dot.` classify like `example.dot`.
-/// Shares [`crate::platform::DOTNS_TLDS`] with product-identifier validation
-/// so navigation and derivation accept the same per-network names.
-fn is_dotns_domain(host: &str) -> bool {
-	has_dotns_tld(&normalize_host(host))
+/// Whether `host` ends in a TLD `stack` accepts, applied to
+/// the [`normalize_host`] form so `Example.DOT` and the trailing-dot FQDN
+/// `example.dot.` classify like `example.dot`.
+fn is_dotns_domain(host: &str, stack: &Stack) -> bool {
+	normalize_host(host)
+		.rsplit_once('.')
+		.is_some_and(|(_, tld)| stack.accepts_tld(tld))
 }
 
 fn parse_with_explicit_https(input: &str) -> Option<Url> {
@@ -199,7 +207,7 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 /// of the scheme maps it to [`APP_SCHEME`] before asking. Recognized ahead of
 /// the other `polkadotapp:` links, which need an `OpenUrl` grant: the Pocket is
 /// the host's own surface. `None` sends the input on to the other branches.
-fn classify_pocket(input: &str) -> Option<NavigateDecision> {
+fn classify_pocket(input: &str, stack: &Stack) -> Option<NavigateDecision> {
 	let url = Url::parse(input).ok().filter(|url| url.scheme() == APP_SCHEME)?;
 	if normalize_host(url.host_str()?) != POCKET_HOST {
 		return None;
@@ -236,13 +244,15 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			reason: "pocket deeplink names no product or no card".to_string(),
 		});
 	};
-	let identifier = match product.parse::<ProductId>() {
-		Ok(identifier) if has_dotns_tld(identifier.as_str()) => identifier,
-		_ => {
-			return Some(NavigateDecision::Reject {
-				reason: "pocket deeplink names a product that is not a dotNS name".to_string(),
-			});
-		},
+	let served = product
+		.parse::<ProductId>()
+		.ok()
+		.filter(|identifier| !identifier.is_localhost())
+		.and_then(|identifier| stack.served_id(&identifier).ok());
+	let Some(identifier) = served else {
+		return Some(NavigateDecision::Reject {
+			reason: "pocket deeplink names no dotNS product this host serves".to_string(),
+		});
 	};
 	// A deeplink and `remove_card` name the same card, so both screen the id
 	// the same way. Without this, `?card=%20loyalty%20` would add a card under
@@ -306,11 +316,11 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 /// - `Some(DotName)` for a clean dotNS URL
 /// - `Some(Reject)` for a dotNS URL with port or userinfo
 /// - `None` when the input isn't a dotNS URL (caller falls through to localhost / external)
-fn classify_dotns(input: &str) -> Option<NavigateDecision> {
+fn classify_dotns(input: &str, stack: &Stack) -> Option<NavigateDecision> {
 	let parsed = parse_with_explicit_https(input)?;
 
 	let hostname = parsed.host_str()?;
-	if !is_dotns_domain(hostname) {
+	if !is_dotns_domain(hostname, stack) {
 		return None;
 	}
 
@@ -320,9 +330,13 @@ fn classify_dotns(input: &str) -> Option<NavigateDecision> {
 		});
 	}
 
-	let identifier = match normalize_host(hostname).parse::<ProductId>() {
+	let served = normalize_host(hostname)
+		.parse::<ProductId>()
+		.map_err(|error| error.to_string())
+		.and_then(|identifier| stack.served_id(&identifier).map_err(|error| error.to_string()));
+	let identifier = match served {
 		Ok(identifier) => identifier,
-		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
+		Err(reason) => return Some(NavigateDecision::Reject { reason }),
 	};
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
 	let canonical_url = join_url(PRODUCT_SCHEME, identifier.as_str(), &path);

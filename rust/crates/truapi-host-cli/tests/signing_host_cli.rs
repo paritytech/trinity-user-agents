@@ -237,7 +237,7 @@ fn exec_product_reports_the_normalized_selected_product() {
 		.expect("run signing-host exec /product");
 
 	assert!(output.status.success());
-	assert!(String::from_utf8_lossy(&output.stdout).contains("dotli.dot"));
+	assert!(String::from_utf8_lossy(&output.stdout).contains("dotli.paseo"));
 	assert!(!output.stdout.contains(&0x1b));
 	assert!(!output.stderr.contains(&0x1b));
 }

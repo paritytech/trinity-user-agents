@@ -699,6 +699,16 @@ describe("createMockHost TestHostAPI parity", () => {
     });
   });
 
+  it("defaults to a product the configured test stack serves", () => {
+    // The core opens a product only under the stack's own TLD, so a default
+    // fixed to one TLD would not start on a test stack with another.
+    const onFork = { ...mockRuntimeConfig().testStack, tld: "fork" };
+    expect([
+      mockRuntimeConfig().productId,
+      mockRuntimeConfig({ testStack: onFork }).productId,
+    ]).toEqual(["mock.paseo", "mock.fork"]);
+  });
+
   it("keys a remote permission on its tag, not the domains it names", async () => {
     // The Rust mock asserts the same thing. Keying on the domains would make
     // the grant below cover only the exact list it was issued for, so it could

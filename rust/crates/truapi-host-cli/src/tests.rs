@@ -16,7 +16,16 @@ async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostS
 	let network = Network::default().bundled_stack(ChainBackend::Rpc);
 	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.state_directory())?;
 	catalog.set_current(name)?;
-	start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None).await
+	let core_stack = network.core_stack()?;
+	start_signing_host(
+		&SigningHostArgs::default(),
+		catalog,
+		name.to_string(),
+		network,
+		core_stack,
+		None,
+	)
+	.await
 }
 
 fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
@@ -100,8 +109,16 @@ async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
 	let args =
 		SigningHostArgs { account: Some("auto-1".to_string()), ..SigningHostArgs::default() };
 
-	let session =
-		start_signing_host(&args, catalog, DEFAULT_SESSION_NAME.to_string(), network, None).await?;
+	let core_stack = network.core_stack()?;
+	let session = start_signing_host(
+		&args,
+		catalog,
+		DEFAULT_SESSION_NAME.to_string(),
+		network,
+		core_stack,
+		None,
+	)
+	.await?;
 
 	assert_eq!(
 		(session.signer.is_none(), session.catalog.current_session()?),
@@ -310,6 +327,16 @@ async fn session_selection_failure_keeps_the_working_identity_and_responders() -
 	Ok(())
 }
 
+/// A session kept in `path`, with its product storage under `storage`.
+fn session_profile_at(path: &Path) -> SessionProfile {
+	SessionProfile {
+		name: "test".to_string(),
+		path: path.to_path_buf(),
+		product_storage_dir: path.join("storage"),
+		account_base_path: path.to_path_buf(),
+	}
+}
+
 /// Without a local session every restart fails the same way, so `/pair`
 /// has to end with the failure instead of restarting forever.
 #[tokio::test]
@@ -317,8 +344,11 @@ async fn a_responder_without_a_local_session_stops_instead_of_restarting() {
 	let profile = tempfile::tempdir().unwrap();
 	let (runtime, _platform) = build_signing_runtime(
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-		profile.path().to_path_buf(),
-		profile.path().join("storage"),
+		crate::network::Network::PaseoNextV2
+			.bundled_stack(ChainBackend::Rpc)
+			.core_stack()
+			.unwrap(),
+		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
 		None,
@@ -342,8 +372,11 @@ async fn the_signing_runtime_keeps_its_core_database_in_the_profile_directory() 
 	let profile = tempfile::tempdir().unwrap();
 	let (runtime, _platform) = build_signing_runtime(
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-		profile.path().to_path_buf(),
-		profile.path().join("storage"),
+		crate::network::Network::PaseoNextV2
+			.bundled_stack(ChainBackend::Rpc)
+			.core_stack()
+			.unwrap(),
+		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
 		None,
@@ -376,8 +409,11 @@ async fn a_core_database_this_build_cannot_open_asks_for_cleanup() {
 	let build = || {
 		build_signing_runtime(
 			&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-			profile.clone(),
-			profile.join("storage"),
+			crate::network::Network::PaseoNextV2
+				.bundled_stack(ChainBackend::Rpc)
+				.core_stack()
+				.unwrap(),
+			&session_profile_at(&profile),
 			ApprovalPolicy::AutoAccept,
 			None,
 			None,
@@ -715,9 +751,10 @@ async fn script_completion_removes_the_private_frame_socket_before_returning() -
 		let directory = socket.parent().context("socket has no directory")?;
 		assert!(socket.exists());
 		let product = frame_server::ProductSelection::new(
-			ProductId::for_test("script-cleanup.testnet"),
+			ProductId::for_test("script-cleanup.dot"),
 			ExecutableKind::App,
-		);
+			&network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack()?,
+		)?;
 		let result =
 			with_frame_server(Arc::new(UnusedRuntimeFactory), product, frame_server, async move {
 				anyhow::ensure!(!script_failed, "script failed");

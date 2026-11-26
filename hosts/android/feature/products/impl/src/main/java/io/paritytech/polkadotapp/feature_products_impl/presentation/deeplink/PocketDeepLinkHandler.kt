@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -47,7 +48,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
-        if (!isPocketLink(data.scheme, data.host)) return false
+        if (!isPocketLink(data.scheme, data.host) || !parser.canParse) return false
         val card = parser.parse(data.toString()) as? PocketDeeplink.Card ?: return true
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
 
@@ -71,13 +72,18 @@ internal class PocketDeepLinkHandler @Inject constructor(
         when (val deeplink = parser.parse(data.toString())) {
             null -> Result.success(malformed(data))
             PocketDeeplink.Collection -> openCollection()
-            is PocketDeeplink.Card -> dotNsTldProvider.getTld()
+            is PocketDeeplink.Card -> claimedTld()
                 .flatMap { tld -> productIdFromHost(deeplink.productId.value, tld) }
                 .flatMap { productId ->
                     dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)), deeplink.pageQuery)
                 }
         }
     }
+
+    // The TLD `canHandle` used for a card. Reading it again from the People chain would block the link when the
+    // app starts offline.
+    private suspend fun claimedTld(): Result<DotNsTld> =
+        dotNsTldProvider.currentTldOrNull()?.let { Result.success(it) } ?: dotNsTldProvider.getTld()
 
     private suspend fun openCollection(): Result<DeeplinkProcessingOutcome> = runCancellableCatching {
         accountRepository.awaitAccountsInitialized()

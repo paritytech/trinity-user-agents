@@ -9,7 +9,7 @@ struct TrUAPIWsBridgeTests {
     func anOpenRenderDoesNotHoldAWorkerAfterTheLastConsumerLeaves() async throws {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: Self.makeHostRuntimeConfig())
-        let product = try ProductId("shared.dot")
+        let product = try ProductId("shared.testnet")
         let chat = runtime.claimWorker(productId: product)
         let pocket = runtime.claimWorker(productId: product)
         let execution = try runtime.openProductExecution(
@@ -90,7 +90,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
+                productId: ProductId("test.testnet"),
                 executionKind: .app
             )
         )
@@ -127,7 +127,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
+                productId: ProductId("test.testnet"),
                 executionKind: .app
             )
         )
@@ -165,7 +165,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: ProductId("test.dot"),
+                productId: ProductId("test.testnet"),
                 executionKind: .app
             )
         )

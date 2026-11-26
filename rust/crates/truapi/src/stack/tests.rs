@@ -41,6 +41,11 @@ fn bundled(
 	Stack::bundled(&pointer, &bytes, reserved_values)
 }
 
+/// A stack on `tld`, allowed reserved values so that it may be on `dot`.
+fn on(tld: &str) -> Stack {
+	crate::test_support::test_stack(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32])
+}
+
 fn identity() -> StackIdentity {
 	StackIdentity { id: "stack".to_string(), generation: "generation".to_string() }
 }
@@ -142,17 +147,17 @@ fn a_stack_without_asset_hub_people_or_bulletin_is_refused() {
 	);
 }
 
-/// Products are named under the TLDs the core serves dotNS for. Until that
-/// list comes from the stack, a stack on any other TLD cannot host products.
+/// Product names end in the stack's TLD, so it has to be a label dotNS could
+/// register.
 #[test]
-fn a_tld_the_core_does_not_serve_is_refused() {
+fn a_tld_that_is_not_a_dns_label_is_refused() {
 	let chains = StackChains {
 		relay: None,
 		asset_hub: [0xc3; 32],
 		people: [0xa1; 32],
 		bulletin: [0xb2; 32],
 	};
-	let tlds = ["kusama", "", ".paseo", "Paseo"];
+	let tlds = ["", ".paseo", "Paseo", "pa.seo", "-paseo"];
 
 	assert_eq!(
 		tlds.map(|tld| Stack::new(
@@ -162,14 +167,192 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 			chains.clone(),
 			&ReservedValuesPolicy::ALLOWED
 		)),
-		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
+		tlds.map(|tld| Err(StackError::InvalidTld { tld: tld.into() })),
+	);
+}
+
+/// Share hosts end in `.li`, and every name under `localhost` resolves to the
+/// local machine (RFC 6761), so a product under either TLD would not reach its
+/// dotNS content. The error says which, whether the stack comes from a
+/// descriptor or from parts.
+#[test]
+fn a_tld_whose_names_mean_something_else_is_refused() {
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let refusal = |tld: &str| {
+		let from_parts = Stack::new(
+			identity(),
+			"paseo".into(),
+			tld.into(),
+			chains.clone(),
+			&ReservedValuesPolicy::ALLOWED,
+		);
+		let bundled = bundled(
+			&test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]),
+			&ReservedValuesPolicy::default(),
+		);
+		[from_parts.err(), bundled.err()].map(|error| error.map(|error| error.to_string()))
+	};
+
+	let li = Some(r#"stack tld "li" is reserved: share hosts end in .li"#.to_string());
+	let localhost = Some(
+		r#"stack tld "localhost" is reserved: every name under localhost resolves to the local machine"#
+			.to_string(),
+	);
+	assert_eq!(
+		[refusal("li"), refusal("localhost")],
+		[[li.clone(), li], [localhost.clone(), localhost]]
+	);
+}
+
+/// A fork with its own TLD runs products under it, reads a name under
+/// Polkadot's as its own, and runs none under a third TLD.
+#[test]
+fn a_stack_serves_its_own_tld_and_reads_the_reserved_one_as_it() {
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let fork = Stack::new(
+		identity(),
+		"fork".into(),
+		"fork".into(),
+		chains,
+		&ReservedValuesPolicy::default(),
+	)
+	.expect("fork starts");
+	let served =
+		|product_id: &str| fork.served_id(&ProductId::for_test(product_id)).ok().map(String::from);
+
+	assert_eq!(
+		["app.fork", "app.dot", "app.paseo", "app.testnet", "localhost:3000"].map(served),
+		[
+			Some("app.fork".to_string()),
+			Some("app.fork".to_string()),
+			None,
+			None,
+			Some("localhost:3000".to_string())
+		]
 	);
 	assert_eq!(
 		bundled(
-			&test_descriptor("kusama", [0xa1; 32], [0xb2; 32], [0xc3; 32]),
+			&test_descriptor("fork", [0xa1; 32], [0xb2; 32], [0xc3; 32]),
 			&ReservedValuesPolicy::default()
+		)
+		.map(|stack| stack.tld().to_owned()),
+		Ok("fork".to_owned())
+	);
+}
+
+/// A trusted label skips every prompt, so it counts only under an id the
+/// stack serves: `peopl.com` parses, and must still prompt. `peopl.dot` is no
+/// id on a `paseo` stack, so nothing that reached the core under it is
+/// trusted.
+#[test]
+fn a_trusted_label_is_trusted_only_under_an_id_the_stack_serves() {
+	let trusted = |stack_tld, product_id| on(stack_tld).trusts(&ProductId::for_test(product_id));
+
+	assert_eq!(
+		[
+			trusted("paseo", "peopl.paseo"),
+			trusted("dot", "peopl.dot"),
+			trusted("fork", "dim2.fork"),
+			trusted("paseo", "peopl.dot"),
+			trusted("paseo", "peopl.testnet"),
+			trusted("paseo", "peopl.com"),
+			trusted("paseo", "app.peopl.paseo"),
+		],
+		[true, true, true, false, false, false, false]
+	);
+}
+
+#[test]
+fn the_reserved_tld_is_accepted_once() {
+	assert_eq!(on("dot").accepted_tlds().collect::<Vec<_>>(), ["dot"]);
+	assert_eq!(on("paseo").accepted_tlds().collect::<Vec<_>>(), ["dot", "paseo"]);
+}
+
+/// A stack's own registry resolves a `dot` name, so the product it names is
+/// the stack's and gets the stack's id. Keys derive from the id: served as
+/// `game.dot`, what a testnet registry publishes would hold the keys of
+/// Polkadot's `game.dot`. Only a stack on `dot` serves a `dot` id, and it
+/// reads no other TLD as its own.
+#[test]
+fn a_dot_name_is_served_under_the_stacks_own_tld() {
+	let served = |stack_tld, product_id| {
+		on(stack_tld).served_id(&ProductId::for_test(product_id)).ok().map(String::from)
+	};
+
+	assert_eq!(
+		[
+			served("paseo", "game.dot"),
+			served("paseo", "worker.game.dot"),
+			served("dot", "game.dot"),
+			served("dot", "game.paseo"),
+		],
+		[
+			Some("game.paseo".to_string()),
+			Some("worker.game.paseo".to_string()),
+			Some("game.dot".to_string()),
+			None,
+		]
+	);
+}
+
+/// The id a `dot` name is served under is the one keys derive from, so the
+/// name as written is not an id the stack serves. The refusal names the id
+/// the stack serves the product under, which is what a host opens instead.
+#[test]
+fn only_ids_under_the_stacks_own_tld_are_served() {
+	let refusal = |stack_tld, product_id| {
+		on(stack_tld)
+			.require_served(&ProductId::for_test(product_id))
+			.err()
+			.map(|unserved| unserved.to_string())
+	};
+
+	assert_eq!(
+		[
+			refusal("paseo", "game.paseo"),
+			refusal("paseo", "localhost"),
+			refusal("dot", "game.dot"),
+			refusal("paseo", "game.dot"),
+			refusal("paseo", "game.testnet"),
+		],
+		[
+			None,
+			None,
+			None,
+			Some(
+				"the paseo stack serves no product under the id game.dot, which names its \
+				 product game.paseo"
+					.to_string()
+			),
+			Some("the paseo stack serves no product under the id game.testnet".to_string()),
+		]
+	);
+}
+
+/// A `dot` name that fits the id limit can pass it under a longer TLD. No
+/// product id names it there, so the stack does not serve it.
+#[test]
+fn a_dot_name_too_long_under_the_stacks_tld_is_not_served() {
+	let labels = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(60)];
+	let longest_under_dot = ProductId::for_test(&format!("{}.dot", labels.join(".")));
+
+	assert_eq!(
+		(
+			longest_under_dot.as_str().len(),
+			on("dot").served_id(&longest_under_dot).is_ok(),
+			on("paseo").served_id(&longest_under_dot).is_ok(),
 		),
-		Err(StackError::UnsupportedTld { tld: "kusama".to_string() })
+		(crate::product_id::PRODUCT_ID_MAX_BYTES, true, false)
 	);
 }
 
@@ -305,12 +488,12 @@ fn allowed_reserved_values_with_extra_ones_are_refused() {
 }
 
 /// A reserved TLD is compared with a stack's as written, and a stack's TLD is
-/// one the core serves, so any other entry would reserve nothing. The build is
-/// told instead.
+/// a DNS label other than `li` and `localhost`, so any other entry would
+/// reserve nothing. The build is told instead.
 #[test]
 fn an_extra_tld_no_stack_can_have_is_refused() {
 	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	let entries = ["kusama", ".testnet", "Testnet", "testnet ", ""];
+	let entries = ["li", "localhost", ".testnet", "Testnet", "testnet ", ""];
 	let reserving = |entry: &str| ReservedValuesPolicy {
 		extra_tlds: vec!["testnet".to_string(), entry.to_string()],
 		..ReservedValuesPolicy::default()
@@ -327,21 +510,21 @@ fn an_extra_tld_no_stack_can_have_is_refused() {
 #[test]
 fn a_policy_fault_is_reported_before_the_stacks() {
 	let policy = ReservedValuesPolicy {
-		extra_tlds: vec!["kusama".to_string()],
+		extra_tlds: vec!["li".to_string()],
 		..ReservedValuesPolicy::default()
 	};
-	let on_kusama = test_descriptor("kusama", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	let (_, bytes) = sign_test_descriptor(&on_kusama);
+	let on_li = test_descriptor("li", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let (_, bytes) = sign_test_descriptor(&on_li);
 	let zero_asset_hub =
 		StackChains { relay: None, asset_hub: [0; 32], people: [0xa1; 32], bulletin: [0xb2; 32] };
 
 	assert_eq!(
 		[
-			bundled(&on_kusama, &policy),
+			bundled(&on_li, &policy),
 			Stack::bundled(&test_stack_link(None), &bytes, &policy),
-			Stack::new(identity(), "paseo".into(), "kusama".into(), zero_asset_hub, &policy),
+			Stack::new(identity(), "paseo".into(), "li".into(), zero_asset_hub, &policy),
 		],
-		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })),
+		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "li".to_string() })),
 	);
 }
 
