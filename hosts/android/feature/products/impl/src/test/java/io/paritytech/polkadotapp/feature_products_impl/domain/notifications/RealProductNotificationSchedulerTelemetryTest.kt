@@ -137,7 +137,7 @@ class RealProductNotificationSchedulerTelemetryTest {
     }
 
     @Test
-    fun `a refused alarm records add_failed, reports it and returns the same failure`() = runBlocking {
+    fun `a refused alarm records add_failed, reports it and returns it as the cause`() = runBlocking {
         // Given
         val refusal = SecurityException("exact alarms are off")
         every { alarmManager.setAndAllowWhileIdle(any(), any(), any()) } throws refusal
@@ -148,13 +148,13 @@ class RealProductNotificationSchedulerTelemetryTest {
         val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
 
         // Then
-        assertSame(refusal, result.exceptionOrNull())
+        assertSame(refusal, result.exceptionOrNull()?.cause)
         assertEquals(listOf(notScheduled(ids.single().value, "add_failed", HostEventLevel.ERROR)), captured)
         assertEquals(listOf(issue("add-failed", refusal)), issues)
     }
 
     @Test
-    fun `a failed insert records store_failed, reports it and returns the same failure`() = runBlocking {
+    fun `a failed insert records store_failed, reports it and returns it as the cause`() = runBlocking {
         // Given
         val storeError = IllegalStateException("disk full")
         coEvery { repository.insert(any()) } throws storeError
@@ -165,13 +165,14 @@ class RealProductNotificationSchedulerTelemetryTest {
         val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
 
         // Then
-        assertSame(storeError, result.exceptionOrNull())
+        assertSame(storeError, result.exceptionOrNull()?.cause)
+        assertEquals("disk full", result.exceptionOrNull()?.message)
         assertEquals(listOf(notScheduled(ids.single().value, "store_failed", HostEventLevel.ERROR)), captured)
         assertEquals(listOf(issue("store-failed", storeError)), issues)
     }
 
     @Test
-    fun `a failed count records not_scheduled read_failed without an id, reports it and returns the same failure`() =
+    fun `a failed count records not_scheduled read_failed without an id, reports it and returns it as the cause`() =
         runBlocking {
             // Given
             val readError = IllegalStateException("database closed")
@@ -181,7 +182,7 @@ class RealProductNotificationSchedulerTelemetryTest {
             val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
 
             // Then
-            assertSame(readError, result.exceptionOrNull())
+            assertSame(readError, result.exceptionOrNull()?.cause)
             assertEquals(
                 listOf(
                     HostEvent(
@@ -209,7 +210,7 @@ class RealProductNotificationSchedulerTelemetryTest {
         val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
 
         // Then
-        assertSame(readError, result.exceptionOrNull())
+        assertSame(readError, result.exceptionOrNull()?.cause)
         assertEquals(listOf(notScheduled(id = null, reason = "read_failed", HostEventLevel.ERROR)), captured)
         assertEquals(listOf(issue("read-failed", readError)), issues)
     }
