@@ -103,6 +103,13 @@ class ParticleRulesTest {
         assertEquals(512, many.particles.size)
     }
 
+    @Test(timeout = 1000)
+    fun `a burst however large sends at most the most a host keeps alive`() {
+        val system = ParticleSystem(Random(1))
+        system.burst(emitter(maxAlive = 65535), Int.MAX_VALUE, 0L, 0.0, 0.0)
+        assertEquals(ParticleRules.MAX_ALIVE, system.particles.size)
+    }
+
     @Test
     fun `a pan sends along the way the finger went, only while it is down, and bursts where it last was`() {
         val rules = emitter(source = JsEmitSource.Pan("p"), ratePer100pt = 4)

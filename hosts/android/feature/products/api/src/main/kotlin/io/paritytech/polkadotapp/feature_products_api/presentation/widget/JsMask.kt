@@ -63,7 +63,7 @@ internal fun JsModifier.Mask.maskModifier(): Modifier {
     var bounds by remember { mutableStateOf(Rect.Zero) }
     var frameNanos by remember { mutableLongStateOf(0L) }
     val channel = mask.channel
-    val coordinates = remember(mask.trail) { MaskCoordinates() }
+    val coordinates = remember { MaskCoordinates() }
 
     /** What the node draws now, in hundredths of a dp from its top-start corner. */
     fun picture(): JsMaskShapes.Picture {

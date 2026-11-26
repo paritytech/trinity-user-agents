@@ -41,6 +41,20 @@ class MaskStampsTest {
     }
 
     @Test
+    fun `a stamped line has at most the core's most stamps, never closer than half a dp, from end to end`() {
+        val thin = ellipse.copy(spacingPermille = 50)
+        assertEquals(MaskStamps.MAX_STAMPS, MaskStamps.centres(1, thin, listOf(JsMaskPoint(0, 0), JsMaskPoint(10_000_000, 0))).size)
+        val widest = listOf(JsMaskPoint(Int.MIN_VALUE, 0), JsMaskPoint(Int.MAX_VALUE, 0))
+        val stamps = MaskStamps.centres(1, thin, widest)
+        assertEquals(MaskStamps.MAX_STAMPS, stamps.size)
+        assertEquals(MaskStamps.Centre(Int.MIN_VALUE.toDouble(), 0.0), stamps.first())
+        assertEquals("the last stamp is on the last point", Int.MAX_VALUE.toDouble(), stamps.last().x, 1.0)
+        assertEquals("every half a dp", 5, MaskStamps.centres(1, thin, listOf(JsMaskPoint(0, 0), JsMaskPoint(200, 0))).size)
+        val zigzag = (0 until 10_000).map { JsMaskPoint(if (it % 2 == 0) 0 else 100_000, it) }
+        assertTrue(MaskStamps.centres(1, thin, zigzag).size <= MaskStamps.MAX_STAMPS)
+    }
+
+    @Test
     fun `fixed angle turns the tip and capsule ends stay round`() {
         val origin = MaskStamps.Centre(0.0, 0.0)
         val vertical = ellipse.copy(angleCentideg = 9000)

@@ -135,11 +135,14 @@ internal class ParticleSystem(private val random: Random = Random.Default) {
         }
     }
 
-    /** Sends [count] particles at once from the source; a pan source sends them from where the finger last was. */
+    /**
+     * Sends [count] particles at once from the source, at most the most a host keeps alive; a pan source sends them
+     * from where the finger last was.
+     */
     fun burst(emitter: JsEmitter, count: Int, now: Long, width: Double, height: Double) {
         val pan = emitter.source is JsEmitSource.Pan
         val from = if (pan) lastFinger ?: return else null
-        repeat(count) { send(emitter, from ?: origin(emitter, width, height), now) }
+        repeat(count.coerceIn(0, ParticleRules.MAX_ALIVE)) { send(emitter, from ?: origin(emitter, width, height), now) }
     }
 
     private fun owed(amount: Double, time: Boolean): Int {

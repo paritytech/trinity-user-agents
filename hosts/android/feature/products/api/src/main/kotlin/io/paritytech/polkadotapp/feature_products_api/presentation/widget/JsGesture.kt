@@ -31,10 +31,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
@@ -92,6 +94,17 @@ internal fun JsGesture(
     val currentOnAction by rememberUpdatedState(onAction)
     val workerPosition = widget.position?.value?.collectAsState()
     val moves = remember { GestureMoveCoalescer<Offset>() }
+    var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    fun placeTrail(coordinates: LayoutCoordinates) {
+        current.trail?.let { trail ->
+            trail.origin = coordinates.positionInRoot()
+            trail.coordinates = coordinates
+        }
+    }
+
+    // Replacing a trail at unchanged bounds does not trigger another layout callback.
+    SideEffect { layoutCoordinates?.takeIf { it.isAttached }?.let(::placeTrail) }
 
     // Host-owned place of the children, in px from the travel's start. Kept across trees at the same place.
     val placeX = remember { Animatable(0f) }
@@ -356,10 +369,8 @@ internal fun JsGesture(
             }
             // Where the pan's strokes sit on screen, for masks that follow them.
             .onGloballyPositioned { coordinates ->
-                current.trail?.let { trail ->
-                    trail.origin = coordinates.positionInRoot()
-                    trail.coordinates = coordinates
-                }
+                layoutCoordinates = coordinates
+                placeTrail(coordinates)
             }
             .semantics {
                 label?.let { contentDescription = it }
@@ -470,8 +481,8 @@ internal fun JsGesture(
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 if (change.changedToUpIgnoreConsumed()) {
-                                    lifted = true
-                                    if (claimed) {
+                                    lifted = !event.isCancel()
+                                    if (claimed && lifted) {
                                         last = at(change.position)
                                         trace(last)
                                         change.consume()
@@ -564,8 +575,8 @@ internal fun JsGesture(
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.changedToUpIgnoreConsumed()) {
-                                lifted = true
-                                if (claimed) {
+                                lifted = !event.isCancel()
+                                if (claimed && lifted) {
                                     val rest = Offset(
                                         owed.x - GestureRules.caughtUp(owed.x, catchUpFrame),
                                         owed.y - GestureRules.caughtUp(owed.y, catchUpFrame),
@@ -691,6 +702,13 @@ internal fun JsGesture(
 
 private const val NANOS_PER_MS = 1_000_000L
 private const val NANOS_PER_FRAME = 1_000_000_000f / 60f
+
+/**
+ * Whether this event is a touch the system took away (palm rejection, a system gesture, a parent taking the touch)
+ * rather than a lift. Compose reports such a cancel as an up it builds itself, with no MotionEvent behind it; a real
+ * lift always carries one, even when a child pan inside already consumed it.
+ */
+private fun PointerEvent.isCancel(): Boolean = motionEvent == null
 
 /** The feel's damped spring home: its natural frequency squared is the stiffness. */
 private fun JsPanFeel.springHome(): AnimationSpec<Float> = spring(dampingRatio = springDamping, stiffness = springStiffness())
