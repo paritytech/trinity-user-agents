@@ -11,11 +11,7 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Runs calls into the core one after another, off the caller's thread, in the order they were made. The core must see
- * the user's steps, and the read-backs of what it said changed, in the order they happened even when they come from
- * separate coroutines or separate funding parts. Runs for as long as [scope] does.
- */
+// Serial so the core sees the user's steps and their read-backs in order, even across coroutines.
 @Singleton
 class FundingCoreCalls @Inject constructor(
     @ProcessScope scope: CoroutineScope,
@@ -37,12 +33,10 @@ class FundingCoreCalls @Inject constructor(
         }
     }
 
-    /** Queues [call] after every call made before it. */
     fun launch(call: suspend () -> Unit) {
         queue.trySend(call)
     }
 
-    /** Queues [call] after every call made before it, and answers what it returned. */
     suspend fun <T> run(call: suspend () -> T): T {
         val answer = CompletableDeferred<T>()
         queue.trySend {

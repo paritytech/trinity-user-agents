@@ -20,7 +20,6 @@ val FundingQuoteState.isPending: Boolean
 val FundingStage.isOpen: Boolean
     get() = this is FundingStage.Open
 
-/** Why the session ended, once it has failed. */
 val FundingStage.failure: FundingFailure?
     get() = (this as? FundingStage.Failed)?.reason
 

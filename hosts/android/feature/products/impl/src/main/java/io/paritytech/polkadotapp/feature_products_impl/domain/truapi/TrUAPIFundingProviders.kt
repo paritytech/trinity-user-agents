@@ -6,14 +6,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/**
- * Lists the funding providers the core offers: the configured ones after each Remote Config sync, which the core
- * ignores when nothing changed.
- */
+// No dedup: the core ignores an unchanged list.
 class TrUAPIFundingProviders @Inject constructor(
     private val fundingProvidersConfig: FundingProvidersConfig,
 ) {
-    /** Follows Remote Config in [scope] for as long as it lives. */
     fun install(runtime: TrUAPIHostRuntime, scope: CoroutineScope) {
         scope.launch {
             fundingProvidersConfig.publishedNames().collect { names -> runtime.setFundingProviderConfig(names) }

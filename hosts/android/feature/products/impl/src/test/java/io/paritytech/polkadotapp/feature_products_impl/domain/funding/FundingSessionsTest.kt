@@ -171,6 +171,38 @@ class FundingSessionsTest {
     }
 
     @Test
+    fun `a start on the best quote the core refuses fails, and later asks do not start the session`() = runTest {
+        val service = service()
+        presented(service)
+        quotes.quote(100.intoBalance(), INTENT)
+        advanceUntilIdle()
+        core.autoStartFails = true
+
+        val started = service.start(INTENT, null)
+        quotes.quote(200.intoBalance(), INTENT)
+        advanceUntilIdle()
+
+        assertTrue(started.isFailure)
+        assertEquals(listOf("startWhenQuoted 1"), core.calls.filter { it.startsWith("startWhenQuoted") })
+    }
+
+    @Test
+    fun `a started session drops its asks`() = runTest {
+        val service = service()
+        val outcome = presented(service)
+        quotes.quote(100.intoBalance(), INTENT)
+        service.start(INTENT, null)
+        advanceUntilIdle()
+
+        core.sessions["intent"] = FakeFundingCore.session("intent", providerId = ramp)
+        service.onSessionChanged(INTENT)
+        advanceUntilIdle()
+
+        assertEquals(FundingPresentOutcome.STARTED, outcome.await())
+        assertNull(quotes.latestAsk(INTENT))
+    }
+
+    @Test
     fun `an ask made after arming the start is started on too`() = runTest {
         val service = service()
         presented(service)
@@ -181,20 +213,6 @@ class FundingSessionsTest {
         advanceUntilIdle()
 
         assertTrue("startWhenQuoted 1" in core.calls)
-    }
-
-    @Test
-    fun `leaving the start screen disarms the core`() = runTest {
-        val service = service()
-        presented(service)
-        quotes.quote(100.intoBalance(), INTENT)
-        service.start(INTENT, null)
-        advanceUntilIdle()
-
-        quotes.stopStarting(INTENT)
-        advanceUntilIdle()
-
-        assertEquals("cancelAutoStart", core.calls.last())
     }
 
     @Test
@@ -209,7 +227,8 @@ class FundingSessionsTest {
         advanceUntilIdle()
 
         assertEquals(FundingPresentOutcome.DISMISSED, outcome.await())
-        assertFalse("cancelAutoStart" in core.calls)
+        assertFalse(core.calls.any { it.startsWith("cancel") })
+        assertNull(quotes.latestAsk(INTENT))
     }
 
     @Test
@@ -262,7 +281,6 @@ class FundingSessionsTest {
 
         assertEquals(CancelOutcome.CANCELLED, cancelled.getOrNull())
         assertTrue("cancel" in core.calls)
-        assertFalse("cancelAutoStart" in core.calls)
     }
 
     @Test

@@ -13,36 +13,25 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The screens a session's provider asks to show, which the core holds until the app opens them. */
 interface FundingProviderFrames {
-    /** What the providers ask of the app's screens. One consumer reads it; events wait until it does. Never ends. */
+    // Single consumer; events wait until it reads. Never ends.
     val events: Flow<FundingFrameEvent>
 
-    /**
-     * Lets the provider of session [intentId] show the screen it asked for, once the session is on screen or the user
-     * tapped the notice. The screen then comes as [FundingFrameEvent.Opened]; answers whether one was waiting.
-     */
     suspend fun open(intentId: FundingIntentId): Result<Boolean>
 
-    /** Whether the provider of session [intentId] waits for its screen to be opened, so the notice can show again. */
     suspend fun isWaiting(intentId: FundingIntentId): Result<Boolean>
 
-    /** Answers the provider's screen [request], once it is gone. */
     fun answer(request: FundingFrameRequest, outcome: FundingFrameOutcome)
 }
 
 sealed interface FundingFrameEvent {
-    /** Provider [providerId] wants to show one of its screens for session [intentId], held until the app opens it. */
     data class Requested(val intentId: FundingIntentId, val providerId: ProductId) : FundingFrameEvent
 
-    /** The core presents a provider's screen now, answered through [FundingProviderFrames.answer]. */
     data class Opened(val request: FundingFrameRequest) : FundingFrameEvent
 
-    /** The provider's screens for a session are done: take them down and show the session in their place. */
     data class Closed(val intentId: FundingIntentId) : FundingFrameEvent
 }
 
-/** A provider's screen the core presents for session [intentId], showing [target]. */
 data class FundingFrameRequest(
     val id: FundingFrameRequestId,
     val intentId: FundingIntentId,
@@ -50,7 +39,6 @@ data class FundingFrameRequest(
     val target: FundingFrameTarget,
 )
 
-/** Serves the core's provider-screen callbacks, which reach it through the funding bridge. */
 @Singleton
 class RealFundingProviderFrames @Inject constructor(
     private val core: FundingCore,
@@ -72,12 +60,10 @@ class RealFundingProviderFrames @Inject constructor(
         pending?.answer?.complete(outcome)
     }
 
-    /** Provider [providerId] asks to show a screen for session [intentId]. */
     fun requested(providerId: ProductId, intentId: FundingIntentId) {
         eventQueue.trySend(FundingFrameEvent.Requested(intentId, providerId))
     }
 
-    /** A provider's screen the core presents now, once the app opened it, answered once the app takes it down. */
     suspend fun present(providerId: ProductId, intentId: FundingIntentId, target: FundingFrameTarget): FundingFrameOutcome {
         val request = FundingFrameRequest(
             id = FundingFrameRequestId(UUID.randomUUID().toString()),
@@ -97,7 +83,6 @@ class RealFundingProviderFrames @Inject constructor(
         }
     }
 
-    /** The provider is done with its screens for session [intentId]: each one still open answers `Closed`. */
     fun close(providerId: ProductId, intentId: FundingIntentId) {
         val closed = synchronized(lock) {
             frames.values
