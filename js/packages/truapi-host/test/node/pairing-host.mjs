@@ -127,3 +127,53 @@ test(
     await portsBackTo(baseline);
   },
 );
+
+test(
+  "the last owner can stop a worker while its render stream is open",
+  { skip: !wasmIsBuilt("web/truapi_server_bg.wasm") && "WASM not built" },
+  async () => {
+    const { createMockHost } = await import("@parity/truapi-host/testing");
+    const runtime = await createNodePairingHostRuntime(
+      createMockHost().callbacks,
+      {
+        hostConfig,
+      },
+    );
+    try {
+      const productId = "shared-worker.dot";
+      const changes = [];
+      runtime.subscribeWorkerDemand((change) => changes.push(change));
+      const chat = runtime.claimWorker(productId);
+      const pocket = runtime.claimWorker(productId);
+      const provider = await runtime.createProvider({
+        productId,
+        executionKind: "Worker",
+      });
+      const opened = Promise.withResolvers();
+      const unsubscribe = provider.subscribe(opened.resolve);
+      const closeRender = provider.render(
+        {
+          context: { tag: "PocketCard", value: { cardId: "loyalty" } },
+          payload: "0x",
+        },
+        { onUpdate() {}, onError: opened.reject },
+      );
+      await opened.promise;
+      unsubscribe();
+
+      pocket.release();
+      pocket.release();
+      await runtime.parseProductId(productId);
+      assert.deepEqual(changes, [{ productId, wanted: true }]);
+      chat.release();
+      await runtime.parseProductId(productId);
+      assert.deepEqual(changes, [
+        { productId, wanted: true },
+        { productId, wanted: false },
+      ]);
+      closeRender();
+    } finally {
+      runtime.dispose();
+    }
+  },
+);

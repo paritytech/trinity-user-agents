@@ -17,11 +17,10 @@ final class MockRemoteConfigManager: RemoteConfigManaging {
         dotNsResolver: nil,
         dotNsNameRegistry: nil,
         coinageInstanceId: nil,
-        fundingUrl: nil,
-        offrampUrl: nil,
         accountDataStoreContract: nil,
         paymentAsset: nil,
-        appSharingUrl: nil
+        appSharingUrl: nil,
+        coinagePrivacyConfig: nil
     )
 
     func fetchRemoteConfigValues() {

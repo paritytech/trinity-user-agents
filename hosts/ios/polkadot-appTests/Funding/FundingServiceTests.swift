@@ -158,7 +158,7 @@ struct FundingServiceTests {
         let cancelled = try await service.cancel(intent)
         runtime.releaseSelection()
 
-        #expect(cancelled == .ended)
+        #expect(cancelled == .cancelled)
         #expect(await outcome.value == .dismissed)
         await #expect(throws: FundingStartError.left) { try await start.value }
     }
@@ -351,7 +351,9 @@ private extension FundingServiceTests {
     var intent: String { "intent" }
 
     func makeService(_ runtime: MockFundingRuntime) -> FundingService {
-        FundingService(runtime: runtime, logger: MockLogger())
+        let service = FundingService(logger: MockLogger())
+        service.attach(runtime: runtime)
+        return service
     }
 
     func state(_ service: FundingService) async -> FundingEntry {

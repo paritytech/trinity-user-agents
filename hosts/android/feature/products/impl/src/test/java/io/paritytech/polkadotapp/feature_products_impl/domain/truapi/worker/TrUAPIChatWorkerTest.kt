@@ -52,6 +52,7 @@ import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
@@ -68,7 +69,7 @@ class TrUAPIChatWorkerTest {
     private val messageData = DataByteArray.empty()
 
     private fun TestScope.worker(
-        runtime: TrUAPIHostRuntime = mock(),
+        runtime: TrUAPIHostRuntime = mockk(relaxed = true),
         workers: TrUAPIWorkerSupervisor = mock(),
         chatMessaging: ProductChatMessaging = FakeChatMessaging(),
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
@@ -555,16 +556,18 @@ class TrUAPIChatWorkerTest {
     @Test
     fun `the lease is acquired once and released once when the scope is cancelled`() = runTest {
         val runtime: TrUAPIHostRuntime = mock()
+        val claim: NativeWorkerClaim = mock()
+        whenever(runtime.claimWorker(productId)).thenReturn(claim)
         val workerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         worker(runtime = runtime, scope = workerScope)
 
-        verify(runtime, times(1)).acquireWorker(productId)
-        verify(runtime, never()).releaseWorker(productId)
+        verify(runtime, times(1)).claimWorker(productId)
+        verify(claim, never()).release()
 
         workerScope.cancel()
         advanceUntilIdle()
 
-        verify(runtime, times(1)).releaseWorker(productId)
+        verify(claim, times(1)).release()
     }
 }

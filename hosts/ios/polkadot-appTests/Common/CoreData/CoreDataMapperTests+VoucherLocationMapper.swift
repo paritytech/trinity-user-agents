@@ -242,5 +242,49 @@ extension CoreDataMapperTests {
                 try await locationRepo.saveOperation({ [update] }, { [] }).asyncExecute()
             }
         }
+
+        struct UnloadedCountCase: Sendable {
+            let secondState: Voucher.OnChainState
+            let expected: UInt32?
+        }
+
+        @Test(
+            "The unloaded count is kept within a ring and cleared when the voucher leaves it",
+            arguments: [
+                UnloadedCountCase(
+                    secondState: .inRecycler(.init(index: 4, membersCount: 20)),
+                    expected: 5
+                ),
+                UnloadedCountCase(
+                    secondState: .inRecycler(.init(index: 4, membersCount: 20, unloadedCount: 6)),
+                    expected: 6
+                ),
+                UnloadedCountCase(
+                    secondState: .inRecycler(.init(index: 8, membersCount: 20)),
+                    expected: nil
+                ),
+                UnloadedCountCase(
+                    secondState: .onboarding,
+                    expected: nil
+                )
+            ]
+        )
+        func unloadedCountFollowsRingMembership(_ testCase: UnloadedCountCase) async throws {
+            let original = unlocatedVoucher(index: 310)
+            try await fullRepo.saveOperation({ [original] }, { [] }).asyncExecute()
+
+            try await locationRepo.saveOperation({
+                [VoucherLocationUpdate(
+                    derivationIndex: 310,
+                    remoteState: .inRecycler(.init(index: 4, membersCount: 20, unloadedCount: 5))
+                )]
+            }, { [] }).asyncExecute()
+
+            try await locationRepo.saveOperation({
+                [VoucherLocationUpdate(derivationIndex: 310, remoteState: testCase.secondState)]
+            }, { [] }).asyncExecute()
+
+            #expect(try await stored(original).recycler?.unloadedCount == testCase.expected)
+        }
     }
 }

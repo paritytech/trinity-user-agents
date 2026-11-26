@@ -62,8 +62,6 @@ use super::{
 		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
-#[cfg(doc)]
-use crate::WorkerTransition;
 
 /// Carries both kinds of core traffic to one host's callbacks.
 ///
@@ -84,6 +82,23 @@ impl crate::logging::HostSink for CallbackSink {
 		if let Some(callbacks) = self.callbacks.upgrade() {
 			callbacks.on_core_event(marker.to_string(), attributes);
 		}
+	}
+}
+
+/// One consumer's reference on a product worker.
+///
+/// Release the claim when its owner finishes. Dropping the last handle also releases it.
+#[derive(uniffi::Object)]
+pub struct NativeWorkerClaim {
+	reference: Mutex<Option<crate::WorkerHold>>,
+}
+
+#[uniffi::export]
+impl NativeWorkerClaim {
+	/// Release this claim once, even if several owners of this handle call concurrently.
+	pub fn release(&self) {
+		let reference = self.reference.lock().expect("worker claim mutex poisoned").take();
+		drop(reference);
 	}
 }
 
@@ -159,11 +174,11 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
-			pointer,
-			descriptor,
-			*allows_reserved_values,
+			&pointer,
+			&descriptor,
+			reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
@@ -476,9 +491,16 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request, and say what
-	/// that did. `TooLate` asks the host to tell the user the balance was
-	/// already credited.
+	/// Cancel funding session `intent` at the user's request, whatever it
+	/// went through so far, and say what that did. While its overlay is up
+	/// the core drops `present_funding`, which the host answers by taking the
+	/// overlay down, and the session is gone (`Cancelled`). Once started, it ends
+	/// when no provider serves it; otherwise the provider is asked
+	/// (`Requested`), and before money moved a second cancel ends it. After
+	/// money moved the provider may answer with an offer, read from the
+	/// session's `cancel` and answered with `confirm_funding_cancel`.
+	/// `TooLate` asks the host to tell the user the balance was already
+	/// credited; an ended session answers `Refused`.
 	pub async fn cancel_funding(
 		&self,
 		intent: String,
@@ -590,7 +612,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Disarm `start_funding_when_quoted` for session `intent`, as the user
-	/// leaves its quotes.
+	/// goes back from its quotes and the session stays open.
+	/// `cancel_funding` disarms it too.
 	pub fn cancel_funding_auto_start(&self, intent: String) {
 		self.runtime.cancel_funding_auto_start(&intent);
 	}
@@ -678,17 +701,17 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// The stack the runtime runs: its verified descriptor, whether it is
-	/// stale or has shut down, and whether a newer copy waits for the next
-	/// start.
+	/// stale or has shut down, whether a newer copy waits for the next
+	/// start, and where its chains answered differently from the descriptor.
 	pub fn stack_status(&self) -> StackStatus {
 		self.stack_refresh.status()
 	}
 
 	/// Fetch the stack's descriptor now instead of when the copy is an hour
-	/// old, as when the app returns to the foreground or a chain answers with
-	/// another genesis hash. Returns at once; the result arrives through
-	/// [`NativeStackCallbacks::stack_changed`]. Nothing is fetched until
-	/// [`Self::set_stack_callbacks`] installed the callbacks.
+	/// old, as when the app returns to the foreground. Returns at once; the
+	/// result arrives through [`NativeStackCallbacks::stack_changed`].
+	/// Nothing is fetched until [`Self::set_stack_callbacks`] installed the
+	/// callbacks.
 	pub fn refresh_stack(&self) {
 		self.stack_refresh.refresh_now();
 	}
@@ -721,11 +744,13 @@ impl NativeTrUApiHostRuntime {
 		))
 	}
 
-	/// Take one reference on the product's worker for a modality holder. The
-	/// first one requests [`WorkerTransition::Start`]; pair every call with
-	/// one [`Self::release_worker`].
-	pub fn acquire_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().acquire(&product_id);
+	/// Claim a product's worker while this consumer needs it.
+	///
+	/// Each call returns a separate claim on the worker.
+	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
+		Arc::new(NativeWorkerClaim {
+			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
+		})
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -734,12 +759,6 @@ impl NativeTrUApiHostRuntime {
 	/// start it again.
 	pub fn worker_exited(&self, product_id: ProductId) {
 		self.runtime.worker_exited(&product_id);
-	}
-
-	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
-	/// Releasing with none held is a no-op.
-	pub fn release_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().release(&product_id);
 	}
 
 	/// Forget one product: revoke its grants and Allow once answers, then

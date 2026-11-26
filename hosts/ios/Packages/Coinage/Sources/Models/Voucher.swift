@@ -51,11 +51,14 @@ public struct Voucher: Equatable, CoinageDerivable, Sendable {
         /// First locally confirmed inclusion in this ring.
         /// Nil until confirmed. Saved across restarts and reset on restore.
         public let enteredAt: Date?
+        /// The ring's `RecyclersUnloadedCount`. Nil while not yet delivered by the chain.
+        public let unloadedCount: UInt32?
 
-        public init(index: UInt32, membersCount: UInt32, enteredAt: Date? = nil) {
+        public init(index: UInt32, membersCount: UInt32, enteredAt: Date? = nil, unloadedCount: UInt32? = nil) {
             self.index = index
             self.membersCount = membersCount
             self.enteredAt = enteredAt
+            self.unloadedCount = unloadedCount
         }
     }
 
