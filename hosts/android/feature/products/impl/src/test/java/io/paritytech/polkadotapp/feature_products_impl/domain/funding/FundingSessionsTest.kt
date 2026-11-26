@@ -199,7 +199,7 @@ class FundingSessionsTest {
         advanceUntilIdle()
 
         assertEquals(FundingPresentOutcome.STARTED, outcome.await())
-        assertNull(quotes.shown(INTENT))
+        assertNull(quotes.latestAsk(INTENT))
     }
 
     @Test
@@ -228,7 +228,7 @@ class FundingSessionsTest {
 
         assertEquals(FundingPresentOutcome.DISMISSED, outcome.await())
         assertFalse(core.calls.any { it.startsWith("cancel") })
-        assertNull(quotes.shown(INTENT))
+        assertNull(quotes.latestAsk(INTENT))
     }
 
     @Test

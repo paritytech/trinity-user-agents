@@ -232,7 +232,7 @@ class RealFundingSessions @Inject constructor(
             }
         }
         val parts = read.logFailure("Funding session read failed").getOrElse { return null }
-        val shownQuotes = quotes.shown(intentId)
+        val shownQuotes = quotes.latestAsk(intentId)
 
         return synchronized(lock) {
             val presentation = presentations[intentId]
