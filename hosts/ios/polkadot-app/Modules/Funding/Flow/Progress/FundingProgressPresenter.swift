@@ -27,7 +27,7 @@ final class FundingProgressPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeProgressViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeProgressViewModel(for: model))
     }
 
     override func setup() {
@@ -52,7 +52,7 @@ private extension FundingProgressPresenter {
     /// while a provider that serves another network with its own screen
     /// reports no address, so only its screen opens.
     func showDepositOnceReported() {
-        let current = state
+        let current = model
         guard !hasShownDeposit, current.direction == .in, !current.hasReached(.received),
               case .crypto? = current.progress?.deposit
         else { return }
@@ -62,7 +62,7 @@ private extension FundingProgressPresenter {
     }
 
     func refreshWhenTakingLonger() {
-        let current = state
+        let current = model
         interactor.refreshWhenTakingLonger(atMs: current.hasStarted ? current.progress?.longerAtMs : nil)
     }
 }

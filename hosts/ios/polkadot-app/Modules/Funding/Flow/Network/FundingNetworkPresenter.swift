@@ -19,7 +19,7 @@ final class FundingNetworkPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeNetworkViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeNetworkViewModel(for: model))
     }
 }
 

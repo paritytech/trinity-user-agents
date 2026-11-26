@@ -27,18 +27,18 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
         entryInteractor.setup()
     }
 
-    var state: FundingEntryModel {
-        var state = flowState.model(for: entry)
-        state.amountIssue = activity.amountIssue
-        state.isStarting = activity.isStarting
-        state.startError = activity.startError
-        state.isCancelling = activity.isCancelling
-        state.isAnsweringOffer = activity.isAnsweringOffer
-        state.historyClock = activity.historyClock
-        return state
+    var model: FundingEntryModel {
+        var model = flowState.model(for: entry)
+        model.amountIssue = activity.amountIssue
+        model.isStarting = activity.isStarting
+        model.startError = activity.startError
+        model.isCancelling = activity.isCancelling
+        model.isAnsweringOffer = activity.isAnsweringOffer
+        model.historyClock = activity.historyClock
+        return model
     }
 
-    /// Builds the screen's view model from `state` and pushes it to the view.
+    /// Builds the screen's view model from `model` and pushes it to the view.
     func render() {}
 
     /// Tells the core of the draft's selection when it changed since the
@@ -52,7 +52,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     /// which it is told of first.
     func requestQuote() {
         reportSelection()
-        entryInteractor.quote(amount: state.amount)
+        entryInteractor.quote(amount: model.amount)
     }
 
     /// A hook for a screen that acts on the session's new state.

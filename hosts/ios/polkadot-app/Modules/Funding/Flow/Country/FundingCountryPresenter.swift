@@ -19,7 +19,7 @@ final class FundingCountryPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeCountryViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeCountryViewModel(for: model))
     }
 }
 

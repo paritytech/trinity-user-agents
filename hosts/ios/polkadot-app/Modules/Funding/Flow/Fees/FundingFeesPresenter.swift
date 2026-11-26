@@ -18,7 +18,7 @@ final class FundingFeesPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeFeesViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeFeesViewModel(for: model))
     }
 }
 

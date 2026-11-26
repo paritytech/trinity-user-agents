@@ -25,7 +25,7 @@ final class FundingSummaryPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeSummaryViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeSummaryViewModel(for: model))
     }
 }
 
@@ -34,7 +34,7 @@ extension FundingSummaryPresenter: FundingSummaryPresenterProtocol {
     /// can leave while it is being selected, when the core drops the session
     /// and nothing more is shown.
     func start() {
-        let current = state
+        let current = model
         guard !current.isStarting, !current.hasStarted, let providerId = current.selectedProviderId,
               current.selectedQuote != nil
         else { return }

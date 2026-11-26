@@ -21,7 +21,7 @@ final class FundingDepositPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeDepositViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeDepositViewModel(for: model))
     }
 }
 

@@ -25,7 +25,7 @@ final class FundingAmountPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeAmountViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeAmountViewModel(for: model))
     }
 
     override func setup() {
@@ -69,7 +69,7 @@ extension FundingAmountPresenter: FundingAmountPresenterProtocol {
     }
 
     func continueFromAmount() {
-        guard state.canContinue else { return }
+        guard model.canContinue else { return }
 
         quoteDebouncer.cancel()
         switch flowState.draft.rail {
@@ -98,7 +98,7 @@ private extension FundingAmountPresenter {
     /// replacing the ask waiting on the pause before it.
     func askAfterPause() {
         quoteDebouncer.cancel()
-        guard flowState.draft.rail != .crypto, (state.amount ?? 0) > 0 else { return }
+        guard flowState.draft.rail != .crypto, (model.amount ?? 0) > 0 else { return }
 
         quoteDebouncer.debounce { [weak self] in
             self?.requestQuote()
@@ -108,6 +108,6 @@ private extension FundingAmountPresenter {
     /// Reads the core's issue with the typed amount again.
     func refreshAmountIssue() {
         let spendable = flowState.draft.spendable
-        activity.amountIssue = state.amount.flatMap { interactor.amountIssue($0, spendable: spendable) }
+        activity.amountIssue = model.amount.flatMap { interactor.amountIssue($0, spendable: spendable) }
     }
 }
