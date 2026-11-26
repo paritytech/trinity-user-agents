@@ -87,7 +87,7 @@ import uniffi.truapi.PocketCardRemoval
 import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
-import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardCoverOutcome
 import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
@@ -251,27 +251,26 @@ interface HostBridge {
     ): DevicePermissionStatus = DevicePermissionStatus.NOT_APPLICABLE
 
     /**
-     * Show or hide the face above this execution's expanded card. Answers
-     * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
-     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it,
-     * and returns without waiting for the animation.
+     * Cover (`true`) or uncover (`false`) this execution's expanded card. Answers
+     * [ExpandedCardCoverOutcome.NOT_PRESENTED] when the product is not under its
+     * card and [ExpandedCardCoverOutcome.USER_MOVING] while the user drags it.
      *
-     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
-     * says so instead of pretending it moved one.
+     * Defaults to [ExpandedCardCoverOutcome.UNSUPPORTED], so an app without cards
+     * says so instead of pretending it covered one.
      */
-    suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-        ExpandedCardFaceOutcome.UNSUPPORTED
+    suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+        ExpandedCardCoverOutcome.UNSUPPORTED
 
     /**
-     * Turn this execution's expanded card so its back (`true`) or its front
-     * (`false`) is up. Answers [ExpandedCardTurnOutcome.NO_BACK] when the card
-     * has no back to show, and the face call's outcomes otherwise. Returns
-     * without waiting for the animation.
+     * Turn this execution's expanded card so [side] is up. Answers
+     * [ExpandedCardTurnOutcome.NO_BACK] when the card has no back to show, and
+     * the cover call's outcomes otherwise. Returns without waiting for the
+     * animation.
      *
      * Defaults to [ExpandedCardTurnOutcome.UNSUPPORTED], so an app that cannot
      * turn cards says so.
      */
-    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+    suspend fun turnExpandedCard(side: PocketCardSide): ExpandedCardTurnOutcome =
         ExpandedCardTurnOutcome.UNSUPPORTED
 
     /**
@@ -628,11 +627,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = withHostRejection { bridge.devicePermissionStatus(request) }
 
-    override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-        withHostRejection { bridge.setExpandedCardFaceShown(shown) }
+    override suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+        withHostRejection { bridge.setExpandedCardCovered(covered) }
 
-    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
-        withHostRejection { bridge.setExpandedCardBackShown(shown) }
+    override suspend fun turnExpandedCard(side: PocketCardSide): ExpandedCardTurnOutcome =
+        withHostRejection { bridge.turnExpandedCard(side) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,

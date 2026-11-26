@@ -339,16 +339,19 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 	let (_other, other_callbacks) = open_widget("other.dot");
 
 	let admin = card.admin();
-	let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
+	let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_card_covered(
 		admin.product_runtime().as_ref(),
 		&truapi::CallContext::default(),
-		v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
+		truapi::latest::HostExpandedCardSetCardCoveredRequest { covered: true }.into(),
 	));
 
-	let turned = futures::executor::block_on(truapi::api::ExpandedCard::set_back_shown(
+	let turned = futures::executor::block_on(truapi::api::ExpandedCard::turn_card(
 		admin.product_runtime().as_ref(),
 		&truapi::CallContext::default(),
-		v01::HostExpandedCardSetBackShownRequest { shown: true }.into(),
+		truapi::latest::HostExpandedCardTurnCardRequest {
+			side: truapi::latest::PocketCardSide::Back,
+		}
+		.into(),
 	));
 
 	assert!(
@@ -356,12 +359,12 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 		"the card's own host applied both: {reply:?} {turned:?}"
 	);
 	assert_eq!(
-		(card_callbacks.face_requests(), card_callbacks.back_requests()),
-		(vec![false], vec![true])
+		(card_callbacks.cover_requests(), card_callbacks.turn_requests()),
+		(vec![true], vec![truapi::latest::PocketCardSide::Back])
 	);
 	assert!(
-		other_callbacks.face_requests().is_empty() && other_callbacks.back_requests().is_empty(),
-		"another product's card must not be asked to move its face or turn"
+		other_callbacks.cover_requests().is_empty() && other_callbacks.turn_requests().is_empty(),
+		"another product's card must not be asked to cover or turn"
 	);
 }
 

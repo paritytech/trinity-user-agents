@@ -36,7 +36,7 @@ use crate::{
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	host_logic::root_entropy::RootEntropy,
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -1101,7 +1101,7 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		product_id: ProductId,
 		card_id: String,
-		side: PocketCardSide,
+		side: latest::PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
 		Ok(self.pocket.face(product_id, card_id, side).await?)
 	}

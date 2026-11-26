@@ -43,7 +43,7 @@ class PocketPreviewLoaderTest {
     )
 
     private fun definition(preview: PocketCardPreview) =
-        PocketCardDefinition(id = PocketCardId("loyalty"), title = "Loyalty", preview = preview, faceShown = true)
+        PocketCardDefinition(id = PocketCardId("loyalty"), title = "Loyalty", preview = preview, startsCovered = false)
 
     /**
      * The preview is read on the way to the add sheet, before the user has approved anything, so how
