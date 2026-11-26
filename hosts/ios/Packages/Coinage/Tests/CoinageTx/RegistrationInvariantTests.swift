@@ -127,6 +127,39 @@ struct RegistrationInvariantTests {
         }
     }
 
+    // MARK: - Reclaim
+
+    @Test("Accepts a reclaim of a handed-off coin")
+    func acceptsReclaimOfHandedOffCoin() async throws {
+        let store = MockCoinageTxRepository()
+        try await store.markHandedOff(.coin(42, testKey(42)))
+
+        try await store.register(.fixture(inputs: [.coin(.reclaimed(42, testKey(42)))]))
+
+        #expect(try await store.getAllEntries().count == 1)
+    }
+
+    @Test("Rejects a reclaim of a coin that was never handed off")
+    func rejectsReclaimOfUnhandedCoin() async throws {
+        let store = MockCoinageTxRepository()
+
+        await #expect(throws: CoinageTxError.reclaimedInputNotHandedOff(testKey(43).toHex())) {
+            try await store.register(.fixture(inputs: [.coin(.reclaimed(43, testKey(43)))]))
+        }
+    }
+
+    @Test("Rejects a reclaim of a handed-off coin a live entry still claims")
+    func rejectsReclaimClaimedByLiveEntry() async throws {
+        let store = MockCoinageTxRepository()
+        let input = CoinageTxInput.coin(.reclaimed(44, testKey(44)))
+        try await store.markHandedOff(.coin(44, testKey(44)))
+        try await store.register(.fixture(inputs: [input]))
+
+        await #expect(throws: CoinageTxError.inputAlreadyClaimed(testKey(44).toHex())) {
+            try await store.register(.fixture(inputs: [input]))
+        }
+    }
+
     // MARK: - Checkpoint
 
     @Test("Registration checkpoint is preserved on the stored entry")

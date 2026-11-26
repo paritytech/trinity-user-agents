@@ -33,4 +33,5 @@ class StatementStoreSlotAllocationLocal(
     val priorityLevel: Int,
     /** Set by the consumer that allocated the slot, which finds its own rows by it. */
     val tag: String?,
+    val signerDerivationPath: String?,
 )

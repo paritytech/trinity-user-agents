@@ -140,6 +140,9 @@ const STATEMENT_AFFINITY_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 /// here instead, by [`MAX_UNDELIVERED_FRAMES`].
 const MAX_PENDING_REQUESTS: u32 = 1024;
 const MAX_SUBSCRIPTIONS: u32 = 1024;
+/// Transactions a chain holds from submission until they are finalized or
+/// dropped, matching smoldot's own default.
+const MAX_PENDING_TRANSACTIONS: u32 = 64;
 
 /// How many response frames may be waiting for the consumer before further
 /// requests are refused, mirroring the bounded outbound buffer the WebSocket
@@ -331,6 +334,8 @@ impl LightState {
 						max_subscriptions: MAX_SUBSCRIPTIONS,
 					},
 					statement_protocol_config: statement_protocol.then(statement_protocol_config),
+					max_pending_transactions: NonZero::new(MAX_PENDING_TRANSACTIONS)
+						.expect("budget is non-zero"),
 				})
 				.map_err(|err| ProviderError::AddChain { reason: err.to_string() })
 		});
@@ -480,6 +485,8 @@ fn add_implicit(
 			potential_relay_chains: relay.into_iter(),
 			json_rpc: AddChainConfigJsonRpc::Disabled,
 			statement_protocol_config: statement_protocol.then(statement_protocol_config),
+			max_pending_transactions: NonZero::new(MAX_PENDING_TRANSACTIONS)
+				.expect("budget is non-zero"),
 		})
 		.map_err(|err| ProviderError::AddChain { reason: err.to_string() })?;
 
