@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import os
 import PolkadotUI
 import Products
@@ -400,6 +401,48 @@ struct ChatRuntimeTests {
             #expect(workers.references.acquired == [chatProduct])
             #expect(workers.references.released.isEmpty)
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func chatForwardsTheCurrentRoomsAndUpdatesToEachRunningWorker() async throws {
+        let bot = ChatSampleExtension(logger: StubLogger())
+        let rooms = ChatExtensionDiscoverContext(
+            settings: InMemorySettingsManager(),
+            storageFacade: UserDataStorageTestFacade(),
+            operationQueue: OperationQueue(),
+            logger: StubLogger()
+        )
+        let first = MockProductExecution()
+        let replacement = MockProductExecution()
+        let workers = workersRunning(first)
+        let runtime = makeRustRuntime(workers: workers)
+        var firstUpdates = first.roomChanges.stream.makeAsyncIterator()
+        var replacementUpdates = replacement.roomChanges.stream.makeAsyncIterator()
+        var states = workers.executionsDelivered.makeAsyncIterator()
+        let lobby = ChatRoom(roomId: "lobby", participatingAs: .roomHost)
+        let news = ChatRoom(roomId: "news", participatingAs: .roomHost)
+
+        try await disposing(runtime) {
+            try await runtime.start(messagingSupport: .init(bot: bot, context: rooms))
+            _ = await states.next()
+            #expect(await firstUpdates.next() == [])
+
+            _ = try await rooms.createRoom(for: bot, roomId: "lobby", name: nil, icon: nil)
+            #expect(await firstUpdates.next() == [lobby])
+
+            workers.publish([:])
+            _ = await states.next()
+            workers.publish([chatProduct: replacement])
+            #expect(await replacementUpdates.next() == [lobby])
+
+            _ = try await rooms.createRoom(for: bot, roomId: "news", name: nil, icon: nil)
+            #expect(await replacementUpdates.next()?.sorted { $0.roomId < $1.roomId } == [lobby, news])
+        }
+
+        first.roomChanges.continuation.finish()
+        #expect(await firstUpdates.next() == nil)
+        #expect(workers.readinessObservations == (started: 1, cancelled: 1))
+        #expect(workers.references.released == [chatProduct])
     }
 
     @Test func rustRuntimeForwardsUserMessagesAndActions() async throws {

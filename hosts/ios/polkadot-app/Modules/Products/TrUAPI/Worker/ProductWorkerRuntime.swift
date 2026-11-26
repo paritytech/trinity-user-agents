@@ -43,11 +43,12 @@ extension ProductWorkerRuntime {
         _ body: @escaping @Sendable (NativeWorkerExecution) async -> Void
     ) async {
         var running: Task<Void, Never>?
-        defer { running?.cancel() }
 
         for await worker in workerExecutionState(productId: productId) {
+            guard !Task.isCancelled else { break }
             guard let execution = worker.execution else {
                 running?.cancel()
+                await running?.value
                 running = nil
                 continue
             }
@@ -55,6 +56,9 @@ extension ProductWorkerRuntime {
                 running = Task { await body(execution) }
             }
         }
+
+        running?.cancel()
+        await running?.value
     }
 
     /// Draws `request` on the product's worker for as long as the caller listens.

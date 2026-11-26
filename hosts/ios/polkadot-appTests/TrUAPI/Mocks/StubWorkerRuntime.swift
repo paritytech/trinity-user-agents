@@ -8,10 +8,12 @@ import TrUAPIHost
 final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
     private let states = AsyncCurrentValueSubject<[ProductId: NativeWorkerExecutionState]>([:])
     private let entered = AsyncStream<Void>.makeStream()
+    private let observations = OSAllocatedUnfairLock(initialState: (started: 0, cancelled: 0))
     private let delivered = AsyncStream<Void>.makeStream()
 
     let references = StubWorkerReferences()
 
+    var readinessObservations: (started: Int, cancelled: Int) { observations.withLock { $0 } }
     var readinessChecks: AsyncStream<Void> { entered.stream }
     var executionsDelivered: AsyncStream<Void> { delivered.stream }
 
@@ -24,12 +26,15 @@ final class StubWorkerRuntime: ProductWorkerRuntime, @unchecked Sendable {
     }
 
     func workerExecutionState(productId: ProductId) -> AsyncStream<NativeWorkerExecutionState> {
+        observations.withLock { $0.started += 1 }
         entered.continuation.yield(())
         let iterator = StateIterator(states.makeAsyncIterator())
         return AsyncStream(unfolding: { [delivered] in
             guard let snapshot = await iterator.next() else { return nil }
             delivered.continuation.yield(())
             return snapshot[productId] ?? .pending
+        }, onCancel: { [observations] in
+            observations.withLock { $0.cancelled += 1 }
         })
     }
 }

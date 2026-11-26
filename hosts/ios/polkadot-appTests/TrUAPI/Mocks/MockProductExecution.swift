@@ -19,6 +19,7 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
     var devicePermissionGranted = false
     private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
+    let roomChanges = AsyncStream<[ChatRoom]>.makeStream()
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
@@ -154,7 +155,7 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
         chainClosed.append(connectionId)
     }
 
-    override func notifyChatRoomsChanged(rooms _: [ChatRoom]) {}
+    override func notifyChatRoomsChanged(rooms: [ChatRoom]) { roomChanges.continuation.yield(rooms) }
 
     func sessionChatIdentityKey() throws -> Data? {
         nil
