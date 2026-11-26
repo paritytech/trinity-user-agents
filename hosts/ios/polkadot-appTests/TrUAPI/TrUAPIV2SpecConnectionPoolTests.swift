@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import ChainRegistry
 import IssueMonitoring
-import os
 import SDKLogger
 @testable import polkadot_app
 
@@ -382,16 +381,6 @@ struct TrUAPIV2SpecConnectionPoolTests {
         await pool.awaitLifecycleEvents()
 
         #expect(socket.probeTimeouts == [5])
-    }
-}
-
-private final class RecordingIssueReporter: IssueReporting, @unchecked Sendable {
-    private let recorded = OSAllocatedUnfairLock<[CriticalIssue]>(initialState: [])
-
-    var issues: [CriticalIssue] { recorded.withLock { $0 } }
-
-    func report(_ issue: CriticalIssue) {
-        recorded.withLock { $0.append(issue) }
     }
 }
 
