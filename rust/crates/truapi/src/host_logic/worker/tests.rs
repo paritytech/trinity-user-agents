@@ -166,6 +166,19 @@ fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
 	);
 }
 
+// A reload starts the product afresh, so the crashes of the version it replaces
+// do not count against the one that follows.
+#[test]
+fn a_reload_ends_the_run_of_crashes() {
+	let (ledger, _recorder) = observed();
+	let product = ProductId::for_test("a.dot");
+	ledger.acquire(&product);
+	let exited = |now_ms| ledger.exited(&product, current(&ledger, &product), now_ms);
+	assert_eq!((exited(0), exited(1)), (None, Some(1_000)));
+	ledger.reload(&product);
+	assert_eq!(exited(2), None, "the reloaded worker's first crash restarts at once");
+}
+
 // A restart waiting out its backoff does nothing once nothing holds the
 // worker, or once it was started again meanwhile.
 #[test]
