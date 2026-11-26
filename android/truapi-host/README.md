@@ -141,7 +141,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("chat.dot").getOrThrow(), ExecutableKind.WORKER),
+    configuration = ProductExecutionConfig(ProductId.parse("chat.paseo").getOrThrow(), ExecutableKind.WORKER),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()

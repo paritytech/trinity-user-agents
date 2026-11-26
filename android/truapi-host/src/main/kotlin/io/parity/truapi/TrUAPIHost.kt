@@ -1134,7 +1134,10 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
-    /** The first claim requests a worker start. Releasing the last claim requests a stop. */
+    /**
+     * The first claim requests a worker start. Releasing the last claim requests a stop.
+     * A claim under an id the stack does not serve holds nothing.
+     */
     fun claimWorker(productId: ProductId): NativeWorkerClaim = inner.claimWorker(productId)
 
     /**

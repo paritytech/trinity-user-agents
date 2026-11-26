@@ -20,13 +20,15 @@ A host passes the core ids its stack serves, so the two never hold different ids
 `parseProductId` gives that id for a name: it answers the id the host's stack serves the name under and rejects a name
 the stack does not serve. The wasm module's own `parseProductId` checks syntax only and accepts any TLD. With `game.dot`
 on a `paseo` stack, `productRuntime` and `createProvider` throw an error that names `game.paseo`, `claimWorker` holds
-nothing and logs a warning, and the permission status calls reject, because a status stored under that name is one no
-product reads. `clearProductState` clears what is stored under exactly the id it is given.
+nothing, which the core logs at `warn`, and the permission status calls reject, because a status stored under that name
+is one no product reads. They reject the same way when a request names `game.dot`, as the target of an account access
+for example. `clearProductState` clears the grants and the product storage kept under exactly the id it is given.
 
 A product that an earlier release ran as `name.dot` on such a stack runs as `name.<tld>`, with new accounts and none of
 what was stored under the `dot` id: its storage, Pocket cards, chat rooms, ring-VRF registrations and stored permission
-statuses. A host drops those with `clearProductState("name.dot")`. The CLI reads `--product-id name.dot` as
-`name.<tld>`, so its default product and any product a user selected under `.dot` get new accounts too.
+statuses. `clearProductState("name.dot")` drops its grants and its storage. The rest stays in the host's store, where no
+product reads it. The CLI reads `--product-id name.dot` as `name.<tld>`, so its default product and any product a user
+selected under `.dot` get new accounts too.
 
 The test host follows the same rule. Its test stack is on `paseo` and its default product is `mock.paseo`. The
 Playwright fixture, `createMockClient`, `productAccountAddress`, `getProductAccountAddress` and `seedProductStorage`

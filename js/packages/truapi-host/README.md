@@ -61,14 +61,14 @@ answer wherever the runtime takes a product id, so the host and the core hold
 one id for a product. With `chat-bot.dot` on a `paseo` stack:
 
 - `createProvider` rejects, and the error names `chat-bot.paseo`;
-- `claimWorker` holds nothing and the core logs a warning, so no demand is
+- `claimWorker` holds nothing, which the core logs at `warn`, so no demand is
   reported for it;
 - `getPermissionAuthorizationStatus`, `getPermissionAuthorizationStatuses` and
   `setPermissionAuthorizationStatus` reject, since a status stored under that
-  name is one no product reads;
-- `clearProductState` clears what is stored under exactly that id, which is how
-  a host drops what an earlier release kept under it. It does not touch
-  `chat-bot.paseo`.
+  name is one no product reads, and they reject a request that names it too;
+- `clearProductState` clears the grants and the product storage kept under
+  exactly that id, which is how a host drops them for an id an earlier release
+  ran. It does not touch `chat-bot.paseo`.
 
 Ids the core hands to a host are ids the stack serves, also when a product
 wrote a `dot` name in a call.

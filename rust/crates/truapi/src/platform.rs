@@ -965,6 +965,19 @@ pub enum PermissionAuthorizationRequest {
 	},
 }
 
+/// The products a request names besides the one the status belongs to: the
+/// target of an access or a signature, and the owner of an NFT purse.
+impl NamesProducts for PermissionAuthorizationRequest {
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		match self {
+			Self::AccountAccess { target_product_id } |
+			Self::CrossProductSignature { target_product_id, .. } => vec![target_product_id],
+			Self::Remote(request) => request.products(),
+			Self::Device(_) | Self::IdentityDisclosure => vec![],
+		}
+	}
+}
+
 /// A kind of signature a product makes with another product's account.
 ///
 /// The user approves each kind separately: approving one never lets another

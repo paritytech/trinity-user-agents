@@ -528,12 +528,37 @@ impl ProductConnection {
 		format!("c{}:{id}", self.core_instance)
 	}
 
+	/// Refuses a host's permission call that names a product by an id the
+	/// stack serves it under another: this connection's own product, or one a
+	/// request names.
+	///
+	/// A status under such a name is one no product reads, so a host that set
+	/// it would take the product that name runs as for changed. The error
+	/// names that product's id. An id the stack serves nothing under passes:
+	/// its record is all there is to administer.
+	fn refuse_names_served_under_another_id(
+		&self,
+		requests: &mut [PermissionAuthorizationRequest],
+	) -> Result<(), latest::GenericError> {
+		let stack = self.services.stack();
+		let named = requests.iter_mut().flat_map(NamesProducts::products);
+		for product_id in core::iter::once(self.product_id()).chain(named.map(|named| &*named)) {
+			if let Err(unserved) = stack.require_served(product_id) &&
+				unserved.served_as.is_some()
+			{
+				return Err(latest::GenericError { reason: unserved.to_string() });
+			}
+		}
+		Ok(())
+	}
+
 	/// Read stored authorization, including the current OS gate for device access.
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
 	pub async fn permission_authorization_status(
 		&self,
-		request: PermissionAuthorizationRequest,
+		mut request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
+		self.refuse_names_served_under_another_id(core::slice::from_mut(&mut request))?;
 		let service = self.permissions_service();
 		service.authorization_status(&request).await
 	}
@@ -542,8 +567,9 @@ impl ProductConnection {
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		requests: Vec<PermissionAuthorizationRequest>,
+		mut requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, latest::GenericError> {
+		self.refuse_names_served_under_another_id(&mut requests)?;
 		let service = self.permissions_service();
 		service.authorization_statuses(&requests).await
 	}
@@ -552,9 +578,10 @@ impl ProductConnection {
 	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		request: PermissionAuthorizationRequest,
+		mut request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), latest::GenericError> {
+		self.refuse_names_served_under_another_id(core::slice::from_mut(&mut request))?;
 		let service = self.permissions_service();
 		service.set_authorization_status(&request, status).await
 	}

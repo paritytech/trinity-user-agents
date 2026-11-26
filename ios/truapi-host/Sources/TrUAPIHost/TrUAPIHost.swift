@@ -1397,6 +1397,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// Take one reference on the worker until this consumer releases its claim.
+    /// A claim under an id the stack does not serve holds nothing.
     public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
         inner.claimWorker(productId: productId)
     }

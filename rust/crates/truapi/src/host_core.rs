@@ -441,39 +441,21 @@ impl<Role: HostRole> HostRuntime<Role> {
 			.map_err(ring_vrf_admin_error)
 	}
 
-	/// Refuses a name the stack serves under another id.
-	///
-	/// A record under such a name is one no product reads, so a host that set
-	/// it would take the product that name runs as for changed. The error
-	/// names that product's id. An id the stack serves nothing under passes:
-	/// its record is all there is to administer.
-	fn refuse_a_name_served_under_another_id(
-		&self,
-		product_id: &ProductId,
-	) -> Result<(), v01::GenericError> {
-		match self.stack().require_served(product_id) {
-			Err(unserved) if unserved.served_as.is_some() => {
-				Err(v01::GenericError { reason: unserved.to_string() })
-			},
-			_ => Ok(()),
-		}
-	}
-
 	/// Read a stored permission authorization status for a product without prompting.
 	///
 	/// A device capability also resolves the host application's OS gate, so an
 	/// OS refusal reads as `Denied` whatever is stored. Remote,
 	/// identity-disclosure and account-access decisions have no OS gate.
 	///
-	/// Fails for a `dot` name on a stack with another TLD, as the two calls
-	/// below do: the stack keeps that product's statuses under its own id.
+	/// Fails for a `dot` name on a stack with another TLD, as the product or
+	/// in the request, as the two calls below do: the stack keeps that
+	/// product's statuses under its own id.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
 		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.refuse_a_name_served_under_another_id(product_id)?;
 		self.product_admin(product_context(product_id))
 			.permission_authorization_status(request)
 			.await
@@ -490,7 +472,6 @@ impl<Role: HostRole> HostRuntime<Role> {
 		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.refuse_a_name_served_under_another_id(product_id)?;
 		self.product_admin(product_context(product_id))
 			.permission_authorization_statuses(requests)
 			.await
@@ -504,7 +485,6 @@ impl<Role: HostRole> HostRuntime<Role> {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.refuse_a_name_served_under_another_id(product_id)?;
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
 			.await

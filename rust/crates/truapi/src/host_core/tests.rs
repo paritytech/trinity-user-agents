@@ -90,40 +90,77 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	);
 }
 
-/// A record under a name the stack serves as another id is one no product
-/// reads. A host that set a status there would take the running product for
-/// changed, so the permission calls refuse the name and say which id the
+/// A status under a name the stack serves under another id is one no product
+/// reads: on a `testnet` stack the product `myapp.dot` names runs as
+/// `myapp.testnet`. A host that set one would take that product for changed,
+/// so the permission calls refuse the name, whether it is the product a
+/// status belongs to or a product the request names, and say which id the
 /// product has. An id the stack serves nothing under has only its record,
 /// which the host can still read.
 #[test]
 fn a_permission_call_refuses_a_name_the_stack_serves_under_another_id() {
 	use crate::platform::PermissionAuthorizationRequest;
+	use truapi::latest::{NftPurseOwner, RemotePermission, RemotePermissionRequest};
 
 	let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
-	let request = || PermissionAuthorizationRequest::AccountAccess {
-		target_product_id: ProductId::for_test("peopl.testnet"),
+	let access = |target: &str| PermissionAuthorizationRequest::AccountAccess {
+		target_product_id: ProductId::for_test(target),
 	};
-	let read = |product_id: &str| {
+	let purse_of = |owner: &str| {
+		PermissionAuthorizationRequest::Remote(RemotePermissionRequest {
+			permission: RemotePermission::NftPurseRead {
+				owner: NftPurseOwner::Product(ProductId::for_test(owner)),
+			},
+		})
+	};
+	let read = |product_id: &str, request: PermissionAuthorizationRequest| {
 		futures::executor::block_on(
-			runtime.permission_authorization_status(&ProductId::for_test(product_id), request()),
+			runtime.permission_authorization_status(&ProductId::for_test(product_id), request),
 		)
 		.map_err(|error| error.reason)
 	};
-	let deny = |product_id: &str| {
+	let read_all = |product_id: &str, requests: Vec<PermissionAuthorizationRequest>| {
+		futures::executor::block_on(
+			runtime.permission_authorization_statuses(&ProductId::for_test(product_id), requests),
+		)
+		.map_err(|error| error.reason)
+	};
+	let deny = |product_id: &str, request: PermissionAuthorizationRequest| {
 		futures::executor::block_on(runtime.set_permission_authorization_status(
 			&ProductId::for_test(product_id),
-			request(),
+			request,
 			PermissionAuthorizationStatus::Denied,
 		))
 		.map_err(|error| error.reason)
 	};
-	let refusal = "the testnet stack serves no product under the id myapp.dot, which names its \
-	               product myapp.testnet"
-		.to_string();
+	let refusal = |label: &str| {
+		format!(
+			"the testnet stack serves no product under the id {label}.dot, which names its \
+			 product {label}.testnet"
+		)
+	};
 
 	assert_eq!(
-		(deny("myapp.dot"), read("myapp.dot"), read("left.paseo")),
-		(Err(refusal.clone()), Err(refusal), Ok(PermissionAuthorizationStatus::NotDetermined))
+		(
+			deny("myapp.dot", access("peopl.testnet")),
+			read("myapp.dot", access("peopl.testnet")),
+			read_all("myapp.dot", vec![access("peopl.testnet")]),
+			deny("myapp.testnet", access("peopl.dot")),
+			read("myapp.testnet", access("peopl.dot")),
+			read_all("myapp.testnet", vec![access("peopl.testnet"), access("peopl.dot")]),
+			read("myapp.testnet", purse_of("stash.dot")),
+			read("left.paseo", access("peopl.testnet")),
+		),
+		(
+			Err(refusal("myapp")),
+			Err(refusal("myapp")),
+			Err(refusal("myapp")),
+			Err(refusal("peopl")),
+			Err(refusal("peopl")),
+			Err(refusal("peopl")),
+			Err(refusal("stash")),
+			Ok(PermissionAuthorizationStatus::NotDetermined),
+		)
 	);
 }
 

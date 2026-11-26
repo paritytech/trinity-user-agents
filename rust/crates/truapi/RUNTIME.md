@@ -592,14 +592,16 @@ only a connection's own product reaches, the manifest readers and worker
 references refuse an id the stack does not serve.
 
 `HostRuntime` and the wasm runtimes administer stored state by the id as
-written. `clear_product_state` clears what is kept under exactly that id,
-served or not, so a host can drop what an id it no longer runs left behind,
-such as a `dot` id an earlier release ran on a `paseo` stack.
+written. `clear_product_state` clears the grants and the product storage kept
+under exactly that id, served or not, so a host can drop them for an id it no
+longer runs, such as a `dot` id an earlier release ran on a `paseo` stack.
+Permission statuses, ring-VRF registrations, Pocket cards and chat rooms kept
+under such an id stay in the store, where no product reads them.
 `permission_authorization_status` and its setter read and change the statuses
 of an id the stack serves and of an id it serves nothing under. They refuse a
-`dot` name on a stack with another TLD: the stack keeps that product's
-statuses under its own id, and a status stored under the name would be one no
-product reads. A native host can clear with `clear_product_state`, but it
+`dot` name on a stack with another TLD, as the product a status belongs to or
+as a product the request names: the stack keeps that product's statuses under
+its own id, and a status stored under the name would be one no product reads. A native host can clear with `clear_product_state`, but it
 reads and sets stored statuses only through a `NativeProductExecution`, which
 opens only for a served product.
 
