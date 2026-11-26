@@ -1,17 +1,22 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.hostApi
 
 import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
+import io.paritytech.polkadotapp.common.presentation.notifications.PublishOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ProductNotificationPublisherTest {
     @Test
-    fun `notifications off for the app is notifications_disabled`() {
-        assertEquals(ProductNotificationReason.NOTIFICATIONS_DISABLED, suppressedReason(notificationsEnabled = false))
-    }
+    fun `each publish outcome is shown or suppressed for its own reason`() {
+        val reasons = PublishOutcome.entries.associateWith { it.suppressedReason }
 
-    @Test
-    fun `a blocked channel is channel_blocked`() {
-        assertEquals(ProductNotificationReason.CHANNEL_BLOCKED, suppressedReason(notificationsEnabled = true))
+        assertEquals(
+            mapOf(
+                PublishOutcome.POSTED to null,
+                PublishOutcome.NOTIFICATIONS_DISABLED to ProductNotificationReason.NOTIFICATIONS_DISABLED,
+                PublishOutcome.CHANNEL_BLOCKED to ProductNotificationReason.CHANNEL_BLOCKED,
+            ),
+            reasons,
+        )
     }
 }
