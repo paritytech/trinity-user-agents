@@ -159,8 +159,10 @@ pub enum TypographyStyle {
     BodyLargeRegular,
     BodyMediumRegular,
     BodySmallRegular,
-    /// Medium body text at medium weight, CSS weight 500.
-    BodyMediumMedium,
+    HeadlineMedium,
+    HeadlineSmall,
+    TitleExtraLarge,
+    TitleLarge,
 }
 
 /// Button emphasis.
@@ -413,12 +415,6 @@ pub enum RendererNode {
         props: MaterialsProps,
         children: Vec<RendererNode>,
     },
-    /// Takes the finger over its children and fires its triggers, as
-    /// [Materials](materials.md#touch) defines.
-    Touch {
-        props: TouchProps,
-        children: Vec<RendererNode>,
-    },
 }
 ```
 
@@ -437,8 +433,8 @@ counts against any cap a host puts on such a file.
 
 ### Actions
 
-An action id is product-chosen and opaque to the host. `Button::click_action`, `TextField::value_change_action` and
-`TouchTrigger::action` are the action sites.
+An action id is product-chosen and opaque to the host. `Button::click_action` and `TextField::value_change_action` are
+the action sites.
 
 Action payload by node, as the host sends it in `HostRendererActionSubscribeItem::payload`:
 
@@ -446,7 +442,6 @@ Action payload by node, as the host sends it in `HostRendererActionSubscribeItem
 | ----------- | ------------ | ---------------------------------------------- |
 | `Button`    | Press        | Empty                                          |
 | `TextField` | Value change | UTF-8 bytes of the new value, no length prefix |
-| `Touch`     | Its trigger  | Empty                                          |
 
 The host fills `context` from the render request whose tree the node belongs to. Only the current tree of an open
 `render` stream is a source of actions. Actions published before the product subscribes are buffered until it does.
@@ -457,9 +452,6 @@ The host opens a `render` stream when the body comes on screen and closes it whe
 back opens a fresh stream with the same request. Each item replaces the whole tree. A stream that ends cleanly leaves
 the last tree on screen. After an error the host shows the product's identity and no body. A product that cannot draw
 the body ends the stream with an error.
-
-An open `render` stream is one worker reference in [Worker Lifecycle](worker-lifecycle.md) terms, whichever surface
-opened it.
 
 ### Chat
 

@@ -1,85 +1,12 @@
 import BigInt
+import DesignSystem
 import TrUAPIHost
 import PolkadotUI
 import Products
 import SwiftUI
 
 extension RendererNode {
-    /// `Materials` nodes are numbered depth first, a parent before its children, across the whole tree,
-    /// the order of `ResolvedMaterials.nodes`. `Touch` nodes are numbered the same way among themselves.
     func toWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
-        toWidgetNode(resolver: resolver, counter: MaterialsCounter(takesTouch: rendererTouchNodes(tree: self)))
-    }
-
-    /// The material of each layer of each `Materials` node, one entry per entry of
-    /// `ResolvedMaterials.nodes`.
-    var nodeMaterials: [[Data]] {
-        let own: [[Data]] = if case let .materials(props, _) = self { [props.layers.map(\.material)] } else { [] }
-        return own + children.flatMap(\.nodeMaterials)
-    }
-
-    /// The props of every `Touch` node, depth first.
-    var touchProps: [TouchProps] {
-        let own: [TouchProps] = if case let .touch(props, _) = self { [props] } else { [] }
-        return own + children.flatMap(\.touchProps)
-    }
-}
-
-private final class MaterialsCounter {
-    private var next: UInt32 = 0
-    private var nextTouch: UInt32 = 0
-    private let takesTouch: [Bool]
-
-    init(takesTouch: [Bool]) {
-        self.takesTouch = takesTouch
-    }
-
-    func take() -> UInt32 {
-        defer { next += 1 }
-        return next
-    }
-
-    /// The next `Touch` node, and whether the core lets it take touch.
-    func takeTouch() -> (index: UInt32, takesTouch: Bool) {
-        defer { nextTouch += 1 }
-        return (nextTouch, takesTouch.indices.contains(Int(nextTouch)) && takesTouch[Int(nextTouch)])
-    }
-
-    /// The core also numbers `Materials` and `Touch` nodes inside text and button children, which draw
-    /// no widget.
-    func skip(_ nodes: [RendererNode]) {
-        for node in nodes {
-            if case .materials = node { _ = take() }
-            if case .touch = node { _ = takeTouch() }
-            skip(node.children)
-        }
-    }
-}
-
-private extension RendererNode {
-    var children: [RendererNode] {
-        switch self {
-        case let .materials(_, children),
-             let .touch(_, children),
-             let .box(_, _, children),
-             let .column(_, _, children),
-             let .row(_, _, children),
-             let .text(_, _, children),
-             let .button(_, _, children):
-            children
-        case .nil,
-             .string,
-             .image,
-             .spacer,
-             .textField:
-            []
-        }
-    }
-
-    func toWidgetNode(
-        resolver: any WidgetDesignTokenResolving,
-        counter: MaterialsCounter
-    ) -> CustomMessageWidgetNode? {
         switch self {
         case .nil,
              .string,
@@ -88,32 +15,11 @@ private extension RendererNode {
              .text,
              .button,
              .textField:
-            counter.skip(children)
             return leafWidgetNode(resolver: resolver)
 
-        case let .materials(props, children):
-            let index = counter.take()
+        case let .materials(_, children):
             return CustomMessageWidgetNode(
-                content: .materials(
-                    index: index,
-                    bleed: CGFloat(props.bleed),
-                    children: children.widgetNodes(resolver: resolver, counter: counter)
-                ),
-                modifiers: .empty
-            )
-
-        case let .touch(props, children):
-            let (index, takesTouch) = counter.takeTouch()
-            return CustomMessageWidgetNode(
-                content: .touch(
-                    WidgetTouchNode(
-                        index: index,
-                        drag: props.drag == .horizontal ? .horizontal : .any,
-                        takesTouch: takesTouch,
-                        accessibilityActions: props.triggers.compactMap(\.accessibilityAction)
-                    ),
-                    children: children.widgetNodes(resolver: resolver, counter: counter)
-                ),
+                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
                 modifiers: .empty
             )
 
@@ -122,10 +28,7 @@ private extension RendererNode {
                 CustomMessageWidgetNode.BoxProps(alignment: $0.toScale().swiftUIAlignment)
             }
             return CustomMessageWidgetNode(
-                content: .box(
-                    boxProps ?? .init(),
-                    children: children.widgetNodes(resolver: resolver, counter: counter)
-                ),
+                content: .box(boxProps ?? .init(), children: children.widgetNodes(resolver: resolver)),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -135,7 +38,7 @@ private extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .column(
                     .init(alignment: alignment, arrangement: arrangement),
-                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                    children: children.widgetNodes(resolver: resolver)
                 ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
@@ -146,7 +49,7 @@ private extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .row(
                     .init(alignment: alignment, arrangement: arrangement),
-                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                    children: children.widgetNodes(resolver: resolver)
                 ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
@@ -215,37 +118,23 @@ private extension RendererNode {
         case .box,
              .column,
              .row,
-             .materials,
-             .touch:
+             .materials:
             return nil
         }
-    }
-}
-
-private extension TouchTrigger {
-    /// A tap or a drag VoiceOver can stand in for. A trail has no single action to offer.
-    var accessibilityAction: String? {
-        if case .trailCovers = when { nil } else { action }
     }
 }
 
 private extension RendererNode {
     /// The nodes this one contributes to its parent's children: its own, or
     /// none when it does not draw.
-    func widgetNodesInPlace(
-        resolver: any WidgetDesignTokenResolving,
-        counter: MaterialsCounter
-    ) -> [CustomMessageWidgetNode] {
-        toWidgetNode(resolver: resolver, counter: counter).map { [$0] } ?? []
+    func widgetNodesInPlace(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
+        toWidgetNode(resolver: resolver).map { [$0] } ?? []
     }
 }
 
 private extension [RendererNode] {
-    func widgetNodes(
-        resolver: any WidgetDesignTokenResolving,
-        counter: MaterialsCounter
-    ) -> [CustomMessageWidgetNode] {
-        flatMap { $0.widgetNodesInPlace(resolver: resolver, counter: counter) }
+    func widgetNodes(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
+        flatMap { $0.widgetNodesInPlace(resolver: resolver) }
     }
 }
 
@@ -374,15 +263,18 @@ private extension ColorToken {
     }
 }
 
-private extension TypographyStyle {
+private extension TrUAPIHostTypographyStyle {
     var labelStyle: PolkadotUI.LabelStyle {
         switch self {
-        case .headlineLarge: ScaleTypographyStyle.titleXL.toLabelStyle
-        case .titleMediumRegular: ScaleTypographyStyle.headline.toLabelStyle
+        case .headlineLarge: .init(typography: .headlineLarge)
+        case .headlineMedium: .init(typography: .headlineMedium)
+        case .headlineSmall: .init(typography: .headlineSmall)
+        case .titleExtraLarge: .init(typography: .titleExtraLarge)
+        case .titleLarge: .init(typography: .titleLarge)
+        case .titleMediumRegular: .init(typography: .titleMedium)
         case .bodyLargeRegular: ScaleTypographyStyle.bodyM.toLabelStyle
         case .bodyMediumRegular: ScaleTypographyStyle.bodyS.toLabelStyle
         case .bodySmallRegular: ScaleTypographyStyle.caption.toLabelStyle
-        case .bodyMediumMedium: .body14Medium()
         }
     }
 }
