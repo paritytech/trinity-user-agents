@@ -59,7 +59,7 @@ fun FundingAmountScreen(
             FundingCircleButton(icon = NovaIcons.Close, onClick = onClose)
         }
 
-        FundingRailTabs(tabs = state.rails, onSelect = onRailSelected)
+        FundingRailTabs(modifier = Modifier.align(Alignment.CenterHorizontally), tabs = state.rails, onSelect = onRailSelected)
 
         AmountFigure(state)
 
@@ -147,6 +147,7 @@ private fun Presets(
                     text = preset.label,
                     style = PolkadotTheme.typography.body.mediumEmphasized,
                     color = PolkadotTheme.colors.fg.primary,
+                    textAlign = TextAlign.Center,
                 )
             }
         }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -70,5 +71,6 @@ private fun KeyLabel(text: String) {
         text = text,
         style = PolkadotTheme.typography.title.large,
         color = PolkadotTheme.colors.fg.primary,
+        textAlign = TextAlign.Center,
     )
 }

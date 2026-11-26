@@ -173,6 +173,7 @@ fun FundingCryptoIconImage(
                 text = icon.monogram,
                 style = PolkadotTheme.typography.title.small,
                 color = PolkadotTheme.colors.fg.primary,
+                textAlign = TextAlign.Center,
             )
         }
     }
