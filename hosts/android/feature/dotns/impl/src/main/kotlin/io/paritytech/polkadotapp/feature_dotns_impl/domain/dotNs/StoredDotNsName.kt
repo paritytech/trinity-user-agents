@@ -15,6 +15,6 @@ data class DotNsNameChange(val contentHash: ContentHash?, val records: Map<Strin
 }
 
 @Serializable
-data class DotNsBuild(val served: DotNsNameVersion, val update: DotNsNameChange?) {
-    fun applied(): DotNsBuild = DotNsBuild(served = update?.let(served::with) ?: served, update = null)
+data class StoredDotNsName(val served: DotNsNameVersion, val update: DotNsNameChange?) {
+    fun applied(): StoredDotNsName = StoredDotNsName(served = update?.let(served::with) ?: served, update = null)
 }

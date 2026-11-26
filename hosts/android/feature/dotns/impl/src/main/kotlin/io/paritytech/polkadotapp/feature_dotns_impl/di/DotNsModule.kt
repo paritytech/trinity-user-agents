@@ -18,13 +18,13 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.RealCarFetcher
 import io.paritytech.polkadotapp.feature_dotns_impl.data.repository.NetworkSuffixRepository
 import io.paritytech.polkadotapp.feature_dotns_impl.data.repository.RealNetworkSuffixRepository
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
-import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsBuildStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsNameStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsTldStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsContentStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsTldStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsContentHashOverrides
-import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsDotNsBuildStorage
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsDotNsNameStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.RealDotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.RealDotNsUpdates
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.tld.RealDotNsTldProvider
@@ -59,7 +59,7 @@ internal interface DotNsModule {
 
     @Binds
     @Singleton
-    fun bindDotNsBuildStorage(impl: SharedPrefsDotNsBuildStorage): DotNsBuildStorage
+    fun bindDotNsNameStorage(impl: SharedPrefsDotNsNameStorage): DotNsNameStorage
 
     @Binds
     @Singleton

@@ -34,11 +34,12 @@ class ProductUpdateWorker @AssistedInject constructor(
             productUpdater.checkAll()
         }
             .logFailure("Product update check failed")
-            .toWorkerResult(retryOnFailure = true)
+            .toWorkerResult(retryOnFailure = runAttemptCount < MAX_RETRY_COUNT)
     }
 
     companion object {
         private const val WORK_NAME = "ProductUpdates"
+        private const val MAX_RETRY_COUNT = 3
 
         private val INTERVAL = 4.hours
         private val FIRST_RETRY_DELAY = 30.seconds

@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 
 class RealDotNsContentStorage @Inject constructor(
@@ -43,12 +45,14 @@ class RealDotNsContentStorage @Inject constructor(
 
     override suspend fun saveContentStreaming(contentHash: ContentHash, write: (CarContentWriter) -> Unit) {
         withContext(Dispatchers.IO) {
-            val contentPath = File(baseDir, contentHash)
+            val unpackingPath = File(baseDir, "$contentHash$UNPACKING_SUFFIX")
+            unpackingPath.deleteRecursively()
 
             try {
-                write { path, content -> writeEntry(contentPath, path, content) }
+                write { path, content -> writeEntry(unpackingPath, path, content) }
+                Files.move(unpackingPath.toPath(), File(baseDir, contentHash).toPath(), StandardCopyOption.ATOMIC_MOVE)
             } catch (e: Throwable) {
-                contentPath.deleteRecursively()
+                unpackingPath.deleteRecursively()
                 throw e
             }
         }
@@ -94,7 +98,14 @@ class RealDotNsContentStorage @Inject constructor(
         }
     }
 
+    override suspend fun deleteAllExcept(contentHashes: Set<ContentHash>) {
+        withContext(Dispatchers.IO) {
+            baseDir.listFiles()?.filterNot { it.name in contentHashes }?.forEach { it.deleteRecursively() }
+        }
+    }
+
     companion object {
         private const val DOTNS_DIR = "dotns_content"
+        private const val UNPACKING_SUFFIX = ".unpacking"
     }
 }

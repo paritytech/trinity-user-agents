@@ -1,7 +1,8 @@
 package io.paritytech.polkadotapp.common.utils.network
 
+import io.paritytech.polkadotapp.common.utils.RetryDelayStrategy
+import io.paritytech.polkadotapp.common.utils.exponentialRetryDelay
 import kotlinx.coroutines.delay
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 sealed interface NetworkRetryPolicy {
@@ -34,16 +35,8 @@ suspend fun <T> NetworkStateService.retrying(
         failedAttempts++
         if (policy is NetworkRetryPolicy.Attempts && failedAttempts >= policy.count) return result
 
-        delay(retryDelayAfter(failedAttempts))
+        delay(NETWORK_RETRY_DELAY.delayFor(failedAttempts))
     }
 }
 
-private val FIRST_RETRY_DELAY = 1.seconds
-private val MAX_RETRY_DELAY = 30.seconds
-
-private const val MAX_DELAY_DOUBLINGS = 5
-
-private fun retryDelayAfter(failedAttempts: Int): Duration {
-    val doublings = (failedAttempts - 1).coerceAtMost(MAX_DELAY_DOUBLINGS)
-    return (FIRST_RETRY_DELAY * (1 shl doublings)).coerceAtMost(MAX_RETRY_DELAY)
-}
+private val NETWORK_RETRY_DELAY: RetryDelayStrategy = exponentialRetryDelay(initialDelay = 1.seconds, maxDelay = 30.seconds)

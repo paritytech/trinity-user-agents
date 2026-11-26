@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
 import io.novasama.substrate_sdk_android.extensions.toHexString
-import io.paritytech.polkadotapp.chains.network.binding.DispatchError
+import io.novasama.substrate_sdk_android.wsrpc.exception.ConnectionClosedException
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapNotNull
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
@@ -11,9 +11,9 @@ import io.paritytech.polkadotapp.common.utils.requireNotNull
 import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHash
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
-import io.paritytech.polkadotapp.feature_revive_api.ReviveContractReverted
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+import java.io.IOException
 import java.util.concurrent.TimeoutException
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
@@ -47,8 +47,8 @@ internal class DotNsChainReader @Inject constructor(
     }
 
     private fun isWorthRetrying(error: Throwable): Boolean = when (error) {
-        is ReviveContractReverted, is DispatchError, is IllegalArgumentException -> false
-        else -> true
+        is TimeoutException, is ConnectionClosedException, is IOException -> true
+        else -> false
     }
 
     private companion object {
