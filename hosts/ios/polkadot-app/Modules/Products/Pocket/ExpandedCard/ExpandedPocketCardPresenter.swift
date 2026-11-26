@@ -1,6 +1,6 @@
 import Foundation
 import Products
-import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardCoverOutcome
 import UIKitExt
 
 @MainActor
@@ -65,7 +65,7 @@ extension ExpandedPocketCardPresenter: ExpandedPocketCardInteractorOutputProtoco
         view?.showLoadFailure(content)
     }
 
-    func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        view?.setFaceShown(shown) ?? .notPresented
+    func didRequestCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome {
+        view?.setCardCovered(covered) ?? .notPresented
     }
 }
