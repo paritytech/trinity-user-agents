@@ -31,7 +31,8 @@ pub fn unlocked_wallet(
 		Spawner::for_test(),
 	);
 	let registry = RingVrfRegistryStore::new(services.platform.clone());
-	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
+	let consent =
+		Arc::new(ProductConsent::new(services.platform.clone(), services.stack().clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
 	wallet.install(wallet.prepare_activation(RootEntropy::new([entropy; 32]), None).unwrap());
@@ -90,16 +91,19 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 	))
 	.expect("synthetic registry entry persists");
 
+	let request = wallet
+		.serve(HostAccountRingVrfSignRequest {
+			key_handle: handle,
+			message: b"reject mismatched registry state".to_vec(),
+		})
+		.unwrap();
 	let error = futures::executor::block_on(wallet.ring_vrf_sign(
 		AccountInvocation {
 			call: &CallContext::default(),
 			session: &session,
 			caller: AccountCaller::Local { product: &product },
 		},
-		HostAccountRingVrfSignRequest {
-			key_handle: handle,
-			message: b"reject mismatched registry state".to_vec(),
-		},
+		request,
 	))
 	.unwrap_err();
 
@@ -107,4 +111,38 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 		error,
 		RingVrfError::Unknown { reason } if reason.contains("does not match the active wallet")
 	));
+}
+
+/// Every derivation keyed by a product id refuses an id the stack serves no
+/// product under, whoever asked for it. A paired host's request reaches these
+/// without a handler's check. On a stack with another TLD that includes a
+/// `dot` id: its keys are a Polkadot product's, and the stack serves that name
+/// under its own TLD.
+#[test]
+fn no_key_is_derived_for_an_id_the_stack_does_not_serve() {
+	let derives_on = |stack: Stack, product: &str| {
+		let keys = WalletKeys::new(RootEntropy::new([7; 32]), stack);
+		let product_id = ProductId::for_test(product);
+		let account = ProductAccountId {
+			dot_ns_identifier: product_id.clone(),
+			derivation_index: DerivationIndex::Index(0),
+		};
+		[
+			keys.product_subtree_keypair(&product_id).is_ok(),
+			keys.product_keypair(&account).is_ok(),
+			keys.ring_vrf_entropy(&account).is_ok(),
+			keys.ring_vrf_domain_entropy(&product_id).is_ok(),
+			keys.derive_entropy(&product_id, b"context").is_ok(),
+			keys.statement_allowance_key(&product_id).is_ok(),
+			keys.bulletin_allowance_key(&product_id).is_ok(),
+		]
+	};
+
+	let derives = |product| derives_on(crate::test_support::paseo_test_stack(), product);
+
+	assert_eq!(derives("myapp.paseo"), [true; 7]);
+	assert_eq!(derives("myapp.dot"), [false; 7]);
+	assert_eq!(derives("myapp.testnet"), [false; 7]);
+	assert_eq!(derives("example.com"), [false; 7]);
+	assert_eq!(derives_on(crate::test_support::dot_test_stack(), "myapp.dot"), [true; 7]);
 }

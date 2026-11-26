@@ -1799,13 +1799,15 @@ export function withChainsGeneration(stack: TestStack): TestStack {
 
 /**
  * A default {@link MockRuntimeConfig} for a mock host. Override any field;
- * the stack and product id are placeholders suitable for tests.
+ * the stack and product id are placeholders suitable for tests. The default
+ * product is `mock` under the test stack's TLD, an id that stack serves.
  */
 export function mockRuntimeConfig(
   overrides: Partial<MockRuntimeConfig> = {},
 ): MockRuntimeConfig {
+  const testStack = overrides.testStack ?? mockTestStack();
   return {
-    productId: asProductId("mock.dot"),
+    productId: asProductId(`mock.${testStack.tld}`),
     host: {
       name: "Mock Host",
       icon: "https://example.invalid/mock.png",
@@ -1815,7 +1817,7 @@ export function mockRuntimeConfig(
       type: "node",
       version: "0",
     },
-    testStack: mockTestStack(),
+    testStack,
     pairing: {
       deeplinkScheme: "polkadotapp",
     },

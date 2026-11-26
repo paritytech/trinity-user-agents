@@ -83,7 +83,7 @@ impl SigningHost {
 	) -> Arc<Self> {
 		let platform = services.platform.clone();
 		let ring_vrf_registry = RingVrfRegistryStore::new(platform.clone());
-		let consent = Arc::new(ProductConsent::new(platform.clone()));
+		let consent = Arc::new(ProductConsent::new(platform.clone(), services.stack().clone()));
 		let wallet = Arc::new(WalletAccountHolder::new(
 			services.clone(),
 			consent.clone(),

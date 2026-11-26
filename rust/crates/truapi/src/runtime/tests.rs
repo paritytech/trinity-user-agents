@@ -127,6 +127,12 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 /// Root entropy the signing-host fixtures activate their wallet with.
 pub const ENTROPY: [u8; 16] = [0xAB; 16];
 
+/// Wraps `value` in `Served` for the account calls. Every product these tests
+/// name is under `dot`, the TLD of the stack they run on.
+pub fn served<T: NamesProducts>(value: T) -> Served<T> {
+	serve(&crate::test_support::dot_test_stack(), value).expect("a dot stack serves a .dot product")
+}
+
 /// A locked signing host on `.dot`. With no dotNS Asset Hub, activation looks
 /// up no username on the scripted chain.
 pub fn signing_runtime_on_asset_hub(
@@ -1888,7 +1894,7 @@ fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
 	);
 	assert_eq!(
 		platform.chain_connects.lock().unwrap().clone(),
-		vec![paseo_test_stack().chains().people],
+		vec![dot_test_stack().chains().people],
 		"the call was waiting on People"
 	);
 }
@@ -4157,6 +4163,164 @@ fn provider_workers_run_while_the_overlay_is_up() {
 	);
 }
 
+// A provider the host lists under a TLD the stack does not serve can never
+// open a worker, and until its manifest read has run it is offered from the
+// manifest the host shipped. The overlay must not have the host start a
+// worker that would be refused each time it connects.
+#[test]
+fn the_overlay_starts_no_worker_for_a_provider_the_stack_does_not_serve() {
+	use crate::host_logic::worker::WorkerTransition::{Start, Stop};
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
+		product_id: ProductId::for_test(provider_id),
+		worker_manifest: Some(RAMP_MANIFEST.to_string()),
+	};
+	services.set_funding_providers(vec![entry("ramp.dot"), entry("ramp.elsewhere")]);
+	// The manifest reads never run, so both providers stay offered as shipped.
+	drop(tasks.take());
+	let offered = services.funding_providers().quote_targets();
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Dismissed,
+	)));
+
+	let shown = futures::executor::block_on(services.show_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	));
+	futures::executor::block_on(tasks.run());
+
+	assert!(shown.is_ok(), "the overlay opened");
+	assert_eq!(
+		(offered, workers.seen()),
+		(
+			vec![ProductId::for_test("ramp.dot"), ProductId::for_test("ramp.elsewhere")],
+			vec![("ramp.dot".to_string(), Start), ("ramp.dot".to_string(), Stop)]
+		)
+	);
+}
+
+// A quote asked of such a provider before its manifest read has run has no
+// worker to start either. Its row times out like that of any provider that
+// stays silent.
+#[test]
+fn a_quote_starts_no_worker_for_a_provider_the_stack_does_not_serve() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	offer_provider(&services, "ramp.elsewhere", RAMP_MANIFEST);
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = new_intent();
+	// The manifest read never runs, so the provider stays offered as shipped.
+	drop(tasks.take());
+	let shown = futures::executor::block_on(services.show_funding(
+		None,
+		intent.clone(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	));
+	futures::executor::block_on(tasks.run());
+	drop(tasks.take());
+
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_millis(20),
+		Duration::from_secs(600),
+	);
+	futures::executor::block_on(tasks.run());
+
+	assert!(shown.is_ok(), "the overlay opened");
+	let rows = services
+		.funding_quotes()
+		.shown(&intent)
+		.map(|rows| rows.into_iter().map(|row| row.state).collect::<Vec<_>>());
+	assert_eq!(
+		(rows, workers.seen()),
+		(
+			Some(vec![crate::platform::FundingQuoteState::Unavailable {
+				reason: crate::platform::FundingQuoteUnavailable::Timeout,
+			}]),
+			vec![]
+		)
+	);
+}
+
+// A session stored while the stack served its provider is restored on a
+// stack that does not, as after a host's stack moved to another TLD. The
+// provider's worker can never open there, so the session takes no hold and
+// the host is not asked to start it, while a provider still served is held.
+#[test]
+fn a_restored_session_starts_no_worker_for_a_provider_the_stack_does_not_serve() {
+	use crate::host_logic::worker::WorkerTransition::Start;
+	let db = crate::store::open_memory_core_db();
+	let (host_config, _) = runtime_config("funding.dot");
+	// Each session is stored by a host on its provider's TLD.
+	let assigned_to = |provider_id: &str| {
+		let provider = ProductId::for_test(provider_id);
+		let tld = provider.network_suffix().expect("a provider has a TLD");
+		let before = RuntimeServices::new(
+			stub_platform(),
+			host_config.host.host_info.clone(),
+			crate::test_support::test_stack(tld, [0; 32], [0xbb; 32], [0xcc; 32]),
+			Spawner::for_test(),
+		);
+		assert!(before.install_core_db(db.clone()).is_some());
+		assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Started,
+		)));
+		before.set_funding_providers(vec![
+			crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: provider.clone(),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			},
+		]);
+		let intent = futures::executor::block_on(before.open_funding(
+			None,
+			new_intent(),
+			v01::FundingDirection::In,
+			Some(1_000),
+		))
+		.expect("opened")
+		.intent;
+		assert!(
+			futures::executor::block_on(before.select_funding_provider(
+				&intent,
+				&provider,
+				&offer_test_quote(&before, &intent, provider_id)
+			))
+			.expect("selected")
+		);
+		intent
+	};
+	assigned_to("ramp.dot");
+	let unserved = assigned_to("ramp.testnet");
+
+	let tasks = HeldTasks::default();
+	let after = funding_services_on(&db, tasks.spawner());
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(after.worker_ledger.install_worker_controller(workers.clone()));
+	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	// The resume loads the sessions, then the reconciler it wakes takes
+	// their holds.
+	futures::executor::block_on(tasks.run());
+	futures::executor::block_on(tasks.run());
+
+	assert_eq!(
+		(after.funding().get(&unserved).and_then(|session| session.provider_id), workers.seen()),
+		(Some(ProductId::for_test("ramp.testnet")), vec![("ramp.dot".to_string(), Start)])
+	);
+}
+
 // The overlay is handed its options before it shows, and again for each
 // selection the user makes while it is up; a selection after it closed
 // changes nothing.
@@ -4283,7 +4447,9 @@ fn showing_overlay(
 	answer: futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>,
 ) -> (
 	String,
-	std::thread::JoinHandle<Result<crate::host_logic::funding::FundingSession, super::funding::OpenFundingError>>,
+	std::thread::JoinHandle<
+		Result<crate::host_logic::funding::FundingSession, super::funding::OpenFundingError>,
+	>,
 ) {
 	let platform = GatedFundingPlatform::new(services, Some(answer));
 	assert!(services.funding().install_platform(platform.clone()));
@@ -5163,9 +5329,13 @@ fn push_notification_delegates_payload_and_returns_host_id() {
 
 /// A title replaces the product id the person sees, so only a trusted product
 /// may set one. Any other product could otherwise pass for the Polkadot app.
+///
+/// Trust is the stack's, so `dim2.testnet` sets none either. The bridges never
+/// run a product the stack does not serve, so this context, built without
+/// their check, tests the trust rule on its own.
 #[test]
 fn push_notification_keeps_a_title_only_from_a_trusted_product() {
-	let delivered_titles = ["dim2.dot", "other.dot"].map(|product| {
+	let delivered_titles = ["dim2.dot", "other.dot", "dim2.testnet"].map(|product| {
 		let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
 		let platform = Arc::new(StubPlatform {
 			pushed_notifications: pushed_notifications.clone(),
@@ -5183,7 +5353,7 @@ fn push_notification_keeps_a_title_only_from_a_trusted_product() {
 		let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
 		pushed.iter().map(|notification| notification.title.clone()).collect::<Vec<_>>()
 	});
-	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None]]);
+	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None], vec![None]]);
 }
 
 /// Hosts show the product id only when the title is absent, so a blank title
@@ -5505,23 +5675,248 @@ fn a_request_for_an_account_of_no_product_does_not_decode() {
 		|product: &str| (0u8, product.to_string(), v01::DerivationIndex::Index(0)).encode();
 
 	assert!(HostAccountGetRequest::decode(&mut &request_naming("myapp.dot")[..]).is_ok());
-	assert!(HostAccountGetRequest::decode(&mut &request_naming("example.com")[..]).is_err());
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("example")[..]).is_err());
 }
 
 #[test]
 fn list_ring_vrf_keys_rejects_invalid_owners_before_dispatch() {
-	let frame = (0u8, "example.com", v01::RingVrfKeyDisclosure::Anonymized).encode();
+	let frame = (0u8, "example", v01::RingVrfKeyDisclosure::Anonymized).encode();
 	assert!(HostAccountListRingVrfKeysRequest::decode(&mut frame.as_slice()).is_err());
 }
 
 #[test]
 fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
-	for target in ["not a product", "", "example.com"] {
+	for target in ["not a product", "", "example"] {
 		let frame = (1u8, Some(target), "k").encode();
 		assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_err());
 	}
 	let frame = (1u8, Some("wallet.dot"), "k").encode();
 	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
+}
+
+/// Manifests are cached by bare label, so `granting.paseo` would get
+/// `granting.dot`'s manifest. For an id the stack does not serve the readers
+/// return no manifest.
+#[test]
+fn an_unserved_product_is_not_answered_with_its_namesakes_manifest() {
+	use futures::executor::block_on;
+
+	let platform = stub_platform();
+	let granting = ProductId::for_test("granting.dot");
+	cache_manifest(&platform, "granting.dot", r#"{"unknown":["storage"]}"#, 0);
+	for (key, json) in [
+		(
+			product_manifest::worker_manifest_cache_key(&granting),
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#,
+		),
+		(
+			product_manifest::app_manifest_cache_key(&granting),
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"app","entrypoint":"index.html"}"#,
+		),
+	] {
+		let entry =
+			CachedManifest { fetched_at_secs: current_unix_secs(), json: Some(json.to_string()) };
+		block_on(platform.write_core_storage(key, entry.encode()))
+			.expect("stub core storage accepts the entry");
+	}
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	let connection = &host.connection;
+	let (services, platform) = (&connection.services, connection.platform.as_ref());
+
+	let reads = |target: &str| {
+		let target = ProductId::for_test(target);
+		[
+			block_on(connection.holds_cross_product_scope(&target, Granted::Storage)),
+			block_on(product_manifest::read_worker_manifest(
+				services,
+				platform,
+				&target,
+				product_manifest::CachePolicy::UseCache,
+			))
+			.is_ok_and(|(manifest, _)| manifest.is_some()),
+			block_on(product_manifest::publishes_app(
+				services,
+				platform,
+				&target,
+				Duration::from_secs(1),
+			)) == Some(true),
+		]
+	};
+
+	assert_eq!(reads("granting.dot"), [true; 3]);
+	assert_eq!(reads("granting.paseo"), [false; 3]);
+	assert_eq!(reads("granting.com"), [false; 3]);
+}
+
+fn is_malformed<T, E>(result: Result<T, CallError<E>>) -> bool {
+	matches!(result, Err(CallError::MalformedFrame { .. }))
+}
+
+/// An id on a TLD the stack does not serve still decodes, because decoding
+/// has no stack. Every call that names it fails as if the id did not decode,
+/// before any key, grant or manifest lookup.
+#[test]
+fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
+	use futures::executor::block_on;
+
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+
+	for product in ["other.testnet", "example.com"] {
+		let account = account_id(product, 0);
+		let own_account = account_id("myapp.dot", 0);
+		let get_account = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+			product_account_id: account.clone(),
+		});
+		let sign_payload = HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+			account: account.clone(),
+			payload: crate::test_support::sign_payload_data(),
+		});
+		let sign_raw = HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account.clone(),
+			payload: raw_payload(),
+		});
+		let sign_vrf = HostAccountSignVrfRequest::V1(v01::HostAccountSignVrfRequest {
+			account: account.clone(),
+			transcript_label: b"ctx".to_vec(),
+			items: vec![],
+		});
+		let create_transaction = ProductAccountTxPayload::V1(v01::ProductAccountTxPayload {
+			signer: account.clone(),
+			genesis_hash: [1; 32],
+			call_data: vec![],
+			extensions: vec![],
+			tx_ext_version: 0,
+			contacts: vec![],
+		});
+		let list_keys =
+			HostAccountListRingVrfKeysRequest::V1(v01::HostAccountListRingVrfKeysRequest {
+				owner: ProductId::for_test(product),
+				disclosure: v01::RingVrfKeyDisclosure::Anonymized,
+			});
+		let statement_proof = RemoteStatementStoreCreateProofRequest::V1(
+			truapi::latest::RemoteStatementStoreCreateProofRequest {
+				product_account_id: account.clone(),
+				statement: statement(),
+			},
+		);
+		let storage_read = HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+			product: Some(ProductId::for_test(product)),
+			key: "k".to_string(),
+		});
+		// A request naming both is served only when both are, so one row names
+		// the unserved product as the key handle and one as the context.
+		let alias = |key_handle: &v01::ProductAccountId, context: &str| {
+			truapi::versioned::account::HostAccountGetAliasRequest::V1(
+				v01::HostAccountGetAliasRequest {
+					key_handle: key_handle.clone(),
+					context: product_proof_context(context),
+					ring_location: ring_location_fixture(),
+				},
+			)
+		};
+		let proof = |key_handle: &v01::ProductAccountId, context: &str| {
+			HostAccountCreateProofRequest::V1(v01::HostAccountCreateProofRequest {
+				key_handle: key_handle.clone(),
+				context: product_proof_context(context),
+				ring_location: ring_location_fixture(),
+				message: vec![],
+			})
+		};
+
+		let list_purses = truapi::versioned::nft_purse::HostNftPurseListPursesRequest::V1(
+			v01::HostNftPurseListPursesRequest {
+				owner: v01::NftPurseOwner::Product(ProductId::for_test(product)),
+			},
+		);
+
+		let read_purses_permission = truapi::versioned::permissions::RemotePermissionRequest::V1(
+			v01::RemotePermissionRequest {
+				permission: v01::RemotePermission::NftPurseRead {
+					owner: v01::NftPurseOwner::Product(ProductId::for_test(product)),
+				},
+			},
+		);
+
+		let calls = [
+			(
+				"request_remote_permission",
+				is_malformed(block_on(host.request_remote_permission(&cx, read_purses_permission))),
+			),
+			(
+				"list_purses",
+				is_malformed(block_on(crate::api::NftPurse::list_purses(&host, &cx, list_purses))),
+			),
+			("get_account", is_malformed(block_on(host.get_account(&cx, get_account)))),
+			("sign_payload", is_malformed(block_on(host.sign_payload(&cx, sign_payload)))),
+			("sign_raw", is_malformed(block_on(host.sign_raw(&cx, sign_raw)))),
+			("sign_vrf", is_malformed(block_on(host.sign_vrf(&cx, sign_vrf)))),
+			(
+				"create_transaction",
+				is_malformed(block_on(host.create_transaction(&cx, create_transaction))),
+			),
+			("list_ring_vrf_keys", is_malformed(block_on(host.list_ring_vrf_keys(&cx, list_keys)))),
+			(
+				"ring_vrf_sign",
+				is_malformed(block_on(host.ring_vrf_sign(&cx, ring_vrf_sign_request(product)))),
+			),
+			(
+				"get_account_alias key handle",
+				is_malformed(block_on(host.get_account_alias(&cx, alias(&account, "myapp.dot")))),
+			),
+			(
+				"get_account_alias context",
+				is_malformed(block_on(host.get_account_alias(&cx, alias(&own_account, product)))),
+			),
+			(
+				"create_account_proof key handle",
+				is_malformed(block_on(
+					host.create_account_proof(&cx, proof(&account, "myapp.dot")),
+				)),
+			),
+			(
+				"create_account_proof context",
+				is_malformed(block_on(
+					host.create_account_proof(&cx, proof(&own_account, product)),
+				)),
+			),
+			(
+				"statement create_proof",
+				is_malformed(block_on(StatementStore::create_proof(&host, &cx, statement_proof))),
+			),
+			(
+				"local storage read",
+				is_malformed(block_on(LocalStorage::read(&host, &cx, storage_read))),
+			),
+		];
+		for (call, malformed) in calls {
+			assert!(malformed, "{call} naming {product}");
+		}
+	}
+
+	let reached = [
+		("permission prompt", platform.permission_prompt_products.lock().unwrap().len()),
+		("remote permission prompt", platform.remote_permission_requests.lock().unwrap().len()),
+		("account access prompt", platform.account_access_reviews.lock().unwrap().len()),
+		("sign payload review", platform.sign_payload_reviews.lock().unwrap().len()),
+		("sign raw review", platform.sign_raw_reviews.lock().unwrap().len()),
+		("sign VRF review", platform.sign_vrf_reviews.lock().unwrap().len()),
+		("transaction review", platform.create_transaction_reviews.lock().unwrap().len()),
+		(
+			"statement signing review",
+			platform.statement_store_product_sign_reviews.lock().unwrap().len(),
+		),
+		("product subtree review", platform.product_subtree_reviews.lock().unwrap().len()),
+		("chain connection", platform.chain_connects.lock().unwrap().len()),
+		("wallet request", platform.sent_rpc.lock().unwrap().len()),
+	]
+	.into_iter()
+	.filter(|(_, count)| *count > 0)
+	.collect::<Vec<_>>();
+	assert_eq!(reached, [], "a refused call reached a prompt, the chain or the wallet");
 }
 
 #[test]
@@ -5678,6 +6073,37 @@ fn get_account_derives_rfc0022_product_key() {
 		hex::encode(inner.account.public_key),
 		"1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
 	);
+}
+
+/// A product names itself as its code spells it. On a `paseo` host `myapp.dot`
+/// is the product `myapp.paseo`, so the call is for the product's own account
+/// and answers from that product's subtree. A subtree an earlier release kept
+/// under the `dot` id, whose keys are a Polkadot product's, is never read.
+#[test]
+fn a_call_naming_a_dot_id_gets_the_stacks_own_products_account() {
+	let (mut host_config, _) = runtime_config("myapp.paseo");
+	host_config.stack = crate::test_support::paseo_test_stack();
+	let product = ProductContext::new(ProductId::for_test("myapp.paseo"));
+	let host =
+		ProductRuntimeHost::new(stub_platform(), (host_config, product), Spawner::for_test());
+	let session = sso_session_info();
+	for kept in ["myapp.paseo", "myapp.dot"] {
+		host.test_cache_product_subtree(
+			&session,
+			&ProductId::for_test(kept),
+			test_product_subtree(kept),
+		);
+	}
+	host.test_session_state().set_session(session);
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let HostAccountGetResponse::V1(response) =
+		futures::executor::block_on(host.get_account(&CallContext::default(), request))
+			.expect("a product's own account needs no prompt");
+
+	assert_eq!(response.account.public_key, test_product_account_public("myapp.paseo", 0));
 }
 
 #[test]
@@ -6300,6 +6726,38 @@ fn derive_entropy_matches_dotli_vector() {
 	assert_eq!(
 		hex::encode(inner.entropy),
 		"ab1887248c9de3cf4b8c5a255782796d3d35a98c8eb2d7df61a410db8b14da36"
+	);
+}
+
+/// A pairing host derives product entropy from the session's entropy source
+/// without asking the wallet, so it refuses an id its stack does not serve
+/// itself. On a `paseo` host that includes a `dot` id, whose entropy is a
+/// Polkadot product's.
+#[test]
+fn derive_entropy_refuses_an_id_the_stack_does_not_serve() {
+	use crate::test_support::{dot_test_stack, paseo_test_stack};
+
+	let derives = |stack: crate::platform::Stack, product_id: &str| {
+		let (mut host_config, product) = runtime_config(product_id);
+		host_config.stack = stack;
+		let host =
+			ProductRuntimeHost::new(stub_platform(), (host_config, product), Spawner::for_test());
+		let mut session = sso_session_info();
+		session.root_entropy_source = session_info().root_entropy_source;
+		install_pairing_session(&host, session);
+		let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+			context: b"product-key".to_vec(),
+		});
+		futures::executor::block_on(host.derive(&CallContext::default(), request)).is_ok()
+	};
+
+	assert_eq!(
+		[
+			derives(paseo_test_stack(), "myapp.paseo"),
+			derives(paseo_test_stack(), "myapp.dot"),
+			derives(dot_test_stack(), "myapp.dot"),
+		],
+		[true, false, true]
 	);
 }
 
@@ -8294,7 +8752,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			&session,
 			&cx,
 			&ProductContext::new(ProductId::for_test("dim2next.dot")),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: v01::ProductAccountId {
 					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
@@ -8305,7 +8763,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 				},
 				ring_location: ring_location_fixture(),
 				message: b"prove me".to_vec(),
-			},
+			}),
 		))
 	};
 
@@ -8471,7 +8929,7 @@ fn a_refusal_past_the_key_check_is_warned_once() {
 	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
 	let host = dim2_with_a_pairing_session(platform);
 	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
-	request.context.product_id = ProductId::for_test("dim2.paseo");
+	request.context.product_id = ProductId::for_test("localhost:3000");
 	let lines = crate::logging::testing::host_sink_lines(|| {
 		let _ = futures::executor::block_on(host.create_account_proof(
 			&CallContext::default(),
@@ -8483,7 +8941,7 @@ fn a_refusal_past_the_key_check_is_warned_once() {
 		vec![
 			"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
 			 {because=context on another network, entry=dim2, caller=dim2.dot, \
-			 owner=peopl.dot, context=dim2.paseo, scopes=None}"
+			 owner=peopl.dot, context=localhost:3000, scopes=None}"
 		]
 	);
 }
@@ -9007,11 +9465,12 @@ const RAMP_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","ent
 
 /// Offer `provider_id` as a funding provider publishing `manifest`.
 fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {
-	services
-		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+	services.set_funding_providers(vec![
+		crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
-		}]);
+		},
+	]);
 }
 
 /// A provider's worker connection, signed in.
@@ -10112,15 +10571,14 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	services
-		.set_funding_providers(
-			["ramp.dot", "slow.dot"]
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	services.set_funding_providers(
+		["ramp.dot", "slow.dot"]
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10188,11 +10646,12 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 fn an_ask_without_a_country_takes_the_detected_one() {
 	let services = funding_services();
 	assert!(services.funding().install_platform(RecordingFundingPlatform::in_country("pt")));
-	services
-		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+	services.set_funding_providers(vec![
+		crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		}]);
+		},
+	]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10235,15 +10694,14 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	services
-		.set_funding_providers(
-			["ramp.dot", "cheap.dot"]
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	services.set_funding_providers(
+		["ramp.dot", "cheap.dot"]
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10355,11 +10813,12 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 			.is_some_and(|rows| rows.is_empty())),
 		"no provider listed yet"
 	);
-	services
-		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+	services.set_funding_providers(vec![
+		crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		}]);
+		},
+	]);
 
 	let rows = shown_when(&services, &intent, |rows| {
 		rows.iter()
@@ -10423,15 +10882,14 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_feed(platform.clone()));
 	assert!(services.funding().install_platform(platform.clone()));
-	services
-		.set_funding_providers(
-			["ramp.dot", "slow.dot"]
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	services.set_funding_providers(
+		["ramp.dot", "slow.dot"]
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10798,8 +11256,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
 	};
-	services
-		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
+	services.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10855,17 +11312,16 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 			.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
 		let crypto_only =
 			RAMP_MANIFEST.replace(r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]},"#, "");
-		services
-			.set_funding_providers(vec![
-				crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test("ramp.dot"),
-					worker_manifest: Some(germany_only),
-				},
-				crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test("chain.dot"),
-					worker_manifest: Some(crypto_only),
-				},
-			]);
+		services.set_funding_providers(vec![
+			crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test("ramp.dot"),
+				worker_manifest: Some(germany_only),
+			},
+			crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test("chain.dot"),
+				worker_manifest: Some(crypto_only),
+			},
+		]);
 		let intent = futures::executor::block_on(services.open_funding(
 			None,
 			new_intent(),
@@ -12902,15 +13358,14 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let first = served_session(&before, 10);
-	before
-		.set_funding_providers(
-			["ramp.dot", "other.dot"]
-				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(provider),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	before.set_funding_providers(
+		["ramp.dot", "other.dot"]
+			.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(provider),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let second = futures::executor::block_on(before.open_funding(
 		None,
 		new_intent(),
@@ -13318,16 +13773,15 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let providers: Vec<String> = (0..12).map(|index| format!("ramp{index}.dot")).collect();
-	services
-		.set_funding_providers(
-			providers
-				.iter()
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.collect(),
-		);
+	services.set_funding_providers(
+		providers
+			.iter()
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.collect(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -13404,6 +13858,34 @@ fn assert_events_carry_none_of(events: &[crate::logging::CoreEvent], secrets: &[
 			assert!(!line.contains(secret), "a fact carries {secret}: {line}");
 		}
 	}
+}
+
+// A fact names the product that opened the session only when it is
+// first-party, so the tag stays a closed set. `peopl` under a TLD the stack
+// does not serve is whoever registered the name there.
+#[test]
+fn a_funding_fact_names_the_opener_only_when_the_stack_trusts_it() {
+	use crate::runtime::funding_telemetry::read::{text, value};
+	let opener_tag = |product_id: &str| {
+		let services = funding_services();
+		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Dismissed,
+		)));
+		let opener = ProductContext::new(ProductId::for_test(product_id));
+		let shown = futures::executor::block_on(services.show_funding(
+			Some(&opener),
+			new_intent(),
+			v01::FundingDirection::In,
+			None,
+		));
+		assert!(shown.is_ok(), "the overlay opened");
+		value(&services.funding().emitted_facts()[0], "product")
+	};
+
+	assert_eq!(
+		(opener_tag("peopl.dot"), opener_tag("peopl.elsewhere")),
+		(text("peopl"), text("third_party"))
+	);
 }
 
 // A top-up the user starts, hands to a provider, cancels once paid and that
@@ -13668,7 +14150,8 @@ fn provider_frames_report_their_lifecycle() {
 			)
 		})
 		.collect();
-	let row = |name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
+	let row =
+		|name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
 	assert_eq!(
 		frames,
 		[

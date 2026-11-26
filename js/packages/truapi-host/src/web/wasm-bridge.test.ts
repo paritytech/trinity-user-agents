@@ -26,11 +26,16 @@ import { wasmIsBuilt } from "../testing/require-wasm.js";
 
 /**
  * {@link mockRuntimeConfig} with the bundled previewnet stack in place of its
- * test stack: the production bundle reads only a signed `stack`.
+ * test stack: the production bundle reads only a signed `stack`. The product
+ * is one previewnet serves.
  */
 function bundledRuntimeConfig() {
   const { testStack: _testStack, ...config } = mockRuntimeConfig();
-  return { ...config, stack: bundledTestStack() };
+  return {
+    ...config,
+    productId: asProductId("mock.testnet"),
+    stack: bundledTestStack(),
+  };
 }
 
 /**
@@ -121,6 +126,42 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       "worker.truapi-playground.paseo",
     ]);
     expect(() => parseProductId("not a product")).toThrow();
+  });
+
+  it("opens a product only under an id the stack serves, and names that id", async () => {
+    const { WasmPairingHostRuntime, initSync } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      hostConfig,
+    );
+    const open = (productId: string) =>
+      runtime.productRuntime({ productId }, { emitFrame: () => {} });
+
+    // The bundled stack is previewnet, on `testnet`. A name under `dot` is
+    // that stack's own product, which the host asks for before it opens it,
+    // so the host and the core hold one id for it.
+    expect([
+      runtime.parseProductId(" Game.DOT "),
+      runtime.parseProductId("game.testnet"),
+      runtime.parseProductId("localhost:3000"),
+    ]).toEqual(["game.testnet", "game.testnet", "localhost:3000"]);
+    expect(() => runtime.parseProductId("game.paseo")).toThrow(
+      "the testnet stack serves no product under the id game.paseo",
+    );
+    expect(() => open("game.dot")).toThrow(
+      "the testnet stack serves no product under the id game.dot, which names its product game.testnet",
+    );
+    expect(() => open("game.paseo")).toThrow(
+      "the testnet stack serves no product under the id game.paseo",
+    );
+    open("game.testnet").dispose();
   });
 
   it("distinguishes product IDs from shared labels in persisted storage keys", async () => {
@@ -271,7 +312,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
           { extraTlds: "testnet" },
           { extraTlds: ["paseo", null] },
           { extraTlds: [".testnet"] },
-          { extraTlds: ["kusama"] },
+          { extraTlds: ["li"] },
           { extraGenesisHashes: ["0x1234"] },
           { extraGenesisHashes: [new Uint8Array(31)] },
         ].map(refusal),
@@ -282,8 +323,8 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       `${path}.allowed must be a boolean`,
       `${path}.extraTlds must be an array`,
       `${path}.extraTlds[1] must be a string`,
-      'runtimeConfig.stack: reserved tld ".testnet" is not one of dot, paseo, testnet',
-      'runtimeConfig.stack: reserved tld "kusama" is not one of dot, paseo, testnet',
+      'runtimeConfig.stack: reserved tld ".testnet" is not a TLD a stack can have',
+      'runtimeConfig.stack: reserved tld "li" is not a TLD a stack can have',
       `${path}.extraGenesisHashes[0]: expected 32-byte hex string, got 4 hex chars`,
       `${path}.extraGenesisHashes[0] must be exactly 32 bytes, got 31`,
     ]);

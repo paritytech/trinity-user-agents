@@ -498,7 +498,7 @@ fn product_target_resolves_to_allocation_derivation() {
 		.to_bytes();
 
 	let resolved = resolve_target(
-		&WalletKeys::new(RootEntropy::new(entropy), "paseo".to_string()),
+		&WalletKeys::new(RootEntropy::new(entropy), crate::test_support::dot_test_stack()),
 		&product("a.dot"),
 	)
 	.unwrap();
@@ -518,7 +518,7 @@ fn wallet_sso_target_resolves_to_the_responder_identity() {
 		.to_bytes();
 
 	let resolved = resolve_target(
-		&WalletKeys::new(RootEntropy::new(entropy), "paseo".to_string()),
+		&WalletKeys::new(RootEntropy::new(entropy), crate::test_support::paseo_test_stack()),
 		&StatementRenewalTarget::WalletSso,
 	)
 	.unwrap();
@@ -661,10 +661,10 @@ fn untracking_a_device_preserves_the_other_identitys_entry() {
 #[test]
 fn owner_key_follows_the_root_entropy() {
 	assert_ne!(
-		WalletKeys::new(RootEntropy::new([7; 32]), "paseo".to_string())
+		WalletKeys::new(RootEntropy::new([7; 32]), crate::test_support::dot_test_stack())
 			.root_public_key()
 			.unwrap(),
-		WalletKeys::new(RootEntropy::new([8; 32]), "paseo".to_string())
+		WalletKeys::new(RootEntropy::new([8; 32]), crate::test_support::dot_test_stack())
 			.root_public_key()
 			.unwrap()
 	);
@@ -681,4 +681,29 @@ fn a_renewal_target_does_not_name_its_account_in_full() {
 	let written = format!("{target:?}");
 
 	assert_eq!(written, r#"Account { account_id: abababab, label: "pairing peer" }"#);
+}
+
+/// After a network switch the ledger still holds the other network's entries.
+/// They are skipped without a warning, because the warning would repeat on
+/// every tick. An entry under `dot` is another network's too, and renewing it
+/// would derive a Polkadot product's key.
+#[test]
+fn another_networks_target_is_skipped_without_a_warning() {
+	let keys = WalletKeys::new(RootEntropy::new([7; 32]), crate::test_support::paseo_test_stack());
+	let target = |product: &str| StatementRenewalTarget::ProductStatementAllowance {
+		product_id: ProductId::for_test(product),
+	};
+	let mut labels = Vec::new();
+
+	let warnings = crate::logging::testing::host_sink_lines(|| {
+		labels = resolve_targets(
+			&keys,
+			&[target("app.paseo"), target("app.testnet"), target("app.dot")],
+		)
+		.into_iter()
+		.map(|resolved| resolved.label)
+		.collect();
+	});
+
+	assert_eq!((labels, warnings), (vec!["product:app.paseo".to_string()], Vec::<String>::new()));
 }

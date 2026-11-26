@@ -22,7 +22,8 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
 	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, Stack,
+	TopUpPlatform,
 };
 use futures::{
 	StreamExt,
@@ -312,6 +313,11 @@ impl<Role> HostRuntime<Role> {
 		self.services.contact_handle_cache.clear();
 	}
 
+	/// The stack this host runs.
+	pub fn stack(&self) -> &Stack {
+		self.services.stack()
+	}
+
 	/// Reference counts per product worker, shared by every connection of
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
@@ -321,8 +327,12 @@ impl<Role> HostRuntime<Role> {
 	/// Hold the product's worker until this reference is dropped.
 	///
 	/// The first reference requests startup and the last release requests a stop.
-	pub fn hold_worker(&self, product_id: &ProductId) -> crate::WorkerHold {
+	/// A product the stack does not serve is logged and gets no hold, since its
+	/// worker can never open.
+	pub fn hold_worker(&self, product_id: &ProductId) -> Option<crate::WorkerHold> {
 		crate::WorkerHold::acquire(&self.services, product_id)
+			.inspect_err(|error| tracing::warn!(%error, "worker reference for an unserved product"))
+			.ok()
 	}
 
 	/// Report that the product's worker stopped without being asked to:
@@ -436,6 +446,10 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// A device capability also resolves the host application's OS gate, so an
 	/// OS refusal reads as `Denied` whatever is stored. Remote,
 	/// identity-disclosure and account-access decisions have no OS gate.
+	///
+	/// Fails for a `dot` name on a stack with another TLD, as the product or
+	/// in the request, as the two calls below do: the stack keeps that
+	/// product's statuses under its own id.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
@@ -543,8 +557,10 @@ impl HostRuntime<PairingHost> {
 	/// product storage, while preserving the active session and unrelated
 	/// products.
 	///
-	/// Stop the product's executions first: a value a running execution
-	/// writes after the clear is kept.
+	/// Clears what is kept under exactly `product_id`, whether or not the
+	/// stack serves it, so a host can drop what an id it no longer runs left
+	/// behind. Stop the product's executions first: a value a running
+	/// execution writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(
 		&self,
@@ -585,6 +601,9 @@ impl HostRuntime<PairingHost> {
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
 	/// persisted slot, or the Account Holder. `timeout_ms` bounds that wait.
+	///
+	/// `None` while signed out, answered before any other check. Fails for a
+	/// product the stack does not serve, whatever subtree was kept for it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
@@ -686,7 +705,8 @@ impl HostRuntime<SigningHost> {
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `None` while no session is active.
+	/// root, or `None` while no session is active, answered before any other
+	/// check. Fails for a product the stack does not serve.
 	///
 	/// A signing host holds the root, so it answers this locally where a
 	/// pairing host has to ask the Account Holder.
@@ -1278,10 +1298,14 @@ impl HostRuntime<SigningHost> {
 	/// clear the values it wrote to product storage, while preserving
 	/// unrelated products.
 	///
-	/// Stop the product's executions first: a value a running execution
-	/// writes after the clear is kept.
+	/// Clears what is kept under exactly `product_id`, whether or not the
+	/// stack serves it. Stop the product's executions first: a value a
+	/// running execution writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id);
 		self.services
 			.platform
