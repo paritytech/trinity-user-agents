@@ -81,8 +81,8 @@ export interface ReservedValuesPolicy {
   extraGenesisHashes?: (string | Uint8Array)[];
   /**
    * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
-   * is, without the leading dot. The core's refusal of any other entry names
-   * the TLDs a stack can have.
+   * is, without the leading dot. The core refuses an entry no stack can have:
+   * one that is not a DNS label, or is `li` or `localhost`.
    */
   extraTlds?: string[];
 }
@@ -257,7 +257,12 @@ export interface StackCallbacks {
 
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
-  /** Stable identifier used to scope product accounts, permissions, and storage. */
+  /**
+   * Stable identifier used to scope product accounts, permissions, and storage.
+   * It is an id the host's stack serves. A pairing or signing host runtime's
+   * `parseProductId` gives it for a name, such as one written under `dot` on
+   * a stack with another TLD.
+   */
   productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
   executionKind?: ExecutableKind;

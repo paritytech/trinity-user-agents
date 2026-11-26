@@ -49,8 +49,29 @@ the host build runs:
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key, a
-descriptor without an Asset Hub, People or Bulletin chain, and a field `stack`
-does not have.
+descriptor without an Asset Hub, People or Bulletin chain, a field `stack` does
+not have, and the TLDs `li`, which share hosts end in, and `localhost`, whose
+names all resolve to the local machine.
+
+The core runs products under the stack's TLD. A product can also be named
+under `dot`: on a stack with another TLD that name is the stack's own product,
+so on `paseo` `chat-bot.dot` is `chat-bot.paseo`. `runtime.parseProductId(name)`
+answers the id for a name and rejects a name the stack does not serve. Pass its
+answer wherever the runtime takes a product id, so the host and the core hold
+one id for a product. With `chat-bot.dot` on a `paseo` stack:
+
+- `createProvider` rejects, and the error names `chat-bot.paseo`;
+- `claimWorker` holds nothing, which the core logs at `warn`, so no demand is
+  reported for it;
+- `getPermissionAuthorizationStatus`, `getPermissionAuthorizationStatuses` and
+  `setPermissionAuthorizationStatus` reject, since a status stored under that
+  name is one no product reads, and they reject a request that names it too;
+- `clearProductState` clears the grants and the product storage kept under
+  exactly that id, which is how a host drops them for an id an earlier release
+  ran. It does not touch `chat-bot.paseo`.
+
+Ids the core hands to a host are ids the stack serves, also when a product
+wrote a `dot` name in a call.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
@@ -253,9 +274,9 @@ needs, and a rejected schedule reaches the product as a host failure. A host
 keeps one reminder per product. The core serves
 `game` to the game product, `dim2`, alone. The mock test host
 (`@parity/truapi-host/testing`) accepts every reminder and cancel without
-holding them once it runs as that product; its default `mock.dot` gets
+holding them once it runs as that product; its default `mock.paseo` gets
 `Unsupported`, so a suite that exercises `game` passes
-`productId: "dim2.dot"`.
+`productId: "dim2.dot"`, which the test host runs as `dim2.paseo`.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
@@ -364,6 +385,11 @@ const address = await productAccountAddress({
 });
 ```
 
+The address is the one the host gives the product, so the product id is read as
+the host's stack reads it. The mock test stack's TLD is `paseo`, which makes
+`tx-demo.dot` the product `tx-demo.paseo`. A suite whose host runs another test
+stack passes it as `testStack`.
+
 Which one to reach for:
 
 - `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
@@ -372,9 +398,9 @@ Which one to reach for:
 - `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
   is asynchronous and runs the whole derivation from a dev account's session
   root. It needs the built testing bundle, so it is for suites only. Because
-  the address depends on nothing but the root, the product id and the index, a
-  suite can work it out in a `globalSetup` and fund it once rather than per
-  test.
+  the address depends on nothing but the root, the id the stack serves the
+  product under and the index, a suite can work it out in a `globalSetup` and
+  fund it once rather than per test.
 
 A running fixture answers the same address through
 `testHost.getProductAccountAddress(productId?, index?)`, which reads the session
@@ -440,7 +466,7 @@ connects again: `onPort` is called with a fresh port once the new document
 sends a frame, and the function `onPort` returned for the previous port runs
 then. Each port is a new product session, so give it a core connection of its
 own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
-and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker and answers the id the host's stack serves the name under. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 ## Example — Node (worker thread)
 
@@ -465,7 +491,8 @@ const runtime = await createNodePairingHostRuntime(
   }),
   { hostConfig },
 );
-const client = createClient(createTransport(await runtime.createProvider({ productId: "my-cli.dot" })));
+const productId = await runtime.parseProductId("my-cli.dot");
+const client = createClient(createTransport(await runtime.createProvider({ productId })));
 await client.account.requestLogin({});
 ```
 

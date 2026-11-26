@@ -132,7 +132,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			crate::test_support::paseo_test_stack(),
+			crate::test_support::dot_test_stack(),
 			crate::Spawner::for_test(),
 		);
 		futures::executor::block_on(root_manifest_within(
@@ -187,7 +187,7 @@ fn concurrent_lookups_for_one_product_read_asset_hub_once() {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::paseo_test_stack(),
+		crate::test_support::dot_test_stack(),
 		crate::Spawner::for_test(),
 	);
 	let product = ProductId::for_test("peopl.dot");

@@ -39,7 +39,7 @@ use crate::{
 	runtime::{
 		sso_service::Dispatch,
 		tests::{
-			ENTROPY, active_signing_host, grant_auto_signing, product_runtime_for,
+			ENTROPY, active_signing_host, grant_auto_signing, product_runtime_for, served,
 			signing_runtime_on_asset_hub,
 		},
 	},
@@ -187,7 +187,7 @@ fn relayed<'a>(cx: &'a CallContext, session: &'a AuthoritySession) -> AccountInv
 /// The service a paired host reaches, bound to `authority`'s wallet from `ENTROPY`.
 fn sso_service(authority: &SigningHost) -> SsoAccountHolderService {
 	let entropy = RootEntropy::new(ENTROPY);
-	let statement = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+	let statement = entropy.derive_identity_keypair(authority.services.stack().tld()).unwrap();
 	let (_, encryption) = entropy.derive_x25519_keypair(b"sso");
 	authority
 		.sso_responder()
@@ -409,8 +409,8 @@ fn a_refused_signature_tells_the_host_what_it_judged_by() {
 /// A refusal by the context check names the context it refused.
 ///
 /// A stored denial lists the scopes the manifest grants, which shows the
-/// manifest was not the reason. A context on another network reads no
-/// manifest at all, so its line has no source.
+/// manifest was not the reason. A context off the owner's network, as a
+/// localhost id is, reads no manifest at all, so its line has no source.
 #[test]
 fn a_context_refusal_tells_the_host_which_context() {
 	let context_grants = Some(r#"{"dim2next":["context"]}"#);
@@ -429,7 +429,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 			Door::Product,
 			OWNER_GRANTS_DIM2NEXT,
 			context_grants,
-			context_of("dim2.paseo"),
+			context_of("localhost:3000"),
 			|_| {},
 		);
 	});
@@ -439,7 +439,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 	);
 	let off_network_line = refusal_line(
 		"because=context on another network, entry=dim2next, caller=dim2next.dot, \
-		 owner=peopl.dot, context=dim2.paseo, scopes=None",
+		 owner=peopl.dot, context=localhost:3000, scopes=None",
 	);
 	assert_eq!(
 		(pin_cache_ages(denied, seeded_at_secs, 0), off_network),
@@ -485,11 +485,11 @@ fn a_consented_alias_read_warns_nobody() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test("myapp.dot")),
-			HostAccountGetAliasRequest {
+			served(HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: context_of("other.dot"),
 				ring_location,
-			},
+			}),
 		))
 		.expect("the user consented to the read");
 	});
@@ -598,6 +598,30 @@ fn a_blessed_product_proves_with_a_context_grant_despite_a_stored_denial() {
 	);
 }
 
+/// Only a product the stack trusts is exempt from a stored refusal. A trusted
+/// label under a TLD the stack does not serve is held to it like any other
+/// product.
+#[test]
+fn a_trusted_label_off_the_stack_is_held_to_a_stored_denial() {
+	use crate::host_internal::product_manifest::Granted;
+	let platform = Arc::new(StubPlatform::default());
+	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+	deny_account_access(&platform, "dim2.testnet", "peopl.dot");
+	let (services, _authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+
+	let granted = |caller: &str| {
+		futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+			&services,
+			platform.as_ref(),
+			&ProductId::for_test(caller),
+			&ProductId::for_test("peopl.dot"),
+			Granted::Context,
+		))
+	};
+	assert_eq!([granted("dim2.dot"), granted("dim2.testnet")], [true, false]);
+}
+
 /// A `context` grant covers the identity read, so the two calls agree.
 ///
 /// The contextual alias and the proof come out of one VRF evaluation, so a
@@ -629,11 +653,11 @@ fn a_context_grant_covers_the_identity_read() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountGetAliasRequest {
+			served(v01::HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: context.clone(),
 				ring_location: ring.clone(),
-			},
+			}),
 		))
 	};
 
@@ -676,6 +700,9 @@ fn a_context_grant_covers_the_identity_read() {
 fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 	let platform = Arc::new(StubPlatform::default());
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+	// The development id grants the same, so only its being on no network
+	// refuses its context below.
+	cache_grant(&platform, "localhost:3000", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
@@ -689,7 +716,7 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
@@ -697,7 +724,7 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 				},
 				ring_location: ring.clone(),
 				message: b"m".to_vec(),
-			},
+			}),
 		))
 	};
 
@@ -723,16 +750,10 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 		"the granting product is all its executables, so its context is too"
 	);
 	assert_eq!(
-		mint("dim2.dot", "dim2.paseo").err(),
+		mint("dim2.dot", "localhost:3000").err(),
 		Some(RingVrfError::NotAllowlisted),
-		"the grantee's own namesake on another network is a different \
-         product, so its context is not the grantee's"
-	);
-	assert_eq!(
-		mint("dim2.dot", "peopl.paseo").err(),
-		Some(RingVrfError::NotAllowlisted),
-		"a grant published on one network must not reach the pseudonym a \
-         namesake presents on another"
+		"a grant published on a network must not reach the pseudonym a \
+         development id presents, which is on none"
 	);
 }
 
@@ -803,11 +824,11 @@ fn third_product_context(
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("dim2next.dot")),
-		v01::HostAccountGetAliasRequest {
+		served(v01::HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location: ring,
-		},
+		}),
 	));
 	(proof, alias)
 }
@@ -857,7 +878,7 @@ fn a_product_may_grant_a_grantee_its_context() {
 /// and at each door.
 #[test]
 fn a_context_the_naming_product_did_not_grant_is_refused() {
-	let cases: [(&str, Option<&str>, &str, &str); 5] = [
+	let cases: [(&str, Option<&str>, &str, &str); 4] = [
 		(
 			OWNER_GRANTS_DIM2NEXT,
 			None,
@@ -881,14 +902,6 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 			Some(r#"{"dim2next":["storage"]}"#),
 			"dim2.dot",
 			"a narrower scope does not imply context",
-		),
-		(
-			// `dim2.dot`'s manifest is cached by bare label, so it is the
-			// document a `.paseo` context would read: a namesake's grant.
-			OWNER_GRANTS_DIM2NEXT,
-			Some(r#"{"dim2next":["context"]}"#),
-			"dim2.paseo",
-			"a grant must not reach the pseudonym on another network",
 		),
 	];
 	for (owner, grants, context, why) in cases {
@@ -986,10 +999,10 @@ fn an_owner_listing_its_own_keys_is_not_prompted_for_its_own_account() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("PEOPL.DOT")),
-		v01::HostAccountListRingVrfKeysRequest {
+		served(v01::HostAccountListRingVrfKeysRequest {
 			owner: ProductId::for_test("peopl.dot"),
 			disclosure: v01::RingVrfKeyDisclosure::PublicKey,
-		},
+		}),
 	));
 	assert!(
 		listed.is_ok(),
@@ -1032,7 +1045,7 @@ fn a_cross_network_namesake_is_not_treated_as_the_owner() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("peopl.paseo")),
-		v01::HostAccountCreateProofRequest {
+		served(v01::HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context: v01::ProductProofContext {
 				product_id: ProductId::for_test("bank.dot"),
@@ -1040,7 +1053,7 @@ fn a_cross_network_namesake_is_not_treated_as_the_owner() {
 			},
 			ring_location: ring.clone(),
 			message: b"m".to_vec(),
-		},
+		}),
 	));
 	assert_eq!(
 		minted.err(),
@@ -1070,7 +1083,7 @@ fn a_grantee_may_spell_its_own_context_differently() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test("dim2.dot")),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
@@ -1078,7 +1091,7 @@ fn a_grantee_may_spell_its_own_context_differently() {
 				},
 				ring_location: ring.clone(),
 				message: b"m".to_vec(),
-			},
+			}),
 		))
 	};
 	assert!(mint("dim2.dot").is_ok(), "control: the canonical spelling");
@@ -1157,7 +1170,11 @@ fn a_refusal_covers_every_executable_of_the_refused_target() {
 	});
 	cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 	futures::executor::block_on(
-		crate::runtime::product_consent::ProductConsent::new(platform.clone()).account_access(
+		crate::runtime::product_consent::ProductConsent::new(
+			platform.clone(),
+			crate::test_support::test_stack(TEST_NETWORK_SUFFIX, [0; 32], [0xbb; 32], [0xcc; 32]),
+		)
+		.account_access(
 			&ProductId::for_test("ordinary.dot"),
 			&ProductId::for_test("peopl.dot"),
 			platform.as_ref(),
@@ -1192,6 +1209,9 @@ fn a_refusal_covers_every_executable_of_the_refused_target() {
 fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 	let platform = Arc::new(StubPlatform::default());
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+	// The development id grants the same, so only its being on no network
+	// refuses its context below.
+	cache_grant(&platform, "localhost:3000", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
@@ -1204,14 +1224,14 @@ fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountGetAliasRequest {
+			served(v01::HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: ring.clone(),
-			},
+			}),
 		))
 	};
 
@@ -1230,7 +1250,7 @@ fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 		"the granting product is all its executables here too"
 	);
 	assert_eq!(
-		alias("dim2.dot", "peopl.paseo").err(),
+		alias("dim2.dot", "localhost:3000").err(),
 		Some(RingVrfError::NotAllowlisted),
 		"the network rule binds the read as well as the proof: the alias and \
          the proof come out of one VRF evaluation"
@@ -1264,7 +1284,7 @@ fn an_owner_spelled_differently_still_proves_with_its_own_key() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test("peopl.dot"),
@@ -1272,7 +1292,7 @@ fn an_owner_spelled_differently_still_proves_with_its_own_key() {
 				},
 				ring_location: ring.clone(),
 				message: b"m".to_vec(),
-			},
+			}),
 		))
 	};
 	assert!(prove("peopl.dot").is_ok(), "control: the canonical spelling");
@@ -1602,7 +1622,7 @@ impl Door {
 				session,
 				&CallContext::default(),
 				&ProductContext::new(ProductId::for_test(caller)),
-				request,
+				served(request),
 			)),
 			Door::Paired => paired_request(authority, caller, request),
 		}
@@ -1621,7 +1641,7 @@ impl Door {
 				session,
 				&CallContext::default(),
 				&ProductContext::new(ProductId::for_test(caller)),
-				request,
+				served(request),
 			)),
 			Door::Paired => paired_request(authority, caller, request),
 		}
@@ -1771,23 +1791,23 @@ fn ring_alias_and_proof_share_the_explicit_registered_key() {
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("peopl.dot")),
-		HostAccountGetAliasRequest {
+		served(HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context: context.clone(),
 			ring_location: ring_location.clone(),
-		},
+		}),
 	))
 	.expect("alias succeeds");
 	let proof = futures::executor::block_on(authority.accounts().create_proof(
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("peopl.dot")),
-		HostAccountCreateProofRequest {
+		served(HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location,
 			message: b"prove me".to_vec(),
-		},
+		}),
 	))
 	.expect("proof succeeds");
 
@@ -1811,7 +1831,7 @@ fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("peopl.dot")),
-		HostAccountGetAliasRequest {
+		served(HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context: v01::ProductProofContext {
 				product_id: ProductId::for_test("myapp.dot"),
@@ -1821,7 +1841,7 @@ fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 				chain_id: registered_ring.chain_id,
 				junctions: vec![],
 			},
-		},
+		}),
 	))
 	.unwrap_err();
 
@@ -1848,11 +1868,11 @@ fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("myapp.dot")),
-		HostAccountGetAliasRequest {
+		served(HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context: context.clone(),
 			ring_location: ring_location.clone(),
-		},
+		}),
 	));
 	assert_eq!(alias, Err(RingVrfError::Rejected));
 
@@ -1860,12 +1880,12 @@ fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("myapp.dot")),
-		HostAccountCreateProofRequest {
+		served(HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location,
 			message: b"prove me".to_vec(),
-		},
+		}),
 	));
 	assert_eq!(proof, Err(RingVrfError::NotAllowlisted));
 	assert_eq!(
@@ -1903,12 +1923,15 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 		&session,
 		&cx,
 		&product,
-		request.clone(),
+		served(request.clone()),
 	))
 	.expect("first alias succeeds");
-	futures::executor::block_on(
-		authority.accounts().account_alias(&session, &cx, &product, request),
-	)
+	futures::executor::block_on(authority.accounts().account_alias(
+		&session,
+		&cx,
+		&product,
+		served(request),
+	))
 	.expect("second alias succeeds from cached grant");
 
 	assert_eq!(
@@ -1988,7 +2011,7 @@ fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
 		&session,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		request,
+		served(request),
 	))
 	.expect("VRF signing succeeds");
 
@@ -2041,7 +2064,7 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 		&session,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect("granted product signs without another confirmation");
 	assert!(
@@ -2057,7 +2080,7 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 		&session,
 		&CallContext::default(),
 		&connection(&authority, "other.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("different calling product remains confirmation-bound");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2096,7 +2119,7 @@ fn auto_signing_grant_does_not_cross_root_identity_replacement() {
 		&replacement,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("replacement root must receive its own confirmation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2138,7 +2161,7 @@ fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
 		&reactivated,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("reactivated wallet must receive its own confirmation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2180,7 +2203,7 @@ fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
 		&current,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("stale allocation must not grant the replacement activation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2224,7 +2247,7 @@ fn auto_signing_grant_does_not_cross_runtime_instance() {
 		&session,
 		&CallContext::default(),
 		&connection(&replacement, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("a separate runtime must receive its own confirmation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2259,10 +2282,10 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 
 	let product_response = futures::executor::block_on(authority.wallet.sign_payload(
 		relayed(&cx, &session),
-		SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
+		SignPayloadAuthorityRequest::Product(served(v01::HostSignPayloadRequest {
 			account: product_account(0),
 			payload: payload.clone(),
-		}),
+		})),
 	))
 	.expect("product payload signing succeeds");
 
@@ -2296,7 +2319,7 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 	let legacy_response = futures::executor::block_on(authority.wallet.sign_payload(
 		relayed(&cx, &session),
 		SignPayloadAuthorityRequest::LegacyAccount {
-			product_account: product_account(0),
+			product_account: served(product_account(0)),
 			request: v01::HostSignPayloadWithLegacyAccountRequest {
 				signer: format!("0x{}", hex::encode(keypair.public.to_bytes())),
 				payload,
@@ -2406,7 +2429,7 @@ fn create_transaction_reaches_chain_metadata_resolution() {
 
 	let err = futures::executor::block_on(activation.wallet.create_transaction(
 		relayed(&cx, &session),
-		CreateTransactionAuthorityRequest::Product(tx_payload(0)),
+		CreateTransactionAuthorityRequest::Product(served(tx_payload(0))),
 	))
 	.expect_err("fixture cannot resolve metadata");
 	assert!(
@@ -2425,7 +2448,7 @@ fn create_transaction_legacy_signer_mismatch_errors() {
 
 	let payload = tx_payload(0);
 	let request = CreateTransactionAuthorityRequest::LegacyAccount {
-		product_account: product_account(0),
+		product_account: served(product_account(0)),
 		request: v01::LegacyAccountTxPayload {
 			signer: [0xff; 32], // does not match the derived slot-zero key
 			genesis_hash: payload.genesis_hash,
@@ -2454,7 +2477,7 @@ fn create_transaction_requires_active_session() {
 
 	let err = futures::executor::block_on(activation.wallet.create_transaction(
 		relayed(&cx, &stale_session),
-		CreateTransactionAuthorityRequest::Product(tx_payload(0)),
+		CreateTransactionAuthorityRequest::Product(served(tx_payload(0))),
 	))
 	.expect_err("no active session");
 	assert_eq!(err, AuthorityError::Disconnected);
@@ -2559,7 +2582,7 @@ fn reactivation_invalidates_prior_session_snapshot() {
 	};
 	let err = futures::executor::block_on(authority.wallet.sign_raw(
 		relayed(&cx, &stale),
-		SignRawAuthorityRequest::Product(request),
+		SignRawAuthorityRequest::Product(served(request)),
 		true,
 	))
 	.expect_err("stale snapshot rejected");
@@ -2586,7 +2609,7 @@ fn disconnect_clears_local_session() {
 	};
 	let err = futures::executor::block_on(authority.wallet.sign_raw(
 		relayed(&cx, &session),
-		SignRawAuthorityRequest::Product(request),
+		SignRawAuthorityRequest::Product(served(request)),
 		true,
 	))
 	.expect_err("no session after disconnect");

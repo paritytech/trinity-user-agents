@@ -624,12 +624,17 @@ later run draws them without the files or Bulletin.
 
 Accepted product identifiers are:
 
-- a name ending in a dotNS TLD (`.dot`, `.paseo` or `.testnet`);
+- a name ending in `.dot` or in the TLD of the stack the host runs;
 - `localhost`; or
 - a string beginning with `localhost:`.
 
 Identifiers are trimmed, Unicode-NFC normalized, and lowercased. For example,
 `" Dotli.DOT "` becomes `dotli.dot`.
+
+On a stack whose TLD is not `dot`, a name ending in `.dot` selects the same
+name under the stack's TLD, because the stack's own dotNS registry resolves it:
+on `paseo`, `dotli.dot` is the product `dotli.paseo`. The host shows that id,
+and it is the id that scopes everything below.
 
 Other identifiers, including an ordinary `example.com`, are rejected.
 
@@ -1759,9 +1764,9 @@ rotates with every fresh checkpoint, and the light client fetches the one the
 descriptor names itself.
 
 A descriptor that lacks one of the three roles, gives two of them the same
-genesis hash (the host routes each role by its genesis), has a `tld` the core
-does not serve (`dot`, `paseo`, `testnet`), has the id `polkadot`, or has no
-`dub` service or no `dotns.popController` is an error for every command. The
+genesis hash (the host routes each role by its genesis), has a `tld` that is not a
+lowercase DNS label, has the id `polkadot`, or has no `dub` service or no
+`dotns.popController` is an error for every command. The
 CLI's own username reads (`register-name`, `identity-check`, `attest`) go
 through that controller without looking it up on chain; the signing host's
 core still discovers its controller on chain.

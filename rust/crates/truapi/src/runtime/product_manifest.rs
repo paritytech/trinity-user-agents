@@ -54,11 +54,9 @@ const APP_SUBNAME: &str = "app";
 /// The two are one answer because a caller cannot act on the difference.
 ///
 /// The TLD the identifier carries is discarded and the node re-derived under
-/// the TLD the network reports. A product id is minted on one network but
-/// [`DOTNS_TLDS`][tlds] spans them all, so `dim2.dot` reaching a `.paseo`
-/// deployment has to resolve there rather than hash a name no registry holds.
-///
-/// [tlds]: crate::platform::DOTNS_TLDS
+/// the TLD the network reports. The readers below pass only ids the stack
+/// serves, which are under its own TLD, so the two differ only when the chain
+/// and the stack disagree.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
 async fn fetch_root_manifest(
 	chain: &ChainRuntime,
@@ -283,6 +281,10 @@ pub enum ManifestSource {
 	/// The lookup ran past [`MANIFEST_RESOLUTION_CEILING`].
 	#[display("dotNS lookup timed out")]
 	TimedOut,
+	/// The id is not one the stack serves a product under, so nothing was
+	/// read for it.
+	#[display("not a product of this stack")]
+	Unserved,
 }
 
 /// Why a grant lookup refused, with what it judged by.
@@ -374,7 +376,7 @@ async fn scope_grant(
 	if !manifest.grants(caller_id, scope) {
 		return Err(Refusal { because: RefusedBecause::NotGranted, source, scopes });
 	}
-	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
+	if scope == Granted::Context && !services.stack().trusts(caller_id) {
 		let because = match stored_account_decision(platform, caller_id, target).await {
 			StoredDecision::Denied => RefusedBecause::UserDenied,
 			StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
@@ -485,8 +487,8 @@ async fn root_manifest_within(
 /// With `peopl.paseo` granting `dim2next` its key:
 /// - `dim2next.paseo` may prove in `dim2.paseo`'s context when `dim2.paseo` grants `dim2next`
 ///   `context`.
-/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a namesake's on another
-///   network.
+/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a localhost id's, which is
+///   on no network.
 ///
 /// Guards the alias read as well as the proof: both come from one VRF evaluation.
 pub async fn require_context_access(
@@ -515,9 +517,8 @@ pub async fn require_context_access(
 	// The manifest is resolved by bare label on the host's network, so
 	// `dim2.dot` and `dim2.paseo` read one document. The context is held to the
 	// owner's network, so a grant read for one TLD does not admit the pseudonym
-	// named under another. This is the owner's TLD as the handle spells it, not
-	// the host's: an owner id from another network reads this host's manifests,
-	// as `ring_vrf_key_access_granted` already does for the key grant.
+	// named under another. The ids that reach this are ones the stack serves, so
+	// what it keeps apart today is a localhost context and a dotNS owner.
 	if !context_id.on_one_network(&access.owner) {
 		Refusal { because: RefusedBecause::ContextOffNetwork, source: None, scopes: None }.warn(
 			&access.caller,
@@ -671,6 +672,11 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
+	// The read below drops the TLD and caches by bare label, so an
+	// unserved `foo.testnet` would get `foo.paseo`'s manifest.
+	if services.stack().require_served(target).is_err() {
+		return (None, ManifestSource::Unserved);
+	}
 	let key = CoreStorageKey::product_manifest(target);
 	let run = services.stack().run();
 	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
@@ -714,6 +720,11 @@ pub async fn read_worker_manifest(
 	product_id: &ProductId,
 	policy: CachePolicy,
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
+	if services.stack().require_served(product_id).is_err() {
+		// Reported as just fetched: there is nothing to refresh for an
+		// id the stack does not serve.
+		return Ok((None, DotnsRead::Fetched));
+	}
 	let key = worker_manifest_cache_key(product_id);
 	let run = services.stack().run();
 	let (json, read) = cached_dotns_json(platform, &run, key, policy, || async {
@@ -781,6 +792,9 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
+	if services.stack().require_served(product_id).is_err() {
+		return Some(false);
+	}
 	let key = app_manifest_cache_key(product_id);
 	let run = services.stack().run();
 	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {

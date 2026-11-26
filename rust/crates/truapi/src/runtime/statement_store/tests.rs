@@ -11,9 +11,9 @@ use crate::{
 		root_entropy::RootEntropy,
 		statement_store::{MAX_MATCH_ANY_TOPICS, SUBMIT_STATEMENT_METHOD, TopicFilterKind},
 	},
-	platform::{CoreStorageKey, ProductContext},
+	platform::{CoreStorageKey, ProductContext, ProductId},
 	test_support::{
-		StubPlatform, account_id, new_statements_frame, paseo_test_stack, runtime_config,
+		StubPlatform, account_id, dot_test_stack, new_statements_frame, runtime_config,
 		signed_statement, sso_session_info, sso_success_response_script, statement, stub_platform,
 		submitted_remote_message, subscribe_ack_frame,
 	},
@@ -45,7 +45,7 @@ fn assert_sr25519_signature(signer: [u8; 32], signature: [u8; 64], payload: &[u8
 /// resolves without a chain.
 fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	let entry = crate::runtime::product_manifest::encode_cached_root_manifest(
-		&paseo_test_stack().run(),
+		&dot_test_stack().run(),
 		Some(&format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
 		crate::unix_time::current_unix_secs(),
 	);
@@ -76,7 +76,7 @@ fn signing_host_runtime_on(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		paseo_test_stack(),
+		dot_test_stack(),
 		Spawner::for_test(),
 	);
 	let signing_host = SigningHost::new(services.clone());
@@ -157,16 +157,16 @@ fn statement_store_create_proof_signing_host_uses_product_key() {
 #[test]
 fn statement_store_create_proof_confirms_a_cross_product_account() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform.clone());
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
 	let owner = RootEntropy::new(ENTROPY)
-		.derive_product_keypair(&ProductId::for_test("dim2.paseo"), index_bytes(0))
+		.derive_product_keypair(&ProductId::for_test("dim2.dot"), index_bytes(0))
 		.unwrap();
 	let request = RemoteStatementStoreCreateProofRequest::V1(
 		latest::RemoteStatementStoreCreateProofRequest {
-			product_account_id: account_id("dim2.paseo", 0),
+			product_account_id: account_id("dim2.dot", 0),
 			statement,
 		},
 	);
@@ -192,7 +192,7 @@ fn statement_store_create_proof_confirms_a_cross_product_account() {
 	assert_eq!(reviews.len(), 1, "the user saw the signature");
 	assert_eq!(
 		reviews[0].calling_product_id,
-		Some(ProductId::for_test("dim2next.paseo")),
+		Some(ProductId::for_test("dim2next.dot")),
 		"and saw which product asked",
 	);
 }
@@ -200,11 +200,11 @@ fn statement_store_create_proof_confirms_a_cross_product_account() {
 #[test]
 fn statement_store_create_proof_refuses_a_cross_product_account_the_user_declines() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: false, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform);
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform);
 	let request = RemoteStatementStoreCreateProofRequest::V1(
 		latest::RemoteStatementStoreCreateProofRequest {
-			product_account_id: account_id("dim2.paseo", 0),
+			product_account_id: account_id("dim2.dot", 0),
 			statement: statement(),
 		},
 	);
@@ -248,15 +248,15 @@ fn create_proof_as(
 #[test]
 fn statement_store_create_proof_asks_once_per_cross_product_owner() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform.clone());
 
 	for _ in 0..3 {
-		create_proof_as(&host, account_id("dim2.paseo", 0)).expect("the grant admits the account");
+		create_proof_as(&host, account_id("dim2.dot", 0)).expect("the grant admits the account");
 	}
-	create_proof_as(&host, account_id("dim2.paseo", 1)).expect("the grant admits the account");
-	cache_context_grant(&platform, "stash.paseo", "dim2next");
-	create_proof_as(&host, account_id("stash.paseo", 0)).expect("the grant admits the account");
+	create_proof_as(&host, account_id("dim2.dot", 1)).expect("the grant admits the account");
+	cache_context_grant(&platform, "stash.dot", "dim2next");
+	create_proof_as(&host, account_id("stash.dot", 0)).expect("the grant admits the account");
 
 	let reviewed: Vec<_> = platform
 		.statement_store_product_sign_reviews
@@ -265,17 +265,17 @@ fn statement_store_create_proof_asks_once_per_cross_product_owner() {
 		.iter()
 		.map(|review| review.account.clone())
 		.collect();
-	assert_eq!(reviewed, vec![account_id("dim2.paseo", 0), account_id("stash.paseo", 0)]);
+	assert_eq!(reviewed, vec![account_id("dim2.dot", 0), account_id("stash.dot", 0)]);
 }
 
 #[test]
 fn statement_store_create_proof_asks_again_after_a_refusal() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: false, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform.clone());
 
 	for _ in 0..2 {
-		create_proof_as(&host, account_id("dim2.paseo", 0)).expect_err("the user refused");
+		create_proof_as(&host, account_id("dim2.dot", 0)).expect_err("the user refused");
 	}
 
 	let reviews = platform

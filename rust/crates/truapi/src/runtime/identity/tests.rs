@@ -161,7 +161,7 @@ fn overlapping_lookups_of_one_session_read_dotns_once() {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			crate::test_support::paseo_test_stack(),
+			crate::test_support::dot_test_stack(),
 			crate::Spawner::for_test(),
 		);
 		let session = session_without_usernames([0x11; 32], ACCOUNT);

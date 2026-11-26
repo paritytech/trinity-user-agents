@@ -446,8 +446,15 @@ pub fn test_run_from(asset_hub: [u8; 32], sequence: u32) -> crate::platform::Sta
 /// nothing to the stub's chain.
 pub const UNSERVED_GENESIS: [u8; 32] = [0xfe; 32];
 
-/// The stack most runtime tests run on: [`test_stack`] on `paseo` with People
-/// `[0; 32]`, Bulletin `[0xbb; 32]` and Asset Hub `[0xcc; 32]`.
+/// The stack most runtime tests run on: [`test_stack`] on `dot`, the TLD
+/// their products are under, with People `[0; 32]`, Bulletin `[0xbb; 32]` and
+/// Asset Hub `[0xcc; 32]`.
+pub fn dot_test_stack() -> crate::platform::Stack {
+	test_stack("dot", [0; 32], [0xbb; 32], [0xcc; 32])
+}
+
+/// [`dot_test_stack`]'s chains on `paseo`, for a test of a stack with a TLD
+/// of its own.
 pub fn paseo_test_stack() -> crate::platform::Stack {
 	test_stack("paseo", [0; 32], [0xbb; 32], [0xcc; 32])
 }
@@ -622,7 +629,7 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
-	(pairing_config_on(paseo_test_stack()), ProductContext::new(ProductId::for_test(product_id)))
+	(pairing_config_on(dot_test_stack()), ProductContext::new(ProductId::for_test(product_id)))
 }
 
 /// The pairing host of [`runtime_config`] on `stack`.
@@ -689,7 +696,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		paseo_test_stack(),
+		dot_test_stack(),
 		"polkadotapp".to_string(),
 	)
 	.expect("test pairing config is valid");

@@ -40,12 +40,12 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 
 fn dim2_account() -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: ProductId::for_test("dim2.paseo"),
+		dot_ns_identifier: ProductId::for_test("dim2.dot"),
 		derivation_index: v01::DerivationIndex::Index(0),
 	}
 }
 
-/// `caller` signs a payload with `dim2.paseo`'s account.
+/// `caller` signs a payload with `dim2.dot`'s account.
 fn sign_as(
 	platform: Arc<StubPlatform>,
 	caller: &str,
@@ -68,14 +68,14 @@ fn sign_as(
 #[test]
 fn a_context_grant_signs_with_the_granting_products_account() {
 	let platform = Arc::new(StubPlatform { sign_payload_confirmed: true, ..Default::default() });
-	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
+	cache_grant(&platform, "dim2.dot", r#"{"dim2next":["context"]}"#);
 
-	let response = sign_as(platform, "dim2next.paseo").expect("the grant admits the account");
+	let response = sign_as(platform, "dim2next.dot").expect("the grant admits the account");
 
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
 	let owner = RootEntropy::new(ENTROPY)
-		.derive_product_keypair(&ProductId::for_test("dim2.paseo"), index_bytes(0))
+		.derive_product_keypair(&ProductId::for_test("dim2.dot"), index_bytes(0))
 		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),
@@ -85,16 +85,16 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 		schnorrkel::Signature::from_bytes(&response.signature[1..]).expect("64-byte signature");
 	assert!(
 		owner.public.verify_simple(b"substrate", &preimage, &signature).is_ok(),
-		"dim2.paseo's account signed the payload",
+		"dim2.dot's account signed the payload",
 	);
 }
 
 #[test]
 fn an_ungranted_product_cannot_sign_with_the_account() {
 	let platform = Arc::new(StubPlatform { sign_payload_confirmed: true, ..Default::default() });
-	cache_grant(&platform, "dim2.paseo", r#"{}"#);
+	cache_grant(&platform, "dim2.dot", r#"{}"#);
 
-	let error = sign_as(platform, "dim2next.paseo").expect_err("no grant names this caller");
+	let error = sign_as(platform, "dim2next.dot").expect_err("no grant names this caller");
 
 	assert!(
 		matches!(
@@ -113,9 +113,9 @@ fn an_ungranted_product_cannot_sign_with_the_account() {
 #[test]
 fn a_granted_signature_is_still_confirmed_by_the_user() {
 	let platform = Arc::new(StubPlatform { sign_payload_confirmed: false, ..Default::default() });
-	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
+	cache_grant(&platform, "dim2.dot", r#"{"dim2next":["context"]}"#);
 
-	sign_as(platform.clone(), "dim2next.paseo")
+	sign_as(platform.clone(), "dim2next.dot")
 		.expect_err("a refused confirmation refuses the signature");
 
 	assert_eq!(
@@ -142,8 +142,8 @@ fn a_blessed_product_signs_with_another_products_account_only_when_granted() {
 		(r#"{"stash":["context"]}"#, Ok(())),
 	] {
 		let platform = Arc::new(StubPlatform::default());
-		cache_grant(&platform, "dim2.paseo", trusted);
-		let result = sign_as(platform.clone(), "stash.paseo").map(|_| ());
+		cache_grant(&platform, "dim2.dot", trusted);
+		let result = sign_as(platform.clone(), "stash.dot").map(|_| ());
 		assert_eq!((result, platform.sign_payload_reviews.lock().unwrap().len()), (expected, 0),);
 	}
 }
@@ -162,30 +162,30 @@ fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted
 		(r#"{"stash":["context"]}"#, Ok(())),
 	] {
 		let platform = Arc::new(StubPlatform::default());
-		cache_grant(&platform, "dim2.paseo", trusted);
+		cache_grant(&platform, "dim2.dot", trusted);
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
 		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("the local session activates");
-		let runtime = product_runtime_for(services, activation, "stash.paseo");
+		let runtime = product_runtime_for(services, activation, "stash.dot");
 
 		let result = futures::executor::block_on(runtime.sign_vrf(
 			&CallContext::default(),
-			HostAccountSignVrfRequest::V1(vrf_request("dim2.paseo")),
+			HostAccountSignVrfRequest::V1(vrf_request("dim2.dot")),
 		))
 		.map(|_| ());
 		assert_eq!((result, platform.sign_vrf_reviews.lock().unwrap().len()), (expected, 0));
 	}
 }
 
-/// A `dim2next.paseo` execution that `dim2.paseo` granted its accounts, on a
+/// A `dim2next.dot` execution that `dim2.dot` granted its accounts, on a
 /// local signing session. One runtime is one execution, so what the user
 /// approved carries from one call to the next.
 fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost<WalletAccountHolder> {
-	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
+	cache_grant(&platform, "dim2.dot", r#"{"dim2next":["context"]}"#);
 	let (services, activation) = signing_runtime_with_platform(platform);
 	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
-	product_runtime_for(services, activation, "dim2next.paseo")
+	product_runtime_for(services, activation, "dim2next.dot")
 }
 
 fn payload_request(account: v01::ProductAccountId) -> HostSignPayloadRequest {
@@ -203,7 +203,7 @@ fn raw_request(account: v01::ProductAccountId) -> HostSignRawRequest {
 }
 
 fn transaction_request(account: v01::ProductAccountId) -> ProductAccountTxPayload {
-	let mut payload = crate::test_support::product_tx_payload("dim2.paseo");
+	let mut payload = crate::test_support::product_tx_payload("dim2.dot");
 	payload.signer = account;
 	ProductAccountTxPayload::V1(payload)
 }
@@ -262,24 +262,24 @@ fn a_cross_product_signature_is_confirmed_once_per_kind_and_product() {
 	let runtime = dim2next_runtime(platform.clone());
 
 	for _ in 0..3 {
-		sign_payload_with(&runtime, account_id("dim2.paseo", 0));
+		sign_payload_with(&runtime, account_id("dim2.dot", 0));
 	}
 	assert_eq!(prompts(&platform), (1, 0, 0));
 
-	sign_payload_with(&runtime, account_id("dim2.paseo", 1));
+	sign_payload_with(&runtime, account_id("dim2.dot", 1));
 	assert_eq!(
 		prompts(&platform),
 		(1, 0, 0),
 		"another account of the same product does not ask again",
 	);
 
-	cache_grant(&platform, "stash.paseo", r#"{"dim2next":["context"]}"#);
-	sign_payload_with(&runtime, account_id("stash.paseo", 0));
+	cache_grant(&platform, "stash.dot", r#"{"dim2next":["context"]}"#);
+	sign_payload_with(&runtime, account_id("stash.dot", 0));
 	assert_eq!(prompts(&platform), (2, 0, 0), "another product asks again");
 
 	for _ in 0..2 {
-		sign_raw_with(&runtime, account_id("dim2.paseo", 0));
-		create_transaction_with(&runtime, account_id("dim2.paseo", 0));
+		sign_raw_with(&runtime, account_id("dim2.dot", 0));
+		create_transaction_with(&runtime, account_id("dim2.dot", 0));
 	}
 	assert_eq!(prompts(&platform), (2, 1, 1), "each kind asks once");
 }
@@ -293,10 +293,8 @@ fn a_refused_cross_product_signature_asks_again() {
 
 	for _ in 0..2 {
 		futures::executor::block_on(
-			runtime.sign_payload(
-				&CallContext::default(),
-				payload_request(account_id("dim2.paseo", 0)),
-			),
+			runtime
+				.sign_payload(&CallContext::default(), payload_request(account_id("dim2.dot", 0))),
 		)
 		.expect_err("the user refused");
 	}
@@ -315,7 +313,7 @@ fn unwatermarked_raw_bytes_are_confirmed_every_time() {
 		#[allow(deprecated)]
 		futures::executor::block_on(runtime.sign_raw_unwatermarked_deprecated(
 			&CallContext::default(),
-			raw_request(account_id("dim2.paseo", 0)),
+			raw_request(account_id("dim2.dot", 0)),
 		))
 		.expect("the grant admits the account and the user approves");
 	}
@@ -336,16 +334,16 @@ fn an_approved_signature_does_not_wait_for_another_prompt() {
 		..Default::default()
 	});
 	let runtime = dim2next_runtime(platform.clone());
-	sign_payload_with(&runtime, account_id("dim2.paseo", 0));
+	sign_payload_with(&runtime, account_id("dim2.dot", 0));
 
 	let cx = CallContext::default();
 	let mut transaction =
-		Box::pin(runtime.create_transaction(&cx, transaction_request(account_id("dim2.paseo", 0))));
+		Box::pin(runtime.create_transaction(&cx, transaction_request(account_id("dim2.dot", 0))));
 	assert!(transaction.as_mut().now_or_never().is_none());
 	assert_eq!(prompts(&platform), (1, 0, 1), "the transaction prompt is open");
 
 	let signed = runtime
-		.sign_payload(&cx, payload_request(account_id("dim2.paseo", 0)))
+		.sign_payload(&cx, payload_request(account_id("dim2.dot", 0)))
 		.now_or_never();
 	assert!(
 		matches!(signed, Some(Ok(_))),

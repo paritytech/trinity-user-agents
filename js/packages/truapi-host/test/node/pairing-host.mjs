@@ -107,7 +107,7 @@ test(
     try {
       await assert.rejects(runtime.activateStoredSession(), /absent/);
       const provider = await runtime.createProvider({
-        productId: "node-entry-test.dot",
+        productId: await runtime.parseProductId("node-entry-test.dot"),
       });
       const client = createClient(createTransport(provider));
 
@@ -140,7 +140,11 @@ test(
       },
     );
     try {
-      const productId = "shared-worker.dot";
+      // The stack is on `paseo`, where the name `shared-worker.dot` is the
+      // product `shared-worker.paseo`. The host asks for that id once, so the
+      // demand it hears names the product as the host does.
+      const productId = await runtime.parseProductId("shared-worker.dot");
+      assert.equal(productId, "shared-worker.paseo");
       const changes = [];
       runtime.subscribeWorkerDemand((change) => changes.push(change));
       const chat = runtime.claimWorker(productId);

@@ -104,8 +104,9 @@ use crate::{
 };
 
 /// Default product served by the pairing host's frame endpoint. Product ids
-/// must be a dotNS name (`.dot`, `.paseo` or `.testnet`) or a `localhost`
-/// identifier (host-spec product id).
+/// must be a dotNS name under `.dot` or the stack's TLD, or a `localhost`
+/// identifier (host-spec product id). A name under `.dot` selects the same
+/// name under the stack's TLD.
 const DEFAULT_PRODUCT_ID: &str = "headless-playground.dot";
 /// Deeplink scheme advertised by the pairing host.
 const DEEPLINK_SCHEME: &str = "polkadotapp";
@@ -1260,8 +1261,12 @@ async fn run_pairing_host(
 	}
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path);
-	let product =
-		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
+	let stack = network.core_stack().context("invalid stack")?;
+	let product = frame_server::ProductSelection::new(
+		args.product_id,
+		args.execution_kind.context(),
+		&stack,
+	)?;
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1286,7 +1291,7 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.core_stack().context("invalid stack")?,
+		stack,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1376,10 +1381,14 @@ async fn run_signing_host(
 	let exec_command = exec_input
 		.as_deref()
 		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
-	let product =
-		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
-	let product_id = product.current();
 	let network = source.resolve_checked().await?;
+	let stack = network.core_stack().context("invalid stack")?;
+	let product = frame_server::ProductSelection::new(
+		args.product_id.clone(),
+		args.execution_kind.context(),
+		&stack,
+	)?;
+	let product_id = product.current();
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -1402,6 +1411,7 @@ async fn run_signing_host(
 		session_catalog,
 		initial_session_name,
 		network,
+		stack,
 		ui_handle.clone(),
 	)
 	.await?;
@@ -1669,6 +1679,7 @@ async fn start_signing_host(
 	catalog: SessionCatalog,
 	session_name: String,
 	network: Stack,
+	core_stack: truapi::platform::Stack,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
 	let approval = approval_policy(args.auto_accept);
@@ -1733,8 +1744,8 @@ async fn start_signing_host(
 	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
 		&network,
-		storage_profile.path,
-		storage_profile.product_storage_dir,
+		core_stack,
+		&storage_profile,
 		approval,
 		ui.clone(),
 		chat.clone(),
@@ -1813,13 +1824,14 @@ async fn start_signing_host(
 
 fn build_signing_runtime(
 	network: &Stack,
-	storage_path: PathBuf,
-	product_storage_dir: PathBuf,
+	core_stack: truapi::platform::Stack,
+	profile: &SessionProfile,
 	approval: ApprovalPolicy,
 	ui: Option<UiHandle>,
 	chat: Option<Arc<chat::CliChatHost>>,
 	pocket: Option<Arc<pocket::CliPocketHost>>,
 ) -> Result<(Arc<HostRuntime<SigningHost>>, Arc<CliPlatform>)> {
+	let storage_path = profile.path.clone();
 	std::fs::create_dir_all(&storage_path)
 		.with_context(|| format!("creating state directory {}", storage_path.display()))?;
 	let core_db = futures::executor::block_on(truapi::store::Db::open(
@@ -1833,16 +1845,13 @@ fn build_signing_runtime(
 		Arc::new(cleartext_storage::CliCleartextStorage::new(cleartext_storage_path));
 	let platform = CliPlatform::new(
 		network,
-		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
+		Some(CliStoragePaths::new(storage_path, profile.product_storage_dir.clone())),
 		approval,
 		ui,
 	);
-	let mut config = SigningHostConfig::new(
-		host_info("Headless Signing Host"),
-		platform_info(),
-		network.core_stack().context("invalid stack")?,
-	)
-	.context("invalid signing host config")?;
+	let mut config =
+		SigningHostConfig::new(host_info("Headless Signing Host"), platform_info(), core_stack)
+			.context("invalid signing host config")?;
 	// It draws nothing, but with a Pocket host it resolves the materials of every face its Worker
 	// renders, as a phone does.
 	config.materials_enabled = pocket.is_some();
@@ -3181,8 +3190,8 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		&session.network,
-		profile.path.clone(),
-		profile.product_storage_dir.clone(),
+		session.runtime.stack().clone(),
+		&profile,
 		session.platform.approval_policy(),
 		session.ui.clone(),
 		session.chat.clone(),
@@ -3266,8 +3275,8 @@ async fn import_mnemonic_session(
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		&session.network,
-		profile.path.clone(),
-		profile.product_storage_dir.clone(),
+		session.runtime.stack().clone(),
+		&profile,
 		session.platform.approval_policy(),
 		session.ui.clone(),
 		session.chat.clone(),
@@ -3387,15 +3396,17 @@ async fn pairing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
+				match product.select(product_id, runtime.stack()) {
+					Ok(true) => {
+						let product_id = product.current();
+						ui.set_product(product_id.clone());
+						ui.success(
+							format!("Product set to {product_id}"),
+							Some("Reconnect product clients to continue.".to_string()),
+						);
+					},
+					Ok(false) => ui.system(product.current()),
+					Err(error) => ui.error(error.to_string()),
 				}
 			},
 			ShellCommand::Quit => return Ok(()),
@@ -3575,15 +3586,17 @@ async fn signing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
+				match product.select(product_id, session.runtime.stack()) {
+					Ok(true) => {
+						let product_id = product.current();
+						ui.set_product(product_id.clone());
+						ui.success(
+							format!("Product set to {product_id}"),
+							Some("Reconnect product clients to continue.".to_string()),
+						);
+					},
+					Ok(false) => ui.system(product.current()),
+					Err(error) => ui.error(error.to_string()),
 				}
 			},
 			ShellCommand::Session(SessionCommand::Current) => {
@@ -3928,7 +3941,7 @@ async fn execute_non_interactive_command(
 			println!("{}", product.current());
 		},
 		ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-			if product.select(product_id) {
+			if product.select(product_id, session.runtime.stack())? {
 				terminal_ui::output_success(
 					format!("Product set to {}", product.current()),
 					Some("Reconnect product clients to continue.".to_string()),
