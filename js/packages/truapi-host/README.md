@@ -74,7 +74,10 @@ refresh it.
   pins. `lastRefresh` says so. `generation` changes when the stack restarts
   its chains: key cached chain data by it. `mismatches` lists each chain whose
   last connection reached one with a different genesis hash from the
-  descriptor's.
+  descriptor's. On a signing host it also lists People's `NetworkSuffix` once
+  the runtime's allowance work has read one that is not the descriptor's
+  `tld`. The suffix is kept in memory only, so a runtime built again lists
+  none until it reads the suffix itself.
 
 After a stack's chains restart from genesis, the same endpoints serve new
 chains with new genesis hashes. To catch that, the core asks every chain

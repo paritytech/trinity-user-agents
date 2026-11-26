@@ -829,3 +829,125 @@ fn a_mismatch_stays_reported_until_the_restart_the_newer_copy_asks_for() {
 		)
 	);
 }
+
+fn suffix_is(answered: &str) -> StackMismatch {
+	StackMismatch::NetworkSuffix { named: "paseo".to_string(), answered: answered.to_string() }
+}
+
+/// An identity derived under the `tld` does not match one under People's
+/// suffix, so the host is told both values. Nothing is refused over a suffix,
+/// so the descriptor's server is not asked any sooner.
+#[test]
+fn a_people_suffix_that_is_not_the_tld_is_reported() {
+	let (bundled, mut source) = fetched_at_start();
+
+	let listing = source.people_suffix_answered(b"testnet");
+
+	assert_eq!(
+		(listing, source.status(), source.next_fetch_in(START)),
+		(
+			Listing::Listed(suffix_is("testnet")),
+			StackStatus {
+				mismatches: vec![suffix_is("testnet")],
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			Some(Duration::from_secs(3600)),
+		)
+	);
+}
+
+/// The warning a native host is handed for a suffix has to give both values.
+#[test]
+fn a_suffix_mismatch_reads_as_the_warning_the_core_logs() {
+	assert_eq!(
+		suffix_is("testnet").to_string(),
+		r#"People's NetworkSuffix is "testnet", not the stack's tld "paseo""#
+	);
+}
+
+/// A suffix that is the `tld` with a byte that does not print, such as
+/// `paseo\0`, would read as the `tld` itself, and the host could not tell what
+/// is wrong. Such a byte is escaped in the entry and in the warning.
+#[test]
+fn a_suffix_that_differs_from_the_tld_only_in_a_byte_that_does_not_print_reads_differently() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+
+	let shown = [b"paseo\0".as_slice(), b"paseo\n"].map(|answered| {
+		source.people_suffix_answered(answered);
+		let mismatches = source.status().mismatches;
+		mismatches
+			.into_iter()
+			.map(|wrong| (wrong.to_string(), wrong))
+			.collect::<Vec<_>>()
+	});
+
+	assert_eq!(
+		shown,
+		[
+			vec![(
+				r#"People's NetworkSuffix is "paseo\x00", not the stack's tld "paseo""#.to_string(),
+				suffix_is(r"paseo\x00"),
+			)],
+			vec![(
+				r#"People's NetworkSuffix is "paseo\n", not the stack's tld "paseo""#.to_string(),
+				suffix_is(r"paseo\n"),
+			)],
+		]
+	);
+}
+
+/// The usual answer is the stack's own `tld`, and it changes nothing the host
+/// is told.
+#[test]
+fn a_people_suffix_equal_to_the_tld_is_not_reported() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+
+	let listing = source.people_suffix_answered(b"paseo");
+
+	assert_eq!((listing, source.status()), (Listing::Unchanged, stack_status(&bundled, None)));
+}
+
+/// Every allowance flow reads the suffix again. Once People gives the `tld`,
+/// as after its operator corrected it, the host stops showing it as wrong.
+#[test]
+fn a_people_suffix_read_as_the_tld_later_is_no_longer_reported() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+	source.people_suffix_answered(b"testnet");
+
+	let listing = source.people_suffix_answered(b"paseo");
+
+	assert_eq!((listing, source.status()), (Listing::Cleared, stack_status(&bundled, None)));
+}
+
+/// Every allowance flow reads the suffix again, so the same wrong answer
+/// comes back each time. Only a different one is news to the host.
+#[test]
+fn a_wrong_people_suffix_read_again_changes_nothing_until_it_differs() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	source.people_suffix_answered(b"testnet");
+
+	let again = source.people_suffix_answered(b"testnet");
+	let another = source.people_suffix_answered(b"other");
+
+	assert_eq!(
+		(again, another, source.status().mismatches),
+		(Listing::Unchanged, Listing::Listed(suffix_is("other")), vec![suffix_is("other")])
+	);
+}
+
+/// A host shows the chains it must keep off first, then the suffix, and the
+/// status crosses to hosts as text whatever bytes People stores.
+#[test]
+fn the_suffix_is_listed_after_the_chains_and_as_text() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+
+	source.people_suffix_answered(&[0xff, b'x']);
+	source.chain_answered(PEOPLE_WIPED);
+
+	assert_eq!(
+		source.status().mismatches,
+		vec![people_gave(TEST_STACK_WIPED_PEOPLE), suffix_is(r"\xffx")]
+	);
+}

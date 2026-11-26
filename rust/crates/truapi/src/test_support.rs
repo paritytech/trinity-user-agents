@@ -64,6 +64,10 @@ pub use scripted_chain::{
 /// Response frames produced for an incoming JSON-RPC request.
 pub type RpcResponder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
+/// Response frames produced for an incoming JSON-RPC request on a connection
+/// opened for the chain with this genesis hash.
+pub type ChainRpcResponder = Arc<dyn Fn([u8; 32], &str) -> Vec<String> + Send + Sync>;
+
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
 /// their effects polls for them instead of assuming an ordering.
@@ -86,15 +90,20 @@ pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
 	}
 }
 
-/// The output of `future`, failing the test rather than hanging when it does
-/// not finish within two seconds.
+/// The wait [`finish`] is given for work that ends once a scripted node has
+/// answered.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn finish<F: core::future::Future>(future: F) -> F::Output {
-	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+pub const ANSWER_WAIT: Duration = Duration::from_secs(2);
+
+/// The output of `future`, failing the test rather than hanging when it does
+/// not finish within `wait`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn finish<F: core::future::Future>(wait: Duration, future: F) -> F::Output {
+	let timeout = futures_timer::Delay::new(wait);
 	let future = core::pin::pin!(future);
 	match futures::executor::block_on(futures::future::select(future, timeout)) {
 		futures::future::Either::Left((output, _)) => output,
-		futures::future::Either::Right(_) => panic!("the future did not finish"),
+		futures::future::Either::Right(_) => panic!("the future did not finish within {wait:?}"),
 	}
 }
 
@@ -204,6 +213,10 @@ pub struct StubPlatform {
 	pub rpc_responses: Vec<String>,
 	/// Frames keyed by request contents, including subscription events.
 	pub rpc_responder: Option<RpcResponder>,
+	/// Like `rpc_responder`, and also told which chain the connection was
+	/// opened for, so one platform can serve several chains differently.
+	/// `rpc_responder` wins when both are set.
+	pub chain_rpc_responder: Option<ChainRpcResponder>,
 	/// Responses keyed by JSON-RPC method, answered as each request arrives with
 	/// that request's own id echoed back. A `state_call` is keyed by the runtime
 	/// API it names instead, so metadata and view-function reads stay separable.
@@ -2096,11 +2109,14 @@ impl ChainProvider for StubPlatform {
 		if let Some(handover) = &self.chain_connect_handover {
 			let _ = handover.clone().await;
 		}
+		let chain_rpc_responder = self.chain_rpc_responder.clone().map(|responder| {
+			Arc::new(move |request: &str| responder(genesis_hash, request)) as RpcResponder
+		});
 		Ok(Box::new(RecordingConnection {
 			sent: Arc::default(),
 			all_sent: self.sent_rpc.clone(),
 			responses: self.rpc_responses.clone(),
-			rpc_responder: self.rpc_responder.clone(),
+			rpc_responder: self.rpc_responder.clone().or(chain_rpc_responder),
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
 			sso_response_script: self.sso_response_script.clone(),
