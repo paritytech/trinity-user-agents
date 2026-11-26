@@ -139,15 +139,14 @@ pub enum Animation {
         /// Overshoot, in per mille. 0 does not overshoot.
         bounce_per_mille: u16,
     },
-    /// An ease in and out over `duration_ms`.
-    Ease {
+    /// A move over `duration_ms` along a curve.
+    Timed {
         /// Duration, in milliseconds.
         duration_ms: u32,
-    },
-    /// A constant speed over `duration_ms`, for drives whose keyframes shape the motion.
-    Linear {
-        /// Duration, in milliseconds.
-        duration_ms: u32,
+        /// How the move progresses over the duration, as a keyframe curve does over its stretch. `Linear` keeps a
+        /// constant speed for drives whose keyframes shape the motion, a `CubicBezier` eases, and `Step` jumps at the
+        /// end.
+        curve: KeyframeCurve,
     },
 }
 ```
@@ -514,7 +513,14 @@ A heart that pops on each tap. The value counts taps, and a period of 1 makes ev
 
 ```tsx
 <Box
-  value={{ id: "like", value: likes, period: 1, inputs: [{ tap: {} }], animation: { linear: 400 }, action: "like" }}
+  value={{
+    id: "like",
+    value: likes,
+    period: 1,
+    inputs: [{ tap: {} }],
+    animation: { timed: [400, "Linear"] },
+    action: "like",
+  }}
   onValue={(event) => event.tag === "Settled" && setLikes(event.value)}
   drive={{
     source: { value: "like" },
@@ -680,7 +686,7 @@ the cover is erased it moves to 1, which fades out the rest.
     value={{
       id: "cover",
       value: revealed ? 1 : 0,
-      animation: { ease: 300 },
+      animation: { timed: [300, { cubicBezier: [0.42, 0, 0.58, 1] }] },
       action: "cover",
       label: "Reveal",
       inputs: [{ scratch: { radius: 18, stepAt: 600 } }],
