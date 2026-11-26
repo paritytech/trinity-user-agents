@@ -14,5 +14,5 @@ fn every_host_places_jollity_on_its_own_network() {
 
 #[test]
 fn a_chat_needs_a_network_its_product_can_be_named_on() {
-	assert!(host_placed_chats("com".into()).is_err());
+	assert!(host_placed_chats("my_tld".into()).is_err());
 }

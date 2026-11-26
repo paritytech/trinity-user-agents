@@ -6,7 +6,7 @@ use parity_scale_codec::{Decode, Encode};
 
 use crate::{
 	CallError, PrivilegedProduct,
-	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label, normalize_host},
+	dotns_name::{is_dns_label, normalize_host},
 };
 
 /// Largest accepted product identifier, in bytes. Manifest lookups are cached
@@ -24,10 +24,14 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
 /// A product identifier in normalized form: trimmed, lowercased, and either a
-/// name dotNS can register or a localhost development identifier.
+/// name of DNS labels ending in a TLD, such as `app.dot` or `example.com`, or a
+/// localhost development identifier.
 ///
 /// Only [`FromStr`] builds one, so two values are equal exactly when they name
 /// the same product executable. Encodes as the identifier string.
+///
+/// Parsing checks syntax only, so any DNS label is accepted as a TLD. The
+/// host's stack decides which names it serves.
 ///
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
@@ -54,8 +58,12 @@ pub enum ProductIdError {
 	/// The identifier was empty or whitespace-only.
 	#[display("product_id must not be empty")]
 	Empty,
-	/// The identifier was not a dotNS or localhost product identifier.
-	#[display("product_id must be a dotNS or localhost product identifier, got {input:?}")]
+	/// The identifier was neither a name of DNS labels ending in a TLD nor a
+	/// localhost development identifier.
+	#[display(
+		"product_id must be a name of DNS labels ending in a TLD, or a localhost identifier, got \
+		 {input:?}"
+	)]
 	Invalid {
 		/// The identifier as received.
 		input: String,
@@ -127,22 +135,21 @@ impl FromStr for ProductId {
 		}
 		// `localhost` is reserved as a label too, so a published
 		// `localhost.<tld>` cannot pass for a development id.
-		let reserves_localhost = normalized
-			.rsplit_once('.')
-			.is_some_and(|(label, _tld)| label == LOCALHOST_PRODUCT_LABEL);
-		if has_dotns_tld(&normalized) && !reserves_localhost {
-			Ok(Self(normalized))
-		} else {
-			Err(ProductIdError::Invalid { input: product_id.to_string() })
+		match normalized.rsplit_once('.') {
+			Some((name, _tld)) if name != LOCALHOST_PRODUCT_LABEL => Ok(Self(normalized)),
+			_ => Err(ProductIdError::Invalid { input: product_id.to_string() }),
 		}
 	}
 }
 
 impl ProductId {
 	/// Construct a dotNS identity from its full name and explicit network suffix.
+	///
+	/// `network_suffix` is one TLD, so a dotted suffix is refused rather than
+	/// read as more of the name.
 	pub fn from_name(name: &str, network_suffix: &str) -> Result<Self, ProductIdError> {
 		let input = format!("{name}.{network_suffix}");
-		if !DOTNS_TLDS.contains(&network_suffix) {
+		if !is_dns_label(network_suffix) {
 			return Err(ProductIdError::Invalid { input });
 		}
 		input.parse()
@@ -192,10 +199,20 @@ impl ProductId {
 	/// Everything before the TLD: `app.dim2` for `app.dim2.dot`. `None` for a
 	/// localhost identifier.
 	pub fn dotns_name(&self) -> Option<&str> {
-		if !has_dotns_tld(&self.0) {
-			return None;
+		self.0.rsplit_once('.').map(|(name, _tld)| name)
+	}
+
+	/// The same name under `tld`: `app.dim2.dot` under `paseo` is
+	/// `app.dim2.paseo`. A localhost identifier has no TLD and is returned
+	/// unchanged.
+	///
+	/// Fails when `tld` is not one DNS label, or when the name under it is
+	/// longer than [`PRODUCT_ID_MAX_BYTES`].
+	pub fn under_tld(&self, tld: &str) -> Result<Self, ProductIdError> {
+		match self.dotns_name() {
+			Some(name) => Self::from_name(name, tld),
+			None => Ok(self.clone()),
 		}
-		self.0.rsplit_once('.').map(|(label, _tld)| label)
 	}
 
 	/// Whether this dotNS identity belongs to the explicitly configured network.
@@ -212,8 +229,8 @@ impl ProductId {
 	/// The privileged product this id names, on any network.
 	///
 	/// Matches the whole name: `peopl.dot` and `peopl.paseo` are Humanity,
-	/// `app.peopl.dot` and localhost ids are no privileged product. The id also
-	/// needs a dotNS TLD, so a bare `peopl` never qualifies.
+	/// `app.peopl.dot` and localhost ids are no privileged product. The TLD is
+	/// not checked here: `Stack::trusts` checks that the stack serves the id.
 	pub fn privileged_product(&self) -> Option<PrivilegedProduct> {
 		self.dotns_name()?.parse().ok()
 	}
@@ -227,19 +244,14 @@ impl ProductId {
 		self.privileged_product().is_some()
 	}
 
-	/// [`has_trusted_remote_permissions`](Self::has_trusted_remote_permissions)
-	/// for an id in any spelling. An id that does not parse is not trusted.
-	pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
-		product_id.parse::<Self>().is_ok_and(|id| id.has_trusted_remote_permissions())
-	}
-
 	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
 	/// is not.
 	pub fn is_game_product(&self) -> bool {
 		self.privileged_product() == Some(PrivilegedProduct::Game)
 	}
 
-	/// Parse only a supported share host, without a URL or network lookup.
+	/// Parse a share host, without a URL or network lookup. Any TLD parses;
+	/// the host's stack decides whether it serves the product.
 	pub fn from_share_host(input: &str) -> Option<Self> {
 		let hostname = normalize_host(input);
 		let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;

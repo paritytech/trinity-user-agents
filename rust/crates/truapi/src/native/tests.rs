@@ -556,8 +556,7 @@ fn clearing_a_product_reaches_its_storage_subscriptions_only() {
 	let other = ProductId::for_test("myapp.dotapp.dot");
 	let mut own =
 		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
-	let mut others =
-		platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	let mut others = platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
 	for subscription in [&mut own, &mut others] {
 		futures::executor::block_on(futures::StreamExt::next(subscription));
 	}
@@ -579,9 +578,14 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		host_version: None,
 		platform_type: None,
 		platform_version: None,
-		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
-		)),
+		// On `dot`, the TLD the tests' products are under, in a build that
+		// allows it.
+		stack: crate::native::BundledStack {
+			reserved_values: crate::platform::ReservedValuesPolicy::ALLOWED,
+			..native_bundled_stack(&crate::test_support::test_descriptor(
+				"dot", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+			))
+		},
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
@@ -592,8 +596,16 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 	}
 }
 
+/// The bundled copy [`crate::test_support::published_test_descriptor`] is a
+/// later publication of: the same chains on `paseo`.
+fn native_bundled_paseo_stack() -> crate::native::BundledStack {
+	native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	))
+}
+
 /// `descriptor` signed, as a native host bundles it.
-fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
+pub fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
 	crate::native::BundledStack {
 		pointer,
@@ -888,13 +900,15 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
 		.expect("host runtime config should be valid");
 
-	let first_connected_key =
-		callbacks.auth_states.lock().expect("auth state mutex poisoned").iter().find_map(
-			|state| match state {
-				AuthState::Connected(info) => Some(info.device_enc_public_key),
-				_ => None,
-			},
-		);
+	let first_connected_key = callbacks
+		.auth_states
+		.lock()
+		.expect("auth state mutex poisoned")
+		.iter()
+		.find_map(|state| match state {
+			AuthState::Connected(info) => Some(info.device_enc_public_key),
+			_ => None,
+		});
 	let handed_over_public_key =
 		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
 	assert_eq!(
@@ -1932,7 +1946,8 @@ fn native_chain_provider_forwards_send_response_and_close() {
 fn native_chain_provider_closes_when_the_host_refuses_a_send() {
 	let (callbacks, _events, platform) = event_platform();
 	*callbacks.chain_id.lock().unwrap() = Some(42);
-	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let connection =
+		futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
 	let mut responses = connection.responses();
 	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
 
@@ -1977,6 +1992,7 @@ impl NativeStackCallbacks for PublishedStack {
 #[test]
 fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let config = HostRuntimeConfig {
+		stack: native_bundled_paseo_stack(),
 		local_session_secret: None,
 		local_session_lite_username: None,
 		..native_host_runtime_config()
@@ -2036,7 +2052,8 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 /// status says why the copy waits instead.
 #[test]
 fn a_record_the_database_refuses_asks_for_no_restart() {
-	let config = native_host_runtime_config();
+	let config =
+		HostRuntimeConfig { stack: native_bundled_paseo_stack(), ..native_host_runtime_config() };
 	let wiped = crate::test_support::published_test_descriptor(
 		2,
 		"second",
@@ -2246,12 +2263,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
-		fn on_core_event(
-			&self,
-			_marker: String,
-			_attributes: Vec<crate::logging::CoreAttribute>,
-		) {
-		}
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2440,12 +2452,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
-		fn on_core_event(
-			&self,
-			_marker: String,
-			_attributes: Vec<crate::logging::CoreAttribute>,
-		) {
-		}
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -3033,7 +3040,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 
 	let entropy = [7; 32];
 	let root_entropy = RootEntropy::new(entropy);
-	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let statement = root_entropy.derive_identity_keypair("dot").unwrap().public.to_bytes();
 	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
@@ -3435,7 +3442,10 @@ fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
 		parse_renderer_node_json(json).expect("the face reads"),
 		latest::RendererNode::Image {
 			modifiers: Vec::new(),
-			props: latest::ImageProps { source: latest::ImageSource::Inline(Vec::new()), fit: None },
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(Vec::new()),
+				fit: None
+			},
 		}
 	);
 }
@@ -3856,4 +3866,52 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 		Some(&MarkerClass::Export { severity: Severity::Warn })
 	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
+}
+
+/// A share host names a product by the id the stack serves it under, so a
+/// `dot.li` link opens the stack's own product.
+#[test]
+fn share_hosts_require_a_tld_the_stack_accepts() {
+	let stack = crate::test_support::test_stack("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	for (input, expected) in [
+		("BROWSE.TESTNET.LI", Some("browse.testnet")),
+		("browse.dot.li", Some("browse.testnet")),
+		("browse.paseo.li", None),
+		("browse.test.li", None),
+		("browse.dot", None),
+		("https://browse.dot.li", None),
+		("localhost.li", None),
+	] {
+		assert_eq!(
+			stack.parse_product_share_host(input.to_string()),
+			expected.map(ProductId::for_test),
+			"{input}"
+		);
+	}
+}
+
+/// A host opens the stack its build bundles before the runtime starts and
+/// takes its share hosts and trusted products from it, so it never supplies a
+/// TLD of its own. A copy the build does not allow is refused the same way the
+/// runtime refuses it.
+#[test]
+fn a_host_reads_links_and_trust_from_the_bundled_stack() {
+	let open = |tld: &str| {
+		let descriptor =
+			crate::test_support::test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+		let (pointer, descriptor) = crate::test_support::sign_test_descriptor(&descriptor);
+		let reserved_values = crate::platform::ReservedValuesPolicy::default();
+		Stack::open_bundled(BundledStack { pointer, descriptor, reserved_values })
+	};
+
+	let fork = open("fork").expect("a fork's stack opens");
+	assert_eq!(
+		(
+			fork.product_share_hosts(),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.fork")),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.paseo")),
+		),
+		(vec!["dot.li".to_owned(), "fork.li".to_owned()], true, false)
+	);
+	assert!(matches!(open("dot"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }

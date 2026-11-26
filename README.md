@@ -102,8 +102,9 @@ Swift's `try ProductId("my-product.dot")` and Kotlin's
 `ProductId.fromName("my-product", "dot")`; both return `Result<ProductId>`
 so callers explicitly handle invalid input. Kotlin's `executable(kind)` and
 `owner()` methods expose their failures the same way. Both platforms
-own the resulting immutable values. Browser hosts can use their existing worker
-runtime's `parseProductId` method for the same validation and normalization.
+own the resulting immutable values. Browser hosts use their existing worker
+runtime's `parseProductId` method, which also answers the id the host's stack
+serves the name under and rejects a name it does not serve.
 Native callers use Rust for product names, executable ownership, and share-link parsing and formatting.
 Both native hosts use Rust's `ExecutableKind` for executable selection and
 its label mapping for manifest discriminators.

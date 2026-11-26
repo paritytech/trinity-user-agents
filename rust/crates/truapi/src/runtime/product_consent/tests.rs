@@ -1,5 +1,8 @@
 use super::*;
-use crate::test_support::StubPlatform;
+use crate::{
+	platform::{ProductContext, ResourceAllocationReview},
+	test_support::{StubPlatform, dot_test_stack, paseo_test_stack},
+};
 use PermissionAuthorizationStatus::{Authorized, Denied};
 
 fn consent_answering(
@@ -9,7 +12,7 @@ fn consent_answering(
 		permission_confirmation_decisions: Mutex::new(decisions.into_iter().collect()),
 		..StubPlatform::default()
 	});
-	(platform.clone(), ProductConsent::new(platform))
+	(platform.clone(), ProductConsent::new(platform, dot_test_stack()))
 }
 
 fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
@@ -71,7 +74,7 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 		account_access_confirmation_gate: Mutex::new(Some(gate)),
 		..StubPlatform::default()
 	});
-	let consent = ProductConsent::new(platform.clone());
+	let consent = ProductConsent::new(platform.clone(), dot_test_stack());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let (first, second, ()) = futures::executor::block_on(async {
 		futures::join!(
@@ -81,4 +84,35 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 		)
 	});
 	assert_eq!((first.unwrap(), second.unwrap(), prompts(&platform)), (Authorized, Authorized, 1));
+}
+
+/// A trusted label is trusted only under an id the stack serves, so
+/// `dim2.testnet` on a paseo stack is asked like any other product.
+#[test]
+fn a_trusted_label_off_the_stack_is_asked_for_account_access() {
+	let platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: Mutex::new([PermissionDecision::Deny].into()),
+		..StubPlatform::default()
+	});
+	let consent = ProductConsent::new(platform.clone(), paseo_test_stack());
+	assert_eq!(
+		(access(&consent, "dim2.paseo"), access(&consent, "dim2.testnet"), prompts(&platform)),
+		(Authorized, Denied, 1)
+	);
+}
+
+/// A trusted product skips the review of its own operations, but only under
+/// an id the stack serves.
+#[test]
+fn a_trusted_label_off_the_stack_does_not_skip_a_review() {
+	let stack = paseo_test_stack();
+	let skips = |product_id: &str| {
+		let product = ProductContext::new(ProductId::for_test(product_id));
+		let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+			calling_product_id: product.product_id.clone(),
+			resources: vec![],
+		});
+		skips_review(&stack, AccountCaller::Local { product: &product }, &review)
+	};
+	assert_eq!([skips("dim2.paseo"), skips("dim2.testnet")], [true, false]);
 }

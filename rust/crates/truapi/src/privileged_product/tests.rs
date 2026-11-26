@@ -1,7 +1,6 @@
 use strum::VariantArray;
 
 use super::*;
-use crate::dotns_name::DOTNS_TLDS;
 
 // The personhood label is the chain's `personhood::PRODUCT_NAME`, and every
 // label is the root of the keys hosts derive for that product, so renaming one
@@ -18,7 +17,7 @@ fn every_privileged_product_is_trusted_on_every_network() {
 	// A label that product-id validation rejects or rewrites would never
 	// match a normalized id, so the product would be silently untrusted.
 	for &product in PrivilegedProduct::VARIANTS {
-		for tld in DOTNS_TLDS {
+		for tld in ["dot", "paseo", "fork"] {
 			let product_id = product.product_id(tld).expect("a privileged label is a product name");
 			assert_eq!(product_id.to_string(), format!("{}.{tld}", product.label()));
 			assert!(
@@ -50,5 +49,5 @@ fn a_product_id_names_its_privileged_product_only_by_the_whole_name() {
 
 #[test]
 fn a_privileged_product_needs_a_network_it_can_be_named_on() {
-	assert!(PrivilegedProduct::Personhood.product_id("com").is_err());
+	assert!(PrivilegedProduct::Personhood.product_id("my_tld").is_err());
 }

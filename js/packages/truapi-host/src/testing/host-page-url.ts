@@ -11,7 +11,7 @@ import type { MockHostConfig } from "../web/create-mock-host.js";
 export interface HostPageConfig {
   /** URL of the product under test. */
   productUrl: string;
-  /** dotNS identifier the host runs the product under. */
+  /** dotNS name of the product the host runs, read as its test stack reads it. */
   productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host. */
   mock?: MockHostConfig;

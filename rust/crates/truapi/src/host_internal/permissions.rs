@@ -41,7 +41,7 @@ use parity_scale_codec::{Decode, Encode};
 use crate::platform::{
 	BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind,
 	DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	PermissionDecision, PermissionStatusHost, Permissions, ProductContext, ProductId,
+	PermissionDecision, PermissionStatusHost, Permissions, ProductContext, ProductId, Stack,
 	is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
 };
 use truapi::latest::{
@@ -178,16 +178,20 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
 impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a, S, P> {
 	/// Construct a service backed by the given storage + prompt callbacks.
 	///
+	/// The product is trusted only when `stack` trusts it, so a trusted label
+	/// under an id the stack does not serve reads its stored decisions like
+	/// any other product.
+	///
 	/// Device grants resolve without an OS check by default. Use
 	/// [`Self::with_status_host`] on paths that enforce a device capability, so
 	/// a grant the OS has since withdrawn stops reading as usable.
-	pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext) -> Self {
+	pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext, stack: &Stack) -> Self {
 		Self {
 			storage,
 			prompt,
 			product,
 			status: None,
-			trusted_product: product.product_id.has_trusted_remote_permissions(),
+			trusted_product: stack.trusts(&product.product_id),
 			temporary_permissions: Arc::default(),
 		}
 	}

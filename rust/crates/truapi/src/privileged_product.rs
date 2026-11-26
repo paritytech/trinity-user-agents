@@ -35,7 +35,7 @@ impl PrivilegedProduct {
 
 	/// The product's id on the network with `network_suffix`.
 	///
-	/// Fails when `network_suffix` is not a dotNS TLD.
+	/// Fails when `network_suffix` is not a DNS label.
 	pub fn product_id(self, network_suffix: &str) -> Result<ProductId, ProductIdError> {
 		ProductId::from_name(self.label(), network_suffix)
 	}
