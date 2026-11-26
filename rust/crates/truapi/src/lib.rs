@@ -43,6 +43,8 @@ use parity_scale_codec::{Decode, Encode};
 pub mod api;
 mod dotns_name;
 pub mod markers;
+mod privileged_product;
+pub use privileged_product::PrivilegedProduct;
 mod product_id;
 pub use product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
@@ -548,8 +550,7 @@ cfg_select! {
 		pub use wasm::{
 			WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
 			derive_product_account_public_key, describe_core_storage_key_for_wasm,
-			has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-			wire_schema_hash,
+			product_account_address, set_log_level, wire_schema_hash,
 		};
 	},
 	_ => {},

@@ -2,8 +2,6 @@ import Foundation
 import TrUAPIHost
 
 public struct ProductHost: Sendable {
-    public static let shareHosts: Set<String> = Set(productShareHosts())
-
     private let identifier: ProductId
 
     public var name: String {

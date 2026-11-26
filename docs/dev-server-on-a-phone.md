@@ -38,13 +38,16 @@ opens that page.
 ## Run it as a published product
 
 Add `?product_id=<name>` to the address, for example
-`192.168.x.x:3000?product_id=humanity.dot`, and the page runs as that product:
-its accounts, and the storage and permissions that product has on the TrUAPI
-runtime on this device. A product the native runtime runs, the default in the
+`192.168.x.x:3000?product_id=humanity.testnet` on a previewnet build, and the
+page runs as that product: its accounts, and the storage and permissions that
+product has on the TrUAPI runtime on this device. The name is the product's id
+on the build's network, so it ends in the network's TLD: `.testnet` on
+previewnet, `.paseo` on Paseo, `.dot` on Polkadot. A name under another TLD
+does not open. A product the native runtime runs, the default in the
 iOS DevCI build, keeps storage the page does not see. A product that signs
-without asking, such as `peopl.dot`, does so from the development server too.
-The name must be one the app accepts as a product id, a dotNS name such as
-`humanity.dot` or `localhost[:port]`.
+without asking, such as `peopl.testnet` on previewnet, does so from the
+development server too. The name must be one the app accepts as a product id,
+a dotNS name such as `humanity.testnet` or `localhost[:port]`.
 
 On Android a tab keeps the address it was opened with, so it runs as the same
 product when it wakes from sleep or the app restores it after a restart, even

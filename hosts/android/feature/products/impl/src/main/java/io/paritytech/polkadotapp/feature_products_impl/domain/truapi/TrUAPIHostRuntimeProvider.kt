@@ -17,11 +17,8 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigMaterialsSwitch
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashes
@@ -39,7 +36,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
@@ -72,7 +68,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val chainDirectory: TrUAPIChainDirectory,
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
-    private val dotNsTldProvider: DotNsTldProvider,
     private val encryptedPreferences: EncryptedPreferences,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
@@ -84,7 +79,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
-    private val pinnedPocketCards: PinnedPocketCards,
     private val coreEventLogger: CoreEventLogger,
     private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
     private val materialsSwitch: RemoteConfigMaterialsSwitch,
@@ -160,12 +154,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         val localSession = localSessionSource.resolve()
             .logFailure("TrUAPI local session unavailable; booting the host runtime without one")
             .getOrNull()
-        // The pinned cards are backed by products named under this TLD, so it has to
-        // be the network's own. A saved one is safe to reuse because a build has one
-        // network. Throwing releases the memoised boot so the next caller tries again.
-        val tld = dotNsTldProvider.currentTldOrNull()
-            ?: withTimeoutOrNull(TLD_RESOLVE_TIMEOUT_MS) { dotNsTldProvider.getTldRetrying() }
-            ?: error("dotNS TLD unresolved after ${TLD_RESOLVE_TIMEOUT_MS}ms")
 
         return HostRuntimeConfig(
             hostName = HOST_NAME,
@@ -174,7 +162,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
-            pinnedPocketCards = pinnedPocketCards.cards(tld),
             deviceEncryptionKey = deviceEncryptionKey,
             materialsEnabled = materialsSwitch.isOn(),
         )
@@ -321,12 +308,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private companion object {
         const val HOST_NAME = "Polkadot"
-
-        /**
-         * Ceiling on resolving the network's dotNS TLD while booting the runtime.
-         * `getTldRetrying` polls until it succeeds, so the boot needs its own bound.
-         */
-        const val TLD_RESOLVE_TIMEOUT_MS = 30_000L
 
         /**
          * Core database directory, under `noBackupFilesDir`: a durable-transaction

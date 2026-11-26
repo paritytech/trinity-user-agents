@@ -25,7 +25,7 @@ fn runtime_config() -> PairingHostConfig {
 			platform: truapi::latest::HostPlatform::Web,
 		},
 		PlatformInfo { kind: Some("Firefox".to_string()), version: Some("192.32".to_string()) },
-		crate::test_support::paseo_test_stack(),
+		crate::test_support::dot_test_stack(),
 		"polkadotapp".to_string(),
 	)
 	.expect("test runtime config is valid")

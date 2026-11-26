@@ -11,6 +11,7 @@ import dagger.multibindings.IntoSet
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
+import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -158,6 +159,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealT
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIOurDeviceKeypairProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIStack
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -177,6 +179,7 @@ import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import okhttp3.Call
 import okhttp3.OkHttpClient
+import uniffi.truapi.Stack
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -467,6 +470,13 @@ internal interface ProductsModule {
     fun bindRequestPaymentUseCase(impl: RealRequestPaymentUseCase): RequestPaymentUseCase
 
     companion object {
+        // Links are judged by the core's stack before the runtime starts. Absent when the bundled copy cannot be
+        // opened, so a bad stack disables those links instead of crashing the app at launch.
+        @Provides
+        @Singleton
+        fun provideStack(@ApplicationContext context: Context, environment: TestnetEnvironment): Stack? =
+            TrUAPIStack.of(environment).openedOrNull(context)
+
         @Provides
         @Singleton
         @TrUAPIChainHttpClient

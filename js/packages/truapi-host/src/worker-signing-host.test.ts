@@ -5,7 +5,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { createClient, createTransport } from "@parity/truapi";
+import { asProductId, createClient, createTransport } from "@parity/truapi";
 
 import { createMockHost, mockRuntimeConfig } from "./web/create-mock-host.js";
 import { createWebWorkerPairingHostRuntime } from "./web/index.js";
@@ -57,8 +57,14 @@ suite("worker serving a signing host", () => {
 
     // A bundled stack rather than `testStack`, so building the runtime reads
     // the stack record through the main thread before the worker is ready.
-    const { productId, testStack: _testStack, ...config } = mockRuntimeConfig();
+    const {
+      productId: _productId,
+      testStack: _testStack,
+      ...config
+    } = mockRuntimeConfig();
     const hostConfig = { ...config, stack: bundledTestStack() };
+    // A product the bundled previewnet stack serves.
+    const productId = asProductId("mock.testnet");
     const host = createMockHost();
     const coreStorageReads: string[] = [];
     const { coreStorage } = host.callbacks;

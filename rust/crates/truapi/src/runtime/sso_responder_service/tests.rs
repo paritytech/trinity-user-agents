@@ -573,7 +573,7 @@ fn resource_allocation_requires_confirmation_before_allocation() {
 		&signing_host,
 		"alloc-1",
 		v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-			calling_product_id: ProductId::for_test("myapp.dot"),
+			calling_product_id: ProductId::for_test("myapp.paseo"),
 			resources: vec![api::AllocatableResource::StatementStoreAllowance],
 			on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
 		}),
@@ -591,7 +591,7 @@ fn resource_allocation_requires_confirmation_before_allocation() {
 		.lock()
 		.expect("resource allocation review list mutex poisoned");
 	assert_eq!(reviews.len(), 1);
-	assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.dot"));
+	assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.paseo"));
 }
 
 #[test]
@@ -605,18 +605,18 @@ fn native_product_reset_does_not_invalidate_remote_allocation_review() {
 	let (_, signing_host) = signing_fixture(platform.clone());
 	let entropy = RootEntropy::new(ENTROPY);
 	let expected_secret = entropy
-		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.paseo"))
 		.unwrap()
 		.secret
 		.to_bytes();
 	let expected_domain = entropy
-		.derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+		.derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.paseo"))
 		.unwrap();
 	let service = sso_service(&signing_host);
 	let answer = service.answer(allocation_request("remote-reset"));
 	futures::pin_mut!(answer);
 	assert!(answer.as_mut().now_or_never().is_none());
-	signing_host.clear_product_state(&ProductId::for_test("myapp.dot"));
+	signing_host.clear_product_state(&ProductId::for_test("myapp.paseo"));
 	release.send(()).unwrap();
 	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(answer) else {
 		panic!("expected an allocation response")
@@ -720,7 +720,7 @@ fn allocation_request(message_id: &str) -> RemoteMessage {
 	RemoteMessage::request(
 		message_id.to_string(),
 		sso_messages::ResourceAllocationRequest {
-			calling_product_id: ProductId::for_test("myapp.dot"),
+			calling_product_id: ProductId::for_test("myapp.paseo"),
 			resources: vec![api::AllocatableResource::AutoSigning],
 			on_existing: OnExistingAllowancePolicy::Ignore,
 		},
@@ -1222,6 +1222,28 @@ fn product_subtree_request_is_consent_free_and_hard_derived() {
 		&signing_host,
 		"subtree-1",
 		v1::RemoteMessage::ProductSubtreeRequest(sso_messages::ProductSubtreeRequest {
+			product_id: ProductId::for_test("browse.paseo"),
+		}),
+	);
+
+	let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
+		panic!("expected product subtree response");
+	};
+	assert_eq!(response.responding_to, "subtree-1");
+	assert_eq!(response.payload, Ok(subtree_public_key("browse.paseo")));
+}
+
+/// A paired host names a product as it likes, and the subtree needs no
+/// consent. On a `paseo` wallet `browse.dot` is what paseo's registry
+/// publishes as `browse`, so the request gets that product's subtree. The
+/// subtree of Polkadot's `browse.dot` under the same seed is not handed out.
+#[test]
+fn a_paired_request_for_a_dot_name_gets_the_stacks_own_products_subtree() {
+	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+	let response = answer(
+		&signing_host,
+		"subtree-1",
+		v1::RemoteMessage::ProductSubtreeRequest(sso_messages::ProductSubtreeRequest {
 			product_id: ProductId::for_test("browse.dot"),
 		}),
 	);
@@ -1229,13 +1251,79 @@ fn product_subtree_request_is_consent_free_and_hard_derived() {
 	let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
 		panic!("expected product subtree response");
 	};
-	let expected = RootEntropy::new(ENTROPY)
-		.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+	assert_eq!(
+		(response.payload, subtree_public_key("browse.paseo") == subtree_public_key("browse.dot")),
+		(Ok(subtree_public_key("browse.paseo")), false)
+	);
+}
+
+/// A paired host relays an account as a product spelled it. The wallet shows
+/// the review for the stack's own product and signs with that product's
+/// account, so the signature verifies under `myapp.paseo`'s key and not under
+/// the key of Polkadot's `myapp.dot`.
+#[test]
+fn a_relayed_vrf_request_for_a_dot_account_is_signed_as_the_stacks_own_product() {
+	let platform = Arc::new(StubPlatform { sign_vrf_confirmed: true, ..StubPlatform::default() });
+	let (_, signing_host) = signing_fixture(platform.clone());
+	let account = |product_id: &str| api::ProductAccountId {
+		dot_ns_identifier: ProductId::for_test(product_id),
+		derivation_index: api::DerivationIndex::Index(0),
+	};
+
+	let response = answer(
+		&signing_host,
+		"vrf-1",
+		v1::RemoteMessage::SignVrfRequest(sso_messages::ProductRequest {
+			calling_product_id: ProductId::for_test("myapp.dot"),
+			payload: api::HostAccountSignVrfRequest {
+				account: account("myapp.dot"),
+				transcript_label: b"pop:airdrop".to_vec(),
+				items: vec![],
+			},
+		}),
+	);
+
+	let v1::RemoteMessage::SignVrfResponse(response) = response else {
+		panic!("expected a VRF signature response");
+	};
+	let signature = response.payload.expect("the user confirms the review");
+	let verifies_under = |product_id: &str| {
+		let keypair = RootEntropy::new(ENTROPY)
+			.derive_product_keypair(
+				&ProductId::for_test(product_id),
+				crate::host_logic::product_account::index_bytes(0),
+			)
+			.expect("fixture derives a product account");
+		keypair
+			.public
+			.vrf_verify(
+				merlin::Transcript::new(b"pop:airdrop"),
+				&schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap(),
+				&schnorrkel::vrf::VRFProof::from_bytes(&signature.proof).unwrap(),
+			)
+			.is_ok()
+	};
+	let reviewed: Vec<_> = platform
+		.sign_vrf_reviews
+		.lock()
+		.expect("review list mutex poisoned")
+		.iter()
+		.map(|review| (review.calling_product_id.clone(), review.request.account.clone()))
+		.collect();
+
+	assert_eq!(
+		(verifies_under("myapp.paseo"), verifies_under("myapp.dot"), reviewed),
+		(true, false, vec![(ProductId::for_test("myapp.paseo"), account("myapp.paseo"))])
+	);
+}
+
+/// The public key of `product_id`'s subtree under the fixture's seed.
+fn subtree_public_key(product_id: &str) -> [u8; 32] {
+	RootEntropy::new(ENTROPY)
+		.derive_product_subtree_keypair(&ProductId::for_test(product_id))
 		.expect("fixture derives subtree")
 		.public
-		.to_bytes();
-	assert_eq!(response.responding_to, "subtree-1");
-	assert_eq!(response.payload, Ok(expected));
+		.to_bytes()
 }
 
 #[test]
