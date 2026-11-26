@@ -28,7 +28,6 @@ struct RustRuntimeEnvironment {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
         let osPermissionAsker: OSPermissionAsking
-        var acknowledgeStartup: (@Sendable () -> Bool)?
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -115,11 +114,9 @@ private extension RustRuntimeEnvironment {
 
         let game = gameReminders == nil ? nil : bridges.host
         let execution: TrUAPIProductExecution
-        let acknowledge: (@Sendable () -> Bool)?
         switch purpose {
         case let .worker(_, attempt):
             execution = try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
-            acknowledge = { attempt.moduleStarted() }
         case .app:
             execution = runtime.openAppExecution(
                 bridge: bridges.host,
@@ -127,7 +124,6 @@ private extension RustRuntimeEnvironment {
                 chat: bridges.chat,
                 game: game
             )
-            acknowledge = nil
         case .expandedCard:
             execution = runtime.openWidgetExecution(
                 bridge: bridges.host,
@@ -135,7 +131,6 @@ private extension RustRuntimeEnvironment {
                 chat: bridges.chat,
                 game: game
             )
-            acknowledge = nil
         }
 
         bridges.host.attach(execution)
@@ -143,8 +138,7 @@ private extension RustRuntimeEnvironment {
         return ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker,
-            acknowledgeStartup: acknowledge
+            osPermissionAsker: osPermissionAsker
         )
     }
 

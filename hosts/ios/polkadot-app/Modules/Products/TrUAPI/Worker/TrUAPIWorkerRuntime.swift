@@ -55,7 +55,6 @@ actor TrUAPIWorkerRuntime {
 
         try await bridge.executeScript(url: productUrl)
         try checkNotDisposed()
-        guard executionModel.acknowledgeStartup?() != false else { throw CancellationError() }
 
         logger.debug("[truapi] worker running: \(productUrl)")
     }
