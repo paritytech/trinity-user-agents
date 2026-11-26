@@ -30,8 +30,8 @@ struct DebugPocketCardsView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-                        if card.faceShown == false {
-                            Text(verbatim: "Opens with the face away")
+                        if card.startsCovered == true {
+                            Text(verbatim: "Starts covered by the page")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -56,7 +56,7 @@ struct DebugPocketCardsView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Toggle("Open with the face away", isOn: $viewModel.opensWithFaceAway)
+                Toggle("Start covered by the page", isOn: $viewModel.startsCovered)
 
                 Button("Save") { viewModel.save() }
                     .disabled(!viewModel.canSave)

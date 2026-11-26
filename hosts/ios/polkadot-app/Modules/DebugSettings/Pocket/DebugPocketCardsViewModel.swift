@@ -13,7 +13,7 @@ final class DebugPocketCardsViewModel {
     var title = ""
     var faceUrl = "http://127.0.0.1:5173/pocket/devicehood.json"
     var widgetUrl = ""
-    var opensWithFaceAway = false
+    var startsCovered = false
 
     private let store: any DebugPocketCardsStoring
 
@@ -44,7 +44,7 @@ final class DebugPocketCardsViewModel {
             title: title,
             faceUrl: faceUrl,
             widgetUrl: URL(string: widgetUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
-            faceShown: !opensWithFaceAway
+            startsCovered: startsCovered
         )
 
         guard card.definition != nil else {

@@ -3,11 +3,11 @@ import TrUAPIHost
 
 /// Answers with an outcome no other path gives, so a test can tell its answer arrived.
 @MainActor
-final class StubCardFace: ExpandedCardFaceShowing {
+final class StubCoveredCard: ExpandedCardCovering {
     private(set) var requests: [Bool] = []
 
-    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        requests.append(shown)
+    func setCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome {
+        requests.append(covered)
         return .userMoving
     }
 }

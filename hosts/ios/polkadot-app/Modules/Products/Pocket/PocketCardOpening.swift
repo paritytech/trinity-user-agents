@@ -41,11 +41,11 @@ struct PocketCardOpening {
             PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
 
             Task { [weak view] in
-                let shown = await PocketCardFaceOnOpen.faceShown(
+                let covered = await PocketCardCoverOnOpen.startsCovered(
                     for: card.key,
                     cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
                 )
-                view?.applyOpeningFace(shown: shown)
+                view?.applyOpeningCover(covered: covered)
             }
         }
     }

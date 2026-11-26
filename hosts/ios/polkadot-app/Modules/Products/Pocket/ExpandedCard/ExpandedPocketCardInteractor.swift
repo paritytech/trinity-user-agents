@@ -1,6 +1,6 @@
 import Foundation
 import Products
-import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardCoverOutcome
 
 @MainActor
 final class ExpandedPocketCardInteractor {
@@ -53,9 +53,9 @@ extension ExpandedPocketCardInteractor: ExpandedPocketCardInteractorInputProtoco
     }
 }
 
-extension ExpandedPocketCardInteractor: ExpandedCardFaceShowing {
-    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        presenter?.didRequestFaceShown(shown) ?? .notPresented
+extension ExpandedPocketCardInteractor: ExpandedCardCovering {
+    func setCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome {
+        presenter?.didRequestCardCovered(covered) ?? .notPresented
     }
 }
 
@@ -87,7 +87,7 @@ extension ExpandedPocketCardInteractor: SPAProductReloading {
 private extension ExpandedPocketCardInteractor {
     func startRuntime(engine: JSEngineProtocol) {
         do {
-            let newRuntime = try runtimeFactory.makeRuntime(face: self)
+            let newRuntime = try runtimeFactory.makeRuntime(card: self)
             runtime = newRuntime
 
             let onPhase = phaseHandler()
