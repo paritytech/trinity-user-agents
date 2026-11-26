@@ -16,7 +16,7 @@ android {
         buildConfigString("FIAT_SYMBOL", localProperties.readSecretOrThrow("FIAT_SYMBOL"))
         buildConfigString("APP_NAME", localProperties.readSecretOrThrow("APPLICATION_NAME"))
 
-        buildConfigField("String", "TESTNET_ENVIRONMENT", "\"TESTNET\"")
+        buildConfigField("String", "TESTNET_ENVIRONMENT", "\"NIGHTLY\"")
         buildConfigField("boolean", "COINAGE_DEBUG_FEATURES", "true")
         buildConfigField("boolean", "COINAGE_DEBUG_TOOLS", "true")
         buildConfigField("boolean", "TESTNET_FUND_ENABLED", "true")
