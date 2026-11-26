@@ -16,7 +16,7 @@ product receives discrete events on the [Unified Renderer](unified-renderer.md)'
 
 ## Motivation
 
-Products several kinds of motion usecases: a state change that animates, a gesture such as a tap or a pan that moves
+Products have several kinds of motion usecases: a state change that animates, a gesture such as a tap or a pan that moves
 part of the card, a material whose look follows the device's tilt and time, and content hidden under a cover that a tap
 or a scratch reveals.
 
