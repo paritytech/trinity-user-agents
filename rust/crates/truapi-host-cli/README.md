@@ -1041,9 +1041,8 @@ and a built-in network's copy the CLI cannot run on over either chain backend.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields neither truapi-host nor
 the core reads, and names the same light specs, leaves it in place and reports
-it as current. When the copy at `--out` names the `dot` TLD or a Polkadot
-genesis hash, which only a build that allows reserved values runs, a change to
-a field the core pins for that build is written too. `--light-specs <file>`
+it as current. A change to a field the core pins for a build that allows
+reserved values is written too, whichever stack it is. `--light-specs <file>`
 also fetches the light specs of the relay, People, Asset Hub and Bulletin,
 checks them against the descriptor and writes them to `<file>` by `sha256`; the
 script passes it for each stack with a `stacks/light-specs/<name>.json`, which

@@ -158,17 +158,6 @@ impl ReservedValuesPolicy {
 	pub const ALLOWED: Self =
 		Self { allowed: true, extra_genesis_hashes: Vec::new(), extra_tlds: Vec::new() };
 
-	/// Checks that `descriptor` names no reserved value this policy does not
-	/// allow, by the same rules the core starts a stack under: neither its TLD
-	/// nor the genesis hash of any chain role.
-	///
-	/// Fails with [`StackError::ReservedTld`] or [`StackError::ReservedGenesis`],
-	/// the TLD's first.
-	pub fn refuse_reserved_values(&self, descriptor: &Descriptor) -> Result<(), StackError> {
-		self.refuse_tld(&descriptor.tld)?;
-		self.refuse_genesis(descriptor.chains.iter().map(Chain::genesis))
-	}
-
 	/// Refuses extra values that would reserve nothing: any at all when the
 	/// stack is allowed reserved values, and a TLD no stack can have.
 	fn refuse_extras_that_reserve_nothing(&self) -> Result<(), StackError> {

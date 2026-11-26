@@ -143,7 +143,7 @@ pub fn light_client_chains(descriptor: &Descriptor) -> impl Iterator<Item = &Cha
 /// rotates with every fresh checkpoint and the light client fetches the one
 /// the descriptor names itself. So are the other fields the core pins for a
 /// stack its build allows reserved values, such as `assets` and `coinage`,
-/// which [`bundles_same`] compares for a stack that names a reserved value.
+/// which [`bundles_same`] compares.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
@@ -159,26 +159,21 @@ pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 
 /// Whether a bundled copy of `stack` can stay in place of `other`: they
 /// [read the same](reads_same), name the same `lightSpec.sha256` for the
-/// relay, People, Asset Hub and Bulletin, whose specs the binary ships, and,
-/// when `stack` names a reserved value, agree in every field the core's
-/// [`Pinned`] pins. Only a build that allows reserved values runs such a
-/// stack, and that build pins it: one that bundles a copy older in a pinned
-/// field would refuse every published copy that has the change. A build that
-/// runs any other stack does not need to allow reserved values, and then pins
-/// only the TLD, which [`reads_same`] compares.
+/// relay, People, Asset Hub and Bulletin, whose specs the binary ships, and
+/// agree in every field the core's [`Pinned`] pins for a stack its build
+/// allows reserved values. Which builds allow that is up to each host, so
+/// every stack is compared as if pinned: a build that bundles a copy older in
+/// a pinned field would refuse every published copy that has the change.
 pub fn bundles_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
 		light_client_chains(descriptor)
 			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
 	}
-	let names_reserved_value =
-		ReservedValuesPolicy::default().refuse_reserved_values(stack).is_err();
 	reads_same(stack, other) &&
 		light_specs(stack).eq(light_specs(other)) &&
-		(!names_reserved_value ||
-			Pinned::new(stack.clone())
-				.refuse_change(other, &ReservedValuesPolicy::ALLOWED)
-				.is_ok())
+		Pinned::new(stack.clone())
+			.refuse_change(other, &ReservedValuesPolicy::ALLOWED)
+			.is_ok()
 }
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:

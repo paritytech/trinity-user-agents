@@ -85,8 +85,7 @@ pub enum StackCommand {
 		#[arg(long)]
 		out: PathBuf,
 		/// Leave `--out` untouched when the fetched copy differs from it only in
-		/// fields truapi-host does not read and, for a stack that names a reserved
-		/// value, the core does not pin.
+		/// fields truapi-host does not read and the core does not pin.
 		#[arg(long)]
 		skip_same_projection: bool,
 		/// Also fetch and check the light specs of the relay, People, Asset Hub

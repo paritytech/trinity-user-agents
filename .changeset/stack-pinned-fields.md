@@ -1,5 +1,5 @@
 ---
-"@parity/truapi-host": minor
+"@parity/truapi-host": major
 "@parity/truapi": patch
 ---
 
@@ -11,6 +11,9 @@ starts from the bundled copy. Only a new build changes one of them. A fresher re
 is a Polkadot fork made again from a later block, because both change the relay's `lightSpec`. The pins cover what the
 descriptor names, not what a host reads from the chains.
 
-`truapi-host stack bundle --skip-same-projection` also compares every field the core pins when the bundled copy names
-the `dot` TLD or a Polkadot genesis hash, which only a build that allows reserved values runs, so a published copy that
-changes only one of them is still written.
+A host that sets `allowed` for a stack whose operator wipes its chains, redeploys its contracts or changes its assets,
+as dotli does for pcf-devnet, no longer follows those changes: it needs a new build that bundles the new descriptor
+each time.
+
+`truapi-host stack bundle --skip-same-projection` also compares every field the core pins for a stack its build allows
+reserved values, on every stack, so a published copy that changes only one of them is still written.

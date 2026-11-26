@@ -192,12 +192,12 @@ fn test_reads_same_by_field() {
 	assert!(bundles_same(&base, &renamed));
 }
 
-/// Only a build that allows reserved values runs a stack that names one, and only such a build
-/// pins the rest of its descriptor. A pinned field the CLI does not read rewrites the bundle of a
-/// stack on `dot` or on a Polkadot genesis hash, which a build that pins it would otherwise refuse
-/// to follow, and leaves a testnet's bundle in place.
+/// A build that allows its stack reserved values refuses every published copy that changes a field
+/// its bundled copy pins, and each host decides which of its stacks it allows them. So a pinned
+/// field the CLI does not read rewrites the bundle of any stack, a testnet's included. An empty
+/// list names nothing, so writing one leaves the bundle in place.
 #[test]
-fn a_pinned_field_rewrites_the_bundle_only_of_a_stack_that_names_a_reserved_value() {
+fn a_pinned_field_rewrites_the_bundle_of_any_stack() {
 	let pinned_changes: [fn(&mut serde_json::Value); 5] = [
 		|descriptor| {
 			descriptor["chains"][0]["genesisHash"] = format!("0x{}", "08".repeat(32)).into()
@@ -222,28 +222,13 @@ fn a_pinned_field_rewrites_the_bundle_only_of_a_stack_that_names_a_reserved_valu
 	];
 	let assets_written_empty: fn(&mut serde_json::Value) =
 		|descriptor| descriptor["assets"] = serde_json::json!([]);
-	let bases: [fn(&mut serde_json::Value); 3] = [
-		|_testnet| {},
-		|on_dot| on_dot["tld"] = "dot".into(),
-		|on_polkadot_relay| {
-			on_polkadot_relay["chains"][0]["genesisHash"] =
-				"0x91b171bb158e2d3848fa23a9f1c25182fb8e20313b2c1eb49219da7a70ce90c3".into()
-		},
-	];
-	let rewritten = |base: fn(&mut serde_json::Value), change: fn(&mut serde_json::Value)| {
-		let changed = stack_descriptor(|descriptor| {
-			base(descriptor);
-			change(descriptor);
-		});
-		!bundles_same(&stack_descriptor(base), &changed)
+	let rewritten = |change: fn(&mut serde_json::Value)| {
+		!bundles_same(&stack_descriptor(|_| {}), &stack_descriptor(change))
 	};
 
 	assert_eq!(
-		bases.map(|base| (
-			pinned_changes.map(|change| rewritten(base, change)),
-			rewritten(base, assets_written_empty)
-		)),
-		[([false; 5], false), ([true; 5], false), ([true; 5], false)]
+		(pinned_changes.map(rewritten), rewritten(assets_written_empty)),
+		([true; 5], false)
 	);
 }
 
