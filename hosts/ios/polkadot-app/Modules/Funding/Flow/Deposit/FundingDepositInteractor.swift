@@ -29,7 +29,8 @@ final class FundingDepositInteractor: FundingEntryInteractor, FundingDepositInte
     func createQRCode(for payload: String) {
         qrCodeTask?.cancel()
 
-        let wrapper = qrFactory.createOperation(payload: Data(payload.utf8), qrSize: Constants.qrSize)
+        let side = FundingDepositConstants.qrSide
+        let wrapper = qrFactory.createOperation(payload: Data(payload.utf8), qrSize: CGSize(width: side, height: side))
         qrCodeTask = Task { [weak self, entryId, logger] in
             do {
                 let image = try await wrapper.asyncExecute()
@@ -41,11 +42,5 @@ final class FundingDepositInteractor: FundingEntryInteractor, FundingDepositInte
                 }
             }
         }
-    }
-}
-
-private extension FundingDepositInteractor {
-    enum Constants {
-        static let qrSize = CGSize(width: 220, height: 220)
     }
 }

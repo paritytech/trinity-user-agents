@@ -42,3 +42,8 @@ protocol FundingDepositWireframeProtocol: FundingToastPresentable {
 }
 
 extension FundingFlowWireframe: FundingDepositWireframeProtocol {}
+
+enum FundingDepositConstants {
+    /// The QR code's side on screen, which the interactor draws it at.
+    static let qrSide: CGFloat = 220
+}

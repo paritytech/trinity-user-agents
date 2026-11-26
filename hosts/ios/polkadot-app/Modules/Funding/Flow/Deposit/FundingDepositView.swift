@@ -78,17 +78,7 @@ private extension FundingDepositView {
 
     func cryptoDeposit(_ deposit: FundingDepositViewModel.Crypto) -> some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            Color.clear
-                .overlay {
-                    if let qrCode {
-                        Image(uiImage: qrCode)
-                            .resizable()
-                            .scaledToFit()
-                    }
-                }
-                .frame(width: 220, height: 220)
-                .padding(DSSpacings.medium)
-                .background(.white, in: RoundedRectangle(cornerRadius: DSRadii.large))
+            QRCodeTile(image: qrCode, side: FundingDepositConstants.qrSide)
 
             VStack(spacing: DSSpacings.small) {
                 if let amount = deposit.amount {
