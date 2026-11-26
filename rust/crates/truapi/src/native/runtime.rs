@@ -178,13 +178,14 @@ impl NativeTrUApiHostRuntime {
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
 		))?;
-		let pinned = PinnedPocketCard::privileged(stack_refresh.stack().tld())
+		let stack = stack_refresh.stack();
+		let pinned = PinnedPocketCard::privileged(stack.tld())
 			.expect("a verified stack names a dotNS TLD; qed");
 		let pocket = futures::executor::block_on(PocketCards::open(core_db.clone(), pinned))
 			.map_err(unavailable)?;
 		let signing = SigningHostConfig {
 			host: runtime_config.host,
-			stack: stack_refresh.stack(),
+			stack,
 			materials_enabled: runtime_config.materials_enabled,
 		};
 		let events = Arc::new(NativeEventBus::default());

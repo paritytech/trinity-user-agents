@@ -4,7 +4,6 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.ProductId
