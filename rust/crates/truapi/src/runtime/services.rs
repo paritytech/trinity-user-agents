@@ -29,6 +29,7 @@ use crate::{
 		product_manifest::ManifestSource,
 		single_flight::SingleFlight,
 		sso_responder_service::DevicePairingObserver,
+		statement_allowance,
 		statement_store_rpc::StatementStoreRpc,
 	},
 };
@@ -233,8 +234,8 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let chain = match stack.genesis_check() {
-			Some(check) => chain.checking_genesis(check),
+		let chain = match crate::stack::checks(&stack) {
+			Some(checks) => chain.checking_genesis(checks.genesis_check()),
 			None => chain,
 		};
 		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
@@ -313,6 +314,29 @@ impl RuntimeServices {
 	/// product. Returns whether this call installed it.
 	pub fn install_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
 		self.permission_status.set(host).is_ok()
+	}
+
+	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
+	///
+	/// The suffix also goes to the stack's checks, which report one that is
+	/// not the stack's `tld`. Over a client the host routes by another chain's
+	/// genesis hash, that chain's suffix is returned and does not go to the
+	/// checks.
+	///
+	/// Fails when the read fails or the chain holds no suffix of one to
+	/// sixteen bytes. A failed read changes nothing the checks report: a
+	/// suffix reported before stays reported.
+	pub async fn people_network_suffix(
+		&self,
+		people: &statement_allowance::ChainClient,
+	) -> Result<Vec<u8>, statement_allowance::StatementAllowanceError> {
+		let suffix = statement_allowance::slot::read_network_suffix(people.rpc()).await?;
+		if people.configured_genesis_hash() == self.stack.chains().people &&
+			let Some(checks) = crate::stack::checks(&self.stack)
+		{
+			checks.people_suffix_answered(&suffix);
+		}
+		Ok(suffix)
 	}
 
 	/// The stack the host runs.

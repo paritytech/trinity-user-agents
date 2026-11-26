@@ -253,6 +253,11 @@ impl ChainClient {
 		&self.rpc
 	}
 
+	/// The genesis hash the host routes this client by.
+	pub fn configured_genesis_hash(&self) -> [u8; 32] {
+		self.configured_genesis_hash
+	}
+
 	/// Where to build extrinsics for this chain: `extrinsics`, over the
 	/// genesis the host configured.
 	pub fn extrinsic_target<'a>(&self, extrinsics: &'a ExtrinsicService) -> ExtrinsicTarget<'a> {

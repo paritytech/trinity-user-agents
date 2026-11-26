@@ -5,17 +5,21 @@ import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessRepor
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.deriveAccountId
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
+import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.AllowanceAccountDerivation
+import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.AllowanceSystem
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceResourceKind
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.OnExistingAllocationStrategy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import timber.log.Timber
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class RealStatementStoreSubmissionSponsoring @Inject constructor(
     private val allowanceKeyUseCase: AllowanceKeyUseCase,
+    private val allowanceAccountDerivation: AllowanceAccountDerivation,
     private val statementStoreSlotAllocator: StatementStoreSlotAllocator,
 ) : StatementStoreSubmissionSponsoring {
     override suspend fun ensureSponsorshipKey(productId: ProductId): Result<SlotAccountKey> {
@@ -36,8 +40,12 @@ class RealStatementStoreSubmissionSponsoring @Inject constructor(
             return Result.success(Unit)
         }
 
+        val holder = StatementStoreSlotHolder.Local(
+            accountId = slotAccount,
+            derivationPath = allowanceAccountDerivation.allowancePath(AllowanceSystem.STATEMENT_STORE, productId),
+        )
         return with(StalenessReportCollector.NoOp) {
-            statementStoreSlotAllocator.allocate(slotAccount, OnExistingAllocationStrategy.IGNORE, SlotPriority.Normal)
+            statementStoreSlotAllocator.allocate(holder, OnExistingAllocationStrategy.IGNORE, SlotPriority.Normal)
         }
     }
 }

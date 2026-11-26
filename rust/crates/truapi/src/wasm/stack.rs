@@ -328,7 +328,7 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 }
 
 /// `{ kind: "genesisHash", role, named, answered }`, with both hashes as `0x`
-/// hex.
+/// hex, or `{ kind: "networkSuffix", named, answered }`.
 fn mismatch_to_js(mismatch: &StackMismatch) -> JsValue {
 	match mismatch {
 		StackMismatch::GenesisHash { role, named, answered } => object(&[
@@ -336,6 +336,11 @@ fn mismatch_to_js(mismatch: &StackMismatch) -> JsValue {
 			("role", JsValue::from_str(role)),
 			("named", JsValue::from_str(&encode_hex(named))),
 			("answered", JsValue::from_str(&encode_hex(answered))),
+		]),
+		StackMismatch::NetworkSuffix { named, answered } => object(&[
+			("kind", JsValue::from_str("networkSuffix")),
+			("named", JsValue::from_str(named)),
+			("answered", JsValue::from_str(answered)),
 		]),
 	}
 }
