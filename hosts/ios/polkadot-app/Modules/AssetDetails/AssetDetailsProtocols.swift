@@ -16,9 +16,6 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceive(topUpLoading: Bool)
 
     func didReceive(coinageBreakdown: CoinageBalanceBreakdownViewModel)
-    #if TESTNET_FEATURE
-        func didReceive(testnetTopUpLoading: Bool)
-    #endif
 }
 
 @MainActor
@@ -28,20 +25,12 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func onAddMoney()
     func onOpenBackupSettings()
     func onTopUp()
-
-    #if TESTNET_FEATURE
-        func onTestnetTopUp()
-    #endif
 }
 
 protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func setup()
 
     func openTopUp()
-
-    #if TESTNET_FEATURE
-        func topUp()
-    #endif
 }
 
 @MainActor
@@ -63,9 +52,6 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
         holdings: CoinageHoldings,
         denominations: DenominationBreakdownContext
     )
-    #if TESTNET_FEATURE
-        func didCompleteTopUp(_ result: Result<Void, Error>)
-    #endif
 }
 
 @MainActor

@@ -53,12 +53,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         viewModel.onTopUp = { [weak presenter] in
             presenter?.onTopUp()
         }
-
-        #if TESTNET_FEATURE
-            viewModel.onTestnetTopUp = { [weak presenter] in
-                presenter?.onTestnetTopUp()
-            }
-        #endif
     }
 
     func didSetCards(viewModels: [WalletCardCreateViewModel]) {
@@ -108,12 +102,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     func didReceive(coinageBreakdown: CoinageBalanceBreakdownViewModel) {
         viewModel.coinageBreakdown = coinageBreakdown
     }
-
-    #if TESTNET_FEATURE
-        func didReceive(testnetTopUpLoading: Bool) {
-            viewModel.isTestnetTopUpInProgress = testnetTopUpLoading
-        }
-    #endif
 
     func didReceive(isRecoveryInProgress: Bool) {
         viewModel.isUpdating = isRecoveryInProgress

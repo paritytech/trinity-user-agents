@@ -108,14 +108,6 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 
         interactor?.openTopUp()
     }
-
-    #if TESTNET_FEATURE
-        func onTestnetTopUp() {
-            view?.didReceive(testnetTopUpLoading: true)
-
-            interactor?.topUp()
-        }
-    #endif
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
@@ -138,18 +130,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         provideAssetBalance()
         provideCoinageBreakdown()
     }
-
-    #if TESTNET_FEATURE
-        func didCompleteTopUp(_ result: Result<Void, Error>) {
-            view?.didReceive(testnetTopUpLoading: false)
-
-            guard case let .failure(error) = result else {
-                return
-            }
-
-            wireframe.present(error: error, from: view)
-        }
-    #endif
 
     func didReceive(balance: Decimal) {
         self.balance = balance
