@@ -230,18 +230,48 @@ class RealProductNotificationSchedulerTelemetryTest {
     }
 
     @Test
-    fun `a cancelled insert records nothing`() = runBlocking {
+    fun `a cancelled insert records nothing and stays a cancellation`() = runBlocking {
         // Given
         val cancellation = CancellationException("closed")
         coEvery { repository.insert(any()) } throws cancellation
 
         // When
-        val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
+        val thrown = runCatching { scheduler.schedule(productId, "hello", deeplink = null, scheduledAt) }
 
         // Then
-        assertSame(cancellation, result.exceptionOrNull())
+        assertSame(cancellation, thrown.exceptionOrNull())
         assertEquals(emptyList<HostEvent>(), captured)
         assertEquals(emptyList<CriticalIssue>(), issues)
+    }
+
+    @Test
+    fun `a cancelled cancel records nothing and stays a cancellation`() = runBlocking {
+        // Given
+        val cancellation = CancellationException("closed")
+        coEvery { repository.exists(productId, any()) } returns true
+        coEvery { repository.delete(any(), any()) } throws cancellation
+
+        // When
+        val thrown = runCatching { scheduler.cancel(productId, NotificationId(7)) }
+
+        // Then
+        assertSame(cancellation, thrown.exceptionOrNull())
+        assertEquals(emptyList<HostEvent>(), captured)
+    }
+
+    @Test
+    fun `a cancelled uninstall records nothing and stays a cancellation`() = runBlocking {
+        // Given
+        val cancellation = CancellationException("closed")
+        coEvery { repository.getAll() } returns listOf(stored(productId, 7))
+        coEvery { repository.deleteAllByProduct(productId) } throws cancellation
+
+        // When
+        val thrown = runCatching { scheduler.cancelAllForProduct(productId) }
+
+        // Then
+        assertSame(cancellation, thrown.exceptionOrNull())
+        assertEquals(emptyList<HostEvent>(), captured)
     }
 
     @Test

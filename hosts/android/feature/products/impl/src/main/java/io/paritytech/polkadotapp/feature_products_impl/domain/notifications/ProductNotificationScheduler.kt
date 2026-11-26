@@ -8,11 +8,11 @@ import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotification
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
-import kotlinx.coroutines.CancellationException
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -84,29 +84,27 @@ class RealProductNotificationScheduler @Inject constructor(
             .onFailure { error ->
                 telemetry.notScheduled(productId, notificationId, ProductNotificationReason.ADD_FAILED, error)
             }
-            .mapCatching {
-                try {
-                    repository.insert(scheduled)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    telemetry.notScheduled(productId, notificationId, ProductNotificationReason.STORE_FAILED, error)
-                    throw error
-                }
+            .flatMap {
+                runCancellableCatching { repository.insert(scheduled) }
+                    .onFailure { error ->
+                        telemetry.notScheduled(productId, notificationId, ProductNotificationReason.STORE_FAILED, error)
+                    }
+            }
+            .map {
                 telemetry.scheduled(scheduled)
                 notificationId
             }
             .logFailure("Failed to schedule product notification")
     }
 
-    override suspend fun cancel(productId: ProductId, notificationId: NotificationId): Result<Unit> = runCatching {
+    override suspend fun cancel(productId: ProductId, notificationId: NotificationId): Result<Unit> = runCancellableCatching {
         val existed = repository.exists(productId, notificationId)
         alarmManager.cancel(buildAlarmPendingIntent(productId, notificationId))
         repository.delete(productId, notificationId)
         if (existed) telemetry.cancelled(productId, notificationId)
     }
 
-    override suspend fun cancelAllForProduct(productId: ProductId): Result<Unit> = runCatching {
+    override suspend fun cancelAllForProduct(productId: ProductId): Result<Unit> = runCancellableCatching {
         val pending = repository.getAll().filter { it.productId == productId }
         pending.forEach { row ->
             alarmManager.cancel(buildAlarmPendingIntent(row.productId, row.notificationId))
