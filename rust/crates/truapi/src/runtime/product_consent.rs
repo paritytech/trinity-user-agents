@@ -20,20 +20,24 @@ use crate::{
 		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductId, SignPayloadReview,
 		SignRawReview, UserConfirmationReview,
 	},
+	stack::Stack,
 };
 
 /// One runtime's consent policy: one decision store, one prompt at a time, one set of rules.
 pub struct ProductConsent {
 	platform: Arc<dyn Platform>,
+	stack: Stack,
 	permission_prompt: futures::lock::Mutex<()>,
 	allowed_once: Mutex<HashSet<(String, String)>>,
 }
 
 impl ProductConsent {
-	/// Store decisions through `platform`, the runtime-wide one.
-	pub fn new(platform: Arc<dyn Platform>) -> Self {
+	/// Store decisions through `platform`, the runtime-wide one, and trust only
+	/// the products the runtime's `stack` trusts.
+	pub fn new(platform: Arc<dyn Platform>, stack: Stack) -> Self {
 		Self {
 			platform,
+			stack,
 			permission_prompt: futures::lock::Mutex::new(()),
 			allowed_once: Mutex::default(),
 		}
@@ -50,7 +54,7 @@ impl ProductConsent {
 		target: &ProductId,
 		prompt: &dyn Platform,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		if requester == target || requester.has_trusted_remote_permissions() {
+		if requester == target || self.stack.trusts(requester) {
 			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		// Filed per product, the granularity a manifest grant uses, so a refused
@@ -96,7 +100,7 @@ impl ProductConsent {
 		prompt: &dyn Platform,
 		review: UserConfirmationReview,
 	) -> Result<(), AuthorityError> {
-		if skips_review(caller, &review) {
+		if skips_review(&self.stack, caller, &review) {
 			return Ok(());
 		}
 		let approved = super::until_cancelled(cx, prompt.confirm_user_action(review))
@@ -189,12 +193,13 @@ pub enum AccountAccessError {
 	Confirmation(GenericError),
 }
 
-/// Reviews a product bound by this host may skip; a paired caller never skips one.
-fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> bool {
+/// Reviews a product bound by this host may skip when `stack` trusts it; a
+/// paired caller never skips one.
+fn skips_review(stack: &Stack, caller: AccountCaller<'_>, review: &UserConfirmationReview) -> bool {
 	let AccountCaller::Local { product } = caller else {
 		return false;
 	};
-	let first_party = product.product_id.has_trusted_remote_permissions();
+	let first_party = stack.trusts(&product.product_id);
 	match review {
 		UserConfirmationReview::SignPayload(SignPayloadReview::Product { .. }) |
 		UserConfirmationReview::SignRaw(SignRawReview::Product { .. }) |

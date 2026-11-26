@@ -2,6 +2,7 @@ import Foundation
 import Products
 import Revive
 import SubstrateSdk
+import TrUAPIHost
 
 extension AppConfig {
     enum KnownIPFS {
@@ -29,7 +30,7 @@ extension AppConfig {
         static let dotNsBrowse = "browse"
 
         static let dotNsGameWebview = "game-webview"
-        static let dotNsCollectibles = "stash"
+        static let dotNsCollectibles = privilegedProductLabel(product: .collectibles)
 
         static func config() throws -> DotNsConfig {
             let resolverAddress = try EvmAddressFormat.validate(Self.dotNsResolverAddress.fromHex())

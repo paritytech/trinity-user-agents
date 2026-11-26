@@ -3,7 +3,7 @@
 use std::sync::{Arc, Weak};
 
 use super::RuntimeServices;
-use crate::ProductId;
+use crate::{ProductId, stack::UnservedProduct};
 
 /// One reference held on a product's worker. Acquiring and dropping it may call
 /// into the host, so neither operation should run under a lock.
@@ -14,9 +14,16 @@ pub struct WorkerHold {
 
 impl WorkerHold {
 	/// Acquire one reference on the product's worker.
-	pub fn acquire(services: &Arc<RuntimeServices>, product: &ProductId) -> Self {
+	///
+	/// Fails for a product the stack does not serve, without asking the host
+	/// to start its worker: that worker can never open.
+	pub fn acquire(
+		services: &Arc<RuntimeServices>,
+		product: &ProductId,
+	) -> Result<Self, UnservedProduct> {
+		services.stack().require_served(product)?;
 		services.worker_ledger.acquire(product);
-		Self { services: Arc::downgrade(services), product: product.clone() }
+		Ok(Self { services: Arc::downgrade(services), product: product.clone() })
 	}
 
 	/// The product whose worker this holds.
