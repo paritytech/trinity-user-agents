@@ -9,6 +9,7 @@ import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashes
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -34,11 +35,12 @@ class TrUAPIHostRuntimeProviderTest {
     val tempFolder = TemporaryFolder()
 
     private val runtimeConfig = slot<HostRuntimeConfig>()
+    private val nativeRuntime = mockk<NativeTrUApiHostRuntime>(relaxed = true)
 
     @Before
     fun captureRuntimeConfig() {
         mockkObject(NativeTrUApiHostRuntime.Companion)
-        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns mockk(relaxed = true)
+        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns nativeRuntime
     }
 
     @After
@@ -92,6 +94,7 @@ class TrUAPIHostRuntimeProviderTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
+        fundingProviders = mockk(relaxed = true),
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
         installations = mockk(),
@@ -100,6 +103,7 @@ class TrUAPIHostRuntimeProviderTest {
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
         materialsSwitch = mockk(relaxed = true),
         workerSupervisor = { mockk(relaxed = true) },
+        workerCrashes = WorkerCrashes(),
         dispatchers = testDispatchers(),
     )
 
