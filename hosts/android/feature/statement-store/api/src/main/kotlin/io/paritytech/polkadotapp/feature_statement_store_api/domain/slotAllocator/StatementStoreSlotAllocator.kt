@@ -8,17 +8,21 @@ interface StatementStoreSlotAllocator {
     fun currentPeriod(): UInt
 
     /**
-     * Allocates a statement store slot for [target] in the current period.
+     * Allocates a statement store slot for [holder] in the current period.
      *
-     * When [strategy] is [OnExistingAllocationStrategy.IGNORE] and [target] already
+     * When [strategy] is [OnExistingAllocationStrategy.IGNORE] and [holder] already
      * holds a slot in this period the call is a no-op.
      *
-     * Otherwise, first renews every stale local row, then picks the first free seq; if the
-     * slot table is full, LRU-evicts the oldest slot not owned by [target] whose
-     * `StmtStoreReplacementCooldown` has elapsed and whose effective priority can be evicted
-     * by [priority] (see [canBeEvictedBy]). Fails with
-     * [StatementStoreSlotAllocationError.NoAllocationAvailable] if neither a free
-     * nor an evictable slot exists.
+     * Otherwise, first renews every stale local row, then picks the first free seq. If the
+     * slot table is full, it evicts a slot not owned by [holder] whose effective priority can be
+     * evicted by [priority] (see [canBeEvictedBy]), lowest priority and oldest first. A runtime
+     * with `replace_statement_store_account` takes only a slot whose current holder signs the
+     * replacement, so only slots allocated for a [StatementStoreSlotHolder.Local] qualify; an older
+     * runtime takes any slot whose `StmtStoreReplacementCooldown` has elapsed.
+     *
+     * Fails with [StatementStoreSlotAllocationError.NoAllocationAvailable] if neither a free nor an
+     * evictable slot exists, and with [StatementStoreSlotAllocationError.Unknown] when evictable
+     * slots exist but none may be replaced yet.
      *
      * [priority] is also persisted on the local accounting row so renewal across
      * period rollovers can preserve higher-tier claims under capacity pressure. So is [tag],
@@ -29,7 +33,7 @@ interface StatementStoreSlotAllocator {
      */
     context(diagnostics: StalenessReportCollector)
     suspend fun allocate(
-        target: AccountId,
+        holder: StatementStoreSlotHolder,
         strategy: OnExistingAllocationStrategy,
         priority: SlotPriority,
         tag: StatementStoreSlotTag? = null,

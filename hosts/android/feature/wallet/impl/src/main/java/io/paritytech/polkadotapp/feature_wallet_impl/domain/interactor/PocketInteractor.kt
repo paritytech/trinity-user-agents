@@ -8,7 +8,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardCoverOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
@@ -31,7 +31,7 @@ class PocketInteractor @Inject constructor(
     private val coinageBackupService: CoinageBackupService,
     private val pocketCollection: PocketCollection,
     private val pocketFaceSource: PocketFaceSource,
-    private val pocketCardFaceOnOpen: PocketCardFaceOnOpen,
+    private val pocketCardCoverOnOpen: PocketCardCoverOnOpen,
     private val productContentWarmUp: ProductContentWarmUp,
 ) {
     fun observeBackupProgress(): Flow<BackupProgress> = coinageBackupService.subscribeProgress()
@@ -57,7 +57,7 @@ class PocketInteractor @Inject constructor(
     /** Fetches the product's pages before its card is opened, so opening it does not wait on them. */
     suspend fun warmUpProduct(key: PocketCardKey): Result<Unit> = productContentWarmUp.warmUp(key.productId)
 
-    suspend fun faceShownOnOpen(key: PocketCardKey): Boolean = pocketCardFaceOnOpen.faceShownOnOpen(key)
+    suspend fun startsCovered(key: PocketCardKey): Boolean = pocketCardCoverOnOpen.startsCovered(key)
 
     /** Collect only while the face is on screen: collecting keeps the backing product's worker running. */
     fun observeFace(key: PocketCardKey): Flow<PocketFace> = pocketFaceSource.observeFace(key)

@@ -15,8 +15,8 @@ import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.CardCoverAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.CardCoverRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
@@ -44,14 +44,14 @@ class ProductPocketCardDetailsLoadingTest {
     val compose = createComposeRule()
 
     private class FakeSession : SpaHostSession {
-        val faceRequests = MutableSharedFlow<FaceShownRequest>(extraBufferCapacity = 1)
+        val coverRequests = MutableSharedFlow<CardCoverRequest>(extraBufferCapacity = 1)
 
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
         override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Completed)
         override val isPageRevealed = MutableStateFlow(true)
         override val title = MutableStateFlow("")
-        override val faceShownRequests get() = faceRequests
+        override val cardCoverRequests get() = coverRequests
         override fun pauseConnections() = Unit
         override fun resumeConnections() = Unit
     }
@@ -78,7 +78,7 @@ class ProductPocketCardDetailsLoadingTest {
                     ),
                 ),
                 shownProduct = session?.let { ShownProduct(card.key.launchUrl(), it) },
-                openingFaceShown = true,
+                startsCovered = false,
                 cardIndex = 0,
                 onSettled = {},
                 onBack = {},
@@ -105,30 +105,30 @@ class ProductPocketCardDetailsLoadingTest {
     fun aRequestFromAProductWhoseCardIsMovingIsHeldUntilTheCardSettles() {
         val session = FakeSession()
         val arrival = showArriving(session)
-        assertEquals("not listening while the card moved", 1, session.faceRequests.subscriptionCount.value)
+        assertEquals("not listening while the card moved", 1, session.coverRequests.subscriptionCount.value)
 
-        val reply = requestFaceHidden(session)
+        val reply = requestCover(session)
         assertFalse("applied while the card was moving", reply.isCompleted)
 
         compose.mainClock.advanceTimeUntil(timeoutMillis = 3_000) { reply.isCompleted }
         assertTrue("applied before the card settled", arrival.isIdle)
-        assertEquals(FaceShownAnswer.APPLIED, runBlocking { reply.await() })
+        assertEquals(CardCoverAnswer.APPLIED, runBlocking { reply.await() })
     }
 
-    // A card closed before it settles never moves its face, so the product is told at once instead of
+    // A card closed before it settles never moves, so the product is told at once instead of
     // waiting out its call.
     @Test
     fun aRequestHeldForACardThatLeavesBeforeSettlingIsNotPresented() {
         val session = FakeSession()
         val arrival = showArriving(session)
-        val reply = requestFaceHidden(session)
+        val reply = requestCover(session)
 
         arrival.targetState = false
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
 
         assertTrue("left unanswered when the card left", reply.isCompleted)
-        assertEquals(FaceShownAnswer.NOT_PRESENTED, runBlocking { reply.await() })
+        assertEquals(CardCoverAnswer.NOT_PRESENTED, runBlocking { reply.await() })
     }
 
     private fun showArriving(session: SpaHostSession): MutableTransitionState<Boolean> {
@@ -144,9 +144,9 @@ class ProductPocketCardDetailsLoadingTest {
         return arrival
     }
 
-    private fun requestFaceHidden(session: FakeSession): CompletableDeferred<FaceShownAnswer> {
-        val reply = CompletableDeferred<FaceShownAnswer>()
-        assertTrue(session.faceRequests.tryEmit(FaceShownRequest(shown = false, reply = reply)))
+    private fun requestCover(session: FakeSession): CompletableDeferred<CardCoverAnswer> {
+        val reply = CompletableDeferred<CardCoverAnswer>()
+        assertTrue(session.coverRequests.tryEmit(CardCoverRequest(covered = true, reply = reply)))
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
         return reply

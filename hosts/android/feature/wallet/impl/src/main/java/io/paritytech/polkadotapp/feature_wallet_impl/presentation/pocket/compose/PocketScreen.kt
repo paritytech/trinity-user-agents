@@ -86,7 +86,7 @@ fun PocketScreen() {
     val screenState by viewModel.state.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val shownProduct by viewModel.shownProduct.collectAsStateWithLifecycle()
-    val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
+    val startsCovered by viewModel.startsCovered.collectAsStateWithLifecycle()
     val collectiblesProduct by viewModel.collectiblesProduct.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
@@ -95,7 +95,7 @@ fun PocketScreen() {
         screenState = screenState,
         cards = cards,
         shownProduct = shownProduct,
-        openingFaceShown = openingFaceShown,
+        startsCovered = startsCovered,
         collectiblesProduct = collectiblesProduct,
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
@@ -114,7 +114,7 @@ private fun PocketScreenInternal(
     screenState: PocketScreenState,
     cards: ImmutableList<PocketCardUiModel>,
     shownProduct: ShownProduct?,
-    openingFaceShown: Boolean?,
+    startsCovered: Boolean?,
     collectiblesProduct: ShownProduct?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
@@ -190,7 +190,7 @@ private fun PocketScreenInternal(
                                     selectedCard = current.selectedCard,
                                     allCards = cards,
                                     shownProduct = shownProduct,
-                                    openingFaceShown = openingFaceShown,
+                                    startsCovered = startsCovered,
                                     bindingsOf = bindingsOf,
                                     onSettled = onExpandedCardSettled,
                                     onBack = onCardDismissed,
@@ -217,7 +217,7 @@ private fun SelectedCardDetails(
     selectedCard: PocketCardUiModel,
     allCards: ImmutableList<PocketCardUiModel>,
     shownProduct: ShownProduct?,
-    openingFaceShown: Boolean?,
+    startsCovered: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onBack: () -> Unit,
@@ -234,7 +234,7 @@ private fun SelectedCardDetails(
             card = selectedCard,
             bindings = bindingsOf(selectedCard),
             shownProduct = shownProduct,
-            openingFaceShown = openingFaceShown,
+            startsCovered = startsCovered,
             cardIndex = cardIndex,
             onSettled = { onSettled(selectedCard) },
             onBack = onBack,
@@ -399,7 +399,7 @@ private fun PocketScreenPreview() {
                     )
                 ),
                 shownProduct = null,
-                openingFaceShown = null,
+                startsCovered = null,
                 collectiblesProduct = null,
                 bindingsOf = { card ->
                     ProductFaceBindings(
