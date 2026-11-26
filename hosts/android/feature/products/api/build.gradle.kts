@@ -8,6 +8,7 @@ plugins {
 
 android {
     namespace = "io.paritytech.polkadotapp.feature_products_api"
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
@@ -32,6 +33,10 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

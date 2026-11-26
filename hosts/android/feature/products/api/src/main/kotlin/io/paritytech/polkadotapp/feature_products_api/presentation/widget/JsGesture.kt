@@ -36,6 +36,7 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
@@ -93,6 +94,17 @@ internal fun JsGesture(
     val currentOnAction by rememberUpdatedState(onAction)
     val workerPosition = widget.position?.value?.collectAsState()
     val moves = remember { GestureMoveCoalescer<Offset>() }
+    var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    fun placeTrail(coordinates: LayoutCoordinates) {
+        current.trail?.let { trail ->
+            trail.origin = coordinates.positionInRoot()
+            trail.coordinates = coordinates
+        }
+    }
+
+    // Replacing a trail at unchanged bounds does not trigger another layout callback.
+    SideEffect { layoutCoordinates?.takeIf { it.isAttached }?.let(::placeTrail) }
 
     // Host-owned place of the children, in px from the travel's start. Kept across trees at the same place.
     val placeX = remember { Animatable(0f) }
@@ -357,10 +369,8 @@ internal fun JsGesture(
             }
             // Where the pan's strokes sit on screen, for masks that follow them.
             .onGloballyPositioned { coordinates ->
-                current.trail?.let { trail ->
-                    trail.origin = coordinates.positionInRoot()
-                    trail.coordinates = coordinates
-                }
+                layoutCoordinates = coordinates
+                placeTrail(coordinates)
             }
             .semantics {
                 label?.let { contentDescription = it }
