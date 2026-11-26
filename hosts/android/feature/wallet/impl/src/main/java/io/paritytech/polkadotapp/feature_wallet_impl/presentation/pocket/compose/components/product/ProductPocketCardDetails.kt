@@ -44,7 +44,7 @@ import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.CardCoverAnswer
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
@@ -72,7 +72,7 @@ fun ProductPocketCardDetails(
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
     shownProduct: ShownProduct?,
-    openingFaceShown: Boolean?,
+    startsCovered: Boolean?,
     cardIndex: Int,
     onSettled: () -> Unit,
     onBack: () -> Unit,
@@ -87,20 +87,20 @@ fun ProductPocketCardDetails(
 
     // The product is asked for only once the card has arrived, so its WebView is not built while the
     // card is still travelling. The fold starts after the arrival, so the shared-element transition
-    // lands on the card's real bounds; showFace returns as the fold starts, so the page is requested
-    // while it animates. Applied once: a recreated screen must not fold away a face the user has
+    // lands on the card's real bounds; cover returns as the fold starts, so the page is requested
+    // while it animates. Applied once: a recreated screen must not cover a card the user has
     // pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
     val leaving = arrival?.targetState == EnterExitState.PostExit
-    var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
+    var openingCoverApplied by rememberSaveable { mutableStateOf(false) }
     var settled by remember(leaving) { mutableStateOf(false) }
-    LaunchedEffect(arrived, openingFaceShown, leaving) {
-        if (leaving || !arrived || openingFaceShown == null) return@LaunchedEffect
+    LaunchedEffect(arrived, startsCovered, leaving) {
+        if (leaving || !arrived || startsCovered == null) return@LaunchedEffect
 
-        if (!openingFaceApplied) {
-            if (!openingFaceShown) fold.showFace(false)
-            openingFaceApplied = true
+        if (!openingCoverApplied) {
+            if (startsCovered) fold.cover(true)
+            openingCoverApplied = true
         }
         settled = true
         onSettled()
@@ -110,16 +110,16 @@ fun ProductPocketCardDetails(
     // card's fold alone. Requests wait for the card to settle, so the fold never starts mid-flight.
     LaunchedEffect(session, fold, leaving) {
         if (leaving) return@LaunchedEffect
-        session?.faceShownRequests?.collect { request ->
+        session?.cardCoverRequests?.collect { request ->
             val handling = launch {
                 try {
                     snapshotFlow { settled }.first { it }
-                    request.reply.complete(fold.showFace(request.shown))
+                    request.reply.complete(fold.cover(request.covered))
                 } finally {
-                    request.reply.complete(FaceShownAnswer.NOT_PRESENTED)
+                    request.reply.complete(CardCoverAnswer.NOT_PRESENTED)
                 }
             }
-            // A withdrawn request was answered NotPresented, so its face must not move after all.
+            // A withdrawn request was answered NotPresented, so its card must not move after all.
             request.reply.invokeOnCompletion { cause -> if (cause != null) handling.cancel() }
         }
     }

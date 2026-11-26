@@ -16,7 +16,7 @@ data class DebugPocketCard(
     val cardId: PocketCardId,
     val title: String,
     val previewUrl: String,
-    val faceShown: Boolean,
+    val startsCovered: Boolean,
 )
 
 /**
@@ -60,7 +60,7 @@ class PrefsDebugPocketCards(
                 cardId = PocketCardId(cardId),
                 title = rawTitle?.let(::screenPocketCardTitle)?.takeIf { it.isNotEmpty() } ?: cardId,
                 previewUrl = previewUrl,
-                faceShown = prefs.getBoolean(productId.key(FACE_SHOWN), true),
+                startsCovered = prefs.getBoolean(productId.key(STARTS_COVERED), false),
             )
         }
             .logFailure("pocket: debug card for $productId is not usable")
@@ -72,7 +72,7 @@ class PrefsDebugPocketCards(
             putString(productId.key(CARD_ID), card?.cardId?.value)
             putString(productId.key(TITLE), card?.title)
             putString(productId.key(PREVIEW_URL), card?.previewUrl)
-            putBoolean(productId.key(FACE_SHOWN), card?.faceShown ?: true)
+            putBoolean(productId.key(STARTS_COVERED), card?.startsCovered ?: false)
         }
     }
 
@@ -92,7 +92,7 @@ class PrefsDebugPocketCards(
         const val CARD_ID = "card_id"
         const val TITLE = "title"
         const val PREVIEW_URL = "preview_url"
-        const val FACE_SHOWN = "face_shown"
+        const val STARTS_COVERED = "starts_covered"
         const val APP_URL = "app_url"
     }
 }
@@ -105,5 +105,5 @@ fun DebugPocketCard.toDefinition(): PocketCardDefinition = PocketCardDefinition(
     id = cardId,
     title = title,
     preview = PocketCardPreview.Url(previewUrl),
-    faceShown = faceShown,
+    startsCovered = startsCovered,
 )

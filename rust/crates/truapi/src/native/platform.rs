@@ -238,34 +238,31 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 
 #[async_trait::async_trait]
 impl crate::platform::ExpandedCardHost for CallbackPlatform {
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, v01::GenericError> {
 		self.callbacks.on_core_log(
-			markers::NATIVE_SET_EXPANDED_CARD_FACE_SHOWN.target.to_string(),
-			format!("{shown}"),
+			markers::NATIVE_SET_EXPANDED_CARD_COVERED.target.to_string(),
+			format!("{covered}"),
 		);
 
 		self.callbacks
-			.set_expanded_card_face_shown(shown)
+			.set_expanded_card_covered(covered)
 			.await
 			.map_err(v01::GenericError::from)
 	}
 
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: latest::PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, v01::GenericError> {
 		self.callbacks.on_core_log(
-			markers::NATIVE_SET_EXPANDED_CARD_BACK_SHOWN.target.to_string(),
-			format!("{shown}"),
+			markers::NATIVE_TURN_EXPANDED_CARD.target.to_string(),
+			format!("{side:?}"),
 		);
 
-		self.callbacks
-			.set_expanded_card_back_shown(shown)
-			.await
-			.map_err(v01::GenericError::from)
+		self.callbacks.turn_expanded_card(side).await.map_err(v01::GenericError::from)
 	}
 }
 
