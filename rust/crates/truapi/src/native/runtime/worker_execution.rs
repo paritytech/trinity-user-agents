@@ -10,14 +10,12 @@ use truapi::latest;
 
 /// The consumer operations on one shared product execution.
 ///
-/// Retaining this handle does not keep the worker running.
-///
-/// A call on this handle enters Rust, and the execution talks to the product's worker. For
-/// [`Self::render`] on a worker hosted in a WebView:
+/// A call on this handle enters Rust, and the execution talks to the product's worker.
+/// e.g For [`Self::render`]:
 ///
 /// ```text
-///  Chat, Pocket             this execution            product JavaScript
-///  native                   Rust                      native, in the worker WebView
+///  Chat, Pocket             worker execution                product
+///      Host                   Rust core                     JavaScript
 ///       |                         |                           |
 ///       |-- render(request) ----->|                           |
 ///       |          UniFFI         |-- Start frame ----------->|

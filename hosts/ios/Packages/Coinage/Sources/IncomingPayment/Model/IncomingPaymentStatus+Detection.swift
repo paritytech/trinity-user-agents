@@ -6,7 +6,8 @@ public extension IncomingPaymentStatus {
     /// it reports as `.claiming` — a partial figure is only ever final via `.claimedPartially`.
     init(detection: CoinageTransferDetection) {
         switch detection {
-        case .detecting:
+        case .detecting,
+             .noCoinsOnChain:
             self = .detecting
         case .claiming,
              .claimingRest:

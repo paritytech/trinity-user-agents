@@ -25,10 +25,10 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable, ProductWorkerReloading
     func shutdownProductWorkers()
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
-/// build bundles + the local session secret, activates the local session once,
-/// and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once a session secret exists.
+/// Builds one ``TrUAPIHostRuntime`` from host identity + the stack the build
+/// bundles + the local session secret, activates the local session once, and
+/// caches it. Built off the main thread by ``setup()``, or on first use
+/// before that, so startup is not blocked.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
@@ -38,6 +38,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let workerEngine: any NativeWorkerEngine
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let fundingHandler: FundingCoreEventHandling
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
@@ -60,6 +61,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         workerEngine: any NativeWorkerEngine,
+        fundingHandler: FundingCoreEventHandling,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
@@ -72,6 +74,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.workerEngine = workerEngine
+        self.fundingHandler = fundingHandler
         self.tldProvider = tldProvider
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
@@ -103,16 +106,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+    func attach(paymentsSupport: PaymentsSupport) {
         backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
+                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),
@@ -127,6 +127,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         if let cachedRuntime {
             bridge.install(on: cachedRuntime)
         }
+    }
+
+    /// Builds the runtime now, off the caller's thread, rather than on first
+    /// use: the core resumes the funding sessions a provider was still working
+    /// on when it starts. Called once, after the worker manager and payments
+    /// are attached.
+    func setup() async throws -> TrUAPIHostRuntime {
+        try await Task.detached { [self] in try sharedRuntime() }.value
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -184,8 +192,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
-        // Also before any execution opens: the core offers only the providers
-        // the host lists, the ones `funding_config` names.
+        // Also before any execution opens, so a product's Funding request
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names.
+        runtime.setFunding(AppFundingHostBridge(handler: fundingHandler))
+        bridge.onWorkerCrashing { [weak fundingHandler] productId in
+            fundingHandler?.workerCrashing(productId: productId)
+        }
         listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),

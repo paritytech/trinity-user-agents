@@ -2,7 +2,6 @@ import Foundation
 import Foundation_iOS
 import ChainRegistry
 import SubstrateSdkExt
-import Products
 
 @MainActor
 final class SearchAccountPresenter {
@@ -114,7 +113,7 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
     func selectSelfTransfer() {
         view?.didReceive(selfTransferLoading: true)
 
-        interactor.openWithdrawProduct()
+        interactor.openWithdrawal()
     }
 
     func didEndEditingInput(_ input: String?) {
@@ -172,17 +171,17 @@ extension SearchAccountPresenter: SearchAccountInteractorOutputProtocol {
         )
     }
 
-    func didResolveWithdrawProduct(_ result: Result<ProductPage, Error>) {
+    func didOpenWithdrawal(_ result: Result<String?, Error>) {
         view?.didReceive(selfTransferLoading: false)
 
-        switch result {
-        case let .success(page):
-            wireframe.showProduct(page: page)
+        switch FundingOpened(result) {
+        case .started:
             wireframe.close(from: view)
-        case let .failure(error):
-            guard !(error is CancellationError) else { return }
-
-            wireframe.present(error: RampAction.withdraw.errorContent(for: error), from: view)
+        case .notStarted,
+             .cancelled:
+            break
+        case let .failed(error):
+            wireframe.present(error: error, from: view)
         }
     }
 }

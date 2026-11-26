@@ -95,6 +95,18 @@ interface StatementStoreSlotAllocationDao {
         accountIds: Collection<ByteArray>,
     ): List<AccountMaxPriorityRow>
 
+    @Query(
+        """
+        SELECT DISTINCT accountId AS accountId, signerDerivationPath AS signerDerivationPath
+        FROM statement_store_slot_allocations
+        WHERE chainId = :chainId AND accountId IN (:accountIds) AND signerDerivationPath IS NOT NULL
+        """
+    )
+    suspend fun signerDerivationPathsFor(
+        chainId: String,
+        accountIds: Collection<ByteArray>,
+    ): List<AccountSignerDerivationPathRow>
+
     /**
      * Updates a renewed row to its new on-chain coordinate. `newSeq` is the seq the renewer
      * just assigned in the new period and `newCollection` the collection it claimed it in
@@ -114,5 +126,10 @@ interface StatementStoreSlotAllocationDao {
     class AccountMaxPriorityRow(
         val accountId: ByteArray,
         val maxPriorityLevel: Int,
+    )
+
+    class AccountSignerDerivationPathRow(
+        val accountId: ByteArray,
+        val signerDerivationPath: String,
     )
 }

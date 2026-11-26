@@ -5,13 +5,15 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::channel::mpsc;
 
-use super::{NativeProductExecution, NativeWorkerExecutionState, StartedAttempt};
+use super::{attempt::StartedAttempt, observer::NativeWorkerExecutionState};
 use crate::{
-	background_task::BackgroundTask, native::subscribers::Subscribers, platform::ProductId,
+	BackgroundTask,
+	native::{runtime::NativeProductExecution, subscribers::Subscribers},
+	platform::ProductId,
 };
 
 impl NativeProductExecution {
-	fn has_live_transport(&self) -> bool {
+	fn has_live_connection(&self) -> bool {
 		self.product_control
 			.lock()
 			.expect("product control mutex poisoned")
@@ -24,19 +26,28 @@ impl NativeProductExecution {
 pub enum Signal {
 	/// The engine reported that the product's module started.
 	ModuleStarted,
-	/// The execution's bridge authenticated a connection.
+	/// The execution gained a live connection.
 	Connected,
 }
 
 enum Phase {
 	Starting {
-		owner: Option<Arc<NativeProductExecution>>,
-		module_ready: bool,
-		/// Fails the attempt if it is still starting after [`super::STARTUP_DEADLINE`]. Dropped,
-		/// and so cancelled, with this phase.
+		stage: Stage,
+		/// Fails the attempt if it is still starting after [`super::session::STARTUP_DEADLINE`].
+		/// Dropped, and so cancelled, with this phase.
 		_timeout: BackgroundTask,
 	},
 	Running(Arc<NativeProductExecution>),
+}
+
+/// How far a starting attempt has got.
+enum Stage {
+	/// The engine has not opened the execution yet.
+	Opening,
+	/// The execution is open and its module has not started.
+	Loading(Arc<NativeProductExecution>),
+	/// The module started and no connection is live: before the first one, or after losing it.
+	Connecting(Arc<NativeProductExecution>),
 }
 
 enum Entry {
@@ -67,10 +78,11 @@ impl Removed {
 	pub fn stop(self) {
 		if let Entry::Active { phase, started } = self.0 {
 			match phase {
-				Phase::Starting { owner: Some(owner), .. } | Phase::Running(owner) => {
-					owner.shutdown()
-				},
-				Phase::Starting { owner: None, .. } => {},
+				Phase::Starting {
+					stage: Stage::Loading(owner) | Stage::Connecting(owner), ..
+				} |
+				Phase::Running(owner) => owner.shutdown(),
+				Phase::Starting { stage: Stage::Opening, .. } => {},
 			}
 			drop(started);
 		}
@@ -142,7 +154,7 @@ impl Registry {
 		timeout: BackgroundTask,
 		started: Arc<StartedAttempt>,
 	) -> Option<Removed> {
-		let phase = Phase::Starting { owner: None, module_ready: false, _timeout: timeout };
+		let phase = Phase::Starting { stage: Stage::Opening, _timeout: timeout };
 		self.insert(product, Entry::Active { phase, started })
 	}
 
@@ -154,40 +166,50 @@ impl Registry {
 		product: &ProductId,
 		open: impl FnOnce() -> Arc<NativeProductExecution>,
 	) -> Option<Arc<NativeProductExecution>> {
-		let Some(Entry::Active { phase: Phase::Starting { owner, .. }, .. }) =
+		let Some(Entry::Active { phase: Phase::Starting { stage, .. }, .. }) =
 			self.entries.get_mut(product)
 		else {
 			return None;
 		};
-		if owner.is_some() {
+		if !matches!(stage, Stage::Opening) {
 			return None;
 		}
-		Some(owner.insert(open()).clone())
+		let owner = open();
+		*stage = Stage::Loading(owner.clone());
+		Some(owner)
 	}
 
 	/// Record a signal for the product's attempt.
 	///
 	/// A starting attempt runs once its module started and its connection is live. A running one
 	/// that gains a live connection is announced to observers again. Returns false when the
-	/// signal changes nothing: the product has no active attempt, the attempt has no execution
-	/// or one that was shut down, or it runs and the signal is not a live connection.
+	/// attempt cannot take the signal: the product has no active attempt, the attempt has no
+	/// execution or one that was shut down, or it runs and the signal is not a live connection.
 	pub fn ready(&mut self, product: &ProductId, signal: Signal) -> bool {
 		let Some(Entry::Active { phase, .. }) = self.entries.get_mut(product) else {
 			return false;
 		};
 		match phase {
 			Phase::Running(owner)
-				if matches!(signal, Signal::Connected) && owner.has_live_transport() => {},
-			Phase::Starting { owner: Some(owner), module_ready, .. }
-				if !owner.closed.load(Ordering::Acquire) =>
-			{
-				*module_ready |= matches!(signal, Signal::ModuleStarted);
-				if !*module_ready || !owner.has_live_transport() {
+				if matches!(signal, Signal::Connected) && owner.has_live_connection() => {},
+			Phase::Running(_) => return false,
+			Phase::Starting { stage, .. } => {
+				let owner = match &*stage {
+					Stage::Opening => return false,
+					Stage::Loading(owner) | Stage::Connecting(owner) => owner.clone(),
+				};
+				if owner.closed.load(Ordering::Acquire) {
+					return false;
+				}
+				if matches!((&*stage, signal), (Stage::Loading(_), Signal::Connected)) {
 					return true;
 				}
-				*phase = Phase::Running(owner.clone());
+				if !owner.has_live_connection() {
+					*stage = Stage::Connecting(owner);
+					return true;
+				}
+				*phase = Phase::Running(owner);
 			},
-			_ => return false,
 		}
 		self.changed(product);
 		true
@@ -200,11 +222,10 @@ impl Registry {
 	pub fn lost(&mut self, product: &ProductId, timeout: impl FnOnce() -> BackgroundTask) {
 		let Some(Entry::Active { phase, .. }) = self.entries.get_mut(product) else { return };
 		let Phase::Running(owner) = phase else { return };
-		if owner.has_live_transport() {
+		if owner.has_live_connection() {
 			return;
 		}
-		*phase =
-			Phase::Starting { owner: Some(owner.clone()), module_ready: true, _timeout: timeout() };
+		*phase = Phase::Starting { stage: Stage::Connecting(owner.clone()), _timeout: timeout() };
 		self.changed(product);
 	}
 

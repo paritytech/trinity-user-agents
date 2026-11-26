@@ -552,8 +552,8 @@ struct ChatRuntimeTests {
         #expect(sameCard == nil)
         #expect(nextCard == nil)
         #expect(logger.lines == [
-            .warning("[truapi.product] A register card is docked, but only the TrUAPI chat runtime can draw one"),
-            .warning("[truapi.product] A register card is docked, but only the TrUAPI chat runtime can draw one"),
+            .warning("[truapi.chat] A card is docked, but only the TrUAPI chat runtime can draw one"),
+            .warning("[truapi.chat] A card is docked, but only the TrUAPI chat runtime can draw one"),
         ])
     }
 

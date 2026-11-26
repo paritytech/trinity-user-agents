@@ -63,7 +63,7 @@ impl NativeRendererObserver for RenderObserver {
 }
 
 async fn connect(
-	owner: &NativeProductExecution,
+	owner: &Arc<NativeProductExecution>,
 ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
 	let endpoint = owner.start_ws_bridge(0).unwrap();
 	let (socket, _) = tokio_tungstenite::connect_async(format!(

@@ -1,4 +1,3 @@
-import AsyncExtensions
 import Foundation
 import Testing
 import UIKit
@@ -94,26 +93,13 @@ private extension PaymentAssetBrandingTests {
             dotNsResolver: nil,
             dotNsNameRegistry: nil,
             coinageInstanceId: nil,
-            fundingUrl: nil,
-            offrampUrl: nil,
             accountDataStoreContract: nil,
             paymentAsset: published
                 ? PaymentAssetConfig(symbol: symbol, squareIconURL: square, wideIconURL: wide)
                 : nil,
-            appSharingUrl: nil
+            appSharingUrl: nil,
+            coinagePrivacyConfig: nil
         )
-    }
-}
-
-private final class StubConfigStream: RemoteConfigObserving {
-    private let subject = AsyncCurrentValueSubject<RemoteAppConfig?>(nil)
-
-    func remoteConfigStream() -> AnyAsyncSequence<RemoteAppConfig> {
-        subject.compacted().eraseToAnyAsyncSequence()
-    }
-
-    func send(_ config: RemoteAppConfig) {
-        subject.send(config)
     }
 }
 

@@ -11,6 +11,7 @@ public struct DSButton: View {
     private let leadingIcon: ImageResource?
     private let trailingIcon: ImageResource?
     private let expands: Bool
+    private let horizontalPadding: CGFloat?
     private let isLoading: Bool
     private let action: () -> Void
 
@@ -22,6 +23,7 @@ public struct DSButton: View {
         leadingIcon: ImageResource? = nil,
         trailingIcon: ImageResource? = nil,
         expands: Bool = false,
+        horizontalPadding: CGFloat? = nil,
         isLoading: Bool = false,
         action: @escaping () -> Void
     ) {
@@ -32,6 +34,7 @@ public struct DSButton: View {
         self.leadingIcon = leadingIcon
         self.trailingIcon = trailingIcon
         self.expands = expands
+        self.horizontalPadding = horizontalPadding
         self.isLoading = isLoading
         self.action = action
     }
@@ -44,6 +47,7 @@ public struct DSButton: View {
         leadingIcon: ImageResource? = nil,
         trailingIcon: ImageResource? = nil,
         expands: Bool = false,
+        horizontalPadding: CGFloat? = nil,
         isLoading: Bool = false,
         action: @escaping () -> Void
     ) {
@@ -54,6 +58,7 @@ public struct DSButton: View {
         self.leadingIcon = leadingIcon
         self.trailingIcon = trailingIcon
         self.expands = expands
+        self.horizontalPadding = horizontalPadding
         self.isLoading = isLoading
         self.action = action
     }
@@ -75,7 +80,7 @@ public struct DSButton: View {
             }
             .frame(maxWidth: expands ? .infinity : nil)
         }
-        .buttonStyle(.ds(style: style, shape: shape, size: size))
+        .buttonStyle(.ds(style: style, shape: shape, size: size, horizontalPadding: horizontalPadding))
         .disabled(isLoading)
     }
 

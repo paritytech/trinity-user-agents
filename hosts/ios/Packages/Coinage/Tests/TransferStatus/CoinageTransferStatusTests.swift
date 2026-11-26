@@ -50,18 +50,91 @@ struct CoinageTransferStatusTests {
         #expect(status(tracked, atFinalized: [:]) == .detecting)
     }
 
-    @Test("Only failed and finalized-claim are terminal")
+    @Test("The consumer decides before any presence rule, except a failed reclaim of a gone coin", arguments: [
+        ReclaimLadderCase(
+            name: "a landed reclaim beats a finalized mint absent at finality",
+            consumer: .pendingSuccess, onChain: false, presentAtFinality: false,
+            expected: .reclaimed(finalized: false)
+        ),
+        ReclaimLadderCase(
+            name: "a finalized reclaim is a finalized reclaim",
+            consumer: .finalizedSuccess, onChain: false, presentAtFinality: false,
+            expected: .reclaimed(finalized: true)
+        ),
+        ReclaimLadderCase(
+            name: "a reclaim still being built is reclaiming",
+            consumer: .pending, onChain: false, presentAtFinality: false,
+            expected: .reclaiming
+        ),
+        ReclaimLadderCase(
+            name: "a reclaim awaiting inclusion is reclaiming",
+            consumer: .pendingSubmission, onChain: false, presentAtFinality: false,
+            expected: .reclaiming
+        ),
+        ReclaimLadderCase(
+            name: "a failed consumer falls through to the presence rules",
+            consumer: .failure, onChain: true, minter: .pending,
+            expected: .awaitingClaim(finalized: false)
+        ),
+        ReclaimLadderCase(
+            name: "a failed reclaim of a coin still on chain is reclaimFailed",
+            inFailedReclaims: true, onChain: true, presentAtFinality: true,
+            expected: .reclaimFailed
+        ),
+        ReclaimLadderCase(
+            name: "a failed reclaim of a coin that is gone reads as the peer's claim",
+            inFailedReclaims: true, onChain: false, presentAtFinality: false,
+            expected: .claimed(finalized: true)
+        )
+    ])
+    func reclaimLadder(_ ladderCase: ReclaimLadderCase) {
+        let tracked = trackedCoin(
+            onChain: ladderCase.onChain,
+            everOnChain: true,
+            minter: ladderCase.minter,
+            consumer: ladderCase.consumer
+        )
+        let atFinalized = ladderCase.presentAtFinality.map { [key: $0] } ?? [:]
+        let failedReclaims: Set<PublicKey> = ladderCase.inFailedReclaims ? [key] : []
+
+        #expect(status(tracked, failedReclaims: failedReclaims, atFinalized: atFinalized) == ladderCase.expected)
+    }
+
+    @Test("Only a finalized reclaim and a finalized claim are terminal")
     func terminalFlags() {
         #expect(CoinageTransferStatus.failed.isTerminal)
+        #expect(!CoinageTransferStatus.reclaimFailed.isTerminal)
         #expect(CoinageTransferStatus.claimed(finalized: true).isTerminal)
         #expect(!CoinageTransferStatus.claimed(finalized: false).isTerminal)
+        #expect(CoinageTransferStatus.reclaimed(finalized: true).isTerminal)
+        #expect(!CoinageTransferStatus.reclaimed(finalized: false).isTerminal)
+        #expect(!CoinageTransferStatus.reclaiming.isTerminal)
         #expect(!CoinageTransferStatus.awaitingClaim(finalized: true).isTerminal)
         #expect(!CoinageTransferStatus.detecting.isTerminal)
     }
 }
 
+extension CoinageTransferStatusTests {
+    struct ReclaimLadderCase: CustomTestStringConvertible {
+        let name: String
+        var consumer: CoinageTxStatus?
+        var inFailedReclaims = false
+        let onChain: Bool
+        var minter: CoinageTxStatus = .finalizedSuccess
+        var presentAtFinality: Bool?
+        let expected: CoinageTransferStatus
+
+        var testDescription: String { name }
+    }
+}
+
 private extension CoinageTransferStatusTests {
-    func trackedCoin(onChain: Bool, everOnChain: Bool, minter: CoinageTxStatus) -> TrackedCoin {
+    func trackedCoin(
+        onChain: Bool,
+        everOnChain: Bool,
+        minter: CoinageTxStatus,
+        consumer: CoinageTxStatus? = nil
+    ) -> TrackedCoin {
         let coin = Coin(
             exponent: 1,
             derivationIndex: 0,
@@ -71,11 +144,15 @@ private extension CoinageTransferStatusTests {
         )
         return TrackedCoin(
             coin: coin,
-            state: CoinageAssetState(handedOff: true, consumerStatus: nil, minterStatus: minter)
+            state: CoinageAssetState(handedOff: true, consumerStatus: consumer, minterStatus: minter)
         )
     }
 
-    func status(_ tracked: TrackedCoin, atFinalized: [PublicKey: Bool]) -> CoinageTransferStatus {
-        CoinageTransferStatusService.transferStatus(tracked, atFinalized: atFinalized)
+    func status(
+        _ tracked: TrackedCoin,
+        failedReclaims: Set<PublicKey> = [],
+        atFinalized: [PublicKey: Bool]
+    ) -> CoinageTransferStatus {
+        CoinageTransferStatusService.status(tracked, failedReclaims: failedReclaims, atFinalized: atFinalized)
     }
 }

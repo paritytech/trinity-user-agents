@@ -35,6 +35,7 @@ public actor CoinageBalanceService: CoinageBalanceServiceProtocol {
     private nonisolated let databaseFactory: any DatabaseDependencyFactoring
     private nonisolated let verdicts: AnyAsyncSequence<RecyclingVerdicts>
     private nonisolated let settings: any CoinageRecyclingStrategyProviding
+    private nonisolated let privacyConfigProvider: any CoinagePrivacyConfigProviding
     private let strategyResolver: any RecyclingStrategyProviding
     private let ringCapacityProvider: any RingCapacityProviding
     private let preClassificator: any CoinageAssetsPreClassificating
@@ -55,6 +56,7 @@ public actor CoinageBalanceService: CoinageBalanceServiceProtocol {
         databaseFactory: any DatabaseDependencyFactoring,
         verdicts: AnyAsyncSequence<RecyclingVerdicts>,
         settings: any CoinageRecyclingStrategyProviding,
+        privacyConfigProvider: any CoinagePrivacyConfigProviding,
         strategyResolver: any RecyclingStrategyProviding,
         ringCapacityProvider: any RingCapacityProviding,
         preClassificator: any CoinageAssetsPreClassificating,
@@ -64,6 +66,7 @@ public actor CoinageBalanceService: CoinageBalanceServiceProtocol {
         self.databaseFactory = databaseFactory
         self.verdicts = verdicts
         self.settings = settings
+        self.privacyConfigProvider = privacyConfigProvider
         self.strategyResolver = strategyResolver
         self.ringCapacityProvider = ringCapacityProvider
         self.preClassificator = preClassificator
@@ -107,7 +110,7 @@ private extension CoinageBalanceService {
             let combined = combineLatest(
                 combineLatest(coinsStream, vouchersStream),
                 verdicts,
-                settings.strategyStream()
+                combineLatest(settings.strategyStream(), privacyConfigProvider.privacyConfigStream())
             )
             do {
                 for try await ((coins, vouchers), verdictMap, _) in combined {
@@ -169,7 +172,10 @@ private extension CoinageBalanceService {
     }
 
     func nextUnlock(among gainingPrivacy: [TrackedVoucher], now: Date) -> Date? {
-        let readiness = settings.strategy.params(forcedRecyclingAge: CoinageConstants.recycleAtAge).voucherReadiness
+        let readiness = settings.strategy.params(
+            forcedRecyclingAge: CoinageConstants.recycleAtAge,
+            privacyConfig: privacyConfigProvider.privacyConfig
+        ).voucherReadiness
         return gainingPrivacy
             .compactMap { readiness.readyAt(for: $0.voucher) }
             .filter { $0 > now }

@@ -154,6 +154,7 @@ struct TrUAPIHostRuntimeProviderConfigTests {
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
             confirmationRouterFacade: ProductRoutersFacade.worker(),
             workerEngine: NoWorkerEngine(),
+            fundingHandler: FundingService(logger: MockLogger()),
             logger: Logger.shared
         )
 

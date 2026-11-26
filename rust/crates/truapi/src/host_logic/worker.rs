@@ -67,7 +67,8 @@ struct CrashRun {
 	last_exit_ms: u64,
 }
 
-/// The holds on one product's worker and the attempt started for them.
+/// The holds on one product's worker, the attempt started for them and its
+/// current run of crashes.
 struct Demand {
 	/// Live [`crate::WorkerHold`]s. Core operations and host modalities each
 	/// take their own, so the first one starts the worker and dropping the
@@ -78,6 +79,10 @@ struct Demand {
 	attempt_id: u64,
 	/// Whether that attempt has run, as [`WorkerLedger::running`] reported.
 	ran: bool,
+	/// The current run of crashes, if any. It ends with the last hold or a
+	/// reload, and [`WorkerLedger::exited`] starts a new one after a quiet
+	/// [`CRASH_RUN_WINDOW_MS`].
+	crash_run: Option<CrashRun>,
 }
 
 /// Counts and the transitions they have produced but not yet reported.
@@ -91,8 +96,6 @@ struct LedgerState {
 	/// Set once by [`WorkerLedger::shutdown`]. A hold taken afterwards counts
 	/// for nothing, so no worker starts after the session ended.
 	closed: bool,
-	/// Each product's current run of crashes.
-	crashes: HashMap<ProductId, CrashRun>,
 	/// Events in ledger order, waiting for the draining thread.
 	pending: VecDeque<LedgerEvent>,
 	/// Whether a thread is already draining `pending`.
@@ -144,6 +147,7 @@ impl WorkerLedger {
 				count: 0,
 				attempt_id: 0,
 				ran: false,
+				crash_run: None,
 			});
 			demand.count += 1;
 			if demand.count != 1 {
@@ -171,7 +175,6 @@ impl WorkerLedger {
 			// The last one: an entry is dropped rather than left at zero, so
 			// every stored count is at least one and none of this can wrap.
 			state.references.remove(product_id);
-			state.crashes.remove(product_id);
 			state.request(product_id, WorkerTransition::Stop);
 		}
 		self.drain();
@@ -196,20 +199,22 @@ impl WorkerLedger {
 	fn exited(&self, product_id: &ProductId, attempt_id: u64, now_ms: u64) -> Option<u64> {
 		let wait_ms = {
 			let mut state = self.state();
-			let demand = state.references.get(product_id)?;
+			let demand = state.references.get_mut(product_id)?;
 			if attempt_id != demand.attempt_id {
 				return None;
 			}
 			let ran = demand.ran;
-			let run = state.crashes.entry(product_id.clone()).or_insert(CrashRun {
+			let over = |run: &CrashRun| {
+				ran && now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS
+			};
+			if demand.crash_run.as_ref().is_some_and(over) {
+				demand.crash_run = None;
+			}
+			let run = demand.crash_run.get_or_insert_with(|| CrashRun {
 				crashes: 0,
 				backoff: Backoff::new(RESTART_BACKOFF_FIRST, RESTART_BACKOFF_LONGEST),
 				last_exit_ms: now_ms,
 			});
-			if ran && now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
-				run.crashes = 0;
-				run.backoff.reset();
-			}
 			run.crashes = run.crashes.saturating_add(1);
 			run.last_exit_ms = now_ms;
 			let consecutive_crashes = run.crashes;
@@ -272,10 +277,8 @@ impl WorkerLedger {
 	pub fn reload(&self, product_id: &ProductId) {
 		{
 			let mut state = self.state();
-			if !state.references.contains_key(product_id) {
-				return;
-			}
-			state.crashes.remove(product_id);
+			let Some(demand) = state.references.get_mut(product_id) else { return };
+			demand.crash_run = None;
 			state.request(product_id, WorkerTransition::Stop);
 			state.request(product_id, WorkerTransition::Start);
 		}
@@ -290,7 +293,6 @@ impl WorkerLedger {
 				return;
 			}
 			state.closed = true;
-			state.crashes.clear();
 			for product_id in core::mem::take(&mut state.references).into_keys() {
 				state.request(&product_id, WorkerTransition::Stop);
 			}
