@@ -30,13 +30,22 @@ pub enum Signal {
 
 enum Phase {
 	Starting {
-		owner: Option<Arc<NativeProductExecution>>,
-		module_ready: bool,
+		stage: Stage,
 		/// Fails the attempt if it is still starting after [`super::STARTUP_DEADLINE`]. Dropped,
 		/// and so cancelled, with this phase.
 		_timeout: BackgroundTask,
 	},
 	Running(Arc<NativeProductExecution>),
+}
+
+/// How far a starting attempt has got.
+enum Stage {
+	/// The engine has not opened the execution yet.
+	Opening,
+	/// The execution is open and its module has not started.
+	Loading(Arc<NativeProductExecution>),
+	/// The module started and no connection is live: before the first one, or after losing it.
+	Connecting(Arc<NativeProductExecution>),
 }
 
 enum Entry {
@@ -67,10 +76,11 @@ impl Removed {
 	pub fn stop(self) {
 		if let Entry::Active { phase, started } = self.0 {
 			match phase {
-				Phase::Starting { owner: Some(owner), .. } | Phase::Running(owner) => {
-					owner.shutdown()
-				},
-				Phase::Starting { owner: None, .. } => {},
+				Phase::Starting {
+					stage: Stage::Loading(owner) | Stage::Connecting(owner), ..
+				} |
+				Phase::Running(owner) => owner.shutdown(),
+				Phase::Starting { stage: Stage::Opening, .. } => {},
 			}
 			drop(started);
 		}
@@ -142,7 +152,7 @@ impl Registry {
 		timeout: BackgroundTask,
 		started: Arc<StartedAttempt>,
 	) -> Option<Removed> {
-		let phase = Phase::Starting { owner: None, module_ready: false, _timeout: timeout };
+		let phase = Phase::Starting { stage: Stage::Opening, _timeout: timeout };
 		self.insert(product, Entry::Active { phase, started })
 	}
 
@@ -154,15 +164,17 @@ impl Registry {
 		product: &ProductId,
 		open: impl FnOnce() -> Arc<NativeProductExecution>,
 	) -> Option<Arc<NativeProductExecution>> {
-		let Some(Entry::Active { phase: Phase::Starting { owner, .. }, .. }) =
+		let Some(Entry::Active { phase: Phase::Starting { stage, .. }, .. }) =
 			self.entries.get_mut(product)
 		else {
 			return None;
 		};
-		if owner.is_some() {
+		if !matches!(stage, Stage::Opening) {
 			return None;
 		}
-		Some(owner.insert(open()).clone())
+		let owner = open();
+		*stage = Stage::Loading(owner.clone());
+		Some(owner)
 	}
 
 	/// Record a signal for the product's attempt.
@@ -178,16 +190,25 @@ impl Registry {
 		match phase {
 			Phase::Running(owner)
 				if matches!(signal, Signal::Connected) && owner.has_live_transport() => {},
-			Phase::Starting { owner: Some(owner), module_ready, .. }
-				if !owner.closed.load(Ordering::Acquire) =>
-			{
-				*module_ready |= matches!(signal, Signal::ModuleStarted);
-				if !*module_ready || !owner.has_live_transport() {
+			Phase::Running(_) => return false,
+			Phase::Starting { stage, .. } => {
+				let owner = match (&*stage, signal) {
+					(Stage::Loading(owner), Signal::ModuleStarted) |
+					(Stage::Connecting(owner), _) => owner.clone(),
+					(Stage::Loading(owner), Signal::Connected) => {
+						return !owner.closed.load(Ordering::Acquire);
+					},
+					(Stage::Opening, _) => return false,
+				};
+				if owner.closed.load(Ordering::Acquire) {
+					return false;
+				}
+				if !owner.has_live_transport() {
+					*stage = Stage::Connecting(owner);
 					return true;
 				}
-				*phase = Phase::Running(owner.clone());
+				*phase = Phase::Running(owner);
 			},
-			_ => return false,
 		}
 		self.changed(product);
 		true
@@ -203,8 +224,7 @@ impl Registry {
 		if owner.has_live_transport() {
 			return;
 		}
-		*phase =
-			Phase::Starting { owner: Some(owner.clone()), module_ready: true, _timeout: timeout() };
+		*phase = Phase::Starting { stage: Stage::Connecting(owner.clone()), _timeout: timeout() };
 		self.changed(product);
 	}
 
