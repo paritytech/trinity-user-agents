@@ -48,6 +48,7 @@ class ContactChatSignerResolverTest {
     @Before
     fun setUp() {
         coEvery { accountDerivation.deriveKeypair(contactAccountId) } returns Result.success(chatKeypair)
+        coEvery { accountDerivation.derivationPath(contactAccountId) } returns "//chat-signer"
         coEvery { accountSecretsStorage.getMetaAccountKeypair(ourMetaAccountId) } returns usernameKeypair
         coEvery { connectionRefCounter.requestConnectionEnabled(any(), any()) } returns mockk(relaxed = true)
     }
@@ -118,7 +119,7 @@ class ContactChatSignerResolverTest {
 
     private fun verifyCriticalAllocationRequested() {
         val call = slotAllocator.allocateCalls.single()
-        assertEquals(chatAccountId, call.target)
+        assertEquals(chatAccountId, call.holder.accountId)
         assertEquals(OnExistingAllocationStrategy.IGNORE, call.strategy)
         assertEquals(SlotPriority.Critical, call.priority)
         assertEquals(CHAT_SIGNER_SLOT_TAG, call.tag)
