@@ -94,7 +94,7 @@ private fun CountryRow(country: FundingCountryUi, onClick: (String) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.smallIncreased),
         ) {
-            NovaText(text = country.flag, style = PolkadotTheme.typography.emoji.large)
+            NovaText(text = country.flag, style = PolkadotTheme.typography.emoji.small)
             Column {
                 NovaText(
                     text = country.name,
