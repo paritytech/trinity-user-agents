@@ -86,7 +86,7 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
 
     /// The card's frame on screen, wherever scrolling and a pull have moved it. The flight uses its top-left corner.
     func itemFrame(in view: UIView) -> CGRect {
-        let card = state.cardFrame.offsetBy(dx: hosting.view.transform.tx, dy: hosting.view.transform.ty)
+        let card = state.cardFrame.offsetBy(dx: state.itemOffset.x, dy: state.itemOffset.y)
         return view.convert(card, from: nil)
     }
 
@@ -97,6 +97,7 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
 
     /// Moves the card with its page, so the page never covers the card the Pocket draws in its place.
     func moveItem(by offset: CGPoint) {
+        state.itemOffset = offset
         hosting.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
     }
 
@@ -176,7 +177,9 @@ private extension AssetDetailsScreenViewController {
 @Observable
 private final class AssetDetailsScreenState {
     var isCardHidden = false
+    /// The card's frame on screen without the flight's offset.
     @ObservationIgnored var cardFrame: CGRect = .zero
+    @ObservationIgnored var itemOffset: CGPoint = .zero
 }
 
 /// The Balance card with its details open, the details under the card.
@@ -194,7 +197,7 @@ private struct AssetDetailsScreenRoot: View {
                 onCardTapped: {},
                 overscroll: overscroll,
                 isCardHidden: state.isCardHidden,
-                onCardFrame: { state.cardFrame = $0 }
+                onCardFrame: { state.cardFrame = $0.offsetBy(dx: -state.itemOffset.x, dy: -state.itemOffset.y) }
             )
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)
