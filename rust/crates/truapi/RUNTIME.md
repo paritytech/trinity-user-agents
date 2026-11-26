@@ -192,7 +192,8 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain.
+derivation working offline. The core reads the chain's suffix later and
+reports a difference, as the next section describes.
 
 #### Checks against the chains
 
@@ -233,7 +234,14 @@ refused chain only as failing calls. A `WasmProductRuntime` built on its own
 has no status either. A browser host that passes `stackChanged` without
 `fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
 Without the callbacks the chain is still refused, and nothing is fetched. A host
-shows a listed chain as out of service and keeps its own features off it.
+shows a listed chain as out of service and keeps its own features off it. A
+`StackMismatch::NetworkSuffix` entry, described below, names no chain to keep
+off: the core keeps using People, so a host keeps People in service as well and
+shows the entry as a fault in the stack. The operator corrects it by setting
+People's suffix to the `tld`. A corrected descriptor on another TLD does not
+help a running build, and the entry stays listed. A host that fetches the
+descriptor sees that copy refused in `last_refresh`. Only a new host build that
+bundles that descriptor runs on its TLD.
 
 The check has three limits:
 
@@ -245,6 +253,28 @@ The check has three limits:
   descriptor.
 - A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
   is not checked.
+
+The core also checks People's `NetworkSuffix.NetworkSuffix` against the
+descriptor's `tld`. It makes no request for this. A signing host already reads
+People's suffix when it builds statement store and Bulletin allowance proofs,
+and when it renews a statement store allowance, and the core compares that
+value. Only People's suffix is compared: a PGAS claim reads Asset Hub's
+`NetworkSuffix`, which the core does not check. If People's suffix differs,
+`StackStatus::mismatches` lists it until a later read gives the `tld` or the
+runtime ends. The core keeps the suffix in memory only, so a runtime built
+again, after a relaunch or after `restart_required`, lists no suffix until its
+own allowance work reads one. A suffix that is not listed may not have been
+read yet.
+
+This is only a report. The core keeps using People and does not fetch the
+descriptor any sooner. It matters because the core derives its identities under
+the `tld` but builds proof contexts with People's suffix. If the two differ, an
+identity derived under one does not match the other.
+
+A failed read changes nothing, and neither does a suffix that is not one to
+sixteen bytes long: a suffix listed before stays listed, and the allowance work
+fails with that error. A pairing host does no allowance work, so it never lists
+a suffix.
 
 #### Storage per stack
 

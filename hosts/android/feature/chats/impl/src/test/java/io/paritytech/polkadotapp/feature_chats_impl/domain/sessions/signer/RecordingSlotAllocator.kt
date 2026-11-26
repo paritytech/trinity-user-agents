@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessRepor
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.OnExistingAllocationStrategy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlots
 
@@ -16,7 +17,7 @@ class RecordingSlotAllocator(
     var period: UInt = 1u,
 ) : StatementStoreSlotAllocator {
     class AllocateCall(
-        val target: AccountId,
+        val holder: StatementStoreSlotHolder,
         val strategy: OnExistingAllocationStrategy,
         val priority: SlotPriority,
         val tag: StatementStoreSlotTag?,
@@ -29,12 +30,12 @@ class RecordingSlotAllocator(
 
     context(diagnostics: StalenessReportCollector)
     override suspend fun allocate(
-        target: AccountId,
+        holder: StatementStoreSlotHolder,
         strategy: OnExistingAllocationStrategy,
         priority: SlotPriority,
         tag: StatementStoreSlotTag?,
     ): Result<Unit> {
-        allocateCalls += AllocateCall(target, strategy, priority, tag)
+        allocateCalls += AllocateCall(holder, strategy, priority, tag)
         return allocationResult
     }
 

@@ -28,7 +28,8 @@ use crate::{
 	},
 	platform::JsonRpcConnection,
 	test_support::{
-		HeardAnswers, StubPlatform, finish, statement_page_frame, subscribe_ack_frame, wait_until,
+		ANSWER_WAIT, HeardAnswers, StubPlatform, finish, statement_page_frame, subscribe_ack_frame,
+		wait_until,
 	},
 };
 
@@ -437,7 +438,7 @@ fn checked_statement_store(genesis: [u8; 32]) -> CheckedStore {
 fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 	let CheckedStore { statement_store, heard, .. } = checked_statement_store(PEOPLE_GENESIS);
 
-	let client = finish(statement_store.client("test"));
+	let client = finish(ANSWER_WAIT, statement_store.client("test"));
 
 	assert!(client.is_ok(), "{:?}", client.err());
 	assert_eq!(
@@ -456,8 +457,8 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 	let CheckedStore { statement_store, node: wiped_node, heard, pooled } =
 		checked_statement_store(WIPED_PEOPLE);
 
-	let refused =
-		finish(statement_store.client("test")).expect_err("the wiped People chain is refused");
+	let refused = finish(ANSWER_WAIT, statement_store.client("test"))
+		.expect_err("the wiped People chain is refused");
 
 	let kind = match refused {
 		StatementStoreRpcClientError::Chain(failure) => Some(failure.kind()),
