@@ -61,6 +61,7 @@ import type {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
+  PocketCardSide,
   Result,
 } from "@parity/truapi";
 
@@ -343,9 +344,9 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * What the host did with a request to cover or uncover the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card.
  */
-export type ExpandedCardFaceOutcome =
+export type ExpandedCardCoverOutcome =
   | "Applied"
   | "NotPresented"
   | "UserMoving"
@@ -1225,12 +1226,13 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * What the host did with a request to cover or uncover the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card.
  */
-export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
-  (): S.Codec<ExpandedCardFaceOutcome> =>
-    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
-);
+export const ExpandedCardCoverOutcome: S.Codec<ExpandedCardCoverOutcome> =
+  S.lazy(
+    (): S.Codec<ExpandedCardCoverOutcome> =>
+      S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+  );
 
 /**
  * What the host did with a request to turn the expanded card.
@@ -2033,15 +2035,14 @@ export interface CoreStorage {
  */
 export interface ExpandedCardHost {
   /**
-   * Uncover (`true`) or cover (`false`) the face under the calling Widget.
+   * Cover (`true`) or uncover (`false`) the card under the calling Widget.
    */
-  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+  setExpandedCardCovered(covered: boolean): Promise<ExpandedCardCoverOutcome>;
 
   /**
-   * Turn the card above the calling Widget so its back (`true`) or its
-   * front (`false`) is up.
+   * Turn the card above the calling Widget so `side` is up.
    */
-  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardTurnOutcome>;
+  turnExpandedCard(side: PocketCardSide): Promise<ExpandedCardTurnOutcome>;
 }
 
 /**

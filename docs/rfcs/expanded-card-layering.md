@@ -10,14 +10,13 @@ status: draft
 
 An opened Pocket card shows the product page in a transparent WebView that covers the whole screen, above the native
 face. The page scrolls the face with it, starts its content below the face, which the host makes part of the page's top
-safe area, and may draw over the face. `ExpandedCard::set_face_shown` keeps its wire shape and comes to mean whether the
-page covers the face. Everything else about Pocket and the expanded card stays as [Pocket modality](pocket-modality.md)
-defines it.
+safe area, and may draw over the face. `ExpandedCard::set_card_covered` sets whether the page covers the face.
+Everything else about Pocket and the expanded card stays as [Pocket modality](pocket-modality.md) defines it.
 
 ## Motivation
 
 [Pocket modality](pocket-modality.md#expanded-card) has the host draw the face above the Widget, move the face out of
-the way on `set_face_shown(false)`, and size the Widget to the space the face leaves. On iOS the card screen then nests
+the way on `set_card_covered(true)`, and size the Widget to the space the face leaves. On iOS the card screen then nests
 the WebView's scroll view inside a scroll view that carries the face, and keeps the two in step by hand: it moves the
 face with the page and resizes the page after each gesture. The two scroll views fight over gestures, and every resize
 makes the page lay out again.
@@ -42,7 +41,7 @@ The design has five parts:
 - How the face and the page are layered.
 - The safe area that tells the page where the face ends.
 - How the two scroll.
-- What `set_face_shown` means.
+- What `set_card_covered` means.
 
 ### Executable
 
@@ -78,9 +77,9 @@ the face.
 
 ### Face state
 
-`set_face_shown(false)` marks the face covered: it stays drawn where it is, and touches over it go to the page.
-`set_face_shown(true)` sends touches over the face back to the face. Neither call moves the face or resizes the page. A
-card definition's `faceShown` sets whether the face starts covered, with `false` meaning covered. Covering applies to
+`set_card_covered(true)` marks the face covered: it stays drawn where it is, and touches over it go to the page.
+`set_card_covered(false)` sends touches over the face back to the face. Neither call moves the face or resizes the page.
+A card definition's `startsCovered` sets whether the face starts covered. Covering applies to
 the card whichever side is up, and turning the card keeps it covered or uncovered. Gestures that move the card, such as
 pulling it down to close it, start only while the face is uncovered. A covered page is still never a trap: the host
 keeps a way to leave the card, such as its back navigation or tab bar.
