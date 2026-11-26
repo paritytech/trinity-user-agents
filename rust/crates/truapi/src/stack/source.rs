@@ -199,6 +199,9 @@ pub struct StackSource {
 	/// record it returned is stored or fails to store, so that the host is
 	/// never told `Current` for a copy whose store may still fail.
 	before_store: Option<StackStatus>,
+	/// Whether the record the last [`Self::fetched`] returned only drops the
+	/// `ETag` of the copy the core held, after a refused or failed fetch.
+	record_drops_etag: bool,
 }
 
 impl StackSource {
@@ -244,6 +247,7 @@ impl StackSource {
 			wrong_genesis: Vec::new(),
 			people_suffix: None,
 			before_store: None,
+			record_drops_etag: false,
 		})
 	}
 
@@ -430,6 +434,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		});
+		let drops_etag = matches!(accepted.status, Status::Unreachable);
 		let held = match self.rules.hold(accepted.stack) {
 			Ok(held) => held,
 			Err(error) => {
@@ -446,6 +451,7 @@ impl StackSource {
 			self.before_store = Some(self.status());
 		}
 		self.last_refresh = Some(outcome);
+		self.record_drops_etag = drops_etag;
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
 		if self.running.runs_as(&held) {
@@ -481,9 +487,15 @@ impl StackSource {
 		}
 	}
 
-	/// The check for storing `record`, which [`Self::fetched`] returned.
+	/// The check for storing `record`, which [`Self::fetched`] returned. A
+	/// record that only drops the `ETag` of the copy the core held replaces
+	/// no record the core ignores, since that record may be another build's.
 	pub fn replace_check(&self, record: &[u8]) -> ReplaceCheck {
-		ReplaceCheck::new(self.rules.clone(), record)
+		if self.record_drops_etag {
+			ReplaceCheck::without_etag(self.rules.clone(), record)
+		} else {
+			ReplaceCheck::new(self.rules.clone(), record)
+		}
 	}
 
 	/// Why the core refuses a served document that verifies under the

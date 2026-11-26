@@ -21,13 +21,12 @@ pub trait StackRecords: Send + Sync {
 	/// runtime, and the slower one must not put an older copy back. A store
 	/// checks and writes in one transaction where it can.
 	///
-	/// That holds between runtimes of one build. `check` judges the stored
-	/// record under the writing build's rules and replaces one they refuse,
-	/// so two builds with different reserved values or bundled copies that
-	/// share a store, such as two deployments on one web origin, can each put
-	/// an older copy back over a record only the other takes. A build writes
-	/// such a record after a refused or failed fetch, when it stores its own
-	/// copy again without the `ETag`.
+	/// `check` judges the stored record under the writing build's rules. Two
+	/// builds with different reserved values or bundled copies can share a
+	/// store, such as two deployments on one web origin, and each ignores the
+	/// record the other takes. Only a copy a build took from a fetch replaces
+	/// such a record, so the store settles on the record of the build that
+	/// takes the published copy.
 	async fn write_stack_record(
 		&self,
 		stack_id: &str,
@@ -40,24 +39,38 @@ pub trait StackRecords: Send + Sync {
 /// stored one holds a copy that passes the core's rules at a higher
 /// `sequence`.
 ///
-/// Any other stored record is replaced. The core never starts from one it
-/// ignores, so keeping it would block every lower `sequence`.
+/// A record with a copy the core took replaces any other stored record. The
+/// core never starts from one it ignores, so keeping it would block every
+/// lower `sequence`. A record that only drops the `ETag` of the copy the core
+/// held replaces no record the core ignores: that record may be one another
+/// build sharing the store takes.
 pub struct ReplaceCheck {
 	rules: CopyRules,
 	sequence: Option<u32>,
+	replaces_ignored: bool,
 }
 
 impl ReplaceCheck {
-	/// The check for storing `record` under `rules`.
+	/// The check for storing `record`, which holds a copy the core took,
+	/// under `rules`.
 	pub fn new(rules: CopyRules, record: &[u8]) -> Self {
 		let sequence = passing_sequence(&rules, record);
-		Self { rules, sequence }
+		Self { rules, sequence, replaces_ignored: true }
+	}
+
+	/// The check for storing `record`, the copy the core held stored again
+	/// without its `ETag`, under `rules`.
+	pub fn without_etag(rules: CopyRules, record: &[u8]) -> Self {
+		Self { replaces_ignored: false, ..Self::new(rules, record) }
 	}
 
 	/// Whether the record may replace `existing`.
 	#[must_use]
 	pub fn replaces(&self, existing: &[u8]) -> bool {
-		passing_sequence(&self.rules, existing) <= self.sequence
+		match passing_sequence(&self.rules, existing) {
+			Some(existing) => Some(existing) <= self.sequence,
+			None => self.replaces_ignored,
+		}
 	}
 }
 

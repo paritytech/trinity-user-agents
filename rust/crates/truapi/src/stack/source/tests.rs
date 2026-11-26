@@ -546,6 +546,35 @@ fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
 	);
 }
 
+/// Two builds with different bundled copies can share one store, such as two
+/// deployments of one web app, and each ignores the other's record. A build
+/// still running on its own record stores that copy again without its `ETag`
+/// after a refused or failed fetch. That must not put its copy back over the
+/// record of the build that takes the published copy, which would then start
+/// from its bundled copy and fetch the whole descriptor again.
+#[test]
+fn a_record_rewritten_without_its_etag_replaces_no_record_the_build_ignores() {
+	let old = reserved_test_descriptor(1);
+	let new = redeployed_reserved_test_descriptor(2);
+	let old_record = stored_test_record(&old, START);
+	let new_record = stored_test_record(&new, START);
+	let old_build = || load_reserving(&old, Some(&old_record), ReservedValuesPolicy::ALLOWED);
+	let (mut refused, mut failed) = (old_build(), old_build());
+	let rewritten = [
+		(serve(&mut refused, &new, START + 3600), refused),
+		(fail(&mut failed, START + 3600), failed),
+	];
+
+	assert_eq!(
+		rewritten.map(|(record, old_build)| {
+			let record = record.expect("the copy is stored without its ETag");
+			let check = old_build.replace_check(&record);
+			[check.replaces(&new_record), check.replaces(&old_record)]
+		}),
+		[[false, true], [false, true]]
+	);
+}
+
 /// A stack without reserved values follows its operator: a redeployed
 /// contract reaches its hosts at once, without a new build.
 #[test]
