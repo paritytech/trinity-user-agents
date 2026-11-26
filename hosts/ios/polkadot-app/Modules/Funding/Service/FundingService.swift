@@ -120,14 +120,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func stopStarting(_ entryId: String) {
-        let wasStarting = state.withLock { state in
-            defer {
-                state.quotes[entryId]?.startsWhenQuoted = false
-                state.quotes[entryId]?.startedOn = nil
-            }
-            return state.quotes[entryId]?.startsWhenQuoted == true
-        }
-        guard wasStarting else { return }
+        guard disarm(entryId) else { return }
 
         calls.async { [weak self] in self?.runtime?.cancelFundingAutoStart(intent: entryId) }
     }
@@ -135,17 +128,14 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     func leave(_ entryId: String) {
         guard isPresenting(entryId) else { return }
 
-        stopStarting(entryId)
+        // The core forgets the session's start on its best quote when the
+        // overlay closes, so only the host's own flag is cleared.
+        disarm(entryId)
         resolvePresentation(entryId, with: .dismissed)
         finishFollowers(of: entryId)
     }
 
     func cancel(_ entryId: String) async throws -> CancelOutcome {
-        guard !isPresenting(entryId) else {
-            leave(entryId)
-            return .cancelled
-        }
-
         let outcome = try await runtimeSlot.built().cancelFunding(intent: entryId)
         publish(entryId)
         return outcome
@@ -316,6 +306,19 @@ private extension FundingService {
 
         state.withLock { _ = $0.requestedFrames.remove(entryId) }
         eventSink.yield(.frameClosed(entryId: entryId))
+    }
+
+    /// Clears the session's start on its best quote on the host's side, and
+    /// says whether it was armed.
+    @discardableResult
+    func disarm(_ entryId: String) -> Bool {
+        state.withLock { state in
+            defer {
+                state.quotes[entryId]?.startsWhenQuoted = false
+                state.quotes[entryId]?.startedOn = nil
+            }
+            return state.quotes[entryId]?.startsWhenQuoted == true
+        }
     }
 
     func isPresenting(_ entryId: String) -> Bool {

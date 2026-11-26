@@ -90,8 +90,10 @@ A product with **no published worker**, driven by hand.
 
 ## The expanded card, live
 
-An opened card's page can call `truapi.expandedCard.setFaceShown({ shown })` to
-move the face away and back. To try it with the
+An opened card's page can call `truapi.expandedCard.setCardCovered({ covered })`
+to cover the face and uncover it. A covered face takes no touches, so the page
+gets them, and the pull-down is off. The face itself does not move. To try it
+with the
 [`pocket-worker`](../../android/feature/products/product-sample/pocket-worker/README.md)
 test page:
 
@@ -101,8 +103,8 @@ test page:
    `loyalty`, face URL `http://127.0.0.1:5173/faces/loyalty.json` and widget
    URL `http://127.0.0.1:5173/`. Use `/`, not `/index.html`, which `serve`
    redirects without its query. The app appends `card=<id>` to the widget URL.
-   Add `?hideOnLoad` to test a call made as the page loads, and turn on **Open
-   with the face away** to open the card with the face hidden.
+   Add `?coverOnLoad` to test a call made as the page loads, and turn on **Start
+   covered by the page** to open the card covered.
 3. Add the card and open it.
 
 A card with a widget URL always loads through the TrUAPI runtime. A published
@@ -157,17 +159,18 @@ Declare the card in the worker's manifest:
   "entrypoint": "worker.js",
   "includes": { "chat": false, "pocket": true },
   "pocket": {
-    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": false }]
+    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "startsCovered": true }]
   }
 }
 ```
 
-`faceShown: false` opens the card with its face away. Left out or `null`, the
-face shows. A value that is not a boolean drops all of the product's cards.
+`startsCovered: true` opens the card covered by its page. Left out or `null`,
+the card opens uncovered. A value that is not a boolean drops all of the
+product's cards.
 
 The card opens before its product answers. With no answer within five seconds
-the face stays shown, and an answer that comes after the user or the page has
-moved the face is ignored.
+the card stays uncovered, and an answer that comes after the page has covered
+or uncovered the card itself is ignored.
 
 A debug card's widget URL still opens in place of the published widget until
 the debug card is deleted.

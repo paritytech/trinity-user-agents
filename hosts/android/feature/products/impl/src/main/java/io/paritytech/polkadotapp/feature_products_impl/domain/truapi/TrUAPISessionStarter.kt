@@ -7,7 +7,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardCover
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -37,7 +37,7 @@ class TrUAPISessionStarter @Inject constructor(
         productUrl: String,
         scope: CoroutineScope,
         hostApiNavigation: NavigationPolicy,
-        card: ExpandedCardFace? = null,
+        card: ExpandedCardCover? = null,
         explicitProductId: ProductId? = null,
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
@@ -53,7 +53,7 @@ class TrUAPISessionStarter @Inject constructor(
         provider: BrowserWebViewProvider,
         productUrl: String,
         navigation: NavigationPolicy,
-        card: ExpandedCardFace?,
+        card: ExpandedCardCover?,
         explicitProductId: ProductId?,
     ): Result<Unit> {
         // A debug page served from a loopback url carries no product in its host.
