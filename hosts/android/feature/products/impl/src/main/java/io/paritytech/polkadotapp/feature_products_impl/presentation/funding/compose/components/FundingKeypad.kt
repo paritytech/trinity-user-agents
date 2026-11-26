@@ -4,10 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -68,9 +68,9 @@ fun FundingKeypad(
 @Composable
 private fun KeyLabel(text: String) {
     NovaText(
+        modifier = Modifier.wrapContentSize(),
         text = text,
         style = PolkadotTheme.typography.title.large,
         color = PolkadotTheme.colors.fg.primary,
-        textAlign = TextAlign.Center,
     )
 }
