@@ -76,8 +76,7 @@ class FundingSheetViewModel @Inject constructor(
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val wallet: StateFlow<FundingWallet?> = flow {
-        // Unread, the core checks the amount without what a withdrawal can spend.
-        emit(FundingWallet(interactor.cashPrecision(), interactor.spendable().getOrNull()))
+        emit(FundingWallet(interactor.cashPrecision(), interactor.spendable()))
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     override val flow: StateFlow<FundingFlowState?> = combine(entry, picks, wallet, ::Triple)
@@ -178,10 +177,11 @@ class FundingSheetViewModel @Inject constructor(
             direction = entry.direction,
             cashPrecision = wallet.cashPrecision,
             format = cashFormat,
-            spendable = wallet.spendable,
+            spendable = wallet.spendable.getOrNull(),
             options = options,
             amount = entry.amount,
             country = detected,
+            spendableUnread = wallet.spendable.isFailure,
         )
         val choice = entry.session?.choice?.takeIf { entry.hasStarted }
         val resumed = choice?.let { base.withRail(it.rail).withAsset(it.asset) } ?: base
@@ -231,5 +231,5 @@ class FundingSheetViewModel @Inject constructor(
 
     private fun top(): FundingScreen? = stack.value.lastOrNull()?.screen
 
-    private data class FundingWallet(val cashPrecision: Int, val spendable: Balance?)
+    private data class FundingWallet(val cashPrecision: Int, val spendable: Result<Balance>)
 }

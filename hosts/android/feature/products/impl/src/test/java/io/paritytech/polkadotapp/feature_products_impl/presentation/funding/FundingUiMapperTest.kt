@@ -134,6 +134,7 @@ class FundingUiMapperTest {
         cashPrecision = 6,
         format = testCashFormat(),
         spendable = null,
+        spendableUnread = false,
         options = FundingOptions(
             candidates = listOf(candidate(providerA), candidate(providerB)),
             countries = emptyList(),
@@ -153,6 +154,7 @@ class FundingUiMapperTest {
         cashPrecision = 6,
         format = testCashFormat(),
         spendable = null,
+        spendableUnread = false,
         options = FundingOptions(
             candidates = candidates.toList(),
             countries = emptyList(),

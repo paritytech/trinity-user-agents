@@ -178,6 +178,7 @@ object FundingFixtures {
         cashPrecision = CASH_PRECISION,
         format = testCashFormat(),
         spendable = null,
+        spendableUnread = false,
         options = options,
         amount = null,
         country = FundingCountry(code = "DE", name = "Germany", currencyCode = "EUR", currencyName = "Euro"),
