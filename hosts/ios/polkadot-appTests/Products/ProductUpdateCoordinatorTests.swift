@@ -26,7 +26,7 @@ struct ProductUpdateCoordinatorTests {
     init() {
         coordinator = ProductUpdateCoordinator(
             contentLoader: loader,
-            workerReloader: workerReloader,
+            currentWorkerReloader: { [workerReloader] in workerReloader },
             noticePresenter: notice,
             refreshSources: ProductUpdateCoordinator.RefreshSources(
                 applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: notificationCenter),
@@ -46,6 +46,36 @@ struct ProductUpdateCoordinatorTests {
         #expect(loader.appliedUpdates == [update])
         #expect(workerReloader.reloadedIds == [Self.productId])
         #expect(notice.shownProductNames.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func workerUpdateUsesTheSessionActiveWhenApplyFinishes(replacementIsSignedIn: Bool) async {
+        let gate = AsyncStream<Void>.makeStream()
+        let loader = StubProductContentLoader(applyGate: gate.stream)
+        let replacement = StubProductWorkerReloader()
+        var active: StubProductWorkerReloader? = workerReloader
+        let coordinator = ProductUpdateCoordinator(
+            contentLoader: loader,
+            currentWorkerReloader: { active },
+            noticePresenter: notice,
+            refreshSources: ProductUpdateCoordinator.RefreshSources(
+                applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: notificationCenter),
+                hostPlacedProducts: hostPlaced
+            ),
+            logger: Logger.shared
+        )
+        let update = Self.makeUpdate(contentId: Self.workerId)
+        coordinator.start()
+
+        loader.simulate(update: update)
+        await loader.waitForApplies(1)
+        active = replacementIsSignedIn ? replacement : nil
+        gate.continuation.finish()
+        await loader.waitForRemovals(2)
+
+        #expect(loader.appliedUpdates == [update])
+        #expect(workerReloader.reloadedIds.isEmpty)
+        #expect(replacement.reloadedIds == (replacementIsSignedIn ? [Self.productId] : []))
     }
 
     @Test func appUpdateWithNoOpenSPAIsAppliedWithoutReloadingTheWorker() async {

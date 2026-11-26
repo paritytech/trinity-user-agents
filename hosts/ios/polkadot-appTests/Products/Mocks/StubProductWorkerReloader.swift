@@ -28,7 +28,7 @@ final class StubProductWorkerReloader: ProductWorkerReloading, @unchecked Sendab
         }
     }
 
-    func reloadWorker(of productId: ProductId) async {
+    func reloadWorker(of productId: ProductId) {
         let ready = state.withLock { state in
             state.reloadedIds.append(productId)
             let count = state.reloadedIds.count

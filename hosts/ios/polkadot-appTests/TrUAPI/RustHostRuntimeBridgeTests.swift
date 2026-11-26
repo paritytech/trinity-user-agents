@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ChainRegistry
 import Keystore_iOS
+import KeyDerivation
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -143,6 +144,23 @@ private func makeDatabaseDirectory() throws -> String {
 }
 
 struct TrUAPIHostRuntimeProviderConfigTests {
+    @Test func aWorkerUpdateLeavesAnUnopenedSessionRuntimeUnopened() throws {
+        let entropy = UnavailableRootEntropy()
+        let provider = TrUAPIHostRuntimeProvider(
+            chainRegistry: MockChainRegistry(),
+            entropyManager: entropy,
+            settingsManager: InMemorySettingsManager(),
+            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+            confirmationRouterFacade: ProductRoutersFacade.worker(),
+            workerEngine: NoWorkerEngine(),
+            logger: Logger.shared
+        )
+
+        try provider.reloadWorker(of: ProductId("shop.dot"))
+
+        #expect(entropy.reads == 0)
+    }
+
     /// The core verifies the bundled descriptor under the build's stack link
     /// before it starts, so a config the core refuses leaves the app with no
     /// runtime and no product can open.
@@ -171,4 +189,16 @@ struct TrUAPIHostRuntimeProviderConfigTests {
 
         _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config, workerEngine: NoWorkerEngine())
     }
+}
+
+private final class UnavailableRootEntropy: RootEntropyManaging {
+    private(set) var reads = 0
+
+    func fetchRootEntropy() throws -> Data {
+        reads += 1
+        throw CancellationError()
+    }
+
+    func createRootEntropy(_: Data) throws { throw CancellationError() }
+    func hasRootEntropy() throws -> Bool { false }
 }

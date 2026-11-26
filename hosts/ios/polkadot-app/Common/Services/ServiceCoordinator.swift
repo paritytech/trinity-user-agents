@@ -253,9 +253,8 @@ extension ServiceCoordinator {
                 services: workerServices
             )
         }
-        // Single process-wide TrUAPI runtime provider. Registered in the root
-        // locator so the static SPA factory reaches the same instance the
-        // chat bot factory does — one shared runtime across all products.
+        // The root locator lets the SPA factory and product updates reach
+        // the same dashboard session as Chat.
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
@@ -361,7 +360,6 @@ extension ServiceCoordinator {
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(runtime: runtime),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )

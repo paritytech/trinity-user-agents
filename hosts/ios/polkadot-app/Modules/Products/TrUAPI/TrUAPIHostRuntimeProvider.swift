@@ -11,10 +11,8 @@ import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
 
-/// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
-/// the single shared runtime, so its authentication and core services are
-/// shared across every SPA and chat product.
-protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
+/// Shares one ``TrUAPIHostRuntime`` across the dashboard session's products.
+protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable, ProductWorkerReloading {
     /// Return the shared runtime, building and activating its local session on
     /// first use. Subsequent calls return the cached instance.
     func sharedRuntime() throws -> TrUAPIHostRuntime
@@ -88,6 +86,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     @MainActor
     func setPresentationView(_ view: ControllerBackedProtocol) {
         confirmationRouterFacade.setPresentationView(view)
+    }
+
+    func reloadWorker(of productId: ProductId) {
+        let runtime = lock.withLock { sessionEnded ? nil : cachedRuntime }
+        runtime?.reloadWorker(productId: productId)
     }
 
     func shutdownProductWorkers() {
