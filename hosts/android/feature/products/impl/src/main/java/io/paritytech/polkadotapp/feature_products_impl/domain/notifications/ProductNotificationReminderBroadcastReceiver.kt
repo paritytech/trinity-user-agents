@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
 import io.paritytech.polkadotapp.common.utils.launchAsyncJob
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductNotificationPublisher

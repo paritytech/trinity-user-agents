@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
 import uniffi.truapi.ProductId
 
 /**

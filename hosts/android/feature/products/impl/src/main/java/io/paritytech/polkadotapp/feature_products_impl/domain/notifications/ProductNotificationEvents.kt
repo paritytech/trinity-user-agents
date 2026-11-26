@@ -1,4 +1,15 @@
-package io.paritytech.polkadotapp.common.data.telemetry
+package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
+
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssue
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
+import io.paritytech.polkadotapp.common.data.telemetry.baseTags
+
+const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
+const val PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID = "product_notification_product_id"
+const val PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID = "product_notification_id"
 
 enum class ProductNotificationStep(val value: String) {
     /** The alarm is registered and the booking is stored. */
@@ -47,7 +58,7 @@ enum class ProductNotificationReason(val value: String, val issueKind: String?) 
  * The notification text and deeplink have no parameter here, so they cannot reach an event. The id is sent as
  * the unsigned number the product receives.
  */
-fun HostEventOrigin.productNotification(
+internal fun HostEventOrigin.productNotification(
     step: ProductNotificationStep,
     productId: String,
     notificationId: Int?,

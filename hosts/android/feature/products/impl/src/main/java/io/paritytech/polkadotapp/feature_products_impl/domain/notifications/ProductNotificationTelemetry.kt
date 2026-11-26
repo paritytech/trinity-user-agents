@@ -6,9 +6,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssue
 import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationStep
-import io.paritytech.polkadotapp.common.data.telemetry.productNotification
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotification
@@ -59,6 +56,9 @@ class ProductNotificationTelemetry @Inject internal constructor(
 
     fun cancelled(productId: ProductId, notificationId: NotificationId) =
         report(ProductNotificationStep.CANCELLED, productId, notificationId)
+
+    fun tapped(productId: ProductId, notificationId: NotificationId?) =
+        report(ProductNotificationStep.TAPPED, productId, notificationId)
 
     private fun report(
         step: ProductNotificationStep,

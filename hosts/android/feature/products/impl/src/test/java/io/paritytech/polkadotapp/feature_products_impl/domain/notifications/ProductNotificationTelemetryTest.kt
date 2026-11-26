@@ -12,8 +12,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationStep
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotification
 import org.junit.Assert.assertEquals
@@ -203,6 +201,24 @@ class ProductNotificationTelemetryTest {
 
         // Then
         assertEquals(listOf(event(ProductNotificationStep.CANCELLED, productTags, bookingExtras)), events)
+    }
+
+    @Test
+    fun `tapped carries the id when the intent had one`() {
+        // When
+        val events = captured {
+            tapped(product, booking)
+            tapped(product, notificationId = null)
+        }
+
+        // Then
+        assertEquals(
+            listOf(
+                event(ProductNotificationStep.TAPPED, tags = productTags, extras = bookingExtras),
+                event(ProductNotificationStep.TAPPED, tags = productTags, extras = baseExtras),
+            ),
+            events,
+        )
     }
 
     @Test

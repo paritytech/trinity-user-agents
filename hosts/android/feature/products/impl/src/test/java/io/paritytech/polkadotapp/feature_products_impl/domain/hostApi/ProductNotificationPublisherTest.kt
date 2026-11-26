@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.hostApi
 
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
 import io.paritytech.polkadotapp.common.presentation.notifications.PublishOutcome
+import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationReason
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

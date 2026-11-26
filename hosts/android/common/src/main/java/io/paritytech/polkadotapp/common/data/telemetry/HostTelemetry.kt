@@ -30,10 +30,6 @@ data class CriticalIssue(
     val error: Throwable?,
 )
 
-const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
-const val PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID = "product_notification_product_id"
-const val PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID = "product_notification_id"
-
 fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
     "host.platform" to platform,
     "host.app_variant" to appVariant,
@@ -42,15 +38,6 @@ fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
 )
 
 fun HostEventOrigin.baseExtras(): Map<String, Any> = mapOf("host.app_build" to appBuild)
-
-fun HostEventOrigin.productNotificationTapped(productId: String, notificationId: Int?) = productNotification(
-    ProductNotificationStep.TAPPED,
-    productId,
-    notificationId,
-    reason = null,
-    scheduledAtMillis = null,
-    deliveredAtMillis = null,
-)
 
 /** A tap is recorded once: not again when the activity is restored or relaunched from Recents. */
 fun isFreshNotificationLaunch(isRestored: Boolean, intentFlags: Int): Boolean =

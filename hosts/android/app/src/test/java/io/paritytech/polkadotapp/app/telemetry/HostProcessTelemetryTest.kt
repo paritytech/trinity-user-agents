@@ -12,7 +12,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
 import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
-import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
@@ -250,48 +249,6 @@ class HostProcessTelemetryTest {
         }
 
         assertEquals(listOf(listOf("host.one"), listOf("host.one"), listOf("host.two")), fingerprints)
-    }
-
-    @Test
-    fun `captures product notification fields and keeps disabled capture lazy`() {
-        val captured = mutableListOf<HostEvent>()
-        val capture = HostEventCapture { captured += it() }
-
-        capture.capture { origin.productNotificationTapped(productId = "jolly.dot", notificationId = 7) }
-        capture.capture { origin.productNotificationTapped(productId = "jolly.dot", notificationId = null) }
-
-        val expectedTags = mapOf(
-            "host.platform" to "android",
-            "host.app_variant" to "nightly",
-            "host.app_flavor" to "gp",
-            "host.native_app_version" to "1.2.3",
-            "product_notification.product_id" to "jolly.dot",
-        )
-        val expectedExtras = mapOf<String, Any>("host.app_build" to 42L)
-        assertEquals(
-            listOf(
-                HostEvent(
-                    "host.product_notification.tapped",
-                    expectedTags,
-                    expectedExtras + ("product_notification.id" to 7L),
-                    HostEventLevel.INFO,
-                ),
-                HostEvent("host.product_notification.tapped", expectedTags, expectedExtras, HostEventLevel.INFO),
-            ),
-            captured,
-        )
-
-        var eventBuilt = false
-        val disabledCapture = RealHostEventCapture(
-            enabledProvider = HostTelemetryEnabledProvider { false },
-            sentryCapture = sentryCapture,
-        )
-        disabledCapture.capture {
-            eventBuilt = true
-            origin.productNotificationTapped(productId = "jolly.dot", notificationId = 7)
-        }
-
-        assertFalse(eventBuilt)
     }
 
     @Test
