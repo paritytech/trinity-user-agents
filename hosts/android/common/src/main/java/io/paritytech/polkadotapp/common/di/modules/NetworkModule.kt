@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.data.network.NetworkApiCreator
 import io.paritytech.polkadotapp.common.data.network.OverrideBaseUrlInterceptor
 import io.paritytech.polkadotapp.common.data.network.RealNetworkApiCreator
+import io.paritytech.polkadotapp.common.data.network.SocketServiceFactory
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.data.network.WsConnectionLogger
 import io.paritytech.polkadotapp.common.data.network.addDebugLoggingInterceptor
@@ -86,19 +87,24 @@ class NetworkModule {
     fun provideGson(): Gson = GsonBuilder().disableHtmlEscaping().create()
 
     @Provides
-    fun provideSocketService(jsonMapper: Gson): SocketService {
+    fun provideSocketServiceFactory(jsonMapper: Gson): SocketServiceFactory = SocketServiceFactory { webSocketFactory ->
+        SocketService(
+            jsonMapper = jsonMapper,
+            logger = WsConnectionLogger(ignoreStateMachineLogs = true),
+            webSocketFactory = webSocketFactory,
+            reconnector = Reconnector(),
+            requestExecutor = RequestExecutor()
+        )
+    }
+
+    @Provides
+    fun provideSocketService(socketServiceFactory: SocketServiceFactory): SocketService {
         val wsFactory =
             WebSocketFactory().apply {
                 connectionTimeout = SOCKET_CONNECTION_TIMEOUT
             }
 
-        return SocketService(
-            jsonMapper = jsonMapper,
-            logger = WsConnectionLogger(ignoreStateMachineLogs = true),
-            webSocketFactory = wsFactory,
-            reconnector = Reconnector(),
-            requestExecutor = RequestExecutor()
-        )
+        return socketServiceFactory.create(wsFactory)
     }
 
     @Provides

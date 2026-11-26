@@ -1,12 +1,8 @@
 package io.parity.truapi
 
-import android.security.NetworkSecurityPolicy
 import uniffi.truapi_provider.ChainCloseReason
 import uniffi.truapi_provider.ChainMessageListener
-import uniffi.truapi_provider.ChainProvider
 import uniffi.truapi_provider.ChainProviderException
-import uniffi.truapi_provider.RpcNode
-import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -42,9 +38,7 @@ fun interface ChainEndpointResolver {
  */
 class RpcChainProvider(
     private val resolver: ChainEndpointResolver,
-    private val cleartextPermitted: (host: String) -> Boolean = { host ->
-        NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)
-    },
+    private val cleartextPermitted: (host: String) -> Boolean = ::systemPermitsCleartext,
     private val onLog: (message: String) -> Unit = {},
 ) {
     private class EventSink(
@@ -160,15 +154,12 @@ class RpcChainProvider(
             for (url in urls) {
                 if (synchronized(lock) { state == State.FINISHED }) return
                 dialledUrl = url
-                if (!permitted(url)) {
-                    onLog("chain connection $id skipped $url: cleartext traffic is not permitted to its host")
-                    continue
-                }
                 onLog("chain connection $id dialling $url")
                 val opened = try {
-                    ChainProvider.withRpcNodes(listOf(RpcNode(genesisHash, url))).use { node ->
-                        node.connect(genesisHash, this)
-                    }
+                    dialRpcNode(genesisHash, url, this, cleartextPermitted)
+                } catch (refused: CleartextNotPermittedException) {
+                    onLog("chain connection $id skipped $url: cleartext traffic is not permitted to its host")
+                    continue
                 } catch (error: ChainProviderException) {
                     onLog("chain connection $id failed on $url: ${error.describe()}")
                     continue
@@ -181,12 +172,6 @@ class RpcChainProvider(
                 return
             }
             finish()
-        }
-
-        /** A malformed URL is left for the provider to reject. */
-        private fun permitted(url: String): Boolean {
-            val target = runCatching { URI(url) }.getOrNull() ?: return true
-            return target.scheme != "ws" || cleartextPermitted(target.host.orEmpty())
         }
 
         private fun adopt(opened: RpcConnection): Boolean = synchronized(lock) {
@@ -256,12 +241,4 @@ class RpcChainProvider(
             Thread(task, "truapi-chain-dial").apply { isDaemon = true }
         }
     }
-}
-
-private fun ChainProviderException.describe(): String =
-    (this as? ChainProviderException.Connect)?.reason ?: javaClass.simpleName
-
-private fun ChainCloseReason.describe(): String = when (this) {
-    ChainCloseReason.StreamEnded -> "stream ended"
-    is ChainCloseReason.ListenerFailed -> "listener failed: $reason"
 }
