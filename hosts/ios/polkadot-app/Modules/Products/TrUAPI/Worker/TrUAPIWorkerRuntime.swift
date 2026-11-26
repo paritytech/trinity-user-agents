@@ -53,7 +53,7 @@ actor TrUAPIWorkerRuntime {
         try checkNotDisposed()
         moduleBridge = bridge
 
-        try await bridge.executeScript(url: productUrl, isWorkerEntry: true)
+        try await bridge.executeScript(url: productUrl)
         try checkNotDisposed()
         guard executionModel.acknowledgeStartup?() != false else { throw CancellationError() }
 
