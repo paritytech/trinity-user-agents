@@ -28,7 +28,9 @@ effect, each with its own rules both platforms must match exactly, and the proto
 The usecases however share one shape: something on the device changes every frame (a finger, the tilt, a clock), a node
 property follows it, and the product needs only the outcome.
 
-## Requirements
+## Detailed Design
+
+### Requirements
 
 - **Local:** the frame path, from input to drawn frame, never waits on the product.
 - **Product-owned:** the product owns every state an input changes, and the host keeps only what is in flight.
