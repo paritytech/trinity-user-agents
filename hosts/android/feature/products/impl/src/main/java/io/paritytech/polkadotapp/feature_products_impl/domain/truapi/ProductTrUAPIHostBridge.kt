@@ -32,7 +32,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardCover
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -41,7 +41,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
-import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.CoreAttribute
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ExpandedCardCoverOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -52,7 +54,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -87,6 +88,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val coreEventLogger: CoreEventLogger,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -130,7 +132,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
-        card: ExpandedCardFace?,
+        card: ExpandedCardCover?,
     ) = object : HostBridge {
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId)
@@ -139,6 +141,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun onCoreLog(marker: String, detail: String) {
             logCoreLine(marker, detail)
+        }
+
+        override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+            coreEventLogger.log(marker, attributes)
         }
 
         /**
@@ -250,8 +256,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
 
-        override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-            card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+        override suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+            card?.setCovered(covered) ?: ExpandedCardCoverOutcome.UNSUPPORTED
     }
 
     internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
@@ -278,7 +284,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigationPolicy: NavigationPolicy,
         kind: ExecutableKind,
         chat: ChatHostBridge? = null,
-        card: ExpandedCardFace? = null,
+        card: ExpandedCardCover? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -434,9 +440,9 @@ internal fun logCoreLine(marker: String, detail: String) {
 
 // The priority each core marker is logged at, read once from the core's own table. A marker the
 // table keeps on the device, or does not list at all, has no priority here and is logged below the
-// level `SentryLogTree` forwards. Read lazily rather than in the file's initializer, so a core that
+// level `HostLogSinkTree` forwards. Read lazily rather than in the file's initializer, so a core that
 // cannot answer costs the log line instead of every top-level helper in this file.
-private val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
+internal val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
     coreMarkers().mapNotNull { (marker, markerClass) ->
         when (markerClass) {
             is MarkerClass.Export ->

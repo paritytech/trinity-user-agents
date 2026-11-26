@@ -21,7 +21,7 @@ internal fun RowScope.ModeTouchTarget(
     interactionSource: MutableInteractionSource,
     onClick: () -> Unit
 ) {
-    val itemDescription = appearance.accessibilityDescription
+    val itemDescription = appearance.label
     val itemState = stringResource(
         if (isSelected) {
             RCommon.string.payment_privacy_mode_state_selected

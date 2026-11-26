@@ -12,6 +12,8 @@ final class ChatTransferAmountView: UIView {
 
     private(set) var typography: TypographyStyle = Constants.typographyLadder[0]
 
+    private let shimmer = ShimmerMask()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
 
@@ -27,9 +29,10 @@ final class ChatTransferAmountView: UIView {
     override var intrinsicContentSize: CGSize {
         let amountSize = amountLabel.intrinsicContentSize
         let unitSize = unitLabel.intrinsicContentSize
+        let gap = unitGap(for: amountLabel.font ?? UIFont.app(typography))
 
         return CGSize(
-            width: amountSize.width + unitSize.width,
+            width: amountSize.width + gap + unitSize.width,
             height: max(amountSize.height, unitSize.height)
         )
     }
@@ -44,27 +47,35 @@ final class ChatTransferAmountView: UIView {
 
         amountLabel.frame = CGRect(origin: .zero, size: amountSize)
         unitLabel.frame = CGRect(
-            x: amountSize.width,
+            x: amountSize.width + unitGap(for: amountFont),
             y: amountFont.ascender - unitFont.ascender,
             width: unitSize.width,
             height: unitSize.height
         )
+
+        shimmer.layout(in: self)
     }
 
-    func bind(currencySymbol: String, amount: String, unit: String) {
-        let amountText = currencySymbol + amount
-
+    func bind(amount amountText: String, unit: String, isStruckThrough: Bool = false) {
         typography = Constants.typographyLadder.first { fits(amountText: amountText, unit: unit, typography: $0) }
             ?? Constants.typographyLadder[Constants.typographyLadder.count - 1]
 
         let font = UIFont.app(typography)
         amountLabel.font = font
-        amountLabel.text = amountText
+        var attributes = LabelStyle(typography: typography).attributes(for: .left)
+        if isStruckThrough {
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        }
+        amountLabel.attributedText = NSAttributedString(string: amountText, attributes: attributes)
         unitLabel.attributedText = CashLogo.unit(unit, fallback: unitFont(for: font))
         unitLabel.accessibilityLabel = unit
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
+    }
+
+    func setShimmering(_ isActive: Bool) {
+        shimmer.setActive(isActive, on: self)
     }
 }
 
@@ -80,9 +91,14 @@ private extension ChatTransferAmountView {
 
     func fits(amountText: String, unit: String, typography: TypographyStyle) -> Bool {
         let font = UIFont.app(typography)
-        let total = width(of: amountText, font: font) + CashLogo.unit(unit, fallback: unitFont(for: font)).size().width
+        let total = width(of: amountText, font: font) + unitGap(for: font)
+            + CashLogo.unit(unit, fallback: unitFont(for: font)).size().width
 
         return total <= Constants.maxWidth
+    }
+
+    func unitGap(for font: UIFont) -> CGFloat {
+        width(of: " ", font: font)
     }
 
     func width(of text: String, font: UIFont) -> CGFloat {

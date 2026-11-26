@@ -7,9 +7,9 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
-	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError,
+	StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -102,9 +102,9 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
-	pub face_requests: Mutex<Vec<bool>>,
-	pub back_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+	pub cover_requests: Mutex<Vec<bool>>,
+	pub turn_requests: Mutex<Vec<truapi::latest::PocketCardSide>>,
+	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
 	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
@@ -158,7 +158,7 @@ impl EventCallbacks {
 		Self {
 			logs: Mutex::new(Vec::new()),
 			events: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+			chat_room_status: Mutex::new(truapi::latest::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
 			chat_registered_bots: Mutex::new(Vec::new()),
@@ -192,19 +192,19 @@ impl EventCallbacks {
 			remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
-			face_requests: Mutex::new(Vec::new()),
-			back_requests: Mutex::new(Vec::new()),
+			cover_requests: Mutex::new(Vec::new()),
+			turn_requests: Mutex::new(Vec::new()),
 		}
 	}
 
-	/// The face visibilities this execution's card was asked for, in order.
-	pub fn face_requests(&self) -> Vec<bool> {
-		self.face_requests.lock().expect("face requests mutex poisoned").clone()
+	/// Whether this execution's card was asked to be covered, in order.
+	pub fn cover_requests(&self) -> Vec<bool> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").clone()
 	}
 
 	/// The sides this execution's card was asked to turn to, in order.
-	pub fn back_requests(&self) -> Vec<bool> {
-		self.back_requests.lock().expect("back requests mutex poisoned").clone()
+	pub fn turn_requests(&self) -> Vec<truapi::latest::PocketCardSide> {
+		self.turn_requests.lock().expect("turn requests mutex poisoned").clone()
 	}
 }
 
@@ -258,7 +258,7 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn push_notification(
 		&self,
-		_request: v01::HostPushNotificationRequest,
+		_request: truapi::latest::HostPushNotificationRequest,
 	) -> Result<u32, HostRejection> {
 		Ok(0)
 	}
@@ -283,18 +283,18 @@ impl HostCallbacks for EventCallbacks {
 			DevicePermissionStatus::NotApplicable
 		})
 	}
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").push(covered);
+		Ok(crate::platform::ExpandedCardCoverOutcome::Applied)
 	}
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: truapi::latest::PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
-		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
+		self.turn_requests.lock().expect("turn requests mutex poisoned").push(side);
 		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
@@ -422,14 +422,10 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
-	async fn begin_operation(
+	async fn clear_product_storage(
 		&self,
 		_product_id: ProductId,
-		_label: String,
-	) -> Result<u32, HostRejection> {
-		Ok(1)
-	}
-	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
+	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
 }
@@ -441,7 +437,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection> {
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
@@ -550,6 +546,32 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
 	);
 }
 
+// A running product follows its keys; once its storage is cleared it must stop
+// seeing the values the host just deleted, while a product whose id extends
+// the cleared one keeps its own.
+#[test]
+fn clearing_a_product_reaches_its_storage_subscriptions_only() {
+	let (_callbacks, _events, platform) = event_platform();
+	let cleared = ProductId::for_test("myapp.dot");
+	let other = ProductId::for_test("myapp.dotapp.dot");
+	let mut own =
+		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
+	let mut others =
+		platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	for subscription in [&mut own, &mut others] {
+		futures::executor::block_on(futures::StreamExt::next(subscription));
+	}
+
+	futures::executor::block_on(ProductStorage::clear_product(&platform, cleared))
+		.expect("clear product");
+
+	assert_eq!(
+		futures::FutureExt::now_or_never(futures::StreamExt::next(&mut own)),
+		Some(Some(Ok(v01::HostLocalStorageChangeItem { value: None })))
+	);
+	assert_eq!(futures::FutureExt::now_or_never(futures::StreamExt::next(&mut others)), None);
+}
+
 pub fn native_host_runtime_config() -> HostRuntimeConfig {
 	HostRuntimeConfig {
 		host_name: "Polkadot Web".to_string(),
@@ -574,7 +596,11 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 /// `descriptor` signed, as a native host bundles it.
 fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
-	crate::native::BundledStack { pointer, descriptor, allows_reserved_values: false }
+	crate::native::BundledStack {
+		pointer,
+		descriptor,
+		reserved_values: crate::platform::ReservedValuesPolicy::default(),
+	}
 }
 
 pub fn native_execution_config(
@@ -799,10 +825,16 @@ fn process_runtime_counts_worker_references_per_product() {
 	.expect("host runtime config should be valid");
 	let product = || ProductId::for_test("shared.dot");
 
-	host.acquire_worker(product());
-	host.acquire_worker(product());
-	host.release_worker(product());
-	host.release_worker(product());
+	let first = host.claim_worker(product());
+	let second = host.claim_worker(product());
+	first.release();
+	first.release();
+	drop(first);
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start)]
+	);
+	drop(second);
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
@@ -1678,10 +1710,11 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	};
 	let product =
 		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
-	let request = v01::HostChatCreateRoomRequest {
-		room_id: "support".to_string(),
+	let request = truapi::latest::HostChatCreateRoomRequest {
+		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -1689,14 +1722,18 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
+		"support".to_string(),
 		request.clone(),
 	))
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
-		&platform, &product, request,
+		&platform,
+		&product,
+		"support".to_string(),
+		request,
 	))
 	.unwrap();
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1710,10 +1747,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	))
 	.unwrap();
 
-	assert_eq!(created.status, v01::ChatRoomRegistrationStatus::New);
+	assert_eq!(created, truapi::latest::ChatRoomRegistrationStatus::New);
 	assert_eq!(updated_rooms.rooms.len(), 1);
 	assert_eq!(updated_rooms.rooms[0].room_id, "support");
-	assert_eq!(existing.status, v01::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(existing, truapi::latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(posted.message_id, "message-1");
 	assert_eq!(
 		callbacks
@@ -2045,14 +2082,14 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 }
 
 #[test]
-fn runtime_config_passes_the_reserved_values_flag_through() {
+fn runtime_config_passes_the_reserved_values_through() {
 	// A testnet build must not run a stack on `dot`; a Polkadot build may.
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
 	let refused =
 		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
-	stack.allows_reserved_values = true;
+	stack.reserved_values.allowed = true;
 	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
 	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
 		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
@@ -2064,11 +2101,48 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 		(refused.err(), allowed.map(tld).ok()),
 		(
 			Some(NativeRuntimeConfigError::Invalid {
-				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
+				reason: "stack uses the reserved tld dot, which this build does not allow"
 					.to_string(),
 			}),
 			Some("dot".into()),
 		),
+	);
+}
+
+#[test]
+fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
+	// A build that reserves a TLD or a genesis hash must not start a stack on it.
+	let stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let reserving = |reserved_values| {
+		build_runtime(HostRuntimeConfig {
+			stack: crate::native::BundledStack { reserved_values, ..stack.clone() },
+			..native_host_runtime_config()
+		})
+		.err()
+	};
+	let refused = |reason: &str| {
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: format!("{reason}, which this build does not allow"),
+		})
+	};
+
+	assert_eq!(
+		[
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_tlds: vec!["paseo".to_string()],
+				..Default::default()
+			}),
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_genesis_hashes: vec![[0xc3; 32]],
+				..Default::default()
+			}),
+		],
+		[
+			refused("stack uses the reserved tld paseo"),
+			refused(&format!("stack uses the reserved genesis hash 0x{}", "c3".repeat(32))),
+		],
 	);
 }
 
@@ -2174,7 +2248,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2194,15 +2268,15 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
+		async fn turn_expanded_card(
 			&self,
-			_shown: bool,
+			_side: truapi::latest::PocketCardSide,
 		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
@@ -2285,18 +2359,10 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
+		async fn clear_product_storage(
 			&self,
 			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
+		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
 	}
@@ -2376,7 +2442,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2398,15 +2464,15 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
+		async fn turn_expanded_card(
 			&self,
-			_shown: bool,
+			_side: truapi::latest::PocketCardSide,
 		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
@@ -2489,18 +2555,10 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
+		async fn clear_product_storage(
 			&self,
 			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
+		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
 	}
@@ -2934,16 +2992,14 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		host_internal::sso_messages::{
 			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
 		},
-		host_logic::{
-			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
-			sso::pairing::derive_x25519_keypair_from_entropy,
-		},
+		host_logic::root_entropy::RootEntropy,
 	};
 	use parity_scale_codec::Encode;
 
 	let entropy = [7; 32];
-	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
-	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	let root_entropy = RootEntropy::new(entropy);
+	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
 			.open_sso_service(statement, encryption)
@@ -2978,14 +3034,11 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			}
 			.encode(),
 		};
-		let public_key = derive_product_subtree_keypair(
-			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
-				.unwrap(),
-			&ProductId::for_test("browse.dot"),
-		)
-		.unwrap()
-		.public
-		.to_bytes();
+		let public_key = root_entropy
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.unwrap()
+			.public
+			.to_bytes();
 		assert_eq!(
 			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
 			response(Ok(public_key))
@@ -3359,8 +3412,12 @@ fn expanded_card_calls_log_registered_markers() {
 	let (callbacks, _events, platform) = event_platform();
 
 	futures::executor::block_on(async {
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_covered(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::turn_expanded_card(
+			&platform,
+			truapi::latest::PocketCardSide::Back,
+		)
+		.await;
 	});
 
 	let classes: Vec<_> = callbacks
@@ -3479,7 +3536,7 @@ fn the_deepest_face_with_materials_reads_back_once_kept() {
 		futures::executor::block_on(cards.face(
 			product,
 			"stamps".into(),
-			crate::pocket_cards::PocketCardSide::Front,
+			truapi::latest::PocketCardSide::Front,
 		))
 		.unwrap(),
 		Some(deepest)

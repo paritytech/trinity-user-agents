@@ -19,11 +19,14 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImages
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
@@ -63,6 +66,8 @@ class PocketViewModel @Inject constructor(
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
     private val tabSelection: BottomTabSelection,
+    private val materialsGl: MaterialsGl,
+    private val materialImages: MaterialImages,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
@@ -70,8 +75,8 @@ class PocketViewModel @Inject constructor(
     private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val collectiblesPage = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url) } }
-    private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
-    private var openingFaceLookup: Job? = null
+    private val _startsCovered = MutableStateFlow<Boolean?>(null)
+    private var openingCoverLookup: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -177,17 +182,20 @@ class PocketViewModel @Inject constructor(
         // with a whole face tree in its replay buffer.
         val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext.job))
 
+        val imageResolver = object : JsImageResolver {
+            override suspend fun resolve(source: JsImageSource) = resolveFaceImage(card, source)
+
+            override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
+        }
+
         return CardBinding(
             scope = scope,
             bindings = ProductFaceBindings(
                 face = interactor.observeFace(card.key)
                     .stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null),
                 onFaceAction = { actionId, type -> onFaceAction(card, actionId, type) },
-                imageResolver = object : JsImageResolver {
-                    override suspend fun resolve(source: JsImageSource) = resolveFaceImage(card, source)
-
-                    override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
-                },
+                imageResolver = imageResolver,
+                materials = CardMaterialsSlot(materialsGl, { source -> materialImages.load(imageResolver, source) }, scope),
             ),
         )
     }
@@ -221,8 +229,8 @@ class PocketViewModel @Inject constructor(
     /** The collectibles page loading inside the open book, live only while the book is open. */
     val collectiblesProduct = collectiblesPage.shown
 
-    /** Whether the selected card opens with its face shown; null until its product has answered. */
-    val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
+    /** Whether the selected card opens covered by its page; null until its product has answered. */
+    val startsCovered: StateFlow<Boolean?> = _startsCovered
 
     init {
         // A tab shown for the first time has no product cards until the collection loads.
@@ -270,19 +278,19 @@ class PocketViewModel @Inject constructor(
         if (card is PocketCardUiModel.ProductCard) {
             expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
             warmUpProduct(card)
-            lookUpOpeningFace(card)
+            lookUpOpeningCover(card)
         }
     }
 
-    private fun lookUpOpeningFace(card: PocketCardUiModel.ProductCard) {
-        openingFaceLookup?.cancel()
-        _openingFaceShown.value = null
-        openingFaceLookup = launch { _openingFaceShown.value = interactor.faceShownOnOpen(card.key) }
+    private fun lookUpOpeningCover(card: PocketCardUiModel.ProductCard) {
+        openingCoverLookup?.cancel()
+        _startsCovered.value = null
+        openingCoverLookup = launch { _startsCovered.value = interactor.startsCovered(card.key) }
     }
 
-    private fun forgetOpeningFace() {
-        openingFaceLookup?.cancel()
-        _openingFaceShown.value = null
+    private fun forgetOpeningCover() {
+        openingCoverLookup?.cancel()
+        _startsCovered.value = null
     }
 
     /**
@@ -306,7 +314,7 @@ class PocketViewModel @Inject constructor(
 
     fun dismissCard() {
         expandedProduct.close()
-        forgetOpeningFace()
+        forgetOpeningCover()
         selectedCardId.value = null
     }
 
@@ -383,7 +391,7 @@ class PocketViewModel @Inject constructor(
 
     private fun closeExpandedCard() {
         expandedProduct.release()
-        forgetOpeningFace()
+        forgetOpeningCover()
         selectedCardId.value = null
     }
 

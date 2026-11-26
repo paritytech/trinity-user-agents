@@ -2,9 +2,12 @@
 
 package io.paritytech.polkadotapp.feature_statement_store_impl.domain.slotAllocator
 
+import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchAlias
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchContext
 import io.paritytech.polkadotapp.common.utils.flattenResult
 import io.paritytech.polkadotapp.common.utils.mapAsync
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_people_api.domain.BandersnatchKeyResolver
@@ -30,6 +33,10 @@ class StatementStoreSlotLoader @Inject constructor(
             .map(::StatementStoreSlots)
     }
 
+    suspend fun slotAlias(collection: PeopleCollection, period: UInt, seq: UInt): Result<BandersnatchAlias> = runCancellableCatching {
+        aliasInContext(collection, dotNsTldProvider.getTldRetrying(), period, seq)
+    }
+
     private suspend fun loadSlotsForCollection(
         context: AllocateContext,
         collection: PeopleCollection,
@@ -37,8 +44,7 @@ class StatementStoreSlotLoader @Inject constructor(
         return statementStoreSlotRepository.maxSlotsPerPeriod(collection).mapCatching { maxSlots ->
             val tld = dotNsTldProvider.getTldRetrying()
             val aliasesByIndex = (0u until maxSlots).associateWith { seq ->
-                val ctx = BandersnatchContext.statementStoreSlot(tld, context.period, seq)
-                bandersnatchKeyResolver.getAliasInContext(collection, ctx)
+                aliasInContext(collection, tld, context.period, seq)
             }
             val taken = statementStoreSlotRepository.allowanceEntries(context.chain.id, context.period, aliasesByIndex.values)
             val slots = aliasesByIndex.map { (seq, alias) ->
@@ -55,5 +61,10 @@ class StatementStoreSlotLoader @Inject constructor(
             }
             StatementSlotsForCollection(collection, slots)
         }
+    }
+
+    private suspend fun aliasInContext(collection: PeopleCollection, tld: DotNsTld, period: UInt, seq: UInt): BandersnatchAlias {
+        val ctx = BandersnatchContext.statementStoreSlot(tld, period, seq)
+        return bandersnatchKeyResolver.getAliasInContext(collection, ctx)
     }
 }

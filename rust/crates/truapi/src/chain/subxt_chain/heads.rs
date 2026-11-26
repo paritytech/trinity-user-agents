@@ -15,6 +15,7 @@ use crate::{
 };
 
 const HEADS: &str = "chain_heads";
+const FINALIZED_BLOCK: &str = "chain_finalized_block";
 const HEAD_EVENTS: &str = "chain_head_events";
 
 type HeadEvents = BoxStream<'static, Result<HeadEvent, RuntimeFailure>>;
@@ -27,6 +28,11 @@ impl ChainHeads for ChainRuntime {
 			finalized: finalized_block(&legacy, HEADS).await?,
 			best: best_block(&legacy, HEADS).await?,
 		})
+	}
+
+	async fn finalized_block(&self, genesis: H256) -> Result<HashAndNumber, RuntimeFailure> {
+		let legacy = self.legacy(genesis).await?;
+		finalized_block(&legacy, FINALIZED_BLOCK).await
 	}
 
 	async fn head_events(&self, genesis: H256) -> Result<HeadEvents, RuntimeFailure> {

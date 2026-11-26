@@ -91,8 +91,8 @@ export type MainToWorker =
   | { kind: "cancelPairing" }
   | { kind: "notifySessionStoreChanged" }
   | { kind: "notifyContactsChanged" }
-  | { kind: "acquireWorker"; productId: ProductId }
-  | { kind: "releaseWorker"; productId: ProductId }
+  | { kind: "claimWorker"; claimId: number; productId: ProductId }
+  | { kind: "releaseWorker"; claimId: number }
   | { kind: "activateStoredSession"; requestId: number }
   | { kind: "activateExternalSession"; requestId: number; blob: Uint8Array }
   /**
@@ -129,6 +129,7 @@ export type MainToWorker =
       tags: string[];
     }
   | { kind: "resetSessionState"; requestId: number }
+  | { kind: "clearProductState"; requestId: number; productId: ProductId }
   | {
       kind: "getPermissionAuthorizationStatus";
       productId: ProductId;
@@ -218,9 +219,9 @@ export type WorkerToMain =
       error: string;
     }
   /**
-   * Shared reply for `activateStoredSession`, `activateExternalSession` and
-   * `resetSessionState`: all three settle as a bare success or a failure
-   * reason.
+   * Shared reply for the requests that settle as a bare success or a failure
+   * reason, such as `activateStoredSession`, `resetSessionState` and
+   * `clearProductState`.
    */
   | { kind: "sessionActivationResponse"; requestId: number; ok: true }
   | {

@@ -9,9 +9,9 @@ use crate::{
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProviderError, StackFetchRequest, StackFetchResponse,
-		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
+		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductStorage,
+		ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse, StackHost,
+		StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -70,6 +70,15 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 		self.contacts
 			.pick_contact(product.product_id.clone())
 			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn contact_usernames(
+		&self,
+		product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, v01::GenericError> {
+		self.contacts
+			.contact_usernames(product.product_id.clone())
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 }
@@ -191,15 +200,15 @@ impl Navigation for CallbackPlatform {
 impl Notifications for CallbackPlatform {
 	async fn push_notification(
 		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		notification: latest::HostPushNotificationRequest,
+	) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
 		self.callbacks.on_core_log(
 			markers::NATIVE_PUSH_NOTIFICATION.target.to_string(),
 			notification.text.clone(),
 		);
 
 		let id = self.callbacks.push_notification(notification).await?;
-		Ok(v01::HostPushNotificationResponse { id })
+		Ok(latest::HostPushNotificationResponse { id })
 	}
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
@@ -229,34 +238,31 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 
 #[async_trait::async_trait]
 impl crate::platform::ExpandedCardHost for CallbackPlatform {
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, v01::GenericError> {
 		self.callbacks.on_core_log(
-			markers::NATIVE_SET_EXPANDED_CARD_FACE_SHOWN.target.to_string(),
-			format!("{shown}"),
+			markers::NATIVE_SET_EXPANDED_CARD_COVERED.target.to_string(),
+			format!("{covered}"),
 		);
 
 		self.callbacks
-			.set_expanded_card_face_shown(shown)
+			.set_expanded_card_covered(covered)
 			.await
 			.map_err(v01::GenericError::from)
 	}
 
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: latest::PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, v01::GenericError> {
 		self.callbacks.on_core_log(
-			markers::NATIVE_SET_EXPANDED_CARD_BACK_SHOWN.target.to_string(),
-			format!("{shown}"),
+			markers::NATIVE_TURN_EXPANDED_CARD.target.to_string(),
+			format!("{side:?}"),
 		);
 
-		self.callbacks
-			.set_expanded_card_back_shown(shown)
-			.await
-			.map_err(v01::GenericError::from)
+		self.callbacks.turn_expanded_card(side).await.map_err(v01::GenericError::from)
 	}
 }
 
@@ -349,6 +355,16 @@ impl ProductStorage for CallbackPlatform {
 		Ok(())
 	}
 
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.callbacks.clear_product_storage(product_id).await?;
+		self.storage_events.notify_storage_cleared_under(&owned);
+		Ok(())
+	}
+
 	fn subscribe_storage(
 		&self,
 		key: String,
@@ -366,32 +382,6 @@ impl ProductStorage for CallbackPlatform {
 				.map_err(|error| v01::GenericError { reason: error.to_string() })
 		};
 		stream::once(current).chain(rx).boxed()
-	}
-}
-
-#[async_trait::async_trait]
-impl ProductOperations for CallbackPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		self.callbacks
-			.begin_operation(product.product_id.clone(), label)
-			.await
-			.map(|id| v01::HostWorkerBeginOperationResponse { id })
-			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), v01::HostWorkerOperationError> {
-		self.callbacks
-			.end_operation(product.product_id.clone(), id)
-			.await
-			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
 	}
 }
 
@@ -680,21 +670,25 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatCreateRoomRequest,
-	) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
-		let status: v01::ChatRoomRegistrationStatus = self
+		room_id: String,
+		request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
+	{
+		let status: truapi::latest::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(request.room_id, request.name, request.icon)
+			.create_room(room_id, request.name, request.icon)
 			.await
-			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
+			.map_err(|error| truapi::latest::HostChatCreateRoomError::Unknown {
+				reason: error.to_string(),
+			})?;
 
-		if status == v01::ChatRoomRegistrationStatus::New &&
+		if status == truapi::latest::ChatRoomRegistrationStatus::New &&
 			let Ok(rooms) = self.chat.list_rooms().await
 		{
 			self.events.notify_chat_rooms_changed(rooms);
 		}
 
-		Ok(v01::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(

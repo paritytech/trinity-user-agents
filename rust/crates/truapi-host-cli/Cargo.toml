@@ -1,6 +1,6 @@
 [package]
 name = "truapi-host-cli"
-version = "0.31.0"
+version = "0.33.0"
 edition.workspace = true
 description = "Headless TrUAPI hosts: a signing-host companion and a pairing host that pair over the real People-chain statement store, for end-to-end testing without an external signer service"
 license = "MIT"
@@ -28,8 +28,8 @@ correctness = "warn"
 truapi = { path = "../truapi" }
 # Chain connections for the People, Bulletin and Asset Hub host traffic the preset
 # serves as roles, plus `Chain/*` playground methods: RPC nodes over TLS, or the
-# light client with the bundled network catalog. See src/chain.rs.
-truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws", "networks"] }
+# light client with the stack's light specs. See src/chain.rs.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws", "smoldot"] }
 trinity-stack = { path = "../trinity-stack" }
 alloy-sol-types = { workspace = true }
 anyhow = { workspace = true }
@@ -70,6 +70,8 @@ zeroize = { workspace = true, features = ["alloc", "derive"] }
 
 [dev-dependencies]
 alloy-primitives = { workspace = true }
+# The bundled catalog gives a test the genesis hashes of a network the CLI does not route.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["networks"] }
 truapi = { path = "../truapi", features = ["mock"] }
 tokio = { workspace = true, features = ["test-util"] }
 rusqlite = { workspace = true }

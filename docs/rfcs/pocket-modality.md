@@ -47,7 +47,7 @@ host-placed card on their own and the add flow layers on top without changing th
   same rules as a chat identifier (see Wire surface).
 - The **face** is the collapsed presentation, rendered natively from a `RendererNode` tree.
 - The **back** is an optional second face a card declares, drawn the same way and shown only by turning the opened card
-  over. The face shown otherwise is the card's front. The fixed theme, `faceShown` and `ExpandedCard::set_face_shown`
+  over. The face shown otherwise is the card's front. The fixed theme, `startsCovered` and `ExpandedCard::set_card_covered`
   apply to the card whichever side is up. A turn is not a move of the face, and hiding and showing the face keeps the
   side that was up.
 - The **expanded card** is the product's `widget` executable in a WebView.
@@ -90,8 +90,8 @@ The Widget runs under the same product identity and storage namespace as the wor
 state it shows are one product's.
 
 The host draws the face above the Widget, and the user can move it out of the way and back. The Widget can do the same
-with `ExpandedCard::set_face_shown`, to take the whole screen or to bring the face back after something on it changed. A
-card definition's `faceShown` sets where the face starts when the card opens. The host sizes the Widget to the part of
+with `ExpandedCard::set_card_covered`, to take the whole screen or to bring the face back after something on it changed. A
+card definition's `startsCovered` sets where the face starts when the card opens. The host sizes the Widget to the part of
 the screen the face leaves, so the Widget learns the space it has from its own `resize` event. The face is never locked:
 the user can always move it, and a call that arrives while the user is moving it or turning the card has no effect and
 is answered `UserMoving`, so the product can retry once the user lets go. A product should not undo a move the user
@@ -105,7 +105,7 @@ card returns it to its front. The host loads the back no later than when the car
 On an opened card both sides count as on screen, an exception to the renderer's Live rule, since the back is one turn
 away.
 
-The Widget can turn the card too, with `ExpandedCard::set_back_shown`, for example from a "Show my code" button on its
+The Widget can turn the card too, with `ExpandedCard::turn_card`, for example from a "Show my code" button on its
 page for a user who does not know the card turns. The call names the side to show rather than turning by half a turn, so
 repeating it changes nothing, and it answers once the turn starts. A call while the user is dragging the card, to turn
 it or to move the face, has no effect and is answered `UserMoving`. Asking for the back of a card with no back to show
@@ -136,15 +136,15 @@ type PocketCardDefinition = {
   id: string; // Card label, unique within the product. Screened as a chat identifier is.
   title: string; // Shown in the approval dialog and in host chrome.
   preview: string; // Path inside the worker archive to a RendererNode tree, JSON in the generated TypeScript shape.
-  faceShown?: boolean; // Whether the face is shown above the expanded card when it opens. Default true.
+  startsCovered?: boolean; // Whether the page covers the card when it opens. Default false.
   back?: string; // Path inside the worker archive to the back's RendererNode tree. Absent: the card has no back.
 };
 ```
 
-A `faceShown` that is not a boolean, or a `back` that is not a string or is empty, makes the definition invalid, as a
+A `startsCovered` that is not a boolean, or a `back` that is not a string or is empty, makes the definition invalid, as a
 missing `title` does, and an invalid definition drops all of the product's cards. A `back` file that is missing or does
 not decode counts as no file: the card shows its cached back, or has no back until the worker draws one. A host that
-does not read `faceShown` or `back` shows nothing wrong, so a product checks both before publishing rather than relying
+does not read `startsCovered` or `back` shows nothing wrong, so a product checks both before publishing rather than relying
 on what today's hosts display.
 
 The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
@@ -280,8 +280,8 @@ another product's cards. A host with no Pocket surface answers `remove_card` wit
 `list_subscribe` with the same error, which a product reads as an unsupported host rather than as an empty collection.
 
 The expanded card's call comes from the Widget, and `Pocket` is reachable only from the worker. An execution restriction
-applies to a whole trait, so the calls are a trait of their own, `23`, with `set_face_shown` as method `0` and
-`set_back_shown` as method `1`.
+applies to a whole trait, so the calls are a trait of their own, `23`, with `set_card_covered` as method `0` and
+`turn_card` as method `1`.
 
 ```rust
 /// The card a Widget is shown under.
@@ -289,31 +289,31 @@ applies to a whole trait, so the calls are a trait of their own, `23`, with `set
 #[crate::service(required_execution = Widget)]
 #[async_trait::async_trait]
 pub trait ExpandedCard: Send + Sync {
-    /// Show or hide the face above the calling Widget. Succeeds when the face is already in that state.
+    /// Cover or uncover the card under the calling Widget. Succeeds when the card is already in that state.
     #[wire(id = 0)]
-    async fn set_face_shown(
+    async fn set_card_covered(
         &self,
         cx: &CallContext,
-        request: HostExpandedCardSetFaceShownRequest,
-    ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>;
+        request: HostExpandedCardSetCardCoveredRequest,
+    ) -> Result<HostExpandedCardSetCardCoveredResponse, CallError<HostExpandedCardSetCardCoveredError>>;
 
-    /// Turn the card so its back (`true`) or its front (`false`) is up. Succeeds when that side is already up.
+    /// Turn the card so `side` is up. Succeeds when that side is already up.
     #[wire(id = 1)]
-    async fn set_back_shown(
+    async fn turn_card(
         &self,
         cx: &CallContext,
-        request: HostExpandedCardSetBackShownRequest,
-    ) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>;
+        request: HostExpandedCardTurnCardRequest,
+    ) -> Result<HostExpandedCardTurnCardResponse, CallError<HostExpandedCardTurnCardError>>;
 }
 ```
 
 ```rust
-pub struct HostExpandedCardSetFaceShownRequest {
-    /// `true` brings the face back, `false` moves it out of the way.
-    pub shown: bool,
+pub struct HostExpandedCardSetCardCoveredRequest {
+    /// `true` covers the card, `false` uncovers it.
+    pub covered: bool,
 }
 
-pub enum HostExpandedCardSetFaceShownError {
+pub enum HostExpandedCardSetCardCoveredError {
     /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
     NotPresented,
     /// The user is moving the face or turning the card; the request had no effect.
@@ -325,12 +325,17 @@ pub enum HostExpandedCardSetFaceShownError {
     },
 }
 
-pub struct HostExpandedCardSetBackShownRequest {
-    /// `true` turns the back up, `false` turns the front up.
-    pub shown: bool,
+pub struct HostExpandedCardTurnCardRequest {
+    /// The side to turn up.
+    pub side: PocketCardSide,
 }
 
-pub enum HostExpandedCardSetBackShownError {
+pub enum PocketCardSide {
+    Front,
+    Back,
+}
+
+pub enum HostExpandedCardTurnCardError {
     /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
     NotPresented,
     /// The user is turning the card or moving its face; the request had no effect.
@@ -345,7 +350,7 @@ pub enum HostExpandedCardSetBackShownError {
 }
 ```
 
-`HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s, as `remove_card`'s is.
+`HostExpandedCardSetCardCoveredResponse` and `HostExpandedCardTurnCardResponse` carry no payload, as `remove_card`'s does.
 Each call acts on the card above the Widget that made it, so no request names a card. An App or Worker caller is
 `Denied`, and a host without expanded cards, or one that cannot turn them, answers `Unsupported`. Both calls answer
 `UserMoving` while the user is moving the face or turning the card.
@@ -369,8 +374,8 @@ Each call acts on the card above the Widget that made it, so no request names a 
 - **Pocket declares no rendering method of its own.** A `card_render` and `action_subscribe` pair keyed by `card_id` was
   considered and dropped: a face is a body like any other, and a pair per surface costs four wire ids each and gives a
   product one handler per surface to register.
-- **`set_back_shown` sets a side, it does not toggle.** A toggle undoes itself when called twice or when it races the
-  user's own turn. Naming the side makes every call safe to repeat, as `set_face_shown` is.
+- **`turn_card` sets a side, it does not toggle.** A toggle undoes itself when called twice or when it races the
+  user's own turn. Naming the side makes every call safe to repeat, as `set_card_covered` is.
 - **The side is a context variant, not a render payload.** The render request has to name the side to draw, and a
   variant names it for presses too, so a product needs no action-id convention to tell the sides apart. A product on an
   SDK without the variant refuses back renders and keeps its front.

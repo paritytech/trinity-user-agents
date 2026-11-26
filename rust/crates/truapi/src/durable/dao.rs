@@ -1,6 +1,9 @@
 //! Queries over the `durable_tx` ledger, one SQL constant and one function
 //! each.
 
+mod dependency;
+
+use const_format::concatcp;
 use futures::stream::BoxStream;
 use rusqlite::{
 	Connection, Row, Transaction, named_params,
@@ -8,20 +11,25 @@ use rusqlite::{
 };
 use subxt::utils::H256;
 
+use dependency::{BLOCKED_BY_DEPENDENCY, released_dependencies};
+pub use dependency::{
+	CascadingFailure, abandon_cascading, cascading_failures, has_unsettled_dependency,
+	insert_dependency, observe_released_domains, registered_domain, released_submissions,
+};
+
 use super::model::{
-	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
-	GroupId, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan,
+	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
+	DurableTxStatus, GroupId, PolicyParams, SubmissionPlan, Window,
 };
 use crate::{
-	chain::{HashAndNumber, MortalExtrinsic, Mortality},
+	chain::{HashAndNumber, MortalExtrinsic},
 	store::{Db, DbError},
 };
 
 const INSERT: &str = "INSERT INTO durable_tx
-    (domain, group_id, tx_hash, birth_number, birth_hash, period, status, policy_id,
-     policy_params)
-    VALUES (:domain, :group_id, :tx_hash, :birth_number, :birth_hash, :period, 'PENDING',
-     :policy_id, :policy_params)
+    (domain, group_id, tx_hash, birth_number, period, status, policy_params)
+    VALUES (:domain, :group_id, :tx_hash, :birth_number, :period, 'PENDING',
+     :policy_params)
     RETURNING id";
 
 /// Records a presigned extrinsic as a `Pending` row, rebuilt through `plan`
@@ -33,16 +41,14 @@ pub fn insert(
 	extrinsic: &MortalExtrinsic,
 	plan: Option<&SubmissionPlan>,
 ) -> Result<DurableTxId, DbError> {
-	let birth = extrinsic.mortality.birth();
+	let window = Window::from(&extrinsic.mortality);
 	let id = tx.prepare_cached(INSERT)?.query_row(
 		named_params! {
 			":domain": domain.as_str(),
 			":group_id": group.map(GroupId::as_str),
 			":tx_hash": extrinsic.extrinsic.hash().0,
-			":birth_number": birth.number,
-			":birth_hash": birth.hash.0,
-			":period": extrinsic.mortality.period(),
-			":policy_id": plan.map(|plan| plan.policy.as_str()),
+			":birth_number": window.birth,
+			":period": window.period,
 			":policy_params": plan.map(|plan| &plan.params),
 		},
 		|row| row.get("id").map(DurableTxId),
@@ -50,24 +56,23 @@ pub fn insert(
 	Ok(id)
 }
 
-const SCHEDULE: &str = "INSERT INTO durable_tx
-    (domain, group_id, status, policy_id, policy_params)
-    VALUES (:domain, :group_id, 'PENDING_SUBMISSION', :policy_id, :policy_params)
+const DEFER: &str = "INSERT INTO durable_tx
+    (domain, group_id, status, policy_params)
+    VALUES (:domain, :group_id, 'PENDING_SUBMISSION', :policy_params)
     RETURNING id";
 
 /// Records a transaction built later through `plan`, as a
 /// `PendingSubmission` row with no attempt.
-pub fn schedule(
+pub fn defer(
 	tx: &Transaction<'_>,
 	domain: &DomainId,
 	group: Option<&GroupId>,
 	plan: &SubmissionPlan,
 ) -> Result<DurableTxId, DbError> {
-	let id = tx.prepare_cached(SCHEDULE)?.query_row(
+	let id = tx.prepare_cached(DEFER)?.query_row(
 		named_params! {
 			":domain": domain.as_str(),
 			":group_id": group.map(GroupId::as_str),
-			":policy_id": plan.policy.as_str(),
 			":policy_params": plan.params,
 		},
 		|row| row.get("id").map(DurableTxId),
@@ -75,27 +80,31 @@ pub fn schedule(
 	Ok(id)
 }
 
-const START_ATTEMPT: &str = "UPDATE durable_tx
+const START_ATTEMPT: &str = concatcp!(
+	"UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
-    birth_hash = :birth_hash, period = :period, success_number = NULL, success_hash = NULL,
+    period = :period, success_number = NULL, success_hash = NULL,
     scanned_number = NULL, attempts = attempts + 1,
     policy_params = COALESCE(:policy_params, policy_params)
-    WHERE id = :id AND status = 'PENDING_SUBMISSION'";
+    WHERE id = :id AND status = 'PENDING_SUBMISSION' AND NOT ",
+	BLOCKED_BY_DEPENDENCY
+);
 
 /// Gives a waiting row the attempt `extrinsic` makes, and `params` in place of
-/// its policy params when given. Returns whether the row was still waiting.
+/// its policy params when given. Returns whether the row was still waiting
+/// with no dependency blocking it: one may have failed or gone back to
+/// pending while the policy built the attempt.
 pub fn start_attempt(
 	tx: &Transaction<'_>,
 	id: DurableTxId,
 	extrinsic: &MortalExtrinsic,
 	params: Option<&PolicyParams>,
 ) -> Result<bool, DbError> {
-	let birth = extrinsic.mortality.birth();
+	let window = Window::from(&extrinsic.mortality);
 	let changed = tx.prepare_cached(START_ATTEMPT)?.execute(named_params! {
 		":tx_hash": extrinsic.extrinsic.hash().0,
-		":birth_number": birth.number,
-		":birth_hash": birth.hash.0,
-		":period": extrinsic.mortality.period(),
+		":birth_number": window.birth,
+		":period": window.period,
 		":policy_params": params,
 		":id": id.0,
 	})?;
@@ -112,66 +121,43 @@ pub fn abandon_submission(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool,
 	Ok(changed == 1)
 }
 
-const SUBMISSION_PLAN: &str = "SELECT policy_id, policy_params FROM durable_tx
-    WHERE id = :id AND policy_id IS NOT NULL";
+const WAITING_DOMAINS: &str = "SELECT DISTINCT domain FROM durable_tx
+    WHERE status = 'PENDING_SUBMISSION'";
 
-/// The plan that rebuilds the row with `id`, when it has one.
-pub fn submission_plan(
-	conn: &Connection,
-	id: DurableTxId,
-) -> Result<Option<SubmissionPlan>, DbError> {
-	let mut stmt = conn.prepare_cached(SUBMISSION_PLAN)?;
-	let mut rows = stmt.query(named_params! { ":id": id.0 })?;
-	Ok(rows.next()?.map(SubmissionPlan::from_row).transpose()?)
+/// The domain of every row waiting to be built.
+pub fn waiting_domains(conn: &Connection) -> Result<Vec<DomainId>, DbError> {
+	let mut stmt = conn.prepare_cached(WAITING_DOMAINS)?;
+	let domains = stmt.query_map([], domain_from_row)?;
+	Ok(domains.collect::<rusqlite::Result<_>>()?)
 }
 
-const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
-    FROM durable_tx WHERE status = 'PENDING_SUBMISSION' ORDER BY id";
+/// [`waiting_domains`], re-read after every commit that changes it.
+pub fn observe_waiting_domains(db: &Db) -> BoxStream<'static, Result<Vec<DomainId>, DbError>> {
+	db.observe(WAITING_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
+}
 
-/// Every row waiting to be built, in registration order, re-read after every
-/// commit that changes them.
-pub fn observe_pending_submissions(
+const LIVE_IN_DOMAIN: &str = "SELECT id, status FROM durable_tx WHERE domain = :domain
+    AND status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS')
+    UNION ALL
+    SELECT dependency.id, dependency.status FROM durable_tx_dependency
+    JOIN durable_tx waiting ON waiting.id = durable_tx_dependency.tx_id
+    JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
+    WHERE waiting.domain = :domain AND waiting.status = 'PENDING_SUBMISSION'
+    ORDER BY 1, 2";
+
+/// Emits whenever a row of `domain` is registered, changes between live
+/// statuses, or reaches a final status, and whenever a dependency of one of
+/// its waiting rows changes status, whatever the dependency's domain. What
+/// it emits is only a signal: ids and statuses.
+pub fn observe_domain_changes(
 	db: &Db,
-) -> BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>> {
-	db.observe(PENDING_SUBMISSIONS, |stmt| stmt.query_map([], ScheduledDurableTx::from_row))
-}
-
-const HAS_PENDING_SUBMISSIONS: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx
-    WHERE status = 'PENDING_SUBMISSION') AS waiting";
-
-/// Whether any row is waiting to be built.
-pub fn has_pending_submissions(conn: &Connection) -> Result<bool, DbError> {
-	let mut stmt = conn.prepare_cached(HAS_PENDING_SUBMISSIONS)?;
-	let waiting = stmt.query_row([], |row| row.get("waiting"))?;
-	Ok(waiting)
-}
-
-/// Whether any row is waiting to be built, re-read after every commit that
-/// changes it.
-pub fn observe_has_pending_submissions(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
-	db.observe(HAS_PENDING_SUBMISSIONS, |stmt| stmt.query_row([], |row| row.get("waiting")))
-}
-
-const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
-    FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain
-    AND policy_id = :policy_id AND group_id IS :group_id ORDER BY id";
-
-/// The rows of one domain, policy and group waiting to be built, in
-/// registration order.
-pub fn bucket_submissions(
-	conn: &Connection,
-	domain: &DomainId,
-	policy: &PolicyId,
-	group: Option<&GroupId>,
-) -> Result<Vec<ScheduledDurableTx>, DbError> {
-	let mut stmt = conn.prepare_cached(BUCKET_SUBMISSIONS)?;
-	let params = named_params! {
-		":domain": domain.as_str(),
-		":policy_id": policy.as_str(),
-		":group_id": group.map(GroupId::as_str),
-	};
-	let rows = stmt.query_map(params, ScheduledDurableTx::from_row)?;
-	Ok(rows.collect::<rusqlite::Result<_>>()?)
+	domain: DomainId,
+) -> BoxStream<'static, Result<Vec<(i64, String)>, DbError>> {
+	db.observe(LIVE_IN_DOMAIN, move |stmt| {
+		stmt.query_map(named_params! { ":domain": domain.as_str() }, |row| {
+			Ok((row.get(0)?, row.get(1)?))
+		})
+	})
 }
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx
@@ -247,7 +233,7 @@ pub fn observe_status(
 }
 
 const GROUP: &str = concat!(
-	"SELECT id, tx_hash, policy_id, policy_params, ",
+	"SELECT id, tx_hash, policy_params, ",
 	status_columns!(),
 	" FROM durable_tx WHERE domain = :domain AND group_id = :group_id ORDER BY id"
 );
@@ -294,16 +280,16 @@ pub fn observe_group(
 	})
 }
 
-const DOMAIN_ENTRIES: &str =
-	concat!("SELECT * FROM durable_tx WHERE domain = :domain AND ", submitted!(), " ORDER BY id");
+const UNDECIDED_ENTRIES: &str = "SELECT * FROM durable_tx
+    WHERE domain = :domain AND status IN ('PENDING', 'PENDING_SUCCESS') ORDER BY id";
 
-/// Every row of one domain with a submitted attempt, in registration order.
-pub fn domain_entries(
+/// Every row of one domain awaiting a verdict, in registration order.
+pub fn undecided_entries(
 	conn: &Connection,
 	domain: &DomainId,
 ) -> Result<Vec<DurableTxEntry>, DbError> {
 	Ok(conn
-		.prepare_cached(DOMAIN_ENTRIES)?
+		.prepare_cached(UNDECIDED_ENTRIES)?
 		.query_map(named_params! { ":domain": domain.as_str() }, DurableTxEntry::from_row)?
 		.collect::<rusqlite::Result<_>>()?)
 }
@@ -328,16 +314,15 @@ macro_rules! live_statuses {
 	};
 }
 
-const HAS_LIVE: &str = concat!(
-	"SELECT EXISTS (SELECT 1 FROM durable_tx WHERE status IN ",
-	live_statuses!(),
-	") AS live"
-);
+const LIVE_TRANSACTION_DOMAINS: &str =
+	concat!("SELECT DISTINCT domain FROM durable_tx WHERE status IN ", live_statuses!());
 
-/// Whether any transaction is waiting to be built or awaits a verdict,
-/// re-read after every commit that changes it.
-pub fn observe_has_live(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
-	db.observe(HAS_LIVE, |stmt| stmt.query_row([], |row| row.get("live")))
+/// The domain of every live transaction, re-read after every commit that
+/// changes them.
+pub fn observe_live_transaction_domains(
+	db: &Db,
+) -> BoxStream<'static, Result<Vec<DomainId>, DbError>> {
+	db.observe(LIVE_TRANSACTION_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
 }
 
 impl DurableTxEntry {
@@ -347,7 +332,7 @@ impl DurableTxEntry {
 			domain: domain_from_row(row)?,
 			group: group_from_row(row)?,
 			tx_hash: H256(row.get("tx_hash")?),
-			mortality: mortality_from_row(row)?,
+			window: Window { birth: row.get("birth_number")?, period: row.get("period")? },
 			status: status_from_row(row)?,
 			scanned_to: row.get("scanned_number")?,
 			plan: plan_from_row(row)?,
@@ -365,15 +350,6 @@ fn group_from_row(row: &Row<'_>) -> rusqlite::Result<Option<GroupId>> {
 	Ok(name.map(GroupId::new))
 }
 
-/// The era of the row's attempt, checked as [`Mortality::new`] checks it.
-fn mortality_from_row(row: &Row<'_>) -> rusqlite::Result<Mortality> {
-	let birth =
-		HashAndNumber { hash: H256(row.get("birth_hash")?), number: row.get("birth_number")? };
-	Mortality::new(birth, row.get("period")?).map_err(|error| {
-		rusqlite::Error::FromSqlConversionFailure(0, Type::Integer, Box::new(error))
-	})
-}
-
 /// The block the row's success was recorded at, when it has one.
 fn success_from_row(row: &Row<'_>) -> rusqlite::Result<Option<HashAndNumber>> {
 	let number: Option<u64> = row.get("success_number")?;
@@ -383,24 +359,24 @@ fn success_from_row(row: &Row<'_>) -> rusqlite::Result<Option<HashAndNumber>> {
 		.map(|(number, hash)| HashAndNumber { hash: H256(hash), number }))
 }
 
-impl ScheduledDurableTx {
-	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+impl DeferredDurableTx {
+	/// The waiting row `row`, with its dependencies read through `conn`.
+	fn from_row(row: &Row<'_>, conn: &Connection) -> rusqlite::Result<Self> {
+		let id = DurableTxId(row.get("id")?);
 		Ok(Self {
-			id: DurableTxId(row.get("id")?),
+			id,
 			domain: domain_from_row(row)?,
 			group: group_from_row(row)?,
 			plan: SubmissionPlan::from_row(row)?,
 			attempts: row.get("attempts")?,
+			dependencies: released_dependencies(conn, id)?,
 		})
 	}
 }
 
 impl SubmissionPlan {
 	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-		Ok(Self {
-			policy: PolicyId::new(row.get::<_, String>("policy_id")?),
-			params: PolicyParams(row.get("policy_params")?),
-		})
+		Ok(Self { params: PolicyParams(row.get("policy_params")?) })
 	}
 }
 
@@ -418,9 +394,8 @@ impl DurableTxState {
 
 /// The row's plan, when a policy builds it.
 fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<Option<SubmissionPlan>> {
-	row.get::<_, Option<String>>("policy_id")?
-		.map(|_| SubmissionPlan::from_row(row))
-		.transpose()
+	let params: Option<Vec<u8>> = row.get("policy_params")?;
+	Ok(params.map(|params| SubmissionPlan { params: PolicyParams(params) }))
 }
 
 impl ToSql for PolicyParams {

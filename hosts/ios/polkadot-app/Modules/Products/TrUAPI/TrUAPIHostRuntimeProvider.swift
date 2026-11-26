@@ -1,3 +1,4 @@
+import AsyncExtensions
 import Foundation
 import UIKit
 import UIKitExt
@@ -30,10 +31,10 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
-/// build bundles + the local session secret, activates the local session once,
-/// and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once a session secret exists.
+/// Builds one ``TrUAPIHostRuntime`` from host identity + the stack the build
+/// bundles + the local session secret, activates the local session once, and
+/// caches it. Built off the main thread by ``setup()``, or on first use
+/// before that, so startup is not blocked.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
@@ -42,12 +43,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let fundingHandler: FundingCoreEventHandling
+    private let remoteConfig: RemoteConfigObserving?
+    private let appliedConfig: () -> RemoteAppConfig?
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
-    private let logger: LoggerProtocol
+    private let logger: CoreEventLoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+    private var fundingProvidersObservation: Task<Void, Never>?
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
@@ -63,18 +68,28 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
+        fundingHandler: FundingCoreEventHandling,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        remoteConfig: RemoteConfigObserving? = nil,
+        appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
-        logger: LoggerProtocol
+        logger: CoreEventLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
+        self.fundingHandler = fundingHandler
         self.tldProvider = tldProvider
+        self.remoteConfig = remoteConfig
+        self.appliedConfig = appliedConfig
         self.deviceEncryptionKeys = deviceEncryptionKeys
         self.logger = logger
+    }
+
+    deinit {
+        fundingProvidersObservation?.cancel()
     }
 
     @MainActor
@@ -96,16 +111,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+    func attach(paymentsSupport: PaymentsSupport) {
         backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
+                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),
@@ -120,6 +132,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         if let cachedRuntime {
             bridge.install(on: cachedRuntime)
         }
+    }
+
+    /// Builds the runtime now, off the caller's thread, rather than on first
+    /// use: the core resumes the funding sessions a provider was still working
+    /// on when it starts. Called once, after the worker manager and payments
+    /// are attached.
+    func setup() async throws -> TrUAPIHostRuntime {
+        try await Task.detached { [self] in try sharedRuntime() }.value
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -177,6 +197,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
+        // Also before any execution opens, so a product's Funding request
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names.
+        runtime.setFunding(AppFundingHostBridge(handler: fundingHandler))
+        bridge.onWorkerCrashing { [weak fundingHandler] productId in
+            fundingHandler?.workerCrashing(productId: productId)
+        }
+        listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -237,5 +265,39 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// List the providers `funding_config` names once per launch: the config
+    /// already applied, or else the first one remote config delivers, as it
+    /// usually lands after the runtime is built. Later refreshes are not
+    /// followed until known products carry the funding providers.
+    func listFundingProviders(on runtime: TrUAPIHostRuntime) {
+        if let config = appliedConfig() {
+            apply(publishedNames: config.fundingProviders, on: runtime)
+            return
+        }
+        apply(publishedNames: [], on: runtime)
+
+        guard let stream = remoteConfig?.remoteConfigStream() else { return }
+
+        fundingProvidersObservation?.cancel()
+        fundingProvidersObservation = Task { [weak self, weak runtime] in
+            do {
+                for try await config in stream {
+                    guard let self, let runtime, !Task.isCancelled else { return }
+
+                    apply(publishedNames: config.fundingProviders, on: runtime)
+                    return
+                }
+            } catch {
+                self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
+            }
+        }
+    }
+
+    func apply(publishedNames: [String], on runtime: TrUAPIHostRuntime) {
+        runtime.setFundingProviderConfig(publishedNames: publishedNames)
     }
 }

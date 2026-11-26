@@ -101,9 +101,9 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
-  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
-  `dot` TLD.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
@@ -247,10 +247,11 @@ product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
 for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
-render stream is one worker reference the core holds on the product's behalf;
-the transition it causes arrives on the runtime bridge's
-`requestWorkerTransition`, never on the execution's. Two rules the core
+chat identity private key, which must not be logged or persisted. A feature calls
+`runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
+on that claim when its work ends. Starting, replacing or ending a render stream
+leaves the reference count unchanged. The first claim and final release reach
+the runtime bridge through `requestWorkerTransition`. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
@@ -361,6 +362,61 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Funding
+
+A host with a funding overlay implements `FundingHostBridge` and installs it
+once with `runtime.setFunding(_:)`, before opening any product execution.
+Without it, Funding calls answer unsupported. Products and the host's own
+Balance card reach the same overlay: the card opens a session with
+`openFunding(direction:amount:)`, a product with its own Funding request, and
+either way the core calls `presentFunding`.
+
+The core owns the sessions and keeps what the host draws. It calls
+`fundingChanged(intent:kind:)` whenever something changes, and the host reads
+the new state back: `fundingSession(intent:)` and `fundingProgress(intent:)`
+for `.session`, `fundingOptions(intent:)` for `.options` and
+`fundingQuotes(intent:)` for `.quotes`. Before `presentFunding` is called, the
+session's options name its providers and the rails, asset and tokens a
+selection can use. While `presentFunding` waits, the session is live:
+report the user's rail, asset, network, country and currency with
+`selectFundingOptions(intent:selection:)` whenever one changes, price it
+with `getFundingQuote(intent:amount:)` on that selection (the quote list carries the request id the
+call returned, `pending` rows first, and once every provider answered without
+a quote, the reason they gave and what it says about the amount; the core asks
+again every minute, each row keeping its answer until the provider answers
+again, until the session is handed over or the overlay closes, and a new
+`getFundingQuote` replaces the ask), hand it to the chosen provider with
+`selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
+`.started`. Answering `.dismissed` discards the session. A provider that needs
+one of its own screens asks first through `providerFrameRequested`; the core
+calls `presentProviderFrame` only once the host opened it with
+`openProviderFrame(intent:)`, at once while the user looks at the session or
+after a tap on a notice, and `fundingFrameWaiting(intent:)` says whether one
+still waits, so the notice can be shown again after redrawing. Whether the session
+waits on a transfer the user makes outside the frame is on its progress
+(`awaitsUserTransfer`). It is answered `.closed` when the screen closed itself or the core
+closed it because the payment moved, `.dismissed` when the user closed it and
+`.returned(url:)` when the page navigated to the request's `return_url`.
+
+`startFundingWhenQuoted(intent:requestId:)` hands the session to the best quote
+once every provider answered, until `cancelFundingAutoStart(intent:)`, a new ask
+or another selection. `fundingAmountIssue(intent:amount:spendable:)` says what
+is wrong with an amount for the selection, and `fundingAvailable()` whether any
+provider is offered, read again on `.providers`.
+
+`fundingEntries()` lists every session the core announced with its progress,
+`fundingHistory()` the ended ones as summaries, each with how it ended in
+`ended`, and `fundingSummary(intent:)` one of them. `fundingSessionOpen(intent:)`
+says whether a session's overlay can be shown again. Ended sessions keep being
+handed over on each resume until the host records each with
+`acknowledgeFundingSession(intent:)`, which it calls only while the history is
+on screen. `setFundingProviderConfig(publishedNames:)` lists the providers the
+remote configuration names, without a TLD, on every refresh; amounts cross as decimal strings of CASH units. Free functions hold
+the rules both apps share: the `fundingPage*` checks
+for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
+product runs from and which file answers a request, and
+`fundingResumePending(databaseDirectory:)` for starting the core at launch.
+
 ## Payments
 
 A host with a wallet serves top-ups, payments and the spendable balance by
@@ -410,7 +466,7 @@ has a final status.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes a frame channel over it through `window.__HOST_API_TRANSPORT__`. The product's SDK builds its own client over that channel, so frames are encoded by the `@parity/truapi` the product ships. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardCovered`, `turnExpandedCard`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -645,7 +701,7 @@ let runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer: "polkadotapp://stack?key=0x…&url=…",
         descriptor: try Data(contentsOf: descriptorURL),
-        allowsReservedValues: false
+        reservedValues: ReservedValuesPolicy(allowed: false)
     )
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
@@ -695,7 +751,7 @@ execution.close()
 runtime.disconnect()
 ```
 
-The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket. Operations the host may have started fail with `ConnectionResetError`. A call not yet sent goes out on the replacement once its handshake completes, or fails the same way when the SDK stops redialing. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+The updated `@parity/truapi` SDK keeps the same client across connection loss. The container replaces the socket. Operations the host may have started fail with `ConnectionResetError`. A call not yet sent goes out on the replacement once its handshake completes, or fails the same way when the container stops redialing. Recreate read/watch subscriptions in the provider that owns them. SDKs that predate the injected transport encode their frames over the minimal `__HOST_API_PORT__` adapter. It survives connection loss too, and ends what the lost connection carried with a `HostFailure` error.
 
 The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and handles native permission prompts; it does not relay individual network permission messages. An upfront permission request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation rather than persisted.
 

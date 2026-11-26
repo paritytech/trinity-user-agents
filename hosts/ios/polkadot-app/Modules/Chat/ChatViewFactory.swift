@@ -85,9 +85,14 @@ enum ChatViewFactory {
             targetAssetInfo: asset.asset.digitalDollarDisplayInfo,
             formatterFactory: AssetBalanceFormatterFactory()
         )
+        let fiatAmountFormatter = TransferAmountViewModelFactory(
+            targetAssetInfo: asset.asset.digitalDollarFigureDisplayInfo,
+            formatterFactory: AssetBalanceFormatterFactory()
+        )
         let viewModelFactory = ChatViewModelFactory(
             dependencies: .init(
                 balanceFactory: amountFormatter,
+                fiatAmountFactory: fiatAmountFormatter,
                 customDecoders: messageDecoders,
                 attachmentViewModelFactory: ChatAttachmentViewModelFactory(
                     uploadAttachmentStore: uploadAttachmentStore,
@@ -160,6 +165,7 @@ enum ChatViewFactory {
             chatId: chatId,
             engine: chatEngine,
             reactionRepository: reactionRepository,
+            reclaimCoinsService: flowState.coinageService.reclaimCoinsService,
             foregroundVisibilityReporter: flowState.foregroundVisibilityReporter,
             notificationsCleaner: flowState.notificationsCleaner
         )

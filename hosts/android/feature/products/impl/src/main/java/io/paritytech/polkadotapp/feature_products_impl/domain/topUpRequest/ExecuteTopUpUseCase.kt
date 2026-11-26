@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import timber.log.Timber
 import javax.inject.Inject
@@ -78,6 +79,7 @@ class RealExecuteTopUpUseCase @Inject constructor(
             // Claiming already ends on its own window, so it needs no bound of its own here. Nothing is
             // blocked on this call any more — the product follows the status instead of waiting on a reply.
             is TopUpSource.Coins -> claimReceivedCoinsUseCase.claim(source.coinKeys, groupId, retryUntil)
+                .mapNotNull { it.getOrNull() }
         }
 
         return detections

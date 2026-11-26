@@ -13,7 +13,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardCover
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,9 +28,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
-import uniffi.truapi.ExpandedCardFaceOutcome
-import uniffi.truapi.HostRejection
 import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ExpandedCardCoverOutcome
+import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
 
@@ -53,6 +53,7 @@ class ProductTrUAPIHostBridgeTest {
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
+        coreEventLogger = CoreEventLogger { _, _, _, _ -> },
         scope = scope,
     )
 
@@ -99,7 +100,7 @@ class ProductTrUAPIHostBridgeTest {
         verify { execution.close() }
     }
 
-    private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
+    private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardCover?): HostBridge {
         var opened: HostBridge? = null
         val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
             opened = invocation.getArgument(0)
@@ -117,27 +118,27 @@ class ProductTrUAPIHostBridgeTest {
         return checkNotNull(opened)
     }
 
-    // Only a session drawn under a card has a face to move; any other session must say so rather
+    // Only a session drawn under a card has a card to cover; any other session must say so rather
     // than pretend.
     @Test
-    fun `a product that is not under a card cannot move a face`() = runTest {
+    fun `a product that is not under a card cannot cover one`() = runTest {
         val hostBridge = attachCapturingBridge(card = null)
 
-        assertEquals(ExpandedCardFaceOutcome.UNSUPPORTED, hostBridge.setExpandedCardFaceShown(true))
+        assertEquals(ExpandedCardCoverOutcome.UNSUPPORTED, hostBridge.setExpandedCardCovered(true))
     }
 
     @Test
     fun `a product under a card asks that card and gets its answer`() = runTest {
         val asked = mutableListOf<Boolean>()
-        val hostBridge = attachCapturingBridge(ExpandedCardFace { shown ->
-            asked += shown
-            ExpandedCardFaceOutcome.USER_MOVING
+        val hostBridge = attachCapturingBridge(ExpandedCardCover { covered ->
+            asked += covered
+            ExpandedCardCoverOutcome.USER_MOVING
         })
 
-        val outcome = hostBridge.setExpandedCardFaceShown(false)
+        val outcome = hostBridge.setExpandedCardCovered(true)
 
-        assertEquals(listOf(false), asked)
-        assertEquals(ExpandedCardFaceOutcome.USER_MOVING, outcome)
+        assertEquals(listOf(true), asked)
+        assertEquals(ExpandedCardCoverOutcome.USER_MOVING, outcome)
     }
 
     @Test

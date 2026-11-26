@@ -5,9 +5,11 @@ import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.deco
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.encodeToByteArray
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.X25519PublicKey
+import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
+import io.paritytech.polkadotapp.common.utils.exponentialRetryDelay
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
@@ -19,6 +21,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.ChatReque
 import io.paritytech.polkadotapp.feature_statement_store_api.data.Statement
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementData
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementStoreService
+import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementSubmitError
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementTopic
 import io.paritytech.polkadotapp.feature_statement_store_api.data.TopicFilter
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
@@ -26,6 +29,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementSto
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.SessionAccountParams
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.StatementExpiry
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.prepareSignedStatement
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
 
 interface ChatRequestTransport {
     suspend fun fetchChatRequests(
@@ -53,6 +58,14 @@ interface ChatRequestTransport {
         statementProver: StatementStoreMessageProver,
     ): Result<Unit>
 
+    suspend fun submitChatRequestCancel(
+        topics: OutgoingChatRequestTopics,
+        cancel: ChatRequestDecrypted,
+        derivationDomain: SharedSecretDerivationDomain,
+        statementProver: StatementStoreMessageProver,
+        replacedCopyExpiry: ULong,
+    ): Result<Unit>
+
     /** Upper bound of the encoded statement [submitChatRequest] would submit for [request]. */
     suspend fun estimateStatementSize(
         topics: OutgoingChatRequestTopics,
@@ -65,10 +78,20 @@ interface ChatRequestTransport {
         derivationDomain: SharedSecretDerivationDomain,
         signer: AccountId,
     ): Result<Boolean>
+
+    suspend fun fetchChatRequestCopiesToCancel(
+        session: ChatRequestTopic.Session,
+        derivationDomain: SharedSecretDerivationDomain,
+    ): Result<List<StoredChatRequestCopy>>
 }
+
+class StoredChatRequestCopy(val signerAccountId: AccountId, val expiry: ULong)
 
 // Generous upper bound on what a chat request statement adds around its data: proof, expiry, topics, length prefixes.
 private val STATEMENT_ENVELOPE_SIZE = 512.bytes
+
+private const val CANCEL_ATTEMPTS = 10
+private val CANCEL_RETRY_DELAY = exponentialRetryDelay(initialDelay = 1.seconds, maxDelay = 256.seconds)
 
 class RealChatRequestTransport @Inject constructor(
     private val coroutineDispatchers: CoroutineDispatchers,
@@ -118,10 +141,35 @@ class RealChatRequestTransport @Inject constructor(
         derivationDomain: SharedSecretDerivationDomain,
         statementProver: StatementStoreMessageProver,
     ): Result<Unit> {
-        return encryptAndEncodeStatementData(request, peerPublicKey = topics.session.peerChatKey)
-            .mapCatching { createChatRequestStatementBody(it, topics, derivationDomain) }
-            .mapCatching { statementProver.prepareSignedStatement(it) }
+        return prepareStatement(topics, request, derivationDomain, statementProver, StatementExpiry.createForCurrentTimestamp())
             .flatMap { statementStoreService.submitStatement(it) }
+    }
+
+    override suspend fun submitChatRequestCancel(
+        topics: OutgoingChatRequestTopics,
+        cancel: ChatRequestDecrypted,
+        derivationDomain: SharedSecretDerivationDomain,
+        statementProver: StatementStoreMessageProver,
+        replacedCopyExpiry: ULong,
+    ): Result<Unit> {
+        return retryingCancelFailures {
+            val expiry = StatementExpiry.nextAfter(replacedCopyExpiry)
+
+            prepareStatement(topics, cancel, derivationDomain, statementProver, expiry)
+                .flatMap { statementStoreService.submitStatementOnce(it) }
+        }
+    }
+
+    private suspend fun prepareStatement(
+        topics: OutgoingChatRequestTopics,
+        request: ChatRequestDecrypted,
+        derivationDomain: SharedSecretDerivationDomain,
+        statementProver: StatementStoreMessageProver,
+        expiry: ULong,
+    ): Result<Statement> {
+        return encryptAndEncodeStatementData(request, peerPublicKey = topics.session.peerChatKey)
+            .mapCatching { createChatRequestStatementBody(it, topics, derivationDomain, expiry) }
+            .mapCatching { statementProver.prepareSignedStatement(it) }
     }
 
     override suspend fun estimateStatementSize(
@@ -136,11 +184,48 @@ class RealChatRequestTransport @Inject constructor(
         session: ChatRequestTopic.Session,
         derivationDomain: SharedSecretDerivationDomain,
         signer: AccountId,
-    ): Result<Boolean> = withContext(coroutineDispatchers.io) {
+    ): Result<Boolean> {
+        return fetchChatRequestCopies(session, derivationDomain).map { copies ->
+            copies.any { it.signerAccountId == signer }
+        }
+    }
+
+    override suspend fun fetchChatRequestCopiesToCancel(
+        session: ChatRequestTopic.Session,
+        derivationDomain: SharedSecretDerivationDomain,
+    ): Result<List<StoredChatRequestCopy>> {
+        return retryingCancelFailures { fetchChatRequestCopies(session, derivationDomain) }
+    }
+
+    private suspend fun fetchChatRequestCopies(
+        session: ChatRequestTopic.Session,
+        derivationDomain: SharedSecretDerivationDomain,
+    ): Result<List<StoredChatRequestCopy>> = withContext(coroutineDispatchers.io) {
         val sessionTopic = session.toStatementTopic(derivationDomain)
 
         statementStoreService.fetchStatements(TopicFilter.MatchAll(listOf(sessionTopic))).map { statements ->
-            statements.any { it.proof.publicKey.contentEquals(signer.value) }
+            statements.map { StoredChatRequestCopy(signerAccountId = it.proof.publicKey.intoAccountId(), expiry = it.body.expiry) }
+        }
+    }
+
+    private suspend fun <T> retryingCancelFailures(action: suspend () -> Result<T>): Result<T> {
+        var attempt = 1
+
+        while (true) {
+            val result = action()
+            val error = result.exceptionOrNull()
+            if (error == null || !error.allowsCancelRetry() || attempt == CANCEL_ATTEMPTS) return result
+
+            delay(CANCEL_RETRY_DELAY.delayFor(attempt))
+            attempt++
+        }
+    }
+
+    private fun Throwable.allowsCancelRetry(): Boolean {
+        return when (this) {
+            is StatementSubmitError.ChannelPriorityTooLow -> true
+            is StatementSubmitError -> false
+            else -> true
         }
     }
 
@@ -148,12 +233,15 @@ class RealChatRequestTransport @Inject constructor(
         statementData: StatementData,
         topics: OutgoingChatRequestTopics,
         derivationDomain: SharedSecretDerivationDomain,
+        expiry: ULong,
     ): Statement.Body {
+        val sessionTopic = topics.session.toStatementTopic(derivationDomain)
         val statementBody = Statement.Body(
-            expiry = StatementExpiry.createForCurrentTimestamp(),
+            channel = sessionTopic,
+            expiry = expiry,
             topic1 = topics.day.toStatementTopic(derivationDomain),
             topic2 = topics.full.toStatementTopic(derivationDomain),
-            topic3 = topics.session.toStatementTopic(derivationDomain),
+            topic3 = sessionTopic,
             data = statementData
         )
         return statementBody

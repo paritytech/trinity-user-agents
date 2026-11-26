@@ -249,6 +249,12 @@ private extension CoinageBackupRecoveryService {
         let found: Int
     }
 
+    /// One scanned batch: the assets it saved, and how many keys were in use, which decides whether it is empty.
+    struct ScannedBatch {
+        let found: Int
+        let used: Int
+    }
+
     /// A failed scan counts nothing and leaves the installation for the next launch to finish.
     struct RecoveredAssets {
         let coins: Result<Int, Error>
@@ -280,13 +286,13 @@ private extension CoinageBackupRecoveryService {
         limit: ScanLimit
     ) async -> Result<Int, Error> {
         let scanned = await gapScan(from: startIndex, limit: limit) { [scanner, assetStore] batchStart in
-            let coins = try await scanner.scanCoins(
+            let batch = try await scanner.scanCoins(
                 installation: installation,
                 startIndex: batchStart,
                 count: Config.batchSize
             )
-            try await assetStore.saveNew(coins: coins)
-            return coins.count
+            try await assetStore.saveNew(coins: batch.coins)
+            return ScannedBatch(found: batch.coins.count, used: batch.usedCount)
         }
         return await scanned
             .mapError { error in
@@ -313,7 +319,7 @@ private extension CoinageBackupRecoveryService {
                 count: Config.batchSize
             )
             try await assetStore.saveNew(vouchers: vouchers)
-            return vouchers.count
+            return ScannedBatch(found: vouchers.count, used: vouchers.count)
         }
         return await scanned
             .mapError { error in
@@ -331,7 +337,7 @@ private extension CoinageBackupRecoveryService {
     func gapScan(
         from startIndex: DerivationIndex,
         limit: ScanLimit,
-        scanBatch: (_ batchStart: DerivationIndex) async throws -> Int
+        scanBatch: (_ batchStart: DerivationIndex) async throws -> ScannedBatch
     ) async -> Result<GapScanResult, Error> {
         var nextIndex = startIndex
         var batches = 0
@@ -339,15 +345,15 @@ private extension CoinageBackupRecoveryService {
         var found = 0
 
         while !limit.isReached(batches: batches, emptyBatchesInARow: emptyBatchesInARow) {
-            let foundInBatch: Int
+            let batch: ScannedBatch
             do {
-                foundInBatch = try await scanBatch(nextIndex)
+                batch = try await scanBatch(nextIndex)
             } catch {
                 return .failure(error)
             }
 
-            found += foundInBatch
-            emptyBatchesInARow = foundInBatch > 0 ? 0 : emptyBatchesInARow + 1
+            found += batch.found
+            emptyBatchesInARow = batch.used > 0 ? 0 : emptyBatchesInARow + 1
             batches += 1
             nextIndex += Config.batchSize
         }

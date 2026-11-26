@@ -21,13 +21,12 @@
 // localhost WebSocket bridge. Start it with `execution.startWsBridge()` and load
 // the product page after injecting `LocalhostBridgeBootstrap.script(...)` and
 // `ContainerScriptBundle.load(...)` at document start. The container publishes
-// `window.__HOST_API_CLIENT__` and a compatibility MessagePort for older SDKs.
+// `window.__HOST_API_TRANSPORT__`, and a MessagePort for SDKs that predate it.
 
 package io.parity.truapi
 
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
@@ -88,11 +87,12 @@ import uniffi.truapi.PocketCardRemoval
 import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
-import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardCoverOutcome
 import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
@@ -114,6 +114,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.HostContactUsernames
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
@@ -168,9 +169,6 @@ interface HostCoreStorage {
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
 }
-
-/** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
-private val defaultOperationIds = AtomicInteger(0)
 
 /**
  * Host-side callback bundle that the Rust core invokes for capabilities the
@@ -253,27 +251,26 @@ interface HostBridge {
     ): DevicePermissionStatus = DevicePermissionStatus.NOT_APPLICABLE
 
     /**
-     * Show or hide the face above this execution's expanded card. Answers
-     * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
-     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it,
-     * and returns without waiting for the animation.
+     * Cover (`true`) or uncover (`false`) this execution's expanded card. Answers
+     * [ExpandedCardCoverOutcome.NOT_PRESENTED] when the product is not under its
+     * card and [ExpandedCardCoverOutcome.USER_MOVING] while the user drags it.
      *
-     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
-     * says so instead of pretending it moved one.
+     * Defaults to [ExpandedCardCoverOutcome.UNSUPPORTED], so an app without cards
+     * says so instead of pretending it covered one.
      */
-    suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-        ExpandedCardFaceOutcome.UNSUPPORTED
+    suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+        ExpandedCardCoverOutcome.UNSUPPORTED
 
     /**
-     * Turn this execution's expanded card so its back (`true`) or its front
-     * (`false`) is up. Answers [ExpandedCardTurnOutcome.NO_BACK] when the card
-     * has no back to show, and the face call's outcomes otherwise. Returns
-     * without waiting for the animation.
+     * Turn this execution's expanded card so [side] is up. Answers
+     * [ExpandedCardTurnOutcome.NO_BACK] when the card has no back to show, and
+     * the cover call's outcomes otherwise. Returns without waiting for the
+     * animation.
      *
      * Defaults to [ExpandedCardTurnOutcome.UNSUPPORTED], so an app that cannot
      * turn cards says so.
      */
-    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+    suspend fun turnExpandedCard(side: PocketCardSide): ExpandedCardTurnOutcome =
         ExpandedCardTurnOutcome.UNSUPPORTED
 
     /**
@@ -373,7 +370,7 @@ interface HostBridge {
      * [TrUAPIHostRuntime] was built with, never on the per-execution bridge
      * passed to [TrUAPIHostRuntime.openProductExecution]. Can arrive on any
      * thread, including synchronously on the calling thread during
-     * `acquireWorker`/`releaseWorker`, often the main thread and
+     * `claimWorker` or a claim's `release`, often the main thread and
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
@@ -386,24 +383,6 @@ interface HostBridge {
      * Can arrive on any thread.
      */
     fun workerCrashing(productId: ProductId, crashes: UInt) {}
-
-    /**
-     * Begin a pending operation. [label] is a log/UI hint, empty when the
-     * product gave none. Leave unimplemented to opt out of worker keep-alive;
-     * override to run background work past the product's surface.
-     *
-     * The default id is still distinct per call, because an operation id names
-     * one operation: a host overriding only [endOperation], and the core's own
-     * demand accounting, both end the wrong ones when every operation shares an
-     * id.
-     */
-    @Throws(HostRejection::class)
-    suspend fun beginOperation(productId: ProductId, label: String): UInt =
-        defaultOperationIds.incrementAndGet().toUInt()
-
-    /** End a pending operation. Idempotent, so a retry after an ambiguous failure is safe. */
-    @Throws(HostRejection::class)
-    suspend fun endOperation(productId: ProductId, id: UInt) {}
 
     /**
      * A device finished pairing with this signing host.
@@ -467,6 +446,20 @@ interface HostBridge {
     suspend fun encryptedStorageDelete(key: ByteArray): Unit =
         throw HostRejection.Rejected("this host keeps no encrypted storage")
 
+    /**
+     * Remove every value [productId] keeps in product storage. Idempotent.
+     * Runtime-wide, like [durableWorkChanged]: the core calls it from
+     * [TrUAPIHostRuntime.clearProductState], when the product may have no
+     * execution and so no bridge of its own. Every key the product owns starts
+     * with `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`,
+     * so a shared store removes keys with that prefix and a store kept per
+     * product drops that product's store. Defaults to a rejection, so clearing
+     * the product's state fails on a host that has not implemented it.
+     */
+    @Throws(HostLocalStorageReadException::class)
+    suspend fun clearProductStorage(productId: ProductId): Unit =
+        throw HostLocalStorageReadException.Unknown("this host does not clear product storage")
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -485,9 +478,12 @@ interface HostBridge {
  */
 interface ChatHostBridge {
     /**
-     * Create or resolve a native product Chat room. The core has bounded and
-     * normalized these arguments and screened the icon scheme; escaping them
-     * for the surface that renders them is still the host's job.
+     * Create or resolve a native product Chat room. `roomId` is the id that the
+     * core resolved for the room, and every later call names the room with it:
+     * the id that the core derived, or, for a product built against the earlier
+     * client, the id that the product gave. The core has bounded and normalized
+     * these arguments and screened the icon scheme; escaping them for the
+     * surface that renders them is still the host's job.
      */
     @Throws(HostRejection::class)
     suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
@@ -631,11 +627,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = withHostRejection { bridge.devicePermissionStatus(request) }
 
-    override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-        withHostRejection { bridge.setExpandedCardFaceShown(shown) }
+    override suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+        withHostRejection { bridge.setExpandedCardCovered(covered) }
 
-    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
-        withHostRejection { bridge.setExpandedCardBackShown(shown) }
+    override suspend fun turnExpandedCard(side: PocketCardSide): ExpandedCardTurnOutcome =
+        withHostRejection { bridge.turnExpandedCard(side) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -703,11 +699,10 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
 
-    override suspend fun beginOperation(productId: ProductId, label: String): UInt =
-        withHostRejection { bridge.beginOperation(productId, label) }
+    override suspend fun clearProductStorage(productId: ProductId) =
+        withStorageException { bridge.clearProductStorage(productId) }
 
-    override suspend fun endOperation(productId: ProductId, id: UInt) =
-        withHostRejection { bridge.endOperation(productId, id) }
+
 }
 
 // A host that throws an exception type its callback does not declare crosses
@@ -789,9 +784,11 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
  * belongs to the host and not to any one product. A runtime without one
  * answers `contacts.pick` with `Unsupported`.
  *
- * Nothing here reaches a product, and the list never reaches the core: it
- * asks only about the handles a transaction names, and the picker returns the
- * one person the user chose. Omit the contacts the user has blocked, from both.
+ * No account reaches a product, and the accounts on the list never reach the
+ * core: it asks only about the handles a transaction names, and the picker
+ * returns the one person the user chose. Usernames reach the core only through
+ * [contactUsernames], for the game product. Omit the contacts the
+ * user has blocked, from all three.
  */
 interface ContactsHostBridge {
     /**
@@ -810,6 +807,16 @@ interface ContactsHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun pickContact(productId: ProductId): HostContactPick
+
+    /**
+     * List the dotNS usernames of the unblocked contacts the picker would
+     * offer, each the bare label with no top-level domain. The core asks only
+     * for the game product, so [productId] is not a filter. Runs inline, so
+     * answer from what is already in hand. Defaults to
+     * [HostContactUsernames.Unsupported].
+     */
+    @Throws(HostRejection::class)
+    fun contactUsernames(productId: ProductId): HostContactUsernames = HostContactUsernames.Unsupported
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
@@ -818,6 +825,9 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 
     override suspend fun pickContact(productId: ProductId): HostContactPick =
         withHostRejection { bridge.pickContact(productId) }
+
+    override fun contactUsernames(productId: ProductId): HostContactUsernames =
+        withHostRejection { bridge.contactUsernames(productId) }
 }
 
 /**
@@ -1123,22 +1133,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
-    /**
-     * Take one reference on the product's worker for a modality holder that is
-     * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.requestWorkerTransition], which is where the host starts the
-     * worker. Pair every call with one [releaseWorker].
-     */
-    fun acquireWorker(productId: ProductId) {
-        inner.acquireWorker(productId)
-    }
+    /** The first claim requests a worker start. Releasing the last claim requests a stop. */
+    fun claimWorker(productId: ProductId): NativeWorkerClaim = inner.claimWorker(productId)
 
     /**
-     * Release one reference. The last one reports a stop transition, after
-     * which the host may stop the worker. Releasing with none held is a no-op.
+     * Forget one product: revoke its grants and Allow once answers, then
+     * remove its values from product storage through
+     * [HostBridge.clearProductStorage] on the bridge this runtime was built
+     * with. The wallet session and other products are kept. Stop the product's
+     * executions first: a value a running execution writes after the clear is
+     * kept.
      */
-    fun releaseWorker(productId: ProductId) {
-        inner.releaseWorker(productId)
+    suspend fun clearProductState(productId: ProductId) {
+        inner.clearProductState(productId)
     }
 
     /**
