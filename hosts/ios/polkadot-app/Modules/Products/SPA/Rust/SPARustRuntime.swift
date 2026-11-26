@@ -28,13 +28,17 @@ actor SPARustRuntime {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
     private let hostEventRecorder: HostEventRecording
-    private let hostSessionId = UUID()
+    private let openTap: HostOpenTap?
+    private let loadAttempt: Int
+    private let hostSessionId: UUID
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
     private var servedContent: ProductContent?
+    private var webViewCreatedAtMilliseconds: Int?
+    private var pageVisibleRecorded = false
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
@@ -42,7 +46,10 @@ actor SPARustRuntime {
         productOpening: ProductOpening,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        hostEventRecorder: HostEventRecording
+        hostEventRecorder: HostEventRecording,
+        hostSessionID: UUID,
+        loadAttempt: Int = 1,
+        openTap: HostOpenTap? = nil
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -50,6 +57,10 @@ actor SPARustRuntime {
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
+        self.openTap = openTap
+        self.loadAttempt = loadAttempt
+        // The view's id, the tap's when a tap opened it, so the tap, a retry and the page share one.
+        hostSessionId = hostSessionID
     }
 
     deinit {
@@ -92,7 +103,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
             bootstrapScript: bootstrapScript,
             hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
                 hostSessionID: hostSessionId,
-                truapiHostVersion: truapiHostVersion()
+                truapiHostVersion: truapiHostVersion(),
+                openTap: openTap
             )
         )
 
@@ -104,12 +116,19 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
+        let createdAtMilliseconds = HostEventClock.monotonicMilliseconds()
+        webViewCreatedAtMilliseconds = createdAtMilliseconds
         hostEventRecorder.record(.webViewCreated(
             hostSessionID: hostSessionId,
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+            monotonicMilliseconds: createdAtMilliseconds,
+            loadAttempt: loadAttempt,
+            openTap: openTap
         ))
+
+        // Before the disposed check below, so no suspension sits between it and the return.
+        await observeFirstVisibleCommit(of: engine)
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -167,6 +186,25 @@ extension SPARustRuntime: SPARuntimeProtocol {
     }
 }
 
+extension SPARustRuntime {
+    /// Sends `host.page.visible` for the first main-frame commit of this session and ignores every later one,
+    /// so a reload or an in-page navigation does not send it again.
+    func pageDidCommit(monotonicMilliseconds: Int) {
+        guard !pageVisibleRecorded, !disposed, let createdAtMilliseconds = webViewCreatedAtMilliseconds else { return }
+
+        pageVisibleRecorded = true
+        hostEventRecorder.record(.pageVisible(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: monotonicMilliseconds,
+            webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
+            loadAttempt: loadAttempt,
+            openTap: openTap
+        ))
+    }
+}
+
 private extension SPARustRuntime {
     /// Bytes come from the executable's own subname; the origin stays the base domain, which is
     /// what permission grants and web storage are keyed by.
@@ -220,5 +258,13 @@ private extension SPARustRuntime {
 
     func checkNotDisposed() throws {
         guard !disposed else { throw CancellationError() }
+    }
+
+    /// The clock is read where the commit happens, before the hop onto this actor.
+    func observeFirstVisibleCommit(of engine: JSEngineProtocol) async {
+        await engine.onMainFrameCommit { [weak self] in
+            let committedAtMilliseconds = HostEventClock.monotonicMilliseconds()
+            Task { await self?.pageDidCommit(monotonicMilliseconds: committedAtMilliseconds) }
+        }
     }
 }

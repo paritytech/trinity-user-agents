@@ -822,6 +822,10 @@ once:
 make ios-bootstrap
 ```
 
+iOS unit tests share their issue reporter in
+`hosts/ios/polkadot-appTests/Helpers/Mocks/`, including the connection-pool
+diagnostic tests.
+
 Then open `hosts/ios/polkadot-app.xcodeproj`. Rerun it after changing anything
 the bindings are generated from, which is the `truapi` or `truapi-provider`
 crates. `SIM_ONLY=1` halves it by skipping

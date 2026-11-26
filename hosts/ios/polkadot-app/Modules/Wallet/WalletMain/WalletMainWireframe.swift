@@ -1,3 +1,4 @@
+import IssueMonitoring
 import Products
 import UIKit
 import UIKitExt
@@ -47,7 +48,12 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
     func showPocketCard(_ card: PocketCardViewModel) {
         guard let pocket = ProductPocketService.current else { return }
 
-        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket).open(card)
+        PocketCardOpening(
+            flowState: flowState,
+            navigator: moduleNavigator,
+            pocket: pocket,
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
+        ).open(card)
     }
 
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm: @escaping () -> Void) {

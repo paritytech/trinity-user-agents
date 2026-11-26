@@ -1,6 +1,7 @@
 import struct TrUAPIHost.ProductId
 import enum TrUAPIHost.ExecutableKind
 import Foundation
+import IssueMonitoring
 import Products
 
 enum SPAContentSource {
@@ -46,6 +47,8 @@ struct SPAConfiguration {
     let contentSource: SPAContentSource
     let presentation: SPAPresentation
     let browserTabId: UUID?
+    /// The tap that opened this page, handed to the first runtime only so a retry is not timed from it.
+    let openTap: HostOpenTap?
 
     init(
         title: String?,
@@ -54,7 +57,8 @@ struct SPAConfiguration {
         page: ProductPage,
         contentSource: SPAContentSource = .dotNs,
         presentation: SPAPresentation = .pushed,
-        browserTabId: UUID? = nil
+        browserTabId: UUID? = nil,
+        openTap: HostOpenTap? = nil
     ) {
         self.title = title
         self.isRootScreen = isRootScreen
@@ -63,6 +67,7 @@ struct SPAConfiguration {
         self.contentSource = contentSource
         self.presentation = presentation
         self.browserTabId = browserTabId
+        self.openTap = openTap
     }
 }
 

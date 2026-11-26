@@ -1,4 +1,5 @@
 import Foundation
+import os
 import FoundationExt
 import Products
 import SDKLogger
@@ -17,6 +18,7 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
     private let logger: LoggerProtocol
     private let scriptHandlers: [JSEngineScriptHandling]
     private let navigationDecisionHandler: SPANavigationDecisionHandling?
+    private let mainFrameCommitHandler = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
     var onNavigationIntercepted: ((URL) -> Void)?
     var onDeeplinkRequested: ((URL) -> Void)?
@@ -195,6 +197,11 @@ extension SPAJSEngine: JSEngineProtocol {
             self.jsDeviceCapabilityHandler = handler
         }
     }
+
+    /// Set from the runtime's actor and read by WebKit on the main thread, so it sits behind a lock.
+    func onMainFrameCommit(_ handler: @escaping @Sendable () -> Void) async {
+        mainFrameCommitHandler.withLock { $0 = handler }
+    }
 }
 
 // MARK: - WKNavigationDelegate
@@ -220,6 +227,13 @@ extension SPAJSEngine: WKNavigationDelegate {
             decisionHandler(.cancel)
             onDeeplinkRequested?(url)
         }
+    }
+
+    /// `didCommit` is the earliest reliable main-frame signal WebKit gives and the closest to Android's
+    /// `onPageCommitVisible`: the new document has replaced the old one. `didFinish` waits for every subresource.
+    func webView(_: WKWebView, didCommit _: WKNavigation!) {
+        let handler = mainFrameCommitHandler.withLock { $0 }
+        handler?()
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

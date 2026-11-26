@@ -7,6 +7,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     let linkHandler: DeferredLinkHandling = DeferredLinkHandler.shared
+    let linkArrivalClock: LinkArrivalClock = SystemLinkArrivalClock()
 
     private var presenter: RootPresenterProtocol?
 
@@ -19,6 +20,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         willConnectTo _: UISceneSession,
         options: UIScene.ConnectionOptions
     ) {
+        // Read before the app starts up, so a link that launches the app is timed from its arrival.
+        let arrival = linkArrivalClock.read()
+
         guard let windowScene = (scene as? UIWindowScene) else { return }
 
         guard
@@ -29,8 +33,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
 
         initializeApp(windowScene)
-        handleContexts(with: options.urlContexts)
-        handleUserActivities(options.userActivities)
+        handleContexts(with: options.urlContexts, arrival: arrival)
+        handleUserActivities(options.userActivities, arrival: arrival)
 
         #if targetEnvironment(simulator)
             openTrUAPIE2EChatIfRequested()
@@ -38,11 +42,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func scene(_: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-        handleContexts(with: URLContexts)
+        handleContexts(with: URLContexts, arrival: linkArrivalClock.read())
     }
 
     func scene(_: UIScene, continue userActivity: NSUserActivity) {
-        handleUserActivities([userActivity])
+        handleUserActivities([userActivity], arrival: linkArrivalClock.read())
     }
 
     func sceneDidEnterBackground(_: UIScene) {
@@ -81,14 +85,14 @@ extension SceneDelegate {
         window?.makeKeyAndVisible()
     }
 
-    private func handleContexts(with contexts: Set<UIOpenURLContext>) {
+    private func handleContexts(with contexts: Set<UIOpenURLContext>, arrival: LinkArrival) {
         guard let context = contexts.first else {
             return
         }
-        linkHandler.handle(with: context.url)
+        linkHandler.handle(with: context.url, arrival: arrival)
     }
 
-    private func handleUserActivities(_ activities: Set<NSUserActivity>) {
+    private func handleUserActivities(_ activities: Set<NSUserActivity>, arrival: LinkArrival) {
         guard
             let url = activities
             .first(where: { $0.activityType == NSUserActivityTypeBrowsingWeb })?
@@ -96,7 +100,7 @@ extension SceneDelegate {
         else {
             return
         }
-        linkHandler.handle(with: url)
+        linkHandler.handle(with: url, arrival: arrival)
     }
 
     private func attachRootPresenter(to window: UIWindow) {

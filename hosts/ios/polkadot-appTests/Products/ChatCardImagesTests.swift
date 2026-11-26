@@ -63,6 +63,7 @@ private final class NoRuntime: TrUAPIHostRuntimeProviding {
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
     @MainActor var presentationView: ControllerBackedProtocol? { nil }
     func attach(workerManager _: any TrUAPIWorkerManaging) {}
+    var issueDiagnostics: ProductRuntimeIssueDiagnostics { .none }
 }
 
 private struct NoWorkers: ProductWorkerManaging {

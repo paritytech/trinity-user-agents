@@ -29,6 +29,9 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Attach what runs product workers when the core's reference ledger asks
     /// for them. Called once at startup, before the runtime is first built.
     func attach(workerManager: any TrUAPIWorkerManaging)
+
+    /// What every execution off the shared runtime reports through, so the counts span all of them.
+    var issueDiagnostics: ProductRuntimeIssueDiagnostics { get }
 }
 
 /// Builds one ``TrUAPIHostRuntime`` from host identity + the stack the build
@@ -48,6 +51,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let appliedConfig: () -> RemoteAppConfig?
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
     private let logger: CoreEventLoggerProtocol
+    let issueDiagnostics: ProductRuntimeIssueDiagnostics
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
@@ -70,6 +74,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         fundingHandler: FundingCoreEventHandling,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        issueDiagnostics: ProductRuntimeIssueDiagnostics,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
@@ -85,6 +90,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
         self.deviceEncryptionKeys = deviceEncryptionKeys
+        self.issueDiagnostics = issueDiagnostics
         self.logger = logger
     }
 
@@ -165,6 +171,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
+            issueDiagnostic: issueDiagnostics.rpcConnection,
             logger: logger
         )
 

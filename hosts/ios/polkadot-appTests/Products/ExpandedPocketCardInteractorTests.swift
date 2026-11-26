@@ -79,7 +79,8 @@ private final class RecordingRuntimeFactory: ExpandedPocketCardRuntimeMaking {
             ),
             schemeHandlerProxy: SchemeHandlerProxy(),
             logger: Logger.shared,
-            hostEventRecorder: NoopHostEventRecorder()
+            hostEventRecorder: NoopHostEventRecorder(),
+            hostSessionID: UUID()
         )
     }
 }

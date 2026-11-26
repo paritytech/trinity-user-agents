@@ -17,6 +17,22 @@ struct PocketCardHostsTests {
 
         #expect(opened == nil)
         #expect(!hosts.isOnDisplay(loyalty))
+        #expect(hosts.hostSessionID(for: loyalty) == nil)
+    }
+
+    /// A link to the card on screen reports under the host session id of the page
+    /// already there, not the new tap's, and a reload keeps that id.
+    @Test
+    func theCardOnScreenKeepsTheSessionIDItWasBuiltWith() {
+        let hosts = PocketCardHosts()
+        let tap = UUID()
+        let view = hosts.open(loyalty, hostSessionID: tap, make: { StubExpandedPocketCardView() })
+
+        hosts.reload(loyalty, at: "open=prizes") { _ in }
+
+        #expect(hosts.hostSessionID(for: loyalty) == tap)
+        #expect(hosts.hostSessionID(for: trophy) == nil)
+        withExtendedLifetime(view) {}
     }
 
     /// A link to the card on screen cannot open a second screen, so its params

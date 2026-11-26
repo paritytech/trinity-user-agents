@@ -245,6 +245,7 @@ extension ServiceCoordinator {
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             fundingHandler: fundingService,
+            issueDiagnostics: .make(reporter: IssueReportingFacade.shared),
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
