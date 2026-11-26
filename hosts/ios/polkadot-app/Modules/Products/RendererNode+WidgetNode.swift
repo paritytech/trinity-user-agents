@@ -12,8 +12,7 @@ extension RendererNode {
         toWidgetNode(resolver: resolver, counter: MaterialsCounter(takesTouch: rendererTouchNodes(tree: self)))
     }
 
-    /// The material of each layer of each `Materials` node, one entry per entry of
-    /// `ResolvedMaterials.nodes`.
+    /// The material of each layer of each `Materials` node, one entry per entry of `ResolvedMaterials.nodes`.
     var nodeMaterials: [[Data]] {
         let own: [[Data]] = if case let .materials(props, _) = self { [props.layers.map(\.material)] } else { [] }
         return own + children.flatMap(\.nodeMaterials)
@@ -46,8 +45,7 @@ private final class MaterialsCounter {
         return (nextTouch, takesTouch.indices.contains(Int(nextTouch)) && takesTouch[Int(nextTouch)])
     }
 
-    /// The core also numbers `Materials` and `Touch` nodes inside text and button children, which draw
-    /// no widget.
+    /// The core also numbers `Materials` and `Touch` nodes inside text and button children, which draw no widget.
     func skip(_ nodes: [RendererNode]) {
         for node in nodes {
             if case .materials = node { _ = take() }
