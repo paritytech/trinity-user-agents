@@ -16,7 +16,7 @@ import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class TrUAPIWorkerSupervisorFailureTest {
+class WebViewWorkerHostFailureTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val attempt = mockk<NativeWorkerAttempt>(relaxUnitFun = true) { every { id() } returns 1uL }
     private val resolver = mockk<ProductScriptResolver>()
@@ -25,7 +25,7 @@ class TrUAPIWorkerSupervisorFailureTest {
     fun `script resolution failure is reported to the attempt that requested it`() = runTest {
         coEvery { resolver.resolveWorker(productId) } returns Result.failure(IllegalStateException("unavailable"))
 
-        supervisor().start(productId, attempt)
+        createHost().start(productId, attempt)
         advanceUntilIdle()
 
         verify(exactly = 1) { attempt.failed("unavailable") }
@@ -38,17 +38,17 @@ class TrUAPIWorkerSupervisorFailureTest {
             gate.await()
             error("resolution cancelled")
         }
-        val supervisor = supervisor()
+        val host = createHost()
 
-        supervisor.start(productId, attempt)
+        host.start(productId, attempt)
         advanceUntilIdle()
-        supervisor.stop(productId, attempt.id())
+        host.stop(productId, attempt.id())
         advanceUntilIdle()
 
         verify(exactly = 0) { attempt.failed(any()) }
     }
 
-    private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
+    private fun TestScope.createHost() = WebViewWorkerHost(
         hostBridgeFactory = mockk(),
         chainDirectory = mockk(),
         scriptResolver = resolver,

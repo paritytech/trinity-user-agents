@@ -69,7 +69,7 @@ class ProductTrUAPIHostBridgeTest {
         assertTrue(outcome.isFailure)
     }
 
-    // The worker supervisor never holds the bridge; it stops a worker by cancelling the scope it
+    // The WebView worker host never holds the bridge; it stops a worker by cancelling the scope it
     // handed in. That cancel is what has to close the execution, or every card scrolled off screen
     // leaves its execution, loopback registration and chain sockets alive for the whole process.
     @Test

@@ -27,7 +27,7 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /** Creates and disposes each worker's hidden WebView on the main thread. */
-class TrUAPIWorkerSupervisor @Inject constructor(
+class WebViewWorkerHost @Inject constructor(
     private val hostBridgeFactory: ProductTrUAPIHostBridge.Factory,
     private val chainDirectory: TrUAPIChainDirectory,
     private val scriptResolver: ProductScriptResolver,

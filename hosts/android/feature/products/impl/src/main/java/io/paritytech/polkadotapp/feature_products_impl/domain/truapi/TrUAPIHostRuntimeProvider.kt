@@ -22,7 +22,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigM
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WebViewWorkerHost
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -84,7 +84,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val coreEventLogger: CoreEventLogger,
     private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
     private val materialsSwitch: RemoteConfigMaterialsSwitch,
-    private val workerSupervisor: Provider<TrUAPIWorkerSupervisor>,
+    private val webViewWorkerHost: Provider<WebViewWorkerHost>,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -129,7 +129,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         val handedOverKey = deviceKeyHandOver.keyToHandOver()
         val config = buildRuntimeConfig(handedOverKey)
         cachedChains.set(chainDirectory.resolve())
-        TrUAPIHostRuntime(HostRuntimeBridge(), config, workerSupervisor.get()).also {
+        TrUAPIHostRuntime(HostRuntimeBridge(), config, webViewWorkerHost.get()).also {
             if (handedOverKey != null) deviceKeyHandOver.forgetHandedOverKey()
         }
     }

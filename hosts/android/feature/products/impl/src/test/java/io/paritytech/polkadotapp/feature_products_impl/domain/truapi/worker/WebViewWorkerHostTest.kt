@@ -36,7 +36,7 @@ import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class TrUAPIWorkerSupervisorTest {
+class WebViewWorkerHostTest {
     private val attempt = mockk<NativeWorkerAttempt>(relaxUnitFun = true) {
         every { id() } returns 1uL
         every { moduleStarted() } returns true
@@ -69,8 +69,8 @@ class TrUAPIWorkerSupervisorTest {
 
     @Test
     fun `a renderer loss reports the acknowledged attempt to the core`() = runTest {
-        val supervisor = supervisor()
-        supervisor.start(PRODUCT, attempt)
+        val host = createHost()
+        host.start(PRODUCT, attempt)
         advanceUntilIdle()
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
@@ -86,11 +86,11 @@ class TrUAPIWorkerSupervisorTest {
             every { id() } returns 2uL
             every { moduleStarted() } returns true
         }
-        val supervisor = supervisor()
-        supervisor.start(PRODUCT, attempt)
-        supervisor.start(PRODUCT, replacement)
+        val host = createHost()
+        host.start(PRODUCT, attempt)
+        host.start(PRODUCT, replacement)
         advanceUntilIdle()
-        supervisor.stop(PRODUCT, attempt.id())
+        host.stop(PRODUCT, attempt.id())
         advanceUntilIdle()
 
         assertEquals(listOf(false, true), workerScopes.map { it.isActive })
@@ -101,7 +101,7 @@ class TrUAPIWorkerSupervisorTest {
     fun `an open bridge stays pending until the worker module has loaded`() = runTest {
         lateinit var finish: (String) -> Unit
         onModuleLoad = { finish = it }
-        supervisor().start(PRODUCT, attempt)
+        createHost().start(PRODUCT, attempt)
         runCurrent()
 
         verify(exactly = 0) { attempt.moduleStarted() }
@@ -115,9 +115,9 @@ class TrUAPIWorkerSupervisorTest {
     @Test
     fun `only a product that includes chat gets a chat bridge`() = runTest {
         includesChat = false
-        val supervisor = supervisor()
+        val host = createHost()
 
-        supervisor.start(PRODUCT, attempt)
+        host.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         assertEquals(listOf<ChatHostBridge?>(null), chatBridges)
@@ -125,9 +125,9 @@ class TrUAPIWorkerSupervisorTest {
 
     @Test
     fun `a chat product gets a chat bridge`() = runTest {
-        val supervisor = supervisor()
+        val host = createHost()
 
-        supervisor.start(PRODUCT, attempt)
+        host.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         assertEquals(1, chatBridges.filterNotNull().size)
@@ -135,9 +135,9 @@ class TrUAPIWorkerSupervisorTest {
 
     @Test
     fun `a worker bootstrap does not install host WebView telemetry`() = runTest {
-        val supervisor = supervisor()
+        val host = createHost()
 
-        supervisor.start(PRODUCT, attempt)
+        host.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         verify(exactly = 1) { bootstrapInstaller.installerFor(setOf("https://worker.paseo"), null) }
@@ -148,15 +148,15 @@ class TrUAPIWorkerSupervisorTest {
     // stopping the worker cancels a navigation still in flight.
     @Test
     fun `a worker navigates through the chat worker navigation`() = runTest {
-        val supervisor = supervisor()
+        val host = createHost()
 
-        supervisor.start(PRODUCT, attempt)
+        host.start(PRODUCT, attempt)
         advanceUntilIdle()
 
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
-    private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
+    private fun TestScope.createHost() = WebViewWorkerHost(
         hostBridgeFactory = object : ProductTrUAPIHostBridge.Factory {
             override fun create(scope: CoroutineScope) = bridge()
         },
@@ -165,7 +165,7 @@ class TrUAPIWorkerSupervisorTest {
             override suspend fun resolveWorker(productId: ProductId) = Result.success(
                 mockk<ProductExecutable.Worker> {
                     every { scriptUrl } returns SCRIPT_URL
-                    every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
+                    every { includesChat } returns this@WebViewWorkerHostTest.includesChat
                 },
             )
         },

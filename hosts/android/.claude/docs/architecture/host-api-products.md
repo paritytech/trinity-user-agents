@@ -372,7 +372,7 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 
 Core side (`feature/products/impl/.../domain/truapi/`):
 - Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
-- Rust calls `TrUAPIWorkerSupervisor.start(productId, attempt)` to create a hidden WebView. The supervisor
+- Rust calls `WebViewWorkerHost.start(productId, attempt)` to create a hidden WebView. The host
   opens the worker execution through the attempt, installs the bootstrap and loads the entry module. It reports
   module startup on the attempt. Chat and Pocket can share that worker. Rust calls `stop(productId, attemptId)`
   to dispose of its WebView.
