@@ -14,15 +14,27 @@ import io.paritytech.polkadotapp.chains.storage.source.StorageDataSource
 import io.paritytech.polkadotapp.common.data.memory.SingleValueCache
 import io.paritytech.polkadotapp.common.data.memory.getCatching
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.common.utils.InformationSize
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.getLiteNotificationSlotsPerPeriod
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.getNotificationSlotsPerPeriod
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.RuntimeParametersKey
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.RuntimeParametersValue
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.StatementAllowance
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.StatementStorageParametersKey
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.model.StatementStorageParametersValue
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.notificationAllowance
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.notificationRegistrationByAlias
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.parameters
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.runtimeParameters
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.blockchain.statementStoreResources
 import javax.inject.Inject
 
 private val STATEMENT_ALLOWANCE_KEY_PREFIX = ":statement_allowance:".encodeToByteArray()
+
+private val NOTIFICATION_ALLOWANCE_PARAMETER_KEY = RuntimeParametersKey.StatementStorage(StatementStorageParametersKey.NotificationAllowance())
 
 class RealNotificationSlotRepository @Inject constructor(
     @RemoteSourceQualifier private val storageDataSource: StorageDataSource,
@@ -38,6 +50,15 @@ class RealNotificationSlotRepository @Inject constructor(
 
     private val liteHighestSeqCache = SingleValueCache {
         peopleViewFunctions().getLiteNotificationSlotsPerPeriod().getOrThrow()
+    }
+
+    private val notificationStatementMaxSizeCache = SingleValueCache {
+        storageDataSource.query(knownChains.people) {
+            val allowance = runtime.metadata.statementStoreResources.notificationAllowance
+                ?: runtime.metadata.runtimeParameters.parameters.query(NOTIFICATION_ALLOWANCE_PARAMETER_KEY)?.notificationAllowance()
+
+            allowance?.maxSize?.toLong()?.bytes
+        }
     }
 
     override suspend fun highestSeqPerPeriod(collection: PeopleCollection): Result<UByte> = when (collection) {
@@ -71,8 +92,16 @@ class RealNotificationSlotRepository @Inject constructor(
         }.toMap()
     }
 
+    override suspend fun notificationStatementMaxSize(): Result<InformationSize?> = notificationStatementMaxSizeCache.getCatching()
+
     private fun statementAllowanceKey(account: AccountId): String =
         (STATEMENT_ALLOWANCE_KEY_PREFIX + account.value).toHexString(withPrefix = true).lowercase()
+
+    private fun RuntimeParametersValue.notificationAllowance(): StatementAllowance = when (this) {
+        is RuntimeParametersValue.StatementStorage -> when (val parameter = value) {
+            is StatementStorageParametersValue.NotificationAllowance -> parameter.allowance
+        }
+    }
 
     private suspend fun peopleViewFunctions() = viewFunctionsApi.forChain(knownChains.people)
 }

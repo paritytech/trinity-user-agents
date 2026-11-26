@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.A
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.AllowanceSystem
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import io.paritytech.polkadotapp.feature_transaction_storage_api.domain.slotAllocator.TransactionStorageSlotAllocator
 import kotlinx.coroutines.withContext
 import uniffi.truapi.ProductId
@@ -71,7 +72,11 @@ class ResourceAllocationRequestInteractor @Inject constructor(
         ApAllocatableResource.StatementStoreAllowance ->
             allowanceAccountDerivation.deriveSlotKey(AllowanceSystem.STATEMENT_STORE, callingProduct)
                 .flatMap { key ->
-                    statementStoreSlotAllocator.allocate(key.deriveAccountId(), onExisting.toStatementStoreStrategy(), SlotPriority.Normal)
+                    val holder = StatementStoreSlotHolder.Local(
+                        accountId = key.deriveAccountId(),
+                        derivationPath = allowanceAccountDerivation.allowancePath(AllowanceSystem.STATEMENT_STORE, callingProduct),
+                    )
+                    statementStoreSlotAllocator.allocate(holder, onExisting.toStatementStoreStrategy(), SlotPriority.Normal)
                         .map { ApAllocationOutcome.Allocated(ApAllocatedResource.StatementStoreAllowance(key)) }
                 }
 
