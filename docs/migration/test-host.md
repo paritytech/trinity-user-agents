@@ -79,11 +79,12 @@ export const test = base.extend<{ testHost: TestHost }>(
 
 - **`productUrl`** is required. Only the type checks it, so a missing value loads `/undefined` rather than failing.
 - **`productId`** must be the identifier your product signs with, as a dotNS name or `localhost:<port>`. It defaults to
-  `mock.dot`. A wrong value fails every signing call with `PermissionDenied` while reads still work. `127.0.0.1:<port>`
-  is not a valid id, so use `localhost:<port>`, and if your product derives its id from its own origin, serve it on
-  `localhost` too. From 0.29 the id is typed as `ProductId`, so wrap the string with `asProductId` as above. On 0.28 and
-  older, pass the plain string. If your repo doesn't depend on `@parity/truapi` directly, add it as a dev dependency at
-  the same version.
+  `mock.paseo`. The test stack is on `paseo`, so the host reads a name under `.dot` as the same name under `.paseo`, and
+  a name under another TLD fails the start. A value that names another product than the one your page signs as fails
+  every signing call with `PermissionDenied` while reads still work. `127.0.0.1:<port>` is not a valid id, so use
+  `localhost:<port>`, and if your product derives its id from its own origin, serve it on `localhost` too. From 0.29 the
+  id is typed as `ProductId`, so wrap the string with `asProductId` as above. On 0.28 and older, pass the plain string.
+  If your repo doesn't depend on `@parity/truapi` directly, add it as a dev dependency at the same version.
 - **`networks`** lists the chains your product reads. The old package fell back to Paseo Asset Hub when a suite named
   none. This one doesn't, so a suite that relied on that default needs `networks: [PASEO_ASSET_HUB]` to stay on the same
   network. With no `networks`, chain reads and statement submits fail after about 30 seconds with
@@ -145,6 +146,8 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   up whatever signs.
 - The address is stable for the same account and product id. On a live chain, check its balance in global setup so a
   drained account fails clearly. Inside a test, `testHost.getProductAccountAddress()` returns the same address.
+- The address is that of the product the host runs, so `myapp.dot` gives the address of `myapp.paseo`. An address that a
+  release before #2076 gave for a `.dot` id is another account, and the new one needs funding once.
 - Because the address is the same on every run, two CI runs at once share its balance and nonces. Run them in one
   concurrency group, or give each run its own entropy.
 

@@ -40,7 +40,7 @@ class WorkerReferenceTest {
     @Test
     fun chatAndPocketOwnTheWorkerWhileARenderCanStillBeOpenAtLastRelease() = runBlocking {
         directory.mkdirs()
-        val product = ProductId.parse("worker.paseo").getOrThrow()
+        val product = ProductId.parse("worker.testnet").getOrThrow()
         val transitions = CopyOnWriteArrayList<WorkerTransition>()
         val bridge = object : HostBridge by InertHostBridge(context) {
             override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {

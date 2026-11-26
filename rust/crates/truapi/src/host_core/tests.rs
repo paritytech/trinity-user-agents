@@ -65,7 +65,8 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 		..StubPlatform::default()
 	});
 	let runtime = activated_signing_runtime(platform.clone());
-	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
+	let (requester, target) =
+		(ProductId::for_test("myapp.testnet"), ProductId::for_test("peopl.testnet"));
 	let access = || {
 		futures::executor::block_on(runtime.role.accounts().consent().account_access(
 			&requester,
@@ -78,9 +79,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	let allowed_once = access();
 	futures::executor::block_on(runtime.set_permission_authorization_status(
 		&requester,
-		PermissionAuthorizationRequest::AccountAccess {
-			target_product_id: ProductId::for_test("peopl.dot"),
-		},
+		PermissionAuthorizationRequest::AccountAccess { target_product_id: target.clone() },
 		PermissionAuthorizationStatus::NotDetermined,
 	))
 	.expect("the reset is stored");
@@ -88,6 +87,80 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	assert_eq!(
 		(allowed_once, access(), platform.account_access_reviews.lock().unwrap().len()),
 		(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied, 2)
+	);
+}
+
+/// A status under a name the stack serves under another id is one no product
+/// reads: on a `testnet` stack the product `myapp.dot` names runs as
+/// `myapp.testnet`. A host that set one would take that product for changed,
+/// so the permission calls refuse the name, whether it is the product a
+/// status belongs to or a product the request names, and say which id the
+/// product has. An id the stack serves nothing under has only its record,
+/// which the host can still read.
+#[test]
+fn a_permission_call_refuses_a_name_the_stack_serves_under_another_id() {
+	use crate::platform::PermissionAuthorizationRequest;
+	use truapi::latest::{NftPurseOwner, RemotePermission, RemotePermissionRequest};
+
+	let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+	let access = |target: &str| PermissionAuthorizationRequest::AccountAccess {
+		target_product_id: ProductId::for_test(target),
+	};
+	let purse_of = |owner: &str| {
+		PermissionAuthorizationRequest::Remote(RemotePermissionRequest {
+			permission: RemotePermission::NftPurseRead {
+				owner: NftPurseOwner::Product(ProductId::for_test(owner)),
+			},
+		})
+	};
+	let read = |product_id: &str, request: PermissionAuthorizationRequest| {
+		futures::executor::block_on(
+			runtime.permission_authorization_status(&ProductId::for_test(product_id), request),
+		)
+		.map_err(|error| error.reason)
+	};
+	let read_all = |product_id: &str, requests: Vec<PermissionAuthorizationRequest>| {
+		futures::executor::block_on(
+			runtime.permission_authorization_statuses(&ProductId::for_test(product_id), requests),
+		)
+		.map_err(|error| error.reason)
+	};
+	let deny = |product_id: &str, request: PermissionAuthorizationRequest| {
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&ProductId::for_test(product_id),
+			request,
+			PermissionAuthorizationStatus::Denied,
+		))
+		.map_err(|error| error.reason)
+	};
+	let refusal = |label: &str| {
+		format!(
+			"the testnet stack serves no product under the id {label}.dot, which names its \
+			 product {label}.testnet"
+		)
+	};
+
+	assert_eq!(
+		(
+			deny("myapp.dot", access("peopl.testnet")),
+			read("myapp.dot", access("peopl.testnet")),
+			read_all("myapp.dot", vec![access("peopl.testnet")]),
+			deny("myapp.testnet", access("peopl.dot")),
+			read("myapp.testnet", access("peopl.dot")),
+			read_all("myapp.testnet", vec![access("peopl.testnet"), access("peopl.dot")]),
+			read("myapp.testnet", purse_of("stash.dot")),
+			read("left.paseo", access("peopl.testnet")),
+		),
+		(
+			Err(refusal("myapp")),
+			Err(refusal("myapp")),
+			Err(refusal("myapp")),
+			Err(refusal("peopl")),
+			Err(refusal("peopl")),
+			Err(refusal("peopl")),
+			Err(refusal("stash")),
+			Ok(PermissionAuthorizationStatus::NotDetermined),
+		)
 	);
 }
 
@@ -387,6 +460,28 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	// anything that reached for the wallet here would time out instead of
 	// answering, and no statement-store traffic says it did not try.
 	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
+}
+
+/// Kept subtrees are stored by product id, so one can name a product the
+/// stack does not serve. The host's lookup refuses that product rather than
+/// answering from the kept key.
+#[test]
+fn a_kept_subtree_of_an_unserved_product_is_not_returned() {
+	let platform = Arc::new(StubPlatform::default());
+	let (host_config, _) = runtime_config("myapp.dot");
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
+	let session = crate::test_support::sso_session_info();
+	install_session_after_boot(&runtime, &platform, session.clone());
+	let unserved = ProductId::for_test("foo.testnet");
+	runtime
+		.role
+		.accounts()
+		.cache_product_subtree_for_test(&session, &unserved, [9; 32]);
+
+	let error = futures::executor::block_on(runtime.product_subtree_public_key(&unserved, None))
+		.expect_err("an unserved product has no subtree");
+	assert_eq!(error.reason, "the dot stack serves no product under the id foo.testnet");
 }
 
 #[test]
@@ -897,7 +992,8 @@ fn render_lifetime_is_independent_of_the_features_worker_claim() {
 	let (runtime, sink) = render_runtime();
 	let services = runtime.admin.product_runtime().connection().services();
 	let product = ProductId::for_test("worker.dot");
-	let owner = crate::WorkerHold::acquire(services, &product);
+	let owner =
+		crate::WorkerHold::acquire(services, &product).expect("the test stack serves the product");
 	let mut render = start_render(&runtime, "loyalty");
 	assert_eq!(services.worker_ledger.count(&product), 1);
 
@@ -1153,7 +1249,8 @@ fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
 		props: v01::ImageProps { source: v01::ImageSource::Inline(bytes), fit: None },
 	};
 
-	let item = truapi::versioned::renderer::ProductRendererRenderItem::V1(image(b"<svg/>".to_vec()));
+	let item =
+		truapi::versioned::renderer::ProductRendererRenderItem::V1(image(b"<svg/>".to_vec()));
 	deliver_render_frame(
 		&runtime,
 		&render_request_id(&sink, 0),
@@ -1447,14 +1544,14 @@ fn retired_worker_operation_calls_cannot_create_or_release_references() {
 	};
 
 	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
-	let product_id = ProductId::for_test("worker.dot");
+	let product_id = ProductId::for_test("worker.testnet");
 	let product = ProductContext::new_with_execution(
 		product_id.clone(),
 		crate::platform::ExecutableKind::Worker,
 	);
 	let sink = Arc::new(RecordingSink::default());
 	let worker = host.product_runtime(product, sink.clone());
-	let claim = host.hold_worker(&product_id);
+	let claim = host.hold_worker(&product_id).expect("the test stack serves the product");
 	for (method_id, message_type, value) in [
 		(0, MESSAGE_TYPE_REQUEST, (0u8, None::<String>).encode()),
 		(1, MESSAGE_TYPE_REQUEST, (0u8, 1u32).encode()),
@@ -1548,7 +1645,7 @@ fn the_device_pairing_observer_is_installed_once() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::paseo_test_stack(),
+		crate::test_support::dot_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime = HostRuntime::<SigningHost>::new(
@@ -2071,14 +2168,17 @@ fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
 	);
 }
 
-/// Write a value for each of two products, so a clear can show it removed
-/// only the cleared product's. The kept id starts with the cleared one, so
-/// matching on the bare id would remove both.
-fn seed_two_products(platform: &StubPlatform) -> (String, String) {
+/// Write a value for `myapp.<tld>` and for another product under `tld`, so a
+/// clear can show it removed only the cleared product's. The kept id starts
+/// with the cleared one, so matching on the bare id would remove both.
+fn seed_two_products(platform: &StubPlatform, tld: &str) -> (String, String) {
 	use crate::platform::{ProductStorage, ProductStorageKey};
 
-	let cleared = ProductStorageKey::new(ProductId::for_test("myapp.dot"), "theme").encode();
-	let kept = ProductStorageKey::new(ProductId::for_test("myapp.dotapp.dot"), "theme").encode();
+	let stored_by = |product_id: String| {
+		ProductStorageKey::new(ProductId::for_test(&product_id), "theme").encode()
+	};
+	let cleared = stored_by(format!("myapp.{tld}"));
+	let kept = stored_by(format!("myapp.{tld}app.{tld}"));
 	futures::executor::block_on(async {
 		platform.write(cleared.clone(), vec![1]).await.expect("seed write");
 		platform.write(kept.clone(), vec![2]).await.expect("seed write");
@@ -2099,7 +2199,7 @@ fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
 	let (host_config, _) = runtime_config("myapp.dot");
 	let runtime =
 		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
-	let (cleared, kept) = seed_two_products(&platform);
+	let (cleared, kept) = seed_two_products(&platform, "dot");
 
 	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
 		.expect("clear product state");
@@ -2112,10 +2212,43 @@ fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
 fn forgetting_a_product_on_a_signing_host_clears_its_storage() {
 	let platform = Arc::new(StubPlatform::default());
 	let runtime = activated_signing_runtime(platform.clone());
-	let (cleared, kept) = seed_two_products(&platform);
+	let (cleared, kept) = seed_two_products(&platform, "testnet");
 
-	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.testnet")))
 		.expect("clear product state");
 
 	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
+}
+
+/// A host administers stored state under the id it names, served or not. So
+/// it can clear what was kept under a `dot` id on a stack that serves that
+/// name under its own TLD, and under another network's id, and neither clear
+/// touches the stack's own product of that name.
+#[test]
+fn a_host_clears_what_was_stored_under_an_id_the_stack_does_not_serve() {
+	use crate::platform::{ProductStorage, ProductStorageKey};
+
+	let platform = Arc::new(StubPlatform::default());
+	let runtime = activated_signing_runtime(platform.clone());
+	let stored_by = |product_id: &str| {
+		ProductStorageKey::new(ProductId::for_test(product_id), "theme").encode()
+	};
+	let keys = ["myapp.testnet", "myapp.dot", "left.paseo"].map(stored_by);
+	futures::executor::block_on(async {
+		for key in &keys {
+			platform.write(key.clone(), vec![1]).await.expect("seed write");
+		}
+	});
+	let stored = || {
+		let storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+		keys.clone().map(|key| storage.contains_key(&key))
+	};
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+		.expect("clear product state");
+	assert_eq!(stored(), [true, false, true]);
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("left.paseo")))
+		.expect("clear product state");
+	assert_eq!(stored(), [true, false, false]);
 }

@@ -128,3 +128,109 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 		}
 	}
 }
+
+/// A paired host names the caller itself. A trusted label under a TLD the
+/// stack does not serve is refused before any grant, prompt or key is used,
+/// instead of passing as the trusted product without a prompt.
+#[test]
+fn a_relayed_caller_the_stack_does_not_serve_is_refused() {
+	let platform = Arc::new(StubPlatform::default());
+	cache_grant(&platform, "peopl.dot", "{}");
+	let (_, authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let session = authority.accounts().current_session().unwrap();
+	register_full_person_key(&authority, &session, &full_person_ring_location());
+
+	let alias = paired_request(
+		&authority,
+		"peopl.testnet",
+		HostAccountGetAliasRequest {
+			key_handle: full_person_key_handle(),
+			context: v01::ProductProofContext {
+				product_id: ProductId::for_test("peopl.dot"),
+				suffix: v01::DerivationIndex::Index(0),
+			},
+			ring_location: full_person_ring_location(),
+		},
+	);
+	let list = paired_request(
+		&authority,
+		"peopl.testnet",
+		HostAccountListRingVrfKeysRequest {
+			owner: ProductId::for_test("peopl.dot"),
+			disclosure: RingVrfKeyDisclosure::PublicKey,
+		},
+	);
+
+	let unserved = Err(RingVrfError::Unknown {
+		reason: "the dot stack serves no product under the id peopl.testnet".to_string(),
+	});
+	assert_eq!(
+		(
+			alias.map(|_| ()),
+			list.map(|_| ()),
+			platform.account_access_reviews.lock().unwrap().len()
+		),
+		(unserved.clone(), unserved, 0)
+	);
+}
+
+/// A relayed request is held to the rule a product's own request is: every
+/// product it names must be one the stack serves, and it is refused before
+/// the user is asked. For an unserved owner, no Allow Always can be won for
+/// it; one is filed by bare label, so it would also cover the served
+/// namesake. For an unserved context, no alias is minted in a context this
+/// stack does not serve.
+#[test]
+fn a_relayed_request_naming_an_unserved_product_is_refused() {
+	let platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: std::sync::Mutex::new(
+			[PermissionDecision::AllowAlways; 3].into(),
+		),
+		..StubPlatform::default()
+	});
+	cache_grant(&platform, "peopl.dot", "{}");
+	let (_, authority) =
+		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let session = authority.accounts().current_session().unwrap();
+	register_full_person_key(&authority, &session, &full_person_ring_location());
+
+	let alias = |key_handle, context: &str| {
+		let request = HostAccountGetAliasRequest {
+			key_handle,
+			context: v01::ProductProofContext {
+				product_id: ProductId::for_test(context),
+				suffix: v01::DerivationIndex::Index(0),
+			},
+			ring_location: full_person_ring_location(),
+		};
+		paired_request(&authority, "bar.dot", request).map(|_| ())
+	};
+	let unserved_owner = v01::ProductAccountId {
+		dot_ns_identifier: ProductId::for_test("foo.testnet"),
+		derivation_index: v01::DerivationIndex::Index(0),
+	};
+	let list = HostAccountListRingVrfKeysRequest {
+		owner: ProductId::for_test("foo.testnet"),
+		disclosure: RingVrfKeyDisclosure::PublicKey,
+	};
+	let outcomes = [
+		alias(unserved_owner, "bar.dot"),
+		alias(full_person_key_handle(), "foo.testnet"),
+		paired_request(&authority, "bar.dot", list).map(|_| ()),
+	];
+
+	let unserved = || {
+		Err(RingVrfError::Unknown {
+			reason: "the dot stack serves no product under the id foo.testnet".to_string(),
+		})
+	};
+	assert_eq!(
+		(outcomes, platform.account_access_reviews.lock().unwrap().len()),
+		([unserved(), unserved(), unserved()], 0)
+	);
+}
