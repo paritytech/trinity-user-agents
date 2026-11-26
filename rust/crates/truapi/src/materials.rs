@@ -28,7 +28,7 @@ use futures::{
 };
 use parking_lot::Mutex;
 use rusqlite::{OptionalExtension, Transaction};
-use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
+use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode, TouchProps};
 
 use self::format::read_material;
 pub use self::{
@@ -41,6 +41,7 @@ pub use self::{
 		MaterialShader, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
 		UniformRole,
 	},
+	touch::{TouchArea, TouchInputs, TouchPhase, TrailImage},
 };
 use crate::{
 	host_internal::bulletin::preimage_key,
@@ -344,42 +345,84 @@ fn evict(tx: &Transaction<'_>) -> Result<(), DbError> {
 }
 
 fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
-	let layers = materials_nodes(node).into_iter().flat_map(|(props, _)| &props.layers);
+	let layers = materials_nodes(node).into_iter().flat_map(|node| &node.props.layers);
 	ids.extend(layers.map(|layer| layer.material));
 }
 
-/// Every `Materials` node in `tree`, depth first, each with whether another
-/// `Materials` node encloses it.
-fn materials_nodes(tree: &RendererNode) -> Vec<(&MaterialsProps, bool)> {
-	let mut nodes = Vec::new();
-	visit_materials(tree, false, &mut nodes);
-	nodes
+/// A `Materials` node as its tree places it.
+struct PlacedMaterials<'tree> {
+	props: &'tree MaterialsProps,
+	/// Whether another `Materials` node encloses it.
+	nested: bool,
+	/// The props of the nearest `Touch` node around it, when that node takes touch.
+	touch: Option<&'tree TouchProps>,
 }
 
-fn visit_materials<'tree>(
-	node: &'tree RendererNode,
-	nested: bool,
-	nodes: &mut Vec<(&'tree MaterialsProps, bool)>,
-) {
-	let children = match node {
-		RendererNode::Materials { props, children } => {
-			nodes.push((props, nested));
-			children
-		},
-		RendererNode::Box { children, .. } |
-		RendererNode::Column { children, .. } |
-		RendererNode::Row { children, .. } |
-		RendererNode::Text { children, .. } |
-		RendererNode::Button { children, .. } => children,
-		RendererNode::Nil |
-		RendererNode::String { .. } |
-		RendererNode::Spacer { .. } |
-		RendererNode::TextField { .. } |
-		RendererNode::Image { .. } => return,
-	};
-	let nested = nested || matches!(node, RendererNode::Materials { .. });
-	for child in children {
-		visit_materials(child, nested, nodes);
+/// Every `Materials` node in `tree`, depth first.
+fn materials_nodes(tree: &RendererNode) -> Vec<PlacedMaterials<'_>> {
+	let mut visit = Visit::default();
+	visit.node(tree, Enclosing::default());
+	visit.materials
+}
+
+/// Whether each `Touch` node in `tree`, depth first, takes touch. One that
+/// does not draws its children like a `Box`.
+pub fn touch_nodes(tree: &RendererNode) -> Vec<bool> {
+	let mut visit = Visit::default();
+	visit.node(tree, Enclosing::default());
+	visit.touch_nodes
+}
+
+/// What surrounds a node.
+#[derive(Clone, Copy, Default)]
+struct Enclosing<'tree> {
+	in_materials: bool,
+	in_touch: bool,
+	touch: Option<&'tree TouchProps>,
+}
+
+#[derive(Default)]
+struct Visit<'tree> {
+	materials: Vec<PlacedMaterials<'tree>>,
+	touch_nodes: Vec<bool>,
+}
+
+impl<'tree> Visit<'tree> {
+	fn node(&mut self, node: &'tree RendererNode, enclosing: Enclosing<'tree>) {
+		let mut inner = enclosing;
+		let children = match node {
+			RendererNode::Materials { props, children } => {
+				self.materials.push(PlacedMaterials {
+					props,
+					nested: enclosing.in_materials,
+					touch: enclosing.touch,
+				});
+				inner.in_materials = true;
+				children
+			},
+			RendererNode::Touch { props, children } => {
+				let takes_touch = !enclosing.in_touch &&
+					self.touch_nodes.len() < touch::MAX_TREE_TOUCH_NODES &&
+					touch::props_valid(props);
+				self.touch_nodes.push(takes_touch);
+				inner.in_touch = true;
+				inner.touch = takes_touch.then_some(props);
+				children
+			},
+			RendererNode::Box { children, .. } |
+			RendererNode::Column { children, .. } |
+			RendererNode::Row { children, .. } |
+			RendererNode::Text { children, .. } |
+			RendererNode::Button { children, .. } => children,
+			RendererNode::Nil |
+			RendererNode::String { .. } |
+			RendererNode::Spacer { .. } |
+			RendererNode::TextField { .. } |
+			RendererNode::Image { .. } => return,
+		};
+		for child in children {
+			self.node(child, inner);
+		}
 	}
 }
 
@@ -400,6 +443,7 @@ mod metal;
 mod noise;
 mod resolve;
 mod shader;
+mod touch;
 
 #[cfg(test)]
 mod testing;

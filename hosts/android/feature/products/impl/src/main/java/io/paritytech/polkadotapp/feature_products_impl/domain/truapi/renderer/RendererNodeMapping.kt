@@ -43,6 +43,7 @@ private fun RendererNode.materialsCount(): Int = when (this) {
     is RendererNode.Row -> children.sumOf { it.materialsCount() }
     is RendererNode.Text -> children.sumOf { it.materialsCount() }
     is RendererNode.Button -> children.sumOf { it.materialsCount() }
+    is RendererNode.Touch -> children.sumOf { it.materialsCount() }
     is RendererNode.Nil,
     is RendererNode.String,
     is RendererNode.Spacer,
@@ -114,6 +115,7 @@ private class JsWidgetMapping {
             val index = nextMaterialsNode++
             JsWidget.Materials(node = index, children = mapChildren(node.children))
         }
+        is RendererNode.Touch -> JsWidget.Box(children = mapChildren(node.children))
     }
 
     private fun mapChildren(children: List<RendererNode>): List<JsWidget> =
@@ -237,6 +239,7 @@ private fun TypographyStyle.toJs(): JsTypographyStyle = when (this) {
     TypographyStyle.HEADLINE_SMALL -> JsTypographyStyle.HEADLINE_SMALL
     TypographyStyle.TITLE_EXTRA_LARGE -> JsTypographyStyle.TITLE_EXTRA_LARGE
     TypographyStyle.TITLE_LARGE -> JsTypographyStyle.TITLE_LARGE
+    TypographyStyle.BODY_MEDIUM_MEDIUM -> JsTypographyStyle.BODY_MEDIUM_REGULAR
 }
 
 private fun ButtonVariant.toJs(): JsButtonVariant = when (this) {

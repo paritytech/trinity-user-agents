@@ -65,10 +65,51 @@ fn renderer_node() -> RendererNode {
 							))),
 						],
 					}],
+					bleed: Compact(0),
 				},
 				children: vec![RendererNode::Nil],
 			},
+			touch_node(),
 		],
+	}
+}
+
+fn touch_node() -> RendererNode {
+	RendererNode::Touch {
+		props: TouchProps {
+			drag: DragAxis::Horizontal,
+			trail: Some(TrailProps { radius: Compact(20) }),
+			triggers: vec![
+				TouchTrigger {
+					when: TouchCondition::Drag {
+						from: Region { x: 0, y: 0, width: 200, height: 1000 },
+						to: Region { x: 900, y: 0, width: 100, height: 1000 },
+					},
+					action: "confirm".to_string(),
+				},
+				TouchTrigger {
+					when: TouchCondition::TrailCovers(600),
+					action: "revealed".to_string(),
+				},
+			],
+			replay: Some(ReplayProps { length: 2200 }),
+		},
+		children: vec![RendererNode::Materials {
+			props: MaterialsProps {
+				layers: vec![MaterialInstance {
+					material: [9; 32],
+					args: vec![
+						Parameter::Touch,
+						Parameter::TouchState,
+						Parameter::Elapsed,
+						Parameter::Replay,
+						Parameter::SamplerFloat(ImageRef::Trail),
+					],
+				}],
+				bleed: Compact(48),
+			},
+			children: Vec::new(),
+		}],
 	}
 }
 
@@ -89,18 +130,76 @@ fn variants_encode_only_the_fields_they_carry() {
 	assert_eq!(spacer.encode(), vec![5, 0]);
 
 	let materials = RendererNode::Materials {
-		props: MaterialsProps { layers: Vec::new() },
+		props: MaterialsProps { layers: Vec::new(), bleed: Compact(0) },
 		children: Vec::new(),
 	};
-	assert_eq!(materials.encode(), vec![11, 0, 0]);
+	assert_eq!(materials.encode(), vec![11, 0, 0, 0]);
+
+	let touch = RendererNode::Touch {
+		props: TouchProps { drag: DragAxis::Any, trail: None, triggers: Vec::new(), replay: None },
+		children: Vec::new(),
+	};
+	assert_eq!(touch.encode(), vec![13, 1, 0, 0, 0, 0]);
 
 	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
+}
+
+/// The medium weight comes after every older preset, so a tree that names one
+/// of those decodes as before.
+#[test]
+fn older_typography_presets_keep_their_indices() {
+	let encoded: Vec<Vec<u8>> =
+		[TypographyStyle::BodySmallRegular, TypographyStyle::BodyMediumMedium]
+			.iter()
+			.map(Encode::encode)
+			.collect();
+
+	assert_eq!(encoded, [vec![4], vec![9]]);
 }
 
 /// Index 10 stays unused, so an older tree is refused rather than misread.
 #[test]
 fn index_10_is_never_read() {
 	assert!(RendererNode::decode(&mut [10u8, 0, 0].as_slice()).is_err());
+}
+
+/// Index 12 is left to the `SlideToConfirm` node of an open pull request, so
+/// the two can land in either order.
+#[test]
+fn index_12_is_not_read() {
+	assert!(RendererNode::decode(&mut [12u8, 0, 0].as_slice()).is_err());
+}
+
+/// The touch arguments come after every older one, so a tree encoded before
+/// them decodes to the same value.
+#[test]
+fn older_arguments_keep_their_indices() {
+	let encoded: Vec<Vec<u8>> = [
+		Parameter::SamplerVec4(ImageRef::Noise),
+		Parameter::Touch,
+		Parameter::TouchState,
+		Parameter::Elapsed,
+		Parameter::Replay,
+		Parameter::SamplerFloat(ImageRef::Trail),
+	]
+	.iter()
+	.map(Encode::encode)
+	.collect();
+
+	assert_eq!(encoded, [vec![7, 1], vec![8], vec![9], vec![10], vec![11], vec![4, 2]]);
+}
+
+#[test]
+fn a_touch_tree_reads_from_json() {
+	let json = r#"{"tag":"Touch","value":{"props":{"drag":"Horizontal","trail":{"radius":20},
+		"triggers":[{"when":{"tag":"Drag","value":{"from":{"x":0,"y":0,"width":200,"height":1000},
+		"to":{"x":900,"y":0,"width":100,"height":1000}}},"action":"confirm"},
+		{"when":{"tag":"TrailCovers","value":600},"action":"revealed"}],"replay":{"length":2200}},
+		"children":[{"tag":"Materials","value":{"props":{"layers":[{"material":"0x0909090909090909090909090909090909090909090909090909090909090909",
+		"args":[{"tag":"Touch"},{"tag":"TouchState"},{"tag":"Elapsed"},{"tag":"Replay"},{"tag":"SamplerFloat","value":{"tag":"Trail"}}]}],"bleed":48},
+		"children":[]}}]}}"#;
+
+	assert_eq!(serde_json::from_str::<RendererNode>(json).unwrap(), touch_node());
 }
 
 #[test]
@@ -172,6 +271,7 @@ fn refused_inline_images_are_emptied_throughout_the_tree() {
 						image.clone(),
 					)))],
 				}],
+				bleed: Compact(0),
 			},
 			children: vec![inline_image(image)],
 		}],

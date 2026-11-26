@@ -13,7 +13,7 @@ use crate::{
 	test_support::{StubPlatform, runtime_config, wait_until},
 };
 use futures::FutureExt;
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Compact, Encode};
 use std::sync::atomic::Ordering;
 use truapi::{
 	CallContext,
@@ -1693,6 +1693,18 @@ fn the_materials_answer_does_not_wait_for_the_core_database() {
 	assert!(runtime.services.draws_materials(1, &[]));
 }
 
+/// A product sends a `Touch` node only after a yes, so the host that draws
+/// no materials says no, and one that draws them says yes.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_touch_answer_follows_whether_the_host_draws_materials() {
+	let (runtime, _platform) = test_signing_runtime();
+	let before = runtime.services.draws_touch();
+	runtime.services.enable_materials();
+
+	assert_eq!((before, runtime.services.draws_touch()), (false, true));
+}
+
 /// The CLI resolves faces from material files, so a material kept by hand
 /// draws in the first update, without Bulletin. A file the core cannot read is refused
 /// with the reason a fetched one would get.
@@ -1726,7 +1738,10 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 	assert_eq!(keep(&runtime, no_entry_point), Err(MaterialFailure::InvalidMaterial));
 
 	let face = RendererNode::Materials {
-		props: MaterialsProps { layers: vec![MaterialInstance { material: id, args: Vec::new() }] },
+		props: MaterialsProps {
+			layers: vec![MaterialInstance { material: id, args: Vec::new() }],
+			bleed: Compact(0),
+		},
 		children: Vec::new(),
 	};
 	let card = truapi::latest::RenderContext::PocketCard { card_id: "card".to_string() };
@@ -1770,7 +1785,7 @@ fn a_resolved_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
 		.map(|_| MaterialInstance { material: [7; 32], args: Vec::new() })
 		.collect();
 	let tree = RendererNode::Materials {
-		props: MaterialsProps { layers: over_the_layer_limit },
+		props: MaterialsProps { layers: over_the_layer_limit, bleed: Compact(0) },
 		children: Vec::new(),
 	};
 	let context = RenderContext::PocketCard { card_id: "stamps".to_string() };

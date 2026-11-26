@@ -34,7 +34,7 @@ class TrUAPIChatWorkerMaterialsTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val roomId = ProductChatIdParameter("room-1")
     private val messageContext = RenderContext.ChatMessage(roomId = roomId.value, messageId = "msg-1", messageType = "custom")
-    private val withMaterials = RendererNode.Materials(MaterialsProps(emptyList()), listOf(RendererNode.Spacer(emptyList())))
+    private val withMaterials = RendererNode.Materials(MaterialsProps(emptyList(), 0uL), listOf(RendererNode.Spacer(emptyList())))
 
     private val resolution = mockk<MaterialsResolution>(relaxed = true) {
         every { resolved } returns MutableStateFlow(

@@ -79,6 +79,37 @@ struct ProductWidgetViewModelTests {
         )
     }
 
+    /// The card's materials follow the tree it draws, so a render that skipped the resolver would
+    /// leave every `Materials` node plain.
+    @Test func aNativeRenderIsHandedToTheMaterialsResolver() async {
+        // Given
+        let followed = OSAllocatedUnfairLock(initialState: [RendererNode]())
+        let materials = ChatMaterialsResolver(
+            resolve: { tree in
+                followed.withLock { $0.append(tree) }
+                return nil
+            },
+            logger: StubLogger()
+        )
+        let viewModel = ProductWidgetViewModel(
+            roomId: "room",
+            messageId: "m1",
+            messageType: "t",
+            messageData: Data(),
+            runtime: ScriptedRenderRuntime([.draw]),
+            tokenResolver: StubWidgetDesignTokenResolver(),
+            logger: Logger.shared,
+            materials: materials,
+            retryDelay: .milliseconds(10)
+        )
+
+        // When
+        await viewModel.renderTask?.value
+
+        // Then
+        #expect(followed.withLock { $0 } == [.spacer(modifiers: [])])
+    }
+
     /// The cell observes this instance, so a retry that publishes `node` reaches
     /// the screen without the decoder replacing anything.
     @Test func aFailedStreamIsRetriedOnTheSameInstance() async {

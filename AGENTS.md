@@ -34,7 +34,8 @@ rust/crates/
                          Bulletin by its `bulletin_lookup` module, checked against Shaderlab's
                          material format and the tree limits, built into the shaders apps
                          compile (GLSL ES, and Metal through naga), and resolved per tree for
-                         the apps to draw
+                         the apps to draw, with the trail and triggers of the `Touch` nodes
+                         that feed them the finger
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry

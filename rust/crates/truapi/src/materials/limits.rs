@@ -7,13 +7,14 @@ use truapi::latest::{
 	ImageRef, ImageSource, MaterialFailure, MaterialsProps, Parameter, RendererNode,
 };
 
-use super::materials_nodes;
+use super::{PlacedMaterials, materials_nodes};
 
 const MAX_NODE_LAYERS: usize = 16;
 const MAX_TREE_LAYERS: usize = 32;
 const MAX_TREE_MATERIALS: usize = 16;
 const MAX_IMAGE_ARGUMENTS: usize = 13;
 const MAX_TREE_IMAGES: usize = 16;
+const MAX_BLEED: u64 = 64;
 
 /// Why each `Materials` node in `tree` falls back before anything loads, if
 /// it does, depth first. A node that falls back adds nothing to the tree's
@@ -21,15 +22,17 @@ const MAX_TREE_IMAGES: usize = 16;
 pub fn tree_failures(tree: &RendererNode) -> Vec<Option<MaterialFailure>> {
 	let mut budget = TreeBudget::default();
 	let mut failures = Vec::new();
-	for (props, nested) in materials_nodes(tree) {
-		failures.push(check_node(props, nested).and_then(|()| budget.admit(props)).err());
+	for node in materials_nodes(tree) {
+		failures.push(check_node(&node).and_then(|()| budget.admit(node.props)).err());
 	}
 	failures
 }
 
-/// The limits a node meets on its own.
-fn check_node(props: &MaterialsProps, nested: bool) -> Result<(), MaterialFailure> {
-	if nested {
+/// The limits a node meets on its own, and whether a `Touch` node feeds the
+/// touch arguments it takes.
+fn check_node(node: &PlacedMaterials<'_>) -> Result<(), MaterialFailure> {
+	let props = node.props;
+	if node.nested {
 		return Err(MaterialFailure::LimitExceeded);
 	}
 	if props.layers.is_empty() {
@@ -39,8 +42,21 @@ fn check_node(props: &MaterialsProps, nested: bool) -> Result<(), MaterialFailur
 		.layers
 		.iter()
 		.any(|layer| image_arguments(&layer.args).count() > MAX_IMAGE_ARGUMENTS);
-	if props.layers.len() > MAX_NODE_LAYERS || too_many_images {
+	if props.layers.len() > MAX_NODE_LAYERS || too_many_images || props.bleed.0 > MAX_BLEED {
 		return Err(MaterialFailure::LimitExceeded);
+	}
+	let arguments = props.layers.iter().flat_map(|layer| &layer.args);
+	let touch_fed = |argument: &Parameter| match argument {
+		Parameter::Touch | Parameter::TouchState => node.touch.is_some(),
+		Parameter::Replay => node.touch.is_some_and(|touch| touch.replay.is_some()),
+		Parameter::SamplerFloat(ImageRef::Trail) |
+		Parameter::SamplerVec2(ImageRef::Trail) |
+		Parameter::SamplerVec3(ImageRef::Trail) |
+		Parameter::SamplerVec4(ImageRef::Trail) => node.touch.is_some_and(|touch| touch.trail.is_some()),
+		_ => true,
+	};
+	if !arguments.into_iter().all(touch_fed) {
+		return Err(MaterialFailure::InvalidStack);
 	}
 	Ok(())
 }
@@ -88,11 +104,19 @@ fn image_arguments(args: &[Parameter]) -> impl Iterator<Item = &ImageRef> {
 		Parameter::SamplerVec2(image) |
 		Parameter::SamplerVec3(image) |
 		Parameter::SamplerVec4(image) => Some(image),
-		Parameter::Float(_) | Parameter::Vec2(_) | Parameter::Vec3(_) | Parameter::Vec4(_) => None,
+		Parameter::Float(_) |
+		Parameter::Vec2(_) |
+		Parameter::Vec3(_) |
+		Parameter::Vec4(_) |
+		Parameter::Touch |
+		Parameter::TouchState |
+		Parameter::Elapsed |
+		Parameter::Replay => None,
 	})
 }
 
-/// The images a node's layers load. The noise image is made, not loaded.
+/// The images a node's layers load. The noise image and the trail are made,
+/// not loaded.
 fn image_sources(props: &MaterialsProps) -> impl Iterator<Item = &ImageSource> {
 	props
 		.layers
@@ -100,7 +124,7 @@ fn image_sources(props: &MaterialsProps) -> impl Iterator<Item = &ImageSource> {
 		.flat_map(|layer| image_arguments(&layer.args))
 		.filter_map(|image| match image {
 			ImageRef::Source(source) => Some(source),
-			ImageRef::Noise => None,
+			ImageRef::Noise | ImageRef::Trail => None,
 		})
 }
 

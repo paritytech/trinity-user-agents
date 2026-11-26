@@ -3477,6 +3477,7 @@ fn reads_a_materials_node_as_the_client_writes_it() {
 						)),
 					],
 				}],
+				bleed: parity_scale_codec::Compact(0),
 			},
 			children: vec![latest::RendererNode::Nil],
 		}

@@ -103,7 +103,7 @@ class TrUAPIPocketFaceStreamsTest {
         coVerify(exactly = 0) { runtimeProvider.runtime() }
     }
 
-    private val tree = RendererNode.Materials(MaterialsProps(emptyList()), emptyList())
+    private val tree = RendererNode.Materials(MaterialsProps(emptyList(), 0uL), emptyList())
 
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
 

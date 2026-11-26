@@ -549,6 +549,12 @@ impl RuntimeServices {
 		}
 	}
 
+	/// Whether the host draws `Touch` nodes and fills the touch arguments,
+	/// which every host that draws materials does.
+	pub fn draws_touch(&self) -> bool {
+		cfg!(not(target_arch = "wasm32")) && self.materials_enabled()
+	}
+
 	/// The resolved materials of `tree` in `context`, its shaders in
 	/// `language`, filtering 32-bit float images themselves unless
 	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the materials

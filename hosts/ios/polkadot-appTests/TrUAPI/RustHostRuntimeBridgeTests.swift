@@ -158,6 +158,25 @@ struct TrUAPIHostRuntimeProviderConfigTests {
         _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config)
     }
 
+    /// Tests build in Debug, which draws materials, so a config that drops the switch leaves every
+    /// chat card plain with no error.
+    @Test func debugBuildsTurnMaterialsOn() throws {
+        // Given
+        let secret = Data(repeating: 7, count: 32)
+
+        // When
+        let config = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
+            secret: secret,
+            liteUsername: nil,
+            networkSuffix: "testnet",
+            databaseDirectory: makeDatabaseDirectory(),
+            deviceEncryptionKey: nil
+        )
+
+        // Then
+        #expect(config.materialsEnabled)
+    }
+
     /// Tests run in one build only, so the stacks the other builds run are
     /// started here as well: a copy refreshed without its link, or a
     /// reserved-values flag that refuses its stack, fails before it ships.

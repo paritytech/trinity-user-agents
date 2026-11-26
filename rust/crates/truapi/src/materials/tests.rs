@@ -6,6 +6,7 @@ use futures::{
 	future::BoxFuture,
 	task::SpawnExt,
 };
+use parity_scale_codec::Compact;
 use truapi::latest::{BoxProps, MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
 
 use super::{testing::Device, *};
@@ -38,7 +39,7 @@ impl Device {
 			modifiers: Vec::new(),
 			props: BoxProps { content_alignment: None },
 			children: vec![RendererNode::Materials {
-				props: MaterialsProps { layers },
+				props: MaterialsProps { layers, bleed: Compact(0) },
 				children: Vec::new(),
 			}],
 		};
@@ -343,4 +344,37 @@ fn a_host_draws_only_the_format_it_reads_and_only_when_on() {
 	assert!(!draws(false, 1, &[]), "materials off");
 	assert!(!draws(true, 2, &[]), "a newer format version");
 	assert!(!draws(true, 1, &features(&["sl-pressure"])), "a feature version 1 does not define");
+}
+
+/// Each `Materials` node reads the finger of the nearest `Touch` node around
+/// it, through any layout in between, and only that one.
+#[test]
+fn each_materials_node_knows_the_touch_node_around_it() {
+	use truapi::latest::{DragAxis, TouchProps};
+
+	let materials = || RendererNode::Materials {
+		props: MaterialsProps { layers: Vec::new(), bleed: Compact(0) },
+		children: Vec::new(),
+	};
+	let props = |drag| TouchProps { drag, trail: None, triggers: Vec::new(), replay: None };
+	let tree = RendererNode::Box {
+		modifiers: Vec::new(),
+		props: BoxProps { content_alignment: None },
+		children: vec![
+			RendererNode::Touch { props: props(DragAxis::Any), children: vec![materials()] },
+			materials(),
+			RendererNode::Touch {
+				props: props(DragAxis::Horizontal),
+				children: vec![RendererNode::Box {
+					modifiers: Vec::new(),
+					props: BoxProps { content_alignment: None },
+					children: vec![materials()],
+				}],
+			},
+		],
+	};
+
+	let enclosing: Vec<_> =
+		materials_nodes(&tree).iter().map(|node| node.touch.map(|touch| touch.drag)).collect();
+	assert_eq!(enclosing, [Some(DragAxis::Any), None, Some(DragAxis::Horizontal)]);
 }

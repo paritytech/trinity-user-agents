@@ -92,6 +92,7 @@ impl<H: AccountHolder> System for ProductRuntimeHost<H> {
 				feature_supported(
 					self.connection.platform.as_ref(),
 					|version, features| services.draws_materials(version, features),
+					services.draws_touch(),
 					inner,
 				)
 				.await

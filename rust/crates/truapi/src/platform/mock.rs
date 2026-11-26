@@ -1096,8 +1096,9 @@ impl Features for MockPlatform {
 						.iter()
 						.any(|served| served.as_slice() == genesis_hash.as_slice())
 			},
-			// The core answers the materials question, never a platform.
-			latest::HostFeatureSupportedRequest::Materials { .. } => false,
+			// The core answers the materials and touch questions, never a platform.
+			latest::HostFeatureSupportedRequest::Materials { .. } |
+			latest::HostFeatureSupportedRequest::RendererTouch => false,
 		};
 		Ok(latest::HostFeatureSupportedResponse {
 			supported: self.config.feature_supported && served,

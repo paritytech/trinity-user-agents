@@ -218,9 +218,9 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
     it("encodes a Materials node at the index Rust reads and refuses index 10", () => {
         const node: T.RendererNode = {
             tag: "Materials",
-            value: { props: { layers: [] }, children: [] },
+            value: { props: { layers: [], bleed: 0 }, children: [] },
         };
-        expect(toHex(T.RendererNode.enc(node))).toBe("0b0000");
+        expect(toHex(T.RendererNode.enc(node))).toBe("0b000000");
         expect(() => T.RendererNode.dec(new Uint8Array([10, 0, 0]))).toThrow();
     });
 

@@ -28,6 +28,8 @@ pub enum HostFeatureSupportedRequest {
 		/// Feature names, as on the `// @requires` line.
 		features: Vec<String>,
 	},
+	/// Ask whether the host draws `Touch` nodes and fills the touch arguments.
+	RendererTouch,
 }
 
 /// Error from [`crate::api::System::navigate_to`].
