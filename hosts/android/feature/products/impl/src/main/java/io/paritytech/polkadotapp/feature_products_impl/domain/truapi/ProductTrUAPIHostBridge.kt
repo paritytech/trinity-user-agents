@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.Context
 import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
@@ -19,6 +21,7 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
+import io.paritytech.polkadotapp.common.utils.openAppNotificationSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
@@ -60,6 +63,7 @@ import uniffi.truapi.Severity
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.coreMarkers
+import uniffi.truapi.notificationSettingsUrl
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -89,6 +93,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
     private val coreEventLogger: CoreEventLogger,
+    @param:ApplicationContext private val context: Context,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -154,6 +159,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
          * navigation into the system browser, where those names do not resolve.
          */
         override suspend fun navigateTo(url: String) {
+            if (url == notificationSettingsUrl()) return openNotificationSettings()
             val destination = url.toUri()
             val tld = dotNsTldProvider.getTld().getOrElse {
                 throw HostNavigateToException.Unknown(it.message.orEmpty())
@@ -316,6 +322,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
+    }
+
+    private fun openNotificationSettings() {
+        runCatching { context.openAppNotificationSettings() }
+            .getOrElse {
+                Timber.w(it, "truapi.navigate: notification settings did not open")
+                throw HostNavigateToException.Unknown(it.message.orEmpty())
+            }
     }
 
     private fun observeAppLifecycle() {

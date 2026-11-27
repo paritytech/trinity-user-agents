@@ -72,10 +72,8 @@ pub trait System: Send + Sync {
 	/// one covers the other.
 	///
 	/// `polkadotapp://settings/notifications` opens the notification settings the
-	/// operating system keeps for the host application, with no prompt. Use it
-	/// after `requestDevicePermission("Notifications")` answered `granted: false`.
-	/// The iOS and Android hosts serve it. Another host can answer `Ok` and open
-	/// nothing.
+	/// operating system keeps for the host application, with no prompt. A host
+	/// without such a page can answer `Ok` and open nothing.
 	///
 	/// ```ts
 	/// const result = await truapi.system.navigateTo({

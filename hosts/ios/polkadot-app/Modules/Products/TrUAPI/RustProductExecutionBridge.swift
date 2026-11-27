@@ -75,7 +75,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func navigateTo(url: String) async throws {
-        if case .notificationSettings = parseNavigate(input: url) {
+        if url == notificationSettingsUrl() {
             do {
                 try await dependencies.navigationRouter.openNotificationSettings()
             } catch {

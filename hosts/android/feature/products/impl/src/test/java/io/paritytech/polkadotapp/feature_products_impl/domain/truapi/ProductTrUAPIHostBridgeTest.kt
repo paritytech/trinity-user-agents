@@ -1,14 +1,18 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.Context
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.HostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
+import io.paritytech.polkadotapp.common.utils.openAppNotificationSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
@@ -23,13 +27,16 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardCoverOutcome
+import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
@@ -39,6 +46,14 @@ class ProductTrUAPIHostBridgeTest {
 
     private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
     private val game = ProductId.parse("game.dot").getOrThrow()
+    private val context = mockk<Context>()
+    private val dotNsTldProvider = mockk<DotNsTldProvider>()
+
+    @Before
+    fun mockContextHelpers() = mockkStatic(CONTEXT_HELPERS)
+
+    @After
+    fun restoreContextHelpers() = unmockkStatic(CONTEXT_HELPERS)
 
     private fun TestScope.bridge(
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
@@ -50,10 +65,11 @@ class ProductTrUAPIHostBridgeTest {
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
-        dotNsTldProvider = mock(DotNsTldProvider::class.java),
+        dotNsTldProvider = dotNsTldProvider,
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
         coreEventLogger = CoreEventLogger { _, _, _, _ -> },
+        context = context,
         scope = scope,
     )
 
@@ -141,6 +157,38 @@ class ProductTrUAPIHostBridgeTest {
         assertEquals(ExpandedCardCoverOutcome.USER_MOVING, outcome)
     }
 
+    // A player who refused notifications can only turn them back on in the system settings, so the
+    // link has to open them rather than go through product navigation, which knows no such route.
+    @Test
+    fun `the notification settings link opens the app notification settings`() = runTest {
+        withNotificationSettingsOutcome(Result.success(Unit))
+        val hostBridge = attachCapturingBridge(card = null)
+
+        hostBridge.navigateTo("polkadotapp://settings/notifications")
+
+        verifyNotificationSettingsOpened(times = 1)
+        coVerify(exactly = 0) { dotNsTldProvider.getTld() }
+    }
+
+    @Test
+    fun `notification settings that do not open fail the navigation`() = runTest {
+        withNotificationSettingsOutcome(Result.failure(IllegalStateException("no settings activity")))
+        val hostBridge = attachCapturingBridge(card = null)
+
+        val outcome = runCatching { hostBridge.navigateTo("polkadotapp://settings/notifications") }
+
+        assertEquals("no settings activity", (outcome.exceptionOrNull() as? HostNavigateToException.Unknown)?.reason)
+    }
+
+    @Test
+    fun `another settings link does not open the notification settings`() = runTest {
+        val hostBridge = attachCapturingBridge(card = null)
+
+        runCatching { hostBridge.navigateTo("polkadotapp://settings/other") }
+
+        verifyNotificationSettingsOpened(times = 0)
+    }
+
     @Test
     fun `the game bridge schedules and cancels for the calling product`() = runTest {
         withScheduleOutcome(Result.success(Unit))
@@ -167,5 +215,17 @@ class ProductTrUAPIHostBridgeTest {
 
     private fun withScheduleOutcome(outcome: Result<Unit>) {
         coEvery { gameReminder.schedule(game, 1_000) } returns outcome
+    }
+
+    private fun withNotificationSettingsOutcome(outcome: Result<Unit>) {
+        every { context.openAppNotificationSettings() } answers { outcome.getOrThrow() }
+    }
+
+    private fun verifyNotificationSettingsOpened(times: Int) {
+        verify(exactly = times) { context.openAppNotificationSettings() }
+    }
+
+    private companion object {
+        const val CONTEXT_HELPERS = "io.paritytech.polkadotapp.common.utils.ContextKt"
     }
 }

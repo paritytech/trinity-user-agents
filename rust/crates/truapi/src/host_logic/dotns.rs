@@ -19,6 +19,10 @@ pub const APP_SCHEME: &str = "polkadotapp";
 /// The internal URL scheme under which hosts serve product content.
 pub const PRODUCT_SCHEME: &str = "polkadot";
 
+/// The link that names the notification settings the operating system keeps
+/// for the host application.
+pub const NOTIFICATION_SETTINGS_URL: &str = "polkadotapp://settings/notifications";
+
 const HTTP_SCHEME: &str = "http";
 const HTTPS_SCHEME: &str = "https";
 
@@ -91,6 +95,9 @@ pub enum NavigateDecision {
 		/// `navigate_to` hands the host.
 		canonical_url: String,
 	},
+	/// The notification settings the operating system keeps for the host
+	/// application, named by [`NOTIFICATION_SETTINGS_URL`].
+	NotificationSettings,
 	/// An absolute external URL with an `http(s):` scheme prepended if missing.
 	External {
 		/// Canonical URL string.
@@ -180,6 +187,7 @@ pub fn parse_navigate(input: &str, stack: &Stack) -> NavigateDecision {
 	}
 
 	match normalize_external(trimmed) {
+		Ok(url) if url == NOTIFICATION_SETTINGS_URL => NavigateDecision::NotificationSettings,
 		Ok(url) => NavigateDecision::External { url },
 		Err(reason) => NavigateDecision::Reject { reason },
 	}

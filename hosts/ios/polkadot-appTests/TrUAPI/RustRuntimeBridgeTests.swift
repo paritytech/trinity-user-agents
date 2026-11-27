@@ -145,10 +145,7 @@ struct RustRuntimeBridgeTests {
     /// path, which knows no settings route.
     @Test func navigateToOpensTheNotificationSettings() async throws {
         let router = MockNavigationRouter()
-        let bridge = makeBridge(
-            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
-            router: router
-        )
+        let bridge = makeBridge(router: router)
 
         try await bridge.navigateTo(url: "polkadotapp://settings/notifications")
 
@@ -162,10 +159,7 @@ struct RustRuntimeBridgeTests {
     @Test func navigateToReportsNotificationSettingsThatDidNotOpen() async {
         let router = MockNavigationRouter()
         router.errorToThrow = ProductNativeApiError.navigationForbidden
-        let bridge = makeBridge(
-            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
-            router: router
-        )
+        let bridge = makeBridge(router: router)
 
         await #expect(throws: HostNavigateToError.self) {
             try await bridge.navigateTo(url: "polkadotapp://settings/notifications")

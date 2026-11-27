@@ -195,9 +195,7 @@ fn pocket_collection() -> Expected {
 }
 
 fn notification_settings() -> Expected {
-	Expected::Decision(NavigateDecision::NotificationSettings {
-		canonical_url: "polkadotapp://settings/notifications".to_string(),
-	})
+	Expected::Decision(NavigateDecision::NotificationSettings)
 }
 
 fn localhost(host: &str, path: &str) -> Expected {
@@ -366,14 +364,39 @@ fn parse_navigate_cases() {
 			expected: notification_settings(),
 		},
 		TestCase {
-			name: "notification settings deeplink with a trailing slash",
-			input: "polkadotapp://settings/notifications/",
+			name: "notification settings deeplink with surrounding spaces opens the settings",
+			input: "  polkadotapp://settings/notifications  ",
 			expected: notification_settings(),
 		},
 		TestCase {
-			name: "notification settings deeplink in mixed case",
-			input: "POLKADOTAPP://Settings/notifications",
+			name: "notification settings deeplink with a trailing slash is an app link",
+			input: "polkadotapp://settings/notifications/",
+			expected: external("polkadotapp://settings/notifications/"),
+		},
+		TestCase {
+			name: "notification settings deeplink with an upper case scheme opens the settings",
+			input: "POLKADOTAPP://settings/notifications",
 			expected: notification_settings(),
+		},
+		TestCase {
+			name: "notification settings deeplink with a tab inside opens the settings",
+			input: "polkadotapp://settings/notifi\tcations",
+			expected: notification_settings(),
+		},
+		TestCase {
+			name: "notification settings deeplink with a dot segment opens the settings",
+			input: "polkadotapp://settings/./notifications",
+			expected: notification_settings(),
+		},
+		TestCase {
+			name: "notification settings under another host case is an app link",
+			input: "POLKADOTAPP://Settings/notifications",
+			expected: external("polkadotapp://Settings/notifications"),
+		},
+		TestCase {
+			name: "notification settings deeplink with an empty segment is an app link",
+			input: "polkadotapp://settings//notifications",
+			expected: external("polkadotapp://settings//notifications"),
 		},
 		TestCase {
 			name: "settings deeplink without a page is an app link",
@@ -386,24 +409,14 @@ fn parse_navigate_cases() {
 			expected: external("polkadotapp://settings/other"),
 		},
 		TestCase {
-			name: "a page under the notification settings is an app link",
-			input: "polkadotapp://settings/notifications/other",
-			expected: external("polkadotapp://settings/notifications/other"),
-		},
-		TestCase {
-			name: "notifications under another app host is an app link",
-			input: "polkadotapp://pay/notifications",
-			expected: external("polkadotapp://pay/notifications"),
-		},
-		TestCase {
-			name: "notification settings deeplink drops its query",
+			name: "notification settings deeplink with a query is an app link",
 			input: "polkadotapp://settings/notifications?from=card",
-			expected: notification_settings(),
+			expected: external("polkadotapp://settings/notifications?from=card"),
 		},
 		TestCase {
-			name: "notification settings deeplink drops its fragment",
+			name: "notification settings deeplink with a fragment is an app link",
 			input: "polkadotapp://settings/notifications#top",
-			expected: notification_settings(),
+			expected: external("polkadotapp://settings/notifications#top"),
 		},
 		TestCase {
 			name: "notification settings under a web scheme is an ordinary host",
