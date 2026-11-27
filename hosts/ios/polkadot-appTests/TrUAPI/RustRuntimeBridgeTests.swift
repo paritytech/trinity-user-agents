@@ -84,7 +84,7 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
-    cardFace: (any ExpandedCardFaceShowing)? = nil,
+    card: (any ExpandedCardCovering)? = nil,
     router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
@@ -112,7 +112,7 @@ private func makeBridge(
         hostProvider: hostProvider,
         themeManager: themeManager,
         logger: Logger.shared
-    ), cardFace: cardFace)
+    ), card: card)
 }
 
 // MARK: - Tests
@@ -577,26 +577,26 @@ struct RustRuntimeBridgeTests {
         #expect(await presenter.confirm(review: review, from: "test.product.dot") == false)
     }
 
-    // MARK: setExpandedCardFaceShown
+    // MARK: setExpandedCardCovered
 
     /// Called through `HostBridge` as the core does: an override whose signature drifts would lose
     /// to the default and answer `.unsupported`.
     @MainActor
-    @Test func expandedCardFaceReachesTheCardsFace() async throws {
-        let face = StubCardFace()
-        let bridge: HostBridge = makeBridge(cardFace: face)
+    @Test func expandedCardCoverReachesTheCard() async throws {
+        let card = StubCoveredCard()
+        let bridge: HostBridge = makeBridge(card: card)
 
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
-        #expect(face.requests == [false])
+        #expect(try await bridge.setExpandedCardCovered(covered: true) == .userMoving)
+        #expect(card.requests == [true])
     }
 
     @MainActor
-    @Test func expandedCardFaceIsNotPresentedOnceTheCardIsGone() async throws {
-        var face: StubCardFace? = StubCardFace()
-        let bridge: HostBridge = makeBridge(cardFace: face)
-        face = nil
+    @Test func expandedCardCoverIsNotPresentedOnceTheCardIsGone() async throws {
+        var card: StubCoveredCard? = StubCoveredCard()
+        let bridge: HostBridge = makeBridge(card: card)
+        card = nil
 
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .notPresented)
+        #expect(try await bridge.setExpandedCardCovered(covered: true) == .notPresented)
     }
 
     // MARK: attach

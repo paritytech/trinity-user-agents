@@ -12,16 +12,6 @@ use crate::{
 	platform::ProductId,
 };
 
-impl NativeProductExecution {
-	fn has_live_connection(&self) -> bool {
-		self.product_control
-			.lock()
-			.expect("product control mutex poisoned")
-			.as_ref()
-			.is_some_and(crate::ProductRuntimeControl::is_connected)
-	}
-}
-
 /// One of the two things a starting worker waits for before it runs.
 pub enum Signal {
 	/// The engine reported that the product's module started.
@@ -191,7 +181,7 @@ impl Registry {
 		};
 		match phase {
 			Phase::Running(owner)
-				if matches!(signal, Signal::Connected) && owner.has_live_connection() => {},
+				if matches!(signal, Signal::Connected) && owner.live_control().is_some() => {},
 			Phase::Running(_) => return false,
 			Phase::Starting { stage, .. } => {
 				let owner = match &*stage {
@@ -204,7 +194,7 @@ impl Registry {
 				if matches!((&*stage, signal), (Stage::Loading(_), Signal::Connected)) {
 					return true;
 				}
-				if !owner.has_live_connection() {
+				if owner.live_control().is_none() {
 					*stage = Stage::Connecting(owner);
 					return true;
 				}
@@ -222,7 +212,7 @@ impl Registry {
 	pub fn lost(&mut self, product: &ProductId, timeout: impl FnOnce() -> BackgroundTask) {
 		let Some(Entry::Active { phase, .. }) = self.entries.get_mut(product) else { return };
 		let Phase::Running(owner) = phase else { return };
-		if owner.has_live_connection() {
+		if owner.live_control().is_some() {
 			return;
 		}
 		*phase = Phase::Starting { stage: Stage::Connecting(owner.clone()), _timeout: timeout() };

@@ -150,7 +150,6 @@ struct TrUAPIHostRuntimeProviderConfigTests {
         let config = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
             secret: Data(repeating: 7, count: 32),
             liteUsername: nil,
-            networkSuffix: "testnet",
             databaseDirectory: makeDatabaseDirectory(),
             deviceEncryptionKey: nil
         )

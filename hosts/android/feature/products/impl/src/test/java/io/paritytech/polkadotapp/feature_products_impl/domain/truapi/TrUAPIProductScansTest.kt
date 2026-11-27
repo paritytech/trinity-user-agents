@@ -17,11 +17,11 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import uniffi.truapi.ProductId
 import uniffi.truapi.CodeFormat
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 
 class TrUAPIProductScansTest {
     private val request = HostScannerScanRequest(listOf(CodeFormat.QR), null, null)

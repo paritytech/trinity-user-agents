@@ -340,8 +340,8 @@ the card's page URL for that open only. A product's `navigateTo` uses the same l
 Seams, all in `feature/products/api/.../domain/pocket/`:
 - `PocketCollection` — `observeCards()` and user removal, backed by the collection the core keeps in its database
   (`CorePocketCardRepository` over the runtime's `pocketCards()`, `addPocketCard`, `removePocketCard` and
-  `pocketCardFace`). One pinned card, Humanity on the personhood product (`AssetPinnedPocketCards`), is handed to the
-  core in `HostRuntimeConfig.pinnedPocketCards` and has a bundled face; added cards are stored with the face they were
+  `pocketCardFace`). One pinned card, Humanity on the personhood product, is pinned by the core itself on its stack's
+  network (`pinnedPocketCards` lists it) and has a bundled face in `AssetPinnedPocketCards`; added cards are stored with the face they were
   approved with. Balance and Scarcity are not pinned: the products behind them publish no Pocket cards, and the host
   already draws its own native cards for that ground. The core keeps the newest face of every card, pinned ones
   included, from each Pocket card render, so a card wears what its product last drew rather than the bundled
@@ -388,8 +388,8 @@ draws its face live and gives it up on its Remove button.
 
 ### Host-placed chat
 
-The chat analogue of the pinned card. `HostPlacedProducts` (`feature/products/impl/.../domain/bot/external/`) names
-the products the host itself puts in chat, Jollity on the reserved game product, and `ProductExternalExtensionProvider`
+The chat analogue of the pinned card. `HostPlacedProducts` (`feature/products/impl/.../domain/bot/external/`) lists
+the products the core places in chat (`hostPlacedChats`), Jollity on the game product, and `ProductExternalExtensionProvider`
 unions them with the installed chat products, placed first and listed once when the user also installed one. Nothing
 is written to the product tables, so nothing can uninstall them, and the product the registry sees never changes, so
 the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,

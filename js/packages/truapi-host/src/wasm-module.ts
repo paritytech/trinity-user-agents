@@ -56,6 +56,11 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   notifyContactsChanged(): void;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
+  /**
+   * The id the host's stack serves the product `name` names under. Throws for
+   * a name it does not serve.
+   */
+  parseProductId(name: string): ProductId;
   /** Free the returned handle to release this consumer's reference. */
   claimWorker(productId: ProductId): { free(): void } | undefined;
   /**

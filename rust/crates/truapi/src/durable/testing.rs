@@ -1,9 +1,11 @@
 //! Fixtures shared by the durable engine's tests.
 
 mod harness;
+mod live;
 mod policy;
 
 pub use harness::{DeferredTxHarness, cascading_dependency, other_domain, test_domain};
+pub use live::live_engine;
 pub use policy::{
 	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with,
 	extrinsic_for_index, first_build_gated, first_builds, insert_retryable, test_plan,

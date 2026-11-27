@@ -62,9 +62,10 @@ impl NativeRendererObserver for RenderObserver {
 	fn on_error(&self, _reason: String) {}
 }
 
-async fn connect(
-	owner: &Arc<NativeProductExecution>,
-) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+type ClientSocket =
+	tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect(owner: &Arc<NativeProductExecution>) -> ClientSocket {
 	let endpoint = owner.start_ws_bridge(0).unwrap();
 	let (socket, _) = tokio_tungstenite::connect_async(format!(
 		"ws://127.0.0.1:{}/?t={}",
@@ -73,10 +74,35 @@ async fn connect(
 	.await
 	.unwrap();
 	crate::test_support::wait_until(
-		|| owner.product_control.lock().unwrap().is_some(),
+		|| owner.live_control().is_some(),
 		"authenticated socket installed product control",
 	);
 	socket
+}
+
+async fn render_over(
+	execution: &dyn NativeWorkerExecution,
+	socket: &mut ClientSocket,
+) -> Arc<NativeSubscription> {
+	use parity_scale_codec::Decode;
+	let subscription = execution
+		.render(
+			latest::ProductRendererRenderRequest {
+				context: latest::RenderContext::PocketCard { card_id: "weather".into() },
+				payload: vec![],
+			},
+			Arc::new(RenderObserver),
+		)
+		.unwrap();
+	let start = tokio::time::timeout(Duration::from_secs(5), socket.next())
+		.await
+		.unwrap()
+		.unwrap()
+		.unwrap()
+		.into_data();
+	let request = crate::frame::ProtocolMessage::decode(&mut &start[..]).unwrap();
+	assert_eq!(request.payload.message_type, crate::frame::MESSAGE_TYPE_START);
+	subscription
 }
 
 #[tokio::test]
@@ -102,24 +128,7 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	chat.release();
 	drop(chat);
 	assert!(views.stops.lock().unwrap().is_empty());
-	use parity_scale_codec::Decode;
-	let _render = consumer
-		.render(
-			latest::ProductRendererRenderRequest {
-				context: latest::RenderContext::PocketCard { card_id: "weather".into() },
-				payload: vec![],
-			},
-			Arc::new(RenderObserver),
-		)
-		.unwrap();
-	let start = tokio::time::timeout(Duration::from_secs(5), socket.next())
-		.await
-		.unwrap()
-		.unwrap()
-		.unwrap()
-		.into_data();
-	let request = crate::frame::ProtocolMessage::decode(&mut &start[..]).unwrap();
-	assert_eq!(request.payload.message_type, crate::frame::MESSAGE_TYPE_START);
+	let _render = render_over(consumer.as_ref(), &mut socket).await;
 	drop(pocket);
 	assert!(running(&runtime, &product).is_none());
 	assert!(matches!(
@@ -386,42 +395,51 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 }
 
 #[tokio::test]
-async fn losing_the_latest_socket_withdraws_a_worker_until_it_can_receive_calls_again() {
-	let (runtime, views, product) = setup();
-	let _claim = runtime.claim_worker(product.clone());
-	let attempt = views.latest();
-	let callbacks = Arc::new(EventCallbacks::new());
-	let owner = attempt
-		.open_execution(ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None })
-		.unwrap();
-	let endpoint = owner.start_ws_bridge(0).unwrap();
-	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
-	let (send, receive) = mpsc::channel();
-	let _observing = runtime.observe_worker_execution(product, Arc::new(Observer(send)));
-	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	assert!(attempt.module_started());
-	let connect = || tokio_tungstenite::connect_async(url.as_str());
-	let (mut first, _) = connect().await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
-	let (mut next_socket, _) = connect().await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
-	first.close(None).await.unwrap();
-	crate::test_support::wait_until(
-		|| {
-			callbacks
-				.logs
-				.lock()
-				.unwrap()
-				.iter()
-				.any(|(marker, _)| marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target)
-		},
-		"old socket closed",
-	);
-	assert!(receive.try_recv().is_err(), "a replaced socket cannot withdraw the live one");
-	next_socket.close(None).await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	let (_restored, _) = connect().await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
-	assert_eq!(views.starts.lock().unwrap().len(), 1);
+async fn a_worker_renders_on_the_surviving_socket_until_the_last_one_closes() {
+	for close_newest in [false, true] {
+		let (runtime, views, product) = setup();
+		let _claim = runtime.claim_worker(product.clone());
+		let attempt = views.latest();
+		let callbacks = Arc::new(EventCallbacks::new());
+		let owner = attempt
+			.open_execution(ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None })
+			.unwrap();
+		let endpoint = owner.start_ws_bridge(0).unwrap();
+		let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+		let (send, receive) = mpsc::channel();
+		let _observing =
+			runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
+		let mut updates =
+			core::iter::from_fn(|| receive.recv_timeout(Duration::from_secs(5)).unwrap());
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Pending)));
+		assert!(attempt.module_started());
+		let connect = || tokio_tungstenite::connect_async(url.as_str());
+		let (first, _) = connect().await.unwrap();
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Running { .. })));
+		let (second, _) = connect().await.unwrap();
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Running { .. })));
+		let (mut closing, mut survivor) =
+			if close_newest { (second, first) } else { (first, second) };
+		closing.close(None).await.unwrap();
+		crate::test_support::wait_until(
+			|| {
+				callbacks
+					.logs
+					.lock()
+					.unwrap()
+					.iter()
+					.any(|(marker, _)| marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target)
+			},
+			"the bridge has closed one of the two sockets",
+		);
+		let execution = running(&runtime, &product).expect("one socket is still live");
+		let _render = render_over(execution.as_ref(), &mut survivor).await;
+		survivor.close(None).await.unwrap();
+		let unavailable =
+			updates.find(|state| !matches!(state, NativeWorkerExecutionState::Running { .. }));
+		assert!(matches!(unavailable, Some(NativeWorkerExecutionState::Pending)));
+		let (_restored, _) = connect().await.unwrap();
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Running { .. })));
+		assert_eq!(views.starts.lock().unwrap().len(), 1);
+	}
 }

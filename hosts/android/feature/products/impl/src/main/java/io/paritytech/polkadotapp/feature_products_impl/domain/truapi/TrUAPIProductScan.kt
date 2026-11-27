@@ -8,9 +8,9 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotMa
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton

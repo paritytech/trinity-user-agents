@@ -37,6 +37,10 @@ pub trait NativeWorkerExecution: Send + Sync {
 	) -> Result<(), ProductRuntimeError>;
 
 	/// Observe replacement trees until cancellation. Pocket keeps the latest face for offline use.
+	///
+	/// Uses the newest open connection. Returns [`ProductRuntimeError::NotConnected`] if none
+	/// is open or that connection closes during the call. A shut-down execution returns
+	/// [`ProductRuntimeError::Closed`].
 	fn render(
 		&self,
 		request: latest::ProductRendererRenderRequest,
