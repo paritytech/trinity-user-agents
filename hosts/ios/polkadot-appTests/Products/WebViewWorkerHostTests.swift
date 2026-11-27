@@ -82,6 +82,32 @@ struct WebViewWorkerHostTests {
         #expect(try await attempt.nextEvent() == .failed(String(describing: MissingWorker())))
         host.stop(productId: product, attemptId: attempt.id())
     }
+
+    /// A cancelled startup is one the core stopped itself. Nothing failed, so a failure report
+    /// would blame the worker for the core's own stop.
+    @Test
+    func aStartupTheCoreStoppedReportsNoFailure() async throws {
+        let building = AsyncStream<Void>.makeStream()
+        let fetch = AsyncStream<Void>.makeStream()
+        let host = WebViewWorkerHost { _, _ in
+            building.continuation.finish()
+            // Waiting on the stream itself models a fetch that ends when its caller is cancelled.
+            for await _ in fetch.stream {}
+            throw CancellationError()
+        }
+        let events: AsyncStream<Attempt.Event>
+        do {
+            let attempt = Attempt(5)
+            events = attempt.events.stream
+            host.start(productId: product, attempt: attempt)
+            try await withTimeout(.hangGuard) { for await _ in building.stream {} }
+            host.stop(productId: product, attemptId: attempt.id())
+        }
+
+        // The startup task holds the last reference to the attempt, so its events end when it does.
+        let reported = try await withTimeout(.hangGuard) { await events.first { _ in true } }
+        #expect(reported == nil)
+    }
 }
 
 private final class Attempt: NativeWorkerAttempt, @unchecked Sendable {
@@ -97,6 +123,8 @@ private final class Attempt: NativeWorkerAttempt, @unchecked Sendable {
         self.value = value
         super.init(noHandle: .init())
     }
+
+    deinit { events.continuation.finish() }
 
     required init(unsafeFromHandle _: UInt64) {
         fatalError("Only a simulator test can create this attempt")
