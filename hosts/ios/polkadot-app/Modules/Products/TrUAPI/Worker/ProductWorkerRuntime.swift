@@ -70,12 +70,13 @@ extension ProductWorkerRuntime {
         _ productId: ProductId,
         _ request: ProductRendererRenderRequest,
         logger: LoggerProtocol,
+        clock: any Clock<Duration> = ContinuousClock(),
         as output: @escaping @Sendable (RendererNode) -> Output
     ) -> AsyncThrowingStream<Output, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await withRunningWorker(productId) { execution in
-                    await reopening(execution, request, logger: logger) { continuation.yield(output($0)) }
+                    await reopening(execution, request, logger: logger, clock: clock) { continuation.yield(output($0)) }
                 }
                 continuation.finish()
             }
@@ -92,6 +93,7 @@ private func reopening(
     _ execution: NativeWorkerExecution,
     _ request: ProductRendererRenderRequest,
     logger: LoggerProtocol,
+    clock: any Clock<Duration>,
     yield: @Sendable (RendererNode) -> Void
 ) async {
     var attempt = 0
@@ -100,6 +102,7 @@ private func reopening(
             for try await node in try execution.render(request) {
                 try Task.checkCancellation()
                 yield(node)
+                attempt = 0
             }
             attempt = 0
         } catch is CancellationError {
@@ -108,7 +111,7 @@ private func reopening(
             logger.warning("[worker] the render of \(request.context) ended, reopening: \(error)")
         }
 
-        try? await Task.sleep(for: reopenDelay(after: attempt))
+        try? await clock.sleep(for: reopenDelay(after: attempt))
         attempt += 1
     }
 }
