@@ -26,7 +26,7 @@ These are the standards for anything that sends telemetry from a host, and `AGEN
 
 **Every captured event sets a fingerprint.** An event that sets none is grouped by the stack trace Sentry attaches, which splits one event name across several groups as its frames drift. One group per event name is the default, and an event supplies its own key only where its grouping is finer than its name, as an issue does on its flow and kind. A log line has no grouping at all, so a signal that leaves as a log is counted by name and its fingerprint never reaches Sentry.
 
-**Severity says whether something broke, and that decides where the signal lands.** A flow that broke carries `error` and a lifecycle step carries `info`. `SentryHostEventRecorder` sends an info event to Sentry Logs and captures anything above it, so a mapping that picks a level is also picking which product its signal is queried in. Android carries no level on `HostEvent` and captures every one, so the same lifecycle step arrives as a captured event there.
+**Severity says whether something broke, and that decides where the signal lands.** A flow that broke carries `error` and a lifecycle step carries `info`. `SentryHostEventRecorder` sends an info event to Sentry Logs and captures anything above it, so a mapping that picks a level is also picking which product its signal is queried in. Android carries a level on `HostEvent` and sends it as the Sentry level of the event, but captures every event whatever its level, so the same lifecycle step arrives as a captured event there.
 
 **The core's marker table decides what may leave the device.** A host matches a target against the table rather than keeping a list of its own, so the question of what is exportable is answered in one reviewable place.
 
@@ -237,7 +237,7 @@ That is the core's own console line; a host receives the same as typed attribute
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
 2. Do metrics want the same treatment that events have, or is a count on an event enough? Funding's measures are counts on its core events for now.
 3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
-4. Does Android route an info host event to Sentry Logs the way iOS does, which means `HostEvent` grows a level there?
+4. Does Android route an info host event to Sentry Logs the way iOS does, now that `HostEvent` carries a level there?
 
 ## Delivery
 

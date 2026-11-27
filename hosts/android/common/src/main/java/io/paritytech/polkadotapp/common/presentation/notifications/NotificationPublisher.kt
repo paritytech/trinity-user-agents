@@ -28,13 +28,14 @@ abstract class NotificationPublisher(
         channel: PolkadotNotificationChannel,
         notification: Notification,
         tag: String? = null,
-    ): Boolean {
-        if (notificationManager.areNotificationsEnabled().not()) return false
+    ): PublishOutcome {
+        if (notificationManager.areNotificationsEnabled().not()) return PublishOutcome.NOTIFICATIONS_DISABLED
 
         createChannel(channel)
 
         notificationManager.notify(tag, notificationId, notification)
-        return channelReachesThePerson(notificationManager.getNotificationChannelCompat(channel.id)?.importance)
+        val importance = notificationManager.getNotificationChannelCompat(channel.id)?.importance
+        return if (channelReachesThePerson(importance)) PublishOutcome.POSTED else PublishOutcome.CHANNEL_BLOCKED
     }
 
     private fun createChannel(channel: PolkadotNotificationChannel) {
@@ -103,6 +104,8 @@ abstract class NotificationPublisher(
         notificationManager.cancel(tag, notificationId)
     }
 }
+
+enum class PublishOutcome { POSTED, NOTIFICATIONS_DISABLED, CHANNEL_BLOCKED }
 
 /**
  * Whether a notification posted to a channel of this importance reaches the person.

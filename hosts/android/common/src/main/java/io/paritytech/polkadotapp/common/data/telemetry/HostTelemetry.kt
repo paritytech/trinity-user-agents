@@ -11,14 +11,24 @@ data class HostEventOrigin(
     val appBuild: Long,
 )
 
+enum class HostEventLevel {
+    INFO,
+    ERROR,
+}
+
 data class HostEvent(
     val name: String,
     val tags: Map<String, String>,
     val extras: Map<String, Any>,
+    val level: HostEventLevel,
 )
 
-const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
-const val PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID = "product_notification_product_id"
+/** A flow that broke. It is grouped on its flow and kind, and only the type of [error] leaves the device. */
+data class CriticalIssue(
+    val flow: String,
+    val kind: String,
+    val error: Throwable?,
+)
 
 fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
     "host.platform" to platform,
@@ -28,18 +38,6 @@ fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
 )
 
 fun HostEventOrigin.baseExtras(): Map<String, Any> = mapOf("host.app_build" to appBuild)
-
-fun HostEventOrigin.productNotificationShown(productId: String) = HostEvent(
-    name = "host.product_notification.shown",
-    tags = baseTags() + ("product_notification.product_id" to productId),
-    extras = baseExtras(),
-)
-
-fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
-    name = "host.product_notification.tapped",
-    tags = baseTags() + ("product_notification.product_id" to productId),
-    extras = baseExtras(),
-)
 
 /** A tap is recorded once: not again when the activity is restored or relaunched from Recents. */
 fun isFreshNotificationLaunch(isRestored: Boolean, intentFlags: Int): Boolean =
@@ -51,6 +49,10 @@ fun interface HostEventOriginProvider {
 
 fun interface HostEventCapture {
     fun capture(event: () -> HostEvent)
+}
+
+fun interface CriticalIssueCapture {
+    fun capture(issue: CriticalIssue)
 }
 
 fun interface HostMonotonicTimeProvider {

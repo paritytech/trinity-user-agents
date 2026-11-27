@@ -4,6 +4,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
 import android.app.AlarmManager
 import android.content.Context
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
@@ -30,7 +32,8 @@ class RealProductNotificationSchedulerTest {
     @Before
     fun setUp() {
         whenever(context.getSystemService(AlarmManager::class.java)).thenReturn(alarmManager)
-        scheduler = RealProductNotificationScheduler(context, repository)
+        val telemetry = ProductNotificationTelemetry(mock(), mock(), HostEventCapture { }, CriticalIssueCapture { })
+        scheduler = RealProductNotificationScheduler(context, repository, telemetry)
     }
 
     @Test

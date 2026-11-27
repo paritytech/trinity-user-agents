@@ -41,12 +41,7 @@ import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetu
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarRow
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
-import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
-import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
-import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_MARKER
-import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
-import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
@@ -68,6 +63,11 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthIndicatorsWithTooltip
+import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
+import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.PRODUCT_NOTIFICATION_INTENT_MARKER
+import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID
+import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
+import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationTelemetry
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -100,10 +100,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     lateinit var statusBarTitleHolder: StatusBarTitleHolder
 
     @Inject
-    lateinit var hostEventOriginProvider: HostEventOriginProvider
-
-    @Inject
-    lateinit var hostEventCapture: HostEventCapture
+    lateinit var productNotificationTelemetry: ProductNotificationTelemetry
 
     private val viewModel by viewModels<RootViewModel>()
 
@@ -388,10 +385,13 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)
                 ?.let { ProductId.parse(it).getOrNull() }
                 ?: return@runCatching
-
-            hostEventCapture.capture {
-                hostEventOriginProvider.current().productNotificationTapped(productId.value)
+            val notificationId = if (intent.hasExtra(PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID)) {
+                NotificationId(intent.getIntExtra(PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID, 0))
+            } else {
+                null
             }
+
+            productNotificationTelemetry.tapped(productId, notificationId)
         }.logFailure("Failed to capture product notification tapped event")
     }
 

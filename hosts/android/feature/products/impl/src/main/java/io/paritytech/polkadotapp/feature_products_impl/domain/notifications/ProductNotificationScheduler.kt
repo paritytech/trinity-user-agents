@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.mapError
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotification
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
 import uniffi.truapi.ProductId
@@ -34,6 +38,7 @@ interface ProductNotificationScheduler {
 class RealProductNotificationScheduler @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val repository: ScheduledProductNotificationRepository,
+    private val telemetry: ProductNotificationTelemetry,
 ) : ProductNotificationScheduler {
     private companion object {
         const val GLOBAL_SCHEDULE_CAPACITY = 64
@@ -46,16 +51,53 @@ class RealProductNotificationScheduler @Inject constructor(
         text: String,
         deeplink: String?,
         scheduledAt: Instant,
+    ): Result<NotificationId> =
+        book(productId, text, deeplink, scheduledAt)
+            .onFailure { error ->
+                if (error is ProductPushNotificationException) {
+                    telemetry.notScheduled(productId, error.notificationId, error.reason, error.cause ?: error)
+                }
+            }
+            .logFailure("Failed to schedule product notification")
+
+    override suspend fun cancel(productId: ProductId, notificationId: NotificationId): Result<Unit> = runCancellableCatching {
+        val existed = repository.exists(productId, notificationId)
+        alarmManager.cancel(buildAlarmPendingIntent(productId, notificationId))
+        repository.delete(productId, notificationId)
+        if (existed) telemetry.cancelled(productId, notificationId)
+    }
+
+    override suspend fun cancelAllForProduct(productId: ProductId): Result<Unit> = runCancellableCatching {
+        val pending = repository.getAll().filter { it.productId == productId }
+        pending.forEach { row ->
+            alarmManager.cancel(buildAlarmPendingIntent(row.productId, row.notificationId))
+        }
+        repository.deleteAllByProduct(productId)
+        pending.forEach { row -> telemetry.cancelled(row.productId, row.notificationId) }
+    }
+
+    override suspend fun restoreAll(): Result<Unit> = runCatching {
+        repository.getAll().forEach { row ->
+            registerAlarm(row)
+        }
+    }
+
+    private suspend fun book(
+        productId: ProductId,
+        text: String,
+        deeplink: String?,
+        scheduledAt: Instant,
     ): Result<NotificationId> {
-        if (repository.countAll() >= GLOBAL_SCHEDULE_CAPACITY) {
+        val bookedCount = readBookings { repository.countAll() }.getOrElse { return Result.failure(it) }
+        if (bookedCount >= GLOBAL_SCHEDULE_CAPACITY) {
             return Result.failure(ProductPushNotificationException.ScheduleLimitReached)
         }
 
         val notificationId = NotificationId.generate(productId)
-        if (repository.exists(productId, notificationId)) {
-            return Result.failure(
-                IllegalStateException("NotificationId collision for product ${productId.value}; retry the request")
-            )
+        val idTaken = readBookings { repository.exists(productId, notificationId) }
+            .getOrElse { return Result.failure(it) }
+        if (idTaken) {
+            return Result.failure(ProductPushNotificationException.IdCollision(productId, notificationId))
         }
 
         val scheduled = ScheduledProductNotification(
@@ -65,30 +107,20 @@ class RealProductNotificationScheduler @Inject constructor(
             deeplink = deeplink,
             scheduledAt = scheduledAt,
         )
-        return registerAlarm(scheduled).mapCatching {
-            repository.insert(scheduled)
-            notificationId
-        }
+        return registerAlarm(scheduled)
+            .mapError { ProductPushNotificationException.AddFailed(notificationId, it) }
+            .flatMap {
+                runCancellableCatching { repository.insert(scheduled) }
+                    .mapError { ProductPushNotificationException.StoreFailed(notificationId, it) }
+            }
+            .map {
+                telemetry.scheduled(scheduled)
+                notificationId
+            }
     }
 
-    override suspend fun cancel(productId: ProductId, notificationId: NotificationId): Result<Unit> = runCatching {
-        alarmManager.cancel(buildAlarmPendingIntent(productId, notificationId))
-        repository.delete(productId, notificationId)
-    }
-
-    override suspend fun cancelAllForProduct(productId: ProductId): Result<Unit> = runCatching {
-        val pending = repository.getAll().filter { it.productId == productId }
-        pending.forEach { row ->
-            alarmManager.cancel(buildAlarmPendingIntent(row.productId, row.notificationId))
-        }
-        repository.deleteAllByProduct(productId)
-    }
-
-    override suspend fun restoreAll(): Result<Unit> = runCatching {
-        repository.getAll().forEach { row ->
-            registerAlarm(row)
-        }
-    }
+    private suspend fun <T> readBookings(read: suspend () -> T): Result<T> =
+        runCancellableCatching { read() }.mapError(ProductPushNotificationException::ReadFailed)
 
     private fun registerAlarm(notification: ScheduledProductNotification): Result<Unit> {
         val pendingIntent = buildAlarmPendingIntent(notification.productId, notification.notificationId)

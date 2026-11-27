@@ -4,8 +4,11 @@ import android.os.Build
 import android.os.SystemClock
 import io.paritytech.polkadotapp.app.BuildConfig
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssue
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
@@ -45,7 +48,22 @@ internal class RealHostEventCapture @Inject constructor(
 ) : HostEventCapture {
     override fun capture(event: () -> HostEvent) {
         if (enabledProvider.isEnabled()) {
-            sentryCapture.capture(event().toSentryEvent())
+            val hostEvent = event()
+            // One group per event name. Sentry would otherwise group these by the stack
+            // trace it attaches, which splits one name across several groups.
+            sentryCapture.capture(hostEvent.toSentryEvent(fingerprint = listOf(hostEvent.name)))
+        }
+    }
+}
+
+internal class RealCriticalIssueCapture @Inject constructor(
+    private val enabledProvider: HostTelemetryEnabledProvider,
+    private val originProvider: HostEventOriginProvider,
+    private val sentryCapture: SentryEventCapture,
+) : CriticalIssueCapture {
+    override fun capture(issue: CriticalIssue) {
+        if (enabledProvider.isEnabled()) {
+            sentryCapture.capture(issue.toSentryEvent(originProvider.current()))
         }
     }
 }
@@ -88,15 +106,31 @@ private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = 
         "app.launch_id" to launchId.toString(),
         "event.monotonic_ms" to monotonicMs,
     ),
+    level = HostEventLevel.INFO,
 )
 
-private fun HostEvent.toSentryEvent() = SentryEvent().apply {
+private fun CriticalIssue.toSentryEvent(origin: HostEventOrigin): SentryEvent {
+    val tags = buildMap {
+        putAll(origin.baseTags())
+        put("host.os_version", origin.osVersion)
+        put("flow", flow)
+        put("kind", kind)
+        error?.let { put("errorType", it.javaClass.name) }
+    }
+    val event = HostEvent(name = "$flow.$kind", tags = tags, extras = origin.baseExtras(), level = HostEventLevel.ERROR)
+    return event.toSentryEvent(fingerprint = listOf(flow, kind))
+}
+
+private fun HostEvent.toSentryEvent(fingerprint: List<String>) = SentryEvent().apply {
     message = Message().apply { formatted = name }
-    // One group per event name. Sentry would otherwise group these by the stack
-    // trace it attaches, which splits one name across several groups.
-    fingerprints = listOf(this@toSentryEvent.name)
-    level = SentryLevel.INFO
+    fingerprints = fingerprint
+    level = this@toSentryEvent.level.toSentryLevel()
     logger = "host.telemetry"
     this@toSentryEvent.tags.forEach(::setTag)
     this@toSentryEvent.extras.forEach(::setExtra)
+}
+
+private fun HostEventLevel.toSentryLevel() = when (this) {
+    HostEventLevel.INFO -> SentryLevel.INFO
+    HostEventLevel.ERROR -> SentryLevel.ERROR
 }
