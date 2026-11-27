@@ -79,7 +79,8 @@ Refresh the stack's copy in `stacks/` with `scripts/update-stacks.sh` before suc
 bundles has the published values of those fields and a fresh relay checkpoint. Run the script with a `truapi-host`
 built from the same tree, `TRUAPI_HOST=target/debug/truapi-host` after `cargo build -p truapi-host-cli`. The script and
 the daily `update-chain-specs.yml` otherwise run the installed release, which can be older than the tree and keep a
-copy whose only change is to a pinned field.
+copy whose only change is to a pinned field. Keep serving each relay light spec a released build bundles at its URL,
+since such a build runs it whatever a newer descriptor names.
 
 ## What else is here
 
