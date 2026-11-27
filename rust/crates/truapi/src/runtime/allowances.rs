@@ -8,7 +8,8 @@ use super::{authority::AuthorityError, sso_remote::SsoSessionKey};
 use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 
 /// Chain resource an allowance key grants access to.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, strum::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum AllowanceResource {
 	/// Bulletin-chain transaction storage.
 	Bulletin,

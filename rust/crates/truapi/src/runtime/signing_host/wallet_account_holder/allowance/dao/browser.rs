@@ -1,39 +1,40 @@
-//! A browser host has no core database, so it keeps no confirmed allowance
-//! and confirms on chain in every activation.
+//! A browser host has no core database, so it keeps no confirmed allowance.
 
-use super::WalletAccountHolder;
+use core::convert::Infallible;
+
 use crate::{
 	platform::ProductId,
-	runtime::{allowances::AllowanceResource, authority::AuthoritySession},
+	runtime::{allowances::AllowanceResource, services::RuntimeServices},
 };
 
-impl WalletAccountHolder {
-	/// Nothing is confirmed, so the chain is asked.
-	pub async fn allowance_is_confirmed(
-		&self,
-		_session: &AuthoritySession,
-		_product_id: &ProductId,
-		_resource: AllowanceResource,
-		_period: Option<u32>,
-	) -> bool {
-		false
-	}
+/// Nothing is confirmed.
+pub async fn is_confirmed(
+	_services: &RuntimeServices,
+	_owner: [u8; 32],
+	_product_id: &ProductId,
+	_resource: AllowanceResource,
+	_period: Option<u32>,
+) -> Result<bool, Infallible> {
+	Ok(false)
+}
 
-	/// Confirmations are not kept.
-	pub async fn record_confirmed_allowance(
-		&self,
-		_session: &AuthoritySession,
-		_product_id: &ProductId,
-		_resource: AllowanceResource,
-		_period: Option<u32>,
-	) {
-	}
+/// Confirmations are not kept.
+pub async fn record(
+	_services: &RuntimeServices,
+	_owner: [u8; 32],
+	_product_id: &ProductId,
+	_resource: AllowanceResource,
+	_period: Option<u32>,
+) -> Result<(), Infallible> {
+	Ok(())
+}
 
-	/// Nothing was recorded.
-	pub async fn forget_confirmed_allowance(
-		&self,
-		_product_id: &ProductId,
-		_resource: AllowanceResource,
-	) {
-	}
+/// Nothing was recorded.
+pub async fn forget(
+	_services: &RuntimeServices,
+	_owner: [u8; 32],
+	_product_id: &ProductId,
+	_resource: AllowanceResource,
+) -> Result<(), Infallible> {
+	Ok(())
 }

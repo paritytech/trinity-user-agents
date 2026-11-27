@@ -471,4 +471,58 @@ impl WalletAccountHolder {
 		);
 		Ok(())
 	}
+
+	/// Whether this wallet confirmed `resource` for `product_id` in `period`,
+	/// so its key is served without asking the chain.
+	///
+	/// A record that cannot be read answers `false`, so the chain is asked.
+	async fn allowance_is_confirmed(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		resource: AllowanceResource,
+		period: Option<u32>,
+	) -> bool {
+		dao::is_confirmed(&self.services, session.public_key, product_id, resource, period)
+			.await
+			.unwrap_or_else(|error| {
+				warn!(%product_id, %error, "failed to read the confirmed allowance");
+				false
+			})
+	}
+
+	/// Record that this wallet confirmed `resource` for `product_id` in
+	/// `period`.
+	///
+	/// A failed write is logged: the next activation then asks the chain.
+	pub async fn record_confirmed_allowance(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		resource: AllowanceResource,
+		period: Option<u32>,
+	) {
+		let recorded =
+			dao::record(&self.services, session.public_key, product_id, resource, period).await;
+		if let Err(error) = recorded {
+			warn!(%product_id, %error, "failed to record the confirmed allowance");
+		}
+	}
+
+	/// Stop relying on what the active wallet recorded about `resource` for
+	/// `product_id`, so its next request is confirmed on chain.
+	pub async fn forget_confirmed_allowance(
+		&self,
+		product_id: &ProductId,
+		resource: AllowanceResource,
+	) {
+		let Some(session) = self.session_state.current() else {
+			return;
+		};
+		let forgotten =
+			dao::forget(&self.services, session.public_key, product_id, resource).await;
+		if let Err(error) = forgotten {
+			warn!(%product_id, %error, "failed to forget the confirmed allowance");
+		}
+	}
 }
