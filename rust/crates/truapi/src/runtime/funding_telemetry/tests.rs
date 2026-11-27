@@ -109,9 +109,10 @@ fn an_unknown_measure_is_left_off() {
 	assert_eq!((value(&took, "outcome"), value(&took, "take_ms")), (text("not_taken"), None));
 }
 
-// The table gates both ways out of the core, so a funding marker the table
-// does not export would reach no host: each one a fact goes out under is
-// exported, an unexpected ending at error so it can be alerted on.
+// The table gates both ways out of the core on registration, so a funding
+// marker it does not list would reach no host at all. Every marker a fact goes
+// out under is local, reaching a host's own log and nothing past it, bar an
+// unexpected ending at error so it can be alerted on.
 #[test]
 fn only_a_funding_fault_leaves_the_device() {
 	use crate::markers::{MarkerClass, Severity};

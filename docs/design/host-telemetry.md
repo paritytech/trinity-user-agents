@@ -151,7 +151,7 @@ An unregistered target is caught three times over, in this order:
 
 That predicate is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
 
-**What the table decides.** A marker absent from it is local, because lookup is exact. `MarkerClass::Export { severity }` is what carries a core error to Sentry as an error rather than as info. The rule exists once, in the core, whatever the host count.
+**What the table decides.** A marker absent from it is local, because lookup is exact. `MarkerClass::Export { severity }` is what keeps a core error an error at Sentry rather than flattening it to a warning. The rule exists once, in the core, whatever the host count.
 
 The two tag filters stay. They are the only gate on host-originated lines such as `truapi.payments`, which the core table says nothing about. Deleting them would ship every host debug line on any tag.
 
