@@ -3,7 +3,6 @@
 mod account;
 mod allowance;
 mod allowance_renewal;
-mod confirmed_allowances;
 #[cfg(not(target_arch = "wasm32"))]
 mod data_store;
 #[cfg(not(target_arch = "wasm32"))]

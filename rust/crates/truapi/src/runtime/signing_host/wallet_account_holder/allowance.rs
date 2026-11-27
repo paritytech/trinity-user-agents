@@ -1,5 +1,8 @@
 //! Wallet resource approval and allowance issuance.
 
+#[cfg_attr(target_arch = "wasm32", path = "allowance/dao/browser.rs")]
+mod dao;
+
 use tracing::{debug, warn};
 use truapi::latest as api;
 
