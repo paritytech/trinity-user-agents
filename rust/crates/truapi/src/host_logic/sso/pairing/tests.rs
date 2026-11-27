@@ -219,3 +219,25 @@ fn session_statement_uses_nonce_ciphertext_tag_framing() {
 	assert_eq!(encrypted.len(), AEAD_NONCE_LEN + data.encode().len() + 16);
 	assert_eq!(decrypt_session_statement_data(&session, &encrypted).unwrap(), data);
 }
+
+/// The wallet derives the pairing topic and session channels on its own, so a
+/// change on this side alone strands the session. The topic is the mobile
+/// vector; the session values were derived from RFC 7748 X25519 and
+/// `hashlib.blake2b(digest_size=32)` in Python.
+#[test]
+fn topic_and_session_channels_match_independent_derivation() {
+	let (secret, public) = x25519_keypair(1);
+	let session =
+		establish_sso_session_info(&bootstrap(secret, public), [0x77; 32], x25519_keypair(2).1)
+			.unwrap();
+
+	assert_eq!(
+		[bootstrap_topic(SS_PUBLIC, public), session.session_id_own, session.request_channel]
+			.map(hex::encode),
+		[
+			"ec8c8d7993ef1b367a704f34cec0fa1fe01d0a060a918688f26b23e88452a6af",
+			"4f88e3f5774d5c3cdf3001f47d3cb1b9553fbfd8275ba04f6efd65bc02eec8d9",
+			"2ce4608f63874506b94e61007c1159caec39797e6d0506cd5f17d2d517106cce",
+		]
+	);
+}

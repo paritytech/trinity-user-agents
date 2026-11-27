@@ -22,7 +22,7 @@ use schnorrkel::{
 use std::str::FromStr;
 use thiserror::Error;
 
-use super::keyed_hash::blake2b_256_keyed;
+use super::keyed_hash;
 use crate::platform::{PrivilegedProduct, ProductId};
 
 const JUNCTION_ID_LEN: usize = 32;
@@ -89,7 +89,7 @@ pub fn derive_ring_vrf_entropy_from_domain(
 	domain_entropy: &[u8; 32],
 	derivation_index: &truapi::v01::DerivationIndex,
 ) -> [u8; 32] {
-	blake2b_256_keyed(domain_entropy, &derivation_index_bytes(derivation_index))
+	keyed_hash::blake2b_256_keyed(domain_entropy, &derivation_index_bytes(derivation_index))
 }
 
 /// Soft-derive a product account from an allocated 64-byte subtree secret.

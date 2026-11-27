@@ -21,7 +21,7 @@ use thiserror::Error;
 use truapi::latest::X25519PublicKey;
 
 use crate::host_logic::{
-	keyed_hash::blake2b_256_keyed,
+	keyed_hash,
 	session::SsoSessionInfo,
 	x25519_seal::{
 		AEAD_NONCE_LEN, AeadKey, SealError, SealedBox, X25519Keypair, X25519PrivateKey,
@@ -401,7 +401,7 @@ fn create_session_id(
 }
 
 fn keyed_hash(key: [u8; 32], message: &[u8]) -> [u8; 32] {
-	blake2b_256_keyed(message, &key)
+	keyed_hash::blake2b_256_keyed(message, &key)
 }
 
 /// Create one-shot pairing bootstrap material from runtime config.
