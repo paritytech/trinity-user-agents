@@ -46,15 +46,19 @@ class HostLogFilter internal constructor(private val nowMs: () -> Long) {
 
     /**
      * The marker a `truapi.core` body names. A core event's body is the marker on its own, and a
-     * core log line writes it before its fields.
+     * core log line writes it before its fields, so a body naming none inside [MARKER_LIMIT] names
+     * none at all and counts against its tag, which is what keeps one long line from growing the
+     * table.
      */
     private fun coreMarker(tag: String, body: String): String? {
         if (tag != CORE_TAG) return null
-        val markerEnd = body.indexOf(MARKER_SEPARATOR)
+        val head = body.take(MARKER_LIMIT)
+        val markerEnd = head.indexOf(MARKER_SEPARATOR)
         return when {
-            markerEnd > 0 -> body.substring(0, markerEnd)
+            markerEnd > 0 -> head.substring(0, markerEnd)
             markerEnd == 0 -> null
-            else -> body.ifEmpty { null }
+            head.length == MARKER_LIMIT -> null
+            else -> head.ifEmpty { null }
         }
     }
 
@@ -81,6 +85,7 @@ class HostLogFilter internal constructor(private val nowMs: () -> Long) {
         const val TAG_PREFIX = "truapi."
         const val CORE_TAG = "truapi.core"
         const val MARKER_SEPARATOR = ": "
+        const val MARKER_LIMIT = 96
         const val LINES_PER_WINDOW = 60
         const val WINDOW_MS = 60_000L
         const val DROPPED_ATTRIBUTE = "dropped"
