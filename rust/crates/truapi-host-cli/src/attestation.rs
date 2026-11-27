@@ -45,6 +45,9 @@ use crate::{
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
 
+/// Budget for each identity backend request.
+const BACKEND_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
 #[display("backend auth identity derivation failed")]
 struct BackendIdentityDerivationError(ProductAccountError);
@@ -268,7 +271,7 @@ pub async fn lite_username_available(
 	username_base: &str,
 ) -> Result<bool> {
 	let backend_base = network.identity_backend();
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
 	let response =
@@ -299,7 +302,7 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
 	let backend_base = config.network.identity_backend();
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 
 	let mut reader = AssetHubReader::connect(config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
@@ -419,12 +422,27 @@ struct UsernameSearchPage {
 	next_cursor: Option<String>,
 }
 
+/// One row of the identity backend's username search: a username, the account it
+/// was requested for, and its registration status.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UsernameSearchItem {
-	account_id: String,
-	username: String,
-	status: String,
+pub struct UsernameSearchItem {
+	/// SS58 address of the account the name was requested for.
+	pub account_id: String,
+	/// The username, with a lite name's two-digit discriminator restored.
+	#[serde(deserialize_with = "deserialize_searched_username")]
+	pub username: String,
+	/// The backend's registration status, such as `ASSIGNED`.
+	pub status: String,
+}
+
+/// Lists every username the identity backend holds that starts with `prefix`.
+///
+/// The search route is public, so no identity signs in. Rows of every status are
+/// returned, in the backend's order. Request and decoding failures return errors.
+pub async fn search_usernames(network: &Stack, prefix: &str) -> Result<Vec<UsernameSearchItem>> {
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
+	search_backend_prefix(&client, network, None, prefix.to_string()).await
 }
 
 /// Reverse-resolve an assigned username from the identity backend.
@@ -441,21 +459,23 @@ pub async fn lookup_backend_username(
 ) -> Result<Option<String>> {
 	const SEARCH_CONCURRENCY: usize = 4;
 
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-	let matches = stream::iter(b'a'..=b'z')
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
+	let pages = stream::iter(b'a'..=b'z')
 		.map(|initial| {
 			search_backend_prefix(
 				&client,
 				network,
-				auth_entropy,
-				candidate_account_id,
-				char::from(initial),
+				Some(auth_entropy),
+				char::from(initial).to_string(),
 			)
 		})
 		.buffer_unordered(SEARCH_CONCURRENCY)
 		.try_collect::<Vec<_>>()
 		.await?;
-	let matches = matches.into_iter().flatten().collect::<BTreeSet<_>>();
+	let matches = pages
+		.into_iter()
+		.flat_map(|rows| matching_assigned_usernames(rows, candidate_account_id))
+		.collect::<BTreeSet<_>>();
 
 	match matches.len() {
 		0 => Ok(None),
@@ -472,29 +492,32 @@ pub async fn lookup_backend_username(
 async fn search_backend_prefix(
 	client: &reqwest::Client,
 	network: &Stack,
-	auth_entropy: &RootEntropy,
-	candidate_account_id: &str,
-	initial: char,
-) -> Result<Vec<String>> {
+	auth_entropy: Option<&RootEntropy>,
+	prefix: String,
+) -> Result<Vec<UsernameSearchItem>> {
 	const PAGE_LIMIT: &str = "1000";
 
 	let backend_base = network.identity_backend();
 	let url = format!("{backend_base}/usernames/search");
-	let prefix = initial.to_string();
 	let mut cursor = None;
 	let mut seen_cursors = BTreeSet::new();
-	let mut matches = Vec::new();
+	let mut rows = Vec::new();
 	loop {
 		let mut query = vec![("prefix", prefix.as_str()), ("limit", PAGE_LIMIT)];
 		if let Some(cursor) = cursor.as_deref() {
 			query.push(("cursor", cursor));
 		}
-		let response =
-			send_with_backend_auth(client, backend_base, auth_entropy, network.tld(), |token| {
-				client.get(&url).bearer_auth(token).query(&query)
-			})
-			.await
-			.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
+		let request = || client.get(&url).query(&query);
+		let response = match auth_entropy {
+			Some(entropy) => {
+				send_with_backend_auth(client, backend_base, entropy, network.tld(), |token| {
+					request().bearer_auth(token)
+				})
+				.await
+			},
+			None => request().send().await.map_err(anyhow::Error::from),
+		}
+		.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
 		let status = response.status();
 		let text = response.text().await.unwrap_or_default();
 		if !status.is_success() {
@@ -502,7 +525,7 @@ async fn search_backend_prefix(
 		}
 		let page: UsernameSearchPage = serde_json::from_str(&text)
 			.with_context(|| format!("decode identity backend username search response: {text}"))?;
-		matches.extend(matching_assigned_usernames(page.usernames, candidate_account_id));
+		rows.extend(page.usernames);
 
 		let Some(next) = page.next_cursor else {
 			break;
@@ -512,7 +535,7 @@ async fn search_backend_prefix(
 		}
 		cursor = Some(next);
 	}
-	Ok(matches)
+	Ok(rows)
 }
 
 fn matching_assigned_usernames(
@@ -523,7 +546,13 @@ fn matching_assigned_usernames(
 	items
 		.into_iter()
 		.filter(move |item| item.status == "ASSIGNED" && item.account_id == candidate_account_id)
-		.map(|item| normalize_searched_username(&item.username))
+		.map(|item| item.username)
+}
+
+fn deserialize_searched_username<'de, D: serde::Deserializer<'de>>(
+	deserializer: D,
+) -> core::result::Result<String, D::Error> {
+	String::deserialize(deserializer).map(|username| normalize_searched_username(&username))
 }
 
 /// `/usernames/search` decodes the discriminator as a number and therefore

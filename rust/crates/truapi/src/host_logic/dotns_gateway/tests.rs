@@ -663,6 +663,12 @@ fn storage_keys_have_the_expected_layout() {
 	// Blake2_128Concat over the raw account bytes.
 	assert_eq!(&alias_key[48..], &[0x11; 32]);
 
+	// The key Asset Hub's own metadata derives for this account.
+	assert_eq!(
+		hex::encode(account_names_key(&[0x11; 32])),
+		"57ca9018d648b40a8286a471e82c3808de072516e985ec03dec70088d3f16ce37f9c299f1d9bbe856fbf2c98f0f914351111111111111111111111111111111111111111111111111111111111111111"
+	);
+
 	assert_eq!(dispatcher_address_key().len(), 32);
 	assert_eq!(timestamp_now_key().len(), 32);
 }

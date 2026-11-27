@@ -44,6 +44,7 @@ mod stack_descriptor;
 mod terminal_ui;
 mod transcript;
 mod update;
+mod username_search;
 
 use std::{
 	collections::HashMap,
@@ -3428,6 +3429,7 @@ async fn pairing_interactive_loop(
 			ShellCommand::Approval(_) |
 			ShellCommand::Session(_) |
 			ShellCommand::Profile(_) |
+			ShellCommand::Search(_) |
 			ShellCommand::Renew => {
 				ui.error("command is only available on the signing host");
 			},
@@ -3843,6 +3845,7 @@ async fn execute_interactive_operation(
 		},
 		ShellCommand::Renew => run_renew(session).await?,
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
+		ShellCommand::Search(prefix) => run_search(session, &prefix).await?,
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
 		ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
@@ -3984,6 +3987,7 @@ async fn execute_non_interactive_command(
 		},
 		ShellCommand::Renew => run_renew(session).await?,
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
+		ShellCommand::Search(prefix) => run_search(session, &prefix).await?,
 	}
 	Ok(None)
 }
@@ -4000,6 +4004,11 @@ async fn run_profile_command(session: &SigningHostSession, command: ProfileComma
 		},
 	};
 	terminal_ui::output_info(output);
+	Ok(())
+}
+
+async fn run_search(session: &SigningHostSession, prefix: &str) -> Result<()> {
+	terminal_ui::output_info(username_search::search(&session.network, prefix).await?);
 	Ok(())
 }
 

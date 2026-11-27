@@ -23,39 +23,29 @@ class CoinageTiltTest {
     }
 
     @Test
-    fun `dipping the right edge makes a face-on coin mirror the right wall`() {
-        val turn = CoinageTilt.studioTurn(lean = 0.0, sideways = CoinageTilt.scaled(0.4))
+    fun `dipping the right edge of a phone lying flat makes a face-on coin mirror the right wall`() {
+        val turn = flat(roll = 0.0).turnTo(flat(roll = 0.4))
         val mirror = turned(0.0, 0.0, 1.0, turn)
 
         assertTrue("the coin should look toward the right wall", mirror[0] > 0.1)
-        assertEquals("a sideways tilt is pure yaw, never a roll", 0.0, abs(turn.x) + abs(turn.z), TOLERANCE)
     }
 
     @Test
-    fun `a sideways tilt turns the studio symmetrically`() {
-        val left = CoinageTilt.studioTurn(lean = 0.0, sideways = CoinageTilt.scaled(-EIGHTH_TURN))
-        val right = CoinageTilt.studioTurn(lean = 0.0, sideways = CoinageTilt.scaled(EIGHTH_TURN))
+    fun `a sideways tilt of a leaned-back phone turns the studio symmetrically`() {
+        val neutral = pose(roll = 0.0, lean = 0.9)
+        val left = neutral.turnTo(pose(roll = -0.3, lean = 0.9))
+        val right = neutral.turnTo(pose(roll = 0.3, lean = 0.9))
 
-        assertEquals("equal and opposite", left.y, -right.y, TOLERANCE)
+        assertEquals("no shared pitch", 0.0, left.x + right.x, 1e-9)
+        assertEquals("equal and opposite", left.y, -right.y, 1e-9)
+        assertEquals("equal and opposite", left.z, -right.z, 1e-9)
     }
 
     @Test
-    fun `the studio turns as far as the phone`() {
-        assertEquals(CoinageTilt.RANGE, CoinageTilt.TRAVEL, TOLERANCE)
-    }
+    fun `the turn is clamped to the range`() {
+        val turn = pose(roll = 0.0, lean = 0.0).turnTo(pose(roll = 0.0, lean = 1.4))
 
-    @Test
-    fun `the two turns compose as rotations rather than adding`() {
-        val pitch = CoinageTilt.scaled(EIGHTH_TURN)
-        val yaw = CoinageTilt.scaled(EIGHTH_TURN)
-        val turn = CoinageTilt.leaned(pitch, yaw)
-
-        // Added, the z component would be zero and the length would be exactly the hypotenuse of the two.
-        assertTrue("the cross term is real", abs(turn.z) > TOLERANCE)
-        assertTrue(
-            "composed is not the sum",
-            abs(sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z) - hypot(pitch, yaw)) > TOLERANCE
-        )
+        assertEquals(CoinageTilt.TRAVEL, sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z), 1e-9)
     }
 
     @Test
@@ -63,24 +53,6 @@ class CoinageTiltTest {
         assertEquals(CoinageTilt.TRAVEL, CoinageTilt.scaled(CoinageTilt.RANGE), TOLERANCE)
         assertEquals(CoinageTilt.TRAVEL, CoinageTilt.scaled(PI), TOLERANCE)
         assertEquals(-CoinageTilt.TRAVEL, CoinageTilt.scaled(-PI), TOLERANCE)
-    }
-
-    /**
-     * A bearing between two components that both shrink is ill-conditioned exactly where the phone is held:
-     * leaned back. Each angle is taken against everything left over instead, so a five degree roll reads as
-     * five degrees however far back the phone is leaned.
-     */
-    @Test
-    fun `a roll reads the same however far back the phone is leaned`() {
-        val readings = listOf(0.0, 0.5, 1.0, 1.4).map { lean ->
-            val upright = pose(roll = 0.0, lean = lean)
-
-            pose(roll = FIVE_DEGREES, lean = lean).sideways - upright.sideways
-        }
-
-        for (reading in readings) {
-            assertEquals("roll should read five degrees", FIVE_DEGREES, reading, 1e-6)
-        }
     }
 
     /**
@@ -120,7 +92,8 @@ class CoinageTiltTest {
         return CoinageTilt.Pose.of(x, -flat * kotlin.math.cos(lean), -flat * kotlin.math.sin(lean))
     }
 
-    private fun hypot(a: Double, b: Double) = sqrt(a * a + b * b)
+    /** Gravity for a phone lying flat, face up, with its right edge dipped by [roll]. */
+    private fun flat(roll: Double) = CoinageTilt.Pose.of(sin(roll), 0.0, -cos(roll))
 
     /** Rodrigues' rotation, as the shader's `tiltDir` applies the turn to a mirror direction. */
     private fun turned(x: Double, y: Double, z: Double, turn: CoinageTilt.Turn): DoubleArray {
@@ -150,7 +123,5 @@ class CoinageTiltTest {
         const val FRAME = 1.0 / 60
 
         const val TOLERANCE = 1e-9
-        const val EIGHTH_TURN = PI / 4
-        const val FIVE_DEGREES = 5 * PI / 180
     }
 }

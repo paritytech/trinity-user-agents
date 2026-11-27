@@ -10,6 +10,7 @@ import kotlin.time.Instant
 class ScheduledProductNotification(
     val productId: ProductId,
     val notificationId: NotificationId,
+    val title: String?,
     val text: String,
     val deeplink: String?,
     val scheduledAt: Instant,

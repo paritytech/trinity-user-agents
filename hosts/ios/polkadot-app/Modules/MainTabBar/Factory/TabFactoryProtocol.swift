@@ -118,7 +118,7 @@ private extension TabFactory {
             return nil
         }
 
-        let navigation = AppNavigationController(rootViewController: view.controller)
+        let navigation = CustomTransitionNavigationController(rootViewController: view.controller)
 
         return navigation
     }

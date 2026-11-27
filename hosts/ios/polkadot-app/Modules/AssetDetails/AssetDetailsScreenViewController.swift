@@ -4,7 +4,6 @@ import PolkadotUI
 import SnapKit
 import SwiftUI
 import UIKit
-import UIKitExt
 
 /// The Balance card opened onto a screen of its own, titled Purse, pushed on the Wallet stack above the Pocket.
 ///
@@ -41,18 +40,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         pullDown.install()
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
-    }
-
     override func willMove(toParent parent: UIViewController?) {
         super.willMove(toParent: parent)
 
@@ -86,7 +73,7 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
 
     /// The card's frame on screen, wherever scrolling and a pull have moved it. The flight uses its top-left corner.
     func itemFrame(in view: UIView) -> CGRect {
-        let card = state.cardFrame.offsetBy(dx: hosting.view.transform.tx, dy: hosting.view.transform.ty)
+        let card = state.cardFrame.offsetBy(dx: state.itemOffset.x, dy: state.itemOffset.y)
         return view.convert(card, from: nil)
     }
 
@@ -97,6 +84,7 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
 
     /// Moves the card with its page, so the page never covers the card the Pocket draws in its place.
     func moveItem(by offset: CGPoint) {
+        state.itemOffset = offset
         hosting.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
     }
 
@@ -135,11 +123,19 @@ extension AssetDetailsScreenViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
         flight(opening: operation == .push)
     }
+
+    var allowsBackSwipe: Bool {
+        canSwipeBack
+    }
 }
 
 // MARK: - Private
 
 private extension AssetDetailsScreenViewController {
+    var canSwipeBack: Bool {
+        !isInFlight && !pullDown.isPulling
+    }
+
     /// From here on, not from when the flight starts, so the card is never drawn folded away when it flies in.
     func flight(opening: Bool) -> PocketFlight {
         isInFlight = true
@@ -168,7 +164,9 @@ private extension AssetDetailsScreenViewController {
 @Observable
 private final class AssetDetailsScreenState {
     var isCardHidden = false
+    /// The card's frame on screen without the flight's offset.
     @ObservationIgnored var cardFrame: CGRect = .zero
+    @ObservationIgnored var itemOffset: CGPoint = .zero
 }
 
 /// The Balance card with its details open, the details under the card.
@@ -186,7 +184,7 @@ private struct AssetDetailsScreenRoot: View {
                 onCardTapped: {},
                 overscroll: overscroll,
                 isCardHidden: state.isCardHidden,
-                onCardFrame: { state.cardFrame = $0 }
+                onCardFrame: { state.cardFrame = $0.offsetBy(dx: -state.itemOffset.x, dy: -state.itemOffset.y) }
             )
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)

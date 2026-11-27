@@ -20,11 +20,11 @@ struct FundingDepositView: View {
 
             switch viewModel.action {
             case .close:
-                DSButton(.Funding.failureClose, expands: true, action: presenter.close)
+                DSButton(.Common.close, expands: true, action: presenter.close)
             case .cancel:
                 HStack(spacing: DSSpacings.small) {
                     DSButton(
-                        .Funding.depositCancel,
+                        .Common.cancel,
                         style: .destructive,
                         expands: true,
                         action: presenter.confirmCancel
