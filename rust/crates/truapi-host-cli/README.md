@@ -1143,9 +1143,10 @@ A command reaches its chains in one of two ways:
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
   All three are built-in Trinity stacks. The core starts each from the signed copy
   this release ships in `stacks/`, or from a newer copy it verified on an earlier run
-  and kept in the network's state directory. When that copy is over an hour old, a
-  command first fetches the published descriptor, saying so, and waits up to 3
-  seconds for it; it then runs on the newest copy it holds. A signing or pairing host
+  and kept in the network's state directory. When that copy is over an hour old, or
+  was never fetched, as the shipped copy is, a command first fetches the published
+  descriptor, saying so, and waits up to 3 seconds for it; it then runs on the newest
+  copy it holds. A signing or pairing host
   also refreshes the descriptor while it runs, and logs when a newer copy needs a
   restart. A published descriptor that changes
   the stack's `tld`, or that the CLI cannot run on, is not kept, since every account
@@ -1158,10 +1159,10 @@ A command reaches its chains in one of two ways:
 
 Before anything runs, every endpoint of a stack reached over RPC is asked for its
 genesis, and People, once its genesis matches, for its `NetworkSuffix`. An endpoint
-that reports a genesis other than the one it is routed as may belong to a chain that
-restarted from genesis, so the CLI fetches the descriptor once more and repeats the
-checks on a newer copy; without one it is an error. A `NetworkSuffix` other than the
-`tld` is an error. An endpoint that does not answer
+that reports a genesis other than the one it is routed as, or a `NetworkSuffix` other
+than the `tld`, fails the checks. The chain may have restarted after the descriptor
+was published, so the CLI fetches the descriptor once more and repeats the checks on
+a newer copy; without one it is an error. An endpoint that does not answer
 within 3 seconds is logged and left to fail on first use. On the light client the
 light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint

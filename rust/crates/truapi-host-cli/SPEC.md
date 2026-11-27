@@ -1856,7 +1856,7 @@ restarted from genesis after the descriptor in use was published. The CLI then
 fetches the descriptor once (10-second timeout), and when that brings a newer
 copy it starts the core on it and repeats the checks once; otherwise the first
 error stands. A local file is not fetched again. A `NetworkSuffix` other than
-the `tld` is an error that prints both. An endpoint that does not answer within
+the `tld` fails the checks the same way, with an error that prints both. An endpoint that does not answer within
 3 seconds, or a People chain without the storage item, is logged and left to
 fail on first use.
 
