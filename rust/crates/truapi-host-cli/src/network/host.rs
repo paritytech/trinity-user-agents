@@ -9,21 +9,25 @@ use truapi::{
 	},
 };
 
-use super::stack::routes;
+use super::{Network, stack::routes};
 use crate::stack_descriptor::{FETCH_TIMEOUT, Served, fetch_if_changed, light_client_chains};
 
 /// The CLI's [`StackHost`] for one stack.
 #[derive(Clone)]
 pub struct CliStackHost {
 	pointer: Pointer,
-	on_light_client: bool,
+	/// Whether a copy must name a light spec for each chain the light client
+	/// runs: on the light client, and for a built-in network on either
+	/// backend, since its kept copy serves both.
+	needs_light_specs: bool,
 }
 
 impl CliStackHost {
 	/// The host of `pointer`'s stack, run on the light client when
 	/// `on_light_client` is set.
 	pub fn new(pointer: Pointer, on_light_client: bool) -> Self {
-		Self { pointer, on_light_client }
+		let built_in = Network::of_stack(&pointer.stack_id()).is_some();
+		Self { pointer, needs_light_specs: on_light_client || built_in }
 	}
 
 	/// Why the CLI cannot run on `descriptor`, or `None` when it can. The core
@@ -34,7 +38,7 @@ impl CliStackHost {
 		}
 		let missing = light_client_chains(descriptor).find(|chain| chain.light_spec.is_none());
 		match missing {
-			Some(chain) if self.on_light_client => Some(format!(
+			Some(chain) if self.needs_light_specs => Some(format!(
 				"it names no lightSpec for {}, which the light client needs",
 				chain.role
 			)),
@@ -63,7 +67,9 @@ impl StackHost for CliStackHost {
 		if let Ok(opened) = trinity_stack::open(&bytes, &self.pointer) &&
 			let Some(reason) = self.unrunnable(&opened.descriptor)
 		{
-			return Err(format!("{} is a copy the CLI cannot run: {reason}", request.url).into());
+			let refused = format!("{} is a copy the CLI cannot run: {reason}", request.url);
+			tracing::warn!("{refused}; the CLI keeps the copy it holds");
+			return Err(refused.into());
 		}
 		Ok(StackFetchResponse::Document { bytes, etag })
 	}
@@ -86,3 +92,6 @@ impl StackHost for CliStackHost {
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests;

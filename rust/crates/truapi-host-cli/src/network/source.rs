@@ -1,9 +1,9 @@
 //! How a command's [`NetworkSource`] becomes the network it runs against.
 //!
 //! The core resolves every stack: a built-in network from the copy this build
-//! ships, any other link or URL by fetching it first, and a local descriptor
-//! file as it reads. The CLI keeps the record of each stack's newest copy in
-//! the stack's state directory.
+//! ships, any other link or URL from the copy kept for it or else by fetching
+//! it, and a local descriptor file as it reads. The CLI keeps the record of
+//! each stack's newest copy in the stack's state directory.
 
 use std::{path::PathBuf, sync::Arc};
 

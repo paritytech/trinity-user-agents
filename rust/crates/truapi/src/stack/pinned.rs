@@ -8,11 +8,12 @@ use trinity_stack::Descriptor;
 
 use super::StackError;
 
-/// The bundled descriptor's fields that every other copy must keep.
+/// The fields of a stack's first copy that every later copy must keep.
 ///
-/// The bundled copy ships in the build, so a copy signed with a stolen key
-/// cannot move the stack off these values. The TLD is pinned on every stack
-/// because accounts derive under it.
+/// For a stack its build bundles, the first copy ships in the build, so a
+/// copy signed with a stolen key cannot move the stack off these values. For
+/// one it imports, the first copy the core held pins them. The TLD is pinned
+/// on every stack because accounts derive under it.
 #[derive(Clone)]
 pub struct Pinned {
 	tld: String,

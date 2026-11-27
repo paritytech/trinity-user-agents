@@ -42,7 +42,8 @@ const STORE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long building a runtime waits for the stored record. A host whose
 /// storage never answers would otherwise keep the runtime from starting, so
-/// past this the core starts from the bundled copy.
+/// past this the core starts from the bundled copy, or for an imported stack
+/// fetches the descriptor.
 const RECORD_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What a host does for the stack the core runs: fetch its descriptor, and
@@ -218,8 +219,10 @@ impl StackRefresh {
 	}
 
 	/// The descriptor of the copy the core runs, for a host's own features
-	/// such as its chain endpoints and services. Like [`Self::stack`], it stays
-	/// the same for the life of the runtime.
+	/// such as its chain endpoints and services. A newer copy of the same
+	/// stack, such as one with other RPC URLs, replaces it while the core
+	/// runs; one that changes the stack waits for the next start, as
+	/// [`Self::stack`] does.
 	pub fn descriptor(&self) -> Descriptor {
 		self.shared.source().descriptor().clone()
 	}
