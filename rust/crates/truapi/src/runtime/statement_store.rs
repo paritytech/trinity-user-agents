@@ -128,19 +128,18 @@ impl<H: AccountHolder> StatementStore for ProductRuntimeHost<H> {
 				}
 				let encoded = signed_statement_to_scale(statement.clone())
 					.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
-				self.statement_store_rpc()
-					.submit_sso(&encoded, "statement-store")
-					.await
-					.map_err(|error| {
-						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
-							error.is_no_allowance()
-						{
-							self.accounts.forget_statement_store_allowance_key(signer);
-						}
-						CallError::Domain(latest::GenericError {
-							reason: format!("statement-store submit failed: {error}"),
-						})
-					})?;
+				if let Err(error) =
+					self.statement_store_rpc().submit_sso(&encoded, "statement-store").await
+				{
+					if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
+						error.is_no_allowance()
+					{
+						self.accounts.forget_statement_store_allowance_key(signer).await;
+					}
+					return Err(CallError::Domain(latest::GenericError {
+						reason: format!("statement-store submit failed: {error}"),
+					}));
+				}
 				self.connection.services.cache_statement(statement);
 				Ok(())
 			})

@@ -19,6 +19,7 @@ mod v15_to_v16_nft_recovery;
 mod v16_to_v17_durable_domain_policies;
 mod v17_to_v18_durable_birth_hash;
 mod v18_to_v19_durable_tx_dependency;
+mod v19_to_v20_confirmed_allowances;
 
 use rusqlite_migration::Migrations;
 
@@ -45,5 +46,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v16_to_v17_durable_domain_policies::drop_durable_tx_policy_id(),
 		v17_to_v18_durable_birth_hash::drop_durable_tx_birth_hash(),
 		v18_to_v19_durable_tx_dependency::create_durable_tx_dependency(),
+		v19_to_v20_confirmed_allowances::create_confirmed_allowances(),
 	])
 }

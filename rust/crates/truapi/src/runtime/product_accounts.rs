@@ -249,9 +249,10 @@ impl<H: AccountHolder> ProductAccounts<H> {
 	}
 
 	/// Forget this product's kept Statement Store key if it is still `public_key`.
-	pub fn forget_statement_store_allowance_key(&self, public_key: [u8; 32]) {
+	pub async fn forget_statement_store_allowance_key(&self, public_key: [u8; 32]) {
 		self.accounts
-			.forget_statement_store_allowance_key(&self.connection.product.product_id, public_key);
+			.forget_statement_store_allowance_key(&self.connection.product.product_id, public_key)
+			.await;
 	}
 
 	/// Whether preimage submissions stay in the core instead of reaching Bulletin.

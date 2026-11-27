@@ -219,6 +219,9 @@ impl AccountHolder for RemoteAccountHolder {
 		Ok(self.service.device_encryption_secret())
 	}
 
+	/// The phone renews the sponsorships it issued, so nothing changes here.
+	async fn statement_store_key_refused(&self, _product_id: &ProductId) {}
+
 	async fn product_subtree_public_key<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,

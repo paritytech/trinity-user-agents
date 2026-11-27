@@ -418,6 +418,10 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
+	async fn statement_store_key_refused(&self, product_id: &ProductId) {
+		self.forget_confirmed_allowance(product_id, AllowanceResource::StatementStore).await
+	}
+
 	async fn product_subtree_public_key<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,
