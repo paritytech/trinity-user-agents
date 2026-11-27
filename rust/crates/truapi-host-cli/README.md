@@ -284,6 +284,7 @@ Commands always start with `/`:
 | `/profile` | Resolve the active identity's public avatar metadata from dotNS (signing host). |
 | `/profile <username>` | Resolve another username's public avatar metadata without provisioning an identity (signing host). |
 | `/profile upload <image>` | Publish a local PNG, JPEG, GIF, or WebP image as the active identity's avatar (signing host). |
+| `/search <prefix>` | List the usernames the network's identity backend holds under a prefix, with what Asset Hub records for each: the `DotnsGateway` pallet's `LiteLabelOwner` and `AccountNames` entries, and the username the dotNS contracts resolve for the account (signing host). Apps only find names whose `AccountNames` entry matches. |
 | `/session` | Show the current session name, path, and user id (signing host). |
 | `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
