@@ -21,7 +21,8 @@ use crate::{
 	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
-		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ProductId, ScannerPlatform, Stack,
+		TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
@@ -344,6 +345,19 @@ impl RuntimeServices {
 	/// The stack the host runs.
 	pub fn stack(&self) -> &Stack {
 		&self.stack
+	}
+
+	/// Whether `product_id` gets every `RemotePermission` without a prompt,
+	/// under an id the stack serves: a privileged product, or a funding
+	/// provider the host lists, for as long as it lists it. Stored decisions
+	/// don't change this.
+	///
+	/// Only remote permissions follow this. Everything else the host trusts a
+	/// product with, such as consent and the `Context` manifest scope, follows
+	/// [`Stack::trusts`].
+	pub fn has_trusted_remote_permissions(&self, product_id: &ProductId) -> bool {
+		self.stack.trusts(product_id) ||
+			self.stack.serves(product_id) && self.funding_providers.lists(product_id)
 	}
 
 	/// The Asset Hub dotNS reads run against.

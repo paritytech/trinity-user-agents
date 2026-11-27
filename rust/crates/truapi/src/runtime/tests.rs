@@ -9503,6 +9503,110 @@ fn signed_out_provider_worker(
 	)
 }
 
+/// Ask for chain submission and a faucet domain on behalf of `host`.
+fn request_top_up_permissions(host: &ProductRuntimeHost<RemoteAccountHolder>) {
+	for permission in [
+		v01::RemotePermission::ChainSubmit,
+		v01::RemotePermission::Remote { domains: vec!["faucet.example.com".to_string()] },
+	] {
+		futures::executor::block_on(host.request_remote_permission(
+			&CallContext::default(),
+			truapi::versioned::permissions::RemotePermissionRequest::V1(
+				v01::RemotePermissionRequest { permission },
+			),
+		))
+		.expect("the remote permission resolves");
+	}
+}
+
+/// The products the host was asked about, in order.
+fn prompted_products(platform: &StubPlatform) -> Vec<String> {
+	platform
+		.permission_prompt_products
+		.lock()
+		.unwrap()
+		.iter()
+		.map(|product| product.product_id.as_str().to_string())
+		.collect()
+}
+
+// A provider the host lists reaches what a top-up needs without a prompt, as
+// the user already picked it from the host's own list. That holds only while
+// the host lists it: once its configuration drops the provider, it is asked
+// like a product the host never listed.
+#[test]
+fn a_listed_funding_provider_gets_remote_permissions_without_a_prompt_while_listed() {
+	let platform = stub_platform();
+	let services = funding_services_over(platform.clone());
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let ramp = signed_out_provider_worker(&services, "ramp.dot");
+	let unlisted = signed_out_provider_worker(&services, "other.dot");
+
+	request_top_up_permissions(&ramp);
+	request_top_up_permissions(&unlisted);
+	let while_listed = prompted_products(&platform);
+	services.set_funding_providers(Vec::new());
+	request_top_up_permissions(&ramp);
+
+	assert_eq!(
+		(while_listed, prompted_products(&platform)),
+		(
+			vec!["other.dot".to_string(); 2],
+			vec![
+				"other.dot".to_string(),
+				"other.dot".to_string(),
+				"ramp.dot".to_string(),
+				"ramp.dot".to_string(),
+			]
+		)
+	);
+}
+
+// Listing a provider trusts it with remote permissions alone. The host's
+// remote configuration can change the list, so a listed provider is not part
+// of the host: it is asked before using another product's accounts, and a
+// `Context` grant does not override the user's refusal, as it would for a
+// privileged product.
+#[test]
+fn a_listed_funding_provider_is_not_first_party() {
+	let platform = stub_platform();
+	let services = funding_services_over(platform.clone());
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	cache_manifest(&platform, "wallet.dot", r#"{"ramp":["context"],"peopl":["context"]}"#, 0);
+	// The user refused each of them `wallet.dot`'s accounts.
+	let worker = |product_id: &str| {
+		let host = signed_out_provider_worker(&services, product_id);
+		futures::executor::block_on(crate::host_internal::permissions::set_authorization_status(
+			platform.as_ref(),
+			CoreStorageKey::product_account_access_authorization(
+				&ProductId::for_test(product_id),
+				&ProductId::for_test("wallet.dot"),
+			),
+			PermissionAuthorizationStatus::Denied,
+		))
+		.unwrap();
+		host
+	};
+	let (ramp, peopl) = (worker("ramp.dot"), worker("peopl.dot"));
+	let consents = |host: &ProductRuntimeHost<RemoteAccountHolder>| {
+		futures::executor::block_on(host.accounts.consent().account_access(
+			host.connection.product_id(),
+			&ProductId::for_test("other.dot"),
+			platform.as_ref(),
+		))
+		.expect("the stub answers every prompt");
+		platform.account_access_reviews.lock().unwrap().len()
+	};
+
+	assert_eq!(
+		(
+			(consents(&ramp), may_use_account_of(&ramp, "wallet.dot")),
+			(consents(&peopl), may_use_account_of(&peopl, "wallet.dot")),
+		),
+		((1, false), (1, true))
+	);
+}
+
 /// A call a provider's worker received from the core.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProviderCallSeen {

@@ -235,9 +235,10 @@ impl ProductId {
 		self.dotns_name()?.parse().ok()
 	}
 
-	/// Whether this product gets every [`RemotePermission`] without a prompt:
-	/// it is a [privileged product](Self::privileged_product). Stored decisions
-	/// don't change this.
+	/// Whether this product gets every [`RemotePermission`] without a prompt
+	/// by its name alone: it is a [privileged product](Self::privileged_product).
+	/// Stored decisions don't change this. The runtime also grants them to a
+	/// funding provider the host lists, while it lists it.
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {

@@ -8,7 +8,8 @@ use crate::{ProductId, ProductIdError};
 /// Each is a dotNS label reserved for it on every network, so `peopl.dot` and
 /// `peopl.paseo` are the same privileged product. A privileged product gets
 /// every remote permission without a prompt; device permissions still need the
-/// OS grant.
+/// OS grant. A funding provider the host lists gets the remote permissions
+/// alone, and nothing else a privileged product has.
 ///
 /// Parses from its label, the whole dotNS name without a TLD.
 #[derive(Debug, Clone, Copy, PartialEq, strum::EnumString, strum::IntoStaticStr)]

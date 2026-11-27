@@ -133,7 +133,8 @@ The shared Rust core asks privileged products (`PrivilegedProduct`: `peopl`,
 `dim2` and `stash`, on every supported network) only for legacy-account
 signing other than watermarked raw bytes. All other operations it handles
 bypass permission prompts and recorded decisions. Device permissions still need
-the OS grant.
+the OS grant. A funding provider the host's funding configuration lists gets
+remote permissions alone without a prompt, for as long as it is listed.
 
 ## Repository layout
 
