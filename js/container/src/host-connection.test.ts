@@ -517,24 +517,58 @@ describe("shared SDK connection failure timing", () => {
         },
     );
 
-    it("bounds a failed opening without a retry loop and leaves a later call free to reconnect", async () => {
+    it.each([
+        ["background", 10_000],
+        ["visible", 45_250],
+    ] as const)("keeps one pending WebSocket for the %s recovery window", async (page, budget) => {
+        if (page === "visible") visibleDocument();
         const fixture = controlledHost();
         const client = productClient(fixture.connection);
-        const pending = Promise.resolve(
-            client.permissions.requestRemotePermission(permission),
-        ).catch((error) => error);
-        fixture.advance(10_000);
-        expect((await pending).name).toBe("ConnectionResetError");
-        fixture.advance(120_000);
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => last(fixture.statuses) === "connected");
+        fixture.sockets[0]!.close();
+        fixture.advance(0);
+        const socket = fixture.sockets[1]!;
+        let failure: Error | undefined;
+        let openingFailed = false;
+        void fixture.connection.transport.prepare(W.SYSTEM_HANDSHAKE).catch(() => {
+            openingFailed = true;
+        });
+        void Promise.resolve(client.permissions.requestRemotePermission(permission)).catch(
+            (error) => {
+                failure = error;
+            },
+        );
+        fixture.advance(budget - 1);
+        await nextTask();
+        expect(failure).toBeUndefined();
+        fixture.advance(1);
+        await nextTask();
         expect({
+            error: failure?.name,
+            openingFailed,
             attempts: fixture.sockets.length,
-            sent: fixture.sockets[0]!.sent,
+            sent: socket.sent,
             status: last(fixture.statuses),
-        }).toEqual({ attempts: 1, sent: [], status: "disconnected" });
+        }).toEqual({
+            error: "ConnectionResetError",
+            openingFailed: true,
+            attempts: 2,
+            sent: [],
+            status: "connecting",
+        });
+
+        const opening = fixture.connection.transport.prepare(W.SYSTEM_HANDSHAKE);
+        fixture.respond(false);
+        fixture.advance(budget - 1_000);
+        socket.open();
+        await opening;
+        await untilPrepared(() => socket.sent.length === 1);
         const fresh = client.permissions.requestRemotePermission(permission);
-        fixture.sockets[1]!.open();
-        await untilPrepared(() => fixture.sockets[1]!.sent.length === 2);
-        fixture.sockets[1]!.reply(fixture.sockets[1]!.sent[1]!, Uint8Array.of(0, 0, 0));
+        fixture.advance(2_000);
+        socket.reply(socket.sent[0]!, Uint8Array.of(0, 0));
+        await untilPrepared(() => socket.sent.length === 2);
+        socket.reply(socket.sent[1]!, Uint8Array.of(0, 0, 0));
         expect((await fresh)._unsafeUnwrap()).toEqual({ granted: false });
     });
 
