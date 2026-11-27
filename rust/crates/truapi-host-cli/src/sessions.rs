@@ -480,17 +480,15 @@ impl SessionCatalog {
 		Ok(target)
 	}
 
-	/// Check that `target`, as [`Self::resolve_clear_target`] returned it, is
-	/// still listed, and take the account store locks a clear of it needs,
-	/// before anything is removed or a host stops for it. The name is not
-	/// resolved again, so the clear removes the session the user confirmed
-	/// even when sessions changed in the meantime.
+	/// Check that `target` is still listed and take the account store locks
+	/// its clear needs, before anything is removed or a host is stopped.
 	///
-	/// The locks are the default session's store and each removed session's
-	/// own, so a host provisioning one of those sessions cannot write it back
-	/// after the clear. Every store is this stack's, so a host on another stack
-	/// never refuses the clear. Fails as [`Self::validate_clear_target`] does,
-	/// and when another process holds one of the locks.
+	/// `target` is used as [`Self::resolve_clear_target`] returned it, not
+	/// resolved again, so the clear removes the session the user confirmed.
+	/// The locks cover the default session's store and each cleared session's,
+	/// so a host provisioning one of them can't write it back afterwards.
+	/// Fails as [`Self::validate_clear_target`] does, or when another process
+	/// holds a lock.
 	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
 		self.validate_clear_target(target)?;
 		let target = target.clone();
@@ -508,14 +506,13 @@ impl SessionCatalog {
 		Ok(PreparedClear { target, names, default_store, _session_stores: session_stores })
 	}
 
-	/// Permanently remove the session data `clear` names, under the locks it
-	/// holds, and return the names of the sessions removed.
+	/// Permanently remove the sessions `clear` names, under its locks, and
+	/// return their names.
 	///
-	/// Callers must stop an active runtime before clearing its profile. The
-	/// catalog only removes paths it derives from validated, listed names. The
-	/// default session's records of a removed session go before the
-	/// directories, so a clear stopped between the two still lists the session
-	/// and can be run again.
+	/// Stop a running host on one of these sessions first. Nothing outside
+	/// this stack's directory is removed. A session's accounts in the default
+	/// session's store go before its directory, so a clear that stops halfway
+	/// still lists the session and can be run again.
 	pub fn clear(&self, clear: PreparedClear) -> Result<Vec<String>> {
 		let PreparedClear { target, names, default_store, _session_stores } = clear;
 		default_store.remove_managed_accounts(&self.network_id, target.lite_username())?;
