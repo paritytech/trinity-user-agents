@@ -17,6 +17,13 @@ use crate::{
 /// Most rows a listing checks and prints before asking for a narrower prefix.
 const DISPLAY_LIMIT: usize = 50;
 
+/// Where the listing's columns come from, left to right, and how many columns
+/// each source fills.
+const SOURCES: [(&str, usize); 3] =
+	[("identity backend", 3), ("Asset Hub: gateway pallet", 2), ("Asset Hub: dotNS contracts", 1)];
+
+const COLUMN_GAP: &str = "  ";
+
 /// Searches the backend for `prefix`, reads each listed row's Asset Hub records,
 /// and renders them as a table.
 ///
@@ -110,7 +117,7 @@ fn format_rows(prefix: &str, rows: &[SearchRow], hidden: usize) -> String {
 	if rows.is_empty() {
 		return format!("No username starts with {prefix:?}.");
 	}
-	let header = ["name", "backend", "account", "LiteLabelOwner", "AccountNames", "contracts"]
+	let header = ["name", "status", "account", "LiteLabelOwner", "AccountNames", "username"]
 		.map(String::from);
 	let cells: Vec<[String; 6]> = core::iter::once(header)
 		.chain(rows.iter().map(|row| {
@@ -127,18 +134,19 @@ fn format_rows(prefix: &str, rows: &[SearchRow], hidden: usize) -> String {
 	let widths: [usize; 6] = core::array::from_fn(|column| {
 		cells.iter().map(|line| line[column].len()).max().unwrap_or(0)
 	});
-	let mut lines: Vec<String> = cells
-		.iter()
-		.map(|line| {
-			let (last, padded) = line.split_last().expect("six columns");
-			let padded: Vec<String> = padded
-				.iter()
-				.zip(widths)
-				.map(|(cell, width)| format!("{cell:<width$}"))
-				.collect();
-			format!("{}  {last}", padded.join("  "))
-		})
-		.collect();
+	let mut unspanned = widths.as_slice();
+	let sources = SOURCES.map(|(source, columns)| {
+		let (spanned, rest) = unspanned.split_at(columns);
+		unspanned = rest;
+		let width = spanned.iter().sum::<usize>() + COLUMN_GAP.len() * (columns - 1);
+		format!("{source:<width$}")
+	});
+	let mut lines = vec![sources.join(COLUMN_GAP).trim_end().to_string()];
+	lines.extend(cells.iter().map(|line| {
+		let padded: Vec<String> =
+			line.iter().zip(widths).map(|(cell, width)| format!("{cell:<width$}")).collect();
+		padded.join(COLUMN_GAP).trim_end().to_string()
+	}));
 	if hidden > 0 {
 		lines.push(format!("… and {hidden} more; narrow the prefix"));
 	}

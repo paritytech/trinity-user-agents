@@ -57,7 +57,8 @@ fn listing_shows_backend_and_chain_records_side_by_side() {
 	assert_eq!(
 		format_rows("s", &rows, 2),
 		[
-			"name         backend   account  LiteLabelOwner  AccountNames            contracts",
+			"identity backend                Asset Hub: gateway pallet               Asset Hub: dotNS contracts",
+			"name         status    account  LiteLabelOwner  AccountNames            username",
 			"schtrule.01  ASSIGNED  5Sch1    matches         schtrule.01             none",
 			"schtrule.04  ASSIGNED  5Sch4    none            none                    none",
 			"other.01     ASSIGNED  5Other   other account   other.01 (no chat key)  other.01",
