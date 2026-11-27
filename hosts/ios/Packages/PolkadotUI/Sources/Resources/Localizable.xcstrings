@@ -1221,7 +1221,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reclaim funds"
+            "value" : "Return to my balance"
           }
         }
       }
@@ -1232,7 +1232,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Try to reclaim again"
+            "value" : "Try again"
           }
         }
       }
@@ -1342,7 +1342,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reclaimed"
+            "value" : "Returned to your balance"
           }
         }
       }
@@ -1353,7 +1353,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reclaimed %1$(amount)@"
+            "value" : "%1$(amount)@ returned to your balance"
           }
         }
       }
@@ -1364,7 +1364,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reclaiming failed"
+            "value" : "Couldn’t return it"
           }
         }
       }
@@ -1375,7 +1375,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reclaiming funds…"
+            "value" : "Returning to your balance…"
           }
         }
       }
@@ -1386,7 +1386,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claim period expired. Sender can reclaim the funds"
+            "value" : "Expired · you didn’t receive it in time"
           }
         }
       }
@@ -1420,6 +1420,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The recipient didn't claim it in time"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ didn’t receive it in time"
           }
         }
       }

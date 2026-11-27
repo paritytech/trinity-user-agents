@@ -12,11 +12,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
-import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 import java.io.File
@@ -35,19 +33,8 @@ class AssetPinnedPocketCardsTest {
     private fun pinnedCards(): AssetPinnedPocketCards {
         whenever(context.assets).thenReturn(assets)
         whenever(assets.open("pocket/humanity.json")).thenReturn(bundledHumanityFace.inputStream())
-        whenever(context.getString(anyInt())).thenReturn("Humanity")
 
         return AssetPinnedPocketCards(context)
-    }
-
-    // Balance and Scarcity were dropped: the products behind them publish no Pocket cards, so pinning
-    // them left two placeholder cards that duplicated the host's own native ones.
-    @Test
-    fun `the host pins Humanity alone, on the personhood product`() {
-        assertEquals(
-            listOf(PinnedPocketCard(ReservedProductIds.personhood(tld), "humanity", "Humanity")),
-            pinnedCards().cards(tld),
-        )
     }
 
     @Test

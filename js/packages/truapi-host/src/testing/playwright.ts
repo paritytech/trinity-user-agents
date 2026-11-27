@@ -122,11 +122,14 @@ export interface TestHostFixtureOptions {
    */
   productAccounts?: Record<string, string>;
   /**
-   * dotNS identifier the host runs the product under.
+   * dotNS name of the product the host runs. The host runs it under the id
+   * its test stack serves the name under, so `tx-demo.dot` runs as
+   * `tx-demo.paseo` on the mock stack, and a name the stack does not serve
+   * fails the start.
    *
-   * Must match the identifier the product signs with: the core rejects a
-   * signing request whose account is scoped to a different product, so a
-   * mismatch surfaces as `PermissionDenied` rather than as a config error.
+   * Must name the product the page signs as: the core rejects a signing
+   * request whose account is scoped to a different product, so a mismatch
+   * surfaces as `PermissionDenied` rather than as a config error.
    */
   productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host, including `chainProxies`. */

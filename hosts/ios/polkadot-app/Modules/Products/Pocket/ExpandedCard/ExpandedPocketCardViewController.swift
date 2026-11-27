@@ -61,7 +61,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = card.title
         setupFace()
         setupPage()
         pullDown.install()
@@ -175,6 +174,10 @@ extension ExpandedPocketCardViewController: PocketFlightScreen {
         .card(card.key)
     }
 
+    var statusStripTitle: String {
+        card.title
+    }
+
     /// Without the margins the screen draws around the card.
     func itemFrame(in view: UIView) -> CGRect {
         let card = face.view.bounds.insetBy(
@@ -210,6 +213,12 @@ extension ExpandedPocketCardViewController: PocketFlightScreen {
         moveItem(by: .zero)
         setItemHidden(false)
         rootView.sendFaceBehindPage()
+    }
+}
+
+extension ExpandedPocketCardViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
     }
 }
 

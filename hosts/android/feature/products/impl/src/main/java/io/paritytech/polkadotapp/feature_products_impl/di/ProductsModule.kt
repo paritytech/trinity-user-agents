@@ -11,6 +11,7 @@ import dagger.multibindings.IntoSet
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
+import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -39,7 +40,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.Transact
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFragmentClass
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
+import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
+import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingProvidersConfig
+import io.paritytech.polkadotapp.feature_products_impl.data.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.CorePocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
@@ -81,8 +85,16 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingProductsWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.RealAllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.RealStatementStoreSubmissionSponsoring
@@ -147,7 +159,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIOurDeviceKeypairProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIStack
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -168,6 +182,7 @@ import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import okhttp3.Call
 import okhttp3.OkHttpClient
+import uniffi.truapi.Stack
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -197,6 +212,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
+
+    @Binds
+    fun bindCountryDetector(impl: DeviceCountryDetector): CountryDetector
 
     @Binds
     @Singleton
@@ -414,6 +432,21 @@ internal interface ProductsModule {
     fun bindFundingProductsWarmUp(impl: RealFundingProductsWarmUp): FundingProductsWarmUp
 
     @Binds
+    fun bindFundingProvidersConfig(impl: RemoteConfigFundingProvidersConfig): FundingProvidersConfig
+
+    @Binds
+    fun bindFundingCore(impl: TrUAPIFundingCore): FundingCore
+
+    @Binds
+    fun bindFundingSessions(impl: RealFundingSessions): FundingSessions
+
+    @Binds
+    fun bindFundingQuotes(impl: RealFundingQuotes): FundingQuotes
+
+    @Binds
+    fun bindFundingProviderFrames(impl: RealFundingProviderFrames): FundingProviderFrames
+
+    @Binds
     @Singleton
     fun bindScheduledProductNotificationRepository(
         impl: RealScheduledProductNotificationRepository,
@@ -447,6 +480,13 @@ internal interface ProductsModule {
     fun bindRequestPaymentUseCase(impl: RealRequestPaymentUseCase): RequestPaymentUseCase
 
     companion object {
+        // Links are judged by the core's stack before the runtime starts. Absent when the bundled copy cannot be
+        // opened, so a bad stack disables those links instead of crashing the app at launch.
+        @Provides
+        @Singleton
+        fun provideStack(@ApplicationContext context: Context, environment: TestnetEnvironment): Stack? =
+            TrUAPIStack.of(environment).openedOrNull(context)
+
         @Provides
         @Singleton
         @TrUAPIChainHttpClient

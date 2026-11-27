@@ -12,6 +12,7 @@ use super::{
 	AccountHolder, PERMISSION_DENIED_REASON, ProductRuntimeHost,
 	authority::{AuthorityError, StatementStoreAllowanceKey},
 	remote_authority_call, remote_authority_context,
+	served::Served,
 	statement_store_rpc::{self, StatementStoreRpc},
 	versioning::version,
 };
@@ -21,7 +22,6 @@ use crate::host_logic::statement_store::{
 	unsigned_statement_signing_payload, validated_topic_filter,
 };
 
-use crate::platform::ProductId;
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::instrument;
@@ -72,19 +72,14 @@ impl<H: AccountHolder> StatementStore for ProductRuntimeHost<H> {
 	> {
 		version(request)
 			.exec(|request| async move {
-				let owner = request.product_account_id.dot_ns_identifier.clone();
-				if !self.may_use_product_account(&owner, cx).await {
+				let account = self.connection.serve(request.product_account_id)?;
+				if !self.may_use_product_account(&account.dot_ns_identifier, cx).await {
 					return Err(CallError::Domain(
 						latest::RemoteStatementStoreCreateProofError::UnknownAccount,
 					));
 				}
 				let proof = self
-					.create_product_statement_proof(
-						cx,
-						owner,
-						request.product_account_id.derivation_index,
-						request.statement,
-					)
+					.create_product_statement_proof(cx, account, request.statement)
 					.await
 					.map_err(statement_proof_error)?;
 				Ok(latest::RemoteStatementStoreCreateProofResponse { proof })
@@ -278,16 +273,13 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	async fn create_product_statement_proof(
 		&self,
 		cx: &CallContext,
-		owner: ProductId,
-		derivation_index: latest::DerivationIndex,
+		account: Served<latest::ProductAccountId>,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
-		let product_account_id =
-			latest::ProductAccountId { dot_ns_identifier: owner, derivation_index };
 		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
 			.accounts
-			.product_account_public_key(cx, &session, &product_account_id)
+			.product_account_public_key(cx, &session, &account)
 			.await
 			.map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
 		let fields = statement_fields_from_v01(statement)
@@ -296,7 +288,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.map_err(StatementProofFailure::UnableToSign)?;
 		let signature = self
 			.accounts
-			.sign_statement_store_product_payload(&session, cx, product_account_id, payload)
+			.sign_statement_store_product_payload(&session, cx, account, payload)
 			.await
 			.map_err(statement_authority_failure)?;
 		Ok(latest::StatementProof::Sr25519 { signature, signer })

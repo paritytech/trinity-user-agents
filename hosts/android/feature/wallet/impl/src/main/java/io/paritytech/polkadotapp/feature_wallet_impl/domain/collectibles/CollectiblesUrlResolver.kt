@@ -9,7 +9,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
-import uniffi.truapi.ProductId
+import uniffi.truapi.PrivilegedProduct
+import uniffi.truapi.privilegedProductId
 import javax.inject.Inject
 
 class CollectiblesUrlResolver @Inject constructor(
@@ -19,7 +20,7 @@ class CollectiblesUrlResolver @Inject constructor(
     suspend fun resolveUrl(): Result<Uri?> = runCancellableCatching {
         if (!isEnabled()) return@runCancellableCatching null
         val tld = dotNsTldProvider.getTldRetrying()
-        ProductId.fromName(PRODUCT_LABEL, tld.value).getOrThrow().toUri()
+        privilegedProductId(PrivilegedProduct.COLLECTIBLES, tld.value).toUri()
     }
 
     private suspend fun isEnabled(): Boolean {
@@ -31,7 +32,6 @@ class CollectiblesUrlResolver @Inject constructor(
     }
 
     private companion object {
-        const val PRODUCT_LABEL = "stash"
         const val ENABLED_KEY = "collectibles_enabled"
     }
 }

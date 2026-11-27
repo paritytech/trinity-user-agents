@@ -115,12 +115,15 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 // keeps counting the reference the card holds, so no stop ever arrives to clear it.
                 // Only this one: a stop and a new start may have overtaken the failure.
                 .onFailure { cause ->
-                    transitions.withLock {
-                        if (workers[productId] === worker) {
+                    val exited = transitions.withLock {
+                        val current = workers[productId] === worker
+                        if (current) {
                             stop(productId)
                             executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
                         }
+                        current
                     }
+                    if (exited) reportExited(productId)
                 }
                 .onSuccess { execution ->
                     transitions.withLock {
@@ -145,7 +148,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             webViewRuntime.initialize()
             bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
         }.getOrElse { return Result.failure(it) }
-        provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
+        provider.addOnWebViewDestroyedListener { reportRendererLoss(productId, worker) }
 
         return hostBridgeFactory.create(worker.scope)
             .attach(
@@ -175,15 +178,23 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             }
     }
 
-    // The renderer takes the running script with it, and only a fresh boot runs the script again.
-    private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
+    // A stop the core asked for already took the worker out of [workers], so it is not reported.
+    private fun reportRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
-            transitions.withLock {
-                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
-                stop(productId)
-                start(productId)
+            val exited = transitions.withLock {
+                val running = workers[productId] === worker && currentExecution(productId) != null
+                if (running) stop(productId)
+                running
             }
+            if (exited) reportExited(productId)
         }
+    }
+
+    // Outside [transitions]: the core may answer with a start at once, which takes the lock.
+    private suspend fun reportExited(productId: ProductId) {
+        runtimeProvider.get().runtime()
+            .mapCatching { it.workerExited(productId) }
+            .logFailure("TrUAPI worker exit for ${productId.value} was not reported")
     }
 
     private fun stop(productId: ProductId) {

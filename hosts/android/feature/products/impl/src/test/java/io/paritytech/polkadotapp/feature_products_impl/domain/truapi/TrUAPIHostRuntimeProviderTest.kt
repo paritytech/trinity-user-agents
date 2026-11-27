@@ -9,11 +9,7 @@ import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.pinnedCard
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashes
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -31,7 +27,6 @@ import org.junit.rules.TemporaryFolder
 import uniffi.truapi.BundledStack
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
-import uniffi.truapi.PinnedPocketCard
 import java.io.File
 import java.util.Base64
 
@@ -40,13 +35,12 @@ class TrUAPIHostRuntimeProviderTest {
     val tempFolder = TemporaryFolder()
 
     private val runtimeConfig = slot<HostRuntimeConfig>()
-    private val paseo = requireNotNull(DotNsTld.parse("paseo"))
-    private val pinnedHumanity = listOf(PinnedPocketCard(personhoodProduct, "humanity", "humanity"))
+    private val nativeRuntime = mockk<NativeTrUApiHostRuntime>(relaxed = true)
 
     @Before
     fun captureRuntimeConfig() {
         mockkObject(NativeTrUApiHostRuntime.Companion)
-        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns mockk(relaxed = true)
+        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns nativeRuntime
     }
 
     @After
@@ -57,26 +51,6 @@ class TrUAPIHostRuntimeProviderTest {
         provider().runtime().getOrThrow()
 
         assertEquals("1.0.0 (1022)", runtimeConfig.captured.hostVersion)
-    }
-
-    // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's
-    // name shows no cards offline. The name an earlier run read is the one this build's network has.
-    @Test
-    fun `boots offline on the network name an earlier run saved`() = runTest {
-        provider(
-            saved = paseo,
-            read = Result.failure(IllegalStateException("offline")),
-            pinnedPocketCards = mockk { every { cards(paseo) } returns pinnedHumanity },
-        ).runtime().getOrThrow()
-
-        assertEquals(pinnedHumanity, runtimeConfig.captured.pinnedPocketCards)
-    }
-
-    @Test
-    fun `starts the core with the cards the host pins`() = runTest {
-        provider().runtime().getOrThrow()
-
-        assertEquals(pinnedHumanity, runtimeConfig.captured.pinnedPocketCards)
     }
 
     // The core derives the wallet's identities under the stack's TLD, so a build on another
@@ -107,35 +81,29 @@ class TrUAPIHostRuntimeProviderTest {
     }
 
     private fun TestScope.provider(
-        saved: DotNsTld? = null,
-        read: Result<DotNsTld> = Result.success(paseo),
         environment: TestnetEnvironment = TestnetEnvironment.NIGHTLY,
-        pinnedPocketCards: PinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
     ) = TrUAPIHostRuntimeProvider(
         context = context(),
         environment = environment,
         chainDirectory = mockk(relaxed = true),
         localSessionSource = mockk { coEvery { resolve() } returns Result.failure(IllegalStateException()) },
         accountRepository = mockk { every { walletAccountFlow() } returns emptyFlow() },
-        dotNsTldProvider = mockk {
-            every { currentTldOrNull() } returns saved
-            coEvery { getTld() } returns read
-        },
         encryptedPreferences = mockk(relaxed = true),
         chainHttpClient = mockk(relaxed = true),
         confirmationLauncher = mockk(relaxed = true),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
+        fundingProviders = mockk(relaxed = true),
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
         installations = mockk(),
         extensionVersions = mockk(),
-        pinnedPocketCards = pinnedPocketCards,
         coreEventLogger = CoreEventLogger { _, _, _, _ -> },
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
         materialsSwitch = mockk(relaxed = true),
         workerSupervisor = { mockk(relaxed = true) },
+        workerCrashes = WorkerCrashes(),
         dispatchers = testDispatchers(),
     )
 

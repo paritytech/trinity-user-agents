@@ -2,8 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
+import timber.log.Timber
 import uniffi.truapi.BundledStack
 import uniffi.truapi.ReservedValuesPolicy
+import uniffi.truapi.Stack
 
 /**
  * The Trinity stacks the app bundles, and which one each environment runs.
@@ -30,6 +32,11 @@ enum class TrUAPIStack(
             reservedValues = ReservedValuesPolicy(allowed = allowsReservedValues),
         )
     }
+
+    // Null when the bundled copy is missing or refused; the runtime reports the same failure when it starts.
+    fun openedOrNull(context: Context): Stack? = runCatching { Stack.openBundled(bundled(context)) }
+        .onFailure { Timber.e(it, "truapi: the bundled %s stack could not be opened", name) }
+        .getOrNull()
 
     companion object {
         fun of(environment: TestnetEnvironment): TrUAPIStack = when (environment) {

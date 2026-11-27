@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_api.model.derivation
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import uniffi.truapi.PrivilegedProduct
 import uniffi.truapi.ProductId
+import uniffi.truapi.privilegedProductId
 
 /**
  * RFC-0022 governance-reserved dotNS identities for built-in app features.
@@ -13,11 +15,11 @@ import uniffi.truapi.ProductId
  * [personhood] account 0 is the wallet's main account (RFC-0028).
  */
 object ReservedProductIds {
-    fun game(tld: DotNsTld): ProductId = ProductId.fromName("dim2", tld.value).getOrThrow()
+    fun game(tld: DotNsTld): ProductId = privilegedProductId(PrivilegedProduct.GAME, tld.value)
 
     fun funding(tld: DotNsTld): ProductId = ProductId.fromName("fund", tld.value).getOrThrow()
 
-    fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
+    fun personhood(tld: DotNsTld): ProductId = privilegedProductId(PrivilegedProduct.PERSONHOOD, tld.value)
 
     fun chat(tld: DotNsTld): ProductId = ProductId.fromName("chat", tld.value).getOrThrow()
 
