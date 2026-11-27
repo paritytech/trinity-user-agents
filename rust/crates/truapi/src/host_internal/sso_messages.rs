@@ -53,7 +53,7 @@ use crate::{
 pub mod v1;
 
 /// Transport-level acknowledgement code for an SSO session statement.
-#[derive(Clone, Encode, Decode, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
 pub enum SsoResponseCode {
 	/// The request statement was decrypted and decoded.
 	#[codec(index = 0)]
@@ -281,6 +281,66 @@ pub struct Withdrawal {
 	pub message_id: String,
 }
 
+/// A pairing host replacing its session keys with new ones.
+///
+/// Sent over the session it replaces. `signature` is the new statement key's
+/// sr25519 signature, under the `substrate` signing context, over
+/// [`RotateSessionRequest::signed_payload`]: the SCALE encoding of the tuple
+/// (`b"truapi:rotate-session"` as a byte slice, so with its compact length
+/// prefix, the replaced statement account id, `statement_account_id`,
+/// `encryption_public_key`). Naming the replaced key keeps the request from
+/// moving another session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RotateSessionRequest {
+	/// The pairing host's new statement-store account id.
+	pub statement_account_id: [u8; 32],
+	/// The pairing host's new X25519 public key.
+	pub encryption_public_key: [u8; 32],
+	/// The new statement key's signature over the signed payload.
+	pub signature: [u8; 64],
+}
+
+/// Prefix of the bytes a [`RotateSessionRequest`] signature covers.
+const ROTATE_SESSION_SIGNING_PREFIX: &[u8] = b"truapi:rotate-session";
+
+impl RotateSessionRequest {
+	/// The bytes the new statement key signs to replace the session whose
+	/// statement account id is `replaces`.
+	pub fn signed_payload(
+		replaces: [u8; 32],
+		statement_account_id: [u8; 32],
+		encryption_public_key: [u8; 32],
+	) -> Vec<u8> {
+		(ROTATE_SESSION_SIGNING_PREFIX, replaces, statement_account_id, encryption_public_key)
+			.encode()
+	}
+}
+
+/// Why a signing host did not move a session to the requested keys.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+pub enum RotateSessionError {
+	/// This signing host keeps serving the keys it paired with.
+	#[codec(index = 0)]
+	#[display("signing host does not change session keys")]
+	Unsupported,
+	/// Another change of this session was served first, so the requesting
+	/// keys no longer belong to it.
+	#[codec(index = 1)]
+	#[display("session keys were already replaced")]
+	Replaced,
+	/// Any other refusal.
+	#[codec(index = 2)]
+	#[display("{reason}")]
+	Rejected {
+		/// Human-readable refusal reason.
+		reason: String,
+	},
+}
+
+/// Signing host's answer to a [`RotateSessionRequest`]: `Ok` once it serves
+/// the new keys.
+pub type RotateSessionResponse = Result<(), RotateSessionError>;
+
 /// Consent-free request for `//product//{product_id}`'s sr25519 public key.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductSubtreeRequest {
@@ -376,6 +436,9 @@ pub type CreateTransactionResponse = Result<Vec<u8>, String>;
 pub enum SsoSessionStatement {
 	/// The outbound request statement was acknowledged with a success code.
 	RequestAccepted,
+	/// The peer acknowledged the outbound request statement with this
+	/// failure code, so no answer to it is coming.
+	RequestRefused(SsoResponseCode),
 	/// Application messages in wire order, each decoded on its own so a
 	/// consumer can stop at its match before a later undecodable message.
 	RemoteMessages(Vec<Result<v1::RemoteMessage, String>>),
@@ -438,7 +501,7 @@ fn classify_response_ack(
 ) -> Result<SsoSessionStatement, String> {
 	match SsoResponseCode::try_from(response_code) {
 		Ok(SsoResponseCode::Success) => Ok(SsoSessionStatement::RequestAccepted),
-		Ok(code) => Err(format!("SSO request {request_id} was rejected: {code}")),
+		Ok(code) => Ok(SsoSessionStatement::RequestRefused(code)),
 		Err(()) => Err(format!("SSO request {request_id} was rejected: unknown")),
 	}
 }

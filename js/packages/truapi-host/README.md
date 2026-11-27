@@ -488,6 +488,18 @@ given to `activateExternalSession` is the host's to expire. Once a login
 commits, or a stored session is restored, the core deletes the
 `PairingDeviceIdentity` slot, since the session holds the same keys.
 
+After a restore, and once an hour while a session is selected, the core asks
+the signing host to move a session whose keys last changed more than a day ago
+to new keys. Until the signing host answers, the new keys wait in the
+`PendingSessionRotation` slot. Back it with the same store as `AuthSession`,
+shared the same way, so every instance finishes the same change. Once answered,
+the core stores the session on its new keys, with the 30-day lifetime that runs
+from the original pairing and its allowance and automatic-signing grants, and
+restores it; product subtree keys are fetched again. A signing host that refuses
+the change, or cannot decode the request, leaves the session on its keys until
+the next restore asks again. A signing host that served another change of the same
+keys first ends the session.
+
 | Runtime method                  | Use it to                                                                    |
 | ------------------------------- | ---------------------------------------------------------------------------- |
 | `activateStoredSession()`       | Await the restore of the `AuthSession` slot before opening providers.        |

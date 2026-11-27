@@ -268,7 +268,14 @@ export type CoreStorageKey =
    * changed. Kept beside `Self::AuthSession` rather than inside it, and
    * shared the same way.
    */
-  | { tag: "SessionTimes"; value?: undefined };
+  | { tag: "SessionTimes"; value?: undefined }
+  /**
+   * The pairing host's change to new session keys while the signing host
+   * has not answered it, holding those keys. Kept beside
+   * `Self::AuthSession` and shared the same way, so whichever instance
+   * finds it finishes the same change.
+   */
+  | { tag: "PendingSessionRotation"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1158,6 +1165,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
       ] as const,
       SessionTimes: [18, S._void] as const,
+      PendingSessionRotation: [19, S._void] as const,
     }),
 );
 

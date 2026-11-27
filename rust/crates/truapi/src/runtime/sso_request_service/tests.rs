@@ -13,11 +13,12 @@ use std::collections::BTreeMap;
 use truapi::latest::GenericError;
 
 #[derive(Default)]
-struct CleanupStorage {
-	values: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+pub struct CleanupStorage {
+	pub values: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
 	pause: Mutex<Option<(CoreStorageKey, oneshot::Receiver<()>)>>,
-	read_pause: Mutex<Option<(CoreStorageKey, oneshot::Receiver<()>)>>,
+	pub read_pause: Mutex<Option<(CoreStorageKey, oneshot::Receiver<()>)>>,
 	failure: Mutex<Option<CoreStorageKey>>,
+	pub write_failure: Mutex<Option<CoreStorageKey>>,
 	write_pause: Mutex<Option<(CoreStorageKey, oneshot::Receiver<()>)>>,
 }
 
@@ -39,6 +40,9 @@ impl CoreStorage for CleanupStorage {
 		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
+		if self.write_failure.lock().unwrap().as_ref() == Some(&key) {
+			return Err(GenericError { reason: "storage write failed".to_string() });
+		}
 		let pause = take_pause(&self.write_pause, &key);
 		self.values.lock().unwrap().insert(key.encode(), value);
 		if let Some(pause) = pause {

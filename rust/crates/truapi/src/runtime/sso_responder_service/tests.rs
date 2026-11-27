@@ -1348,3 +1348,33 @@ fn decode_failure_request_ids_dedup_and_bound() {
 	assert!(!served.insert(format!("fill-{}", MAX_DECODE_FAILURE_REQUEST_IDS - 1)));
 	assert_eq!(served.seen.len(), MAX_DECODE_FAILURE_REQUEST_IDS);
 }
+
+/// This signing host keeps serving the keys it paired with, so it refuses a
+/// key change in a way the pairing host can tell apart, which keeps it signed
+/// in on its keys instead of waiting for an answer.
+#[test]
+fn a_session_key_change_is_refused_as_unsupported() {
+	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+	let change = RemoteMessage::request(
+		"rotate-1".to_string(),
+		sso_messages::RotateSessionRequest {
+			statement_account_id: [0x11; 32],
+			encryption_public_key: [0x22; 32],
+			signature: [0x33; 64],
+		},
+	);
+
+	let answer = futures::executor::block_on(sso_service(&signing_host).answer(change));
+
+	let Ok(Dispatch::Response(answer)) = answer else {
+		panic!("a key change gets an answer");
+	};
+	let RemoteMessageData::V1(message) = answer.message.data;
+	assert_eq!(
+		message,
+		v1::RemoteMessage::RotateSessionResponse(sso_messages::Response {
+			responding_to: "rotate-1".to_string(),
+			payload: Err(sso_messages::RotateSessionError::Unsupported),
+		})
+	);
+}

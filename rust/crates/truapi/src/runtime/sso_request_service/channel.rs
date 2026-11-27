@@ -8,9 +8,10 @@ use std::sync::{
 use super::{
 	super::{
 		sso_remote::{
-			CancelError, RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SsoRemoteResponseError,
-			SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
-			statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
+			CancelError, PeerDisconnect, RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON,
+			SsoRemoteResponseError, SsoSessionKey, fresh_statement_expiry, reply_matcher,
+			sso_message_id, statement_subscription_stream, subscribe_statement_topic,
+			wait_for_sso_remote_response,
 		},
 		statement_store_rpc::{
 			self, StatementStoreRpc, StatementStoreRpcClientError, StatementSubmitError,
@@ -22,8 +23,9 @@ use crate::{
 	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
 		sso_messages::{
-			RemoteMessage, RemoteMessageData, SsoSessionStatement, Withdrawal,
-			build_outgoing_request_statement, decode_sso_session_statement, v1,
+			RemoteMessage, RemoteMessageData, RotateSessionRequest, RotateSessionResponse,
+			SsoSessionStatement, Withdrawal, build_outgoing_request_statement,
+			decode_sso_session_statement, v1,
 		},
 		sso_wire::SsoRequest,
 	},
@@ -243,12 +245,40 @@ impl SsoRequestService {
 	///
 	/// The outer error is the transport's; the inner result is the peer's
 	/// payload for this request type.
-	#[instrument(skip_all, fields(runtime.method = "sso.remote_message.submit", action = R::NAME))]
 	pub async fn call<R: SsoRequest>(
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
 		request: R,
+	) -> Result<R::Response, SsoRemoteResponseError> {
+		self.send(cx, session, sso_message_id(), request, PeerDisconnect::EndsWait)
+			.await
+	}
+
+	/// Ask the paired signing host to move `session` to new keys, under the
+	/// change's own `message_id`, so that sending it again names the request
+	/// the signing host already answered.
+	///
+	/// The wait goes on through the signing host's disconnect of the keys the
+	/// change replaces, which a served change is followed by.
+	pub async fn send_rotation_request(
+		&self,
+		cx: &CallContext,
+		session: &SessionInfo,
+		message_id: String,
+		request: RotateSessionRequest,
+	) -> Result<RotateSessionResponse, SsoRemoteResponseError> {
+		self.send(cx, session, message_id, request, PeerDisconnect::Ignored).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "sso.remote_message.submit", action = R::NAME))]
+	async fn send<R: SsoRequest>(
+		&self,
+		cx: &CallContext,
+		session: &SessionInfo,
+		message_id: String,
+		request: R,
+		peer_disconnect: PeerDisconnect,
 	) -> Result<R::Response, SsoRemoteResponseError> {
 		let sso = session
 			.sso
@@ -259,7 +289,6 @@ impl SsoRequestService {
 		if !key.matches(&self.session_state) {
 			return Err(SsoRemoteResponseError::LocalDisconnected);
 		}
-		let message_id = sso_message_id();
 		let statement = self.build_request_channel_statement(
 			sso,
 			message_id.clone(),
@@ -329,6 +358,7 @@ impl SsoRequestService {
 				remote_message_id: &message_id,
 				cancel: cx.cancel(),
 				disconnect: Some(disconnect),
+				peer_disconnect,
 			},
 			reply_matcher::<R>(&message_id),
 		)

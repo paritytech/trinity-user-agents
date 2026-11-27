@@ -12,7 +12,9 @@ use super::statement_store_rpc;
 use crate::{
 	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
-		sso_messages::{Response, SsoSessionStatement, decode_sso_session_statement, v1},
+		sso_messages::{
+			Response, SsoResponseCode, SsoSessionStatement, decode_sso_session_statement, v1,
+		},
 		sso_wire::SsoRequest,
 	},
 	host_logic::{session::SsoSessionInfo, statement_store::parse_new_statements_result},
@@ -158,6 +160,18 @@ pub struct RemoteResponseWait<'a> {
 	pub cancel: &'a CancellationToken,
 	/// Resolves with a reason when the session disconnects, if registered.
 	pub disconnect: Option<oneshot::Receiver<String>>,
+	/// What the signing host announcing a disconnect does to the wait.
+	pub peer_disconnect: PeerDisconnect,
+}
+
+/// What the signing host announcing a disconnect does to a remote-response wait.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PeerDisconnect {
+	/// The wait ends with [`SsoRemoteResponseError::PeerDisconnected`].
+	EndsWait,
+	/// The wait goes on for its answer, as a key change does: the signing host
+	/// disconnects the keys a change replaced, right after answering it.
+	Ignored,
 }
 
 /// Cancellation of a pending SSO request, tagged with the message id it
@@ -219,6 +233,10 @@ pub enum SsoRemoteResponseError {
 	/// halted or reached no peer. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
+	/// The signing host could not decode the request: it predates the
+	/// message, so asking again gets the same answer until it is updated.
+	#[display("SSO request was not understood by the signing host")]
+	NotUnderstood,
 	/// Submit, subscription, or decode failure.
 	#[display("{_0}")]
 	#[from]
@@ -271,25 +289,31 @@ pub async fn wait_for_sso_remote_response<T>(
 		remote_message_id,
 		cancel,
 		disconnect,
+		peer_disconnect,
 	} = wait;
+	let reply = AwaitedReply { session, statement_request_id, peer_disconnect, matches: &matches };
 	let response = wait_for_sso_remote_response_inner(
 		own_statements,
 		peer_statements,
 		submit,
-		session,
-		statement_request_id,
+		&reply,
 		remote_message_id,
-		&matches,
 	)
 	.fuse();
 	let disconnect = async move {
-		match disconnect {
+		let error = match disconnect {
 			Some(rx) => match rx.await {
 				Ok(reason) => disconnect_error(reason),
 				Err(_) => SsoRemoteResponseError::LocalDisconnected,
 			},
 			None => futures::future::pending::<SsoRemoteResponseError>().await,
+		};
+		if error == SsoRemoteResponseError::PeerDisconnected &&
+			peer_disconnect == PeerDisconnect::Ignored
+		{
+			return futures::future::pending::<SsoRemoteResponseError>().await;
 		}
+		error
 	}
 	.fuse();
 	let cancel_message_id = remote_message_id.to_string();
@@ -313,10 +337,8 @@ async fn wait_for_sso_remote_response_inner<T>(
 	own_statements: StatementPageStream,
 	peer_statements: StatementPageStream,
 	submit: StatementSubmitFuture,
-	session: &SsoSessionInfo,
-	statement_request_id: &str,
+	reply: &AwaitedReply<'_, impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>>,
 	remote_message_id: &str,
-	matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
 ) -> Result<T, SsoRemoteResponseError> {
 	let mut own_statements = own_statements.fuse();
 	let mut peer_statements = peer_statements.fuse();
@@ -338,10 +360,8 @@ async fn wait_for_sso_remote_response_inner<T>(
 				match item {
 					Some(Ok(value)) => {
 						if let Some(response) = handle_sso_remote_statement_page(
-							session,
+							reply,
 							&value,
-							statement_request_id,
-							matches,
 							&mut request_accepted,
 							&mut pending_remote_response,
 						)? {
@@ -356,10 +376,8 @@ async fn wait_for_sso_remote_response_inner<T>(
 				match item {
 					Some(Ok(value)) => {
 						if let Some(response) = handle_sso_remote_statement_page(
-							session,
+							reply,
 							&value,
-							statement_request_id,
-							matches,
 							&mut request_accepted,
 							&mut pending_remote_response,
 						)? {
@@ -377,14 +395,25 @@ async fn wait_for_sso_remote_response_inner<T>(
 	}
 }
 
+/// The reply a remote-response wait reads statement pages for.
+struct AwaitedReply<'a, M> {
+	/// Session the reply decrypts against.
+	session: &'a SsoSessionInfo,
+	/// Request id the transport acknowledgement names.
+	statement_request_id: &'a str,
+	/// What the signing host announcing a disconnect does to the wait.
+	peer_disconnect: PeerDisconnect,
+	/// Picks the reply out of the peer's messages.
+	matches: &'a M,
+}
+
 fn handle_sso_remote_statement_page<T>(
-	session: &SsoSessionInfo,
+	reply: &AwaitedReply<'_, impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>>,
 	value: &Value,
-	statement_request_id: &str,
-	matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
 	request_accepted: &mut bool,
 	pending_remote_response: &mut Option<T>,
 ) -> Result<Option<T>, SsoRemoteResponseError> {
+	let AwaitedReply { session, statement_request_id, peer_disconnect, matches } = reply;
 	let page = parse_new_statements_result("sso-remote".to_string(), value)
 		.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
 	for statement in page.statements {
@@ -394,6 +423,14 @@ fn handle_sso_remote_statement_page<T>(
 				if let Some(response) = pending_remote_response.take() {
 					return Ok(Some(response));
 				}
+			},
+			Some(SsoSessionStatement::RequestRefused(SsoResponseCode::DecodingFailed)) => {
+				return Err(SsoRemoteResponseError::NotUnderstood);
+			},
+			Some(SsoSessionStatement::RequestRefused(code)) => {
+				return Err(SsoRemoteResponseError::Failure(format!(
+					"SSO request {statement_request_id} was rejected: {code}"
+				)));
 			},
 			Some(SsoSessionStatement::RemoteMessages(messages)) => {
 				for message in messages {
@@ -405,7 +442,12 @@ fn handle_sso_remote_statement_page<T>(
 						},
 					};
 					if message == v1::RemoteMessage::Disconnected {
-						return Err(SsoRemoteResponseError::PeerDisconnected);
+						match peer_disconnect {
+							PeerDisconnect::EndsWait => {
+								return Err(SsoRemoteResponseError::PeerDisconnected);
+							},
+							PeerDisconnect::Ignored => continue,
+						}
 					}
 					let Some(matched) = matches(message) else {
 						continue;

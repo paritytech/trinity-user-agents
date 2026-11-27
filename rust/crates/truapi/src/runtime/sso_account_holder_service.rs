@@ -20,7 +20,8 @@ use crate::{
 			CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse,
 			ListRingVrfKeysResponse, ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse,
 			RegisterRingVrfKeyResponse, RemoteMessage, ResourceAllocationRequest,
-			ResourceAllocationResponse, RingVrfSignResponse, SignRawWithLegacyAccountRequest,
+			ResourceAllocationResponse, RingVrfSignResponse, RotateSessionError,
+			RotateSessionRequest, RotateSessionResponse, SignRawWithLegacyAccountRequest,
 			SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse,
 			SsoAllocatedResource, SsoAllocationOutcome,
 		},
@@ -455,6 +456,16 @@ impl SsoAccountHolderService {
 		}
 		.await
 		.map_err(api::HostAccountSignVrfError::from)
+	}
+
+	/// Refuse a change of the session's keys: this signing host keeps serving
+	/// the keys it paired with.
+	async fn rotate_session(
+		&self,
+		_cx: &SsoRequestContext,
+		_request: RotateSessionRequest,
+	) -> RotateSessionResponse {
+		Err(RotateSessionError::Unsupported)
 	}
 
 	/// Consent-free product hard-subtree public key.

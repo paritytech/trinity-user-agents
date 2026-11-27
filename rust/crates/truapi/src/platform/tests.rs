@@ -584,6 +584,7 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 		(CoreStorageKey::FundingSupport, "FundingSupport", None),
 		(CoreStorageKey::StackRecord { stack_id: "stack".to_string() }, "StackRecord", None),
 		(CoreStorageKey::SessionTimes, "SessionTimes", None),
+		(CoreStorageKey::PendingSessionRotation, "PendingSessionRotation", None),
 		(
 			CoreStorageKey::AppManifest { product_label: "ramp".to_string() },
 			"AppManifest",

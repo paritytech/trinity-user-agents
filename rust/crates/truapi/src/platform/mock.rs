@@ -827,6 +827,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 		},
 		CoreStorageKey::StackRecord { stack_id } => format!("core:stack-record:{stack_id}"),
 		CoreStorageKey::SessionTimes => "core:session-times".to_string(),
+		CoreStorageKey::PendingSessionRotation => "core:pending-session-rotation".to_string(),
 	}
 }
 

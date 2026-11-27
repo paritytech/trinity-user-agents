@@ -52,8 +52,8 @@ pub struct PairingBootstrap {
 	pub encryption_secret_key: [u8; 32],
 }
 
-/// Persistable device identity for a login attempt.
-#[derive(Clone, Encode, Decode)]
+/// Persistable device identity for a login attempt or a key change.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub struct PairingDeviceIdentity {
 	/// 64-byte expanded sr25519 statement-store secret.
 	pub statement_store_secret: [u8; 64],
@@ -217,22 +217,50 @@ pub fn establish_sso_session_info(
 	peer_statement_account_id: [u8; 32],
 	peer_sso_enc_pub_key: [u8; 32],
 ) -> Result<SsoSessionInfo, String> {
-	let shared_secret = shared_secret(bootstrap.encryption_secret_key, peer_sso_enc_pub_key)?;
+	pairing_host_session_info(
+		PairingDeviceIdentity {
+			statement_store_secret: bootstrap.statement_store_secret,
+			statement_store_public_key: bootstrap.statement_store_public_key,
+			encryption_secret_key: bootstrap.encryption_secret_key,
+			encryption_public_key: bootstrap.encryption_public_key,
+		},
+		peer_statement_account_id,
+		peer_sso_enc_pub_key,
+	)
+}
+
+/// The session `current` continues as once this pairing host's keys are `keys`.
+///
+/// The signing host keeps its keys, so its side of every channel stays the
+/// same and only what this host derives from its own keys changes.
+pub fn rotated_sso_session_info(
+	current: &SsoSessionInfo,
+	keys: PairingDeviceIdentity,
+) -> Result<SsoSessionInfo, String> {
+	pairing_host_session_info(keys, current.identity_account_id, current.peer_enc_pubkey)
+}
+
+fn pairing_host_session_info(
+	keys: PairingDeviceIdentity,
+	peer_statement_account_id: [u8; 32],
+	peer_sso_enc_pub_key: [u8; 32],
+) -> Result<SsoSessionInfo, String> {
+	let shared_secret = shared_secret(keys.encryption_secret_key, peer_sso_enc_pub_key)?;
 	let session_id_own = create_session_id(
 		&shared_secret,
-		bootstrap.statement_store_public_key,
+		keys.statement_store_public_key,
 		peer_statement_account_id,
 	);
 	let session_id_peer = create_session_id(
 		&shared_secret,
 		peer_statement_account_id,
-		bootstrap.statement_store_public_key,
+		keys.statement_store_public_key,
 	);
 
 	Ok(SsoSessionInfo {
-		ss_secret: bootstrap.statement_store_secret,
-		ss_public_key: bootstrap.statement_store_public_key,
-		enc_secret: bootstrap.encryption_secret_key,
+		ss_secret: keys.statement_store_secret,
+		ss_public_key: keys.statement_store_public_key,
+		enc_secret: keys.encryption_secret_key,
 		peer_enc_pubkey: peer_sso_enc_pub_key,
 		identity_account_id: peer_statement_account_id,
 		session_id_own,
