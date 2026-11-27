@@ -8,7 +8,7 @@ struct ProductWorkerTests {
         let host = RecordingWebViews()
         let runtime = try makeRuntime(host)
         defer { runtime.shutdownProductWorkers() }
-        let product = try ProductId("worker.dot")
+        let product = try ProductId("worker.testnet")
         var starts = host.starts.stream.makeAsyncIterator()
         var stops = host.stops.stream.makeAsyncIterator()
         var executions = runtime.workerExecutionState(productId: product).compactMap { state -> NativeWorkerExecution? in
