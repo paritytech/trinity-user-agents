@@ -9,7 +9,9 @@ pairings and product data. The built-in networks keep their directories. `networ
 The CLI runs its stack through the core, as the apps do. A built-in network starts from the copy this release ships, or
 from a newer one kept in its state directory, and fetches the published descriptor first only when that copy is over an
 hour old, instead of on every command. A `--stack` link or URL is fetched by the first command and kept there too. When
-a chain gives a genesis hash the descriptor does not name, the CLI fetches the descriptor again before it fails.
+a chain gives a genesis hash the descriptor does not name, the CLI fetches the descriptor again before it fails. The
+signing host also recovers NFT purses from their backup, as the apps do, since the stack it runs now names the
+descriptor's `accountDataStore` contract.
 
 Breaking: a `--stack` that isn't a built-in network starts empty after the update, with a new signer and no pairings.
 The default session's accounts are kept per stack too, so a host still on the default session gets a new auto account,
