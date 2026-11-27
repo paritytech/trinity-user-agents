@@ -10,8 +10,8 @@ holds. A stored copy that differs in one of them is ignored, and the core starts
 build changes one of them. The pins cover what the descriptor names, not what a host reads from the chains.
 
 Such a stack also runs the relay's `lightSpec` from the bundled descriptor. A newer copy that names a fresher one is
-taken, but `StackStatus.descriptor` keeps the bundled one. The provider opens a stack only from signed bytes, so a host
-light client that should start from the shipped checkpoint is opened from the bundled descriptor.
+taken, but `StackStatus.descriptor` keeps the bundled one. The provider opens a keyed stack only from signed bytes, so a
+host light client that should start from the shipped checkpoint is opened from the bundled descriptor.
 
 A host that sets `allowed` for a stack whose operator wipes its chains, redeploys its contracts or changes its assets,
 as dotli does for pcf-devnet, no longer follows those changes: it needs a new build that bundles the new descriptor

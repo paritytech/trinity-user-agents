@@ -214,7 +214,7 @@ impl StackSource {
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
 	/// a stack the core can run. A stored record the core would refuse is
-	/// ignored until the next stored record replaces it.
+	/// ignored until the next copy the core takes replaces it.
 	pub fn load(
 		pointer: Pointer,
 		bundled: &[u8],

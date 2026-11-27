@@ -24,9 +24,9 @@ pub trait StackRecords: Send + Sync {
 	/// `check` judges the stored record under the writing build's rules. Two
 	/// builds with different reserved values or bundled copies can share a
 	/// store, such as two deployments on one web origin, and each ignores the
-	/// record the other takes. Only a copy a build took from a fetch replaces
-	/// such a record, so the store settles on the record of the build that
-	/// takes the published copy.
+	/// record the other takes. Only a fetch that the build takes or finds
+	/// unchanged replaces such a record, so the store settles on the record
+	/// of the build that takes the published copy.
 	async fn write_stack_record(
 		&self,
 		stack_id: &str,
