@@ -6,7 +6,7 @@
     struct SentryHostLogSink: HostLogSink {
         func log(level: HostLogLevel, tag: String, message: String, attributes: [String: HostLogAttribute]) {
             var fields: [String: Any] = attributes.mapValues(\.sentryValue)
-            fields["tag"] = tag
+            fields[HostLogFilter.tagAttribute] = tag
 
             let logger = SentrySDK.logger
 
