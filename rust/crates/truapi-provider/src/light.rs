@@ -36,7 +36,7 @@ use core::{
 };
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError},
+	sync::{Arc, Mutex, OnceLock},
 };
 
 use crate::platform::JsonRpcConnection;
@@ -54,17 +54,8 @@ use smoldot_light::{
 use crate::{
 	config::ChainSource,
 	error::{ProviderError, synthetic_error_frame},
+	mutex,
 };
-
-/// Lock a mutex, recovering the guard if a previous holder panicked.
-///
-/// The embedded light client is a single process-wide instance shared by every
-/// connection, so one poisoning event must not brick all of them. smoldot's own
-/// calls under this lock do not panic; this is defense-in-depth for the shared
-/// singleton's blast radius.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-	mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// A chain spec whose bootnodes this target can actually dial.
 ///
@@ -236,7 +227,7 @@ impl LightState {
 	/// Number of implicit relay chains currently held.
 	#[cfg(test)]
 	pub fn relay_count(&self) -> usize {
-		lock(self.inner())
+		mutex::lock(self.inner())
 			.added
 			.values()
 			.filter(|chain| chain.implicit_id.is_some())
@@ -252,7 +243,7 @@ impl LightState {
 	pub fn is_added(&self, genesis_hash: [u8; 32]) -> bool {
 		self.inner
 			.get()
-			.is_some_and(|inner| lock(inner).added.contains_key(&genesis_hash))
+			.is_some_and(|inner| mutex::lock(inner).added.contains_key(&genesis_hash))
 	}
 
 	/// Subscribe to the lifecycle of the chain with this genesis hash, or
@@ -261,7 +252,7 @@ impl LightState {
 	/// The subscription outlives the id it was taken through: it ends only
 	/// when smoldot stops running the chain.
 	pub fn lifecycle(&self, genesis_hash: [u8; 32]) -> Option<Subscription> {
-		let guard = lock(self.inner.get()?);
+		let guard = mutex::lock(self.inner.get()?);
 		let chain = guard.added.get(&genesis_hash)?;
 		let chain_id = chain.implicit_id.or_else(|| chain.connection_ids.first().copied())?;
 		Some(guard.client.lifecycle_state(chain_id))
@@ -295,7 +286,7 @@ impl LightState {
 		let specification = dialable_spec(specification);
 
 		let inner = Arc::clone(self.inner());
-		let mut guard = lock(&inner);
+		let mut guard = mutex::lock(&inner);
 
 		// Ahead of the relay add below, so a refusal takes no chain reference
 		// to unwind.
@@ -630,17 +621,17 @@ async fn first_ready(mut lifecycle: Subscription) {
 
 impl Pipe {
 	fn is_closed(&self) -> bool {
-		lock(&self.closing).is_none()
+		mutex::lock(&self.closing).is_none()
 	}
 
 	fn send(&self, request: String) {
 		// Parsed before taking the client lock, which every connection shares.
-		let holding = lock(&self.held).is_some();
+		let holding = mutex::lock(&self.held).is_some();
 		let needs_sync = holding && waits_for_sync(&request);
 
 		// The chain-removal check and the request must happen under the same
 		// lock: json_rpc_request panics on a removed ChainId.
-		let mut guard = lock(&self.inner);
+		let mut guard = mutex::lock(&self.inner);
 		if self.is_closed() {
 			return;
 		}
@@ -654,7 +645,7 @@ impl Pipe {
 		}
 
 		self.undelivered.fetch_add(1, Ordering::AcqRel);
-		if needs_sync && let Some(held) = lock(&self.held).as_mut() {
+		if needs_sync && let Some(held) = mutex::lock(&self.held).as_mut() {
 			held.push(request);
 			return;
 		}
@@ -675,11 +666,11 @@ impl Pipe {
 
 	/// Forward the requests held while the chain was syncing, in send order.
 	fn release_held(&self) {
-		let mut guard = lock(&self.inner);
+		let mut guard = mutex::lock(&self.inner);
 		if self.is_closed() {
 			return;
 		}
-		let Some(held) = lock(&self.held).take() else {
+		let Some(held) = mutex::lock(&self.held).take() else {
 			return;
 		};
 		for request in held {
@@ -706,7 +697,7 @@ impl Pipe {
 		};
 		// A full error channel means the consumer is not draining even the
 		// refusals, so the frame is dropped rather than queued behind them.
-		if lock(&self.errors_tx).try_send(frame).is_ok() {
+		if mutex::lock(&self.errors_tx).try_send(frame).is_ok() {
 			self.undelivered.fetch_add(1, Ordering::AcqRel);
 		}
 	}
@@ -718,7 +709,7 @@ impl JsonRpcConnection for LightConnection {
 	}
 
 	fn responses(&self) -> BoxStream<'static, String> {
-		let Some(sources) = lock(&self.responses).take() else {
+		let Some(sources) = mutex::lock(&self.responses).take() else {
 			return stream::empty().boxed();
 		};
 		let responses = stream::unfold(sources.responses, |mut responses| async move {
@@ -740,8 +731,8 @@ impl JsonRpcConnection for LightConnection {
 	}
 
 	fn close(&self) {
-		let mut guard = lock(&self.pipe.inner);
-		if lock(&self.pipe.closing).take().is_none() {
+		let mut guard = mutex::lock(&self.pipe.inner);
+		if mutex::lock(&self.pipe.closing).take().is_none() {
 			return;
 		}
 		guard.connections -= 1;
@@ -760,10 +751,10 @@ impl JsonRpcConnection for LightConnection {
 			release_chain(&mut guard, relay_genesis);
 		}
 
-		lock(&self.pipe.errors_tx).close_channel();
+		mutex::lock(&self.pipe.errors_tx).close_channel();
 		// An untaken response stream keeps smoldot's JSON-RPC service for the
 		// chain alive, and with it the chain's lifecycle.
-		lock(&self.responses).take();
+		mutex::lock(&self.responses).take();
 	}
 }
 

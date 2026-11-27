@@ -8,12 +8,12 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Mutex, MutexGuard, PoisonError},
+	sync::{Mutex, MutexGuard},
 };
 
 use trinity_stack::{Chain, Descriptor, Error, Pointer};
 
-use crate::{ChainSource, ProviderError};
+use crate::{ChainSource, ProviderError, mutex};
 
 /// Where a chain's light spec is published.
 #[derive(Debug, PartialEq, Eq)]
@@ -160,7 +160,7 @@ impl LightStack {
 	}
 
 	fn specs(&self) -> MutexGuard<'_, HashMap<[u8; 32], String>> {
-		self.specs.lock().unwrap_or_else(PoisonError::into_inner)
+		mutex::lock(&self.specs)
 	}
 }
 

@@ -56,6 +56,8 @@ mod light_platform_web;
 mod logging;
 #[cfg(all(feature = "smoldot", not(target_arch = "wasm32")))]
 mod logging_native;
+#[cfg(any(feature = "ws", feature = "smoldot"))]
+mod mutex;
 #[cfg(feature = "networks")]
 mod networks;
 pub mod platform;

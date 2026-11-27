@@ -31,7 +31,7 @@ use tokio::{
 use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 use url::Url;
 
-use crate::error::ProviderError;
+use crate::{error::ProviderError, mutex};
 
 /// Bounded depth of the outbound request buffer. The sole producer is a trusted
 /// in-process consumer, so this rarely fills; when it does the socket is not
@@ -231,31 +231,27 @@ impl LastRead {
 		LastRead(Arc::new(Mutex::new(Reads { at: Instant::now(), unreturned_bytes: 0 })))
 	}
 
-	fn lock(&self) -> std::sync::MutexGuard<'_, Reads> {
-		self.0.lock().expect("last-read mutex poisoned")
-	}
-
 	fn touch(&self, bytes: usize) {
-		let mut reads = self.lock();
+		let mut reads = mutex::lock(&self.0);
 		reads.at = Instant::now();
 		reads.unreturned_bytes = reads.unreturned_bytes.saturating_add(bytes);
 	}
 
 	/// The receiver returned a message or a pong, so what was read is spent.
 	fn message_returned(&self) {
-		self.lock().unreturned_bytes = 0;
+		mutex::lock(&self.0).unreturned_bytes = 0;
 	}
 
 	/// How long a message still on its way has gone without a byte.
 	fn mid_message_silence(&self) -> Option<Duration> {
-		let reads = self.lock();
+		let reads = mutex::lock(&self.0);
 		(reads.unreturned_bytes >= MESSAGE_ON_ITS_WAY_BYTES).then(|| reads.at.elapsed())
 	}
 
 	/// Resolves once nothing has arrived for [`READ_TIMEOUT`].
 	async fn silence(&self) {
 		loop {
-			let deadline = self.lock().at + READ_TIMEOUT;
+			let deadline = mutex::lock(&self.0).at + READ_TIMEOUT;
 			if Instant::now() >= deadline {
 				return;
 			}
@@ -369,19 +365,13 @@ impl JsonRpcConnection for WsConnection {
 		// channel means the writer is already gone. Either way, end the
 		// response stream so the id-correlating consumer reconnects rather than
 		// buffering without bound or waiting on a request that will not be sent.
-		if self
-			.requests
-			.lock()
-			.expect("requests mutex poisoned")
-			.try_send(request)
-			.is_err()
-		{
+		if mutex::lock(&self.requests).try_send(request).is_err() {
 			self.close();
 		}
 	}
 
 	fn responses(&self) -> BoxStream<'static, String> {
-		match self.responses.lock().expect("responses mutex poisoned").take() {
+		match mutex::lock(&self.responses).take() {
 			Some(responses) => responses,
 			None => stream::empty().boxed(),
 		}
@@ -395,9 +385,9 @@ impl JsonRpcConnection for WsConnection {
 		if self.closed.swap(true, Ordering::SeqCst) {
 			return;
 		}
-		self.requests.lock().expect("requests mutex poisoned").close_channel();
+		mutex::lock(&self.requests).close_channel();
 		self.stream_abort.abort();
-		self.responses.lock().expect("responses mutex poisoned").take();
+		mutex::lock(&self.responses).take();
 	}
 }
 

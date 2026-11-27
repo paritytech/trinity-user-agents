@@ -20,7 +20,7 @@ use futures::{
 use send_wrapper::SendWrapper;
 use url::Url;
 
-use crate::error::ProviderError;
+use crate::{error::ProviderError, mutex};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
@@ -181,7 +181,7 @@ impl JsonRpcConnection for WebWsConnection {
 	}
 
 	fn responses(&self) -> BoxStream<'static, String> {
-		match self.responses.lock().expect("responses mutex poisoned").take() {
+		match mutex::lock(&self.responses).take() {
 			Some(responses) => responses,
 			None => futures::stream::empty().boxed(),
 		}
@@ -193,7 +193,7 @@ impl JsonRpcConnection for WebWsConnection {
 		}
 		let _ = self.socket.close();
 		self.responses_close.close_channel();
-		self.responses.lock().expect("responses mutex poisoned").take();
+		mutex::lock(&self.responses).take();
 	}
 }
 
