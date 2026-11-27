@@ -10,7 +10,7 @@ struct PocketDeeplinkParserTests {
     let parser: PocketDeeplinkParser
 
     init() throws {
-        parser = PocketDeeplinkParser(stack: try TrUAPIBundledStack.paseoNextV2.open())
+        parser = try PocketDeeplinkParser(stack: TrUAPIBundledStack.paseoNextV2.open())
     }
 
     private func classify(_ link: String) -> PocketLinkClassification {

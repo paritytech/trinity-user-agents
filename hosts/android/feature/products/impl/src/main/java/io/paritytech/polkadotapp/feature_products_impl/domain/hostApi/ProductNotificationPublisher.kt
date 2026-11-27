@@ -23,7 +23,13 @@ class ProductNotificationPublisher @Inject constructor(
     private val originProvider: HostEventOriginProvider,
     private val capture: HostEventCapture,
 ) : NotificationPublisher(context, intentProvider) {
-    fun publishNotification(notificationId: Int, productId: ProductId, text: String, deeplink: String?) {
+    fun publishNotification(
+        notificationId: Int,
+        productId: ProductId,
+        title: String?,
+        text: String,
+        deeplink: String?,
+    ) {
         val channel = PolkadotNotificationChannel.PRODUCTS
         val contentIntentExtras = bundleOf(
             PRODUCT_NOTIFICATION_INTENT_MARKER to true,
@@ -31,6 +37,7 @@ class ProductNotificationPublisher @Inject constructor(
         )
 
         val notification = NotificationCompat.Builder(appContext, channel.id)
+            .setContentTitle(productNotificationTitle(title, productId))
             .setContentText(text)
             .setupDefaultNotification(
                 deepLink = deeplink?.let(Uri::parse),
@@ -50,3 +57,6 @@ class ProductNotificationPublisher @Inject constructor(
         }
     }
 }
+
+/** The title a product names, or its id so the notification still says which product sent it. */
+internal fun productNotificationTitle(title: String?, productId: ProductId): String = title ?: productId.value

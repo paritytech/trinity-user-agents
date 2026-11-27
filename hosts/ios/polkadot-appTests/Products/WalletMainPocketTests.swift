@@ -225,7 +225,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func frame(of _: PocketItem) -> CGRect? { nil }
     var openItem: PocketItem? { nil }
     func setOpenItem(_: PocketItem?) {}
-    func moveOpenItem(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
+    func moveOpenItem(by _: CGSize, clearance _: CGFloat, animatedOver _: TimeInterval?) {}
 }
 
 @MainActor
