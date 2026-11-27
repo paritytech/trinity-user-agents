@@ -15,8 +15,10 @@ import dagger.assisted.AssistedInject
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionRefCounter
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.withConnectionEnabled
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.toWorkerResult
+import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
@@ -28,11 +30,15 @@ class ProductUpdateWorker @AssistedInject constructor(
     private val productUpdater: ProductUpdater,
     private val chainRegistry: ChainRegistry,
     private val chainConnectionRefCounter: ChainConnectionRefCounter,
+    private val remoteConfigService: RemoteConfigService,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        return chainConnectionRefCounter.withConnectionEnabled(chainRegistry.knownChains.assetHub, WORK_NAME) {
-            productUpdater.checkAll()
-        }
+        return remoteConfigService.sync()
+            .flatMap {
+                chainConnectionRefCounter.withConnectionEnabled(chainRegistry.knownChains.assetHub, WORK_NAME) {
+                    productUpdater.checkAll()
+                }
+            }
             .logFailure("Product update check failed")
             .toWorkerResult(retryOnFailure = runAttemptCount < MAX_RETRY_COUNT)
     }
