@@ -80,19 +80,6 @@ private func disposing(_ runtime: TrUAPIChatHandler, _ body: () async throws -> 
     await runtime.dispose()
 }
 
-private extension TrUAPIChatHandler {
-    /// Return after the send has entered Chat's actor and yielded it to the test.
-    func beginSending(_ text: String) async -> Task<Void, Error> {
-        let entered = AsyncStream<Void>.makeStream()
-        let send = Task {
-            entered.continuation.finish()
-            try await onUserMessage(text: text, roomId: "room")
-        }
-        for await _ in entered.stream {}
-        return send
-    }
-}
-
 /// A manager whose worker is already up, which is what chat finds whenever
 /// something else, a card on screen, got there first.
 private func workersRunning(_ execution: MockProductExecution) -> StubWorkerRuntime {
@@ -203,55 +190,100 @@ struct ChatRuntimeTests {
         await live.dispose()
     }
 
+    /// Chat keeps a batch of messages off the screen until every extension has
+    /// taken it, so a send that waited for the worker would hide what the user
+    /// typed for as long as the worker is cold, restarting or failing.
     @Test(.timeLimit(.minutes(1)))
-    func chatStartsBeforeTheWorkerAndDeliversPendingMessagesInOrder() async throws {
+    func chatTakesMessagesBeforeTheWorkerRunsAndDeliversThemInOrder() async throws {
         let workers = StubWorkerRuntime()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
-        var states = workers.executionsDelivered.makeAsyncIterator()
 
         try await disposing(runtime) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-            _ = await states.next()
-
-            let first = await runtime.beginSending("first")
-            _ = await states.next()
-            let second = await runtime.beginSending("second")
+            try await runtime.onUserMessage(text: "first", roomId: "room")
+            try await runtime.onUserMessage(text: "second", roomId: "room")
             workers.publish([chatProduct: execution])
 
-            try await first.value
-            try await second.value
-            #expect(execution.publishedChatActions == ["first", "second"].map {
+            let delivered = await execution.chatActions.stream.prefix(2)
+                .reduce(into: [HostChatActionSubscribeItem]()) { $0.append($1) }
+            #expect(delivered == ["first", "second"].map {
                 HostChatActionSubscribeItem(roomId: "room", peer: "native", payload: .messagePosted(.text(text: $0)))
             })
         }
     }
 
+    /// A disposed session has given back its claim and its chat surface. A
+    /// message it still held must not reach the worker Pocket keeps running:
+    /// the product would answer into a chat that is gone.
     @Test(.timeLimit(.minutes(1)))
-    func closingChatCancelsAPendingSendWhilePocketStillHoldsTheWorker() async throws {
+    func closingChatDropsAPendingMessageWhilePocketStillHoldsTheWorker() async throws {
         let workers = StubWorkerRuntime()
         let pocket = workers.claimWorker(productId: chatProduct)
         defer { pocket.release() }
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
-        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-        _ = await workers.executionsDelivered.first { _ in true }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                _ = await workers.executionsDelivered.first { _ in true }
-                await runtime.dispose()
-            }
-            await #expect(throws: CancellationError.self) {
-                try await runtime.onUserMessage(text: "pending", roomId: "room")
-            }
+        try await disposing(runtime) {
+            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            _ = await workers.executionsDelivered.first { _ in true }
+            try await runtime.onUserMessage(text: "pending", roomId: "room")
+            _ = await workers.executionsDelivered.first { _ in true }
         }
 
         #expect(workers.references.releaseCounts == [0, 1])
+        // Not exact: the stub counts a cancelled observation again if it is
+        // asked for one more state.
+        #expect(workers.readinessObservations.cancelled >= 2)
         workers.publish([chatProduct: execution])
         await #expect(throws: CancellationError.self) {
             try await runtime.onUserMessage(text: "after close", roomId: "room")
         }
         #expect(execution.publishedChatActions.isEmpty)
+    }
+
+    /// The core refuses a message when its buffer is full or the worker has
+    /// just stopped. That costs the one message: a delivery that ended there
+    /// would leave the product deaf for the rest of the session.
+    @Test(.timeLimit(.minutes(1)))
+    func aMessageTheCoreRefusesDoesNotStopTheOnesAfterIt() async throws {
+        let execution = MockProductExecution()
+        execution.chatActionErrors = [ProductRuntimeError.Closed]
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+
+        try await disposing(runtime) {
+            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            try await runtime.onUserMessage(text: "refused", roomId: "room")
+            try await runtime.onUserMessage(text: "next", roomId: "room")
+
+            let delivered = await execution.chatActions.stream.first { _ in true }
+            #expect(delivered == HostChatActionSubscribeItem(
+                roomId: "room", peer: "native", payload: .messagePosted(.text(text: "next"))
+            ))
+        }
+    }
+
+    /// A chat screen that goes away mid-batch does not record the batch's
+    /// messages as processed and offers them again the next time it opens, so
+    /// taking one from the cancelled batch would deliver it twice.
+    @Test(.timeLimit(.minutes(1)))
+    func aSendFromACancelledTaskIsRefused() async throws {
+        let execution = MockProductExecution()
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+
+        try await disposing(runtime) {
+            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            let leftScreen = Task {
+                withUnsafeCurrentTask { $0?.cancel() }
+                try await runtime.onUserMessage(text: "cancelled", roomId: "room")
+            }
+            await #expect(throws: CancellationError.self) { try await leftScreen.value }
+            try await runtime.onUserMessage(text: "later", roomId: "room")
+
+            let delivered = await execution.chatActions.stream.first { _ in true }
+            #expect(delivered == HostChatActionSubscribeItem(
+                roomId: "room", peer: "native", payload: .messagePosted(.text(text: "later"))
+            ))
+        }
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
@@ -371,7 +403,8 @@ struct ChatRuntimeTests {
 
     /// A worker release restarts the worker under the open chat; the handler must reach the new
     /// worker without asking for it again, since the core still counts the request it holds.
-    @Test func rustRuntimeFollowsARestartedWorker() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func rustRuntimeFollowsARestartedWorker() async throws {
         let previous = MockProductExecution()
         let workers = workersRunning(previous)
         let runtime = makeRustRuntime(workers: workers)
@@ -379,9 +412,11 @@ struct ChatRuntimeTests {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
             try await runtime.onUserMessage(text: "before", roomId: "room")
+            _ = await previous.chatActions.stream.first { _ in true }
             let restarted = MockProductExecution()
             workers.publish([chatProduct: restarted])
             try await runtime.onUserMessage(text: "after", roomId: "room")
+            _ = await restarted.chatActions.stream.first { _ in true }
             await runtime.dispatchEvent(
                 roomId: "room", messageId: "m1", messageType: "t", actionId: "join", payload: "p"
             )

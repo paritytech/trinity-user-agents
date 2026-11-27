@@ -61,8 +61,8 @@ final class ProductBot: ChatExtensionBot {
         do {
             try await runtime.onUserMessage(text: text, roomId: message.chatId.roomId)
         } catch TrUAPIChatHandler.ChatSeamError.notStarted {
-            // Driven before `start` opened the execution — an ordering issue, not
-            // a product failure.
+            // Sent before `start` claimed the worker, an ordering issue, not a
+            // product failure.
             logger.debug("User message not forwarded: the runtime has not started")
         } catch {
             logger.error("Failed to forward user message to script: \(error)")
@@ -108,8 +108,8 @@ extension ProductBot: ChatExtensionBotProtocol {
                 try await runtime.start(messagingSupport: .init(bot: self, context: context))
 
                 #if targetEnvironment(simulator)
-                    // Drives the first user message for `make ios-chat-run`. The core
-                    // buffers host actions until the product subscribes, so no wait.
+                    // Posts the first user message of a scripted simulator run. The runtime
+                    // holds it until the worker runs, and the core until the product subscribes.
                     let environment = ProcessInfo.processInfo.environment
                     if let message = environment["TRUAPI_IOS_E2E_CHAT_MESSAGE"],
                        let roomId = environment["TRUAPI_IOS_E2E_CHAT_ROOM_ID"] {

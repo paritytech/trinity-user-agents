@@ -20,7 +20,11 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
     private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
     let roomChanges = AsyncStream<[ChatRoom]>.makeStream()
+    let chatActions = AsyncStream<HostChatActionSubscribeItem>.makeStream()
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
+    /// Errors thrown by successive `publishChatAction` calls, consumed in order;
+    /// once empty the call succeeds.
+    var chatActionErrors: [Error] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
@@ -92,7 +96,9 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
     }
 
     override func publishChatAction(action: HostChatActionSubscribeItem) throws {
+        if !chatActionErrors.isEmpty { throw chatActionErrors.removeFirst() }
         publishedChatActions.append(action)
+        chatActions.continuation.yield(action)
     }
 
     override func render(

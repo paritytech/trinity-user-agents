@@ -12,10 +12,8 @@ import UIKitExt
 /// events publish chat actions, widget rendering streams typed renderer nodes,
 /// and the product's chat surface serves the core's chat callbacks.
 ///
-/// An actor so `start`/`dispose` never race on runtime state. Actors are
-/// reentrant, so `dispose()` can interleave while `start` is suspended:
-/// `dispose` flips `disposed` before its first await and `start` re-checks it
-/// after every await, releasing anything it took in the gap.
+/// An actor so `start`, `dispose` and the calls between them never race on
+/// runtime state.
 actor TrUAPIChatHandler: ChatRuntimeProtocol {
     enum ChatSeamError: Error, Equatable {
         case notStarted
@@ -37,7 +35,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     /// gives back exactly what start asked for and never more.
     private var workerClaim: NativeWorkerClaim?
     private var roomsForwardingTask: Task<Void, Never>?
-    private var messageDeliveries: [Task<Void, Error>] = []
+    private let pendingMessages = AsyncStream<HostChatActionSubscribeItem>.makeStream()
+    private var messageDeliveryTask: Task<Void, Never>?
     /// Renders still waiting for the worker or drawing, ended by dispose.
     private var renders: [UUID: Task<Void, Never>] = [:]
     private var started = false
@@ -78,29 +77,24 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         }
     }
 
+    /// Returns once the message is queued, not once it is delivered. Chat keeps
+    /// a batch of messages off the screen until its extensions have taken every
+    /// one, and the worker can be a long way from running. Chat records the
+    /// message as processed once this returns, so one still queued when the
+    /// app is killed is not offered again.
     func onUserMessage(text: String, roomId: String?) async throws {
         try checkNotDisposed()
         guard let roomId else { throw ChatSeamError.roomlessChat }
         guard workerClaim != nil else { throw ChatSeamError.notStarted }
+        // A cancelled caller is a chat screen that went away before it recorded
+        // this message as processed, so it offers the message again when it opens.
+        try Task.checkCancellation()
 
-        let previous = messageDeliveries.last
-        let delivery = Task {
-            _ = await previous?.result
-            defer { messageDeliveries.removeFirst() }
-            guard let execution = try await executionWhenRunning() else { throw CancellationError() }
-            try Task.checkCancellation()
-            try execution.publishChatAction(action: HostChatActionSubscribeItem(
-                roomId: roomId,
-                peer: "native",
-                payload: .messagePosted(.text(text: text))
-            ))
-        }
-        messageDeliveries.append(delivery)
-        try await withTaskCancellationHandler {
-            try await delivery.value
-        } onCancel: {
-            delivery.cancel()
-        }
+        pendingMessages.continuation.yield(HostChatActionSubscribeItem(
+            roomId: roomId,
+            peer: "native",
+            payload: .messagePosted(.text(text: text))
+        ))
     }
 
     func renderMessage(
@@ -186,14 +180,12 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
     func dispose() async {
         guard !disposed else { return }
-        // Flipped before the first suspension: any start resuming after this
-        // point observes it and unwinds.
+        // Flipped before the first suspension, so a call that arrives while the
+        // tasks below end is refused.
         disposed = true
 
         roomsForwardingTask?.cancel()
-        for delivery in messageDeliveries {
-            delivery.cancel()
-        }
+        messageDeliveryTask?.cancel()
         for render in renders.values {
             render.cancel()
         }
@@ -211,6 +203,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
         await roomsForwardingTask?.value
         roomsForwardingTask = nil
+        await messageDeliveryTask?.value
+        messageDeliveryTask = nil
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }
@@ -229,6 +223,7 @@ private extension TrUAPIChatHandler {
         let host = try runtime()
         workerClaim = host.claimWorker(productId: productId)
         startRoomsForwarding(host)
+        startMessageDelivery(host)
 
         logger.debug("Rust chat runtime started for: \(productId)")
     }
@@ -299,6 +294,22 @@ private extension TrUAPIChatHandler {
                 } catch {
                     guard !Task.isCancelled else { return }
                     logger.error("Rust chat runtime rooms forwarding ended: \(error)")
+                }
+            }
+        }
+    }
+
+    /// One loop for the session, so messages reach the worker in the order they
+    /// were sent.
+    func startMessageDelivery(_ host: any ProductWorkerRuntime) {
+        messageDeliveryTask = Task { [productId, logger, pendingMessages] in
+            defer { pendingMessages.continuation.finish() }
+            for await message in pendingMessages.stream {
+                guard let execution = await host.executionWhenRunning(productId), !Task.isCancelled else { return }
+                do {
+                    try execution.publishChatAction(action: message)
+                } catch {
+                    logger.error("Rust chat runtime failed to deliver a user message to \(productId): \(error)")
                 }
             }
         }
