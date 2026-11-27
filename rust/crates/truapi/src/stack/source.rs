@@ -200,6 +200,9 @@ pub struct StackSource {
 	/// record it returned is stored or fails to store, so that the host is
 	/// never told `Current` for a copy whose store may still fail.
 	before_store: Option<StackStatus>,
+	/// Whether the record the last fetch returned holds a copy it took,
+	/// rather than the copy held with a new age or `ETag`.
+	took_copy: bool,
 }
 
 impl StackSource {
@@ -280,6 +283,7 @@ impl StackSource {
 		let current = CurrentStack { stack, stale, expired };
 		let mut source = Self::imported(pointer, reserved_values, reader, current, None)?;
 		source.last_refresh = Some(StackRefreshOutcome::Current);
+		source.took_copy = true;
 		Ok((source, record))
 	}
 
@@ -320,6 +324,7 @@ impl StackSource {
 			wrong_genesis: Vec::new(),
 			people_suffix: None,
 			before_store: None,
+			took_copy: false,
 		}
 	}
 
@@ -526,6 +531,7 @@ impl StackSource {
 		if refreshed.stored.is_some() {
 			self.before_store = Some(self.status());
 		}
+		self.took_copy = matches!(accepted.status, Status::Updated);
 		self.last_refresh = Some(outcome);
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
@@ -564,7 +570,7 @@ impl StackSource {
 
 	/// The check for storing `record`, which [`Self::fetched`] returned.
 	pub fn replace_check(&self, record: &[u8]) -> ReplaceCheck {
-		ReplaceCheck::new(self.rules.clone(), record)
+		ReplaceCheck::new(self.rules.clone(), record, self.took_copy)
 	}
 
 	/// Why the core refuses a served document that verifies under the

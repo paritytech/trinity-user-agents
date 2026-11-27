@@ -1839,8 +1839,8 @@ newer one, every command fetches again. A newer copy the fetch stores is run at
 once; without one the command runs on the copy it holds, so a server that does
 not answer stops nothing. When the copy it holds cannot run, for instance past
 `expiresAt`, or on the light client without a `lightSpec` for the relay, People,
-Asset Hub or Bulletin, the CLI fetches once more before the command fails,
-unless it fetched in this run already. Each command also refreshes the
+Asset Hub or Bulletin, the CLI fetches once more before the command fails.
+Each command also refreshes the
 descriptor in the background while it runs, and a host that runs logs when a
 newer copy changes a chain, the network or the `generation` and needs a
 restart. A copy that changes the `tld`, or that the CLI cannot run on (for
@@ -1860,7 +1860,7 @@ Before a command runs, every endpoint of a stack-derived network (a built-in or 
 the same connection once its genesis matches, for its `NetworkSuffix`. An
 endpoint that reports another genesis fails the checks, since its chain may have
 restarted from genesis after the descriptor in use was published. The CLI then
-fetches the descriptor once (10-second timeout), and when that brings a newer
+fetches the descriptor once (10-second timeout), and when that brings another
 copy it starts the core on it and repeats the checks once; otherwise the first
 error stands. A local file is not fetched again. A `NetworkSuffix` other than
 the `tld` fails the checks the same way, with an error that prints both. An endpoint that does not answer within

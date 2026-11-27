@@ -1145,19 +1145,19 @@ A command reaches its chains in one of two ways:
   All three are built-in Trinity stacks. The core starts each from the signed copy
   this release ships in `stacks/`, or from a newer copy it verified and kept in the
   network's state directory. Before a command runs, the CLI fetches the published
-  descriptor when the copy it holds was last fetched over an hour ago or never, as the
-  shipped copy is, saying so and waiting up to 3 seconds. Until a fetch brings the
-  current copy or a newer one, for instance while the server is down, every command
-  fetches again. A newer copy the fetch stores is run at once. When the copy held
-  cannot run, for instance past `expiresAt`, the CLI fetches once more before the
-  command fails, unless it fetched in this run already. The descriptor is also
-  refreshed in the background while a command runs, and a running host logs when a
-  newer copy needs a restart. A published descriptor that changes the stack's `tld`
-  is not kept, since every account derives under the TLD, and neither is one the CLI
-  cannot run on, for instance one without a `dub` service, `dotns.popController` or
-  one of the chains it serves, or on the light client one without a light spec for a
-  chain it runs. Each is reported with a warning. A copy past `expiresAt` is kept: the stack
-  has shut down, and commands fail until its operator publishes a newer one.
+  descriptor when the copy it holds was last fetched over an hour ago or never, as
+  the shipped copy is, saying so and waiting up to 3 seconds. Until a fetch brings
+  the current copy or a newer one, for instance while the server is down, every
+  command fetches again. A newer copy the fetch stores is run at once. When the copy
+  held cannot run, for instance past `expiresAt`, the CLI fetches once more before
+  the command fails. The descriptor is also refreshed in the background while a
+  command runs, and a running host logs when a newer copy needs a restart. A
+  published descriptor that changes the stack's `tld` is not kept, since every
+  account derives under the TLD, and neither is one the CLI cannot run on, for
+  instance one without a `dub` service, `dotns.popController` or one of the chains
+  it serves, or on the light client one without a light spec for a chain it runs.
+  Each is reported with a warning. A copy past `expiresAt` is kept: the stack has
+  shut down, and commands fail until its operator publishes a newer one.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
   replaces `--network`, and the two cannot be combined. A link or URL is fetched by
@@ -1169,7 +1169,7 @@ genesis, and People, once its genesis matches, for its `NetworkSuffix`. An endpo
 that reports a genesis other than the one it is routed as, or a `NetworkSuffix` other
 than the `tld`, fails the checks. The chain may have restarted after the descriptor
 was published, so the CLI fetches the descriptor once more and repeats the checks on
-a newer copy; without one it is an error. An endpoint that does not answer
+the copy that brings; without one it is an error. An endpoint that does not answer
 within 3 seconds is logged and left to fail on first use. On the light client the
 light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint

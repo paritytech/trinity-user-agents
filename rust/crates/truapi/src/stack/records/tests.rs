@@ -62,7 +62,7 @@ fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
 	let records = CoreStorageRecords::new(Arc::new(MemoryCoreStorage::default()));
 	let write = |sequence| {
 		let record = record_at(sequence);
-		let check = ReplaceCheck::new(rules.clone(), &record);
+		let check = ReplaceCheck::new(rules.clone(), &record, true);
 		futures::executor::block_on(records.write_stack_record(&stack_id, record, check))
 			.expect("memory storage writes");
 	};
@@ -84,7 +84,7 @@ fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
 /// passes still keeps an older copy out.
 #[test]
 fn only_a_record_whose_copy_passes_the_cores_rules_keeps_an_older_copy_out() {
-	let check = ReplaceCheck::new(bundled_rules(), &record_at(3));
+	let check = ReplaceCheck::new(bundled_rules(), &record_at(3), true);
 	let existing = [
 		record_at(5),
 		record_at(3),
@@ -106,7 +106,7 @@ fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run
 	let rules = bundled_rules();
 	let stack_id = rules.pointer().stack_id();
 	let write = |record: Vec<u8>| {
-		let check = ReplaceCheck::new(rules.clone(), &record);
+		let check = ReplaceCheck::new(rules.clone(), &record, true);
 		futures::executor::block_on(db.write_stack_record(&stack_id, record, check))
 			.expect("the database writes");
 	};
@@ -121,4 +121,39 @@ fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run
 	write(record_at(4));
 
 	assert_eq!([over_an_ignored_one, stored()], [Some(record_at(3)), Some(record_at(5))]);
+}
+
+/// A stack without a key has no rollback protection, so a copy a fetch took
+/// at a lower `sequence` replaces the stored one. Renewing the age of the copy
+/// a slower runtime held does not, or it would put an older copy back over a
+/// newer one another runtime stored.
+#[test]
+fn only_a_copy_a_fetch_took_replaces_a_higher_unsigned_sequence() {
+	let unsigned = |sequence: u32| {
+		let bytes = serde_json::to_vec(&published_test_descriptor_at(sequence)).unwrap();
+		let pointer =
+			trinity_stack::Pointer::from_link(&crate::test_support::test_stack_link(None)).unwrap();
+		let served = trinity_stack::Served::Document { bytes: &bytes, etag: None };
+		let record = trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
+			.fetched(&pointer, served, 0)
+			.expect("the copy passes the descriptor rules")
+			.stored
+			.expect("a first copy is stored");
+		(pointer, bytes, record)
+	};
+	let (pointer, first, older) = unsigned(5);
+	let descriptor = trinity_stack::open(&first, &pointer)
+		.expect("an unsigned copy opens")
+		.descriptor;
+	let rules = CopyRules::pinned_to(pointer, &descriptor, ReservedValuesPolicy::default())
+		.expect("the copy runs");
+	let (_, _, newer) = unsigned(6);
+
+	assert_eq!(
+		[
+			ReplaceCheck::new(rules.clone(), &older, true).replaces(&newer),
+			ReplaceCheck::new(rules, &older, false).replaces(&newer),
+		],
+		[true, false]
+	);
 }

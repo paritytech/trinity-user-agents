@@ -55,3 +55,38 @@ async fn an_unchanged_descriptor_is_answered_not_modified() {
 		(Some(served_etag(0)), true)
 	);
 }
+
+/// The host refuses a copy without light specs only when this run is on the
+/// light client, so an RPC run keeps a copy it can run.
+#[tokio::test]
+async fn the_host_needs_light_specs_only_on_the_light_client() {
+	let without_specs = edit_descriptor(|descriptor| {
+		for chain in descriptor["chains"].as_array_mut().expect("chains is an array") {
+			chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
+		}
+	});
+	let (server, _) = serve_stack_and_light_specs(vec![without_specs]).await;
+	let url = format!("{server}/stack.json");
+	let pointer = Pointer::new(&url, None).expect("a loopback pointer");
+	let fetch = |on_light_client| {
+		let host = CliStackHost::new(pointer.clone(), on_light_client, FETCH_TIMEOUT);
+		let request =
+			StackFetchRequest { url: url.clone(), if_none_match: None, max_bytes: 1 << 20 };
+		async move { host.fetch_stack_descriptor(request).await.is_ok() }
+	};
+
+	assert_eq!((fetch(false).await, fetch(true).await), (true, false));
+}
+
+/// The core says how much it reads, and the host stops there.
+#[tokio::test]
+async fn the_host_reads_no_more_than_the_request_allows() {
+	let (server, _) = serve_stack_and_light_specs(vec![edit_descriptor(|_| {})]).await;
+	let url = format!("{server}/stack.json");
+	let host = CliStackHost::new(Pointer::new(&url, None).unwrap(), false, FETCH_TIMEOUT);
+	let request = StackFetchRequest { url: url.clone(), if_none_match: None, max_bytes: 10 };
+
+	let refused = host.fetch_stack_descriptor(request).await.err().map(|error| error.reason);
+
+	assert_eq!(refused, Some(format!("{url}: larger than 10 bytes")));
+}

@@ -29,29 +29,32 @@ pub trait StackRecords: Send + Sync {
 }
 
 /// Whether a record may replace the one stored for its stack: not when the
-/// stack is signed and the stored one holds a copy that passes the core's
-/// rules at a higher `sequence`.
+/// stored one holds a copy that passes the core's rules at a higher
+/// `sequence`.
 ///
 /// Any other stored record is replaced. The core never starts from one it
 /// ignores, so keeping it would block every lower `sequence`. A stack without
-/// a key has no rollback protection (RFC 1), so the reader takes a lower
-/// `sequence` for it and the store keeps what the reader took.
+/// a key has no rollback protection (RFC 1), so a copy a fetch took at a lower
+/// `sequence` replaces it too. A record that only renews the age or `ETag` of
+/// the copy held does not, so a slower runtime cannot put that copy back.
 pub struct ReplaceCheck {
 	rules: CopyRules,
 	sequence: Option<u32>,
+	taken: bool,
 }
 
 impl ReplaceCheck {
-	/// The check for storing `record` under `rules`.
-	pub fn new(rules: CopyRules, record: &[u8]) -> Self {
+	/// The check for storing `record` under `rules`. `taken` says the record
+	/// holds a copy a fetch just took.
+	pub fn new(rules: CopyRules, record: &[u8], taken: bool) -> Self {
 		let sequence = passing_sequence(&rules, record);
-		Self { rules, sequence }
+		Self { rules, sequence, taken }
 	}
 
 	/// Whether the record may replace `existing`.
 	#[must_use]
 	pub fn replaces(&self, existing: &[u8]) -> bool {
-		self.rules.pointer().key().is_none() ||
+		(self.taken && self.rules.pointer().key().is_none()) ||
 			passing_sequence(&self.rules, existing) <= self.sequence
 	}
 }

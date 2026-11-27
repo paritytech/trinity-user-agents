@@ -294,8 +294,8 @@ It chooses them by the stack's pointer, not by anything in the descriptor. A
 fork has the same genesis hashes and TLD as its source, and its descriptor can
 declare any `id`, its source's included.
 
-The CLI's directory per stack is described in its README, under "Each stack has
-its own directory".
+The CLI keeps each stack's state in a directory of its own, as its
+[README](../truapi-host-cli/README.md#state-directory) describes.
 
 #### Descriptor refresh
 

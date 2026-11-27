@@ -8,7 +8,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Result, anyhow, bail, ensure};
 use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
 use truapi::{
-	platform::{ReservedValuesPolicy, StackRefresh, StackRefreshOutcome, StackStatus},
+	platform::{ReservedValuesPolicy, StackRefresh, StackRefreshOutcome},
 	time::{RealTimer, SystemClock},
 };
 
@@ -56,7 +56,7 @@ impl NetworkSource {
 	/// The network a command runs against once its chains pass the checks.
 	///
 	/// When an endpoint or light spec fails them, the descriptor is fetched
-	/// again and the checks repeat once on a newer copy. Fails as
+	/// again and the checks repeat once on the copy it brings. Fails as
 	/// [`Self::resolve`] and [`verify_chains`] do.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
 		let stack = self.open().await?;
@@ -69,8 +69,8 @@ impl NetworkSource {
 		tracing::info!("{error}; fetching the stack's descriptor again");
 		let held = refresh.descriptor().sequence;
 		let status = refresh.fetch_now(host).await;
+		host.warn_if_refused(&status);
 		if !status.restart_required && refresh.descriptor().sequence == held {
-			host.warn_if_refused(&status);
 			return Err(error);
 		}
 		let stack = self.open().await?;
@@ -124,29 +124,19 @@ impl NetworkSource {
 	async fn open_published(&self, published: &Published) -> Result<Stack> {
 		let mut refresh = self.load(published).await?;
 		// An imported stack's first copy was fetched as it loaded.
-		let mut last_fetch = refresh.status().last_refresh.is_some().then(|| refresh.status());
-		if last_fetch.is_none() && refresh.fetch_is_due() {
-			let (reloaded, status) = self.fetched(refresh, published).await?;
-			(refresh, last_fetch) = (reloaded, Some(status));
+		let mut fetched = refresh.status().last_refresh.is_some();
+		if !fetched && refresh.fetch_is_due() {
+			refresh = self.fetched(refresh, published).await?;
+			fetched = true;
 		}
-		let opened = match self.running(refresh, published.pointer.clone()) {
-			Err(error) if last_fetch.is_none() => {
+		match self.running(refresh, published.pointer.clone()) {
+			Err(error) if !fetched => {
 				tracing::info!("{error:#}; fetching the stack's descriptor again");
-				let (refresh, status) =
-					self.fetched(self.load(published).await?, published).await?;
-				last_fetch = Some(status);
+				let refresh = self.fetched(self.load(published).await?, published).await?;
 				self.running(refresh, published.pointer.clone())
 			},
 			opened => opened,
-		};
-		// A stack that runs reports its status once its refresh starts.
-		if opened.is_err() &&
-			let Some(status) = &last_fetch
-		{
-			self.host(published.pointer.clone(), PRE_START_FETCH_TIMEOUT)
-				.warn_if_refused(status);
 		}
-		opened
 	}
 
 	/// The core's refresh of `published`, from the copy it holds. An imported
@@ -183,26 +173,23 @@ impl NetworkSource {
 
 	/// `refresh` after one fetch of its descriptor that waits at most
 	/// [`PRE_START_FETCH_TIMEOUT`] for the server, loaded again when the fetch
-	/// stored a copy that changes the stack, with the status the fetch left.
-	async fn fetched(
-		&self,
-		refresh: StackRefresh,
-		published: &Published,
-	) -> Result<(StackRefresh, StackStatus)> {
+	/// stored a copy that changes the stack.
+	async fn fetched(&self, refresh: StackRefresh, published: &Published) -> Result<StackRefresh> {
 		let url = published.pointer.url();
 		tracing::info!("fetching the stack descriptor at {url} before the command runs");
 		let host = self.host(published.pointer.clone(), PRE_START_FETCH_TIMEOUT);
 		let status = refresh.fetch_now(&host).await;
+		host.warn_if_refused(&status);
 		if let Some(StackRefreshOutcome::Unreachable { reason }) = &status.last_refresh {
 			tracing::info!(
 				"the stack descriptor could not be fetched ({reason}); using the copy held"
 			);
 		}
 		if !status.restart_required {
-			return Ok((refresh, status));
+			return Ok(refresh);
 		}
 		drop(refresh);
-		Ok((self.load(published).await?, status))
+		self.load(published).await
 	}
 
 	/// A local descriptor file, read as it is and never refreshed.
