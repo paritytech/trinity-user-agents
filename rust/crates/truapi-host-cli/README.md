@@ -135,18 +135,18 @@ through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
-Each stack has its own directory under `v2`. A built-in network's is its name,
-such as `v2/paseo-next-v2`, also when `--stack` gives its link or URL. Any
-other stack gets `stack-<tag>`, named from the stack's id, so a fork starts
-with none of its source's sessions, accounts, pairings or stored data. A local
-file's id is its canonical path, so the same descriptor at another path gets a
-new directory and starts empty. That covers a file that was moved or renamed,
-and a copy in another checkout or a temporary file. The CLI does not say why.
-Accounts are kept per stack too: the default session's are in
-`v2/<network>/signing-host/accounts.json`, and an `accounts.json` directly
-under `v2`, from earlier releases, is not read.
-`truapi-host network-check` prints the name as `state_directory`, and SPEC.md
-§13.1 has the rest.
+Each stack has its own directory under `v2`. A built-in network uses its name,
+such as `v2/paseo-next-v2`, also when `--stack` gives its link or URL. Any other
+stack gets `stack-` plus a hash of its key, or of its URL or file path when it
+has no key. So a fork starts with none of its source's sessions, accounts,
+pairings or stored data.
+
+A local file is identified by its full path. Moving or renaming it, or using a
+copy in another checkout or a temporary file, starts from scratch, and the CLI
+does not say why. The default session's accounts are in
+`v2/<state_directory>/signing-host/accounts.json`. An `accounts.json` directly
+under `v2`, from earlier releases, is not read. `truapi-host network-check`
+prints the directory name as `state_directory`, and SPEC.md §13.1 has the rest.
 
 The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices

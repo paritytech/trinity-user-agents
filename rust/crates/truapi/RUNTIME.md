@@ -278,14 +278,18 @@ a suffix.
 
 #### Storage per stack
 
-Nothing a host keeps for one stack is visible to another. The core's storage
-keys do not name the stack, so a host that can run more than one stack gives
-each its own `CoreStorage`, `ProductStorage`, encrypted store and core
-database directory, picked from the stack's pointer before it starts the core.
-A fork has its source's genesis hashes and TLD, so neither tells the two apart,
-and a descriptor's `id` is only what it calls itself. The CLI keeps a built-in
-network's state under the network's name, and any other stack's under a name
-made from the stack's id: its pointer's key or URL, or a local file's path.
+The core's storage keys do not say which stack they belong to, so the host has
+to keep stacks apart. A host that can run more than one stack gives each one its
+own `CoreStorage`, `ProductStorage`, encrypted store and core database
+directory, and chooses them before it starts the core.
+
+It chooses them by the stack's pointer, not by anything in the descriptor. A
+fork has the same genesis hashes and TLD as its source, and its descriptor can
+declare any `id`, its source's included.
+
+The CLI keeps a built-in network's state in `v2/<network>`, such as
+`v2/previewnet`. Any other stack's directory is `stack-` plus a hash of the
+pointer's key, or of the URL or file path when there is no key.
 
 #### Descriptor refresh
 
