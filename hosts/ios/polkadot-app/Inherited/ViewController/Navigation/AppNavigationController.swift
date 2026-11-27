@@ -19,6 +19,9 @@ protocol NavigationControlling: AnyObject {
 }
 
 /// A screen that animates its own push and pop. Nil keeps the default transition.
+///
+/// The system back swipes are off while the screen is on top: they would run UIKit's own pop, not the screen's
+/// animator. The stack's edge swipe is its only back swipe.
 protocol NavigationTransitionAnimating: AnyObject {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning?
 
@@ -189,6 +192,22 @@ private extension AppNavigationController {
         viewController.navigationItem.backButtonDisplayMode = mode
     }
 
+    /// Waits for the transition to end, since a cancelled pop leaves the screen it started from on top.
+    func updateSystemBackSwipes() {
+        guard let transitionCoordinator else {
+            matchSystemBackSwipesToTopScreen()
+            return
+        }
+
+        transitionCoordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            self?.matchSystemBackSwipesToTopScreen()
+        }
+    }
+
+    func matchSystemBackSwipesToTopScreen() {
+        setSystemBackSwipesEnabled(!(topViewController is NavigationTransitionAnimating))
+    }
+
     func insertCloseButtonToRootIfNeeded() {
         guard
             barSettings.shouldSetCloseButton,
@@ -252,6 +271,7 @@ extension AppNavigationController: UINavigationControllerDelegate {
     ) {
         updateNavigationBarState(in: viewController)
         setupBackButtonItem(for: viewController)
+        updateSystemBackSwipes()
         transitionObserver?.appNavigationController(
             self,
             willShow: viewController,

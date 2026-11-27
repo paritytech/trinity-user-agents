@@ -3,7 +3,6 @@ import PolkadotUI
 import Products
 import SnapKit
 import UIKit
-import UIKitExt
 import WebKit
 
 /// The Collectibles screen pushed over the Wallet, with the stash product filling it.
@@ -64,18 +63,6 @@ final class CollectiblesViewController: UIViewController {
         } else {
             openBook()
         }
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func viewDidLayoutSubviews() {

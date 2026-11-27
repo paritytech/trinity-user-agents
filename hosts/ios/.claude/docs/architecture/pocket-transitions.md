@@ -16,7 +16,7 @@ These rules hold for every screen that draws its own push and pop. The concrete 
 4. **The commit rule and release timing are shared.** The stack reads the finger with `BackSwipe.progress` and `BackSwipe.commits`, and passes the result to the animator. A release runs the remaining share of the timed duration on the same curve, with a floor so a short leg does not flash.
 5. **Both sides of a shared element run one clock.** When something is drawn by two screens, as a card by the Pocket and by its screen, each side animates itself, on the same curve and duration. Neither side animates the other's views.
 6. **Every exit restores the screen.** A completed push, a completed pop and a cancelled pop all end in one place, such as `endFlight()`, which puts back everything the transition changed. A cancelled pop leaves the screen on the stack, usable.
-7. **The swipe is offered only when it can run.** `allowsBackSwipe` is false while the screen's own transition or another gesture, such as a pull-down, is running. The screen turns the system back swipe off while it is shown, so the stack's edge pan is the only one.
+7. **The swipe is offered only when it can run.** `allowsBackSwipe` is false while the screen's own transition or another gesture, such as a pull-down, is running. The stack turns the system back swipes off while the screen is on top, so its edge pan is the only one. The system swipes would run UIKit's own pop and skip the screen's animator.
 8. **A fade is the fallback.** Under Reduce Motion, or when the motion has nowhere to go, the screen fades. The fade is scrubbed the same way, through `PocketFadeScrub`.
 9. **Frames are measured where they are drawn.** Any frame the animator measures, such as `itemFrame(in:)`, includes every offset already applied, counted once.
 
@@ -100,7 +100,7 @@ A pop that no finger drives runs the reverse. The pull-down close is one such po
 
 ## Scrubbed Pop (Left-Edge Swipe)
 
-`AppNavigationController` owns the swipe. A screen takes part through `NavigationTransitionAnimating` alone: it answers `allowsBackSwipe` and returns an animator. The swipe scrubs the pop when that animator is a `BackSwipeScrubbing`, as `PocketFlight` and `CollectiblesBookReturn` are. The default `allowsBackSwipe` is false, so other screens keep the system back swipe.
+`AppNavigationController` owns the swipe. A screen takes part through `NavigationTransitionAnimating` alone: it answers `allowsBackSwipe` and returns an animator. The swipe scrubs the pop when that animator is a `BackSwipeScrubbing`, as `PocketFlight` and `CollectiblesBookReturn` are. The default `allowsBackSwipe` is false. Screens that do not conform keep the system back swipe.
 
 - `backSwipe` is a left-edge `UIScreenEdgePanGestureRecognizer`. It begins only when the stack holds more than one controller, no transition runs, and `topViewController.allowsBackSwipe` is true. Other pan recognizers wait for it to fail, which it does at once for a touch away from the edge.
 - `.began` calls `popViewController(animated: true)`. UIKit then asks `interactionControllerFor`. That method returns the animator as `scrubbedPop` only while the swipe is `began` or `changed`. Any other pop stays timed.
@@ -143,7 +143,7 @@ The book is the Pocket's peek. Setting `.collectibles` as the open item lifts th
 - One pure function from progress to frame: `PocketFlightChoreography.frame(progress:)`. A finger sets it, and a release lands on its ends.
 - One `PocketFlight` per transition. `navigationAnimator(for:)` creates it.
 - The navigation stack owns the swipe and the scrubbed pop. A screen takes part only through `NavigationTransitionAnimating`: it answers `allowsBackSwipe` and returns an animator.
-- Screens that allow the swipe turn the system back swipe off in `viewDidAppear` and on in `viewWillDisappear`. The edge pan on `AppNavigationController` is their only back swipe.
+- `AppNavigationController` turns the system back swipes (`interactivePopGestureRecognizer`, and `interactiveContentPopGestureRecognizer` on iOS 26 and later) off while a `NavigationTransitionAnimating` screen is on top, and on otherwise. It decides in `willShow`, after the transition ends, so a cancelled pop keeps them off. The edge pan is the only back swipe on these screens.
 - `endFlight()` restores everything a flight changed, on every exit path, including a cancelled pop.
 - `setOpenItem` runs in `willMove(toParent:)` with a parent. It clears in `didMove(toParent:)` without one.
 
@@ -166,19 +166,18 @@ Every screen with its own push and pop does these steps:
 
 1. Conform to `NavigationTransitionAnimating`. Return a new animator from `navigationAnimator(for:)` for `.push` and `.pop`.
 2. Keep an in-transition flag. Set it when an animator is requested and clear it when the transition ends, on every path. Return `allowsBackSwipe` as true only when the flag is clear and no other gesture of the screen is running.
-3. Turn the system back swipe off in `viewDidAppear` and on in `viewWillDisappear`.
-4. Make the pop animator a `BackSwipeScrubbing`. Share one setup step between `animateTransition` and `startInteractiveTransition`, and return from `animateTransition` when the context is interactive. Keep a release that arrives before `startInteractiveTransition`, and replay it there.
-5. Put the motion in a pure model from progress to what is drawn, and test that its ends match the timed transition.
-6. In `release(progress:commits:)`, take `commits` as the stack decided it with `BackSwipe.commits`. Finish or cancel the context, then animate the rest over the remaining share of the timed duration.
-7. Restore the screen in one place on every exit, including a cancelled pop.
-8. Fall back to a fade under Reduce Motion and when the motion has nowhere to go. Use `PocketFlight.fade` for the timed fade and `PocketFadeScrub` for the scrubbed one.
+3. Make the pop animator a `BackSwipeScrubbing`. Share one setup step between `animateTransition` and `startInteractiveTransition`, and return from `animateTransition` when the context is interactive. Keep a release that arrives before `startInteractiveTransition`, and replay it there.
+4. Put the motion in a pure model from progress to what is drawn, and test that its ends match the timed transition.
+5. In `release(progress:commits:)`, take `commits` as the stack decided it with `BackSwipe.commits`. Finish or cancel the context, then animate the rest over the remaining share of the timed duration.
+6. Restore the screen in one place on every exit, including a cancelled pop.
+7. Fall back to a fade under Reduce Motion and when the motion has nowhere to go. Use `PocketFlight.fade` for the timed fade and `PocketFadeScrub` for the scrubbed one.
 
 **A new Pocket item that flies on the Pocket curve** gets most of this from `PocketFlight`:
 
 1. Add a case to `PocketItem` (`PocketOrigin.swift`).
-2. Conform to `PocketFlightScreen` and return `PocketFlight(screen: self, origin: origin, opening:)` for push and pop. `PocketFlight` covers steps 4 to 8. The screen's `endFlight()` restores it and clears the in-transition flag.
+2. Conform to `PocketFlightScreen` and return `PocketFlight(screen: self, origin: origin, opening:)` for push and pop. `PocketFlight` covers steps 3 to 7. The screen's `endFlight()` restores it and clears the in-transition flag.
 3. Call `origin.setOpenItem` in `willMove(toParent:)` and clear it in `didMove(toParent:)`.
-4. Place the item in the Pocket. `WalletMainViewController.frame(of:)` returns its slot, and `WalletView` (`isCardOpen`, `openPosition`) places it in the stack. A nil slot gives the fade path.
-5. For a pull-down, install `PocketPullDown`, read `isPulling` in `allowsBackSwipe`, and keep `itemFrame(in:)` true to where the card is drawn.
+3. Place the item in the Pocket. `WalletMainViewController.frame(of:)` returns its slot, and `WalletView` (`isCardOpen`, `openPosition`) places it in the stack. A nil slot gives the fade path.
+4. For a pull-down, install `PocketPullDown`, read `isPulling` in `allowsBackSwipe`, and keep `itemFrame(in:)` true to where the card is drawn.
 
-**A screen with a motion of its own** writes its own animator pair, as Collectibles does with `CollectiblesBookFlight` and `CollectiblesBookReturn`. It still follows steps 1 to 8, and can reuse `PocketFlight.motion`, `PocketFlight.fade`, `PocketFadeScrub`, `BackSwipe` and `PocketFlightTiming`.
+**A screen with a motion of its own** writes its own animator pair, as Collectibles does with `CollectiblesBookFlight` and `CollectiblesBookReturn`. It still follows steps 1 to 7, and can reuse `PocketFlight.motion`, `PocketFlight.fade`, `PocketFadeScrub`, `BackSwipe` and `PocketFlightTiming`.

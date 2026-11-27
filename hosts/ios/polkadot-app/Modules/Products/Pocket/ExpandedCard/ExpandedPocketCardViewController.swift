@@ -80,18 +80,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         widgetView.scrollIndicatorInsets = view.safeAreaInsets
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
-    }
-
     override func willMove(toParent parent: UIViewController?) {
         super.willMove(toParent: parent)
 

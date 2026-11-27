@@ -4,7 +4,6 @@ import PolkadotUI
 import SnapKit
 import SwiftUI
 import UIKit
-import UIKitExt
 
 /// The Balance card opened onto a screen of its own, titled Purse, pushed on the Wallet stack above the Pocket.
 ///
@@ -39,18 +38,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         view.backgroundColor = .bgSurfaceMain
         setupHosting()
         pullDown.install()
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
