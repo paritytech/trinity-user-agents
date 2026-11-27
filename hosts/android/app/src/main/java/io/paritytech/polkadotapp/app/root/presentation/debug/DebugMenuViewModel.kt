@@ -125,9 +125,17 @@ class DebugMenuViewModel @Inject constructor(
         state.update { it.copy(showDevServerDialog = false) }
     }
 
-    override fun onClearDotNsCacheClick() = launchUnit {
+    override fun onClearDotNsCacheClick() {
+        state.update { it.copy(showDotNsCacheClearDialog = true) }
+    }
+
+    override fun onDotNsCacheClearConfirmed() = launchUnit {
         dotNsResolver.clearCache()
-        showMessage("DotNs cache cleared")
+        restartAppUseCase()
+    }
+
+    override fun onDotNsCacheClearCancelled() {
+        state.update { it.copy(showDotNsCacheClearDialog = false) }
     }
 
     override fun onClearJWTTokenClick() {

@@ -1,10 +1,7 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
-import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
-import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.CarFetcher
-import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
-import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.first
@@ -17,20 +14,15 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 
 class RealDotNsResolverTest {
-    private val contractApi: DotNsContractApi = mock()
-    private val carFetcher: CarFetcher = mock()
-    private val contentStorage: DotNsContentStorage = mock()
-    private val contentHashOverrides: ContentHashOverrides = mock()
+    private val chainReader: DotNsChainReader = mock()
+    private val contentDownloader: DotNsContentDownloader = mock()
+    private val builds: DotNsBuilds = mock()
 
     private val domain = "peopl.testnet"
 
-    // A host screen shows a spinner for as long as progress says the content is on its way. A domain
-    // with nothing registered behind it never downloads and never unpacks, so unless the failure is
-    // reported the spinner is the last thing the user ever sees.
     @Test
-    fun `a domain with no content registered reports failure rather than staying silent`() = runTest {
-        whenever(contentHashOverrides.getContentHashOverride(domain)).thenReturn(null)
-        whenever(contractApi.resolveContentHash(domain)).thenReturn(Result.success(null))
+    fun `a domain whose content hash cannot be read reports failure rather than staying silent`() = runTest {
+        withContentHashReadFailing()
         val resolver = resolver()
 
         val result = resolver.resolveToLocalUri(domain)
@@ -39,37 +31,27 @@ class RealDotNsResolverTest {
         assertTrue(resolver.getProgressByDomain(domain).first() is DotNsLoadProgress.Failed)
     }
 
-    @Test
-    fun `a chain that cannot be reached reports failure too`() = runTest {
-        whenever(contentHashOverrides.getContentHashOverride(domain)).thenReturn(null)
-        whenever(contractApi.resolveContentHash(domain)).thenReturn(Result.failure(IllegalStateException("no node")))
-        val resolver = resolver()
-
-        val result = resolver.resolveToLocalUri(domain)
-
-        assertTrue(result.isFailure)
-        assertTrue(resolver.getProgressByDomain(domain).first() is DotNsLoadProgress.Failed)
-    }
-
-    // A failed lookup is usually a read that did not land, such as a device briefly offline.
-    // Remembered, it would keep the product unreachable until the app restarts, network or not.
     @Test
     fun `a lookup that failed is read from the chain again rather than remembered`() = runTest {
-        whenever(contentHashOverrides.getContentHashOverride(domain)).thenReturn(null)
-        whenever(contractApi.resolveContentHash(domain)).thenReturn(Result.failure(IllegalStateException("no node")))
+        withContentHashReadFailing()
         val resolver = resolver()
 
         resolver.resolveToLocalUri(domain)
         resolver.resolveToLocalUri(domain)
 
-        verify(contractApi, times(2)).resolveContentHash(domain)
+        verify(chainReader, times(2)).readContentHash(domain, NetworkRetryPolicy.DEFAULT)
+    }
+
+    private suspend fun withContentHashReadFailing() {
+        whenever(chainReader.readContentHash(domain, NetworkRetryPolicy.DEFAULT))
+            .thenReturn(Result.failure(IllegalStateException("Domain $domain is not registered or has no content")))
     }
 
     private fun TestScope.resolver() = RealDotNsResolver(
-        contractApi = contractApi,
-        carFetcher = carFetcher,
-        contentStorage = contentStorage,
-        contentHashOverrides = contentHashOverrides,
+        chainReader = chainReader,
+        contentDownloader = contentDownloader,
+        builds = builds,
+        progressRegistry = DotNsLoadProgressRegistry(),
         dispatchers = testDispatchers(),
     )
 }

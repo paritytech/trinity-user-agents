@@ -7,6 +7,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
@@ -66,7 +67,8 @@ class TrUAPIPocketFaceStreamsTest {
     private class ScriptedResolver(private val answers: List<Result<ResolvedProduct>>) : ResolveProductUseCase {
         var calls = 0
 
-        override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> = answers[minOf(calls++, answers.lastIndex)]
+        override suspend fun resolve(productId: ProductId, retryPolicy: NetworkRetryPolicy): Result<ResolvedProduct> =
+            answers[minOf(calls++, answers.lastIndex)]
 
         override suspend fun invalidate(productId: ProductId) = Unit
     }

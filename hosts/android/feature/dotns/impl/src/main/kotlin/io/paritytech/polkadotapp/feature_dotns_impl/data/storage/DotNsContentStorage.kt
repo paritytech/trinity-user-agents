@@ -30,4 +30,6 @@ interface DotNsContentStorage {
     suspend fun deleteContent(contentHash: ContentHash)
 
     suspend fun deleteAll()
+
+    suspend fun deleteAllExcept(contentHashes: Set<ContentHash>)
 }

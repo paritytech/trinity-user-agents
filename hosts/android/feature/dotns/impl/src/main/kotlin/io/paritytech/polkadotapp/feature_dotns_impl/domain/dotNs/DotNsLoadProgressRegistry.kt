@@ -5,13 +5,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentHashMap
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Single source of truth for per-domain [DotNsLoadProgress]. The resolver drives transitions as it
  * downloads and unpacks; [observe] hands the host UI a hot flow it can subscribe to before, during,
  * or after a resolution.
  */
-internal class DotNsLoadProgressRegistry {
+@Singleton
+internal class DotNsLoadProgressRegistry @Inject constructor() {
     private val flows = ConcurrentHashMap<String, MutableStateFlow<DotNsLoadProgress>>()
 
     fun observe(domain: String): StateFlow<DotNsLoadProgress> = flowFor(domain).asStateFlow()

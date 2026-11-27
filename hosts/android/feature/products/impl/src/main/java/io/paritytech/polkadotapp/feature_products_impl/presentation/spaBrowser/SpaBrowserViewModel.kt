@@ -119,7 +119,13 @@ class SpaBrowserViewModel @Inject constructor(
     }
 
     override fun onRefresh() {
-        productSessionController.reload()
+        launch {
+            val url = activeTab.first()?.url
+            val updateApplied = url != null && interactor.applyPageUpdate(url)
+                .logFailure("Failed to apply the update of $url")
+                .getOrDefault(false)
+            if (!updateApplied) productSessionController.reload()
+        }
     }
 
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and
@@ -147,6 +153,13 @@ class SpaBrowserViewModel @Inject constructor(
     override fun onShareClick() {
         val product = state.value.statusBar?.menu as? ProductMenu.Product ?: return
         interactor.share(product.id)
+    }
+
+    override fun onScreenStarted() {
+        launch {
+            val productId = productIdOf(activeTab.first()?.url) ?: return@launch
+            interactor.checkForUpdate(productId).logFailure("Failed to check $productId for an update")
+        }
     }
 
     override fun onCloseAppClick() {
