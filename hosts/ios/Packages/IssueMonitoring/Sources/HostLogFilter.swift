@@ -26,6 +26,7 @@ final class HostLogFilter: @unchecked Sendable {
     static let tagPrefix = "truapi."
     static let coreTag = "truapi.core"
     static let markerSeparator = ": "
+    static let markerLimit = 96
     static let tagAttribute = "tag"
     static let eventNameAttribute = "event.name"
     static let droppedAttribute = "dropped"
@@ -68,13 +69,16 @@ final class HostLogFilter: @unchecked Sendable {
     }
 
     /// The marker a `truapi.core` body names. A core event's body is the marker
-    /// on its own, and a core log line writes it before its fields.
+    /// on its own, and a core log line writes it before its fields, so a body
+    /// naming none inside `markerLimit` names none at all and counts against
+    /// its tag, which is what keeps one long line from growing the table.
     private static func coreMarker(of body: String) -> String? {
-        guard let separator = body.range(of: markerSeparator) else {
-            return body.isEmpty ? nil : body
+        let head = body.prefix(markerLimit)
+        guard let separator = head.range(of: markerSeparator) else {
+            return head.isEmpty || head.count == markerLimit ? nil : String(head)
         }
-        guard separator.lowerBound > body.startIndex else { return nil }
-        return String(body[..<separator.lowerBound])
+        guard separator.lowerBound > head.startIndex else { return nil }
+        return String(head[..<separator.lowerBound])
     }
 
     /// Counts a line against its window.
