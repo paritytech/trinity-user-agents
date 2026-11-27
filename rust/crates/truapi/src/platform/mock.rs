@@ -826,6 +826,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 			"core:last-processed-pairing-statement".to_string()
 		},
 		CoreStorageKey::StackRecord { stack_id } => format!("core:stack-record:{stack_id}"),
+		CoreStorageKey::SessionTimes => "core:session-times".to_string(),
 	}
 }
 

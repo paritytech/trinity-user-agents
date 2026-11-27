@@ -283,6 +283,7 @@ impl<'a> SsoPairingFlow<'a> {
 			self.host.discard_login_session().await;
 			return Ok(SsoPairingOutcome::Cancelled);
 		}
+		self.host.discard_committed_pairing_keys().await;
 		Ok(SsoPairingOutcome::Success)
 	}
 }

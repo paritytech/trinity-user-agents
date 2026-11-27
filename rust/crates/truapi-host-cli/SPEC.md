@@ -1238,7 +1238,7 @@ Pairing-host `/logout`:
 
 - invalidates an in-flight login;
 - disconnects the active account-authority session;
-- clears the persisted auth session;
+- clears the persisted auth session and its times;
 - tries to publish the disconnected SSO message;
 - deletes `PairingDeviceIdentity`; and
 - deletes `LastProcessedPairingStatement`.
@@ -1584,6 +1584,7 @@ When switching from one resolved user to another, only transient authentication
 keys move:
 
 - `AuthSession`;
+- `SessionTimes`;
 - `PairingDeviceIdentity`; and
 - `LastProcessedPairingStatement`.
 

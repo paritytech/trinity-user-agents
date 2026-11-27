@@ -52,7 +52,7 @@ pub struct PairingBootstrap {
 	pub encryption_secret_key: [u8; 32],
 }
 
-/// Persistable device identity reused across pairing attempts.
+/// Persistable device identity for a login attempt.
 #[derive(Clone, Encode, Decode)]
 pub struct PairingDeviceIdentity {
 	/// 64-byte expanded sr25519 statement-store secret.

@@ -478,6 +478,16 @@ callback, `Disconnected` included, so a host waits for the first
 `authStateChanged` instead of treating silence as "signed out". Every
 transition below reports the resulting `AuthState` the same way.
 
+The core records the time a session was paired in the `SessionTimes` slot.
+Back it with the same store as `AuthSession`, shared the same way. When the
+core restores the session in the `AuthSession` slot, at boot and whenever the
+session store changes, it drops a session paired 30 days ago or more, with its
+automatic-signing and allowance grants, and reports `Disconnected`. A session
+stored without times is kept, and its 30 days start at that restore. A session
+given to `activateExternalSession` is the host's to expire. Once a login
+commits, or a stored session is restored, the core deletes the
+`PairingDeviceIdentity` slot, since the session holds the same keys.
+
 | Runtime method                  | Use it to                                                                    |
 | ------------------------------- | ---------------------------------------------------------------------------- |
 | `activateStoredSession()`       | Await the restore of the `AuthSession` slot before opening providers.        |

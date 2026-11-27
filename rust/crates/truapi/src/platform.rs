@@ -1176,7 +1176,8 @@ pub enum CoreStorageKey {
 	/// Opaque SSO/auth session blob.
 	#[codec(index = 0)]
 	AuthSession,
-	/// Pairing device identity used during SSO flows.
+	/// The pairing host's keys for its current login attempt. The core deletes
+	/// the slot once that session is committed.
 	PairingDeviceIdentity,
 	/// Persisted authorization for one product-scoped permission request.
 	PermissionAuthorization {
@@ -1282,6 +1283,11 @@ pub enum CoreStorageKey {
 		/// The stack's `stack_id`, the key in its link.
 		stack_id: String,
 	},
+	/// When the pairing host's paired session began and when its keys last
+	/// changed. Kept beside [`Self::AuthSession`] rather than inside it, and
+	/// shared the same way.
+	#[codec(index = 18)]
+	SessionTimes,
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1401,6 +1407,7 @@ pub fn describe_core_storage_key(
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
 		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
+		CoreStorageKey::SessionTimes => ("SessionTimes", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
