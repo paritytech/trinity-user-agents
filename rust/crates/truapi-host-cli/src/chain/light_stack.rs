@@ -17,7 +17,7 @@ use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 
 use crate::{
-	file_access::{self, FileAccess},
+	file_access::{self, FileAccess, WriteError},
 	network::{ChainEndpoint, bundled_light_spec},
 	stack_descriptor::{FETCH_TIMEOUT, FetchError, Roles, fetch},
 };
@@ -221,16 +221,14 @@ impl StackLightClient {
 			},
 		};
 		self.provider.add_light_spec(genesis_hash, &bytes).map_err(MissingSpec::Wrong)?;
-		let kept_at = kept.display().to_string();
 		let written = tokio::task::spawn_blocking(move || {
-			keep(&kept, &bytes).map_err(|error| error.to_string())
+			keep(&kept, &bytes).map_err(|error| format!("{:#}", anyhow::Error::new(error)))
 		})
 		.await
 		.map_err(|error| error.to_string());
 		if let Err(error) | Ok(Err(error)) = written {
 			tracing::warn!(
-				"cannot keep the light spec of {role} at {kept_at}, so the next run fetches it \
-				 again: {error}"
+				"cannot keep the light spec of {role}, so the next run fetches it again: {error}"
 			);
 		}
 		Ok(())
@@ -259,7 +257,7 @@ fn mark_used(path: &Path) -> std::io::Result<()> {
 /// Keeps `bytes` at `path`, replacing it in one step so a reader never sees a
 /// spec cut short, and removes the specs beside it that went unused for
 /// [`KEPT_SPEC_LIFETIME`].
-fn keep(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+fn keep(path: &Path, bytes: &[u8]) -> Result<(), WriteError> {
 	file_access::write_atomically(path, bytes, FileAccess::Private)?;
 	if let Some(directory) = path.parent() {
 		remove_expired(directory);

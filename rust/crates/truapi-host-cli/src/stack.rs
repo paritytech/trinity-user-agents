@@ -211,8 +211,8 @@ fn publish(
 /// Replaces `path` in one step, so a web root or a build never sees half a file. The file gets the
 /// umask's permissions, so a web server running as another user can serve it.
 fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-	file_access::write_atomically(path, contents, FileAccess::Shared)
-		.with_context(|| format!("write {}", path.display()))
+	file_access::write_atomically(path, contents, FileAccess::Shared)?;
+	Ok(())
 }
 
 async fn verify(stack: &str, key: Option<&str>) -> Result<()> {

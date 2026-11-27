@@ -399,7 +399,7 @@ impl SessionCatalog {
 		let path = self.role_path.join(CURRENT_SESSION_FILE);
 		let contents = format!("{}\n", profile.name);
 		file_access::write_atomically(&path, contents.as_bytes(), FileAccess::Private)
-			.with_context(|| format!("write current session {}", path.display()))
+			.context("write current session")
 	}
 
 	pub fn list(&self) -> Result<Vec<String>> {
@@ -776,7 +776,7 @@ fn write_session_info(session_path: &Path, info: &SessionInfo) -> Result<()> {
 	let path = session_path.join(SESSION_INFO_FILE);
 	let text = serde_json::to_string_pretty(info)?;
 	file_access::write_atomically(&path, format!("{text}\n").as_bytes(), FileAccess::Private)
-		.with_context(|| format!("write session metadata {}", path.display()))
+		.context("write session metadata")
 }
 
 fn read_paired_host_store(session_path: &Path) -> Result<PairedHostStore> {
@@ -826,7 +826,7 @@ fn write_paired_host_store(session_path: &Path, store: &PairedHostStore) -> Resu
 	let path = session_path.join(PAIRED_HOSTS_FILE);
 	let text = serde_json::to_string_pretty(store)?;
 	file_access::write_atomically(&path, format!("{text}\n").as_bytes(), FileAccess::Private)
-		.with_context(|| format!("write paired hosts {}", path.display()))
+		.context("write paired hosts")
 }
 
 /// A session name cannot safely identify a user-owned profile.

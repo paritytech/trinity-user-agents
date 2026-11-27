@@ -7,7 +7,7 @@ use std::{
 	ffi::{OsStr, OsString},
 	fs::DirBuilder,
 	io::{self, Write},
-	path::Path,
+	path::{Path, PathBuf},
 };
 
 use tempfile::NamedTempFile;
@@ -81,6 +81,33 @@ pub fn create_dir(path: &Path, access: FileAccess) -> io::Result<()> {
 	access.directory_builder().create(path)
 }
 
+/// The step of [`write_atomically`] that failed.
+///
+/// Each variant names the path it was working on. Any of them leaves the
+/// target as it was.
+#[derive(derive_more::Display, derive_more::Error, Debug)]
+#[must_use]
+pub enum WriteError {
+	/// The target path ends in no file name, such as `/` or `..`.
+	#[display("{} names no file", path.display())]
+	NoFileName { path: PathBuf },
+	/// The target's directory or one of its parents could not be created.
+	#[display("create directory {}", path.display())]
+	CreateDirectory { path: PathBuf, source: io::Error },
+	/// The temporary file could not be created beside the target.
+	#[display("create temporary file in {}", directory.display())]
+	CreateTemporary { directory: PathBuf, source: io::Error },
+	/// The new contents could not be written to the temporary file.
+	#[display("write temporary file {}", temporary.display())]
+	Write { temporary: PathBuf, source: io::Error },
+	/// The temporary file could not be synced to disk.
+	#[display("sync temporary file {}", temporary.display())]
+	Sync { temporary: PathBuf, source: io::Error },
+	/// The temporary file could not be renamed over the target.
+	#[display("rename {} over {}", temporary.display(), path.display())]
+	Rename { temporary: PathBuf, path: PathBuf, source: io::Error },
+}
+
 /// Replaces the file at `path` with `bytes`, so a reader sees the old
 /// contents or the new ones and never part of either.
 ///
@@ -92,20 +119,34 @@ pub fn create_dir(path: &Path, access: FileAccess) -> io::Result<()> {
 /// rename leaves it as it was and removes the temporary file, and a failure
 /// to sync the directory after it is logged, since the new contents are
 /// already in place.
-pub fn write_atomically(path: &Path, bytes: &[u8], access: FileAccess) -> io::Result<()> {
+pub fn write_atomically(path: &Path, bytes: &[u8], access: FileAccess) -> Result<(), WriteError> {
 	let Some(name) = path.file_name() else {
-		return Err(io::Error::new(io::ErrorKind::InvalidInput, "the path names no file"));
+		return Err(WriteError::NoFileName { path: path.to_path_buf() });
 	};
 	let directory = path.parent().filter(|parent| !parent.as_os_str().is_empty());
 	let directory = directory.unwrap_or(Path::new("."));
-	create_dir_all(directory, access)?;
+	create_dir_all(directory, access)
+		.map_err(|source| WriteError::CreateDirectory { path: directory.to_path_buf(), source })?;
 	let mut prefix = OsString::from(".");
 	prefix.push(name);
 	prefix.push(".");
-	let mut file = access.create_temporary(directory, &prefix)?;
-	file.write_all(bytes)?;
-	file.as_file().sync_all()?;
-	file.persist(path).map_err(|failed| failed.error)?;
+	let mut file = access.create_temporary(directory, &prefix).map_err(|source| {
+		WriteError::CreateTemporary { directory: directory.to_path_buf(), source }
+	})?;
+	let temporary = file.path().to_path_buf();
+	if let Err(source) = file.write_all(bytes) {
+		return Err(WriteError::Write { temporary, source });
+	}
+	if let Err(source) = file.as_file().sync_all() {
+		return Err(WriteError::Sync { temporary, source });
+	}
+	if let Err(failed) = file.persist(path) {
+		return Err(WriteError::Rename {
+			temporary,
+			path: path.to_path_buf(),
+			source: failed.error,
+		});
+	}
 	#[cfg(unix)]
 	if let Err(error) = std::fs::File::open(directory).and_then(|directory| directory.sync_all()) {
 		tracing::warn!(path = %path.display(), %error, "replaced a file but could not sync its directory");

@@ -225,7 +225,7 @@ fn load_log_level(base_path: &Path) -> Result<Option<LogLevel>> {
 fn store_log_level(base_path: &Path, level: LogLevel) -> Result<()> {
 	let path = base_path.join(LOG_LEVEL_FILE);
 	file_access::write_atomically(&path, format!("{level}\n").as_bytes(), FileAccess::Private)
-		.with_context(|| format!("persist saved log level {}", path.display()))
+		.context("persist saved log level")
 }
 
 #[derive(Clone)]

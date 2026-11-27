@@ -71,8 +71,11 @@ fn read_values(path: &Path) -> Result<BTreeMap<String, String>, GenericError> {
 fn write_values(path: &Path, values: &BTreeMap<String, String>) -> Result<(), GenericError> {
 	let text = serde_json::to_string_pretty(values)
 		.map_err(|error| file_error("encoding", path, error))?;
-	file_access::write_atomically(path, text.as_bytes(), FileAccess::Private)
-		.map_err(|error| file_error("writing", path, error))
+	file_access::write_atomically(path, text.as_bytes(), FileAccess::Private).map_err(|error| {
+		GenericError {
+			reason: format!("writing cleartext storage: {:#}", anyhow::Error::new(error)),
+		}
+	})
 }
 
 /// A failed file operation, naming the file.

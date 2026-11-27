@@ -57,8 +57,9 @@ pub enum StorageError {
 	#[display("create {}", path.display())]
 	Create { path: PathBuf, source: std::io::Error },
 	/// A storage file could not be replaced with its new contents.
-	#[display("write {}", path.display())]
-	Write { path: PathBuf, source: std::io::Error },
+	#[display("{_0}")]
+	#[from]
+	Write(file_access::WriteError),
 	/// A storage file could not be removed.
 	#[display("remove {}", path.display())]
 	Remove { path: PathBuf, source: std::io::Error },
@@ -71,8 +72,8 @@ impl std::error::Error for StorageError {
 	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
 		match self {
 			Self::Serialize(source) => std::error::Error::source(source),
+			Self::Write(source) => std::error::Error::source(source),
 			Self::Create { source, .. } |
-			Self::Write { source, .. } |
 			Self::Remove { source, .. } |
 			Self::RecordNavigation { source, .. } => Some(source),
 		}
@@ -1147,8 +1148,8 @@ fn save_product_storage(
 	};
 	let text = serde_json::to_string_pretty(&document)?;
 	let path = product_storage_path(directory, product_id);
-	file_access::write_atomically(&path, text.as_bytes(), FileAccess::Private)
-		.map_err(|source| StorageError::Write { path, source })
+	file_access::write_atomically(&path, text.as_bytes(), FileAccess::Private)?;
+	Ok(())
 }
 
 fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
@@ -1233,8 +1234,8 @@ fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&json)?;
-	file_access::write_atomically(path, text.as_bytes(), FileAccess::Private)
-		.map_err(|source| StorageError::Write { path: path.to_path_buf(), source })
+	file_access::write_atomically(path, text.as_bytes(), FileAccess::Private)?;
+	Ok(())
 }
 
 fn load_hex_key_map(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
@@ -1277,8 +1278,8 @@ fn read_current_pairing_user(bootstrap_dir: &Path) -> Option<String> {
 
 fn persist_current_pairing_user(bootstrap_dir: &Path, user_id: &str) -> Result<(), StorageError> {
 	let path = bootstrap_dir.join(CURRENT_PAIRING_USER_FILE);
-	file_access::write_atomically(&path, format!("{user_id}\n").as_bytes(), FileAccess::Private)
-		.map_err(|source| StorageError::Write { path, source })
+	file_access::write_atomically(&path, format!("{user_id}\n").as_bytes(), FileAccess::Private)?;
+	Ok(())
 }
 
 fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), StorageError> {

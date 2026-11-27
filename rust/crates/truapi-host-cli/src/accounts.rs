@@ -231,8 +231,8 @@ impl AccountStore {
 
 	pub fn save(&self) -> Result<()> {
 		let text = serde_json::to_string_pretty(&self.data)?;
-		file_access::write_atomically(&self.path, text.as_bytes(), FileAccess::Private)
-			.with_context(|| format!("write {}", self.path.display()))
+		file_access::write_atomically(&self.path, text.as_bytes(), FileAccess::Private)?;
+		Ok(())
 	}
 
 	pub fn get(&self, network_id: &str, name: &str) -> Option<&AccountRecord> {

@@ -61,13 +61,39 @@ fn a_failed_write_leaves_the_target_and_no_temporary_file() {
 	fs::create_dir(&path).expect("block the target with a directory");
 	fs::write(path.join("kept"), b"kept").expect("fill the directory");
 
-	write_atomically(&path, b"name\n", FileAccess::Private).expect_err("rename over a directory");
+	let _failure = write_atomically(&path, b"name\n", FileAccess::Private)
+		.expect_err("rename over a directory");
 
 	let entries: Vec<String> = fs::read_dir(root.path())
 		.expect("list")
 		.map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
 		.collect();
 	assert_eq!(entries, ["current-session"]);
+}
+
+/// A failed state write is diagnosed from its message alone, so the error
+/// names the step that failed and the paths it was working on: here the
+/// temporary file beside the target and the target it could not replace.
+#[test]
+fn a_failed_rename_names_the_temporary_file_and_the_target() {
+	let root = tempfile::tempdir().expect("temporary directory");
+	let path = root.path().join("core-storage.json");
+	fs::create_dir(&path).expect("block the target with a directory");
+
+	let error = write_atomically(&path, b"{}", FileAccess::Private).expect_err("rename fails");
+
+	let WriteError::Rename { temporary, path: target, .. } = &error else {
+		panic!("the rename failed, not another step: {error:?}");
+	};
+	let temporary_name = temporary.file_name().expect("a file name").to_string_lossy();
+	assert_eq!(
+		(temporary.parent(), temporary_name.starts_with(".core-storage.json."), target),
+		(Some(root.path()), true, &path)
+	);
+	assert_eq!(
+		error.to_string(),
+		format!("rename {} over {}", temporary.display(), path.display())
+	);
 }
 
 /// Callers undo their own work on an error, such as a session promotion
