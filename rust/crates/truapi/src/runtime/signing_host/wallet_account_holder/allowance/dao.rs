@@ -13,16 +13,14 @@ use crate::{
 };
 
 const SELECT_CONFIRMED: &str = "SELECT 1 FROM confirmed_allowance
-	WHERE root_public_key = :owner AND product_id = :product AND resource = :resource
-	AND period IS :period";
+	WHERE product_id = :product AND resource = :resource AND period IS :period";
 
-/// Whether the wallet `owner` confirmed `resource` for `product_id` in `period`.
+/// Whether the wallet confirmed `resource` for `product_id` in `period`.
 ///
 /// `period` is the Statement Store allowance period, and `None` for a
 /// Bulletin authorization.
 pub async fn is_confirmed(
 	services: &RuntimeServices,
-	owner: [u8; 32],
 	product_id: &ProductId,
 	resource: AllowanceResource,
 	period: Option<u32>,
@@ -33,7 +31,6 @@ pub async fn is_confirmed(
 	let product = product_id.to_string();
 	db.read(move |conn| {
 		Ok(conn.prepare_cached(SELECT_CONFIRMED)?.exists(named_params! {
-			":owner": owner,
 			":product": product,
 			":resource": <&str>::from(resource),
 			":period": period,
@@ -43,14 +40,12 @@ pub async fn is_confirmed(
 }
 
 const UPSERT_CONFIRMED: &str = "INSERT OR REPLACE INTO confirmed_allowance
-	(root_public_key, product_id, resource, period)
-	VALUES (:owner, :product, :resource, :period)";
+	(product_id, resource, period) VALUES (:product, :resource, :period)";
 
-/// Records that the wallet `owner` confirmed `resource` for `product_id` in
+/// Records that the wallet confirmed `resource` for `product_id` in
 /// `period`, replacing what it recorded before.
 pub async fn record(
 	services: &RuntimeServices,
-	owner: [u8; 32],
 	product_id: &ProductId,
 	resource: AllowanceResource,
 	period: Option<u32>,
@@ -61,7 +56,6 @@ pub async fn record(
 	let product = product_id.to_string();
 	db.write(move |tx| {
 		tx.prepare_cached(UPSERT_CONFIRMED)?.execute(named_params! {
-			":owner": owner,
 			":product": product,
 			":resource": <&str>::from(resource),
 			":period": period,
@@ -72,12 +66,11 @@ pub async fn record(
 }
 
 const DELETE_CONFIRMED: &str = "DELETE FROM confirmed_allowance
-	WHERE root_public_key = :owner AND product_id = :product AND resource = :resource";
+	WHERE product_id = :product AND resource = :resource";
 
-/// Removes what the wallet `owner` recorded about `resource` for `product_id`.
+/// Removes what the wallet recorded about `resource` for `product_id`.
 pub async fn forget(
 	services: &RuntimeServices,
-	owner: [u8; 32],
 	product_id: &ProductId,
 	resource: AllowanceResource,
 ) -> Result<(), DbError> {
@@ -87,7 +80,6 @@ pub async fn forget(
 	let product = product_id.to_string();
 	db.write(move |tx| {
 		tx.prepare_cached(DELETE_CONFIRMED)?.execute(named_params! {
-			":owner": owner,
 			":product": product,
 			":resource": <&str>::from(resource),
 		})?;

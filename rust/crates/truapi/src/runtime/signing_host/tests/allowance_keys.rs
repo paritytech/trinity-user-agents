@@ -355,21 +355,16 @@ fn a_restarted_host_serves_a_confirmed_statement_slot_without_the_chain() {
 }
 
 /// A record only stands in for the chain while it can still be true: one from
-/// an earlier period, one of another wallet, and a request to replace the
-/// allowance all go back to the chain.
+/// an earlier period and a request to replace the allowance both go back to
+/// the chain.
 #[test]
 fn a_statement_slot_record_that_may_be_stale_is_not_trusted() {
 	let product_id = ProductId::for_test(PRODUCT_ID);
 	let period = slot::current_period(crate::runtime::allowances::current_unix_secs().unwrap());
 	let resource = crate::runtime::allowances::AllowanceResource::StatementStore;
-	let served_offline = |recorded_period, recorded_owner: Option<[u8; 32]>, policy| {
+	let served_offline = |recorded_period, policy| {
 		let signing_host = active_signing_host_on(offline(), &crate::store::open_memory_core_db());
-		let mut session = signing_host.wallet.current_session().unwrap();
-		if let Some(owner) = recorded_owner {
-			session.public_key = owner;
-		}
 		futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
-			&session,
 			&product_id,
 			resource,
 			Some(recorded_period),
@@ -379,12 +374,11 @@ fn a_statement_slot_record_that_may_be_stale_is_not_trusted() {
 
 	assert_eq!(
 		(
-			served_offline(period, None, OnExistingAllowancePolicy::Ignore),
-			served_offline(period - 1, None, OnExistingAllowancePolicy::Ignore),
-			served_offline(period, Some([7; 32]), OnExistingAllowancePolicy::Ignore),
-			served_offline(period, None, OnExistingAllowancePolicy::Increase),
+			served_offline(period, OnExistingAllowancePolicy::Ignore),
+			served_offline(period - 1, OnExistingAllowancePolicy::Ignore),
+			served_offline(period, OnExistingAllowancePolicy::Increase),
 		),
-		(true, false, false, false),
+		(true, false, false),
 	);
 }
 
@@ -407,7 +401,6 @@ fn a_confirmed_bulletin_allowance_is_served_without_the_chain_until_increased() 
 		bulletin_secret(&active_signing_host_on(offline(), &db), OnExistingAllowancePolicy::Ignore);
 	let signing_host = active_signing_host_on(offline(), &db);
 	futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
-		&signing_host.wallet.current_session().unwrap(),
 		&product_id,
 		resource,
 		None,
@@ -434,7 +427,6 @@ fn a_refused_statement_key_is_confirmed_on_chain_again() {
 	let product_id = ProductId::for_test(PRODUCT_ID);
 	let signing_host = active_signing_host_on(offline(), &crate::store::open_memory_core_db());
 	futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
-		&signing_host.wallet.current_session().unwrap(),
 		&product_id,
 		crate::runtime::allowances::AllowanceResource::StatementStore,
 		Some(slot::current_period(crate::runtime::allowances::current_unix_secs().unwrap())),

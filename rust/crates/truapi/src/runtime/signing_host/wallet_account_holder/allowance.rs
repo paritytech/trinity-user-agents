@@ -113,7 +113,7 @@ impl WalletAccountHolder {
 			return Ok(current);
 		}
 		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
-			self.allowance_is_confirmed(session, product_id, resource, Some(current)).await
+			self.allowance_is_confirmed(product_id, resource, Some(current)).await
 		{
 			return Ok(current);
 		}
@@ -121,7 +121,7 @@ impl WalletAccountHolder {
 			Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
 		})?;
 		let period = self.ensure_statement_slot(session, product_id, target, policy).await?;
-		self.record_confirmed_allowance(session, product_id, resource, Some(period)).await;
+		self.record_confirmed_allowance(product_id, resource, Some(period)).await;
 		Ok(period)
 	}
 
@@ -269,7 +269,7 @@ impl WalletAccountHolder {
 		}
 		let reuse_existing = matches!(policy, OnExistingAllowancePolicy::Ignore);
 		if reuse_existing &&
-			self.allowance_is_confirmed(session, product_id, AllowanceResource::Bulletin, None)
+			self.allowance_is_confirmed(product_id, AllowanceResource::Bulletin, None)
 				.await
 		{
 			return self.bulletin_secret(session, product_id);
@@ -288,7 +288,7 @@ impl WalletAccountHolder {
 		);
 		let current_allowance = fetch_bulletin_allowance(&bulletin_rpc, &target).await?;
 		if reuse_existing && current_allowance.is_some_and(|allowance| allowance.available()) {
-			self.record_confirmed_allowance(session, product_id, AllowanceResource::Bulletin, None)
+			self.record_confirmed_allowance(product_id, AllowanceResource::Bulletin, None)
 				.await;
 			return self.bulletin_secret(session, product_id);
 		}
@@ -360,7 +360,7 @@ impl WalletAccountHolder {
 			remained_transactions = authorization.remained_transactions,
 			"Bulletin authorization visible"
 		);
-		self.record_confirmed_allowance(session, product_id, AllowanceResource::Bulletin, None)
+		self.record_confirmed_allowance(product_id, AllowanceResource::Bulletin, None)
 			.await;
 		self.bulletin_secret(session, product_id)
 	}
@@ -478,12 +478,11 @@ impl WalletAccountHolder {
 	/// A record that cannot be read answers `false`, so the chain is asked.
 	async fn allowance_is_confirmed(
 		&self,
-		session: &AuthoritySession,
 		product_id: &ProductId,
 		resource: AllowanceResource,
 		period: Option<u32>,
 	) -> bool {
-		dao::is_confirmed(&self.services, session.public_key, product_id, resource, period)
+		dao::is_confirmed(&self.services, product_id, resource, period)
 			.await
 			.unwrap_or_else(|error| {
 				warn!(%product_id, %error, "failed to read the confirmed allowance");
@@ -497,30 +496,26 @@ impl WalletAccountHolder {
 	/// A failed write is logged: the next activation then asks the chain.
 	pub async fn record_confirmed_allowance(
 		&self,
-		session: &AuthoritySession,
 		product_id: &ProductId,
 		resource: AllowanceResource,
 		period: Option<u32>,
 	) {
 		let recorded =
-			dao::record(&self.services, session.public_key, product_id, resource, period).await;
+			dao::record(&self.services, product_id, resource, period).await;
 		if let Err(error) = recorded {
 			warn!(%product_id, %error, "failed to record the confirmed allowance");
 		}
 	}
 
-	/// Stop relying on what the active wallet recorded about `resource` for
+	/// Stop relying on what this wallet recorded about `resource` for
 	/// `product_id`, so its next request is confirmed on chain.
 	pub async fn forget_confirmed_allowance(
 		&self,
 		product_id: &ProductId,
 		resource: AllowanceResource,
 	) {
-		let Some(session) = self.session_state.current() else {
-			return;
-		};
 		let forgotten =
-			dao::forget(&self.services, session.public_key, product_id, resource).await;
+			dao::forget(&self.services, product_id, resource).await;
 		if let Err(error) = forgotten {
 			warn!(%product_id, %error, "failed to forget the confirmed allowance");
 		}

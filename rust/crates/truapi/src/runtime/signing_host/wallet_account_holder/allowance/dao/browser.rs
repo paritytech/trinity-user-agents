@@ -10,7 +10,6 @@ use crate::{
 /// Nothing is confirmed.
 pub async fn is_confirmed(
 	_services: &RuntimeServices,
-	_owner: [u8; 32],
 	_product_id: &ProductId,
 	_resource: AllowanceResource,
 	_period: Option<u32>,
@@ -21,7 +20,6 @@ pub async fn is_confirmed(
 /// Confirmations are not kept.
 pub async fn record(
 	_services: &RuntimeServices,
-	_owner: [u8; 32],
 	_product_id: &ProductId,
 	_resource: AllowanceResource,
 	_period: Option<u32>,
@@ -32,7 +30,6 @@ pub async fn record(
 /// Nothing was recorded.
 pub async fn forget(
 	_services: &RuntimeServices,
-	_owner: [u8; 32],
 	_product_id: &ProductId,
 	_resource: AllowanceResource,
 ) -> Result<(), Infallible> {
