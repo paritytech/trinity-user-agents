@@ -90,7 +90,7 @@ extension ServiceCoordinator {
         // rather than in stopInteractive, because the Pocket is started once
         // when the coordinator is built and a coordinator kept alive by a
         // background run is started again when the dashboard returns.
-        pocket?.stop()
+        pocket.stop()
         truapiRuntimeProvider.shutdownProductWorkers()
     }
 }

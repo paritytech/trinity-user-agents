@@ -61,9 +61,8 @@ and tests live in `runtime/tests.rs` and `runtime/tests/`.
 Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
-Trusted products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions and permission prompts. Device permissions still need the OS
-grant.
+Privileged products, `truapi::platform::PrivilegedProduct`, bypass recorded
+permissions and permission prompts. Device permissions still need the OS grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user,
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
@@ -334,12 +333,12 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each side. The host lists the cards it
-pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
-approves with `add_pocket_card`, and follows the collection with
-`observe_pocket_cards`. A card no longer pinned stays only if the user added
-it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+cards in the Pocket and the newest face of each side. The runtime pins the
+privileged products' cards on the stack's network (`pinned_pocket_cards` lists
+them for a host), the host adds the cards the user approves with
+`add_pocket_card`, and follows the collection with `observe_pocket_cards`. A
+card no longer pinned stays only if the user added it. The core keeps the
+newest face of a card from every `RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
 render, at most every two seconds and once more when the render stops, so a
 card has both sides offline and at cold start. `pocket_card_face` reads a side.
 A product connection's renderer actions leave out a press on a back that
@@ -449,12 +448,14 @@ reports module startup and a crash through it. Rust publishes the execution when
 has started and its bridge has authenticated. On the web, `@parity/truapi-host`
 delivers `requestWorkerTransition` to the host and reports no worker exits.
 
-While claims remain, the ledger retries a crashed worker. The first restart is
-immediate. For repeated exits less than a minute apart, the delay starts at 1 s
-and doubles up to 5 min. On the third consecutive crash, the core notifies the
-host through `worker_crashing`. Releasing the last claim cancels a pending
-retry. When the replacement connects, it receives its active funding sessions.
-Observers see the worker as pending while the ledger retries it.
+While claims remain, the ledger retries a crashed worker. The first crash in a
+run restarts the worker immediately. Later crashes in the same run wait 1 s,
+doubling up to 5 min. An exit starts a fresh run if that attempt reached
+`Running` and more than a minute has passed since the previous exit. On the
+third consecutive crash, the core notifies the host through `worker_crashing`.
+Releasing the last claim cancels a pending retry. When the replacement
+connects, it receives its active funding sessions. Observers see the worker
+as pending while the ledger retries it.
 
 ### Inter-host SSO
 
@@ -550,20 +551,66 @@ parsing, so a context off the wire carries a normalized product id.
 ### Product Identity
 
 Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
-that turns a host- or wire-supplied product id into the canonical form
-derivation, product storage and permission scopes are keyed by. Nothing else
-builds a `ProductId`, so holding one means the id is normalized. Code that reads
+that normalizes a host- or wire-supplied product id. Nothing else builds a
+`ProductId`, so holding one means the id is normalized. Derivation, product
+storage and permission scopes are keyed by a normalized id the stack serves. Code that reads
 an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
 and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
-register product names under, one entry per network a host can be pointed at. A
-name ending in one of them is also what navigation resolves back into the host's
-own product surface, so it bypasses the outbound domain grant.
+Parsing checks syntax only, so any DNS label is a TLD: a wire frame or a stored
+record is decoded without a stack. The stack decides which ids it serves:
+localhost ids, and names under its own TLD (`Stack::serves`).
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
-all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-permission prompts. Device permissions still need the OS grant. The runtime grants
+A name can also be written under `dot` on any stack. On a stack with another
+TLD it names the stack's own product: the stack's dotNS registry resolves it,
+so `game.dot` on a `paseo` host is the product `game.paseo`, with that
+product's keys, entropy, storage and permissions (`Stack::served_id`). A name
+under any other TLD names no product of the stack. A stack whose own TLD is
+`dot` serves `dot` ids as they are, and only a build that allows Polkadot's
+reserved values can run one.
+
+The core reads a name this way where a product or a person writes it: a call
+that names a product (answered `MalformedFrame` when the stack does not serve
+it), every product a paired host's request names, and a link, share host or
+Pocket deeplink read through a `Stack` (`parse_navigate`,
+`parse_product_share_host`). `runtime::served` describes how a served value
+reaches the account calls. `parse_product_link` and `parse_dev_server` do not
+take a stack and answer the id as written.
+
+A host and the core hold one id for a product. `ProductContext::served_by`
+opens a product only under an id the stack serves and refuses a `dot` name on
+another stack, naming the id to open instead. A host that is given a name asks
+for the id first: a wasm pairing or signing host runtime's `parseProductId`, or
+`Stack::served_id` in Rust, which the CLI applies to `--product-id`. A native
+host gets served ids from `parse_navigate` and `parse_product_share_host` and
+builds any other id under the stack's TLD. Every other id a host passes is
+taken as written, and a worker claim under an id the stack does not serve
+holds nothing. The subtree lookup, `HostAccounts::derive_entropy`, every key the
+signing wallet derives for a product other than its contact handle key, which
+only a connection's own product reaches, the manifest readers and worker
+references refuse an id the stack does not serve.
+
+`HostRuntime` and the wasm runtimes administer stored state by the id as
+written. `clear_product_state` clears the grants and the product storage kept
+under exactly that id, served or not, so a host can drop them for an id it no
+longer runs, such as a `dot` id an earlier release ran on a `paseo` stack.
+Permission statuses, ring-VRF registrations, Pocket cards and chat rooms kept
+under such an id stay in the store, where no product reads them.
+`permission_authorization_status` and its setter read and change the statuses
+of an id the stack serves and of an id it serves nothing under. They refuse a
+`dot` name on a stack with another TLD, as the product a status belongs to or
+as a product the request names: the stack keeps that product's statuses under
+its own id, and a status stored under the name would be one no product reads. A native host can clear with `clear_product_state`, but it
+reads and sets stored statuses only through a `NativeProductExecution`, which
+opens only for a served product.
+
+`PrivilegedProduct` names the privileged products (Humanity `peopl`, Jollity
+`dim2`, Collectibles `stash`) by the label reserved for each on every network,
+and `ProductId::privileged_product` reads one off an id. One counts only under
+an id the stack serves (`Stack::trusts`). The native exports give hosts each
+product's id and label, the cards every host pins in the Pocket and the chats
+every host places. These products bypass recorded permissions and permission
+prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
 for raw bytes signed inside the `<Bytes>` watermark.
@@ -671,7 +718,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it
   is up before the first quote; a provider handed the session keeps its
-  worker after that. A quote already asked keeps its provider's worker
+  worker after that. A provider under a TLD the stack does not serve has no
+  worker to hold, so none is started for it and a quote asked of it times
+  out. A quote already asked keeps its provider's worker
   until it is answered or times out, overlay closed or not, unless the
   session is handed to another provider: then every quote still waiting
   ends at once and lets its worker go. The manifest names no backend: a provider signs in to its own API
@@ -821,7 +870,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the
-  provider's worker while a session is assigned and open, and stores an
+  provider's worker while a session is assigned and open, unless the stack does
+  not serve the provider, and stores an
   assigned session from then on, even while its overlay is up. It records each
   top-up (inbound) or payment request (outbound) the worker starts while
   serving a session, and a `Crediting` or `Collecting` report must name one of
@@ -935,7 +985,7 @@ Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
 `ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
 connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
-`Unsupported`, and `set_back_shown` answers `Unsupported` to every Widget, since
+`Unsupported`, and `turn_card` answers `Unsupported` to every Widget, since
 no host seam turns a card.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.

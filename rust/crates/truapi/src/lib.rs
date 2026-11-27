@@ -43,6 +43,8 @@ use parity_scale_codec::{Decode, Encode};
 pub mod api;
 mod dotns_name;
 pub mod markers;
+mod privileged_product;
+pub use privileged_product::PrivilegedProduct;
 mod product_id;
 pub use product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
@@ -93,8 +95,8 @@ pub mod latest {
 		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
+		PocketCard, PocketCardSide, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
 		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
@@ -476,6 +478,9 @@ cfg_select! {
 		mod nft_purse;
 
 		#[cfg(not(target_arch = "wasm32"))]
+		mod pgas_claims;
+
+		#[cfg(not(target_arch = "wasm32"))]
 		mod pocket_cards;
 
 		#[cfg(not(target_arch = "wasm32"))]
@@ -548,8 +553,7 @@ cfg_select! {
 		pub use wasm::{
 			WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
 			derive_product_account_public_key, describe_core_storage_key_for_wasm,
-			has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-			wire_schema_hash,
+			product_account_address, set_log_level, wire_schema_hash,
 		};
 	},
 	_ => {},

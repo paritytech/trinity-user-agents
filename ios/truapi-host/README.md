@@ -191,23 +191,19 @@ untrusted: they may name a message in another room, or one that never existed.
 
 The core keeps the Pocket collection in its database: the cards in the Pocket
 and the newest face of each. Products reach it only from a Worker execution
-with an active session. The host lists the cards it pins in
-`HostRuntimeConfig.pinnedPocketCards` and reads and edits the collection on the
-runtime.
+with an active session. The runtime pins the privileged products' cards on its
+stack's network, which `pinnedPocketCards(networkSuffix:)` lists, and the host
+reads and edits the collection on the runtime.
 
 ```swift
-let config = HostRuntimeConfig(
-    // ...
-    pinnedPocketCards: [PinnedPocketCard(productId: try ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")]
-)
-
 // Every card, pinned first, now and after each change.
 for try await cards in runtime.pocketCards() { show(cards) }
 
 // A card the user approved, with the face they approved it by.
-try await runtime.addPocketCard(productId: "game.dot", cardId: "loyalty", title: "Loyalty", face: face)
-let removal = try await runtime.removePocketCard(productId: "game.dot", cardId: "loyalty")
-let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loyalty")
+let game = try ProductId("game.paseo")
+try await runtime.addPocketCard(productId: game, cardId: "loyalty", title: "Loyalty", face: face)
+let removal = try await runtime.removePocketCard(productId: game, cardId: "loyalty")
+let kept = try await runtime.pocketCardFace(productId: game, cardId: "loyalty")
 ```
 
 The core keeps the newest face of a card from every Pocket card render, so a
@@ -454,7 +450,7 @@ has a final status.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes a frame channel over it through `window.__HOST_API_TRANSPORT__`. The product's SDK builds its own client over that channel, so frames are encoded by the `@parity/truapi` the product ships. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes a frame channel over it through `window.__HOST_API_TRANSPORT__`. The product's SDK builds its own client over that channel, so frames are encoded by the `@parity/truapi` the product ships. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardCovered`, `turnExpandedCard`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -703,7 +699,8 @@ let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openAppExecution(
     bridge: bridge,
-    productId: ProductId("my-product.dot")
+    // An id the bundled stack serves: a name under the stack's TLD.
+    productId: ProductId("my-product.paseo")
 )
 // The endpoint stays valid across backgrounding: iOS reclaims a suspended
 // app's listening socket, and the runtime rebinds it on the same port when

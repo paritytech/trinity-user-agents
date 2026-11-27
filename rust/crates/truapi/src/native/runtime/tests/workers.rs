@@ -43,15 +43,13 @@ fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<RecordingEngine>, ProductId) {
 	(runtime, views, ProductId::for_test("shared.dot"))
 }
 
-fn open(attempt: &Arc<NativeWorkerAttempt>) -> Arc<NativeProductExecution> {
+fn open(attempt: &Arc<NativeWorkerAttempt>) -> Result<Arc<NativeProductExecution>, HostRejection> {
 	let callbacks = Arc::new(EventCallbacks::new());
-	attempt
-		.open_execution(ExecutionCallbacks {
-			host: callbacks.clone(),
-			chat: Some(callbacks),
-			game: None,
-		})
-		.unwrap()
+	attempt.open_execution(ExecutionCallbacks {
+		host: callbacks.clone(),
+		chat: Some(callbacks),
+		game: None,
+	})
 }
 
 struct RenderObserver;
@@ -62,9 +60,10 @@ impl NativeRendererObserver for RenderObserver {
 	fn on_error(&self, _reason: String) {}
 }
 
-async fn connect(
-	owner: &Arc<NativeProductExecution>,
-) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+type ClientSocket =
+	tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect(owner: &Arc<NativeProductExecution>) -> ClientSocket {
 	let endpoint = owner.start_ws_bridge(0).unwrap();
 	let (socket, _) = tokio_tungstenite::connect_async(format!(
 		"ws://127.0.0.1:{}/?t={}",
@@ -73,37 +72,18 @@ async fn connect(
 	.await
 	.unwrap();
 	crate::test_support::wait_until(
-		|| owner.product_control.lock().unwrap().is_some(),
+		|| owner.live_control().is_some(),
 		"authenticated socket installed product control",
 	);
 	socket
 }
 
-#[tokio::test]
-async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
-	let (runtime, views, product) = setup();
-	let chat = runtime.claim_worker(product.clone());
-	let pocket = runtime.claim_worker(product.clone());
-	let boot = views.latest();
-	let owner = open(&boot);
-	assert!(running(&runtime, &product).is_none());
-	assert!(boot.module_started());
-	assert!(running(&runtime, &product).is_none(), "acknowledgement alone cannot serve a render");
-	let ledger = runtime.runtime.worker_ledger();
-	assert!(!ledger.ran(&product), "a worker that cannot serve yet counts as never having run");
-	let mut socket = connect(&owner).await;
-	crate::test_support::wait_until(
-		|| running(&runtime, &product).is_some(),
-		"connected worker published",
-	);
-	assert!(ledger.ran(&product), "the ledger must hear of a running worker to end a crash run");
-	let consumer = running(&runtime, &product).unwrap();
-	chat.release();
-	chat.release();
-	drop(chat);
-	assert!(views.stops.lock().unwrap().is_empty());
+async fn render_over(
+	execution: &dyn NativeWorkerExecution,
+	socket: &mut ClientSocket,
+) -> Arc<NativeSubscription> {
 	use parity_scale_codec::Decode;
-	let _render = consumer
+	let subscription = execution
 		.render(
 			latest::ProductRendererRenderRequest {
 				context: latest::RenderContext::PocketCard { card_id: "weather".into() },
@@ -120,6 +100,34 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 		.into_data();
 	let request = crate::frame::ProtocolMessage::decode(&mut &start[..]).unwrap();
 	assert_eq!(request.payload.message_type, crate::frame::MESSAGE_TYPE_START);
+	subscription
+}
+
+#[tokio::test]
+async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
+	let (runtime, views, product) = setup();
+	let chat = runtime.claim_worker(product.clone());
+	let pocket = runtime.claim_worker(product.clone());
+	let boot = views.latest();
+	let owner = open(&boot).unwrap();
+	assert!(open(&boot).is_err(), "the engine must keep the execution it already opened");
+	assert!(running(&runtime, &product).is_none());
+	assert!(boot.module_started());
+	assert!(running(&runtime, &product).is_none(), "acknowledgement alone cannot serve a render");
+	let ledger = runtime.runtime.worker_ledger();
+	assert!(!ledger.ran(&product), "a worker that cannot serve yet counts as never having run");
+	let mut socket = connect(&owner).await;
+	crate::test_support::wait_until(
+		|| running(&runtime, &product).is_some(),
+		"connected worker published",
+	);
+	assert!(ledger.ran(&product), "the ledger must hear of a running worker to end a crash run");
+	let consumer = running(&runtime, &product).unwrap();
+	chat.release();
+	chat.release();
+	drop(chat);
+	assert!(views.stops.lock().unwrap().is_empty());
+	let _render = render_over(consumer.as_ref(), &mut socket).await;
 	drop(pocket);
 	assert!(running(&runtime, &product).is_none());
 	assert!(matches!(
@@ -169,7 +177,7 @@ async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 	assert_eq!(views.starts.lock().unwrap().len(), 2);
 	let retry = views.latest();
-	let owner = open(&retry);
+	let owner = open(&retry).unwrap();
 	let _socket = connect(&owner).await;
 	assert!(retry.module_started());
 	let NativeWorkerExecutionState::Running { execution } = next() else {
@@ -188,19 +196,12 @@ async fn a_stale_attempt_cannot_open_publish_or_stop_a_replacement() {
 	let (runtime, views, product) = setup();
 	let old_claim = runtime.claim_worker(product.clone());
 	let old = views.latest();
-	let _old_owner = open(&old);
+	let _old_owner = open(&old).unwrap();
 	old_claim.release();
 	let _new_claim = runtime.claim_worker(product.clone());
 	let current = views.latest();
-	assert!(
-		old.open_execution(ExecutionCallbacks {
-			host: Arc::new(EventCallbacks::new()),
-			chat: None,
-			game: None,
-		})
-		.is_err()
-	);
-	let current_owner = open(&current);
+	assert!(open(&old).is_err());
+	let current_owner = open(&current).unwrap();
 	let _socket = connect(&current_owner).await;
 	assert!(!old.module_started());
 	assert!(running(&runtime, &product).is_none());
@@ -216,13 +217,7 @@ async fn a_stale_attempt_cannot_open_publish_or_stop_a_replacement() {
 #[tokio::test]
 async fn a_start_that_takes_too_long_is_stopped_and_retried() {
 	let (runtime, views, product) = setup();
-	let callbacks: Arc<dyn HostCallbacks> = Arc::new(EventCallbacks::new());
-	*runtime.workers.lock() =
-		Some(crate::native::runtime::workers::Session::new_with_startup_deadline(
-			&callbacks,
-			views.clone(),
-			Duration::from_millis(50),
-		));
+	runtime.workers.lock().as_mut().unwrap().startup_deadline = Duration::from_millis(50);
 	let _claim = runtime.claim_worker(product);
 	let first = views.latest();
 	crate::test_support::wait_until(
@@ -233,30 +228,12 @@ async fn a_start_that_takes_too_long_is_stopped_and_retried() {
 }
 
 #[tokio::test]
-async fn an_attempt_opens_its_execution_once() {
-	let (runtime, views, product) = setup();
-	let _claim = runtime.claim_worker(product);
-	let attempt = views.latest();
-	let _owner = open(&attempt);
-	assert!(
-		attempt
-			.open_execution(ExecutionCallbacks {
-				host: Arc::new(EventCallbacks::new()),
-				chat: None,
-				game: None,
-			})
-			.is_err(),
-		"a second execution would replace the first, which nothing would then shut down"
-	);
-}
-
-#[tokio::test]
 async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	let (runtime, views, first) = setup();
 	let second = ProductId::for_test("second.dot");
 	let _first = runtime.claim_worker(first.clone());
 	let boot = views.latest();
-	let owner = open(&boot);
+	let owner = open(&boot).unwrap();
 	let _socket = connect(&owner).await;
 	assert!(boot.module_started());
 	let consumer = running(&runtime, &first).unwrap();
@@ -283,15 +260,7 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 		consumer.publish_chat_action(text_chat_action("closed")),
 		Err(crate::ProductRuntimeError::Closed)
 	));
-	assert!(
-		pending
-			.open_execution(ExecutionCallbacks {
-				host: Arc::new(EventCallbacks::new()),
-				chat: None,
-				game: None,
-			})
-			.is_err()
-	);
+	assert!(open(&pending).is_err());
 }
 
 /// Ends the session from inside its second `start` call.
@@ -364,7 +333,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 	assert!(views.starts.lock().unwrap().is_empty());
 	let claim = runtime.claim_worker(product.clone());
 	let old = views.latest();
-	let owner = open(&old);
+	let owner = open(&old).unwrap();
 	let _socket = connect(&owner).await;
 	assert!(old.module_started());
 	runtime.reload_worker(product.clone());
@@ -374,7 +343,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 		owner.publish_chat_action(text_chat_action("old")),
 		Err(crate::ProductRuntimeError::Closed)
 	));
-	let _new_owner = open(&update);
+	let _new_owner = open(&update).unwrap();
 	claim.release();
 	assert!(!update.module_started());
 	old.failed("stale during reload".into());
@@ -386,42 +355,51 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 }
 
 #[tokio::test]
-async fn losing_the_latest_socket_withdraws_a_worker_until_it_can_receive_calls_again() {
-	let (runtime, views, product) = setup();
-	let _claim = runtime.claim_worker(product.clone());
-	let attempt = views.latest();
-	let callbacks = Arc::new(EventCallbacks::new());
-	let owner = attempt
-		.open_execution(ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None })
-		.unwrap();
-	let endpoint = owner.start_ws_bridge(0).unwrap();
-	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
-	let (send, receive) = mpsc::channel();
-	let _observing = runtime.observe_worker_execution(product, Arc::new(Observer(send)));
-	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	assert!(attempt.module_started());
-	let connect = || tokio_tungstenite::connect_async(url.as_str());
-	let (mut first, _) = connect().await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
-	let (mut next_socket, _) = connect().await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
-	first.close(None).await.unwrap();
-	crate::test_support::wait_until(
-		|| {
-			callbacks
-				.logs
-				.lock()
-				.unwrap()
-				.iter()
-				.any(|(marker, _)| marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target)
-		},
-		"old socket closed",
-	);
-	assert!(receive.try_recv().is_err(), "a replaced socket cannot withdraw the live one");
-	next_socket.close(None).await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
-	let (_restored, _) = connect().await.unwrap();
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
-	assert_eq!(views.starts.lock().unwrap().len(), 1);
+async fn a_worker_renders_on_the_surviving_socket_until_the_last_one_closes() {
+	for close_newest in [false, true] {
+		let (runtime, views, product) = setup();
+		let _claim = runtime.claim_worker(product.clone());
+		let attempt = views.latest();
+		let callbacks = Arc::new(EventCallbacks::new());
+		let owner = attempt
+			.open_execution(ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None })
+			.unwrap();
+		let endpoint = owner.start_ws_bridge(0).unwrap();
+		let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+		let (send, receive) = mpsc::channel();
+		let _observing =
+			runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
+		let mut updates =
+			core::iter::from_fn(|| receive.recv_timeout(Duration::from_secs(5)).unwrap());
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Pending)));
+		assert!(attempt.module_started());
+		let connect = || tokio_tungstenite::connect_async(url.as_str());
+		let (first, _) = connect().await.unwrap();
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Running { .. })));
+		let (second, _) = connect().await.unwrap();
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Running { .. })));
+		let (mut closing, mut survivor) =
+			if close_newest { (second, first) } else { (first, second) };
+		closing.close(None).await.unwrap();
+		crate::test_support::wait_until(
+			|| {
+				callbacks
+					.logs
+					.lock()
+					.unwrap()
+					.iter()
+					.any(|(marker, _)| marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target)
+			},
+			"the bridge has closed one of the two sockets",
+		);
+		let execution = running(&runtime, &product).expect("one socket is still live");
+		let _render = render_over(execution.as_ref(), &mut survivor).await;
+		survivor.close(None).await.unwrap();
+		let unavailable =
+			updates.find(|state| !matches!(state, NativeWorkerExecutionState::Running { .. }));
+		assert!(matches!(unavailable, Some(NativeWorkerExecutionState::Pending)));
+		let (_restored, _) = connect().await.unwrap();
+		assert!(matches!(updates.next(), Some(NativeWorkerExecutionState::Running { .. })));
+		assert_eq!(views.starts.lock().unwrap().len(), 1);
+	}
 }

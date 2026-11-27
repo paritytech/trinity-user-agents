@@ -35,7 +35,8 @@ impl NativeWorkerAttempt {
 
 	/// Open this attempt's execution with its trusted Worker context.
 	///
-	/// Fails if an execution was already opened, the demand ended or a replacement started.
+	/// Fails if the stack does not serve the product, an execution was already opened, the
+	/// demand ended or a replacement started.
 	pub fn open_execution(
 		self: &Arc<Self>,
 		callbacks: ExecutionCallbacks,
@@ -44,13 +45,13 @@ impl NativeWorkerAttempt {
 			|| HostRejection::Rejected { reason: "worker startup is no longer pending".into() };
 		let runtime = self.runtime.upgrade().ok_or_else(stale)?;
 		let mut session = self.current(&runtime).ok_or_else(stale)?;
-		let open = || {
-			runtime.open_execution(
-				callbacks,
-				ProductContext::new_with_execution(self.product.clone(), ExecutableKind::Worker),
-				Some(self.clone()),
-			)
-		};
+		let product = ProductContext::served_by(
+			runtime.runtime.stack(),
+			self.product.clone(),
+			ExecutableKind::Worker,
+		)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
+		let open = || runtime.open_execution(callbacks, product, Some(self.clone()));
 		session.registry.attach(&self.product, open).ok_or_else(stale)
 	}
 

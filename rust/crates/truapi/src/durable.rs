@@ -22,7 +22,9 @@ mod search;
 #[cfg(test)]
 mod testing;
 #[cfg(test)]
-pub use testing::engine_on;
+pub use testing::{
+	FakeChain, GENESIS, block, block_hash, engine_on, engine_with, extrinsic, live_engine,
+};
 
 pub use dao::{group, group_exists};
 pub use engine::{

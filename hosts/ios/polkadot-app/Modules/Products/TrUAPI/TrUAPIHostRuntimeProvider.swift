@@ -37,7 +37,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let workerEngine: any NativeWorkerEngine
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
-    private let tldProvider: DotNsTldProviding
     private let fundingHandler: FundingCoreEventHandling
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
@@ -62,7 +61,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         workerEngine: any NativeWorkerEngine,
         fundingHandler: FundingCoreEventHandling,
-        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
@@ -75,7 +73,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.confirmationRouterFacade = confirmationRouterFacade
         self.workerEngine = workerEngine
         self.fundingHandler = fundingHandler
-        self.tldProvider = tldProvider
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
         self.deviceEncryptionKeys = deviceEncryptionKeys
@@ -146,12 +143,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
 
         let secret = try entropyManager.fetchRootEntropy()
-        let networkSuffix = try tldProvider.currentTldOrError()
         let handedOverKey = try deviceEncryptionKeys.keyToHandOver()
         let runtimeConfig = try Self.makeRuntimeConfig(
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
-            networkSuffix: networkSuffix,
             databaseDirectory: Self.coreDatabaseDirectory(),
             deviceEncryptionKey: handedOverKey
         )
@@ -219,12 +214,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 extension TrUAPIHostRuntimeProvider {
     /// Assemble the immutable host-wide config. Every chain fact the core uses
     /// comes from the stack this build bundles, ``TrUAPIBundledStack/current``.
-    /// `networkSuffix` is the dotNS TLD the app's own built-in accounts derive
-    /// from, which names the products backing the pinned Pocket cards.
     static func makeRuntimeConfig(
         secret: Data,
         liteUsername: String?,
-        networkSuffix: String,
         databaseDirectory: String,
         deviceEncryptionKey: Data?
     ) throws -> HostRuntimeConfig {
@@ -240,7 +232,6 @@ extension TrUAPIHostRuntimeProvider {
             platformVersion: UIDevice.current.systemVersion,
             stack: TrUAPIBundledStack.current.load(),
             databaseDirectory: databaseDirectory,
-            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
             localSessionLiteUsername: liteUsername,
             deviceEncryptionKey: deviceEncryptionKey

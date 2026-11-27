@@ -75,17 +75,15 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
-    /// Uncover (`true`) or cover (`false`) the face under this execution's page. Answers
+    /// Cover (`true`) or uncover (`false`) the card under this execution's page. Answers
     /// `.notPresented` when the product is not under its card and `.userMoving` while the user
     /// moves the card. Defaults to `.unsupported`, so an app without cards says so.
-    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+    func setExpandedCardCovered(covered: Bool) async throws -> ExpandedCardCoverOutcome
 
-    /// Turn this execution's expanded card so its back (`true`) or its front
-    /// (`false`) is up. Answers `.noBack` when the card has no back to show,
-    /// and the face call's outcomes otherwise, without waiting for the
-    /// animation. Defaults to `.unsupported`, so an app that cannot turn cards
-    /// says so.
-    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome
+    /// Turn this execution's expanded card so `side` is up. Answers `.noBack` when the card
+    /// has no back to show, and the cover call's outcomes otherwise, without waiting for the
+    /// animation. Defaults to `.unsupported`, so an app that cannot turn cards says so.
+    func turnExpandedCard(side: PocketCardSide) async throws -> ExpandedCardTurnOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
@@ -545,10 +543,10 @@ public extension HostBridge {
     }
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
-    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+    func setExpandedCardCovered(covered: Bool) async throws -> ExpandedCardCoverOutcome {
         .unsupported
     }
-    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
+    func turnExpandedCard(side: PocketCardSide) async throws -> ExpandedCardTurnOutcome {
         .unsupported
     }
 
@@ -888,15 +886,15 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+    func setExpandedCardCovered(covered: Bool) async throws -> ExpandedCardCoverOutcome {
         try await withHostRejection {
-            try await bridge.setExpandedCardFaceShown(shown: shown)
+            try await bridge.setExpandedCardCovered(covered: covered)
         }
     }
 
-    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
+    func turnExpandedCard(side: PocketCardSide) async throws -> ExpandedCardTurnOutcome {
         try await withHostRejection {
-            try await bridge.setExpandedCardBackShown(shown: shown)
+            try await bridge.turnExpandedCard(side: side)
         }
     }
 
@@ -1383,6 +1381,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// Keep the worker running until this consumer releases its claim.
+    /// A claim under an id the stack does not serve holds nothing.
     public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
         inner.claimWorker(productId: productId)
     }

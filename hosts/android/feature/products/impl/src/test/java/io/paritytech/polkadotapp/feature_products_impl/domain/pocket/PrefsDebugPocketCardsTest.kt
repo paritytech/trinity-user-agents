@@ -22,9 +22,9 @@ class PrefsDebugPocketCardsTest {
         cardId: String?,
         title: String? = null,
         previewUrl: String? = DEV_FACE,
-        faceShown: Boolean = true,
+        startsCovered: Boolean = false,
     ) {
-        whenever(prefs.getBoolean("game.dot.face_shown", true)).thenReturn(faceShown)
+        whenever(prefs.getBoolean("game.dot.starts_covered", false)).thenReturn(startsCovered)
         whenever(prefs.getString("game.dot.card_id", null)).thenReturn(cardId)
         whenever(prefs.getString("game.dot.title", null)).thenReturn(title)
         whenever(prefs.getString("game.dot.preview_url", null)).thenReturn(previewUrl)
@@ -100,26 +100,26 @@ class PrefsDebugPocketCardsTest {
 
     /** A developer working on the page itself wants it in front, not behind a face. */
     @Test
-    fun `a card told to open with the face away reaches its definition`() {
-        stored(cardId = "loyalty", faceShown = false)
+    fun `a card told to open covered reaches its definition`() {
+        stored(cardId = "loyalty", startsCovered = true)
 
-        assertEquals(false, cards().get(productId)?.toDefinition()?.faceShown)
+        assertEquals(true, cards().get(productId)?.toDefinition()?.startsCovered)
     }
 
     @Test
-    fun `a card opens with the face shown unless told otherwise`() {
+    fun `a card opens uncovered unless told otherwise`() {
         stored(cardId = "loyalty")
 
-        assertEquals(true, cards().get(productId)?.toDefinition()?.faceShown)
+        assertEquals(false, cards().get(productId)?.toDefinition()?.startsCovered)
     }
 
     @Test
-    fun `the face preference is stored beside the card`() {
+    fun `the cover preference is stored beside the card`() {
         val editor = editingPrefs()
 
-        cards().set(productId, DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = false))
+        cards().set(productId, DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, startsCovered = true))
 
-        verify(editor).putBoolean("game.dot.face_shown", false)
+        verify(editor).putBoolean("game.dot.starts_covered", true)
     }
 
     private fun editingPrefs(): SharedPreferences.Editor =

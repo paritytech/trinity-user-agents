@@ -83,7 +83,7 @@ impl SigningHost {
 	) -> Arc<Self> {
 		let platform = services.platform.clone();
 		let ring_vrf_registry = RingVrfRegistryStore::new(platform.clone());
-		let consent = Arc::new(ProductConsent::new(platform.clone()));
+		let consent = Arc::new(ProductConsent::new(platform.clone(), services.stack().clone()));
 		let wallet = Arc::new(WalletAccountHolder::new(
 			services.clone(),
 			consent.clone(),
@@ -364,6 +364,18 @@ impl crate::nft::ItemSecrets for SigningHost {
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {
 		self.wallet.item_secrets(slots)
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl crate::pgas_claims::PgasClaimBuilder for SigningHost {
+	async fn build_claim(
+		&self,
+		target: subxt::utils::AccountId32,
+		excluded: &std::collections::BTreeSet<crate::pgas_claims::ClaimSlot>,
+	) -> Result<crate::pgas_claims::BuiltClaim, crate::pgas_claims::ClaimBuildError> {
+		Ok(self.wallet.build_pgas_claim(&target.0, excluded).await?)
 	}
 }
 

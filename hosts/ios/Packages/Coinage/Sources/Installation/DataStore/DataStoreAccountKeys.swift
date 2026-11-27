@@ -1,5 +1,4 @@
 import Foundation
-import NovaCrypto
 import KeyDerivation
 import Revive
 import SubstrateSdk
@@ -49,34 +48,18 @@ public actor DataStoreAccountKeys: DataStoreAccountKeysProviding {
         let publicKey = keypair.publicKey().rawData()
         let secret = keypair.privateKey().rawData()
 
-        // `secret` is the canonical scalar the iOS SDK signs with; the encryption key is keyed by the
-        // form polkadot-js and Android hold, so both platforms open each other's records.
         let account = try DataStoreAccount(
             privateKey: secret,
             publicKey: publicKey,
             evmAccountId: publicKey.toH160(),
-            encryptionKey: Self.deriveEncryptionKey(sr25519Secret: Self.ed25519Form(of: secret))
+            encryptionKey: Self.deriveEncryptionKey(sr25519Secret: secret)
         )
         derived = account
         return account
     }
 
-    /// Keyed by the full 64-byte sr25519 secret in schnorrkel's ed25519 form — the scalar times the
-    /// cofactor, then its nonce — which is what polkadot-js and Android derive from the same `//datastore`
-    /// keypair. ``ed25519Form(of:)`` converts the iOS SDK's canonical scalar.
+    /// Keyed by the SDK's canonical 64-byte secret (scalar || nonce)
     public static func deriveEncryptionKey(sr25519Secret: Data) throws -> Data {
         try encryptionContext.blake2b32WithKey(sr25519Secret)
     }
-
-    /// The secret as polkadot-js and the Android SDK hold it (`sr25519_to_ed25519_bytes`).
-    public static func ed25519Form(of sr25519Secret: Data) throws -> Data {
-        guard let converted = try SNPrivateKey(rawData: sr25519Secret).toEd25519Data() else {
-            throw DataStoreAccountKeysError.secretConversionFailed
-        }
-        return converted
-    }
-}
-
-public enum DataStoreAccountKeysError: Error, Equatable {
-    case secretConversionFailed
 }

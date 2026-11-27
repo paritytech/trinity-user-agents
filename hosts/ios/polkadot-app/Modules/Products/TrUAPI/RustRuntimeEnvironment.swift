@@ -48,16 +48,16 @@ struct RustRuntimeEnvironment {
     func makeExpandedCardExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        face: any ExpandedCardFaceShowing
+        card: any ExpandedCardCovering
     ) throws -> ExecutionModel {
-        try services.makeExecution(productId: productId, routers: routers, purpose: .expandedCard(runtime, face: face))
+        try services.makeExecution(productId: productId, routers: routers, purpose: .expandedCard(runtime, card: card))
     }
 }
 
 /// What one execution serves, which decides the bridge the core calls back on.
 enum ExecutionPurpose {
     case app(TrUAPIHostRuntime)
-    case expandedCard(TrUAPIHostRuntime, face: any ExpandedCardFaceShowing)
+    case expandedCard(TrUAPIHostRuntime, card: any ExpandedCardCovering)
     /// The product's one worker, serving its chat bot and its Pocket cards.
     case worker(chatMessaging: any ProductChatMessaging, attempt: NativeWorkerAttempt)
 }
@@ -182,8 +182,8 @@ private extension ExecutionPurpose {
         switch self {
         case .app:
             return (RustProductExecutionBridge(dependencies: dependencies), nil)
-        case let .expandedCard(_, face):
-            return (RustProductExecutionBridge(dependencies: dependencies, cardFace: face), nil)
+        case let .expandedCard(_, card):
+            return (RustProductExecutionBridge(dependencies: dependencies, card: card), nil)
         case let .worker(chatMessaging, _):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
             return (chat, chat)

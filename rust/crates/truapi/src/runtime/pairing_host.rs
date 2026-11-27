@@ -83,7 +83,7 @@ impl PairingHost {
 	pub fn new(services: Arc<RuntimeServices>, host_config: PairingHostConfig) -> Arc<Self> {
 		let platform = services.platform.clone();
 		let session_state = SessionState::new();
-		let consent = Arc::new(ProductConsent::new(platform.clone()));
+		let consent = Arc::new(ProductConsent::new(platform.clone(), services.stack().clone()));
 		let grants = Arc::new(HostGrantStore::new(
 			platform.clone(),
 			RemoteAccountHolder::GRANT_KEEPING,

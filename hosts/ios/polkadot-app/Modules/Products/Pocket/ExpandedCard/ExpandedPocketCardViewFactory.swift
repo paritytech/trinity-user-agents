@@ -91,11 +91,11 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
     let schemeHandlerProxy: SchemeHandlerProxy
     let routers: ProductRoutersFacadeProtocol
 
-    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
+    func makeRuntime(card: any ExpandedCardCovering) throws -> SPARuntimeProtocol {
         let executionModel = try rust.makeExpandedCardExecution(
             productId: configuration.productId,
             routers: routers,
-            face: face
+            card: card
         )
 
         return SPARustRuntime(

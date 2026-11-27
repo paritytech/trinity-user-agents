@@ -22,7 +22,8 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
 	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, Stack,
+	TopUpPlatform,
 };
 use futures::{
 	StreamExt,
@@ -312,6 +313,11 @@ impl<Role> HostRuntime<Role> {
 		self.services.contact_handle_cache.clear();
 	}
 
+	/// The stack this host runs.
+	pub fn stack(&self) -> &Stack {
+		self.services.stack()
+	}
+
 	/// Reference counts per product worker, shared by every connection of
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
@@ -321,8 +327,12 @@ impl<Role> HostRuntime<Role> {
 	/// Hold the product's worker until this reference is dropped.
 	///
 	/// The first reference requests startup and the last release requests a stop.
-	pub fn hold_worker(&self, product_id: &ProductId) -> crate::WorkerHold {
+	/// A product the stack does not serve is logged and gets no hold, since its
+	/// worker can never open.
+	pub fn hold_worker(&self, product_id: &ProductId) -> Option<crate::WorkerHold> {
 		crate::WorkerHold::acquire(&self.services, product_id)
+			.inspect_err(|error| tracing::warn!(%error, "worker reference for an unserved product"))
+			.ok()
 	}
 
 	/// Report that a worker attempt stopped without being asked to.
@@ -437,6 +447,10 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// A device capability also resolves the host application's OS gate, so an
 	/// OS refusal reads as `Denied` whatever is stored. Remote,
 	/// identity-disclosure and account-access decisions have no OS gate.
+	///
+	/// Fails for a `dot` name on a stack with another TLD, as the product or
+	/// in the request, as the two calls below do: the stack keeps that
+	/// product's statuses under its own id.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
@@ -544,8 +558,10 @@ impl HostRuntime<PairingHost> {
 	/// product storage, while preserving the active session and unrelated
 	/// products.
 	///
-	/// Stop the product's executions first: a value a running execution
-	/// writes after the clear is kept.
+	/// Clears what is kept under exactly `product_id`, whether or not the
+	/// stack serves it, so a host can drop what an id it no longer runs left
+	/// behind. Stop the product's executions first: a value a running
+	/// execution writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(
 		&self,
@@ -586,6 +602,9 @@ impl HostRuntime<PairingHost> {
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
 	/// persisted slot, or the Account Holder. `timeout_ms` bounds that wait.
+	///
+	/// `None` while signed out, answered before any other check. Fails for a
+	/// product the stack does not serve, whatever subtree was kept for it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
@@ -687,7 +706,8 @@ impl HostRuntime<SigningHost> {
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `None` while no session is active.
+	/// root, or `None` while no session is active, answered before any other
+	/// check. Fails for a product the stack does not serve.
 	///
 	/// A signing host holds the root, so it answers this locally where a
 	/// pairing host has to ask the Account Holder.
@@ -1071,7 +1091,9 @@ impl HostRuntime<SigningHost> {
 		};
 		start_materials(&self.services, db.clone());
 		let signer = Arc::new(Arc::downgrade(&self.role));
-		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
+		let claim_builder = Arc::new(Arc::downgrade(&self.role));
+		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer, claim_builder)
+		else {
 			return;
 		};
 		self.start_nft_purses(db, engine);
@@ -1279,10 +1301,14 @@ impl HostRuntime<SigningHost> {
 	/// clear the values it wrote to product storage, while preserving
 	/// unrelated products.
 	///
-	/// Stop the product's executions first: a value a running execution
-	/// writes after the clear is kept.
+	/// Clears what is kept under exactly `product_id`, whether or not the
+	/// stack serves it. Stop the product's executions first: a value a
+	/// running execution writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id);
 		self.services
 			.platform
@@ -1427,31 +1453,34 @@ fn materials(services: &Arc<RuntimeServices>, db: crate::store::Db) -> crate::ma
 	crate::materials::Materials::new(db, Arc::new(bulletin), timer, services.spawner.clone())
 }
 
-/// Installs the durable transaction engine over `db`, reports its pending
-/// work and starts its submissions. `None` when an engine is already
-/// installed.
+/// Installs the durable transaction engine over `db` and the PGAS claims
+/// registered with it, reports its pending work and starts its submissions.
+/// `None` when an engine is already installed.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_durable_engine(
 	services: &Arc<RuntimeServices>,
 	db: crate::store::Db,
 	signer: Arc<dyn crate::nft::ItemSigner>,
+	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> Option<Arc<crate::durable::DurableTxEngine>> {
-	let engine = durable_engine(services, db, signer);
+	let engine = durable_engine(services, db, signer, claim_builder);
 	if !services.install_durable_engine(engine.clone()) {
 		return None;
 	}
+	services.install_pgas_claims(crate::pgas_claims::PgasClaims::new(engine.clone()));
 	forward_durable_work(services, &engine);
 	Some(engine)
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections. It serves NFT transfers when an Asset Hub
-/// genesis is configured.
+/// the runtime's chain connections. It serves PGAS claims, and NFT transfers
+/// when an Asset Hub genesis is configured.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
 	signer: Arc<dyn crate::nft::ItemSigner>,
+	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> Arc<crate::durable::DurableTxEngine> {
 	use crate::{
 		durable::{DurableDeps, DurableTxEngine},
@@ -1459,7 +1488,7 @@ fn durable_engine(
 	};
 
 	let chain = Arc::new(services.chain.clone());
-	let registry = durable_registry(services, signer);
+	let registry = durable_registry(services, signer, claim_builder);
 	DurableTxEngine::new(DurableDeps {
 		db,
 		registry,
@@ -1472,17 +1501,23 @@ fn durable_engine(
 	})
 }
 
-/// The domains the durable engine serves: NFT transfers, on the
-/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
-/// keeps the secrets of imported item keys.
+/// The domains the durable engine serves, on Asset Hub: PGAS claims that
+/// `claim_builder` builds, and NFT transfers on the Scarcity pallet. NFT
+/// transfers need encrypted storage, which keeps the secrets of imported item
+/// keys.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
 	signer: Arc<dyn crate::nft::ItemSigner>,
+	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> crate::durable::DurableRegistry {
-	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
+	use crate::{
+		nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers},
+		pgas_claims::with_pgas_claims,
+	};
 
-	let registry = crate::durable::DurableRegistry::new();
+	let genesis = services.asset_hub_chain_genesis_hash().into();
+	let registry = with_pgas_claims(crate::durable::DurableRegistry::new(), genesis, claim_builder);
 	let Some(encrypted) = services.encrypted_storage() else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
@@ -1867,13 +1902,13 @@ pub struct ProductRuntimeControl {
 const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
 
 impl ProductRuntimeControl {
-	/// Whether the peer can still receive frames through this connection.
-	pub fn is_connected(&self) -> bool {
-		!self.disposed.load(Ordering::Acquire)
+	/// Whether the product connection behind this control has ended.
+	pub fn is_disposed(&self) -> bool {
+		self.disposed.load(Ordering::Acquire)
 	}
 
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
-		if !self.is_connected() {
+		if self.is_disposed() {
 			return Err(ProductRuntimeError::Closed);
 		}
 		Ok(&self.connection)

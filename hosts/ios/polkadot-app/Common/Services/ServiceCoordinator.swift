@@ -79,7 +79,7 @@ final class ServiceCoordinator {
     let tldProvider: DotNsTldProviding
     /// Held rather than looked up, so the session that started the Pocket is
     /// the one that stops it. Nil in a build without the products feature.
-    let pocket: ProductPocketService?
+    let pocket: ProductPocketService
     let logger: LoggerProtocol
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
@@ -125,7 +125,7 @@ final class ServiceCoordinator {
         chainStatusProvider: ChainStatusProviding,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         tldProvider: DotNsTldProviding,
-        pocket: ProductPocketService?,
+        pocket: ProductPocketService,
         logger: LoggerProtocol
     ) {
         self.chatCoordinator = chatCoordinator
@@ -294,10 +294,8 @@ extension ServiceCoordinator {
         )
 
         let pocket = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider)
-        if let pocket {
-            RootDependencyLocator.setDependency(pocket)
-            pocket.start(runtime: runtime, flowState: spaFlowState)
-        }
+        RootDependencyLocator.setDependency(pocket)
+        pocket.start(runtime: runtime, flowState: spaFlowState)
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(

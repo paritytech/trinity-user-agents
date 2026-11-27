@@ -72,7 +72,7 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
                 title: "Open dev server",
                 message: """
                 localhost:3000 on the simulator, the Mac's address (192.168.x.x:3000) on a device. \
-                Add ?product_id=name.dot to run it as that product.
+                Add ?product_id=name.tld, with this network's TLD, to run it as that product.
                 """,
                 preferredStyle: .alert
             )

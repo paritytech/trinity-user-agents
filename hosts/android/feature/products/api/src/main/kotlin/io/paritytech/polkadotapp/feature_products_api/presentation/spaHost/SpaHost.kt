@@ -25,23 +25,23 @@ interface SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
     /**
      * [underCard] marks the session drawn beneath an expanded Pocket card, whose product may ask
-     * the host to show or hide the card face.
+     * the host to cover or uncover the card.
      */
     fun createSession(initialUrl: String, underCard: Boolean = false): SpaHostSession
 }
 
-/** A request from the card's product to show or hide the card face, answered by the screen drawing the card. */
-class FaceShownRequest(val shown: Boolean, val reply: CompletableDeferred<FaceShownAnswer>)
+/** A request from the card's product to cover or uncover the card, answered by the screen drawing the card. */
+class CardCoverRequest(val covered: Boolean, val reply: CompletableDeferred<CardCoverAnswer>)
 
-/** What the screen answers a [FaceShownRequest] with; a request that reaches no screen is never sent. */
-enum class FaceShownAnswer {
-    /** The face moved to the requested state. */
+/** What the screen answers a [CardCoverRequest] with; a request that reaches no screen is never sent. */
+enum class CardCoverAnswer {
+    /** The card moved to the requested state. */
     APPLIED,
 
     /** The user is dragging the face, so it was left alone. */
     USER_MOVING,
 
-    /** The card left before the face could move. */
+    /** The card left before it could move. */
     NOT_PRESENTED,
 }
 
@@ -60,8 +60,8 @@ interface SpaHostSession {
     /** Current page title, updated as the product navigates. */
     val title: StateFlow<String>
 
-    /** Face show/hide requests from the product under a card; empty for any other session. */
-    val faceShownRequests: Flow<FaceShownRequest>
+    /** Cover requests from the product under a card; empty for any other session. */
+    val cardCoverRequests: Flow<CardCoverRequest>
         get() = emptyFlow()
 
     fun pauseConnections()

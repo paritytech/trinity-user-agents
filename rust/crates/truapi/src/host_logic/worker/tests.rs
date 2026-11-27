@@ -179,44 +179,6 @@ fn a_reload_ends_the_run_of_crashes() {
 	assert_eq!(exited(2), None, "the reloaded worker's first crash restarts at once");
 }
 
-// A restart waiting out its backoff does nothing once nothing holds the
-// worker, or once it was started again meanwhile.
-#[test]
-fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
-	let (ledger, recorder) = observed();
-	let product = ProductId::for_test("a.dot");
-	ledger.acquire(&product);
-	ledger.exited(&product, current(&ledger, &product), 0);
-	let waiting = current(&ledger, &product);
-	assert!(ledger.exited(&product, waiting, 1).is_some());
-	ledger.release(&product);
-	ledger.restart(&product, waiting);
-	ledger.acquire(&product);
-	assert_eq!(
-		ledger.exited(&product, current(&ledger, &product), 2),
-		None,
-		"a run of crashes ends with the holds that suffered it"
-	);
-	let replaced = current(&ledger, &product);
-	assert!(ledger.exited(&product, replaced, 3).is_some());
-	ledger.release(&product);
-	ledger.acquire(&product);
-	ledger.restart(&product, replaced);
-
-	assert_eq!(
-		recorder.seen(),
-		vec![
-			("a.dot".to_string(), WorkerTransition::Start),
-			("a.dot".to_string(), WorkerTransition::Start),
-			("a.dot".to_string(), WorkerTransition::Stop),
-			("a.dot".to_string(), WorkerTransition::Start),
-			("a.dot".to_string(), WorkerTransition::Start),
-			("a.dot".to_string(), WorkerTransition::Stop),
-			("a.dot".to_string(), WorkerTransition::Start),
-		]
-	);
-}
-
 #[test]
 fn products_are_counted_separately() {
 	let (ledger, recorder) = observed();
@@ -502,14 +464,19 @@ fn an_older_crash_or_backoff_cannot_restart_a_replacement() {
 	let waiting = attempt();
 	assert_eq!(ledger.exited(&product, waiting, 1), Some(1_000));
 	ledger.release(&product);
+	let stopped = recorder.seen();
+	ledger.restart(&product, waiting);
+	assert_eq!(recorder.seen(), stopped);
+
 	ledger.acquire(&product);
-	ledger.exited(&product, attempt(), 2);
+	assert_eq!(ledger.exited(&product, attempt(), 2), None, "the last release ends the crash run");
 	let replacement = attempt();
 	assert_eq!(ledger.exited(&product, replacement, 3), Some(1_000));
 	let before = recorder.seen();
 	ledger.restart(&product, waiting);
 	assert_eq!(ledger.exited(&product, first, 4), None);
 	assert_eq!(recorder.seen(), before);
+	ledger.restart(&product, replacement);
 	ledger.restart(&product, replacement);
 	assert_ne!(attempt(), replacement);
 	assert_eq!(recorder.seen().len(), before.len() + 1);

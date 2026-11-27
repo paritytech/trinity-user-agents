@@ -63,7 +63,7 @@ struct TrUAPIWsBridgeTests {
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
-            productId: ProductId("test.dot")
+            productId: ProductId("test.testnet")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -98,7 +98,7 @@ struct TrUAPIWsBridgeTests {
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
-            productId: ProductId("test.dot")
+            productId: ProductId("test.testnet")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -134,7 +134,7 @@ struct TrUAPIWsBridgeTests {
         )
         let execution = try runtime.openAppExecution(
             bridge: bridge,
-            productId: ProductId("test.dot")
+            productId: ProductId("test.testnet")
         )
         let endpoint = try execution.startWsBridge(bindPort: 0)
         defer { execution.stopWsBridge() }

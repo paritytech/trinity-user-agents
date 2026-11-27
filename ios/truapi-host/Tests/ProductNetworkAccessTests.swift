@@ -287,7 +287,7 @@ private struct NetworkTestProduct {
             ), workerEngine: NoWorkers())
             let execution = try runtime.openAppExecution(
                 bridge: bridge,
-                productId: ProductId("network.paseo")
+                productId: ProductId("network.testnet")
             )
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()

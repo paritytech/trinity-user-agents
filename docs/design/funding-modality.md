@@ -299,7 +299,7 @@ sequenceDiagram
   H->>C: set_funding_callbacks → open core.sqlite3
   C->>C: load sessions + summaries, expire overdue
   C->>H: funding_changed(Session) per session in flight · 200 newest unacknowledged
-  C->>H: request_worker_transition(Start) for each held provider
+  C->>H: engine.start(product_id, attempt) for each held provider
   W->>C: handshake
   C->>W: assign(last update) per session, then unanswered cancels
   W->>W: resume from its saved state
