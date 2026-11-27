@@ -8,6 +8,11 @@ plugins {
 
 android {
     namespace = "io.paritytech.polkadotapp.feature_wallet_impl"
+
+    // The coins' latency probe ships in debug only; every other build type gets the no-op.
+    sourceSets {
+        listOf("release", "nightly", "safetynet").forEach { getByName(it).java.srcDir("src/noDebugTools/java") }
+    }
 }
 
 dependencies {
@@ -37,6 +42,10 @@ dependencies {
     implementation(project(":tools:remoteconfig:api"))
 
     testImplementation(project(":test-shared"))
+
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     testImplementation(libs.mockk)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
