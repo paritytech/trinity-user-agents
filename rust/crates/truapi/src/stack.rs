@@ -5,11 +5,12 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy, and a copy on another TLD than the bundled one is refused.
-//! It resolves the [`Stack`] the core runs on. A runtime built on that
-//! [`Stack`] also checks the genesis hash of each chain it connects to and, on
-//! a signing host, People's `NetworkSuffix`. The refresh reports what differs
-//! from the descriptor.
+//! the same policy, and a copy that changes a field the bundled one pins is
+//! refused: the TLD on every stack, and more on a stack the policy allows
+//! reserved values. It resolves the [`Stack`] the core runs on. A runtime
+//! built on that [`Stack`] also checks the genesis hash of each chain it
+//! connects to and, on a signing host, People's `NetworkSuffix`. The refresh
+//! reports what differs from the descriptor.
 
 mod held;
 mod pinned;
@@ -24,6 +25,7 @@ use truapi::latest::{
 
 use crate::{CallError, ProductId, dotns_name::is_dns_label, product_id::PRODUCT_SHARE_SUFFIX};
 
+pub use pinned::Pinned;
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackChecks, StackHost, StackRefresh};
 pub use source::{
@@ -105,21 +107,23 @@ impl<D> From<UnservedProduct> for CallError<D> {
 
 /// A host build's policy on reserved values for its stack.
 ///
-/// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
-/// reserve more here and cannot reserve fewer. A stack that names a reserved
-/// value, the core's or the build's, under any chain role starts only when
-/// `allowed` is set.
+/// The core reserves Polkadot's genesis hashes and the `dot` TLD, and a build
+/// can reserve more. A stack that names a reserved value starts only with
+/// `allowed`. With it, the stack is pinned to its bundled copy: a newer copy
+/// that changes its chain roles, genesis hashes, `assets`, `contracts`,
+/// `dotns` or `coinage` is refused, and the bundled relay `lightSpec` is
+/// kept. Reads are protected only if the host starts its light client from
+/// the bundled descriptor.
 ///
-/// The core refuses a policy that would reserve less than it says: `allowed`
-/// together with extra values, which the allowed stack may name anyway, and
-/// an extra TLD that no stack can have: one that is not a DNS label, or a
-/// TLD whose names already mean something else. It refuses the policy before
-/// it reads the stack.
+/// The pins hold for a stack the core resolves with [`StackRefresh::load`]. A
+/// host that builds its stack with [`Stack::new`] and fetches newer copies
+/// itself, as the CLI does, has to refuse such a copy itself. The CLI does
+/// not.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
-	/// Whether the stack may name reserved values. Only a Polkadot or
-	/// Polkadot-fork build sets it, and then reserves no extra values.
+	/// Whether the stack may name reserved values. A build that sets it
+	/// reserves no extra values.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
@@ -217,8 +221,9 @@ pub struct StackIdentity {
 /// preimage submission over them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackChains {
-	/// The relay chain, which the core never reads itself. `None` for a host
-	/// that serves none, such as the CLI.
+	/// The relay chain. The core reads nothing from it itself, but reports its
+	/// genesis hash through `get_chain_info`, so a new one also asks for a
+	/// restart. `None` for a host that serves none, such as the CLI.
 	pub relay: Option<[u8; 32]>,
 	/// Asset Hub, where the dotNS contracts are deployed. Product manifests and
 	/// session usernames resolve from it.
@@ -309,7 +314,8 @@ pub enum StackError {
 	/// A stored or fetched copy changes a field the bundled copy pins.
 	#[display("stack descriptor changes {field}, which the bundled copy pins")]
 	PinnedFieldChanged {
-		/// The field, as the descriptor spells it.
+		/// What differs: a top-level field by the name the descriptor gives
+		/// it, or a few words for a part of its `chains`.
 		field: &'static str,
 	},
 }

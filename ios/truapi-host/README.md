@@ -103,14 +103,16 @@ as a `BundledStack`:
   served. The core verifies it under the pointer's key.
 - `reservedValues` is the build's `ReservedValuesPolicy`. Its
   [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
-  which policies it refuses.
+  which policies it refuses. Each `extraGenesisHashes` entry must be 32 bytes:
+  the bindings reject any other length before the core sees the config, so the
+  initializer throws the bindings' internal error, which is `fileprivate` and
+  can only be caught as a plain `Error`, without naming the field.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
 one the wallet's reserved identities derive under. An invalid stack makes
 `TrUAPIHostRuntime(bridge:runtimeConfig:)` throw
-`NativeRuntimeConfigError.Invalid(reason:)`. Include this configuration update
-in the embedding app's package upgrade.
+`NativeRuntimeConfigError.Invalid(reason:)`.
 
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
 

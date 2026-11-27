@@ -58,20 +58,17 @@ export type LogLevel = string;
 
 /**
  * A host build's policy on reserved values for its stack. The core reserves
- * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
- * and cannot reserve fewer. A stack that names a reserved value, the core's or
- * the build's, under any chain role starts only when `allowed` is set.
- *
- * The core refuses a policy that would reserve less than it says: a field this
- * type does not have, `allowed` together with extra values, which the allowed
- * stack may name anyway, and an extra TLD that no stack can have. It refuses
- * the policy before it reads the stack.
+ * Polkadot's genesis hashes and the `dot` TLD, and a build can reserve more.
+ * A stack that names a reserved value starts only when `allowed` is set, and
+ * with `allowed` a `stack`, not a `testStack`, is pinned to its bundled
+ * descriptor. The core refuses a policy it cannot read or that would reserve
+ * less than it says, before it checks the stack. `ReservedValuesPolicy` in `rust/crates/truapi/src/stack.rs` has the
+ * rules.
  */
 export interface ReservedValuesPolicy {
   /**
-   * Whether the stack may name reserved values. Only a Polkadot or
-   * Polkadot-fork build sets it, and then reserves no extra values. Defaults
-   * to `false`.
+   * Whether the stack may name reserved values. A build that sets it reserves
+   * no extra values. Defaults to `false`.
    */
   allowed?: boolean;
   /**
@@ -171,7 +168,10 @@ export type StackMismatch =
 export interface StackStatus {
   /**
    * The verified descriptor the core runs, as plain descriptor JSON. The
-   * host's own features read their chains and services from it.
+   * host's own features read their chains and services from it. On a `stack`
+   * allowed reserved values its relay `lightSpec` is the bundled
+   * descriptor's. It carries no signature: open a light client from the
+   * bundled descriptor.
    */
   descriptor: string;
   /**
@@ -191,9 +191,12 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core stored a newer copy that changes a chain, the network or the
-   * generation. It runs that copy from its next start, so build the runtime
-   * again to follow it. A copy on another TLD is refused and never sets it.
+   * The core stored a newer copy that changes the genesis hash of the relay,
+   * Asset Hub, People or Bulletin chain, the network, the generation or the
+   * `accountDataStore` contract. It runs that copy from its next start, so
+   * build the runtime again to follow it. A copy that changes a field the
+   * bundled descriptor pins, such as the TLD, never sets it: the core refuses
+   * that copy.
    */
   restartRequired: boolean;
   /**
@@ -222,7 +225,8 @@ export interface StackStatus {
    * suffix is listed only once this runtime has read it, so a suffix that is
    * not listed may not have been read yet. While a chain is listed, a host
    * with `fetchStackDescriptor` is asked for the descriptor every five minutes
-   * instead of every hour, until a newer copy sets `restartRequired`. A light
+   * instead of every hour, until a newer copy sets `restartRequired` or the
+   * published copy changes a pinned field, which only a new build takes. A light
    * client answers from its own chain spec, so it never lists a chain that
    * restarted.
    */

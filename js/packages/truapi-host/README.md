@@ -87,15 +87,18 @@ refresh it.
   page becomes visible again.
 - `stackChanged(status)`: the `StackStatus` at start, and on each change. For a
   host without `fetchStackDescriptor` only `mismatches` changes, when a chain's
-  answer changes it. `restartRequired` means a newer copy changes a chain, the
-  network or the generation, and applies once the runtime is built again. A
-  copy on another TLD than the bundled descriptor is refused, and `lastRefresh`
-  says so. `generation` changes when the stack restarts its chains: key cached
-  chain data by it. `mismatches` lists each chain whose last connection reached
-  one with a different genesis hash from the descriptor's. On a signing host it
-  also lists People's `NetworkSuffix` once the runtime's allowance work has read
-  one that is not the descriptor's `tld`. The suffix is kept in memory only, so
-  a runtime built again lists none until it reads the suffix itself.
+  answer changes it. `restartRequired` means a newer copy changes the genesis
+  hash of the relay, Asset Hub, People or Bulletin chain, the network, the
+  generation or the `accountDataStore` contract, and applies once the runtime
+  is built again. A copy on another TLD than the bundled descriptor is
+  refused, and so is one that changes a field a stack allowed reserved values
+  pins. `lastRefresh` says so. `generation` changes when the stack restarts
+  its chains: key cached chain data by it. `mismatches` lists each chain whose
+  last connection reached one with a different genesis hash from the
+  descriptor's. On a signing host it also lists People's `NetworkSuffix` once
+  the runtime's allowance work has read one that is not the descriptor's
+  `tld`. The suffix is kept in memory only, so a runtime built again lists
+  none until it reads the suffix itself.
 
 After a stack's chains restart from genesis, the same endpoints serve new
 chains with new genesis hashes. To catch that, the core asks every chain
@@ -113,9 +116,12 @@ spec. A `WasmProductRuntime` built on its own also refuses a chain with a
 different hash, but has no status to report it in.
 
 The core keeps the last copy it verified in core storage, under the
-`StackRecord` key, and starts from it when it is newer than the bundled one.
-`create` waits a few seconds at most for that read, then starts from the
-bundled copy.
+`StackRecord` key. It starts from that copy when it is newer than the bundled
+one and passes the checks a fetched copy has to pass. A stored copy the core
+would refuse, such as one that names a value `reservedValues` reserves or
+changes a field the bundled descriptor pins, the TLD among them, is ignored,
+and the core starts from the bundled copy. `create` waits a few seconds at
+most for that read, then starts from the bundled copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` and `/node` hosts run the core in a worker, `worker-runtime`, that does

@@ -192,6 +192,46 @@ fn test_reads_same_by_field() {
 	assert!(bundles_same(&base, &renamed));
 }
 
+/// A build that allows its stack reserved values refuses every published copy that changes a field
+/// its bundled copy pins, and each host decides which of its stacks it allows them. So a pinned
+/// field the CLI does not read rewrites the bundle of any stack, a testnet's included. An empty
+/// list names nothing, so writing one leaves the bundle in place.
+#[test]
+fn a_pinned_field_rewrites_the_bundle_of_any_stack() {
+	let pinned_changes: [fn(&mut serde_json::Value); 5] = [
+		|descriptor| {
+			descriptor["chains"][0]["genesisHash"] = format!("0x{}", "08".repeat(32)).into()
+		},
+		|descriptor| {
+			descriptor["chains"].as_array_mut().unwrap().push(serde_json::json!({
+				"role": "Collectives",
+				"genesisHash": format!("0x{}", "09".repeat(32)),
+				"paraId": 1001,
+				"rpc": ["ws://127.0.0.1:9909"],
+			}));
+		},
+		|descriptor| {
+			descriptor["assets"] = serde_json::json!([
+				{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
+			]);
+		},
+		|descriptor| descriptor["dotns"]["storeFactory"] = format!("0x{}", "cd".repeat(20)).into(),
+		|descriptor| {
+			descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+		},
+	];
+	let assets_written_empty: fn(&mut serde_json::Value) =
+		|descriptor| descriptor["assets"] = serde_json::json!([]);
+	let rewritten = |change: fn(&mut serde_json::Value)| {
+		!bundles_same(&stack_descriptor(|_| {}), &stack_descriptor(change))
+	};
+
+	assert_eq!(
+		(pinned_changes.map(rewritten), rewritten(assets_written_empty)),
+		([true; 5], false)
+	);
+}
+
 /// A source and its fork can both be local files with one descriptor `id`. If
 /// every local file were one stack, the core would give them one set of keys
 /// and the fork would read the source's session.

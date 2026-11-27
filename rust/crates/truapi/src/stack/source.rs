@@ -137,7 +137,9 @@ pub enum Listing {
 pub struct StackStatus {
 	/// The verified descriptor the core runs, as plain descriptor JSON with
 	/// the fields this core knows. The host's own features read their chains
-	/// and services from it.
+	/// and services from it. On a stack allowed reserved values its relay
+	/// `lightSpec` is the bundled copy's. It carries no signature: open a
+	/// light client from the bundled descriptor.
 	pub descriptor: String,
 	/// The descriptor's `generation`, which changes when the stack restarts
 	/// its chains. Key cached chain data by it, such as a light client's
@@ -151,10 +153,12 @@ pub struct StackStatus {
 	/// The newest copy was past `expiresAt` when the core last looked, at
 	/// start and after each fetch: the stack has shut down.
 	pub expired: bool,
-	/// The core stored a newer copy that changes a chain, the network or the
-	/// generation. It runs that copy from its next start, so build the
-	/// runtime again to follow it. A copy on another TLD is refused and never
-	/// sets it.
+	/// The core stored a newer copy that changes the genesis hash of the
+	/// relay, Asset Hub, People or Bulletin chain, the network, the generation
+	/// or the `accountDataStore` contract. It runs that copy from its next
+	/// start, so build the runtime again to follow it. A copy that changes a
+	/// field the bundled descriptor pins, such as the TLD, never sets it: the
+	/// core refuses that copy.
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one. A fetch that
 	/// changed the stored record finishes once that record is stored or its
@@ -166,7 +170,8 @@ pub struct StackStatus {
 	/// it, so a suffix that is not listed may not have been read yet. While a
 	/// chain is listed, a refresh that was started fetches the descriptor
 	/// every five minutes instead of every hour, until a newer copy sets
-	/// `restart_required`.
+	/// `restart_required` or the published copy changes a pinned field,
+	/// which only a new build takes.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -197,6 +202,12 @@ pub struct StackSource {
 	/// record it returned is stored or fails to store, so that the host is
 	/// never told `Current` for a copy whose store may still fail.
 	before_store: Option<StackStatus>,
+	/// Whether the record the last [`Self::fetched`] returned only drops the
+	/// `ETag` of the copy the core held, after a refused or failed fetch.
+	record_drops_etag: bool,
+	/// Whether the last copy the server gave changes a pinned field. Only a
+	/// new build takes such a copy, so fetching it sooner brings nothing.
+	needs_a_new_build: bool,
 }
 
 impl StackSource {
@@ -207,7 +218,7 @@ impl StackSource {
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
 	/// a stack the core can run. A stored record the core would refuse is
-	/// ignored until the next stored record replaces it.
+	/// ignored until the next copy the core takes replaces it.
 	pub fn load(
 		pointer: Pointer,
 		bundled: &[u8],
@@ -242,6 +253,8 @@ impl StackSource {
 			wrong_genesis: Vec::new(),
 			people_suffix: None,
 			before_store: None,
+			record_drops_etag: false,
+			needs_a_new_build: false,
 		})
 	}
 
@@ -365,7 +378,8 @@ impl StackSource {
 		// Once a newer copy waits for the next start, fetching sooner has
 		// done its job.
 		let chain_is_wrong = self.wrong_chains().next().is_some();
-		let max_age = if chain_is_wrong && self.next_start.is_none() {
+		let sooner_helps = self.next_start.is_none() && !self.needs_a_new_build;
+		let max_age = if chain_is_wrong && sooner_helps {
 			MISMATCH_REFRESH_MAX_AGE_SECS
 		} else {
 			REFRESH_MAX_AGE_SECS
@@ -401,11 +415,17 @@ impl StackSource {
 		// The reader judges every later fetch against a copy it takes, so one
 		// the core refuses never reaches it.
 		let (served, unusable) = match answer {
-			Ok(served) => match self.refusal(served) {
-				Some(reason) => {
-					(Served::Unreachable, Some(StackRefreshOutcome::Refused { reason }))
-				},
-				None => (served, None),
+			Ok(served) => {
+				let refusal = self.refusal(served);
+				self.needs_a_new_build =
+					matches!(refusal, Some(StackError::PinnedFieldChanged { .. }));
+				match refusal {
+					Some(error) => {
+						let reason = error.to_string();
+						(Served::Unreachable, Some(StackRefreshOutcome::Refused { reason }))
+					},
+					None => (served, None),
+				}
 			},
 			Err(reason) => (Served::Unreachable, Some(StackRefreshOutcome::Unreachable { reason })),
 		};
@@ -428,6 +448,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		});
+		let drops_etag = matches!(accepted.status, Status::Unreachable);
 		let held = match self.rules.hold(accepted.stack) {
 			Ok(held) => held,
 			Err(error) => {
@@ -444,6 +465,7 @@ impl StackSource {
 			self.before_store = Some(self.status());
 		}
 		self.last_refresh = Some(outcome);
+		self.record_drops_etag = drops_etag;
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
 		if self.running.runs_as(&held) {
@@ -479,17 +501,23 @@ impl StackSource {
 		}
 	}
 
-	/// The check for storing `record`, which [`Self::fetched`] returned.
+	/// The check for storing `record`, which [`Self::fetched`] returned. A
+	/// record that only drops the `ETag` of the copy the core held replaces
+	/// no record the core ignores, since that record may be another build's.
 	pub fn replace_check(&self, record: &[u8]) -> ReplaceCheck {
-		ReplaceCheck::new(self.rules.clone(), record)
+		if self.record_drops_etag {
+			ReplaceCheck::without_etag(self.rules.clone(), record)
+		} else {
+			ReplaceCheck::new(self.rules.clone(), record)
+		}
 	}
 
 	/// Why the core refuses a served document that verifies under the
 	/// pointer. `None` when the core takes it or the reader refuses it.
-	fn refusal(&self, served: Served) -> Option<String> {
+	fn refusal(&self, served: Served) -> Option<StackError> {
 		let Served::Document { bytes, .. } = served else { return None };
 		let verified = open(bytes, self.rules.pointer()).ok()?;
-		self.rules.hold(verified).err().map(|error| error.to_string())
+		self.rules.hold(verified).err()
 	}
 }
 

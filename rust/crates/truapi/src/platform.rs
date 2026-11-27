@@ -32,8 +32,8 @@ pub use crate::{
 	privileged_product::PrivilegedProduct,
 	product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError},
 	stack::{
-		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
-		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,
+		CoreStorageRecords, Pinned, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains,
+		StackError, StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,
 		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus, UnservedProduct,
 	},
 };

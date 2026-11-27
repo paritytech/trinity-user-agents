@@ -223,7 +223,10 @@ subscriptions on People.
 While a chain is listed, the core fetches the descriptor every five minutes
 instead of every hour, since the operator publishes the new genesis hashes with
 the restart. Once the core holds a descriptor that changes a chain, it sets
-`restart_required` and fetches hourly again.
+`restart_required` and fetches hourly again. It also fetches hourly again when
+the published descriptor changes a pinned field, because only a new build takes
+that descriptor. On a stack that is allowed reserved values the genesis hashes
+are pinned, so this is what happens after its chains restart.
 
 A host learns of a mismatch through its stack callbacks, and can read it from
 `stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
@@ -307,14 +310,19 @@ until the next one the core takes replaces it, whatever its `sequence`. After
 a refused or failed fetch, `last_refresh` reports that fetch even if writing
 the record fails.
 
-A newer descriptor that changes a genesis hash, the network or the
-`generation` applies from the next start. Once the core has stored it,
-`StackStatus` has `restart_required` set, and the host builds the runtime
-again. Any other change needs no restart. `StackStatus` carries it once the
-core has stored the descriptor or its store has failed, at most 30 seconds
-after the fetch, and shows the copy from before the fetch until then. It
-documents the rest, including the `generation` a host keys cached chain data
-by.
+On a stack whose build allows it reserved values the core pins more of the
+bundled copy, as `ReservedValuesPolicy` in [`src/stack.rs`](src/stack.rs)
+describes.
+
+A newer descriptor the core takes that changes the genesis hash of the relay,
+Asset Hub, People or Bulletin chain, the network, the `generation` or the
+`accountDataStore` contract applies from the next start. Once the core has
+stored it, `StackStatus` has `restart_required` set, and the host builds the
+runtime again. Any other change needs no restart. `StackStatus` carries it
+once the core has stored the descriptor or its store has failed, at most 30
+seconds after the fetch, and shows the copy from before the fetch until then.
+It documents the rest, including the `generation` a host keys cached chain
+data by.
 
 ### Core database
 

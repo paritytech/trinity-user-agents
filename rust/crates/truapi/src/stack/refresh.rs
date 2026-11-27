@@ -130,6 +130,11 @@ impl StackRefresh {
 	/// cannot be read, or is not read within a few seconds, is logged and
 	/// ignored.
 	///
+	/// The stack keeps the TLD `bundled` names, and one allowed reserved
+	/// values keeps the other fields [`ReservedValuesPolicy`] says it pins. A
+	/// stored copy that changes one is logged and ignored, and a fetched one
+	/// is refused, so the core keeps the copy it holds.
+	///
 	/// `clock` tells how old a copy is and `timer` waits for the next fetch.
 	pub async fn load(
 		pointer: &str,

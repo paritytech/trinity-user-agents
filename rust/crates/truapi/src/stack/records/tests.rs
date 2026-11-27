@@ -6,8 +6,8 @@ use super::*;
 use crate::{
 	stack::{ReservedValuesPolicy, signed_pointer},
 	test_support::{
-		on_testnet, published_test_descriptor_at, sign_test_descriptor, stored_test_record,
-		without_bulletin,
+		on_testnet, published_test_descriptor_at, redeployed_reserved_test_descriptor,
+		reserved_test_descriptor, sign_test_descriptor, stored_test_record, without_bulletin,
 	},
 };
 
@@ -46,10 +46,14 @@ fn record_at(sequence: u32) -> Vec<u8> {
 
 /// The rules of a build that bundles the test stack at `sequence` 1.
 fn bundled_rules() -> CopyRules {
-	let (link, bundled) = sign_test_descriptor(&published_test_descriptor_at(1));
+	rules_of(&published_test_descriptor_at(1), ReservedValuesPolicy::default())
+}
+
+/// The rules of a build that bundles `bundled` under `reserved_values`.
+fn rules_of(bundled: &serde_json::Value, reserved_values: ReservedValuesPolicy) -> CopyRules {
+	let (link, bundled) = sign_test_descriptor(bundled);
 	let pointer = signed_pointer(&link).expect("test link carries a key");
-	CopyRules::new(pointer, &bundled, ReservedValuesPolicy::default())
-		.expect("bundled copy is valid")
+	CopyRules::new(pointer, &bundled, reserved_values).expect("bundled copy is valid")
 }
 
 /// Two runtimes can refresh at once while a host rebuilds its runtime. The
@@ -121,4 +125,19 @@ fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run
 	write(record_at(4));
 
 	assert_eq!([over_an_ignored_one, stored()], [Some(record_at(3)), Some(record_at(5))]);
+}
+
+/// On a stack allowed reserved values the core also ignores a record that
+/// changes a field the bundled copy pins, so that record keeps no copy out
+/// either. The check follows the build's policy on what is pinned.
+#[test]
+fn a_record_that_changes_a_reserved_pin_keeps_no_copy_out() {
+	let rules = rules_of(&reserved_test_descriptor(1), ReservedValuesPolicy::ALLOWED);
+	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3), 0));
+	let existing = [
+		stored_test_record(&reserved_test_descriptor(5), 0),
+		stored_test_record(&redeployed_reserved_test_descriptor(5), 0),
+	];
+
+	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true]);
 }

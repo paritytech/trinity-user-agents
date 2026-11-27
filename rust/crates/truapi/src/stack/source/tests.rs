@@ -5,7 +5,9 @@ use crate::{
 	stack::signed_pointer,
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
-		sign_test_descriptor, stack_status, stored_test_record, without_bulletin,
+		redeployed_reserved_test_descriptor, refused_for_pinned, reserved_test_descriptor,
+		sign_test_descriptor, stack_status, stored_test_record, test_chain, test_light_spec,
+		without_bulletin,
 	},
 };
 
@@ -172,6 +174,31 @@ fn a_new_generation_on_the_same_chains_runs_from_the_next_start() {
 	);
 }
 
+/// The running stack holds the `accountDataStore` contract the core reads, so
+/// a copy that moves it also runs from the next start.
+#[test]
+fn a_moved_account_data_store_runs_from_the_next_start() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut moved = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	moved["contracts"] =
+		serde_json::json!({ "accountDataStore": format!("0x{}", "22".repeat(20)) });
+	let mut source = load(&bundled, None);
+
+	serve(&mut source, &moved, START).expect("the newer copy is stored");
+	source.record_stored();
+
+	assert_eq!(
+		(source.stack().account_data_store(), source.status()),
+		(
+			None,
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			}
+		)
+	);
+}
+
 /// A host told to restart before the record is stored would start from the
 /// old copy, fetch the new one and be told to restart again, for as long as
 /// the store fails.
@@ -265,7 +292,8 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 }
 
 /// A copy stored before the build reserved one of its values is not run: the
-/// bundled copy starts the host.
+/// bundled copy starts the host. The same record starts a build that does not
+/// reserve that value, so the policy alone is what refuses it.
 #[test]
 fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
@@ -283,9 +311,19 @@ fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 		.stored
 		.expect("a first copy is stored");
 
-	let source = load_reserving(&bundled, Some(&record), reserving_extras());
+	let start_on = |reserved_values| {
+		let mut source = load_reserving(&bundled, Some(&record), reserved_values);
+		(source.status(), source.due_fetch(START))
+	};
 
-	assert_eq!(source.status(), stack_status(&bundled, None));
+	assert_eq!(
+		[start_on(reserving_extras()), start_on(ReservedValuesPolicy::default())],
+		[
+			(stack_status(&bundled, None), bundled_copys_fetch()),
+			(stack_status(&on_extra_genesis, None), None),
+		],
+		"only the policy keeps the stored copy from starting the host"
+	);
 }
 
 /// A fresh install starts from the bundled copy, so a build whose policy
@@ -427,6 +465,162 @@ fn an_ignored_records_etag_is_not_sent() {
 	);
 }
 
+/// A key that signs the descriptor of a stack allowed reserved values must
+/// not be able to name other dotNS contracts or another chain for its hosts.
+/// The build's copy decides both, so such a copy is refused on every fetch
+/// and never stored, and the core keeps the copy it holds.
+#[test]
+fn a_reserved_stacks_refresh_that_changes_dotns_or_a_chain_is_refused_and_not_stored() {
+	let mut moved_endpoint = reserved_test_descriptor(2);
+	test_chain(&mut moved_endpoint, "People")["rpc"] =
+		serde_json::json!(["wss://moved.test.invalid"]);
+	let mut wiped = reserved_test_descriptor(3);
+	wiped["generation"] = "second".into();
+	test_chain(&mut wiped, "People")["genesisHash"] =
+		format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE)).into();
+	let refused_copies =
+		[(redeployed_reserved_test_descriptor(3), "dotns"), (wiped, "a chain's genesisHash")];
+
+	assert_eq!(
+		refused_copies.clone().map(|(copy, _)| {
+			let mut source =
+				load_reserving(&reserved_test_descriptor(1), None, ReservedValuesPolicy::ALLOWED);
+			let held = serve_stored(&mut source, &moved_endpoint, START);
+			let refusals = [START + 3600, START + 7200]
+				.map(|now| (serve(&mut source, &copy, now), source.status()));
+			(held.is_some(), refusals)
+		}),
+		refused_copies.map(|(_, field)| {
+			let refused = (None, stack_status(&moved_endpoint, refused_for_pinned(field)));
+			(true, [refused.clone(), refused])
+		})
+	);
+}
+
+/// A stack allowed reserved values can name a new `generation` while no
+/// pinned field changes. `generation` is not pinned, so the stack follows it
+/// the way any stack follows a restart of its chains.
+#[test]
+fn a_reserved_stack_follows_a_new_generation_with_no_pinned_field_changed() {
+	let bundled = reserved_test_descriptor(1);
+	let mut regenerated = reserved_test_descriptor(2);
+	regenerated["generation"] = "second".into();
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+
+	let record = serve(&mut source, &regenerated, START).expect("the newer copy is stored");
+	source.record_stored();
+	let restarted = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+
+	assert_eq!(
+		(source.status(), restarted.status()),
+		(
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			stack_status(&regenerated, None)
+		)
+	);
+}
+
+/// A record may hold a copy that differs from the build's in a pinned field,
+/// such as one written by another build of the app. The bundled copy starts
+/// the host and is fetched at once although the record was fetched a moment
+/// ago, and the published copy the record came from is refused when it is
+/// fetched.
+#[test]
+fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
+	let bundled = reserved_test_descriptor(1);
+	let record = stored_test_record(&redeployed_reserved_test_descriptor(2), 0);
+
+	let mut source = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+	let at_start = (source.status(), source.due_fetch(START));
+	let fetched = serve(&mut source, &redeployed_reserved_test_descriptor(2), START);
+
+	assert_eq!(
+		(at_start, fetched, source.status()),
+		(
+			(stack_status(&bundled, None), bundled_copys_fetch()),
+			None,
+			stack_status(&bundled, refused_for_pinned("dotns"))
+		)
+	);
+}
+
+/// An operator publishes a fresher relay light spec from time to time. A
+/// stack allowed reserved values takes such a copy, stores it and follows the
+/// rest of it, such as a moved endpoint, but runs the relay light spec its
+/// build ships, also after a restart from the stored copy.
+#[test]
+fn a_reserved_stack_takes_a_fresher_relay_light_spec_and_runs_its_bundled_one() {
+	let bundled = reserved_test_descriptor(1);
+	let with_relay_spec = |light_spec| {
+		let mut copy = reserved_test_descriptor(2);
+		test_chain(&mut copy, "People")["rpc"] = serde_json::json!(["wss://moved.test.invalid"]);
+		test_chain(&mut copy, "Relay")["lightSpec"] = light_spec;
+		copy
+	};
+	let fresher = with_relay_spec(test_light_spec(0xee));
+	let runs = with_relay_spec(test_chain(&mut bundled.clone(), "Relay")["lightSpec"].clone());
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+
+	let record = serve_stored(&mut source, &fresher, START).expect("the fresher copy is stored");
+	let restarted = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+
+	assert_eq!(
+		(source.status(), restarted.status()),
+		(stack_status(&runs, Some(StackRefreshOutcome::Current)), stack_status(&runs, None))
+	);
+}
+
+/// Two builds with different bundled copies can share one store, such as two
+/// deployments of one web app, and each ignores the other's record. A build
+/// still running on its own record stores that copy again without its `ETag`
+/// after a refused or failed fetch. That must not put its copy back over the
+/// record of the build that takes the published copy, which would then start
+/// from its bundled copy and fetch the whole descriptor again.
+#[test]
+fn a_record_rewritten_without_its_etag_replaces_no_record_the_build_ignores() {
+	let old = reserved_test_descriptor(1);
+	let new = redeployed_reserved_test_descriptor(2);
+	let old_record = stored_test_record(&old, START);
+	let new_record = stored_test_record(&new, START);
+	let old_build = || load_reserving(&old, Some(&old_record), ReservedValuesPolicy::ALLOWED);
+	let (mut refused, mut failed) = (old_build(), old_build());
+	let rewritten = [
+		(serve(&mut refused, &new, START + 3600), refused),
+		(fail(&mut failed, START + 3600), failed),
+	];
+
+	assert_eq!(
+		rewritten.map(|(record, old_build)| {
+			let record = record.expect("the copy is stored without its ETag");
+			let check = old_build.replace_check(&record);
+			[check.replaces(&new_record), check.replaces(&old_record)]
+		}),
+		[[false, true], [false, true]]
+	);
+}
+
+/// A stack without reserved values follows its operator: a redeployed
+/// contract reaches its hosts at once, without a new build.
+#[test]
+fn a_stack_without_reserved_values_follows_a_redeployed_contract() {
+	let on_paseo = |mut descriptor: serde_json::Value| {
+		descriptor["tld"] = "paseo".into();
+		descriptor
+	};
+	let redeployed = on_paseo(redeployed_reserved_test_descriptor(2));
+	let mut source = load(&on_paseo(reserved_test_descriptor(1)), None);
+
+	let record = serve_stored(&mut source, &redeployed, START);
+
+	assert_eq!(
+		(record.is_some(), source.status()),
+		(true, stack_status(&redeployed, Some(StackRefreshOutcome::Current)))
+	);
+}
+
 /// The descriptor's server sees one request an hour from each core, and a
 /// host can still ask for one sooner.
 #[test]
@@ -542,6 +736,33 @@ fn a_chain_that_stays_wrong_is_asked_about_every_five_minutes() {
 	assert_eq!(
 		[source.next_fetch_in(START + 300), source.next_fetch_in(START + 600)],
 		[Some(Duration::from_secs(300)), Some(Duration::ZERO)]
+	);
+}
+
+/// A stack allowed reserved values has its genesis hashes pinned, so the copy
+/// its operator publishes after a wipe is refused on every fetch and only a
+/// new build takes it. Asking for it every five minutes would go on for as
+/// long as the runtime lives.
+#[test]
+fn a_wiped_pinned_stack_is_asked_about_hourly_once_its_new_copy_is_refused() {
+	let bundled = reserved_test_descriptor(1);
+	let mut wiped = reserved_test_descriptor(2);
+	test_chain(&mut wiped, "People")["genesisHash"] =
+		format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE)).into();
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+	source.due_fetch(START).expect("a build copy is due at once");
+	serve_stored(&mut source, &bundled, START);
+	source.chain_answered(PEOPLE_WIPED);
+	let before_the_refusal = source.next_fetch_in(START + 60);
+
+	source.due_fetch(START + 300).expect("the copy is five minutes old");
+	serve(&mut source, &wiped, START + 300);
+	let after_the_refusal = source.next_fetch_in(START + 300);
+	serve_stored(&mut source, &bundled, START + 3900);
+
+	assert_eq!(
+		[before_the_refusal, after_the_refusal, source.next_fetch_in(START + 3900)],
+		[240, 3600, 300].map(|seconds| Some(Duration::from_secs(seconds)))
 	);
 }
 

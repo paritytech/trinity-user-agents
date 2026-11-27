@@ -555,9 +555,73 @@ pub fn stack_status(
 
 /// The outcome of fetching a copy on another TLD.
 pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
+	refused_for_pinned("tld")
+}
+
+/// The outcome of fetching a copy that changes `field`, which the bundled
+/// copy pins.
+pub fn refused_for_pinned(field: &str) -> Option<crate::platform::StackRefreshOutcome> {
 	Some(crate::platform::StackRefreshOutcome::Refused {
-		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+		reason: format!("stack descriptor changes {field}, which the bundled copy pins"),
 	})
+}
+
+/// The `chains` entry of `descriptor` with this role.
+pub fn test_chain<'a>(
+	descriptor: &'a mut serde_json::Value,
+	role: &str,
+) -> &'a mut serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.iter_mut()
+		.find(|chain| chain["role"] == role)
+		.expect("the test descriptor has the role")
+}
+
+/// A `lightSpec` entry whose digest is 32 bytes of `digest`.
+pub fn test_light_spec(digest: u8) -> serde_json::Value {
+	serde_json::json!({
+		"url": "https://stack.test.invalid/spec.json",
+		"sha256": format!("0x{}", hex::encode([digest; 32])),
+	})
+}
+
+/// A stack on the reserved `dot` TLD as published at `sequence`, which starts
+/// only under a build that allows it reserved values. It sets every field
+/// such a stack pins, two `assets`, `contracts`, `dotns` and `coinage`, and
+/// the relay light spec it runs from the bundled copy. Its chains are
+/// `Collectives`, a role the core never reads, listed ahead of the Relay with
+/// a light spec of its own, then those of [`published_test_descriptor`].
+pub fn reserved_test_descriptor(sequence: u32) -> serde_json::Value {
+	let mut descriptor = test_descriptor("dot", TEST_STACK_PEOPLE, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = "first".into();
+	test_chain(&mut descriptor, "Relay")["lightSpec"] = test_light_spec(0x5a);
+	let mut collectives = test_descriptor_chain("Collectives", [0xc0; 32], Some(1001));
+	collectives["lightSpec"] = test_light_spec(0xc5);
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.insert(0, collectives);
+	descriptor["assets"] = serde_json::json!([
+		{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
+		{ "role": "fee", "chain": "AssetHub", "pallet": "Assets", "id": 1337 },
+	]);
+	descriptor["contracts"] =
+		serde_json::json!({ "multicall": format!("0x{}", hex::encode([0xc1; 20])) });
+	descriptor["dotns"] =
+		serde_json::json!({ "popController": format!("0x{}", hex::encode([0xd1; 20])) });
+	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor
+}
+
+/// [`reserved_test_descriptor`] at `sequence` with its dotNS contract at
+/// another address, a field such a stack pins.
+pub fn redeployed_reserved_test_descriptor(sequence: u32) -> serde_json::Value {
+	let mut descriptor = reserved_test_descriptor(sequence);
+	descriptor["dotns"]["popController"] = format!("0x{}", hex::encode([0xee; 20])).into();
+	descriptor
 }
 
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
