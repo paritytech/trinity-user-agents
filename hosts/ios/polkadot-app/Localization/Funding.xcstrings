@@ -540,6 +540,17 @@
         }
       }
     },
+    "fees.rate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rate"
+          }
+        }
+      }
+    },
     "fees.swapping" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1009,6 +1020,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This can't be cancelled right now"
+          }
+        }
+      }
+    },
+    "error.openMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something went wrong. Try again."
           }
         }
       }
@@ -1515,6 +1537,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Payout"
+          }
+        }
+      }
+    },
+    "ended.payoutPending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending"
           }
         }
       }

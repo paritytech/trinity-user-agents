@@ -50,7 +50,7 @@ private extension FundingFeesView {
             }
 
             if let rate = fees.rate {
-                line(String(localized: .depositRateTitle), rate, emphasized: false)
+                line(String(localized: .Funding.feesRate), rate, emphasized: false)
             }
         }
     }

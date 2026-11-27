@@ -348,7 +348,7 @@ private extension FundingEndedView {
 
     var payoutText: String? {
         switch ended.payoutState {
-        case .pending: String(localized: .depositTransactionPending)
+        case .pending: String(localized: .Funding.endedPayoutPending)
         case .paidOut: String(localized: .Funding.endedPayoutPaidOut)
         case .failed: String(localized: .Funding.endedPayoutFailedStatus)
         case nil: nil
