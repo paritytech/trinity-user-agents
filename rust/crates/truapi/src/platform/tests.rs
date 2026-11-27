@@ -566,6 +566,20 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 		(CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
 		(CoreStorageKey::RingVrfRegistry { root_public_key: [0x42; 32] }, "RingVrfRegistry", None),
 		(CoreStorageKey::StatementRenewalTargets, "StatementRenewalTargets", None),
+		(
+			CoreStorageKey::ConfirmedStatementAllowance {
+				product_id: ProductId::for_test("product.dot"),
+			},
+			"ConfirmedStatementAllowance",
+			Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
+		),
+		(
+			CoreStorageKey::ConfirmedBulletinAllowance {
+				product_id: ProductId::for_test("product.dot"),
+			},
+			"ConfirmedBulletinAllowance",
+			Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
+		),
 		(CoreStorageKey::DeviceEncryptionKey, "DeviceEncryptionKey", None),
 		(
 			CoreStorageKey::SsoResponderRequestLedger {

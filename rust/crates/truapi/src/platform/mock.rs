@@ -793,6 +793,12 @@ fn core_key(key: &CoreStorageKey) -> String {
 			format!("core:ring-vrf-registry:{}", hex_key(root_public_key))
 		},
 		CoreStorageKey::StatementRenewalTargets => "core:statement-renewal-targets".to_string(),
+		CoreStorageKey::ConfirmedStatementAllowance { product_id } => {
+			format!("core:confirmed-statement-allowance:{product_id}")
+		},
+		CoreStorageKey::ConfirmedBulletinAllowance { product_id } => {
+			format!("core:confirmed-bulletin-allowance:{product_id}")
+		},
 		CoreStorageKey::DeviceEncryptionKey => "core:device-encryption-key".to_string(),
 		CoreStorageKey::ProductSubtree { session_id, product_id } => {
 			format!("core:product-subtree:{session_id}:{product_id}")

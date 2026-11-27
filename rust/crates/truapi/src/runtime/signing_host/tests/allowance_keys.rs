@@ -6,6 +6,7 @@ use parity_scale_codec::Encode;
 use crate::{
 	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::root_entropy::RootEntropy,
+	platform::mock::MockPlatform,
 	runtime::{statement_allowance, statement_allowance::slot},
 };
 
@@ -295,11 +296,17 @@ fn a_preimage_the_bulletin_authorization_holds_is_submitted_without_extending_it
 	);
 }
 
-/// A signing host active under [`ENTROPY`] that keeps its records in `db`.
-fn active_signing_host_on(platform: Arc<StubPlatform>, db: &crate::store::Db) -> Arc<SigningHost> {
-	let (services, signing_host) =
+/// `platform`, keeping its core storage in `storage` so a later host finds it.
+fn keeping(mut platform: Arc<StubPlatform>, storage: &Arc<MockPlatform>) -> Arc<StubPlatform> {
+	Arc::get_mut(&mut platform).expect("the platform is not shared yet").core_storage_override =
+		Some(storage.clone());
+	platform
+}
+
+/// A signing host active under [`ENTROPY`].
+fn active_signing_host_on(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
+	let (_services, signing_host) =
 		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	services.install_core_db(db.clone()).expect("the database is installed once");
 	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	signing_host
@@ -335,14 +342,14 @@ fn statement_allocation(
 /// wallet already made: a slot confirmed once is served from the record.
 #[test]
 fn a_restarted_host_serves_a_confirmed_statement_slot_without_the_chain() {
-	let db = crate::store::open_memory_core_db();
+	let storage = Arc::new(MockPlatform::new());
 	let confirmed = statement_allocation(
-		&active_signing_host_on(chain_with_allocated_slot(), &db),
+		&active_signing_host_on(keeping(chain_with_allocated_slot(), &storage)),
 		OnExistingAllowancePolicy::Ignore,
 	);
-	let platform = offline();
+	let platform = keeping(offline(), &storage);
 	let restarted = statement_allocation(
-		&active_signing_host_on(platform.clone(), &db),
+		&active_signing_host_on(platform.clone()),
 		OnExistingAllowancePolicy::Ignore,
 	);
 
@@ -363,7 +370,7 @@ fn a_statement_slot_record_that_may_be_stale_is_not_trusted() {
 	let period = slot::current_period(crate::runtime::allowances::current_unix_secs().unwrap());
 	let resource = crate::runtime::allowances::AllowanceResource::StatementStore;
 	let served_offline = |recorded_period, policy| {
-		let signing_host = active_signing_host_on(offline(), &crate::store::open_memory_core_db());
+		let signing_host = active_signing_host_on(offline());
 		futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
 			&product_id,
 			resource,
@@ -389,7 +396,7 @@ fn a_statement_slot_record_that_may_be_stale_is_not_trusted() {
 fn a_confirmed_bulletin_allowance_is_served_without_the_chain_until_increased() {
 	let product_id = ProductId::for_test(PRODUCT_ID);
 	let resource = crate::runtime::allowances::AllowanceResource::Bulletin;
-	let db = crate::store::open_memory_core_db();
+	let storage = Arc::new(MockPlatform::new());
 	let bulletin_secret = |signing_host: &SigningHost, policy| {
 		let session = signing_host.wallet.current_session().unwrap();
 		futures::executor::block_on(
@@ -398,14 +405,17 @@ fn a_confirmed_bulletin_allowance_is_served_without_the_chain_until_increased() 
 		.ok()
 	};
 	let unconfirmed =
-		bulletin_secret(&active_signing_host_on(offline(), &db), OnExistingAllowancePolicy::Ignore);
-	let signing_host = active_signing_host_on(offline(), &db);
+		bulletin_secret(
+		&active_signing_host_on(keeping(offline(), &storage)),
+		OnExistingAllowancePolicy::Ignore,
+	);
+	let signing_host = active_signing_host_on(keeping(offline(), &storage));
 	futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
 		&product_id,
 		resource,
 		None,
 	));
-	let restarted = active_signing_host_on(offline(), &db);
+	let restarted = active_signing_host_on(keeping(offline(), &storage));
 
 	let allowance = RootEntropy::new(ENTROPY)
 		.derive_sr25519_hard_path(&["allowance", "bulletin", PRODUCT_ID])
@@ -425,7 +435,7 @@ fn a_confirmed_bulletin_allowance_is_served_without_the_chain_until_increased() 
 #[test]
 fn a_refused_statement_key_is_confirmed_on_chain_again() {
 	let product_id = ProductId::for_test(PRODUCT_ID);
-	let signing_host = active_signing_host_on(offline(), &crate::store::open_memory_core_db());
+	let signing_host = active_signing_host_on(offline());
 	futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
 		&product_id,
 		crate::runtime::allowances::AllowanceResource::StatementStore,

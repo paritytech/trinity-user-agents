@@ -1,8 +1,6 @@
 //! Wallet resource approval and allowance issuance.
 
-#[cfg_attr(target_arch = "wasm32", path = "allowance/dao/browser.rs")]
-mod dao;
-
+use parity_scale_codec::Encode;
 use tracing::{debug, warn};
 use truapi::latest as api;
 
@@ -11,7 +9,7 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::product_account::ProductAccountError,
-	platform::ProductId,
+	platform::{CoreStorageKey, ProductId},
 	runtime::{
 		allowances::{AllowanceResource, current_unix_secs},
 		authority::{AccountHolder, AuthorityError, AuthoritySession},
@@ -475,19 +473,22 @@ impl WalletAccountHolder {
 	/// Whether this wallet confirmed `resource` for `product_id` in `period`,
 	/// so its key is served without asking the chain.
 	///
-	/// A record that cannot be read answers `false`, so the chain is asked.
+	/// `period` is the Statement Store allowance period, and `None` for a
+	/// Bulletin authorization. A record that cannot be read answers `false`,
+	/// so the chain is asked.
 	async fn allowance_is_confirmed(
 		&self,
 		product_id: &ProductId,
 		resource: AllowanceResource,
 		period: Option<u32>,
 	) -> bool {
-		dao::is_confirmed(&self.services, product_id, resource, period)
-			.await
-			.unwrap_or_else(|error| {
+		match self.services.platform.read_core_storage(confirmed_key(product_id, resource)).await {
+			Ok(recorded) => recorded.is_some_and(|recorded| recorded == period.encode()),
+			Err(error) => {
 				warn!(%product_id, %error, "failed to read the confirmed allowance");
 				false
-			})
+			},
+		}
 	}
 
 	/// Record that this wallet confirmed `resource` for `product_id` in
@@ -500,8 +501,11 @@ impl WalletAccountHolder {
 		resource: AllowanceResource,
 		period: Option<u32>,
 	) {
-		let recorded =
-			dao::record(&self.services, product_id, resource, period).await;
+		let recorded = self
+			.services
+			.platform
+			.write_core_storage(confirmed_key(product_id, resource), period.encode())
+			.await;
 		if let Err(error) = recorded {
 			warn!(%product_id, %error, "failed to record the confirmed allowance");
 		}
@@ -515,9 +519,19 @@ impl WalletAccountHolder {
 		resource: AllowanceResource,
 	) {
 		let forgotten =
-			dao::forget(&self.services, product_id, resource).await;
+			self.services.platform.clear_core_storage(confirmed_key(product_id, resource)).await;
 		if let Err(error) = forgotten {
 			warn!(%product_id, %error, "failed to forget the confirmed allowance");
 		}
+	}
+}
+
+fn confirmed_key(product_id: &ProductId, resource: AllowanceResource) -> CoreStorageKey {
+	let product_id = product_id.clone();
+	match resource {
+		AllowanceResource::StatementStore => {
+			CoreStorageKey::ConfirmedStatementAllowance { product_id }
+		},
+		AllowanceResource::Bulletin => CoreStorageKey::ConfirmedBulletinAllowance { product_id },
 	}
 }

@@ -1282,6 +1282,22 @@ pub enum CoreStorageKey {
 		/// The stack's `stack_id`, the key in its link.
 		stack_id: String,
 	},
+	/// The allowance period a signing host's wallet confirmed a product's
+	/// Statement Store slot in on chain, so a restart serves its key without
+	/// a chain read. No key is stored: the wallet derives it.
+	#[codec(index = 18)]
+	ConfirmedStatementAllowance {
+		/// Product the slot belongs to.
+		product_id: ProductId,
+	},
+	/// Marks a product's Bulletin authorization as confirmed on chain by a
+	/// signing host's wallet, so a restart serves its key without a chain
+	/// read. No key is stored: the wallet derives it.
+	#[codec(index = 19)]
+	ConfirmedBulletinAllowance {
+		/// Product the authorization belongs to.
+		product_id: ProductId,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1388,6 +1404,12 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
 		CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
 		CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
+		CoreStorageKey::ConfirmedStatementAllowance { product_id } => {
+			("ConfirmedStatementAllowance", Some(CoreStorageKeyOwner::Product(product_id)))
+		},
+		CoreStorageKey::ConfirmedBulletinAllowance { product_id } => {
+			("ConfirmedBulletinAllowance", Some(CoreStorageKeyOwner::Product(product_id)))
+		},
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_label } => {
