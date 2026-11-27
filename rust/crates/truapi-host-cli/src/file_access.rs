@@ -88,8 +88,10 @@ pub fn create_dir(path: &Path, access: FileAccess) -> io::Result<()> {
 /// bytes go to a new temporary file beside `path`, created with the mode of
 /// `access`, which is synced and renamed over `path`; on Unix the directory
 /// is then synced so the rename survives a crash. The replaced file's mode is
-/// not kept. A failure before the rename leaves `path` as it was and removes
-/// the temporary file.
+/// not kept. An error means `path` was not replaced: a failure before the
+/// rename leaves it as it was and removes the temporary file, and a failure
+/// to sync the directory after it is logged, since the new contents are
+/// already in place.
 pub fn write_atomically(path: &Path, bytes: &[u8], access: FileAccess) -> io::Result<()> {
 	let Some(name) = path.file_name() else {
 		return Err(io::Error::new(io::ErrorKind::InvalidInput, "the path names no file"));
@@ -105,7 +107,9 @@ pub fn write_atomically(path: &Path, bytes: &[u8], access: FileAccess) -> io::Re
 	file.as_file().sync_all()?;
 	file.persist(path).map_err(|failed| failed.error)?;
 	#[cfg(unix)]
-	std::fs::File::open(directory)?.sync_all()?;
+	if let Err(error) = std::fs::File::open(directory).and_then(|directory| directory.sync_all()) {
+		tracing::warn!(path = %path.display(), %error, "replaced a file but could not sync its directory");
+	}
 	Ok(())
 }
 

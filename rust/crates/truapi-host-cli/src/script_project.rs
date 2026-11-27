@@ -11,7 +11,11 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
-use crate::{script_runner, terminal_ui::UiHandle};
+use crate::{
+	file_access::{self, FileAccess},
+	script_runner,
+	terminal_ui::UiHandle,
+};
 
 const SCRIPT: &str = include_str!("../js/sdk-script.ts");
 const MANIFEST: &str = include_str!("../js/script-package.json");
@@ -38,8 +42,11 @@ fn create_with_types(root: &Path, destination: Option<&Path>, types: &[u8]) -> R
 	let destination = destination
 		.map(|path| std::env::current_dir().map(|current| current.join(path)))
 		.transpose()?;
-	let parent = destination.as_deref().and_then(Path::parent).unwrap_or(root);
-	fs::create_dir_all(parent)
+	let (parent, access) = match destination.as_deref().and_then(Path::parent) {
+		Some(parent) => (parent, FileAccess::Shared),
+		None => (root, FileAccess::Private),
+	};
+	file_access::create_dir_all(parent, access)
 		.with_context(|| format!("create script project parent {}", parent.display()))?;
 	let temporary = tempfile::Builder::new().prefix("script-").tempdir_in(parent)?;
 	for (name, contents) in [

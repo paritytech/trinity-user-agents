@@ -69,3 +69,27 @@ fn a_failed_write_leaves_the_target_and_no_temporary_file() {
 		.collect();
 	assert_eq!(entries, ["current-session"]);
 }
+
+/// Callers undo their own work on an error, such as a session promotion
+/// whose pointer write fails, so an error must mean the file was not
+/// replaced. Once the rename is done, a directory that cannot be opened to
+/// sync it is no reason to report one. The owner can create and rename files
+/// in this directory but not open it. Root can open it anyway, and then the
+/// sync succeeds and the assertion still holds.
+#[test]
+fn a_directory_that_cannot_be_synced_still_counts_as_written() {
+	let root = tempfile::tempdir().expect("temporary directory");
+	let directory = root.path().join("unlistable");
+	fs::create_dir(&directory).expect("create the directory");
+	let path = directory.join("current-session");
+	fs::set_permissions(&directory, fs::Permissions::from_mode(0o300)).expect("chmod");
+
+	let written = write_atomically(&path, b"promoted\n", FileAccess::Private);
+
+	let contents = fs::read(&path);
+	fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).expect("restore");
+	assert_eq!(
+		(written.is_ok(), contents.expect("read the replaced file")),
+		(true, b"promoted\n".to_vec())
+	);
+}

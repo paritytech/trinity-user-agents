@@ -115,9 +115,13 @@ async fn session_selection_activates_a_finished_account_without_reprovisioning()
 #[tokio::test]
 async fn session_selection_preserves_the_active_profile_when_promotion_cannot_commit() -> Result<()>
 {
-	for (name, slash_command) in
-		[(DEFAULT_SESSION_NAME, false), ("pending", true), ("pending", false)]
-	{
+	// The blocked pointer cannot be read, so the catalog falls back to the provisioned sessions,
+	// which never include the default profile.
+	for (name, slash_command, unpointed) in [
+		(DEFAULT_SESSION_NAME, false, CurrentSession::Fresh),
+		("pending", true, CurrentSession::Recovered("pending".to_string())),
+		("pending", false, CurrentSession::Recovered("pending".to_string())),
+	] {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), name).await?;
 		let profile = session.profile.clone().unwrap();
@@ -139,7 +143,6 @@ async fn session_selection_preserves_the_active_profile_when_promotion_cannot_co
 		let blocked_pointer = role.path.join("current-session");
 		std::fs::remove_file(&blocked_pointer)?;
 		std::fs::create_dir(&blocked_pointer)?;
-		let selection = session.catalog.current_session()?;
 		let runtime = session.runtime.clone();
 		let resets = session.runtime_factory.connection_reset().unwrap();
 
@@ -159,7 +162,7 @@ async fn session_selection_preserves_the_active_profile_when_promotion_cannot_co
 				resets.has_changed()?,
 				std::fs::read(profile.account_base_path.join("accounts.json"))?,
 			),
-			(true, Some(&profile), selection, false, accounts.clone())
+			(true, Some(&profile), unpointed, false, accounts.clone())
 		);
 		for (path, bytes) in &contents {
 			assert_eq!(

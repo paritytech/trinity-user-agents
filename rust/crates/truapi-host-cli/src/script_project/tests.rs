@@ -8,6 +8,24 @@ fn new_projects_carry_the_matching_declarations_without_reading_a_checkout() -> 
 	Ok(())
 }
 
+/// The project root sits beside the host state under the base path, so a
+/// first `/script` must not create the base path readable by other users
+/// when the state directory would have made it owner-only.
+#[cfg(unix)]
+#[test]
+fn the_project_root_and_its_new_parents_are_readable_by_the_owner_only() -> Result<()> {
+	use std::os::unix::fs::PermissionsExt;
+
+	let temporary = tempfile::tempdir()?;
+	let base = temporary.path().join("truapi-host");
+	create_with_types(&base.join("scripts"), None, b"types")?;
+
+	let mode =
+		|path: &Path| -> Result<u32> { Ok(fs::metadata(path)?.permissions().mode() & 0o777) };
+	assert_eq!((mode(&base)?, mode(&base.join("scripts"))?), (0o700, 0o700));
+	Ok(())
+}
+
 #[test]
 fn ordinary_projects_keep_the_callers_working_directory() -> Result<()> {
 	let root = tempfile::tempdir()?;
