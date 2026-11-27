@@ -73,21 +73,13 @@ To add a stack to the list, open a pull request that:
 
 Users get the stack with the next release of `@parity/trinity-stack` and the crate.
 
-A host build that sets `reservedValues.allowed`, as a Polkadot build does, pins its stack to the copy it bundles: the
-chain roles and their genesis hashes, `assets`, `contracts`, `dotns` and `coinage`. It also runs the relay's `lightSpec`
-from that copy whatever a newer descriptor names; a host light client starts from the checkpoint the build ships when
-the host opens it from the bundled copy's bytes. Refresh the stack's copy in `stacks/` with `scripts/update-stacks.sh` before such a build is released, so
-the copy it bundles has the published values of those fields and a fresh relay checkpoint. Run the script with a `truapi-host` built from the same
-tree, `TRUAPI_HOST=target/debug/truapi-host` after `cargo build -p truapi-host-cli`. The script and the daily
-`update-chain-specs.yml` otherwise run the installed release, which can be older than the tree and keep a copy whose
-only change is to a pinned field.
-
-A build whose copy predates a change to one of those fields refuses each newer descriptor that carries the change and
-runs the values it bundles, also on a device that stored the newer copy under an earlier build. For the same reason, the
-operator of a pinned stack cannot change those fields without stranding the builds already shipped: each one refuses the
-new descriptor and stays on the copy it holds until a new build replaces it. A pinned stack cannot follow a wipe of its
-chains either, since the new genesis hashes are pinned fields: a build that sets `allowed` for it, such as dotli for
-pcf-devnet, stays on the wiped chains until a host build that bundles the new descriptor is deployed.
+A host build that sets `reservedValues.allowed`, as a Polkadot build does, pins its stack to the copy it bundles and
+runs that copy's relay light spec; `ReservedValuesPolicy` in [`truapi`](../truapi/src/stack.rs) lists the pinned fields.
+Refresh the stack's copy in `stacks/` with `scripts/update-stacks.sh` before such a build is released, so the copy it
+bundles has the published values of those fields and a fresh relay checkpoint. Run the script with a `truapi-host`
+built from the same tree, `TRUAPI_HOST=target/debug/truapi-host` after `cargo build -p truapi-host-cli`. The script and
+the daily `update-chain-specs.yml` otherwise run the installed release, which can be older than the tree and keep a
+copy whose only change is to a pinned field.
 
 ## What else is here
 

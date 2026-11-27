@@ -18,14 +18,8 @@ use super::{ReservedValuesPolicy, StackError};
 /// cannot move the stack off these values. The TLD is pinned on every stack
 /// because accounts derive under it.
 ///
-/// A stack its build allows reserved values pins more of what its descriptor
-/// names: the chain roles and each one's genesis hash, `assets`, `contracts`,
-/// `dotns` and `coinage`. The pins fix what the descriptor says, not what a
-/// chain answers: the core does not check a genesis hash against the chain it
-/// reads. Such a stack also runs the relay light spec its bundled copy names,
-/// whatever a newer copy names. The core runs no light client: one starts
-/// from the sync checkpoint the build ships only when its host opens it from
-/// the bundled copy.
+/// A stack its build allows reserved values pins more, and runs its bundled
+/// relay light spec, as [`ReservedValuesPolicy`] describes.
 #[derive(Clone)]
 pub struct Pinned {
 	bundled: Descriptor,

@@ -78,20 +78,9 @@ export type LogLevel = string;
  * hashes against the core's rules.
  *
  * A `stack` that is allowed reserved values is pinned to its bundled
- * descriptor. A copy the core stored or fetched is refused when it gives a
- * chain role another genesis hash, adds or drops a chain role, or changes
- * `assets`, `contracts`, `dotns` or `coinage`. Only a new build changes what
- * the descriptor names for those. The core also runs the relay's `lightSpec`
- * the bundled descriptor names, the file that carries the relay's sync
- * checkpoint, in place of the one a newer copy names, and takes the rest of
- * that copy. A `testStack` has no descriptor and pins nothing.
- *
- * The pins cover the descriptor, not the chains. The core does not check a
- * genesis hash against the chain a host reads, so what a host reads over the
- * descriptor's endpoints is protected only by a light client that starts from
- * the bundled relay light spec, and that protects the relay alone: a
- * parachain's `paraId` and `lightSpec` are not pinned. `network` and
- * `services` are not pinned either.
+ * descriptor and runs its relay light spec. `ReservedValuesPolicy` in
+ * `rust/crates/truapi/src/stack.rs` lists what is pinned and what the pins do
+ * not protect. A `testStack` has no descriptor and pins nothing.
  */
 export interface ReservedValuesPolicy {
   /**
@@ -199,9 +188,8 @@ export interface StackStatus {
    * The verified descriptor the core runs, as plain descriptor JSON. The
    * host's own features read their chains and services from it. On a `stack`
    * allowed reserved values its relay `lightSpec` is the bundled
-   * descriptor's. It carries no signature, so the provider does not open a
-   * keyed stack from it: open a light client from the bundled descriptor to
-   * start from the checkpoint the build ships.
+   * descriptor's. It carries no signature: open a light client from the
+   * bundled descriptor.
    */
   descriptor: string;
   /**
