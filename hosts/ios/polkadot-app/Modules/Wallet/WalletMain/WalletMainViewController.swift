@@ -125,11 +125,11 @@ extension WalletMainViewController: WalletMainViewProtocol {
         }
     }
 
-    func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+    func moveOpenItem(by offset: CGSize, clearance: CGFloat, animatedOver duration: TimeInterval?) {
         let viewModel = content.viewModel
-        withTransaction(Transaction(animation: animated ? PocketFlightTiming.animation : nil)) {
+        withTransaction(Transaction(animation: duration.map(PocketFlightTiming.animation(duration:)))) {
             viewModel.openPocketCardOffset = offset
-            viewModel.isPocketCleared = clearingPocket
+            viewModel.pocketClearance = clearance
         }
 
         applySafeAreaInsets()

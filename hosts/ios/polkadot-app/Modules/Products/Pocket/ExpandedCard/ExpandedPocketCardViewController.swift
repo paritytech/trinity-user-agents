@@ -64,7 +64,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         setupFace()
         setupPage()
         pullDown.install()
-        setContentScrollView(widgetView.webView.scrollView, for: .top)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -79,18 +78,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         super.viewSafeAreaInsetsDidChange()
 
         widgetView.scrollIndicatorInsets = view.safeAreaInsets
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -227,9 +214,17 @@ extension ExpandedPocketCardViewController: NavigationTransitionAnimating {
         isInFlight = true
         return PocketFlight(screen: self, origin: origin, opening: operation == .push)
     }
+
+    var allowsBackSwipe: Bool {
+        canSwipeBack
+    }
 }
 
 private extension ExpandedPocketCardViewController {
+    var canSwipeBack: Bool {
+        !isInFlight && !isClosing && !pullDown.isPulling
+    }
+
     func setupFace() {
         addChild(face)
         rootView.embedFace(face.view)

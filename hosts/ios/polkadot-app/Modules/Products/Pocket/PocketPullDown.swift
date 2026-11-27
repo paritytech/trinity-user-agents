@@ -102,11 +102,12 @@ private extension PocketPullDown {
     }
 
     /// The card's flight starts where the snapshot card is, so the real card is moved to that spot,
-    /// wherever the scroll underneath has left it.
+    /// wherever the scroll underneath has left it. The real page also keeps the pull's fade.
     func closeCard(draggedBy travel: CGFloat) {
         if let overlay, let screen {
             let realCard = screen.itemFrame(in: screen.view)
             screen.moveItem(by: CGPoint(x: 0, y: overlay.startCard.minY + max(travel, 0) - realCard.minY))
+            screen.setPageAlpha(overlay.body.alpha)
         }
         overlay?.view.removeFromSuperview()
         overlay = nil
