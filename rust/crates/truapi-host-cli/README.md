@@ -1143,10 +1143,10 @@ A command reaches its chains in one of two ways:
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
   All three are built-in Trinity stacks. The core starts each from the signed copy
   this release ships in `stacks/`, or from a newer copy it verified on an earlier run
-  and kept in the network's state directory, so a command never waits on the
-  descriptor's server. Each command refreshes the descriptor in the background while
-  it runs and keeps a newer copy for the next start; one that changes the chains
-  takes effect from the next command, and a running host logs that it needs a
+  and kept in the network's state directory. When that copy is over an hour old, a
+  command first fetches the published descriptor, saying so, and waits up to 3
+  seconds for it; it then runs on the newest copy it holds. A signing or pairing host
+  also refreshes the descriptor while it runs, and logs when a newer copy needs a
   restart. A published descriptor that changes
   the stack's `tld`, or that the CLI cannot run on, is not kept, since every account
   derives under the TLD. A stack past its `expiresAt` is an error.

@@ -1,6 +1,8 @@
 //! What the CLI does for the stack the core runs: fetch its descriptor and
 //! report what changes.
 
+use std::time::Duration;
+
 use trinity_stack::{Descriptor, Pointer};
 use truapi::{
 	latest::GenericError,
@@ -20,6 +22,8 @@ pub struct CliStackHost {
 	/// runs: on the light client, and for a built-in network on either
 	/// backend, since its kept copy serves both.
 	needs_light_specs: bool,
+	/// How long a fetch waits for the server.
+	timeout: Duration,
 }
 
 impl CliStackHost {
@@ -27,7 +31,17 @@ impl CliStackHost {
 	/// `on_light_client` is set.
 	pub fn new(pointer: Pointer, on_light_client: bool) -> Self {
 		let built_in = Network::of_stack(&pointer.stack_id()).is_some();
-		Self { pointer, needs_light_specs: on_light_client || built_in }
+		Self { pointer, needs_light_specs: on_light_client || built_in, timeout: FETCH_TIMEOUT }
+	}
+
+	/// This host, with each fetch waiting at most `timeout` for the server.
+	pub fn within(self, timeout: Duration) -> Self {
+		Self { timeout, ..self }
+	}
+
+	/// The URL the stack's descriptor is fetched from.
+	pub fn url(&self) -> &str {
+		self.pointer.url().as_str()
 	}
 
 	/// Why the CLI cannot run on `descriptor`, or `None` when it can. The core
@@ -56,10 +70,9 @@ impl StackHost for CliStackHost {
 		&self,
 		request: StackFetchRequest,
 	) -> Result<StackFetchResponse, GenericError> {
-		let served =
-			fetch_if_changed(&request.url, FETCH_TIMEOUT, request.if_none_match.as_deref())
-				.await
-				.map_err(|error| GenericError::from(format!("{}: {error}", request.url)))?;
+		let served = fetch_if_changed(&request.url, self.timeout, request.if_none_match.as_deref())
+			.await
+			.map_err(|error| GenericError::from(format!("{}: {error}", request.url)))?;
 		let (bytes, etag) = match served {
 			Served::NotModified => return Ok(StackFetchResponse::NotModified),
 			Served::Document { body, etag } => (body, etag),

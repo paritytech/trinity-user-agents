@@ -227,6 +227,17 @@ impl StackRefresh {
 		self.shared.source().descriptor().clone()
 	}
 
+	/// Whether the copy is old enough that the refresh would fetch the
+	/// descriptor now: an hour old, or never fetched, as a bundled copy is.
+	///
+	/// A tool that runs one command at a time may fetch before it starts
+	/// rather than in the background, since it may exit before a background
+	/// fetch is stored. It asks this, and when it is due awaits
+	/// [`Self::fetch_now`] through a host that gives up soon.
+	pub fn fetch_is_due(&self) -> bool {
+		self.shared.source().next_fetch_in(self.shared.now()) == Some(Duration::ZERO)
+	}
+
 	/// Fetches the descriptor through `host` now, whatever the copy's age, and
 	/// returns the status once the answer is taken and any newer copy stored.
 	///

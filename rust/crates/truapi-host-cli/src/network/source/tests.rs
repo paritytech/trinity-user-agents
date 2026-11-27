@@ -102,14 +102,37 @@ async fn a_piped_local_stack_says_why() {
 	);
 }
 
+/// Keeps a record of `descriptor`, fetched `age_secs` ago from `pointer`, in
+/// `state`, as an earlier command would have.
+fn keep_copy(state: &std::path::Path, pointer: &Pointer, descriptor: &[u8], age_secs: u64) {
+	let fetched_at = crate::stack_descriptor::unix_now() - age_secs;
+	let served = trinity_stack::Served::Document { bytes: descriptor, etag: None };
+	let record = trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
+		.fetched(pointer, served, fetched_at as i64)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored");
+	let directory = state.join(super::super::stack::state_directory_of(&pointer.stack_id()));
+	std::fs::create_dir_all(&directory).expect("a state directory");
+	std::fs::write(directory.join(super::super::records::RECORD_FILE), record).expect("a record");
+}
+
+/// Keeps `network`'s shipped copy in `state` as fetched just now, so
+/// resolving it fetches nothing from the real network.
+fn keep_shipped_copy(state: &std::path::Path, network: Network) {
+	let (link, bundled) = network.link_and_bundle();
+	keep_copy(state, &Pointer::from_link(&link).expect("a built-in link"), bundled, 0);
+}
+
 /// A built-in network starts from the copy this build ships, without
-/// waiting on its descriptor's server, and a product sees the network, TLD,
-/// chains and contracts an app bundling the same copy shows, without the
+/// waiting on its descriptor's server while that copy is fresh, and a product sees the network,
+/// TLD, chains and contracts an app bundling the same copy shows, without the
 /// relay, which the CLI does not serve.
 #[tokio::test]
 async fn a_built_in_network_runs_the_stack_an_app_bundling_it_runs() {
 	for network in Network::value_variants() {
 		let state = tempfile::tempdir().expect("temporary directory");
+		keep_shipped_copy(state.path(), *network);
 		let source =
 			NetworkSource::new(ChainAccess::Rpc, Some(*network), None, state.path().into())
 				.expect("a built-in network is a source");
@@ -137,6 +160,7 @@ async fn a_built_in_stack_given_by_link_or_url_keeps_its_state_directory() {
 			.expect("the URL is a pointer")
 			.to_link(DEFAULT_LINK_BASE);
 		let state = tempfile::tempdir().expect("temporary directory");
+		keep_shipped_copy(state.path(), *network);
 
 		let mut state_directories = Vec::new();
 		for value in [pointer.to_link(DEFAULT_LINK_BASE), url, keyless_link] {
@@ -204,4 +228,39 @@ async fn a_light_spec_that_no_longer_matches_is_fixed_by_a_newer_copy() {
 		(stack.descriptor().sequence, light.provider().has_light_spec(stack.genesis().people)),
 		(2, true)
 	);
+}
+
+/// A command may exit before a background fetch is stored, so a copy over an
+/// hour old is fetched before the command runs, and a newer one is run
+/// at once: an operator who moved a service is followed by the next command.
+#[tokio::test]
+async fn a_copy_over_an_hour_old_is_fetched_before_the_command_runs() {
+	let (server, _) = serve_light_specs().await;
+	let (older, newer) = (
+		served_copy(&server, 1, "relay.json", "people.json"),
+		served_copy(&server, 2, "relay.json", "people.json"),
+	);
+	let (server, requests) = serve_stack_and_light_specs(vec![newer]).await;
+	let url = format!("{server}/stack.json");
+	let state = tempfile::tempdir().expect("temporary directory");
+	keep_copy(state.path(), &Pointer::new(&url, None).unwrap(), &older, 2 * 60 * 60);
+
+	let stack = stack_source(&url, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
+
+	assert_eq!((stack.descriptor().sequence, requests.load(Ordering::Relaxed)), (2, 1));
+}
+
+/// A server that does not answer stops nothing: the command runs on the copy
+/// it holds.
+#[tokio::test]
+async fn a_copy_over_an_hour_old_runs_when_its_server_gives_none() {
+	let (server, _) = serve_light_specs().await;
+	let older = served_copy(&server, 1, "relay.json", "people.json");
+	let url = format!("{server}/missing.json");
+	let state = tempfile::tempdir().expect("temporary directory");
+	keep_copy(state.path(), &Pointer::new(&url, None).unwrap(), &older, 2 * 60 * 60);
+
+	let stack = stack_source(&url, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
+
+	assert_eq!(stack.descriptor().sequence, 1);
 }

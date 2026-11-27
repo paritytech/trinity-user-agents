@@ -1830,11 +1830,14 @@ ships a signed copy of each from the repository's `stacks/<name>.json`, with the
 link that carries its pointer from the trinity-stack crate's known stack of the
 same name. A command starts the core with `StackRefresh::load` on that link and
 copy. The core runs the newer of the shipped copy and the copy kept in the
-stack's state directory (`stack-record.json`, §13.1), and never waits on the
-published descriptor. Each command then refreshes the descriptor in the
-background while it runs, as the core does for every host, without waiting for
-the fetch. A newer copy is kept for the next start, and one that changes a
-chain, the network or the `generation` is logged as needing a restart. A copy that changes the `tld`, or
+stack's state directory (`stack-record.json`, §13.1). When that copy is over an
+hour old, or was never fetched, as a shipped copy is, the command first fetches
+the published descriptor, logging that it does, and waits up to 3 seconds. It
+then runs on the newest copy it holds, so a server that does not answer stops
+nothing; RFC 1 lets a tool fetch before it runs. Each command also refreshes the
+descriptor in the background while it runs. A newer copy is kept for the next
+start, and one that changes a chain, the network or the `generation` while a
+host runs is logged as needing a restart. A copy that changes the `tld`, or
 that the CLI cannot run on, is refused with a warning and the copy in use
 stays: for instance one without a `dub` service, or on the light client one that
 names no `lightSpec` for the relay, People, Asset Hub or Bulletin. A copy past
@@ -1873,8 +1876,8 @@ domain is read for its `url` and `key`; a URL is read as a pointer without a
 key; any other value is read as a local descriptor file, signed or not, with no
 key checked. A link or URL that is not a built-in's is imported through
 `StackRefresh::import`: the first command fetches it and keeps it in the stack's
-state directory, and later commands start from that copy without waiting on its
-server, refreshing it in the background as they do a built-in's. A local
+state directory, and later commands start from that copy and fetch it again
+before they run once it is over an hour old, as for a built-in. A local
 file is read on every run and never refreshed. A stack that cannot be fetched
 while none is kept, a descriptor that breaks a rule and one past `expiresAt` are
 errors that name the stack; one past `validUntil` is used with a warning. Its endpoints and People's

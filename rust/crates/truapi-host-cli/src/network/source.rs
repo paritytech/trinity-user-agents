@@ -72,17 +72,36 @@ impl NetworkSource {
 		Ok(stack.kept_current())
 	}
 
-	/// [`Self::resolve_checked`] without contacting any chain. A stack that
-	/// is not built in is fetched only when its state directory holds no
-	/// copy yet. Fails when the stack is past `expiresAt`, when it is not one
-	/// the CLI can run, and for a `--stack` that cannot be read.
+	/// [`Self::resolve_checked`] without contacting any chain. The descriptor
+	/// is fetched only when the copy kept for the stack is over an hour old,
+	/// or there is none yet. Fails when the stack is past `expiresAt`, when it
+	/// is not one the CLI can run, and for a `--stack` that cannot be read.
 	pub async fn resolve(&self) -> Result<Stack> {
 		Ok(self.open().await?.kept_current())
 	}
 
 	/// The stack, with nothing refreshing it yet: a refresh started now could
-	/// have its fetch out when [`Self::resolve_checked`] asks for one.
+	/// have its fetch out when [`Self::resolve_checked`] asks for one. A copy
+	/// due for a fetch is fetched first, as RFC 1 lets a tool do, and a newer
+	/// copy is run; one that cannot be fetched in time is not.
 	async fn open(&self) -> Result<Stack> {
+		let stack = self.open_held().await?;
+		let Some(refresh) = &stack.refresh else {
+			return Ok(stack);
+		};
+		let held = refresh.descriptor();
+		let Some(status) = refresh.fetch_if_due().await else {
+			return Ok(stack);
+		};
+		if !status.restart_required && refresh.descriptor() == held {
+			return Ok(stack);
+		}
+		self.open_held().await
+	}
+
+	/// The stack from the copy the core holds, without fetching unless it is
+	/// a stack the CLI keeps no copy of yet.
+	async fn open_held(&self) -> Result<Stack> {
 		match &self.network {
 			NetworkChoice::BuiltIn(network) => self.built_in(*network).await,
 			NetworkChoice::Stack(stack_arg) => self

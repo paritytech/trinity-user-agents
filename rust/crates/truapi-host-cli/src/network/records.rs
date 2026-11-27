@@ -10,7 +10,7 @@ use truapi::{
 };
 
 /// The file a stack's record is kept in, in its state directory.
-const RECORD_FILE: &str = "stack-record.json";
+pub const RECORD_FILE: &str = "stack-record.json";
 
 /// One stack's descriptor record, kept in a file in its state directory.
 pub struct StackRecordFile {

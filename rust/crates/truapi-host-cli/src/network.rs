@@ -48,6 +48,10 @@ pub enum Network {
 /// Env var supplying `--stack` when the flag is absent; a blank value is unset.
 pub const STACK_ENV: &str = "HOST_CLI_STACK";
 
+/// How long a command waits for its stack's descriptor before it runs, when
+/// the copy in use is over an hour old. It then runs on that copy.
+const PRE_START_FETCH_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// How long a chain check before a command runs waits for a node: an
 /// endpoint's genesis probe, and each side of the Polkadot fork comparison.
 pub const CHAIN_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
@@ -150,6 +154,24 @@ impl DescriptorRefresh {
 	/// is stored.
 	async fn fetch_now(&self) -> StackStatus {
 		self.refresh.fetch_now(&self.host).await
+	}
+
+	/// Fetches the descriptor before a command runs, waiting at most
+	/// [`PRE_START_FETCH_TIMEOUT`] for its server, when the copy in use is due
+	/// for one. Returns the status after the fetch, or `None` when none was
+	/// due. A command may exit before a background fetch is stored, so without
+	/// this a short one would never follow a moved service.
+	async fn fetch_if_due(&self) -> Option<StackStatus> {
+		if !self.refresh.fetch_is_due() {
+			return None;
+		}
+		tracing::info!(
+			"fetching the stack descriptor at {} before the command runs, since the copy in use \
+			 is over an hour old",
+			self.host.url()
+		);
+		let host = self.host.clone().within(PRE_START_FETCH_TIMEOUT);
+		Some(self.refresh.fetch_now(&host).await)
 	}
 
 	/// The descriptor of the copy the core runs.

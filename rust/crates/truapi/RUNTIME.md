@@ -188,7 +188,10 @@ CLI, starts through `StackRefresh::import` from its link, signed or not. The
 core starts from the copy it stored for that stack, or fetches the descriptor
 first and stores it. `StackRefresh::fetch_now` makes one fetch a host can wait
 on; the CLI calls it when a chain gives a genesis hash the descriptor does not
-name, before it refuses the stack. A local descriptor file runs through
+name, before it refuses the stack. A tool that runs one command at a time may
+exit before a background fetch is stored, so it can ask
+`StackRefresh::fetch_is_due` and wait for `fetch_now` before it starts, as
+the CLI does. A local descriptor file runs through
 `Stack::local` under the tool's own id, and a test-host browser bundle passes
 `runtimeConfig.testStack`. The core does not refresh a stack built either of
 those two ways. Each constructor documents what it refuses.
