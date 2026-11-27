@@ -19,7 +19,7 @@ struct FundingFeesView: View {
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.backAction, style: .secondary, expands: true, action: presenter.back)
+            DSButton(.Common.back, style: .secondary, expands: true, action: presenter.back)
         }
         .fundingScreen()
     }
@@ -50,7 +50,7 @@ private extension FundingFeesView {
             }
 
             if let rate = fees.rate {
-                line(String(localized: .Funding.feesRate), rate, emphasized: false)
+                line(String(localized: .depositRateTitle), rate, emphasized: false)
             }
         }
     }

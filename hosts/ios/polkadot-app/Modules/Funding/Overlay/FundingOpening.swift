@@ -17,7 +17,7 @@ enum FundingOpeningError: Error, ErrorContentConvertible {
     func toErrorContent() -> ErrorContent {
         ErrorContent(
             title: String(localized: .Funding.errorOpenTitle),
-            message: String(localized: .Funding.errorOpenMessage)
+            message: String(localized: .Common.errorMessage)
         )
     }
 }

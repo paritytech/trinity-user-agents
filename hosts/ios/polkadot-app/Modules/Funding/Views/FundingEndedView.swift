@@ -166,7 +166,7 @@ private extension FundingEndedView {
                 )
             }
 
-            FundingValueRow(title: String(localized: .Funding.endedStarted)) {
+            FundingValueRow(title: String(localized: .Funding.progressStepStarted)) {
                 value(dateTime(ended.openedAt))
             }
 
@@ -179,7 +179,7 @@ private extension FundingEndedView {
     var bottomAction: some View {
         Group {
             if ended.succeeded {
-                DSButton(.Funding.failureClose, style: .secondary, expands: true, action: onClose)
+                DSButton(.Common.close, style: .secondary, expands: true, action: onClose)
             } else {
                 DSButton(.Funding.endedStartOver, expands: true, action: onStartOver)
             }
@@ -223,12 +223,12 @@ private extension FundingEndedView {
         case .payoutFailed:
             return String(localized: .Funding.activityPayoutFailed)
         case .failed(.refunded):
-            return String(localized: .Funding.activityRefunded)
+            return String(localized: .Funding.failureRefunded)
         case .failed:
             guard step == .received else { return title(step) }
             if ended.direction == .out { return String(localized: .Funding.endedStepSendingFailed) }
-            if ended.isDeclined { return String(localized: .Funding.endedStepPaymentDeclined) }
-            return String(localized: .Funding.endedStepPaymentFailed)
+            if ended.isDeclined { return String(localized: .Funding.failureDeclined) }
+            return String(localized: .transactionFailureTitle)
         }
     }
 
@@ -327,7 +327,7 @@ private extension FundingEndedView {
     }
 
     var endedCaption: String {
-        ended.succeeded ? String(localized: .Funding.endedCompleted) : String(localized: .Funding.endedEnded)
+        ended.succeeded ? String(localized: .Common.completed) : String(localized: .Funding.endedEnded)
     }
 
     /// How the user paid or was paid, with the network for crypto.
@@ -348,7 +348,7 @@ private extension FundingEndedView {
 
     var payoutText: String? {
         switch ended.payoutState {
-        case .pending: String(localized: .Funding.endedPayoutPending)
+        case .pending: String(localized: .depositTransactionPending)
         case .paidOut: String(localized: .Funding.endedPayoutPaidOut)
         case .failed: String(localized: .Funding.endedPayoutFailedStatus)
         case nil: nil
