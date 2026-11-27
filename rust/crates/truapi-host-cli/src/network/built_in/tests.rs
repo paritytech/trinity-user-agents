@@ -63,8 +63,8 @@ fn test_built_in_runnable_check_on_the_light_client() {
 		assert_eq!(
 			error.to_string(),
 			format!(
-				"{url} is a built-in network's stack the CLI cannot run on the light client: its \
-				 descriptor names no lightSpec for {role}"
+				"{url} is a built-in network's stack the CLI cannot run: it names no lightSpec \
+				 for {role}, which the light client needs"
 			)
 		);
 		ensure_built_in_runnable(&POLKADOT_REFERENCE_STACK.pointer(), &without_spec)

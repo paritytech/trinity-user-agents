@@ -294,9 +294,8 @@ It chooses them by the stack's pointer, not by anything in the descriptor. A
 fork has the same genesis hashes and TLD as its source, and its descriptor can
 declare any `id`, its source's included.
 
-The CLI keeps a built-in network's state in `v2/<network>`, such as
-`v2/previewnet`. Any other stack's directory is `stack-` plus a hash of the
-pointer's key, or of the URL or file path when there is no key.
+The CLI's directory per stack is described in its README, under "Each stack has
+its own directory".
 
 #### Descriptor refresh
 

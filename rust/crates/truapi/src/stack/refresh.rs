@@ -182,12 +182,11 @@ impl StackRefresh {
 		let stack_id = pointer.stack_id();
 		let stored = read_record(records.as_ref(), &stack_id, timer.as_ref()).await;
 		let now = unix_now(clock.as_ref());
-		let source = match StackSource::import(&pointer, stored.as_deref(), &reserved_values, now)?
-		{
+		let source = match StackSource::import(&pointer, stored.as_deref(), &reserved_values, now) {
 			Some(source) => source,
 			None => {
-				let first = FirstFetch::new(pointer, reserved_values, now);
-				let response = ask(host, first.request().clone(), timer.as_ref()).await;
+				let (first, request) = FirstFetch::new(pointer, reserved_values, now);
+				let response = ask(host, request, timer.as_ref()).await;
 				let (mut source, record) =
 					first.fetched(served(&response), unix_now(clock.as_ref()))?;
 				let check = source.replace_check(&record);

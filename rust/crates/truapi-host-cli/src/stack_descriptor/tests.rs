@@ -37,8 +37,9 @@ fn a_link_or_url_breaking_a_rule_says_which_instead_of_reading_a_file() {
 	);
 }
 
-/// A server that answers with an error status is told apart from one that
-/// does not answer, so a moved descriptor can be reported louder.
+/// A server that answers with an error status gives no descriptor, and the
+/// reason names the status, so a moved descriptor reads apart from a server
+/// that does not answer.
 #[tokio::test]
 async fn test_fetch_http_status_error() {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -53,12 +54,13 @@ async fn test_fetch_http_status_error() {
 		socket.write_all(response.as_bytes()).await.unwrap();
 	});
 	let error = fetch(&url, FETCH_TIMEOUT).await.expect_err("404 accepted");
-	assert!(matches!(&error, FetchError::Http(status) if status.contains("404")));
-
 	let closed_port_error = fetch("http://127.0.0.1:9/stack.json", FETCH_TIMEOUT)
 		.await
 		.expect_err("closed port accepted");
-	assert!(matches!(closed_port_error, FetchError::Transport(_)));
+	assert_eq!(
+		(error.to_string(), closed_port_error.to_string().contains("404")),
+		("HTTP 404 Not Found".to_string(), false)
+	);
 }
 
 /// A descriptor with every role, a `dub` service and a `popController`, edited.
@@ -208,7 +210,7 @@ fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	let respelled = directory.path().join(".").join("source.json");
 	let id = |path: std::path::PathBuf| {
 		let path = path.to_str().expect("temporary path is UTF-8").to_owned();
-		stack_id(&path, None).expect("a local file has an id")
+		local_file_id(&path).expect("a local file has an id")
 	};
 
 	let (source_id, fork_id, respelled_id) = (id(source), id(fork), id(respelled));
@@ -249,7 +251,7 @@ fn a_local_stack_that_is_not_a_regular_file_is_refused() {
 	let path = fifo.to_str().expect("temporary path is UTF-8");
 
 	assert_eq!(
-		stack_id(path, None).map_err(|error| error.to_string()),
+		local_file_id(path).map_err(|error| error.to_string()),
 		Err(format!(
 			"{path} is not a regular file, so it cannot name a stack; save the descriptor to a \
 			 file and give its path"
@@ -280,5 +282,5 @@ fn a_local_stack_opened_as_a_file_descriptor_is_named_by_its_file_or_refused() {
 	} else {
 		Ok(format!("file:{}", canonical.display()))
 	};
-	assert_eq!(stack_id(&path, None).map_err(|error| error.to_string()), expected);
+	assert_eq!(local_file_id(&path).map_err(|error| error.to_string()), expected);
 }

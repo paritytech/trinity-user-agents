@@ -89,8 +89,8 @@ async fn probe_endpoint(stack: &Stack, endpoint: &ChainEndpoint) -> Result<Endpo
 }
 
 /// Fails when an endpoint of `stack` reports a genesis other than the one it
-/// is routed as, or when
-/// People reports a `NetworkSuffix` other than the stack's TLD. An endpoint
+/// is routed as, or when People reports a `NetworkSuffix` other than the
+/// stack's TLD. An endpoint
 /// that does not answer within [`super::CHAIN_CHECK_TIMEOUT`], or a People
 /// chain without a readable suffix, is logged.
 async fn verify_endpoints(stack: &Stack) -> Result<()> {

@@ -5,10 +5,10 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use anyhow::{Result, bail};
 use clap::ValueEnum;
-use trinity_stack::{DEFAULT_LINK_BASE, Descriptor, Pointer};
+use trinity_stack::{Descriptor, Pointer};
 
-use super::{Network, stack::routes};
-use crate::stack_descriptor::{light_client_chains, pointer_of};
+use super::{Network, stack::unrunnable};
+use crate::stack_descriptor::pointer_of;
 
 /// A known stack this build ships a signed copy of, so a command starts
 /// without the published descriptor when it is unreachable.
@@ -87,22 +87,15 @@ pub fn built_in_name(stack_id: &str) -> Option<&'static str> {
 /// stack the CLI cannot run on over either chain backend, so a bundled copy
 /// cannot start every command with an error.
 pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> Result<()> {
-	let stack_id = pointer.stack_id();
-	if built_in_name(&stack_id).is_none() {
+	if Network::of_stack(&pointer.stack_id()).is_none() {
 		return Ok(());
 	}
-	let url = pointer.url();
-	if let Err(error) = routes(descriptor) {
-		bail!("{url} is a built-in network's stack the CLI cannot run: {error}");
+	match unrunnable(descriptor, true) {
+		Some(reason) => {
+			bail!("{} is a built-in network's stack the CLI cannot run: {reason}", pointer.url())
+		},
+		None => Ok(()),
 	}
-	if let Some(chain) = light_client_chains(descriptor).find(|chain| chain.light_spec.is_none()) {
-		let role = &chain.role;
-		bail!(
-			"{url} is a built-in network's stack the CLI cannot run on the light client: its \
-			 descriptor names no lightSpec for {role}"
-		);
-	}
-	Ok(())
 }
 
 /// The light spec with `sha256`, as a descriptor writes it, when a built-in
@@ -143,11 +136,14 @@ impl Network {
 		}
 	}
 
-	/// The network's link, and the signed copy of its descriptor this build
-	/// ships.
-	pub fn link_and_bundle(self) -> (String, &'static [u8]) {
-		let built_in = self.built_in_stack();
-		(built_in.pointer().to_link(DEFAULT_LINK_BASE), built_in.bundle)
+	/// The pointer of the network's stack, with the key it is signed with.
+	pub fn pointer(self) -> Pointer {
+		self.built_in_stack().pointer()
+	}
+
+	/// The signed copy of the network's descriptor this build ships.
+	pub fn bundle(self) -> &'static [u8] {
+		self.built_in_stack().bundle
 	}
 
 	/// The built-in network whose stack has `stack_id`, or `None` for any
@@ -156,20 +152,16 @@ impl Network {
 		Self::value_variants()
 			.iter()
 			.copied()
-			.find(|network| network.built_in_stack().pointer().stack_id() == stack_id)
+			.find(|network| network.pointer().stack_id() == stack_id)
 	}
 
 	/// The bundled copy of this network's stack, connected to over
 	/// `chain_backend`, without fetching or storing anything.
 	#[cfg(test)]
 	pub fn bundled_stack(self, chain_backend: crate::chain::ChainBackend) -> super::Stack {
-		let chain_access = super::testing::test_access(chain_backend);
-		let (link, bundled) = self.link_and_bundle();
-		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
-		let core = truapi::platform::Stack::bundled(&link, bundled, &allowed)
-			.expect("invalid bundled stack");
+		let access = super::testing::test_access(chain_backend);
 		let descriptor = self.built_in_stack().open_bundled();
-		super::Stack::new(core.without_relay(), None, descriptor, &chain_access)
+		super::testing::stack_on(&self.pointer().stack_id(), descriptor, &access)
 			.expect("invalid bundled stack")
 	}
 }

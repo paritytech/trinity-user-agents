@@ -1408,7 +1408,6 @@ async fn run_signing_host(
 		session_catalog,
 		initial_session_name,
 		network,
-		stack,
 		ui_handle.clone(),
 	)
 	.await?;
@@ -1678,7 +1677,6 @@ async fn start_signing_host(
 	catalog: SessionCatalog,
 	session_name: String,
 	network: Stack,
-	core_stack: truapi::platform::Stack,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
 	let approval = approval_policy(args.auto_accept);
@@ -1743,7 +1741,6 @@ async fn start_signing_host(
 	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
 		&network,
-		core_stack,
 		&storage_profile,
 		approval,
 		ui.clone(),
@@ -1823,7 +1820,6 @@ async fn start_signing_host(
 
 fn build_signing_runtime(
 	network: &Stack,
-	core_stack: truapi::platform::Stack,
 	profile: &SessionProfile,
 	approval: ApprovalPolicy,
 	ui: Option<UiHandle>,
@@ -1848,9 +1844,12 @@ fn build_signing_runtime(
 		approval,
 		ui,
 	);
-	let mut config =
-		SigningHostConfig::new(host_info("Headless Signing Host"), platform_info(), core_stack)
-			.context("invalid signing host config")?;
+	let mut config = SigningHostConfig::new(
+		host_info("Headless Signing Host"),
+		platform_info(),
+		network.core_stack(),
+	)
+	.context("invalid signing host config")?;
 	// It draws nothing, but with a Pocket host it resolves the materials of every face its Worker
 	// renders, as a phone does.
 	config.materials_enabled = pocket.is_some();
@@ -3186,7 +3185,6 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		&session.network,
-		session.runtime.stack().clone(),
 		&profile,
 		session.platform.approval_policy(),
 		session.ui.clone(),
@@ -3271,7 +3269,6 @@ async fn import_mnemonic_session(
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		&session.network,
-		session.runtime.stack().clone(),
 		&profile,
 		session.platform.approval_policy(),
 		session.ui.clone(),

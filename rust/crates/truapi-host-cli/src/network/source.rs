@@ -5,7 +5,7 @@
 //! it, and a local descriptor file as it reads. The CLI keeps the record of
 //! each stack's newest copy in the stack's state directory.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow, bail, ensure};
 use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
 	chain::ChainAccess,
-	stack_descriptor::{load_descriptor, pointer_of, stack_id},
+	stack_descriptor::{FETCH_TIMEOUT, local_file_id, pointer_of, read_local_descriptor},
 };
 
 /// A stack published at a URL: its pointer, and for a built-in network the
@@ -65,14 +65,14 @@ impl NetworkSource {
 		let Err(error) = verify_chains(&stack).await? else {
 			return Ok(stack.kept_current());
 		};
-		let Some(refresh) = &stack.refresh else {
+		let Some(DescriptorRefresh { refresh, host }) = &stack.refresh else {
 			return Err(error);
 		};
 		tracing::info!("{error}; fetching the stack's descriptor again");
-		let held = refresh.descriptor();
-		let status = refresh.fetch_now().await;
-		if !status.restart_required && refresh.descriptor() == held {
-			refresh.host.warn_if_refused(&status);
+		let held = refresh.descriptor().sequence;
+		let status = refresh.fetch_now(host).await;
+		if !status.restart_required && refresh.descriptor().sequence == held {
+			host.warn_if_refused(&status);
 			return Err(error);
 		}
 		let stack = self.open().await?;
@@ -94,10 +94,9 @@ impl NetworkSource {
 	async fn open(&self) -> Result<Stack> {
 		match &self.network {
 			NetworkChoice::BuiltIn(network) => {
-				let (link, shipped) = network.link_and_bundle();
-				let pointer =
-					Pointer::from_link(&link).expect("a built-in network's link is valid");
-				self.open_published(&Published { pointer, shipped: Some(shipped) }).await
+				let published =
+					Published { pointer: network.pointer(), shipped: Some(network.bundle()) };
+				self.open_published(&published).await
 			},
 			NetworkChoice::Stack(stack_arg) => self
 				.open_stack(&stack_arg.value)
@@ -115,8 +114,7 @@ impl NetworkSource {
 		let Some(pointer) = pointer_of(value, key.as_deref())? else {
 			return self.local(value).await;
 		};
-		let shipped =
-			Network::of_stack(&pointer.stack_id()).map(|network| network.link_and_bundle().1);
+		let shipped = Network::of_stack(&pointer.stack_id()).map(Network::bundle);
 		self.open_published(&Published { pointer, shipped }).await
 	}
 
@@ -132,15 +130,14 @@ impl NetworkSource {
 	/// once; without one the command runs on, or fails on, the copy it holds.
 	async fn open_published(&self, published: &Published) -> Result<Stack> {
 		let mut refresh = self.load(published).await?;
-		// An imported stack's first copy was just fetched.
-		let mut fetched = refresh.status().last_refresh.is_some();
-		let mut last_fetch = None;
-		if !fetched && refresh.fetch_is_due() {
+		// An imported stack's first copy was fetched as it loaded.
+		let mut last_fetch = refresh.status().last_refresh.is_some().then(|| refresh.status());
+		if last_fetch.is_none() && refresh.fetch_is_due() {
 			let (reloaded, status) = self.fetched(refresh, published).await?;
-			(refresh, last_fetch, fetched) = (reloaded, Some(status), true);
+			(refresh, last_fetch) = (reloaded, Some(status));
 		}
 		let opened = match self.running(refresh, published.pointer.clone()) {
-			Err(error) if !fetched => {
+			Err(error) if last_fetch.is_none() => {
 				tracing::info!("{error:#}; fetching the stack's descriptor again");
 				let (refresh, status) =
 					self.fetched(self.load(published).await?, published).await?;
@@ -153,7 +150,8 @@ impl NetworkSource {
 		if opened.is_err() &&
 			let Some(status) = &last_fetch
 		{
-			self.host(published.pointer.clone()).warn_if_refused(status);
+			self.host(published.pointer.clone(), PRE_START_FETCH_TIMEOUT)
+				.warn_if_refused(status);
 		}
 		opened
 	}
@@ -180,7 +178,7 @@ impl NetworkSource {
 					&link,
 					RESERVED_VALUES,
 					Box::new(records),
-					&self.host(pointer.clone()),
+					&self.host(pointer.clone(), FETCH_TIMEOUT),
 					Arc::new(RealTimer),
 					Box::new(SystemClock),
 				)
@@ -200,7 +198,7 @@ impl NetworkSource {
 	) -> Result<(StackRefresh, StackStatus)> {
 		let url = published.pointer.url();
 		tracing::info!("fetching the stack descriptor at {url} before the command runs");
-		let host = self.host(published.pointer.clone()).within(PRE_START_FETCH_TIMEOUT);
+		let host = self.host(published.pointer.clone(), PRE_START_FETCH_TIMEOUT);
 		let status = refresh.fetch_now(&host).await;
 		if let Some(StackRefreshOutcome::Unreachable { reason }) = &status.last_refresh {
 			tracing::info!(
@@ -216,10 +214,10 @@ impl NetworkSource {
 
 	/// A local descriptor file, read as it is and never refreshed.
 	async fn local(&self, path: &str) -> Result<Stack> {
-		let id = stack_id(path, None)?;
-		let descriptor = load_descriptor(path, None).await?;
+		let id = local_file_id(path)?;
+		let descriptor = read_local_descriptor(path).await?;
 		let core = truapi::platform::Stack::local(id, &descriptor, &RESERVED_VALUES)?;
-		Stack::new(core.without_relay(), None, descriptor, &self.chain_access)
+		Stack::new(core, None, descriptor, &self.chain_access)
 	}
 
 	fn running(&self, refresh: StackRefresh, pointer: Pointer) -> Result<Stack> {
@@ -232,8 +230,8 @@ impl NetworkSource {
 				 republish"
 			);
 		}
-		let (core, descriptor) = (refresh.stack().without_relay(), refresh.descriptor());
-		let refresh = DescriptorRefresh { refresh, host: self.host(pointer) };
+		let (core, descriptor) = (refresh.stack(), refresh.descriptor());
+		let refresh = DescriptorRefresh { refresh, host: self.host(pointer, FETCH_TIMEOUT) };
 		Stack::new(core, Some(refresh), descriptor, &self.chain_access)
 	}
 
@@ -241,9 +239,11 @@ impl NetworkSource {
 		StackRecordFile::new(self.state_base.join(state_directory_of(&pointer.stack_id())))
 	}
 
-	fn host(&self, pointer: Pointer) -> CliStackHost {
+	/// The host of `pointer`'s stack for this run, whose fetches wait at most
+	/// `timeout` for the server.
+	fn host(&self, pointer: Pointer, timeout: Duration) -> CliStackHost {
 		let on_light_client = matches!(self.chain_access, ChainAccess::LightClient { .. });
-		CliStackHost::new(pointer, on_light_client)
+		CliStackHost::new(pointer, on_light_client, timeout)
 	}
 }
 

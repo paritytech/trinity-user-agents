@@ -16,16 +16,7 @@ async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostS
 	let network = Network::default().bundled_stack(ChainBackend::Rpc);
 	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.state_directory())?;
 	catalog.set_current(name)?;
-	let core_stack = network.core_stack();
-	start_signing_host(
-		&SigningHostArgs::default(),
-		catalog,
-		name.to_string(),
-		network,
-		core_stack,
-		None,
-	)
-	.await
+	start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None).await
 }
 
 fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
@@ -109,16 +100,8 @@ async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
 	let args =
 		SigningHostArgs { account: Some("auto-1".to_string()), ..SigningHostArgs::default() };
 
-	let core_stack = network.core_stack();
-	let session = start_signing_host(
-		&args,
-		catalog,
-		DEFAULT_SESSION_NAME.to_string(),
-		network,
-		core_stack,
-		None,
-	)
-	.await?;
+	let session =
+		start_signing_host(&args, catalog, DEFAULT_SESSION_NAME.to_string(), network, None).await?;
 
 	assert_eq!(
 		(session.signer.is_none(), session.catalog.current_session()?),
@@ -344,9 +327,6 @@ async fn a_responder_without_a_local_session_stops_instead_of_restarting() {
 	let profile = tempfile::tempdir().unwrap();
 	let (runtime, _platform) = build_signing_runtime(
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-		crate::network::Network::PaseoNextV2
-			.bundled_stack(ChainBackend::Rpc)
-			.core_stack(),
 		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -371,9 +351,6 @@ async fn the_signing_runtime_keeps_its_core_database_in_the_profile_directory() 
 	let profile = tempfile::tempdir().unwrap();
 	let (runtime, _platform) = build_signing_runtime(
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-		crate::network::Network::PaseoNextV2
-			.bundled_stack(ChainBackend::Rpc)
-			.core_stack(),
 		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -407,9 +384,6 @@ async fn a_core_database_this_build_cannot_open_asks_for_cleanup() {
 	let build = || {
 		build_signing_runtime(
 			&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-			crate::network::Network::PaseoNextV2
-				.bundled_stack(ChainBackend::Rpc)
-				.core_stack(),
 			&session_profile_at(&profile),
 			ApprovalPolicy::AutoAccept,
 			None,

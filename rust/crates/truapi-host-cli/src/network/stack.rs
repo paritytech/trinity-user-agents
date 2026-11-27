@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
 	chain::{ChainAccess, StackLightClient},
-	stack_descriptor::{ROLE_NAMES, Roles},
+	stack_descriptor::{ROLE_NAMES, Roles, light_client_chains},
 };
 
 /// What the CLI reads from a descriptor to reach the stack's chains and
@@ -61,6 +61,18 @@ pub fn routes(descriptor: &Descriptor) -> Result<Routes> {
 	Ok(Routes { chains, identity_backend, pop_controller })
 }
 
+/// Why the CLI cannot run on `descriptor`, or `None` when it can: [`routes`]
+/// fails, or `needs_light_specs` is set and the descriptor names no light spec
+/// for a chain the light client runs.
+pub fn unrunnable(descriptor: &Descriptor, needs_light_specs: bool) -> Option<String> {
+	if let Err(error) = routes(descriptor) {
+		return Some(format!("{error:#}"));
+	}
+	let missing = light_client_chains(descriptor).find(|chain| chain.light_spec.is_none());
+	let role = &missing.filter(|_| needs_light_specs)?.role;
+	Some(format!("it names no lightSpec for {role}, which the light client needs"))
+}
+
 /// The directory under `<base-path>/v2` that holds the state of the stack
 /// with `stack_id`: a built-in network's name, or `stack-` and the first 32
 /// hex digits of the SHA-256 of `stack_id`.
@@ -75,9 +87,10 @@ pub fn state_directory_of(stack_id: &str) -> String {
 }
 
 impl Stack {
-	/// The stack `core` runs, from `descriptor`, connected to over
-	/// `chain_access`, and kept current by `refresh` when it is not a local
-	/// file. Fails as [`routes`] does, and on the light client as
+	/// The stack `core` runs, from `descriptor`, the same copy, connected to
+	/// over `chain_access`, and kept current by `refresh` when it is not a
+	/// local file. The core runs it without its relay, which the CLI does not
+	/// serve. Fails as [`routes`] does, and on the light client as
 	/// [`StackLightClient::new`] does.
 	pub fn new(
 		core: truapi::platform::Stack,
@@ -94,7 +107,7 @@ impl Stack {
 		};
 		Ok(Self {
 			state_directory: state_directory_of(core.id()),
-			core,
+			core: core.without_relay(),
 			refresh,
 			light_client,
 			descriptor,

@@ -224,3 +224,17 @@ fn test_light_client_without_a_light_spec_error() {
 	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
 	read_stack(descriptor).expect("RPC needs no light spec");
 }
+
+/// The light client needs a light spec for each chain it runs, so a copy
+/// without one cannot run there. Over RPC it runs.
+#[test]
+fn a_copy_without_a_light_spec_runs_only_over_rpc() {
+	let without_spec = edit_chain("Bulletin", |chain| {
+		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
+	});
+
+	assert_eq!(
+		(unrunnable(&without_spec, true).is_some(), unrunnable(&without_spec, false)),
+		(true, None)
+	);
+}

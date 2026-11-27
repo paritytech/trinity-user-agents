@@ -66,7 +66,7 @@ pub fn stack_on(
 ) -> anyhow::Result<Stack> {
 	let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
 	let core = truapi::platform::Stack::local(stack_id.to_owned(), &descriptor, &allowed)?;
-	Stack::new(core.without_relay(), None, descriptor, access)
+	Stack::new(core, None, descriptor, access)
 }
 
 /// `chain_backend` for a test stack. A light client would keep its specs in a

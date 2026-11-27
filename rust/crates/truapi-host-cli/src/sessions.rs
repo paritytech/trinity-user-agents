@@ -440,7 +440,7 @@ impl SessionCatalog {
 
 	/// Check that a clear target names a listed session as it is given,
 	/// without resolving it.
-	pub fn validate_clear_target(&self, target: &SessionClearTarget) -> Result<()> {
+	fn validate_clear_target(&self, target: &SessionClearTarget) -> Result<()> {
 		let SessionClearTarget::Named(name) = target else {
 			return Ok(());
 		};

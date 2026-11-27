@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
-use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackRefresh, StackStatus};
+use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackRefresh};
 
 use crate::{
 	chain::{ChainAccess, ChainBackend, StackLightClient},
@@ -150,17 +150,6 @@ pub struct DescriptorRefresh {
 }
 
 impl DescriptorRefresh {
-	/// Fetches the descriptor now and returns the status once any newer copy
-	/// is stored.
-	async fn fetch_now(&self) -> StackStatus {
-		self.refresh.fetch_now(&self.host).await
-	}
-
-	/// The descriptor of the copy the core runs.
-	fn descriptor(&self) -> Descriptor {
-		self.refresh.descriptor()
-	}
-
 	fn start(&self) {
 		let spawner = truapi::Spawner::new(tokio::runtime::Handle::current());
 		if !self.refresh.start(Box::new(self.host.clone()), &spawner) {
@@ -205,7 +194,7 @@ impl Stack {
 	/// creates here is the same person a phone derives from that seed on this
 	/// network.
 	pub fn tld(&self) -> &str {
-		&self.descriptor.tld
+		self.core.tld()
 	}
 
 	/// Each role's genesis hash: the chain `feature_supported` and the core's

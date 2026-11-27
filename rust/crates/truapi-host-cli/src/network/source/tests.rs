@@ -120,8 +120,7 @@ fn keep_copy(state: &std::path::Path, pointer: &Pointer, descriptor: &[u8], age_
 /// Keeps `network`'s shipped copy in `state` as fetched just now, so
 /// resolving it fetches nothing from the real network.
 fn keep_shipped_copy(state: &std::path::Path, network: Network) {
-	let (link, bundled) = network.link_and_bundle();
-	keep_copy(state, &Pointer::from_link(&link).expect("a built-in link"), bundled, 0);
+	keep_copy(state, &network.pointer(), network.bundle(), 0);
 }
 
 /// A built-in network starts from the copy this build ships, without
@@ -136,9 +135,9 @@ async fn a_built_in_network_runs_the_stack_an_app_bundling_it_runs() {
 		let source =
 			NetworkSource::new(ChainAccess::Rpc, Some(*network), None, state.path().into())
 				.expect("a built-in network is a source");
-		let (link, bundled) = network.link_and_bundle();
+		let link = network.pointer().to_link(DEFAULT_LINK_BASE);
 		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
-		let app = truapi::platform::Stack::bundled(&link, bundled, &allowed)
+		let app = truapi::platform::Stack::bundled(&link, network.bundle(), &allowed)
 			.expect("the bundled copy starts an app");
 
 		let stack = source.resolve().await.expect("the bundled copy runs");
@@ -314,9 +313,9 @@ async fn a_silent_server_delays_a_command_by_the_pre_start_limit_at_most() {
 /// given.
 #[tokio::test]
 async fn a_built_in_key_with_another_url_is_fetched_from_that_url() {
-	let (link, shipped) = Network::Previewnet.link_and_bundle();
-	let key = Pointer::from_link(&link)
-		.unwrap()
+	let shipped = Network::Previewnet.bundle();
+	let key = Network::Previewnet
+		.pointer()
 		.key()
 		.map(hex::encode)
 		.expect("a built-in is signed");
