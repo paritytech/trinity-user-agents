@@ -28,7 +28,7 @@ test("every entry is a target with a class a host can act on", () => {
   for (const [target, markerClass] of CORE_MARKERS) {
     expect(target).toStartWith("truapi.");
     if (markerClass.kind === "export") {
-      expect(["info", "warn", "error"]).toContain(markerClass.severity);
+      expect(["warn", "error"]).toContain(markerClass.severity);
       expect(Object.keys(markerClass).sort()).toStrictEqual([
         "kind",
         "severity",
