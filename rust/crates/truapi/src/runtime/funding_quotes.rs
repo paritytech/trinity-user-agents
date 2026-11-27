@@ -632,13 +632,15 @@ impl RuntimeServices {
 	}
 
 	/// Ask `provider_id` to price `ask`, holding its worker while it answers.
+	/// A provider the stack does not serve has no worker to hold, so it stays
+	/// silent until `deadline`.
 	async fn quote_one(
 		self: &Arc<Self>,
 		provider_id: ProductId,
 		ask: &FundingQuoteAsk,
 		deadline: Duration,
 	) -> FundingQuoteRow {
-		let hold = WorkerHold::acquire(self, &provider_id);
+		let hold = WorkerHold::acquire(self, &provider_id).ok();
 		// A worker the host is stopping keeps its link until its connection
 		// closes, and the one started in its place connects soon after: a
 		// quote that fails on a link is asked again on the next, within the

@@ -44,8 +44,9 @@ pub enum DevServerError {
 		"not a development server: use localhost, 10.0.2.2 or a private IPv4 address over http"
 	)]
 	NotADevServer,
-	/// The `product_id` query is not an identifier the core runs a product
-	/// under.
+	/// The `product_id` query does not parse as a product id. One that parses
+	/// but names a product the host's stack does not serve is refused when the
+	/// host opens the product.
 	#[error(transparent)]
 	InvalidProductId(#[from] ProductIdError),
 }

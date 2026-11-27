@@ -1,7 +1,7 @@
 import Foundation
 import PolkadotUI
 import Products
-import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardCoverOutcome
 import UIKitExt
 
 @MainActor
@@ -16,8 +16,8 @@ protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
     func hideLoading()
     func showLoadFailure(_ content: ErrorContent)
     func updateLoadPhase(_ phase: ProductLoadPhase)
-    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
-    func applyOpeningFace(shown: Bool)
+    func setCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome
+    func applyOpeningCover(covered: Bool)
 }
 
 @MainActor
@@ -40,7 +40,7 @@ protocol ExpandedPocketCardInteractorOutputProtocol: AnyObject {
     func didRequestReload()
     func didUpdateLoadPhase(_ phase: ProductLoadPhase)
     func didFail(error: Error)
-    func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
+    func didRequestCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome
 }
 
 @MainActor
@@ -51,5 +51,5 @@ protocol ExpandedPocketCardWireframeProtocol: AnyObject, AlertPresentable, Error
 
 @MainActor
 protocol ExpandedPocketCardRuntimeMaking {
-    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol
+    func makeRuntime(card: any ExpandedCardCovering) throws -> SPARuntimeProtocol
 }

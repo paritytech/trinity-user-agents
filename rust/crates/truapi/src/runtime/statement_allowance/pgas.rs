@@ -34,6 +34,7 @@ use super::{
 	rpc::RpcClient,
 	slot,
 };
+use crate::chain::MortalExtrinsic;
 
 /// How long to wait for Asset Hub to import the ring revision a proof is built
 /// against before giving up.
@@ -206,13 +207,12 @@ pub async fn claim_pgas(
 	let PgasClaim {
 		asset_hub_rpc,
 		asset_hub_metadata,
-		asset_hub_target,
 		people_rpc,
 		people_metadata,
 		signer,
 		network_suffix,
-		target,
 		ring,
+		..
 	} = params;
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
@@ -246,17 +246,8 @@ pub async fn claim_pgas(
 			&skipped_duplicate_slots,
 		)
 		.await?;
-		let context = slot::derive_pgas_context(network_suffix, day, slot_index);
 		let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
-		let proof = super::RingProof { signer, ring, context, revision };
-		let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
-		let claim = asset_hub_target
-			.extrinsics
-			.build_mortal_extrinsic(asset_hub_target.genesis)
-			.with_call_args("Pgas", "claim_pgas", call)
-			.with_extension(super::AsPgasExtension::new(proof, day))
-			.build()
-			.await?;
+		let claim = build_pgas_claim_extrinsic(&params, day, slot_index, revision).await?;
 
 		match asset_hub_rpc.submit_and_watch(claim.extrinsic.bytes()).await {
 			Ok(block_hash) => {
@@ -280,6 +271,30 @@ pub async fn claim_pgas(
 			Err(err) => return Err(err),
 		}
 	}
+}
+
+/// Builds the `Pgas.claim_pgas` extrinsic of one slot without submitting it.
+///
+/// The claim spends slot `slot_index` of `day` into `params.target`,
+/// authorized by a membership proof against `revision` of `params.ring`.
+/// Fails when the proof or the extrinsic cannot be built.
+pub async fn build_pgas_claim_extrinsic(
+	params: &PgasClaim<'_>,
+	day: u32,
+	slot_index: u32,
+	revision: u32,
+) -> Result<MortalExtrinsic, StatementAllowanceError> {
+	let PgasClaim { asset_hub_target, signer, network_suffix, target, ring, .. } = *params;
+	let context = slot::derive_pgas_context(network_suffix, day, slot_index);
+	let proof = super::RingProof { signer, ring, context, revision };
+	let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
+	Ok(asset_hub_target
+		.extrinsics
+		.build_mortal_extrinsic(asset_hub_target.genesis)
+		.with_call_args("Pgas", "claim_pgas", call)
+		.with_extension(super::AsPgasExtension::new(proof, day))
+		.build()
+		.await?)
 }
 
 /// What Asset Hub's held ring roots say about the revision a proof was built

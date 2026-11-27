@@ -1571,7 +1571,8 @@ impl FundingRegistry {
 		self.catch_up_links(services, now_ms);
 	}
 
-	/// Every assigned open session holds its provider's worker. The
+	/// Every assigned open session holds its provider's worker, unless the
+	/// stack does not serve the provider, whose worker can never open. The
 	/// reconciler keeps the holds current, and an overlay closing brings them
 	/// in line before it lets its own go. Holds are taken outside every lock
 	/// and kept only if the session still wants them once the lock is back,
@@ -1599,7 +1600,13 @@ impl FundingRegistry {
 		};
 		let taken: Vec<(String, WorkerHold)> = missing
 			.into_iter()
-			.map(|(intent, provider)| (intent, WorkerHold::acquire(services, &provider)))
+			.filter_map(|(intent, provider)| match WorkerHold::acquire(services, &provider) {
+				Ok(hold) => Some((intent, hold)),
+				Err(error) => {
+					tracing::warn!(%intent, %error, "no worker for a funding session's provider");
+					None
+				},
+			})
 			.collect();
 		let unwanted: Vec<WorkerHold> = {
 			let held = self.lock_held();
@@ -2088,6 +2095,7 @@ impl FundingRegistry {
 					.as_ref()
 					.is_some_and(|services| services.funding_providers().is_quote_target(provider))
 			},
+			services.as_ref().map(|services| services.stack()),
 			current_unix_millis(),
 		);
 		for fact in facts {
@@ -2915,12 +2923,13 @@ impl RuntimeServices {
 		self.refresh_funding_providers();
 		self.send_funding_options(&session.intent);
 		// Every provider's worker starts as the overlay opens, so it is up by
-		// the time the first quote is asked of it.
+		// the time the first quote is asked of it. A provider the stack does
+		// not serve has no worker to start.
 		let warm: Vec<_> = self
 			.funding_providers()
 			.quote_targets()
 			.iter()
-			.map(|provider_id| WorkerHold::acquire(&self, provider_id))
+			.filter_map(|provider_id| WorkerHold::acquire(&self, provider_id).ok())
 			.collect();
 		let present = platform.present_funding(product.as_ref(), presentation);
 		// The cancel is polled first, so one that came before the overlay

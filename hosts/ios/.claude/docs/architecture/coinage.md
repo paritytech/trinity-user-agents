@@ -55,11 +55,10 @@ installation in the same Room table under an `isCurrent` flag; iOS keeps a separ
 counters in the Keychain.
 
 Backup: the seed's `//datastore` sr25519 account (public key, 64-byte secret and encryption key pinned
-against polkadot-js and Android in `DataStoreKeyParityTests`; the encryption key is keyed by the secret in
-schnorrkel's ed25519 form via `DataStoreAccountKeys.ed25519Form(of:)` over NovaCrypto's `SNPrivateKey.toEd25519Data()`,
-since the iOS SDK holds the canonical scalar) registers each installation in the `AccountDataStore`
-contract on Asset Hub (record = ChaCha20-Poly1305 of the id under `"encryption".blake2b32WithKey(secret64)`,
-deterministic nonce). Contract reads and the `Revive.call` extrinsic go through the `Revive` package
+against Android's `DataStoreKeyParityTest` in `DataStoreKeyParityTests`) registers each installation in the
+`AccountDataStore` contract on Asset Hub (record = ChaCha20-Poly1305 of the id under
+`"encryption".blake2b32WithKey(secret64)`, deterministic nonce). `secret64` is the SDK's canonical secret —
+scalar (mod l) followed by the nonce, `SNPrivateKey.rawData()`. Contract reads and the `Revive.call` extrinsic go through the `Revive` package
 (`ReviveContractApiProtocol`, `RevivePallet.Call`; see architecture/revive.md); the contract ABI table is
 `AccountDataStoreAbi` over `EvmAbi`, and the address is an `EvmAddress`. Registration is a durable-transaction domain (`coinage-installation`, see
 architecture/durable-transactions.md); `CoinageInstallationRegistrar` runs it once per process and
@@ -116,12 +115,18 @@ Transfer plans determine how coins are spent:
 `CoinageTransferMonitor` writes one row per coinage message (`CDIncomingTransferState` /
 `CDOutgoingTransferState`, `Modules/Coinage/Model/TransferState.swift`) and subscribes to every message whose
 row is not terminal (`NSPredicate.withoutTerminalTransferState`). Statuses come in best-head and finalized pairs:
-incoming `claimed` → `claimedFinalized`, outgoing `sent` → `sentFinalized` and `claimed` → `claimedFinalized`.
-A best-head reading is one a fork can still undo, so only `claimedFinalized` and `failed` are terminal — an
-explicit set (`Status.terminal`). A relaunch while a row is `claimed`/`sent` therefore tracks the message again until the finalized chain
-agrees; the bubbles render a finalized status like its best-head twin. Per coin, the package ladder
-(`CoinageTransferStatusService.transferStatus`) reports `awaitingClaim(finalized:)` / `claimed(finalized:)` from the
-finalized head's presence map.
+incoming `claimed` → `claimedFinalized`, outgoing `sent` → `sentFinalized`, `claimed` → `claimedFinalized` and
+`reclaimed` → `reclaimedFinalized`. A best-head reading is one a fork can still undo, so only the finalized
+variants and `failed` are terminal — an explicit set (`Status.terminal`). A relaunch while a row is
+`claimed`/`sent`/`reclaimed` therefore tracks the message again until the finalized chain agrees; the bubbles
+render a finalized status like its best-head twin. The incoming `returnedToSender` (coins absent after the
+6h claim window, from the claim's `noCoinsOnChain` look or its give-up) is not terminal either: the claim keeps
+running, so a late mint still turns it into a claim. Outgoing `unclaimed`, `reclaiming` and `reclaimFailed` are
+best-head readings too. Per coin, the package ladder (`CoinageTransferStatusService.status`) routes a coin with
+a live or landed consumer, or a failed reclaim still on chain, to reclaim tracking (`reclaiming`,
+`reclaimed(finalized:)`, `reclaimFailed`); everything else goes through the presence ladder
+(`awaitingClaim(finalized:)` / `claimed(finalized:)` from the finalized head's presence map). Failed reclaims are
+read from the `chat-reclaim:<messageId>` group, because coin state keeps no failed consumer.
 
 ## Submission Policies (retries)
 

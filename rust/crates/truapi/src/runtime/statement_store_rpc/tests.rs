@@ -4,23 +4,33 @@ use std::sync::{
 };
 
 use futures::{
-	channel::mpsc,
+	FutureExt,
+	channel::{mpsc, oneshot},
+	future::BoxFuture,
 	stream::{BoxStream, StreamExt},
 };
 use serde_json::json;
 
 use futures::executor::{block_on, block_on_stream};
 
-use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, StatementSubmitError};
+use super::{
+	LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, StatementStoreRpcClientError,
+	StatementSubmitError,
+};
 use crate::{
 	Spawner,
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
+	chain_runtime::{
+		ChainRuntime, GenesisHashes, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind,
+	},
 	host_logic::statement_store::{
 		MAX_MATCH_ALL_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD, StatementStoreApi,
 		StatementWatchError, TopicFilter, hex_topic,
 	},
 	platform::JsonRpcConnection,
-	test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame},
+	test_support::{
+		ANSWER_WAIT, HeardAnswers, StubPlatform, finish, statement_page_frame, subscribe_ack_frame,
+		wait_until,
+	},
 };
 
 const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -387,4 +397,140 @@ fn errors_pass_on_before_and_after_the_backlog() {
 
 	let expected = vec![Err(failure.clone()), Ok(vec![vec![1], vec![2]]), Err(failure)];
 	assert_eq!(batches_of(pages), expected);
+}
+
+/// A statement store that opens its subscription connections with the genesis
+/// check on, and what a test reads of it.
+struct CheckedStore {
+	statement_store: StatementStoreRpc,
+	/// The People node the store's own connections reach.
+	node: Arc<StubPlatform>,
+	heard: Arc<HeardAnswers>,
+	/// The chain behind the pooled connection.
+	pooled: Arc<PeopleChain>,
+}
+
+/// A [`CheckedStore`] over a People node whose chain has `genesis`.
+fn checked_statement_store(genesis: [u8; 32]) -> CheckedStore {
+	let node = Arc::new(StubPlatform {
+		rpc_responder: Some(Arc::new(move |request| {
+			let request: serde_json::Value = serde_json::from_str(request).unwrap();
+			let genesis = format!("0x{}", hex::encode(genesis));
+			vec![json!({"jsonrpc": "2.0", "id": request["id"], "result": genesis}).to_string()]
+		})),
+		..Default::default()
+	});
+	let heard = Arc::<HeardAnswers>::default();
+	let pooled = PeopleChain::new(vec![Upstream::Drops]);
+	let statement_store = StatementStoreRpc::new(
+		node.clone(),
+		ChainRuntime::new(pooled.clone(), Spawner::for_test()).checking_genesis(heard.clone()),
+		PEOPLE_GENESIS,
+		Spawner::for_test(),
+	);
+	CheckedStore { statement_store, node, heard, pooled }
+}
+
+/// The check adds one request to every subscription connection. When People
+/// gives the hash it was opened for, the store has to work as it does without
+/// the check.
+#[test]
+fn a_subscription_connection_to_the_people_chain_is_handed_out() {
+	let CheckedStore { statement_store, heard, .. } = checked_statement_store(PEOPLE_GENESIS);
+
+	let client = finish(ANSWER_WAIT, statement_store.client("test"));
+
+	assert!(client.is_ok(), "{:?}", client.err());
+	assert_eq!(
+		heard.heard(),
+		vec![GenesisHashes { named: PEOPLE_GENESIS, answered: PEOPLE_GENESIS }]
+	);
+}
+
+/// Statement subscriptions run on connections the store opens itself, apart
+/// from the pooled one. A host that only listens, such as a paired one
+/// waiting for a request, has nothing else on People, so a wiped People
+/// chain has to be caught on these connections too.
+#[test]
+fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
+	const WIPED_PEOPLE: [u8; 32] = [0x19; 32];
+	let CheckedStore { statement_store, node: wiped_node, heard, pooled } =
+		checked_statement_store(WIPED_PEOPLE);
+
+	let refused = finish(ANSWER_WAIT, statement_store.client("test"))
+		.expect_err("the wiped People chain is refused");
+
+	let kind = match refused {
+		StatementStoreRpcClientError::Chain(failure) => Some(failure.kind()),
+		StatementStoreRpcClientError::Connect { .. } => None,
+	};
+	let asked: Vec<serde_json::Value> = wiped_node
+		.sent_rpc
+		.lock()
+		.unwrap()
+		.iter()
+		.map(|request| serde_json::from_str::<serde_json::Value>(request).unwrap()["method"].take())
+		.collect();
+	assert_eq!(
+		(kind, heard.heard(), asked, pooled.connects()),
+		(
+			Some(RuntimeFailureKind::HostFailure),
+			vec![GenesisHashes { named: PEOPLE_GENESIS, answered: WIPED_PEOPLE }],
+			vec![json!("chainSpec_v1_genesisHash")],
+			0,
+		)
+	);
+}
+
+/// A browser host's `chainConnect` can settle after the caller that dialled
+/// gave up, as a withdrawn SSO request does. The connection it hands over then
+/// has nobody to close it, so the dial closes it itself.
+#[test]
+fn a_subscription_connection_handed_over_after_its_caller_went_is_closed() {
+	let (hand_over, handover) = oneshot::channel();
+	let node = Arc::new(StubPlatform {
+		chain_connect_handover: Some(handover.shared()),
+		..Default::default()
+	});
+	let statement_store = StatementStoreRpc::new(
+		node.clone(),
+		ChainRuntime::new(PeopleChain::new(vec![Upstream::Drops]), Spawner::for_test()),
+		PEOPLE_GENESIS,
+		Spawner::for_test(),
+	);
+
+	let mut client = Box::pin(statement_store.client("test"));
+	let dialling = || {
+		let handed_out = client.as_mut().now_or_never();
+		assert!(handed_out.is_none(), "the connection is not handed out before the host hands it");
+		node.chain_connects.lock().unwrap().len() == 1
+	};
+	wait_until(dialling, "the host dials");
+	drop(client);
+	let _ = hand_over.send(());
+	let closed = || node.chain_closes.load(Ordering::SeqCst) == 1;
+
+	wait_until(closed, "the connection handed over late is closed");
+}
+
+/// A caller withdrawn before the dial's task starts leaves nothing to dial
+/// for, so the host is not asked for a People socket only to have it closed.
+#[test]
+fn a_dial_whose_caller_went_before_it_started_is_not_made() {
+	let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
+	let queue = queued.clone();
+	let spawner = Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task));
+	let node = Arc::new(StubPlatform::default());
+	let statement_store = StatementStoreRpc::new(
+		node.clone(),
+		ChainRuntime::new(PeopleChain::new(vec![Upstream::Drops]), Spawner::for_test()),
+		PEOPLE_GENESIS,
+		spawner,
+	);
+
+	let given_up = statement_store.client("test").now_or_never();
+	let dial = queued.lock().unwrap().pop().expect("the dial waits for its task");
+	block_on(dial);
+
+	assert_eq!((given_up.is_none(), node.chain_connects.lock().unwrap().len()), (true, 0));
 }

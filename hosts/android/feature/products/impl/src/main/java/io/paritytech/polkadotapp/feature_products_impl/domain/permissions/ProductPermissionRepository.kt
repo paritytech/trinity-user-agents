@@ -40,7 +40,7 @@ class RealProductPermissionRepository @Inject constructor(
     private val oneTimeGrants = ConcurrentHashMap.newKeySet<String>()
 
     private fun oneTimeGrantKey(productId: ProductId, permission: ProductPermission): String {
-        return "${productId}:${permission.typeName}:${permission.key}"
+        return "$productId:${permission.typeName}:${permission.key}"
     }
 
     override fun grantOneTime(productId: ProductId, permission: ProductPermission) {

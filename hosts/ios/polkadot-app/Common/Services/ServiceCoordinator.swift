@@ -22,6 +22,8 @@ import DesignSystem
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
+    var fundingService: FundingServiceProtocol { get }
+    var fundingActivityCenter: FundingActivityCenterProtocol { get }
     var polkadotHandshakeService: PolkadotHandshakeServicing { get }
     var chatExtensionsRegistry: ChatExtensionsRegistering { get }
     var signInHostCoordinator: MessageExchangeSignInHostCoordinating { get }
@@ -45,6 +47,8 @@ protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
 final class ServiceCoordinator {
     let chatCoordinator: MessageExchangeChatCoordinating
     let depositService: DepositServiceProtocol
+    let fundingService: FundingServiceProtocol
+    let fundingActivityCenter: FundingActivityCenterProtocol
     let polkadotHandshakeService: PolkadotHandshakeServicing
     let signInHostCoordinator: MessageExchangeSignInHostCoordinating
     let chatExtensionsRegistry: ChatExtensionsRegistering
@@ -75,7 +79,7 @@ final class ServiceCoordinator {
     let tldProvider: DotNsTldProviding
     /// Held rather than looked up, so the session that started the Pocket is
     /// the one that stops it. Nil in a build without the products feature.
-    let pocket: ProductPocketService?
+    let pocket: ProductPocketService
     let logger: LoggerProtocol
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
@@ -92,6 +96,8 @@ final class ServiceCoordinator {
     init(
         chatCoordinator: MessageExchangeChatCoordinating,
         depositService: DepositServiceProtocol,
+        fundingService: FundingServiceProtocol,
+        fundingActivityCenter: FundingActivityCenterProtocol,
         polkadotHandshakeService: PolkadotHandshakeServicing,
         signInHostCoordinator: MessageExchangeSignInHostCoordinating,
         chatExtensionsRegistry: ChatExtensionsRegistering,
@@ -119,11 +125,13 @@ final class ServiceCoordinator {
         chainStatusProvider: ChainStatusProviding,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         tldProvider: DotNsTldProviding,
-        pocket: ProductPocketService?,
+        pocket: ProductPocketService,
         logger: LoggerProtocol
     ) {
         self.chatCoordinator = chatCoordinator
         self.depositService = depositService
+        self.fundingService = fundingService
+        self.fundingActivityCenter = fundingActivityCenter
         self.polkadotHandshakeService = polkadotHandshakeService
         self.signInHostCoordinator = signInHostCoordinator
         self.chatExtensionsRegistry = chatExtensionsRegistry
@@ -229,12 +237,14 @@ extension ServiceCoordinator {
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
+        let fundingService = FundingService(logger: logger)
         let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            fundingHandler: fundingService,
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
@@ -262,19 +272,16 @@ extension ServiceCoordinator {
         // one worker per product, and hanging the Pocket off chat's assembly
         // would let any chat service failing take every live card face with it,
         // silently.
-        var pocket: ProductPocketService?
-        if let service = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider) {
-            RootDependencyLocator.setDependency(service)
-            service.start(
-                runtimeProvider: truapiRuntimeProvider,
-                flowState: spaFlowState,
-                productFileProvider: productFileProvider,
-                chainRegistry: ChainRegistryFacade.sharedRegistry,
-                gameReminders: gameReminders,
-                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-            )
-            pocket = service
-        }
+        let pocket = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider)
+        RootDependencyLocator.setDependency(pocket)
+        pocket.start(
+            runtimeProvider: truapiRuntimeProvider,
+            flowState: spaFlowState,
+            productFileProvider: productFileProvider,
+            chainRegistry: ChainRegistryFacade.sharedRegistry,
+            gameReminders: gameReminders,
+            themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+        )
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -328,7 +335,14 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
-        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
+        Task { [logger] in
+            do {
+                try await fundingService.attach(runtime: truapiRuntimeProvider.setup())
+            } catch {
+                logger.error("[truapi] building the runtime at startup failed: \(error)")
+            }
+        }
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -347,7 +361,7 @@ extension ServiceCoordinator {
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
+            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket.workers }),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )
@@ -406,6 +420,8 @@ extension ServiceCoordinator {
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
             depositService: depositService,
+            fundingService: fundingService,
+            fundingActivityCenter: FundingActivityCenter(service: fundingService, logger: logger),
             polkadotHandshakeService: PolkadotHandshakeService(
                 rootWallet: DynamicDerivedWallet(derivationPath: nil),
                 identityWallet: mainWallet,

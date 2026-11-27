@@ -12,6 +12,8 @@ public enum CoinageTxInput: Hashable, Sendable {
 public enum CoinInput: Hashable, Sendable {
     case own(CoinageKeyIndex, PublicKey)
     case received(PublicKey)
+    /// One of our own handed-off coins taken back after its claim window.
+    case reclaimed(CoinageKeyIndex, PublicKey)
 }
 
 /// An asset this wallet mints, and can therefore hold local projected state for. Carries the
@@ -61,6 +63,7 @@ public extension CoinageTxInput {
     var publicKey: PublicKey {
         switch self {
         case let .coin(.own(_, publicKey)),
+             let .coin(.reclaimed(_, publicKey)),
              let .recyclerVoucher(_, publicKey): publicKey
         case let .coin(.received(publicKey)): publicKey
         }
@@ -76,10 +79,17 @@ public extension CoinageTxInput {
         ownAsset != nil
     }
 
+    /// True for one of our own handed-off coins taken back after its claim window.
+    var isReclaimed: Bool {
+        if case .coin(.reclaimed) = self { return true }
+        return false
+    }
+
     /// The own-asset view of this input, or `nil` for a coin received from a peer.
     var ownAsset: OwnAsset? {
         switch self {
-        case let .coin(.own(index, publicKey)): .coin(index, publicKey)
+        case let .coin(.own(index, publicKey)),
+             let .coin(.reclaimed(index, publicKey)): .coin(index, publicKey)
         case let .recyclerVoucher(index, publicKey): .recyclerVoucher(index, publicKey)
         case .coin(.received): nil
         }

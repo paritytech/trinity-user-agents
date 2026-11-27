@@ -50,6 +50,7 @@ public extension CoinageService {
         incomingPaymentAcknowledger: IncomingPaymentAcknowledging,
         backgroundExecutor: any BackgroundExecuting,
         recyclingStrategySettings: any CoinageRecyclingStrategyProviding,
+        privacyConfigProvider: any CoinagePrivacyConfigProviding,
         personOriginProvider: any OriginPersonProviding,
         viewFunctionFetcher: any ViewFunctionFetching,
         installation: CoinageInstallationDependency,
@@ -269,6 +270,15 @@ public extension CoinageService {
             logger: logger
         )
 
+        let reclaimCoinsService = ReclaimCoinsService(
+            txService: txService,
+            databaseFactory: databaseFactory,
+            minter: coinageMinter,
+            snKeyFactory: SNKeyFactory(),
+            dateProvider: dateProvider,
+            logger: logger
+        )
+
         // Coinage's three submission policies, registered before anything carrying one is submitted:
         // a row naming an unregistered policy is abandoned rather than left waiting for ever.
         CoinageSubmissionPolicies.register(
@@ -302,6 +312,7 @@ public extension CoinageService {
                     factory: durable.factory,
                     chainId: chain.chainId
                 ),
+                coinKeyFactory: coinKeypairFactory,
                 snKeyFactory: SNKeyFactory(),
                 dateProvider: dateProvider,
                 logger: logger
@@ -357,7 +368,10 @@ public extension CoinageService {
             logger: logger
         )
 
-        let recyclingStrategyResolver = RecyclingStrategyProvider(quotaTracker: quotaTracker)
+        let recyclingStrategyResolver = RecyclingStrategyProvider(
+            quotaTracker: quotaTracker,
+            privacyConfigProvider: privacyConfigProvider
+        )
         let preClassificator = CoinageAssetPreClassificator()
 
         let externalPaymentDependency = ExternalPaymentDependency(
@@ -394,6 +408,7 @@ public extension CoinageService {
             chainViewFactory: chainViewFactory,
             chainId: chain.chainId,
             coinOnChainQuery: coinOnChainQuery,
+            txService: txService,
             snKeyFactory: SNKeyFactory(),
             logger: logger
         )
@@ -443,6 +458,7 @@ public extension CoinageService {
             ongoingTransferService: recipientService,
             txService: txService,
             claimCoinsService: claimCoinsService,
+            reclaimCoinsService: reclaimCoinsService,
             transferStatusService: transferStatusService,
             externalPaymentService: externalPaymentService,
             contextLoader: contextLoader,
@@ -450,6 +466,7 @@ public extension CoinageService {
             voucherLocationService: voucherLocationService,
             recyclingService: recyclingService,
             recyclingStrategySettings: recyclingStrategySettings,
+            privacyConfigProvider: privacyConfigProvider,
             recyclingStrategyResolver: recyclingStrategyResolver,
             ringCapacityProvider: ringCapacityProvider,
             preClassificator: preClassificator,

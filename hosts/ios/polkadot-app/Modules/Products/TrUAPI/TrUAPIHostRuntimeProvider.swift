@@ -31,10 +31,10 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
-/// build bundles + the local session secret, activates the local session once,
-/// and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once a session secret exists.
+/// Builds one ``TrUAPIHostRuntime`` from host identity + the stack the build
+/// bundles + the local session secret, activates the local session once, and
+/// caches it. Built off the main thread by ``setup()``, or on first use
+/// before that, so startup is not blocked.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
@@ -42,7 +42,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
-    private let tldProvider: DotNsTldProviding
+    private let fundingHandler: FundingCoreEventHandling
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
@@ -67,7 +67,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
-        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        fundingHandler: FundingCoreEventHandling,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
@@ -78,7 +78,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
-        self.tldProvider = tldProvider
+        self.fundingHandler = fundingHandler
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
         self.deviceEncryptionKeys = deviceEncryptionKeys
@@ -108,16 +108,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+    func attach(paymentsSupport: PaymentsSupport) {
         backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
+                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),
@@ -134,6 +131,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
+    /// Builds the runtime now, off the caller's thread, rather than on first
+    /// use: the core resumes the funding sessions a provider was still working
+    /// on when it starts. Called once, after the worker manager and payments
+    /// are attached.
+    func setup() async throws -> TrUAPIHostRuntime {
+        try await Task.detached { [self] in try sharedRuntime() }.value
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -143,12 +148,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
 
         let secret = try entropyManager.fetchRootEntropy()
-        let networkSuffix = try tldProvider.currentTldOrError()
         let handedOverKey = try deviceEncryptionKeys.keyToHandOver()
         let runtimeConfig = try Self.makeRuntimeConfig(
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
-            networkSuffix: networkSuffix,
             databaseDirectory: Self.coreDatabaseDirectory(),
             deviceEncryptionKey: handedOverKey
         )
@@ -189,8 +192,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
-        // Also before any execution opens: the core offers only the providers
-        // the host lists, the ones `funding_config` names.
+        // Also before any execution opens, so a product's Funding request
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names.
+        runtime.setFunding(AppFundingHostBridge(handler: fundingHandler))
+        bridge.onWorkerCrashing { [weak fundingHandler] productId in
+            fundingHandler?.workerCrashing(productId: productId)
+        }
         listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
@@ -212,12 +220,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 extension TrUAPIHostRuntimeProvider {
     /// Assemble the immutable host-wide config. Every chain fact the core uses
     /// comes from the stack this build bundles, ``TrUAPIBundledStack/current``.
-    /// `networkSuffix` is the dotNS TLD the app's own built-in accounts derive
-    /// from, which names the products backing the pinned Pocket cards.
     static func makeRuntimeConfig(
         secret: Data,
         liteUsername: String?,
-        networkSuffix: String,
         databaseDirectory: String,
         deviceEncryptionKey: Data?
     ) throws -> HostRuntimeConfig {
@@ -233,7 +238,6 @@ extension TrUAPIHostRuntimeProvider {
             platformVersion: UIDevice.current.systemVersion,
             stack: TrUAPIBundledStack.current.load(),
             databaseDirectory: databaseDirectory,
-            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
             localSessionLiteUsername: liteUsername,
             deviceEncryptionKey: deviceEncryptionKey

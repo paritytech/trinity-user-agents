@@ -1,5 +1,6 @@
 import UIKit
 import PolkadotUI
+import TrUAPIHost
 
 @MainActor
 final class MainTabBarPresenter {
@@ -15,21 +16,25 @@ final class MainTabBarPresenter {
     #endif
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
+    private let fundingActivity: FundingActivityCenterProtocol
     private let connectionStatusViewModel = ConnectionStatusSheetViewModel()
 
     init(
         interactor: MainTabBarInteractorInputProtocol,
         wireframe: MainTabBarWireframeProtocol,
-        chipViewModelFactory: SPATabChipViewModelFactory
+        chipViewModelFactory: SPATabChipViewModelFactory,
+        fundingActivity: FundingActivityCenterProtocol
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
         self.chipViewModelFactory = chipViewModelFactory
+        self.fundingActivity = fundingActivity
     }
 }
 
 extension MainTabBarPresenter: MainTabBarPresenterProtocol {
     func setup() {
+        wireframe.attachFunding(view: view)
         interactor.setup()
     }
 
@@ -55,6 +60,21 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
+    func didReceive(fundingEvent: FundingEvent) {
+        switch fundingEvent {
+        case let .presentationRequested(entry):
+            wireframe.presentFunding(entry)
+        case let .frameRequested(request):
+            openWhenOnScreen(request)
+        case let .presentFrame(frame):
+            wireframe.presentProviderFrame(frame)
+        case let .frameClosed(entryId):
+            wireframe.closeProviderFrames(entryId: entryId)
+        case let .providerNotWorking(providerId):
+            wireframe.showProviderNotWorking(providerId)
+        }
+    }
+
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool) {
         wireframe.showPaymentsSetupNotice(isVisible: isWaiting)
     }
@@ -104,5 +124,20 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
             )
         }
         view?.showProductGamePill(viewModel)
+    }
+}
+
+private extension MainTabBarPresenter {
+    /// Opens the screen a provider asked for at once while its session is on
+    /// screen, and otherwise after the user taps the notice about it. A
+    /// closed notice leaves the screen waiting in the core.
+    func openWhenOnScreen(_ request: FundingFrameRequest) {
+        if fundingActivity.isShowingFlow(entryId: request.entryId) {
+            interactor.openProviderFrame(request)
+        } else {
+            wireframe.showProviderFrameNotice(for: request) { [interactor] in
+                interactor.openProviderFrame(request)
+            }
+        }
     }
 }

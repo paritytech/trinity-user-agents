@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_statement_store_impl.data.signer.origins
 
+import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchContext
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
@@ -7,6 +8,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleMembershipProver
+import io.paritytech.polkadotapp.feature_statement_store_impl.data.extension.AsResourcesHolderSignatureExtension
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.extension.AsResourcesProofExtension
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.extension.AsResourcesProofKind
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.extension.notificationSlot
@@ -37,6 +39,10 @@ class RealStatementStoreOrigins @Inject constructor(
     ): Result<TransactionOrigin> = runCancellableCatching {
         val context = BandersnatchContext.notificationSlot(dotNsTldProvider.getTldRetrying(), period, seq)
         unsignedResourcesOrigin(AsResourcesProofKind.NOTIFICATION_FOR_COLLECTION, context, collection)
+    }
+
+    override fun asResourcesSlotHolder(holderKeypair: Sr25519Keypair): TransactionOrigin {
+        return SetTransactionExtensionOrigin(TransactionSignerSource.None, AsResourcesHolderSignatureExtension(holderKeypair))
     }
 
     private fun unsignedResourcesOrigin(

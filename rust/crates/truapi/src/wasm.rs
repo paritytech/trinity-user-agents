@@ -526,7 +526,7 @@ fn runtime_config_from_js(
 	stack: Stack,
 ) -> Result<(PairingHostConfig, ProductContext), JsValue> {
 	let host_config = pairing_host_config_from_js(value, stack)?;
-	let product = product_context_from_js(value)?;
+	let product = product_context_from_js(value, &host_config.stack)?;
 	Ok((host_config, product))
 }
 
@@ -627,7 +627,7 @@ fn signing_host_config_from_js(
 	.map_err(runtime_config_validation_to_js)
 }
 
-fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
+fn product_context_from_js(value: &JsValue, stack: &Stack) -> Result<ProductContext, JsValue> {
 	if value.is_null() || value.is_undefined() {
 		return Err(JsValue::from_str("product is required"));
 	}
@@ -645,10 +645,11 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 				)));
 			},
 		};
-	let product_id = raw_product_id
+	raw_product_id
 		.parse::<ProductId>()
-		.map_err(|error| runtime_config_validation_to_js(error.into()))?;
-	Ok(ProductContext::new_with_execution(product_id, execution_kind))
+		.map_err(RuntimeConfigValidationError::from)
+		.and_then(|product_id| ProductContext::served_by(stack, product_id, execution_kind))
+		.map_err(runtime_config_validation_to_js)
 }
 
 fn runtime_config_field_to_js(field: &str) -> &str {
@@ -679,7 +680,8 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		},
 		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { input }) => {
 			JsValue::from_str(&format!(
-				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {input:?}"
+				"runtimeConfig.productId must be a name of DNS labels ending in a TLD, or a \
+				 localhost identifier, got {input:?}"
 			))
 		},
 		// By length, never by value: an id that trips this is unbounded in
@@ -690,18 +692,21 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		}) => JsValue::from_str(&format!(
 			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
 		)),
+		RuntimeConfigValidationError::UnservedProduct(unserved) => {
+			JsValue::from_str(&format!("runtimeConfig.productId: {unserved}"))
+		},
 	}
 }
 
-fn get_required_object(value: &JsValue, name: &str, path: &str) -> Result<JsValue, JsValue> {
+/// The property `name` of `value`, or `None` when it is null or undefined.
+fn get_optional_property(value: &JsValue, name: &str) -> Result<Option<JsValue>, JsValue> {
 	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Err(JsValue::from_str(&format!("{path} is required")));
-	}
-	if !property.is_object() {
-		return Err(JsValue::from_str(&format!("{path} must be an object")));
-	}
-	Ok(property)
+	Ok((!property.is_null() && !property.is_undefined()).then_some(property))
+}
+
+fn get_required_object(value: &JsValue, name: &str, path: &str) -> Result<JsValue, JsValue> {
+	get_optional_object(value, name, path)?
+		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
 fn get_optional_object(
@@ -709,14 +714,11 @@ fn get_optional_object(
 	name: &str,
 	path: &str,
 ) -> Result<Option<JsValue>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	if !property.is_object() {
+	let property = get_optional_property(value, name)?;
+	if property.as_ref().is_some_and(|property| !property.is_object()) {
 		return Err(JsValue::from_str(&format!("{path} must be an object")));
 	}
-	Ok(Some(property))
+	Ok(property)
 }
 
 fn get_optional_string_at(
@@ -724,25 +726,46 @@ fn get_optional_string_at(
 	name: &str,
 	path: &str,
 ) -> Result<Option<String>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
-	}
-	property
+	get_optional_property(value, name)?
+		.map(|property| string_from_js(property, path))
+		.transpose()
+}
+
+fn string_from_js(value: JsValue, path: &str) -> Result<String, JsValue> {
+	value
 		.as_string()
-		.map(Some)
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
 }
 
 fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Option<bool>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
+	get_optional_property(value, name)?
+		.map(|property| {
+			property
+				.as_bool()
+				.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+		})
+		.transpose()
+}
+
+/// Each entry of an optional array property, read with `entry` at the entry's
+/// own path. Empty when the property is absent.
+fn get_optional_array_at<T>(
+	value: &JsValue,
+	name: &str,
+	path: &str,
+	entry: impl Fn(JsValue, &str) -> Result<T, JsValue>,
+) -> Result<Vec<T>, JsValue> {
+	let Some(property) = get_optional_property(value, name)? else {
+		return Ok(Vec::new());
+	};
+	if !Array::is_array(&property) {
+		return Err(JsValue::from_str(&format!("{path} must be an array")));
 	}
-	property
-		.as_bool()
-		.map(Some)
-		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+	Array::from(&property)
+		.iter()
+		.enumerate()
+		.map(|(index, item)| entry(item, &format!("{path}[{index}]")))
+		.collect()
 }
 
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
@@ -756,20 +779,21 @@ fn get_optional_bytes32_at(
 	name: &str,
 	path: &str,
 ) -> Result<Option<[u8; 32]>, JsValue> {
-	let property = Reflect::get(value, &JsValue::from_str(name))?;
-	if property.is_null() || property.is_undefined() {
-		return Ok(None);
+	get_optional_property(value, name)?
+		.map(|property| bytes32_from_js(property, path))
+		.transpose()
+}
+
+/// A 32-byte value given as a hex string or a `Uint8Array`.
+fn bytes32_from_js(value: JsValue, path: &str) -> Result<[u8; 32], JsValue> {
+	if let Some(hex) = value.as_string() {
+		return parse_hex32(&hex).map_err(|reason| JsValue::from_str(&format!("{path}: {reason}")));
 	}
-	if let Some(hex) = property.as_string() {
-		return parse_hex32(&hex)
-			.map(Some)
-			.map_err(|reason| JsValue::from_str(&format!("{path}: {reason}")));
-	}
-	let array = property
+	let array = value
 		.dyn_into::<Uint8Array>()
 		.map_err(|_| JsValue::from_str(&format!("{path} must be hex or Uint8Array")))?;
 	let bytes = array.to_vec();
-	bytes.try_into().map(Some).map_err(|bytes: Vec<u8>| {
+	bytes.try_into().map_err(|bytes: Vec<u8>| {
 		JsValue::from_str(&format!("{path} must be exactly 32 bytes, got {}", bytes.len()))
 	})
 }
@@ -780,7 +804,6 @@ fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
-#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {
@@ -892,6 +915,15 @@ pub fn parse_product_id_for_wasm(value: &str) -> Result<String, JsValue> {
 	product_id_from_js(value).map(Into::into)
 }
 
+/// The id `stack` serves the product `name` names under, as a runtime's
+/// `parseProductId` answers it.
+fn served_product_id(stack: &Stack, name: &str) -> Result<String, JsValue> {
+	stack
+		.served_id(&product_id_from_js(name)?)
+		.map(Into::into)
+		.map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
 struct WasmCoreInner {
 	core: ProductRuntime,
 	dispose_fn: SendWrapper<Function>,
@@ -962,7 +994,7 @@ fn claim_worker<Role>(runtime: &HostRuntime<Role>, raw_id: &str) -> Option<WasmW
 			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
 		)
 		.ok()?;
-	Some(WasmWorkerClaim { _reference: runtime.hold_worker(&product) })
+	Some(WasmWorkerClaim { _reference: runtime.hold_worker(&product)? })
 }
 
 fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
@@ -1026,8 +1058,8 @@ impl WasmPairingHostRuntime {
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
-	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
-	/// callback receives. `undefined` for a test stack.
+	/// restartRequired, lastRefresh?, mismatches }`, the value the
+	/// `stackChanged` callback receives. `undefined` for a test stack.
 	#[wasm_bindgen(js_name = stackStatus)]
 	pub fn stack_status(&self) -> JsValue {
 		stack_status_to_js(self.stack_refresh.as_ref())
@@ -1051,7 +1083,7 @@ impl WasmPairingHostRuntime {
 		product: JsValue,
 		core_callbacks: JsValue,
 	) -> Result<WasmProductRuntime, JsValue> {
-		let product = product_context_from_js(&product)?;
+		let product = product_context_from_js(&product, self.runtime.stack())?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
 		let channel_id = product.product_id.to_string();
@@ -1101,7 +1133,9 @@ impl WasmPairingHostRuntime {
 
 	/// Resolve a product's hard-subtree public key from the cache, the
 	/// persisted slot, or the Account Holder. `timeoutMs` bounds that wait and
-	/// exceeding it rejects. `undefined` when no session is active.
+	/// exceeding it rejects. `undefined` when no session is active, answered
+	/// before any other check. Rejects for a product the stack does not serve,
+	/// whatever subtree was kept for it.
 	#[wasm_bindgen(js_name = productSubtreePublicKey)]
 	pub async fn product_subtree_public_key(
 		&self,
@@ -1196,9 +1230,22 @@ impl WasmPairingHostRuntime {
 		self.runtime.reset_session_state().await;
 	}
 
+	/// The id this host's stack serves the product `name` names under.
+	///
+	/// `name` is a product name as a person or a configuration writes it. It
+	/// is normalized, and on a stack whose TLD is not `dot` a name under `dot`
+	/// comes back under the stack's TLD. The host passes the answer wherever
+	/// the runtime takes a product id, so the two never hold different ids
+	/// for one product. Throws for a name the stack does not serve.
+	#[wasm_bindgen(js_name = parseProductId)]
+	pub fn parse_product_id(&self, name: &str) -> Result<String, JsValue> {
+		served_product_id(self.runtime.stack(), name)
+	}
+
 	/// Claim one reference until the returned handle is freed.
 	///
-	/// An invalid product id is logged and returns no handle.
+	/// An invalid product id, or one the stack does not serve, is logged and
+	/// returns no handle.
 	#[wasm_bindgen(js_name = claimWorker)]
 	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
 		claim_worker(&self.runtime, &raw_product_id)
@@ -1213,20 +1260,27 @@ impl WasmPairingHostRuntime {
 		worker_exited(&self.runtime, &product_id);
 	}
 
+	/// Whether `productId` is a first-party product the host grants every
+	/// `RemotePermission` without prompting: a trusted label under an id this
+	/// host's stack serves.
+	///
+	/// Trusted products bypass recorded permissions and permission prompts.
+	/// Device permissions still need the OS grant. Hosts mediating product
+	/// network access can use this check before storage. An id that does not
+	/// normalize is never trusted.
+	#[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
+	pub fn has_trusted_remote_permissions(&self, raw_product_id: String) -> bool {
+		trusts_raw_product_id(self.runtime.stack(), &raw_product_id)
+	}
 }
 
-/// Whether `productId` is a first-party product the host grants every
-/// `RemotePermission` without prompting.
-///
-/// Trusted products bypass recorded permissions and permission prompts. Device
-/// permissions still need the OS grant. Hosts mediating product network access
-/// can use this check before storage.
-///
-/// Normalizes before matching, and answers `false` for an id that does not
-/// normalize, so an unknown spelling is never read as trusted.
-#[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
-pub fn has_trusted_remote_permissions_for_wasm(raw_product_id: String) -> bool {
-	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&raw_product_id)
+/// Whether `stack` trusts the product `raw_product_id` names, and `false` for
+/// an id that does not normalize, so an unknown spelling is never read as
+/// trusted.
+fn trusts_raw_product_id(stack: &Stack, raw_product_id: &str) -> bool {
+	raw_product_id
+		.parse::<ProductId>()
+		.is_ok_and(|product_id| stack.trusts(&product_id))
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1278,7 +1332,8 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `undefined` while no session is active.
+	/// root, or `undefined` while no session is active, answered before any
+	/// other check. Throws for a product the stack does not serve.
 	///
 	/// Paired with `deriveProductAccountPublicKey` and `productAccountAddress`
 	/// this gives a host the product's address without asking the product.
@@ -1348,8 +1403,8 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
-	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
-	/// callback receives. `undefined` for a test stack.
+	/// restartRequired, lastRefresh?, mismatches }`, the value the
+	/// `stackChanged` callback receives. `undefined` for a test stack.
 	#[wasm_bindgen(js_name = stackStatus)]
 	pub fn stack_status(&self) -> JsValue {
 		stack_status_to_js(self.stack_refresh.as_ref())
@@ -1373,7 +1428,7 @@ impl WasmSigningHostRuntime {
 		product: JsValue,
 		core_callbacks: JsValue,
 	) -> Result<WasmProductRuntime, JsValue> {
-		let product = product_context_from_js(&product)?;
+		let product = product_context_from_js(&product, self.runtime.stack())?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
 		let runtime = self.runtime.product_runtime(product, sink);
@@ -1460,9 +1515,22 @@ impl WasmSigningHostRuntime {
 		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
+	/// The id this host's stack serves the product `name` names under.
+	///
+	/// `name` is a product name as a person or a configuration writes it. It
+	/// is normalized, and on a stack whose TLD is not `dot` a name under `dot`
+	/// comes back under the stack's TLD. The host passes the answer wherever
+	/// the runtime takes a product id, so the two never hold different ids
+	/// for one product. Throws for a name the stack does not serve.
+	#[wasm_bindgen(js_name = parseProductId)]
+	pub fn parse_product_id(&self, name: &str) -> Result<String, JsValue> {
+		served_product_id(self.runtime.stack(), name)
+	}
+
 	/// Claim one reference until the returned handle is freed.
 	///
-	/// An invalid product id is logged and returns no handle.
+	/// An invalid product id, or one the stack does not serve, is logged and
+	/// returns no handle.
 	#[wasm_bindgen(js_name = claimWorker)]
 	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
 		claim_worker(&self.runtime, &raw_product_id)
@@ -1477,6 +1545,18 @@ impl WasmSigningHostRuntime {
 		worker_exited(&self.runtime, &product_id);
 	}
 
+	/// Whether `productId` is a first-party product the host grants every
+	/// `RemotePermission` without prompting: a trusted label under an id this
+	/// host's stack serves.
+	///
+	/// Trusted products bypass recorded permissions and permission prompts.
+	/// Device permissions still need the OS grant. Hosts mediating product
+	/// network access can use this check before storage. An id that does not
+	/// normalize is never trusted.
+	#[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
+	pub fn has_trusted_remote_permissions(&self, raw_product_id: String) -> bool {
+		trusts_raw_product_id(self.runtime.stack(), &raw_product_id)
+	}
 }
 
 /// Derive a product's hard-subtree public key from a session's root entropy.
@@ -1540,6 +1620,22 @@ pub fn product_storage_key(product_id: String, key: String) -> Result<String, Js
 		.parse::<ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	Ok(crate::platform::ProductStorageKey::new(product_id, key).encode())
+}
+
+/// The id `testStack` serves the product `productId` names under.
+///
+/// For test hosts: a harness that seeds what the core will read, or works out
+/// an address before a host runs, names the product to something other than a
+/// runtime, so it has to read the name as the core will. On a test stack
+/// whose TLD is not `dot`, `tx-demo.dot` is `tx-demo.<tld>`. Throws for a
+/// stack the core would refuse and for a product the stack does not serve.
+#[cfg(feature = "test-host")]
+#[wasm_bindgen(js_name = testStackServedProductId)]
+pub fn test_stack_served_product_id(
+	test_stack: JsValue,
+	product_id: &str,
+) -> Result<String, JsValue> {
+	stack::test_stack_served_id(&test_stack, product_id)
 }
 
 /// The ring-VRF member for `entropy`, derived through the module this core

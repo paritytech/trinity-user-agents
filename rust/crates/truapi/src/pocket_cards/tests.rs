@@ -281,11 +281,25 @@ fn an_added_card_is_screened_like_a_product_would_address_it() {
 }
 
 #[test]
-fn a_pinned_card_is_screened_like_an_added_one() {
-	let blank = PinnedPocketCard { card_id: "   ".into(), ..humanity() };
+fn every_host_pins_humanity_on_its_own_network() {
+	assert_eq!(
+		PinnedPocketCard::privileged("paseo").unwrap(),
+		vec![PinnedPocketCard {
+			product_id: product("peopl.paseo"),
+			card_id: "humanity".into(),
+			title: "Humanity".into(),
+		}]
+	);
+}
 
-	assert_eq!(humanity().screened().unwrap(), humanity());
-	assert!(blank.screened().is_err());
+#[test]
+fn a_privileged_card_is_one_a_product_could_address() {
+	// The product removes and renders its card by id, so an id that screening
+	// would rewrite leaves the pinned card out of the product's reach.
+	for card in PinnedPocketCard::privileged("dot").unwrap() {
+		assert_eq!(normalize_chat_identifier("cardId", &card.card_id).unwrap(), card.card_id);
+		assert_eq!(validate_chat_name("title", &card.title).unwrap(), card.title);
+	}
 }
 
 #[test]

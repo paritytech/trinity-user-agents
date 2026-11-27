@@ -49,7 +49,7 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import type { ProductRuntimeConfig, ReservedValuesPolicy } from "../runtime.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -1750,10 +1750,10 @@ export interface TestStack {
   /** The relay chain. */
   relay?: TestStackChain;
   /**
-   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
-   * Defaults to `false`, as on a real host.
+   * The host's policy on reserved values. Defaults to refusing the core's, as on
+   * a real host.
    */
-  allowsReservedValues?: boolean;
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */
@@ -1803,13 +1803,15 @@ export function withChainsGeneration(stack: TestStack): TestStack {
 
 /**
  * A default {@link MockRuntimeConfig} for a mock host. Override any field;
- * the stack and product id are placeholders suitable for tests.
+ * the stack and product id are placeholders suitable for tests. The default
+ * product is `mock` under the test stack's TLD, an id that stack serves.
  */
 export function mockRuntimeConfig(
   overrides: Partial<MockRuntimeConfig> = {},
 ): MockRuntimeConfig {
+  const testStack = overrides.testStack ?? mockTestStack();
   return {
-    productId: asProductId("mock.dot"),
+    productId: asProductId(`mock.${testStack.tld}`),
     host: {
       name: "Mock Host",
       icon: "https://example.invalid/mock.png",
@@ -1819,7 +1821,7 @@ export function mockRuntimeConfig(
       type: "node",
       version: "0",
     },
-    testStack: mockTestStack(),
+    testStack,
     pairing: {
       deeplinkScheme: "polkadotapp",
     },

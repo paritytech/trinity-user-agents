@@ -275,8 +275,9 @@ type ProductId = NonNullable<TestHostFixtureOptions["productId"]>;
 const productId = "localhost:5199" as ProductId;
 ```
 
-Without `productId` the product id is `mock.dot`, and a `productAccountAddress`
-call in global setup has to use the same id the fixture runs under.
+Without `productId` the product id is `mock.paseo`, and a
+`productAccountAddress` call in global setup has to use the same id the fixture
+runs under.
 
 Get it wrong and every signing call fails with `PermissionDenied`, which reads
 like a permission-policy problem and is not one: the core scopes a product
@@ -331,7 +332,7 @@ the core logs:
 
 ```
 [truapi] WARN truapi::runtime::signing_host: direct resource allocation item failed
-  {product_id=mock.dot, reason=signing account is not a personhood ring member;
+  {product_id=mock.paseo, reason=signing account is not a personhood ring member;
    cannot grant statement-store allowance}
 ```
 
@@ -626,6 +627,13 @@ product id: both feed the derivation, so either change is a different account.
 A product that signs from several indices needs each `index` funded. A suite
 on a fork can instead top up whatever signs as it submits.
 
+The test stack is on `paseo`, and the test host reads a `.dot` name as the same
+name under `.paseo`: the account of `tx-demo.dot` is the account of
+`tx-demo.paseo`, and `productAccountAddress` and `getProductAccountAddress`
+answer that address. A release that served `.dot` ids as written gave another
+address for the same name, so a suite that funded that one funds the new one
+once.
+
 Because the address is the same on every run, two CI runs at once share its
 balance and nonces. Put them in one concurrency group, or give each run its own
 entropy.
@@ -744,7 +752,7 @@ The reason then arrives on the page console, for example:
 
 ```
 [truapi] WARN truapi::runtime::signing_host: direct resource allocation item failed
-  {product_id=mock.dot, reason=signing account is not a personhood ring member;
+  {product_id=mock.paseo, reason=signing account is not a personhood ring member;
    cannot grant statement-store allowance}
 ```
 

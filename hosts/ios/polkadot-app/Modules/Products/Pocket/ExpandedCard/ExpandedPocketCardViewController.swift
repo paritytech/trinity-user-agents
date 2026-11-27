@@ -1,7 +1,7 @@
 import FoundationExt
 import Products
 import SwiftUI
-import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardCoverOutcome
 import struct TrUAPIHost.ProductId
 import UIKit
 import UIKitExt
@@ -22,7 +22,7 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     private let pageController = UIViewController()
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private var faceSetByPage = false
+    private var coverSetByPage = false
     private var isClosing = false
     private var isInFlight = false
 
@@ -137,20 +137,20 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
         widgetView.updateLoadPhase(phase)
     }
 
-    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+    func setCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome {
         guard isOnDisplay, !isClosing else { return .notPresented }
         guard !pullDown.isPulling else { return .userMoving }
 
-        faceSetByPage = true
-        setFaceCovered(!shown)
+        coverSetByPage = true
+        setFaceCovered(covered)
         return .applied
     }
 
-    /// The card's published starting face, unless the page has already set it.
-    func applyOpeningFace(shown: Bool) {
-        guard isOnDisplay, !faceSetByPage else { return }
+    /// The card's published starting cover, unless the page has already set it.
+    func applyOpeningCover(covered: Bool) {
+        guard isOnDisplay, !coverSetByPage else { return }
 
-        setFaceCovered(!shown)
+        setFaceCovered(covered)
     }
 }
 

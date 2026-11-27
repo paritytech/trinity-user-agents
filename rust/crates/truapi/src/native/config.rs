@@ -1,11 +1,8 @@
 use std::path::PathBuf;
 
-use crate::{
-	platform::{
-		ExecutableKind, HostIdentity, HostInfo, PlatformInfo, ProductContext, ProductId,
-		RuntimeConfigValidationError, StackError,
-	},
-	pocket_cards::PinnedPocketCard,
+use crate::platform::{
+	ExecutableKind, HostIdentity, HostInfo, PlatformInfo, ProductContext, ProductId,
+	ReservedValuesPolicy, RuntimeConfigValidationError, StackError,
 };
 use truapi::{Bytes32, latest::HostPlatform};
 
@@ -33,11 +30,6 @@ pub struct HostRuntimeConfig {
 	/// Existing, writable directory for core-owned databases, kept out of
 	/// device backups. The runtime opens its database there at startup.
 	pub database_directory: String,
-	/// Cards the host pins in the Pocket: listed first, removable by nobody.
-	/// A card pinned on an earlier start and missing here stays only if the
-	/// user added it.
-	#[uniffi(default)]
-	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 	/// Whether the host draws materials. Off by default, which draws every
 	/// `Materials` node plain and answers no to products that ask.
 	#[uniffi(default)]
@@ -56,8 +48,8 @@ pub struct HostRuntimeConfig {
 	pub device_encryption_key: Option<Bytes32>,
 }
 
-/// The stack a host build ships: its pointer, its signed descriptor, and
-/// whether the build lets it use Polkadot's reserved values.
+/// The stack a host build ships: its pointer, its signed descriptor, and the
+/// build's policy on reserved values.
 #[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
@@ -66,9 +58,8 @@ pub struct BundledStack {
 	/// The bundled descriptor's bytes, as served: a signed envelope that
 	/// verifies under the pointer's key.
 	pub descriptor: Vec<u8>,
-	/// Whether this build may run a stack that uses Polkadot's genesis hashes
-	/// or the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it.
-	pub allows_reserved_values: bool,
+	/// The build's policy on reserved values.
+	pub reserved_values: ReservedValuesPolicy,
 }
 
 /// Trusted identity attached by a native host to one executable connection.
@@ -97,8 +88,6 @@ pub struct NativeResolvedHostRuntimeConfig {
 	pub device_encryption_key: Option<Bytes32>,
 	/// Directory the core database lives in.
 	pub database_directory: PathBuf,
-	/// Cards the host pins in the Pocket.
-	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 }
 
 /// Why a native runtime or product configuration was refused.
@@ -181,12 +170,6 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			local_session_lite_username: config.local_session_lite_username,
 			device_encryption_key: config.device_encryption_key,
 			database_directory: PathBuf::from(config.database_directory),
-			pinned_pocket_cards: config
-				.pinned_pocket_cards
-				.into_iter()
-				.map(PinnedPocketCard::screened)
-				.collect::<Result<_, _>>()
-				.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?,
 		})
 	}
 }
@@ -194,11 +177,5 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 impl From<&ProductContext> for ProductExecutionConfig {
 	fn from(product: &ProductContext) -> Self {
 		Self { product_id: product.product_id.clone(), execution_kind: product.execution_kind }
-	}
-}
-
-impl From<ProductExecutionConfig> for ProductContext {
-	fn from(config: ProductExecutionConfig) -> Self {
-		ProductContext::new_with_execution(config.product_id, config.execution_kind)
 	}
 }

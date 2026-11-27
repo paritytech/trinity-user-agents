@@ -5,80 +5,81 @@ use truapi::{
 	CallContext, CallError,
 	api::ExpandedCard,
 	latest::{
-		HostExpandedCardSetBackShownError as BackShownError,
-		HostExpandedCardSetFaceShownError as FaceShownError,
+		HostExpandedCardSetCardCoveredError as CoverError,
+		HostExpandedCardTurnCardError as TurnError,
 	},
 	versioned::expanded_card::{
-		HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
-		HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
-		HostExpandedCardSetFaceShownRequest, HostExpandedCardSetFaceShownResponse,
+		HostExpandedCardSetCardCoveredError, HostExpandedCardSetCardCoveredRequest,
+		HostExpandedCardSetCardCoveredResponse, HostExpandedCardTurnCardError,
+		HostExpandedCardTurnCardRequest, HostExpandedCardTurnCardResponse,
 	},
 };
 
 use crate::{
-	platform::{ExecutableKind, ExpandedCardFaceOutcome, ExpandedCardTurnOutcome},
+	platform::{ExecutableKind, ExpandedCardCoverOutcome, ExpandedCardTurnOutcome},
 	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
 
 #[async_trait::async_trait]
 impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
-	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
-	async fn set_face_shown(
+	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_card_covered"))]
+	async fn set_card_covered(
 		&self,
 		_cx: &CallContext,
-		request: HostExpandedCardSetFaceShownRequest,
-	) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
-	{
+		request: HostExpandedCardSetCardCoveredRequest,
+	) -> Result<
+		HostExpandedCardSetCardCoveredResponse,
+		CallError<HostExpandedCardSetCardCoveredError>,
+	> {
 		version(request)
 			.exec(|request| async move {
 				self.require_widget()?;
 				let Some(card) = &self.connection.expanded_card else {
 					return Err(CallError::Unsupported);
 				};
-				match card.set_expanded_card_face_shown(request.shown).await {
-					Ok(ExpandedCardFaceOutcome::Applied) => Ok(()),
-					Ok(ExpandedCardFaceOutcome::NotPresented) => {
-						Err(CallError::Domain(FaceShownError::NotPresented))
+				match card.set_expanded_card_covered(request.covered).await {
+					Ok(ExpandedCardCoverOutcome::Applied) => Ok(()),
+					Ok(ExpandedCardCoverOutcome::NotPresented) => {
+						Err(CallError::Domain(CoverError::NotPresented))
 					},
-					Ok(ExpandedCardFaceOutcome::UserMoving) => {
-						Err(CallError::Domain(FaceShownError::UserMoving))
+					Ok(ExpandedCardCoverOutcome::UserMoving) => {
+						Err(CallError::Domain(CoverError::UserMoving))
 					},
-					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
+					Ok(ExpandedCardCoverOutcome::Unsupported) => Err(CallError::Unsupported),
 					Err(error) => {
-						Err(CallError::Domain(FaceShownError::Unknown { reason: error.reason }))
+						Err(CallError::Domain(CoverError::Unknown { reason: error.reason }))
 					},
 				}
 			})
 			.await
 	}
 
-	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_back_shown"))]
-	async fn set_back_shown(
+	#[instrument(skip_all, fields(runtime.method = "expanded_card.turn_card"))]
+	async fn turn_card(
 		&self,
 		_cx: &CallContext,
-		request: HostExpandedCardSetBackShownRequest,
-	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
-	{
+		request: HostExpandedCardTurnCardRequest,
+	) -> Result<HostExpandedCardTurnCardResponse, CallError<HostExpandedCardTurnCardError>> {
 		version(request)
 			.exec(|request| async move {
 				self.require_widget()?;
 				let Some(card) = &self.connection.expanded_card else {
 					return Err(CallError::Unsupported);
 				};
-				match card.set_expanded_card_back_shown(request.shown).await {
+				match card.turn_expanded_card(request.side).await {
 					Ok(ExpandedCardTurnOutcome::Applied) => Ok(()),
 					Ok(ExpandedCardTurnOutcome::NotPresented) => {
-						Err(CallError::Domain(BackShownError::NotPresented))
+						Err(CallError::Domain(TurnError::NotPresented))
 					},
 					Ok(ExpandedCardTurnOutcome::UserMoving) => {
-						Err(CallError::Domain(BackShownError::UserMoving))
+						Err(CallError::Domain(TurnError::UserMoving))
 					},
 					Ok(ExpandedCardTurnOutcome::NoBack) => {
-						Err(CallError::Domain(BackShownError::NoBack))
+						Err(CallError::Domain(TurnError::NoBack))
 					},
 					Ok(ExpandedCardTurnOutcome::Unsupported) => Err(CallError::Unsupported),
 					Err(error) => {
-						Err(CallError::Domain(BackShownError::Unknown { reason: error.reason }))
+						Err(CallError::Domain(TurnError::Unknown { reason: error.reason }))
 					},
 				}
 			})

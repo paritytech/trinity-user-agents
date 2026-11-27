@@ -11,7 +11,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.CardCoverAnswer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
@@ -57,19 +57,19 @@ internal class ExpandedCardFoldState(initialFoldPx: Float = 0f) {
     }
 
     /**
-     * Folds the card away or back for the page. The answer comes as the fold starts, not when it ends,
-     * so the page is not kept waiting on an animation.
+     * Folds the card away, covering it with the page, or back. The answer comes as the fold starts,
+     * not when it ends, so the page is not kept waiting on an animation.
      */
-    suspend fun showFace(shown: Boolean): FaceShownAnswer {
-        if (dragging) return FaceShownAnswer.USER_MOVING
+    suspend fun cover(covered: Boolean): CardCoverAnswer {
+        if (dragging) return CardCoverAnswer.USER_MOVING
 
         snapshotFlow { maxFoldPx }.first { it > 0f }
-        if (dragging) return FaceShownAnswer.USER_MOVING
+        if (dragging) return CardCoverAnswer.USER_MOVING
 
         CoroutineScope(currentCoroutineContext()).launch {
-            animateTo(if (shown) 0f else maxFoldPx, MutatePriority.Default)
+            animateTo(if (covered) maxFoldPx else 0f, MutatePriority.Default)
         }
-        return FaceShownAnswer.APPLIED
+        return CardCoverAnswer.APPLIED
     }
 
     private suspend fun animateTo(target: Float, priority: MutatePriority) {
