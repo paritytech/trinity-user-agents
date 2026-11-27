@@ -150,7 +150,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 76,
+    version = 77,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -302,6 +302,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 74, to = 75),
         // Add statement_store_slot_allocations.signerDerivationPath for slot eviction
         AutoMigration(from = 75, to = 76),
+        // Add scheduled_product_notifications.title (the title a trusted product names)
+        AutoMigration(from = 76, to = 77),
     ]
 )
 @TypeConverters(

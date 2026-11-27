@@ -20,6 +20,7 @@
 | SSO, sign-in host, dApp authentication         | architecture/sso.md                                        |
 | Products, WebView, JS bridge, HostApi          | architecture/host-api-products.md                          |
 | Product loading, archive cache, refresh, update notice, worker reload | architecture/product-loading.md |
+| Pocket transitions, Opened card push and pop, pull-down close, back-swipe scrub, Collectibles book | architecture/pocket-transitions.md |
 | Extrinsics, transfers, signing                 | architecture/transactions.md                               |
 | Storage queries, runtime calls, SCALE          | architecture/chain-integration.md                          |
 | Coinage, payments, coins                       | architecture/coinage.md                                    |

@@ -19,15 +19,34 @@ struct PocketCardMotion: Equatable {
         opacity: 0
     )
 
-    static func of(cardAt index: Int, openAt openIndex: Int?, openOffset: CGSize, cleared: Bool) -> PocketCardMotion {
-        guard let openIndex else { return cleared ? .shrunkAway : .resting }
+    /// `clearance` runs from 0, the Pocket at rest, to 1, cleared for the open item.
+    static func of(
+        cardAt index: Int,
+        openAt openIndex: Int?,
+        openOffset: CGSize,
+        clearance: CGFloat
+    ) -> PocketCardMotion {
+        guard let openIndex else { return resting.mixed(with: .shrunkAway, by: clearance) }
 
         if index == openIndex {
             return PocketCardMotion(offset: openOffset, scale: 1, opacity: 1)
         }
 
-        guard cleared else { return .resting }
+        return resting.mixed(with: index > openIndex ? .slidAway : .shrunkAway, by: clearance)
+    }
+}
 
-        return index > openIndex ? .slidAway : .shrunkAway
+private extension PocketCardMotion {
+    func mixed(with cleared: PocketCardMotion, by clearance: CGFloat) -> PocketCardMotion {
+        let kept = 1 - clearance
+
+        return PocketCardMotion(
+            offset: CGSize(
+                width: offset.width * kept + cleared.offset.width * clearance,
+                height: offset.height * kept + cleared.offset.height * clearance
+            ),
+            scale: scale * kept + cleared.scale * clearance,
+            opacity: opacity * Double(kept) + cleared.opacity * Double(clearance)
+        )
     }
 }

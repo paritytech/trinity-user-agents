@@ -345,7 +345,7 @@ struct FundingCancelOfferView: View {
                 .multilineTextAlignment(.center)
 
             VStack(spacing: DSSpacings.small) {
-                row(String(localized: .Funding.offerFee), offer.fee)
+                row(String(localized: .feeTitle), offer.fee)
                 row(String(localized: .Funding.offerRefund), offer.refund)
             }
             .padding(DSSpacings.medium)
