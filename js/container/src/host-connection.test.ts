@@ -3,7 +3,6 @@ import { createHostConnection, type HostConnection } from "./host-connection.js"
 import {
     ConnectionResetError,
     createClient,
-    createMessagePortProvider,
     createTransport,
     decodeWireMessage,
     encodeWireMessage,
@@ -262,34 +261,6 @@ describe("shared SDK host connection", () => {
         ).toHaveLength(2);
     });
 
-    it("keeps legacy replies separate and does not replace the legacy port after a disconnect", async () => {
-        const { connection, sockets, frames } = host();
-        const port = connection.legacyPort;
-        const replies: ProtocolMessage[] = [];
-        port.addEventListener("message", (event) =>
-            replies.push(decodeWireMessage(event.data)._unsafeUnwrap()),
-        );
-        const transport = createTransport(createMessagePortProvider(port));
-        cleanup.push(() => transport.dispose());
-        const legacy = createClient(transport);
-        expect((await legacy.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
-        expect(
-            (await connection.internal.permissions.authorizeRemotePermission(permission)).isOk(),
-        ).toBe(true);
-        port.postMessage(
-            encodeWireMessage({ ...frames[0]!, requestId: "host:forged" })._unsafeUnwrap(),
-        );
-        await Bun.sleep(5);
-        expect({
-            connections: sockets.length,
-            replies: replies.map((frame) => frame.requestId),
-            forged: frames.some((frame) => frame.requestId === "host:forged"),
-        }).toEqual({ connections: 1, replies: ["p:1"], forged: false });
-        sockets[0]!.close();
-        await until(() => sockets.length === 2);
-        expect(connection.legacyPort).toBe(port);
-    });
-
     it("closes the physical socket and permanently rejects work on explicit disposal", async () => {
         const fixture = host();
         const statuses: string[] = [];
@@ -340,107 +311,6 @@ describe("shared SDK host connection", () => {
         fixture.sockets[1]!.send(start);
         await until(() => handled.length === 2);
         expect({ handled, teardowns }).toEqual({ handled: [request, request], teardowns: 1 });
-    });
-});
-
-// Products built with an SDK that predates the injected transport reach the
-// host only through this port, and have no other signal that a connection was
-// replaced.
-describe("legacy port across connection loss", () => {
-    const lost = {
-        tag: "HostFailure" as const,
-        value: { reason: "TrUAPI host connection interrupted" },
-    };
-
-    function portClient(connection: HostConnection): TrUApiClient {
-        const transport = createTransport(createMessagePortProvider(connection.legacyPort));
-        cleanup.push(() => transport.dispose());
-        return createClient(transport);
-    }
-
-    it("keeps a port client working on the replacement connection", async () => {
-        const { connection, sockets } = host();
-        const client = portClient(connection);
-        expect((await client.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
-        sockets[0]!.close();
-        await until(() => sockets.length === 2);
-        expect((await client.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
-    });
-
-    it("ends the calls and subscriptions a lost connection carried with a host failure", async () => {
-        const fixture = host();
-        const client = portClient(fixture.connection);
-        await client.system.handshake();
-        fixture.answer(false);
-        const call = client.permissions.requestRemotePermission(permission);
-        const interrupted: unknown[] = [];
-        client.theme.subscribe().subscribe({ error: (error) => interrupted.push(error.reason) });
-        await until(
-            () =>
-                fixture.frames.filter(
-                    (frame) =>
-                        frame.payload.traitId === W.THEME_SUBSCRIBE.trait ||
-                        frame.payload.traitId === W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait,
-                ).length === 2,
-        );
-        fixture.sockets[0]!.close();
-        const result = await call;
-        await until(() => interrupted.length === 1);
-        expect({ call: result.isErr() && result.error, interrupted }).toEqual({
-            call: lost,
-            interrupted: [lost],
-        });
-    });
-
-    it("fails a call it could not send when the host cannot be dialed", async () => {
-        const dial = createWebSocketProviderFactory();
-        let dials = 0;
-        const { connection, sockets } = host((url) => {
-            if (dials++ > 0) throw new Error("refused");
-            return dial(url);
-        });
-        const statuses: string[] = [];
-        connection.subscribeConnectionStatus((status) => statuses.push(status));
-        const client = portClient(connection);
-        await client.system.handshake();
-        sockets[0]!.close();
-        await until(() => dials === 2 && last(statuses) === "disconnected");
-        const result = await client.permissions.requestRemotePermission(permission);
-        expect(result.isErr() && result.error).toEqual(lost);
-    });
-
-    it("stops the streams the host started on a lost connection", async () => {
-        const fixture = host();
-        const client = portClient(fixture.connection);
-        let renders = 0;
-        let teardowns = 0;
-        client.renderer.onRender(() => {
-            renders++;
-            return () => {
-                teardowns++;
-            };
-        });
-        const request: T.V01ProductRendererRenderRequest = {
-            context: {
-                tag: "ChatMessage",
-                value: { roomId: "room", messageId: "message", messageType: "vote" },
-            },
-            payload: "0x",
-        };
-        const start = encodeWireMessage({
-            requestId: "h:1",
-            payload: {
-                traitId: W.RENDERER_RENDER.trait,
-                methodId: W.RENDERER_RENDER.method,
-                messageType: 0,
-                value: T.VersionedProductRendererRenderRequest.enc({ tag: "V1", value: request }),
-            },
-        })._unsafeUnwrap();
-        await client.system.handshake();
-        fixture.sockets[0]!.send(start);
-        await until(() => renders === 1);
-        fixture.sockets[0]!.close();
-        await until(() => teardowns === 1);
     });
 });
 
@@ -850,19 +720,11 @@ describe("shared SDK connection failure timing", () => {
             })._unsafeUnwrap(),
         ],
     ] as const;
-    it.each(
-        malformedFrames.flatMap(([name, frame]) =>
-            [false, true].map((legacyPort) => [name, legacyPort, frame] as const),
-        ),
-    )(
-        "recovers from a malformed %s without approving permissions (legacy port: %s)",
-        async (_name, legacyPort, frame) => {
+    it.each(malformedFrames)(
+        "recovers from a malformed %s without approving permissions",
+        async (_name, frame) => {
             const fixture = controlledHost();
             void productClient(fixture.connection);
-            if (legacyPort) {
-                const port = fixture.connection.legacyPort;
-                cleanup.push(() => port.close());
-            }
             fixture.sockets[0]!.open();
             await untilPrepared(() => last(fixture.statuses) === "connected");
             const pending = Promise.resolve(

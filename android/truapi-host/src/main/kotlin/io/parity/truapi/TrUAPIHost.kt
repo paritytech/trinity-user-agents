@@ -21,7 +21,7 @@
 // localhost WebSocket bridge. Start it with `execution.startWsBridge()` and load
 // the product page after injecting `LocalhostBridgeBootstrap.script(...)` and
 // `ContainerScriptBundle.load(...)` at document start. The container publishes
-// `window.__HOST_API_TRANSPORT__`, and a MessagePort for SDKs that predate it.
+// `window.__HOST_API_TRANSPORT__`.
 
 package io.parity.truapi
 

@@ -32,7 +32,6 @@ export function freezePermissionRuntime(): void {
     'Number',
     'String', // Reserve host: request IDs for private permission replies.
     'Uint8Array', 'DataView', // Prevent altered request and reply bytes.
-    'MessageChannel', 'MessagePort', 'EventTarget', // Keep lazily created legacy endpoints private.
   ] as const) {
     const constructor = globalThis[name];
     if (name !== 'Object' && name !== 'Number') freezePrototype(constructor.prototype);

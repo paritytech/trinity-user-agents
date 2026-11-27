@@ -10,8 +10,6 @@ const source = await browserScript(`
 function browser() {
   const context = createContext({
     ...browserGlobals(),
-    MessageChannel: class {},
-    MessagePort: class {},
     setTimeout,
     clearTimeout,
   });

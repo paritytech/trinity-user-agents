@@ -159,7 +159,6 @@ it("shares web permissions with installed scripts and the injected browser clien
     import { join } from 'node:path';
     assert(window === window.top && window.__HOST_WEBVIEW_MARK__);
     assert(!('__HOST_API_CLIENT__' in window) && Object.isFrozen(window.__HOST_API_TRANSPORT__));
-    assert(window.__HOST_API_PORT__ instanceof MessagePort);
     assert(Object.getOwnPropertyDescriptor(globalThis, 'fetch').configurable === false);
     const expected: string = process.env.PACKAGED_TEST_VALUE!;
     const report = join(import.meta.dir, 'report.txt');

@@ -198,8 +198,6 @@ function browser(
   const sent: Uint8Array[] = [];
   const sockets: BrowserSocket[] = [];
   const deadlines: (() => void)[] = [];
-  const sdkHandler = () => {};
-  const sdkPort = { onmessage: sdkHandler };
   const globals = browserGlobals();
   const { EventTarget: BrowserEvents, MessageEvent: BrowserMessage } = globals;
   const connection = permissionConnection([], transport === 'ready');
@@ -299,8 +297,6 @@ function browser(
     Event,
     CloseEvent,
     Blob,
-    MessageChannel: class {},
-    MessagePort: class {},
     setTimeout(callback: () => void, delay: number) {
       deadlines.push(callback);
       return setTimeout(callback, delay);
@@ -318,7 +314,6 @@ function browser(
       requests.push(new BrowserRequest(input, init));
       return new Response('received');
     },
-    __HOST_API_PORT__: sdkPort,
     __test_permission_connection__: authorize ? connection : undefined,
     __test_native_http__: nativeHttp,
   });
@@ -353,8 +348,6 @@ function browser(
     requests,
     sent,
     sockets,
-    sdkPort,
-    sdkHandler,
     connection,
     deadlines,
     nativeFetch,
@@ -553,13 +546,10 @@ describe('container fetch authorization', () => {
     second.close();
   });
 
-  it('sends authorization through the internal SDK client without replacing the legacy port', async () => {
+  it('sends authorization through the internal SDK client', async () => {
     const realm = browser(() => true);
     await realm.fetch('https://api.example/data');
-    expect({
-      sent: realm.sent.length,
-      sdkHandler: realm.sdkPort.onmessage,
-    }).toEqual({ sent: 1, sdkHandler: realm.sdkHandler });
+    expect(realm.sent.length).toBe(1);
   });
   it('uses an existing grant immediately for a cross-origin fetch', async () => {
     const authorized: string[] = [];
@@ -719,10 +709,9 @@ describe('container fetch authorization', () => {
     expect(realm.requests).toEqual([]);
   });
 
-  it('ignores forged public SDK replies and a replacement legacy authorization hook', async () => {
+  it('ignores an authorization hook a product defines', async () => {
     const realm = browser(() => false);
     realm.context.__truapi_network__ = async () => true;
-    realm.context.__HOST_API_PORT__ = { onmessage: null, postMessage() {} };
     await expect(realm.fetch('https://denied.example/data')).rejects.toThrow(
       'Network access is not allowed',
     );

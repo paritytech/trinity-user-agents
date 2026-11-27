@@ -103,7 +103,7 @@ defined in the [protocol specification](../../../docs/design/truapi-protocol.md#
 
 ## What's in the package
 
-- **Transport providers** for `MessagePort` pipes (used by both webview hosts and iframe hosts)
+- **Transport providers** for `MessagePort` pipes (used by iframe hosts)
   and for WebSocket endpoints (used by hosts that serve frames on a loopback socket).
 - **TrUAPI transport** that handles request, response, subscription, and handshake framing.
 - **Generated domain clients and types** produced from the Rust API contract.
@@ -154,9 +154,7 @@ call still waiting to be sent goes out on the next connection that completes its
 handshake, and rejects with `ConnectionResetError` only when the connection stops
 redialing. Recreate read/watch subscriptions and discard old chain handles before
 resuming work. Registered host-initiated handlers remain
-installed. SDKs that predate the injected transport use a small MessagePort
-adapter, which the host keeps across a replaced connection; there a request or
-subscription the lost connection carried ends with a `HostFailure` error.
+installed.
 
 The shared connection attempts one immediate reconnect. If a reconnect fails
 while the page is visible, it tries again after 250 ms, 1 s and 4 s. After that,

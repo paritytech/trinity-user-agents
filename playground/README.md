@@ -32,7 +32,7 @@ Open [http://localhost:3000](http://localhost:3000). `truapi-host dev` starts a
 signing host on `127.0.0.1:9955`, waits until its signer is ready, then starts
 the playground. The development-only tag in `src/app/layout.tsx` loads
 `http://127.0.0.1:9955/bootstrap.js`, which installs the same
-`window.__HOST_API_PORT__` used by native webview hosts. The production build
+`window.__HOST_API_TRANSPORT__` used by native webview hosts. The production build
 checks that this bridge URL is absent from `out/`.
 
 The source tag and the CLI use fixed port `9955`. If you pass a different

@@ -15,11 +15,6 @@ const source = await browserScript(`
   const connection = createHostConnection('ws://127.0.0.1:1234/?t=execution');
   freezeValue(window, '__HOST_WEBVIEW_MARK__', true);
   freezeValue(window, '__HOST_API_TRANSPORT__', Object.freeze(connection.transport));
-  Object.defineProperty(window, '__HOST_API_PORT__', {
-    get: () => connection.legacyPort,
-    set() {},
-    configurable: false,
-  });
   window.Promise = Promise;
   window.TypeError = TypeError;
   installFetchGate(window, createPermissionAuthorization(window, connection.internal).network);
@@ -75,32 +70,6 @@ function browser() {
   let RealmBytes: typeof Uint8Array;
   const globals = browserGlobals();
   const { EventTarget: BrowserEvents, MessageEvent: BrowserMessage } = globals;
-  class BrowserPort extends BrowserEvents {
-    peer!: BrowserPort;
-    private started = false;
-    private closed = false;
-    private pending: unknown[] = [];
-    postMessage(value: Uint8Array) {
-      if (this.closed || this.peer.closed) return;
-      this.peer.pending.push(new RealmBytes(value));
-      this.peer.drain();
-    }
-    start() { this.started = true; this.drain(); }
-    close() { this.closed = true; this.pending = []; }
-    private drain() {
-      if (!this.started || this.closed) return;
-      for (const data of this.pending.splice(0)) queueMicrotask(() => {
-        if (!this.closed) dispatch.call(this, new BrowserMessage('message', { data }));
-      });
-    }
-  }
-  class BrowserChannel {
-    private readonly first = new BrowserPort();
-    private readonly second = new BrowserPort();
-    constructor() { this.first.peer = this.second; this.second.peer = this.first; }
-    get port1() { return this.first; }
-    get port2() { return this.second; }
-  }
   class BrowserSocket extends BrowserEvents {
     private binary = 'blob';
     private closed = false;
@@ -143,8 +112,8 @@ function browser() {
     fetch: async (request: Request) => { requests.push(request.url); return new Response('received'); },
     ...globals,
     WebSocket: BrowserSocket,
-    MessageChannel: BrowserChannel,
-    MessagePort: BrowserPort,
+    MessageChannel: class {},
+    MessagePort: class {},
     Event,
     setTimeout,
     clearTimeout,
@@ -166,7 +135,7 @@ function browser() {
     connection,
     authorize,
     sockets,
-    port: () => (win as unknown as { __HOST_API_PORT__: MessagePort }).__HOST_API_PORT__,
+    post: (bytes: Uint8Array) => connection.transport.postMessage(RealmBytes.from(bytes)),
     async connect() {
       connection.transport.subscribe(() => {});
       sockets[sockets.length - 1]!.open();
@@ -269,42 +238,6 @@ describe('shared connection permission isolation', () => {
     }
   });
 
-  for (const [name, attack] of [
-    ['MessageChannel', `
-      const NativeChannel = MessageChannel;
-      globalThis.MessageChannel = class extends NativeChannel {
-        constructor() { super(); exposed.push(this.port2); }
-      };
-      const { get } = Object.getOwnPropertyDescriptor(NativeChannel.prototype, 'port2');
-      Reflect.defineProperty(NativeChannel.prototype, 'port2', {
-        get() { const port = Reflect.apply(get, this, []); exposed.push(port); return port; },
-      });
-    `],
-    ['MessagePort', `
-      const start = MessagePort.prototype.start;
-      MessagePort.prototype.start = function () { exposed.push(this); return Reflect.apply(start, this, []); };
-    `],
-    ['EventTarget', `
-      const add = EventTarget.prototype.addEventListener;
-      EventTarget.prototype.addEventListener = function (...args) { exposed.push(this); return Reflect.apply(add, this, args); };
-    `],
-  ]) {
-    it(`keeps the lazy legacy endpoint private after ${name} replacement`, async () => {
-      const host = browser();
-      runInContext(`globalThis.exposed = []; ${attack}`, host.context);
-      const port = host.port();
-      await host.connect();
-      port.postMessage(frame('p:legacy'));
-      await until(() => host.sockets[0]!.sent.some(request => request.requestId === 'p:legacy'));
-      const result = host.fetch().then(() => 'allowed', () => 'denied');
-      await until(() => permissionRequests(host.sockets[0]!).length === 1);
-      host.sockets[0]!.reply(reply(permissionRequests(host.sockets[0]!)[0]!, false));
-      expect({ decision: await result, exposed: host.context.exposed, requests: host.requests }).toEqual({
-        decision: 'denied', exposed: [], requests: [],
-      });
-    });
-  }
-
   it('protects later connections while unrelated built-ins remain mutable', async () => {
     const host = browser();
     runInContext(`
@@ -319,9 +252,8 @@ describe('shared connection permission isolation', () => {
       BigInt.prototype.toString = () => 'replaced';
       BigInt.asUintN = () => 0n;
     `, host.context);
-    const port = host.port();
     await host.connect();
-    port.postMessage(frame('p:protected'));
+    host.post(frame('p:protected'));
     await until(() => host.sockets[0]!.sent.some(request => request.requestId === 'p:protected'));
     const decision = host.authorize();
     await until(() => permissionRequests(host.sockets[0]!).length === 1);
@@ -329,43 +261,19 @@ describe('shared connection permission isolation', () => {
     expect((await decision)._unsafeUnwrap()).toEqual({ granted: false });
   });
 
-  it('keeps the public legacy port across a reconnect without calling a close method installed on it', async () => {
+  it('ignores assignment to the pinned transport and webview mark', () => {
     const host = browser();
-    const port = host.port();
-    await host.connect();
-    let intercepted = false;
-    Object.defineProperty(port, 'close', { value() {
-      intercepted = true;
-      throw new Error('product port close');
-    } });
-    const decision = Promise.resolve(host.authorize()).catch(error => error.name);
-    await until(() => permissionRequests(host.sockets[0]!).length === 1);
-    host.sockets[0]!.disconnect();
-    expect(await decision).toBe('ConnectionResetError');
-    await until(() => host.sockets.length === 2);
-    await host.connect();
-    port.postMessage(frame('p:after'));
-    await until(() => host.sockets[1]!.sent.some(request => request.requestId === 'p:after'));
-    expect(intercepted).toBe(false);
-  });
-
-  it('accepts legacy assignment without replacing the pinned port or transport', () => {
-    const host = browser();
-    const port = host.port();
     runInContext(`
       (() => {
         'use strict';
-        window.__HOST_API_PORT__ = { postMessage() { throw new Error('replacement port'); } };
         window.__HOST_API_TRANSPORT__ = { postMessage() { throw new Error('replacement transport'); } };
         window.__HOST_WEBVIEW_MARK__ = false;
       })();
     `, host.context);
     expect({
-      samePort: host.port() === port,
       sameTransport: runInContext('window.__HOST_API_TRANSPORT__', host.context) === host.connection.transport,
       hosted: runInContext('window.__HOST_WEBVIEW_MARK__', host.context),
-      sockets: host.sockets.length,
-    }).toEqual({ samePort: true, sameTransport: true, hosted: true, sockets: 1 });
+    }).toEqual({ sameTransport: true, hosted: true });
   });
 
   it('keeps authorization private when shared prototypes are replaced', async () => {
@@ -387,12 +295,8 @@ describe('shared connection permission isolation', () => {
       globalThis.performance = { now() { exposed.push('clock'); throw new Error('clock replaced'); } };
       window.WebSocket.prototype.send = function () { throw new Error('send intercepted'); };
       window.WebSocket.prototype.close = function () { throw new Error('close intercepted'); };
-      for (const name of ['port1', 'port2']) {
-        Reflect.defineProperty(MessageChannel.prototype, name, { get() { throw new Error('channel intercepted'); } });
-      }
     `, host.context);
-    const port = host.port();
-    port.postMessage(frame('p:before-loss'));
+    host.post(frame('p:before-loss'));
     const first = host.authorize();
     await until(() => permissionRequests(host.sockets[0]!).length === 1);
     host.sockets[0]!.reply(reply(permissionRequests(host.sockets[0]!)[0]!, false));
@@ -403,31 +307,9 @@ describe('shared connection permission isolation', () => {
     const second = host.authorize();
     await until(() => permissionRequests(host.sockets[1]!).length === 1);
     host.sockets[1]!.reply(reply(permissionRequests(host.sockets[1]!)[0]!, false));
-    expect({
-      decision: (await second)._unsafeUnwrap(),
-      exposed: host.context.exposed,
-      sameLegacyPort: host.port() === port,
-    }).toEqual({ decision: { granted: false }, exposed: [], sameLegacyPort: true });
-  });
-
-  it('rejects reserved IDs in every legacy frame leg, length form and malformed frame', async () => {
-    const host = browser();
-    const port = host.port();
-    await host.connect();
-    const socket = host.sockets[0]!;
-    for (const prefix of ['host:', 'host:permission:', 'host:health:', 'host:unknown:']) {
-      for (let messageType = 0; messageType <= 4; messageType++) {
-        const reserved = frame(`${prefix}1`, messageType);
-        port.postMessage(reserved);
-        for (const width of [2, 4, 5] as const) port.postMessage(alternateLength(reserved, width));
-      }
-    }
-    for (const malformed of [new Uint8Array(), Uint8Array.of(1), Uint8Array.of(3, 255), Uint8Array.of(252)]) {
-      port.postMessage(malformed);
-    }
-    port.postMessage(frame('p:allowed'));
-    await until(() => socket.sent.some(request => request.requestId === 'p:allowed'));
-    expect(socket.sent.map(request => request.requestId)).toEqual(['host:1', 'p:allowed']);
+    expect({ decision: (await second)._unsafeUnwrap(), exposed: host.context.exposed }).toEqual({
+      decision: { granted: false }, exposed: [],
+    });
   });
 
   it('rejects reserved IDs and malformed frames from the injected transport', async () => {
@@ -437,8 +319,14 @@ describe('shared connection permission isolation', () => {
     const transport = runInContext('window.__HOST_API_TRANSPORT__', host.context) as HostConnection['transport'];
     const ProductBytes = runInContext('Uint8Array', host.context) as typeof Uint8Array;
     const post = (bytes: Uint8Array) => transport.postMessage(ProductBytes.from(bytes));
-    for (let messageType = 0; messageType <= 4; messageType++) post(frame(`host:forged:${messageType}`, messageType));
-    for (const malformed of [new Uint8Array(), Uint8Array.of(1), Uint8Array.of(252)]) post(malformed);
+    for (const prefix of ['host:', 'host:permission:', 'host:health:', 'host:unknown:']) {
+      for (let messageType = 0; messageType <= 4; messageType++) {
+        const reserved = frame(`${prefix}1`, messageType);
+        post(reserved);
+        for (const width of [2, 4, 5] as const) post(alternateLength(reserved, width));
+      }
+    }
+    for (const malformed of [new Uint8Array(), Uint8Array.of(1), Uint8Array.of(3, 255), Uint8Array.of(252)]) post(malformed);
     // A product owns the object it passes, and can make it read as another frame.
     const disguised = ProductBytes.from(frame('host:forgery'));
     const decoy = ProductBytes.from(frame('p:legitimate'));
@@ -449,13 +337,9 @@ describe('shared connection permission isolation', () => {
     expect(socket.sent.map(request => request.requestId)).toEqual(['host:1', 'p:allowed']);
   });
 
-  it('keeps private replies off the public channels and ignores stale socket decisions', async () => {
+  it('keeps private replies off the public transport and ignores stale socket decisions', async () => {
     const host = browser();
-    const port = host.port();
-    const publicReplies: string[] = [];
     const transportReplies: string[] = [];
-    port.addEventListener('message', event => publicReplies.push(decode(event.data).requestId));
-    port.start();
     await host.connect();
     host.connection.transport.subscribe(frame => transportReplies.push(decode(frame).requestId));
     const firstSocket = host.sockets[0]!;
@@ -482,10 +366,8 @@ describe('shared connection permission isolation', () => {
     await settle();
     expect(settled).toBe(false);
     replacement.reply(reply(current, false));
-    expect({
-      decision: (await next)._unsafeUnwrap(), publicReplies, transportReplies, sameLegacyPort: host.port() === port,
-    }).toEqual({
-      decision: { granted: false }, publicReplies: ['p:reply'], transportReplies: ['p:reply'], sameLegacyPort: true,
+    expect({ decision: (await next)._unsafeUnwrap(), transportReplies }).toEqual({
+      decision: { granted: false }, transportReplies: ['p:reply'],
     });
   });
 

@@ -224,9 +224,8 @@ dependency. The UniFFI bindings and the container bundle are gitignored build
 outputs; `scripts/rebuild.sh` regenerates them along with the xcframework
 (`make xcframework` + `make uniffi`); see
 [`ios/truapi-host/README.md`](ios/truapi-host/README.md).
-The container publishes the shared client and a temporary MessagePort adapter for
-older SDKs. The adapter's removal is tracked in [#881](https://github.com/paritytech/trinity-user-agents/issues/881);
-CLI and iframe MessagePort transports remain supported.
+The container publishes `window.__HOST_API_TRANSPORT__`, a frame channel over its
+host connection. Each product's SDK builds its own client over it.
 The [container permission boundary](js/container/README.md) documents the protected
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
@@ -741,10 +740,8 @@ The host serves that script itself, with no imports or environment variables
 needed. It installs the shared host transport and browser container before
 product code runs. Keep the tag before application scripts, without `async` or
 `defer`. SDK calls and permission checks share one connection. Each product
-encodes its frames with its own `@parity/truapi`. Updated SDKs keep their
-client across reconnects. SDKs that predate the injected transport use the
-MessagePort adapter, which survives a reconnect too: what the lost connection
-carried ends with a `HostFailure` error.
+encodes its frames with its own `@parity/truapi`, and its client survives
+reconnects. What the lost connection carried fails with `ConnectionResetError`.
 A visible page retries a failed reconnect after 250 ms, 1 s and 4 s; after that, the next API
 call or return to a visible page tries again.
 On iOS the host rebinds its localhost listener on the same port each time the app
