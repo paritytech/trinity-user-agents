@@ -22,7 +22,7 @@ class CoinageGlRenderer private constructor(
     private val meshes: Map<String, GpuMesh>,
     private val instanceBuffer: Int,
     private val reliefTexture: Int,
-    private val environmentTexture: Int,
+    private val environment: CoinageStudioBake.Cube,
     private val uniforms: Uniforms
 ) {
     private var instances: FloatBuffer = newInstanceBuffer(INITIAL_COINS)
@@ -34,7 +34,8 @@ class CoinageGlRenderer private constructor(
         pixelWidth: Int,
         pixelHeight: Int,
         density: Float,
-        light: CoinageTilt.Turn
+        light: CoinageTilt.Turn,
+        set: CoinageScene.CoinSet
     ) {
         GLES20.glViewport(0, 0, pixelWidth, pixelHeight)
         GLES20.glClearColor(0f, 0f, 0f, 0f)
@@ -55,7 +56,7 @@ class CoinageGlRenderer private constructor(
         GLES20.glUseProgram(program)
         GLES30.glBindVertexArray(vertexArray)
 
-        bindUniforms(viewportWidth, viewportHeight, density, light)
+        bindUniforms(viewportWidth, viewportHeight, density, light, set)
         bindTextures()
 
         ensureCapacity(batches.sumOf { it.instances.size })
@@ -85,20 +86,28 @@ class CoinageGlRenderer private constructor(
         GLES20.glDeleteProgram(program)
         GLES30.glDeleteVertexArrays(1, intArrayOf(vertexArray), 0)
         GLES20.glDeleteBuffers(1, intArrayOf(instanceBuffer), 0)
-        GLES20.glDeleteTextures(2, intArrayOf(reliefTexture, environmentTexture), 0)
+        GLES20.glDeleteTextures(2, intArrayOf(reliefTexture, environment.texture), 0)
 
         for (mesh in meshes.values) {
             GLES20.glDeleteBuffers(4, intArrayOf(mesh.positions, mesh.normals, mesh.surfaces, mesh.indices), 0)
         }
     }
 
-    private fun bindUniforms(width: Float, height: Float, density: Float, light: CoinageTilt.Turn) {
+    private fun bindUniforms(
+        width: Float,
+        height: Float,
+        density: Float,
+        light: CoinageTilt.Turn,
+        set: CoinageScene.CoinSet
+    ) {
         val material = bundle.material
 
         GLES20.glUniform2f(uniforms.viewport, width, height)
         GLES20.glUniform1f(uniforms.dpr, density)
         GLES20.glUniform1f(uniforms.tilePx, bundle.tilePixels)
-        GLES20.glUniform1f(uniforms.envMaxLod, bundle.environmentMaxLod)
+        GLES20.glUniform1f(uniforms.envMaxLod, (environment.levels - 1).toFloat())
+        // Spun grain, a polished rim and a satin wall for the plain coins; mint luster for the varied ones.
+        GLES20.glUniform1f(uniforms.grain, if (set == CoinageScene.CoinSet.PLAIN) 1f else 0f)
         GLES20.glUniform3f(uniforms.lightTurn, light.x.toFloat(), light.y.toFloat(), light.z.toFloat())
         GLES20.glUniform1f(uniforms.exposure, material.exposure)
         GLES20.glUniform1f(uniforms.luster, material.luster)
@@ -119,6 +128,17 @@ class CoinageGlRenderer private constructor(
         GLES20.glUniform1f(uniforms.aaVariance, material.aaVariance)
         GLES20.glUniform1f(uniforms.aaThreshold, material.aaThreshold)
         GLES20.glUniform1f(uniforms.reliefBias, material.reliefBias)
+        GLES20.glUniform1f(uniforms.spinGrain, material.spinGrain)
+        GLES20.glUniform1f(uniforms.spinMinPx, material.spinMinPx)
+        GLES20.glUniform1f(uniforms.rimPolish, material.rimPolish)
+        GLES20.glUniform1f(uniforms.wallSatin, material.wallSatin)
+        GLES20.glUniform1f(uniforms.brushCover, material.brushCover)
+        GLES20.glUniform1f(uniforms.brushDepth, material.brushDepth)
+        GLES20.glUniform1f(uniforms.brushScale, material.brushScale)
+        GLES20.glUniform1f(uniforms.brushStretch, material.brushStretch)
+        GLES20.glUniform1f(uniforms.wearDarken, material.wearDarken)
+        GLES20.glUniform1f(uniforms.wearMatte, material.wearMatte)
+        GLES20.glUniform1f(uniforms.brushMinPx, material.brushMinPx)
         GLES20.glUniform1f(uniforms.reliefGain, CoinageTuning.RELIEF_GAIN)
         GLES20.glUniform1f(uniforms.roomLift, CoinageTuning.ROOM_LIFT)
         GLES20.glUniform4fv(uniforms.panels, CoinageTuning.packedPanels.size / 4, CoinageTuning.packedPanels, 0)
@@ -132,7 +152,7 @@ class CoinageGlRenderer private constructor(
         GLES20.glUniform1i(uniforms.atlas, 0)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_CUBE_MAP, environmentTexture)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_CUBE_MAP, environment.texture)
         GLES20.glUniform1i(uniforms.environment, 1)
     }
 
@@ -253,6 +273,18 @@ class CoinageGlRenderer private constructor(
         val aaVariance = GLES20.glGetUniformLocation(program, "uAaVariance")
         val aaThreshold = GLES20.glGetUniformLocation(program, "uAaThreshold")
         val reliefBias = GLES20.glGetUniformLocation(program, "uReliefBias")
+        val grain = GLES20.glGetUniformLocation(program, "uGrain")
+        val spinGrain = GLES20.glGetUniformLocation(program, "uSpinGrain")
+        val spinMinPx = GLES20.glGetUniformLocation(program, "uSpinMinPx")
+        val rimPolish = GLES20.glGetUniformLocation(program, "uRimPolish")
+        val wallSatin = GLES20.glGetUniformLocation(program, "uWallSatin")
+        val brushCover = GLES20.glGetUniformLocation(program, "uBrushCover")
+        val brushDepth = GLES20.glGetUniformLocation(program, "uBrushDepth")
+        val brushScale = GLES20.glGetUniformLocation(program, "uBrushScale")
+        val brushStretch = GLES20.glGetUniformLocation(program, "uBrushStretch")
+        val wearDarken = GLES20.glGetUniformLocation(program, "uWearDarken")
+        val wearMatte = GLES20.glGetUniformLocation(program, "uWearMatte")
+        val brushMinPx = GLES20.glGetUniformLocation(program, "uBrushMinPx")
         val reliefGain = GLES20.glGetUniformLocation(program, "uReliefGain")
         val roomLift = GLES20.glGetUniformLocation(program, "uRoomLift")
         val panels = GLES20.glGetUniformLocation(program, "uPanels")
@@ -274,12 +306,20 @@ class CoinageGlRenderer private constructor(
         /** What the instance buffer starts at. It grows to fit rather than dropping coins on the floor. */
         private const val INITIAL_COINS = 600
 
-        /**
-         * Builds every GL object from an already decoded bundle. Cheap — uploads only — which is why the
-         * decode is shared across contexts and this is not.
-         */
-        fun create(bundle: CoinageAssetBundle): CoinageGlRenderer {
-            val program = link(bundle.vertexSource, bundle.fragmentSource)
+        /** Builds every GL object from an already decoded bundle. */
+        fun create(bundle: CoinageAssetBundle, isCancelled: () -> Boolean): CoinageGlRenderer? {
+            val environment = CoinageStudioBake.bake(
+                bundle.studio,
+                bundle.studioVertexSource,
+                bundle.studioFragmentSource,
+                isCancelled
+            ) ?: return null
+            val program = try {
+                CoinageGlProgram.link(bundle.vertexSource, bundle.fragmentSource)
+            } catch (failure: IllegalStateException) {
+                GLES20.glDeleteTextures(1, intArrayOf(environment.texture), 0)
+                throw failure
+            }
             val arrays = IntArray(1).also { GLES30.glGenVertexArrays(1, it, 0) }
             val instanceBuffer = IntArray(1).also { GLES20.glGenBuffers(1, it, 0) }[0]
 
@@ -291,7 +331,7 @@ class CoinageGlRenderer private constructor(
                 meshes = bundle.meshes.mapValues { (_, mesh) -> upload(mesh) },
                 instanceBuffer = instanceBuffer,
                 reliefTexture = uploadRelief(bundle.relief),
-                environmentTexture = uploadEnvironment(bundle.environment),
+                environment = environment,
                 uniforms = Uniforms(program)
             )
         }
@@ -347,78 +387,11 @@ class CoinageGlRenderer private constructor(
             return name
         }
 
-        /**
-         * Every level of the prefiltered chain is uploaded, so a rough metal reads a blurred studio without
-         * the shader doing the blurring.
-         */
-        private fun uploadEnvironment(faces: List<CoinageEnvironmentFace>): Int {
-            val name = IntArray(1).also { GLES20.glGenTextures(1, it, 0) }[0]
-            val base = faces.first { it.level == 0 }
-            val levels = faces.maxOf { it.level } + 1
-
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_CUBE_MAP, name)
-            GLES30.glTexStorage2D(
-                GLES20.GL_TEXTURE_CUBE_MAP,
-                levels,
-                GLES30.GL_RGBA16F,
-                base.width,
-                base.height
-            )
-
-            for (face in faces) {
-                face.pixels.rewind()
-                GLES20.glTexSubImage2D(
-                    GLES20.GL_TEXTURE_CUBE_MAP_POSITIVE_X + face.slice,
-                    face.level,
-                    0,
-                    0,
-                    face.width,
-                    face.height,
-                    GLES20.GL_RGBA,
-                    GLES30.GL_HALF_FLOAT,
-                    face.pixels
-                )
-            }
-
-            sample(GLES20.GL_TEXTURE_CUBE_MAP)
-
-            return name
-        }
-
         private fun sample(target: Int) {
             GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR_MIPMAP_LINEAR)
             GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
             GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
             GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        }
-
-        private fun link(vertexSource: String, fragmentSource: String): Int {
-            val program = GLES20.glCreateProgram()
-
-            GLES20.glAttachShader(program, compile(GLES20.GL_VERTEX_SHADER, vertexSource))
-            GLES20.glAttachShader(program, compile(GLES20.GL_FRAGMENT_SHADER, fragmentSource))
-            GLES20.glLinkProgram(program)
-
-            val status = IntArray(1)
-            GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0)
-
-            check(status[0] != 0) { "coin program did not link: ${GLES20.glGetProgramInfoLog(program)}" }
-
-            return program
-        }
-
-        private fun compile(type: Int, source: String): Int {
-            val shader = GLES20.glCreateShader(type)
-
-            GLES20.glShaderSource(shader, source)
-            GLES20.glCompileShader(shader)
-
-            val status = IntArray(1)
-            GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, status, 0)
-
-            check(status[0] != 0) { "coin shader did not compile: ${GLES20.glGetShaderInfoLog(shader)}" }
-
-            return shader
         }
     }
 }

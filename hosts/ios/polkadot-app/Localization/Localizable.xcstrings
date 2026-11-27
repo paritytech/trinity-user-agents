@@ -3955,6 +3955,17 @@
         }
       }
     },
+    "wallet.main.backToPocket" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to Pocket"
+          }
+        }
+      }
+    },
     "wallet.main.purse" : {
       "extractionState" : "manual",
       "localizations" : {

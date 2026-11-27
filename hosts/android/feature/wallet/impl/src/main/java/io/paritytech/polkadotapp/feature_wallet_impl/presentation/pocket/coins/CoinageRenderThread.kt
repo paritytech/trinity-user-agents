@@ -7,15 +7,24 @@ import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
-import io.paritytech.polkadotapp.common.utils.logFailure
+import android.opengl.GLES30
+import android.os.Handler
+import android.os.HandlerThread
+import android.view.Choreographer
 import timber.log.Timber
 
 /**
  * Owns the GL context and the frame loop for one surface.
  *
- * Drives itself rather than being ticked from outside: `eglSwapBuffers` blocks until the next vsync, so the
- * loop is paced by the display, and it parks the moment every spring and the light have settled. Motion
- * wakes it — a view that only sampled attitude inside its own draw would go to sleep and freeze the light.
+ * Each frame waits for a vsync from a Choreographer on a thread of its own. Swapping into a `TextureView`'s
+ * surface does not block — the texture drops frames it has no time to show — so a loop paced by the swap
+ * alone spun at over a thousand frames a second. Not the main thread's Choreographer: a busy UI frame would
+ * hold the coins back with it. The loop parks the moment every spring and the light have settled; motion
+ * wakes it, since a view that only sampled attitude inside its own draw would sleep and freeze the light.
+ *
+ * At most two frames are in flight: before drawing, it waits for the frame before last to finish on the GPU.
+ * A third only queues behind a slow GPU and shows the light a frame later. The wait is on this thread alone;
+ * nothing on the main thread ever waits for the GPU.
  */
 class CoinageRenderThread(
     context: Context,
@@ -24,6 +33,21 @@ class CoinageRenderThread(
 ) : Thread("coinage-render") {
     private val appContext = context.applicationContext
     private val tilt = CoinageTilt(context)
+    private val fences = LongArray(FRAMES_IN_FLIGHT)
+    private var fenceIndex = 0
+
+    private val vsyncThread = HandlerThread("coinage-vsync").also { it.start() }
+    private val vsyncHandler = Handler(vsyncThread.looper)
+    private var vsyncs = 0L
+    private var vsyncRequested = false
+    private val requestVsync = Runnable { Choreographer.getInstance().postFrameCallback(onVsync) }
+    private val onVsync = Choreographer.FrameCallback {
+        synchronized(lock) {
+            vsyncs++
+            vsyncRequested = false
+            lock.notifyAll()
+        }
+    }
     private val field = CoinageCoinField()
 
     private val lock = Object()
@@ -68,6 +92,14 @@ class CoinageRenderThread(
     private var bundle: CoinageAssetBundle? = null
 
     private var lastFrame = 0L
+    private var lastShownFrame: ShownFrame? = null
+
+    @Volatile
+    var timings: CoinageFrameTimings? = null
+        set(value) {
+            field = value
+            tilt.onReading = value?.let { it::onReading }
+        }
 
     /**
      * Only a width change re-aims the coins: both arrangements are laid out against the width alone, and
@@ -157,6 +189,7 @@ class CoinageRenderThread(
         }
 
         runCatching { join(SHUTDOWN_WAIT) }
+        vsyncThread.quitSafely()
     }
 
     override fun run() {
@@ -177,6 +210,7 @@ class CoinageRenderThread(
         } finally {
             tilt.stop()
             tilt.onMove = null
+            fences.forEach { if (it != 0L) GLES30.glDeleteSync(it) }
             renderer?.release()
             releaseEgl()
         }
@@ -186,6 +220,17 @@ class CoinageRenderThread(
         while (true) {
             synchronized(lock) {
                 while (running && (!awake || !isVisible)) lock.wait()
+
+                if (!running) return
+
+                val seen = vsyncs
+
+                if (!vsyncRequested) {
+                    vsyncRequested = true
+                    vsyncHandler.post(requestVsync)
+                }
+
+                while (running && vsyncs == seen) lock.wait()
 
                 if (!running) return
             }
@@ -201,10 +246,7 @@ class CoinageRenderThread(
     /** Returns whether anything is still moving, which is what keeps the loop awake. */
     private fun frame(): Boolean {
         val ready = renderer ?: bundle?.let { decoded ->
-            runCatching { CoinageGlRenderer.create(decoded) }
-                .logFailure("CoinageRenderThread: could not build the coin renderer")
-                .getOrNull()
-                ?.also { renderer = it }
+            CoinageGlRenderer.create(decoded, ::isShutDown)?.also { renderer = it }
         } ?: return false
 
         val width: Int
@@ -233,11 +275,21 @@ class CoinageRenderThread(
 
         if (width <= 0 || height <= 0) return false
 
+        awaitFrameBeforeLast()
+
+        val drawn = System.nanoTime()
+        val light = tilt.turn
+
         if (retarget) retarget(ready.designs) else if (follow) follow()
 
         for (tap in pending) tap.onResult(CoinageScene.coinAt(tap.x, tap.y, field, set))
 
-        val moved = advance()
+        val coinsMove = field.isMoving
+        val moved = advance(drawn)
+        val frame = ShownFrame(tilt.turn, offset, width, height, scale, set)
+
+        if (!coinsMove && frame == lastShownFrame) return field.isMoving || moved
+
         val batches = CoinageScene.batches(field, ready.designs, offset, set)
 
         ready.draw(
@@ -247,21 +299,38 @@ class CoinageRenderThread(
             pixelWidth = width,
             pixelHeight = height,
             density = scale,
-            light = tilt.turn
+            light = frame.light,
+            set = set
         )
+
+        fences[fenceIndex] = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        fenceIndex = (fenceIndex + 1) % FRAMES_IN_FLIGHT
 
         EGL14.eglSwapBuffers(display, eglSurface)
         drawnWindow = offset
+        lastShownFrame = frame
+
+        timings?.onSwapped(drawn, System.nanoTime(), tookReading = tilt.turn != light)
 
         return field.isMoving || moved
+    }
+
+    /** Sampled after the wait, so the frame takes the freshest reading there is. */
+    private fun awaitFrameBeforeLast() {
+        val fence = fences[fenceIndex]
+
+        if (fence == 0L) return
+
+        GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_TIMEOUT)
+        GLES30.glDeleteSync(fence)
+        fences[fenceIndex] = 0L
     }
 
     /**
      * A real elapsed time rather than a nominal frame: the spring is exact for any step, and a dropped frame
      * should not slow the motion down.
      */
-    private fun advance(): Boolean {
-        val now = System.nanoTime()
+    private fun advance(now: Long): Boolean {
         val elapsed = if (lastFrame == 0L) {
             NOMINAL_FRAME
         } else {
@@ -271,7 +340,7 @@ class CoinageRenderThread(
 
         field.advance(elapsed)
 
-        return tilt.advance(elapsed)
+        return tilt.advance(now)
     }
 
     /**
@@ -351,6 +420,8 @@ class CoinageRenderThread(
         lock.notifyAll()
     }
 
+    private fun isShutDown(): Boolean = synchronized(lock) { !running }
+
     private fun initialiseEgl(): Boolean {
         display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
 
@@ -429,10 +500,21 @@ class CoinageRenderThread(
         const val LONGEST_FRAME = 1f / 20
         const val NANOSECONDS = 1_000_000_000f
         const val SHUTDOWN_WAIT = 500L
+        const val FRAMES_IN_FLIGHT = 2
+        const val FENCE_TIMEOUT = 100_000_000L
     }
 }
 
 private class Tap(val x: Float, val y: Float, val onResult: (String?) -> Unit)
+
+private data class ShownFrame(
+    val light: CoinageTilt.Turn,
+    val offset: Float,
+    val width: Int,
+    val height: Int,
+    val density: Float,
+    val set: CoinageScene.CoinSet
+)
 
 /**
  * Where the coins came out, so the card can rule their runs and label their blocks.

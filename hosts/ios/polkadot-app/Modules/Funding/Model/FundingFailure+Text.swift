@@ -10,7 +10,7 @@ extension FundingFailure {
         case .verificationRefused: String(localized: .Funding.failureVerificationRefused)
         case .belowMinimum: String(localized: .Funding.failureBelowMinimum)
         case .aboveMaximum: String(localized: .Funding.failureAboveMaximum)
-        case .insufficientBalance: String(localized: .Funding.failureInsufficientBalance)
+        case .insufficientBalance: String(localized: .Validation.insufficientBalance)
         case .expired: String(localized: .Funding.failureExpired)
         case .wrongAssetOrChain: String(localized: .Funding.failureWrongAssetOrChain)
         case .providerTimeout: String(localized: .Funding.failureProviderTimeout)

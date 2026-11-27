@@ -12,6 +12,7 @@ import dagger.hilt.android.HiltAndroidApp
 import io.paritytech.polkadotapp.app.logging.AppFileDebugTree
 import io.paritytech.polkadotapp.app.logging.CoinageFileTree
 import io.paritytech.polkadotapp.app.logging.HostLogSinkTree
+import io.paritytech.polkadotapp.app.logging.SentryLogGate
 import io.paritytech.polkadotapp.app.root.presentation.debug.DebugShakeObserver
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializerPipeline
@@ -59,6 +60,10 @@ class App : Application(), Configuration.Provider {
     }
 
     override fun onCreate() {
+        // Ahead of super.onCreate(), which is where Hilt builds this class's eager fields, so a
+        // provider that throws there is reported. It reads the manifest and needs nothing injected.
+        SentryLogGate.install(this)
+
         super.onCreate()
 
         // Planted before the initializers: the pipeline resumes unfinished top-ups, and Timber drops
