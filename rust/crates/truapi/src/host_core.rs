@@ -335,11 +335,12 @@ impl<Role> HostRuntime<Role> {
 			.ok()
 	}
 
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
+	/// Report that a worker attempt stopped without being asked to.
+	///
+	/// While something holds the worker and `attempt` is still its current one, the worker is
+	/// started again, with a growing wait when it keeps crashing.
+	pub fn worker_attempt_exited(&self, product_id: &ProductId, attempt: u64) {
+		self.services.worker_attempt_exited(product_id, attempt);
 	}
 }
 
@@ -1907,7 +1908,7 @@ impl ProductRuntimeControl {
 	}
 
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
-		if self.disposed.load(Ordering::Acquire) {
+		if self.is_disposed() {
 			return Err(ProductRuntimeError::Closed);
 		}
 		Ok(&self.connection)

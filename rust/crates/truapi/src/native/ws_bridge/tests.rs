@@ -31,7 +31,7 @@ fn runtime_factory_for(platform: Arc<StubPlatform>) -> Arc<dyn WsProductRuntimeF
 	.expect("test signing host config is valid");
 	let runtime = Arc::new(HostRuntime::<SigningHost>::new(platform, config, Spawner::for_test()));
 	let product = ProductContext::new(ProductId::for_test("dotli.dot"));
-	Arc::new(move |sink| runtime.product_runtime(product.clone(), sink))
+	Arc::new(move |sink| Some(runtime.product_runtime(product.clone(), sink)))
 }
 
 fn no_log() -> BridgeLogger {
@@ -316,16 +316,36 @@ fn wrong_or_unknown_token_is_rejected_at_handshake() {
 	drop(bridge);
 }
 
+#[test]
+fn a_connection_with_nothing_to_connect_to_releases_its_slot() {
+	let bridge = start_test_bridge();
+	let nothing_to_connect = |_: Arc<dyn FrameSink>| None::<ProductRuntime>;
+	let endpoint = bridge.register(Arc::new(nothing_to_connect), no_log());
+	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+	let client = tokio::runtime::Builder::new_current_thread()
+		.enable_all()
+		.build()
+		.expect("client runtime");
+
+	let _peer_stays_connected =
+		client.block_on(tokio_tungstenite::connect_async(&url)).expect("dial");
+
+	crate::test_support::wait_until(
+		|| bridge.registry.total_connections.load(Ordering::Acquire) == 0,
+		"the bridge kept a connection nothing serves",
+	);
+}
+
 struct DisposalWatchFactory {
 	inner: Arc<dyn WsProductRuntimeFactory>,
 	control: Mutex<Option<crate::ProductRuntimeControl>>,
 }
 
 impl WsProductRuntimeFactory for DisposalWatchFactory {
-	fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		let runtime = self.inner.product_runtime(sink);
+	fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> Option<ProductRuntime> {
+		let runtime = self.inner.product_runtime(sink)?;
 		*self.control.lock().expect("disposal watch mutex poisoned") = Some(runtime.control());
-		runtime
+		Some(runtime)
 	}
 }
 
@@ -848,9 +868,9 @@ fn total_capacity_is_reusable_after_a_retained_connection_closes() {
 	let factory: Arc<dyn WsProductRuntimeFactory> = Arc::new({
 		let controls = controls.clone();
 		move |sink| {
-			let runtime = inner.product_runtime(sink);
+			let runtime = inner.product_runtime(sink)?;
 			controls.lock().expect("controls mutex poisoned").push(runtime.control());
-			runtime
+			Some(runtime)
 		}
 	});
 
@@ -911,7 +931,7 @@ fn total_capacity_is_reusable_after_a_retained_connection_closes() {
 #[test]
 fn a_panicking_execution_does_not_affect_a_sibling() {
 	let panicking_factory: Arc<dyn WsProductRuntimeFactory> =
-		Arc::new(|_sink: Arc<dyn FrameSink>| -> ProductRuntime {
+		Arc::new(|_sink: Arc<dyn FrameSink>| -> Option<ProductRuntime> {
 			panic!("intentional test panic: simulating a failing product execution")
 		});
 

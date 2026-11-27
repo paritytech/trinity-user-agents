@@ -19,7 +19,6 @@ use super::ws_bridge::WsBridgeStartError;
 use crate::{
 	PairedSsoPeer, PairingProposal,
 	host_internal::bulletin::preimage_key,
-	host_logic::worker::WorkerTransition,
 	markers::{
 		MARKERS, MarkerClass, NATIVE_PUSH_NOTIFICATION, Severity, TRACING_ERROR, TRACING_WARN,
 	},
@@ -99,6 +98,43 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 	}
 }
 
+/// Open a worker through the attempt for its claim, with the product's own callbacks.
+pub fn claimed_worker(
+	config: HostRuntimeConfig,
+	product: &str,
+	callbacks: Arc<EventCallbacks>,
+	chat: Option<Arc<dyn NativeChatCallbacks>>,
+) -> (Arc<NativeTrUApiHostRuntime>, Arc<NativeWorkerClaim>, Arc<NativeProductExecution>) {
+	let (starts, attempts) = mpsc::channel();
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		Arc::new(starts),
+	)
+	.unwrap();
+	let claim = host.claim_worker(ProductId::for_test(product));
+	let worker = attempts
+		.try_recv()
+		.unwrap()
+		.open_execution(ExecutionCallbacks { host: callbacks, chat, game: None })
+		.unwrap();
+	(host, claim, worker)
+}
+
+/// A worker engine that drops every attempt it is asked to start, for a test that needs no
+/// worker.
+pub fn no_workers() -> Arc<dyn NativeWorkerEngine> {
+	Arc::new(mpsc::channel().0)
+}
+
+impl NativeWorkerEngine for mpsc::Sender<Arc<NativeWorkerAttempt>> {
+	fn start(&self, _product_id: ProductId, attempt: Arc<NativeWorkerAttempt>) {
+		let _ = self.send(attempt);
+	}
+
+	fn stop(&self, _product_id: ProductId, _attempt_id: u64) {}
+}
+
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
@@ -125,8 +161,6 @@ pub struct EventCallbacks {
 	pub chain_sends: Mutex<Vec<(u32, String)>>,
 	pub chain_send_rejection: Mutex<Option<String>>,
 	pub chain_closes: Mutex<Vec<u32>>,
-	/// Worker demand transitions, in arrival order.
-	pub worker_demand: Mutex<Vec<(ProductId, WorkerTransition)>>,
 	/// Devices reported as paired, in arrival order.
 	pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
 	/// Every `durable_work_changed` report, in order.
@@ -181,7 +215,6 @@ impl EventCallbacks {
 			chain_sends: Mutex::new(Vec::new()),
 			chain_send_rejection: Mutex::new(None),
 			chain_closes: Mutex::new(Vec::new()),
-			worker_demand: Mutex::new(Vec::new()),
 			paired_devices: Mutex::new(Vec::new()),
 			durable_work: Mutex::new(Vec::new()),
 			os_refused: None,
@@ -217,13 +250,6 @@ impl HostCallbacks for EventCallbacks {
 	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>) {
 		self.events.lock().expect("events mutex poisoned").push((marker, attributes));
 	}
-	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
-		self.worker_demand
-			.lock()
-			.expect("worker demand mutex poisoned")
-			.push((product_id, transition));
-	}
-
 	fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 
 	fn device_paired(&self, device: PairedSsoPeer) {
@@ -614,13 +640,6 @@ pub fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::Bu
 	}
 }
 
-pub fn native_execution_config(
-	product_id: &str,
-	execution_kind: ExecutableKind,
-) -> ProductExecutionConfig {
-	ProductExecutionConfig { product_id: ProductId::for_test(product_id), execution_kind }
-}
-
 pub fn native_product_execution(
 	callbacks: Arc<dyn HostCallbacks>,
 	product_id: &str,
@@ -628,15 +647,14 @@ pub fn native_product_execution(
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-		.expect("host runtime config should be valid");
-	host.open_product_execution(
-		callbacks,
-		None,
-		None,
-		native_execution_config(product_id, ExecutableKind::App),
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, no_workers())
+			.expect("host runtime config should be valid");
+	host.open_app_execution(
+		ProductId::for_test(product_id),
+		ExecutionCallbacks { host: callbacks, chat: None, game: None },
 	)
-	.expect("product execution config should be valid")
+	.expect("open app execution")
 }
 
 /// A deeplink that is not hex at all, and one that is hex but not a
@@ -826,33 +844,6 @@ fn a_paired_device_reaches_the_host_callbacks() {
 	);
 }
 
-#[test]
-fn process_runtime_counts_worker_references_per_product() {
-	let callbacks = Arc::new(EventCallbacks::new());
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		callbacks.clone(),
-		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
-	let product = || ProductId::for_test("shared.dot");
-
-	let first = host.claim_worker(product());
-	let second = host.claim_worker(product());
-	first.release();
-	first.release();
-	drop(first);
-	assert_eq!(
-		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
-		vec![(product(), WorkerTransition::Start)]
-	);
-	drop(second);
-
-	assert_eq!(
-		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
-		vec![(product(), WorkerTransition::Start), (product(), WorkerTransition::Stop),]
-	);
-}
-
 #[derive(Default)]
 struct RecordingGameCallbacks {
 	calls: Mutex<Vec<Option<u64>>>,
@@ -897,8 +888,9 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let config =
 		HostRuntimeConfig { device_encryption_key: Some([9; 32]), ..native_host_runtime_config() };
-	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-		.expect("host runtime config should be valid");
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, no_workers())
+			.expect("host runtime config should be valid");
 
 	let first_connected_key = callbacks
 		.auth_states
@@ -915,6 +907,27 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 		(host.device_encryption_key().expect("device key should read"), first_connected_key),
 		([9; 32], Some(Some(handed_over_public_key)))
 	);
+}
+
+#[test]
+fn publishing_chat_actions_requires_a_worker_with_a_chat_adapter() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let (host, _claim, worker) =
+		claimed_worker(native_host_runtime_config(), "chat-product.dot", callbacks.clone(), None);
+	let app = host
+		.open_app_execution(
+			ProductId::for_test("chat-product.dot"),
+			ExecutionCallbacks { host: callbacks.clone(), chat: Some(callbacks), game: None },
+		)
+		.expect("open app execution");
+	assert!(matches!(
+		worker.publish_chat_action(text_chat_action("worker")),
+		Err(crate::ProductRuntimeError::Unsupported)
+	));
+	assert!(matches!(
+		app.publish_chat_action(text_chat_action("app")),
+		Err(crate::ProductRuntimeError::Denied)
+	));
 }
 
 #[test]
@@ -936,9 +949,12 @@ fn the_runtime_pins_humanity_on_the_network_of_the_stack_it_runs() {
 	config.stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"testnet", [0xa2; 32], [0xbb; 32], [0xcc; 32],
 	));
-	let host =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-			.expect("host runtime config should be valid");
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid");
 	let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
 
 	let _subscription = host.observe_pocket_cards(recorder.clone());
@@ -951,27 +967,6 @@ fn the_runtime_pins_humanity_on_the_network_of_the_stack_it_runs() {
 		*recorder.0.lock().unwrap(),
 		vec![("peopl.testnet".to_string(), "humanity".to_string(), true)]
 	);
-}
-
-#[test]
-fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
-	let mut config = native_host_runtime_config();
-	config.local_session_secret = Some(vec![7; 32]);
-	let host =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-			.expect("host runtime config should be valid");
-	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("chat-product.dot", ExecutableKind::Worker),
-		)
-		.expect("Chat execution should open");
-
-	let result = execution.publish_chat_action(text_chat_action("hello"));
-
-	assert!(matches!(result, Err(crate::ProductRuntimeError::Unsupported)));
 }
 
 #[test]
@@ -1867,8 +1862,7 @@ fn native_chain_provider_rejects_an_early_close_and_allows_a_later_retry() {
 	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
 
 	*callbacks.chain_id.lock().unwrap() = Some(43);
-	let connection =
-		futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
 	let mut responses = connection.responses();
 	events.notify_chain_response(43, "after retry".to_string());
 	assert_eq!(futures::executor::block_on(responses.next()), Some("after retry".to_string()));
@@ -2021,6 +2015,7 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let first = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		config.clone(),
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	assert!(
@@ -2030,9 +2025,12 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let at_start = next_status();
 	let after_fetch = next_status();
 	drop(first);
-	let rebuilt =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-			.expect("host runtime config should be valid");
+	let rebuilt = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid");
 
 	let rebuilt_status = rebuilt.stack_status();
 	assert_eq!(
@@ -2114,6 +2112,7 @@ fn build_runtime(
 			local_session_lite_username: None,
 			..config
 		},
+		no_workers(),
 	)
 }
 
@@ -2264,9 +2263,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
 		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
-		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
-		}
-
 		fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
@@ -2453,9 +2449,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
 		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
-		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
-		}
-
 		fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
@@ -2730,13 +2723,11 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let weak_callbacks = Arc::downgrade(&callbacks);
 	let execution = host
-		.open_product_execution(
-			callbacks,
-			None,
-			None,
-			native_execution_config("first.dot", ExecutableKind::App),
+		.open_app_execution(
+			ProductId::for_test("first.dot"),
+			ExecutionCallbacks { host: callbacks, chat: None, game: None },
 		)
-		.expect("open execution");
+		.expect("open app execution");
 	execution.start_ws_bridge(0).expect("start bridge");
 
 	execution.shutdown();
@@ -2766,6 +2757,7 @@ fn starting_a_host_proves_the_core_log_channel_reaches_it() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			callbacks.clone(),
 			native_host_runtime_config(),
+			no_workers(),
 		)
 		.expect("create host");
 		let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
@@ -2788,6 +2780,7 @@ fn the_core_log_sink_does_not_retain_a_dropped_host() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
+		no_workers(),
 	)
 	.expect("create host");
 
@@ -2811,13 +2804,17 @@ fn a_failed_host_start_leaves_the_running_host_logging() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks.clone(),
 		native_host_runtime_config(),
+		no_workers(),
 	)
 	.expect("create host");
 
 	let mut doomed = native_host_runtime_config();
 	doomed.database_directory = "/truapi-probe-that-cannot-be-opened".to_string();
-	let failed =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), doomed);
+	let failed = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		doomed,
+		no_workers(),
+	);
 	assert!(failed.is_err(), "the probe config was supposed to fail");
 
 	assert!(
@@ -2840,16 +2837,15 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		callbacks[0].clone(),
 		native_host_runtime_config(),
+		no_workers(),
 	)
 	.expect("create host");
 	let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
-		host.open_product_execution(
-			callbacks[index].clone(),
-			None,
-			None,
-			native_execution_config(product_id, ExecutableKind::App),
+		host.open_app_execution(
+			ProductId::for_test(product_id),
+			ExecutionCallbacks { host: callbacks[index].clone(), chat: None, game: None },
 		)
-		.expect("open execution")
+		.expect("open app execution")
 	});
 	executions[0].start_ws_bridge(0).expect("start first");
 	let endpoint = executions[1].start_ws_bridge(0).expect("start second");
@@ -2910,29 +2906,19 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 
 	use crate::frame::{Payload, ProtocolMessage, request_ids};
 
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
-	let app = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::new()),
-			None,
-			None,
-			native_execution_config("shared.dot", ExecutableKind::App),
-		)
-		.expect("App execution should open");
 	let chat_host = Arc::new(EventCallbacks::new());
-	let chat = host
-		.open_product_execution(
-			chat_host.clone(),
-			Some(chat_host),
-			None,
-			native_execution_config("shared.dot", ExecutableKind::Worker),
+	let (host, _claim, chat) = claimed_worker(
+		native_host_runtime_config(),
+		"shared.dot",
+		chat_host.clone(),
+		Some(chat_host),
+	);
+	let app = host
+		.open_app_execution(
+			ProductId::for_test("shared.dot"),
+			ExecutionCallbacks { host: Arc::new(EventCallbacks::new()), chat: None, game: None },
 		)
-		.expect("Chat execution should open");
-
+		.expect("open app execution");
 	let app_endpoint = app.start_ws_bridge(0).expect("start app bridge");
 	let chat_endpoint = chat.start_ws_bridge(0).expect("start chat bridge");
 	assert_eq!(
@@ -3024,8 +3010,12 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 	let mut config = native_host_runtime_config();
 	config.local_session_secret = None;
 	config.local_session_lite_username = None;
-	NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-		.expect("host runtime config should be valid")
+	NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid")
 }
 
 #[test]
@@ -3051,6 +3041,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 			Arc::new(EventCallbacks::new()),
 			native_host_runtime_config(),
+			no_workers(),
 		)
 		.unwrap();
 		assert_eq!(
@@ -3194,21 +3185,10 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 		(Ok(PermissionDecision::Deny), false),
 		(Err(HostRejection::Rejected { reason: "permission UI unavailable".to_string() }), false),
 	] {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.unwrap();
 		let callbacks =
 			Arc::new(EventCallbacks { remote_permission_result: answer, ..EventCallbacks::new() });
-		let execution = host
-			.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				native_execution_config("fetch.dot", ExecutableKind::Worker),
-			)
-			.unwrap();
+		let (_host, _claim, execution) =
+			claimed_worker(native_host_runtime_config(), "fetch.dot", callbacks.clone(), None);
 		let request = truapi::latest::RemotePermissionRequest {
 			permission: truapi::latest::RemotePermission::Remote {
 				domains: vec!["api.example.com".to_string()],
@@ -3267,16 +3247,15 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			callbacks.clone(),
 			native_host_runtime_config(),
+			no_workers(),
 		)
 		.unwrap();
 		let open = |product_id| {
-			host.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				native_execution_config(product_id, ExecutableKind::App),
+			host.open_app_execution(
+				ProductId::for_test(product_id),
+				ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
 			)
-			.unwrap()
+			.expect("open app execution")
 		};
 		let first_execution = open("fetch.dot");
 		let next_execution = open("fetch.dot");
@@ -3316,16 +3295,15 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			callbacks.clone(),
 			native_host_runtime_config(),
+			no_workers(),
 		)
 		.unwrap();
 		let execution = host
-			.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				native_execution_config("fetch.dot", ExecutableKind::App),
+			.open_app_execution(
+				ProductId::for_test("fetch.dot"),
+				ExecutionCallbacks { host: callbacks.clone(), chat: None, game: None },
 			)
-			.unwrap();
+			.expect("open app execution");
 		futures::executor::block_on(async {
 			let request =
 				execution.authorize_remote_permission(truapi::latest::RemotePermissionRequest {
@@ -3360,16 +3338,19 @@ fn a_native_status_read_follows_the_os_gate() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let execution = host
-		.open_product_execution(
-			Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
-			None,
-			None,
-			native_execution_config("gated.dot", ExecutableKind::App),
+		.open_app_execution(
+			ProductId::for_test("gated.dot"),
+			ExecutionCallbacks {
+				host: Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
+				chat: None,
+				game: None,
+			},
 		)
-		.expect("execution should open");
+		.expect("open app execution");
 
 	let camera = futures::executor::block_on(execution.permission_authorization_status(
 		PermissionAuthorizationRequest::Device(v01::HostDevicePermissionRequest::Camera),
@@ -3722,9 +3703,12 @@ fn the_host_reads_back_what_the_core_says_changed() {
 	use super::funding_feed::FundingChangeKind;
 	let config = native_host_runtime_config();
 	let database_directory = config.database_directory.clone();
-	let host =
-		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-			.expect("host runtime config should be valid");
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config,
+		no_workers(),
+	)
+	.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(funding.host.set(Arc::downgrade(&host)).is_ok());
 	assert!(host.set_funding_callbacks(funding.clone()));
@@ -3781,6 +3765,7 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
+		no_workers(),
 	)
 	.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());
@@ -3868,21 +3853,25 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
 
-/// A worker execution with its bridge started, the callbacks that receive its
-/// bridge lines, and the URL a product dials.
-fn worker_bridge() -> (Arc<EventCallbacks>, Arc<NativeProductExecution>, String) {
+struct WorkerBridge {
+	_host: Arc<NativeTrUApiHostRuntime>,
+	_claim: Arc<NativeWorkerClaim>,
+	callbacks: Arc<EventCallbacks>,
+	execution: Arc<NativeProductExecution>,
+	url: String,
+}
+
+fn worker_bridge() -> WorkerBridge {
 	let callbacks = Arc::new(EventCallbacks::new());
-	let execution = native_host_runtime_no_session()
-		.open_product_execution(
-			callbacks.clone(),
-			None,
-			None,
-			native_execution_config("draw.dot", ExecutableKind::Worker),
-		)
-		.expect("open execution");
+	let config = HostRuntimeConfig {
+		local_session_secret: None,
+		local_session_lite_username: None,
+		..native_host_runtime_config()
+	};
+	let (host, claim, execution) = claimed_worker(config, "draw.dot", callbacks.clone(), None);
 	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
 	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
-	(callbacks, execution, url)
+	WorkerBridge { _host: host, _claim: claim, callbacks, execution, url }
 }
 
 struct IgnoredRender;
@@ -3932,20 +3921,21 @@ fn dial_until_rendering(
 /// A worker that reconnects can open several connections and keep an early one.
 #[test]
 fn render_uses_an_open_connection_when_the_newest_hung_up() {
-	let (callbacks, execution, url) = worker_bridge();
+	let bridge = worker_bridge();
 	let client = bridge_test_runtime();
-	let _first = dial_until_rendering(&client, &url, &execution);
+	let _first = dial_until_rendering(&client, &bridge.url, &bridge.execution);
 
 	client.block_on(async {
-		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		let (mut second, _) =
+			tokio_tungstenite::connect_async(&bridge.url).await.expect("dial second");
 		second.close(None).await.expect("close second");
 	});
 	crate::test_support::wait_until(
-		|| bridge_closed_leaving(&callbacks, 1),
+		|| bridge_closed_leaving(&bridge.callbacks, 1),
 		"the second connection never closed",
 	);
 
-	let outcome = render_outcome(&execution);
+	let outcome = render_outcome(&bridge.execution);
 	assert!(outcome.is_ok(), "a connection is still open, got {outcome:?}");
 }
 
@@ -3954,18 +3944,23 @@ fn render_uses_an_open_connection_when_the_newest_hung_up() {
 /// Hosts wait out `NotConnected` and give up on `Closed`.
 #[test]
 fn a_product_that_hung_up_reads_as_not_connected_until_one_dials_in() {
-	let (_callbacks, execution, url) = worker_bridge();
+	let bridge = worker_bridge();
 	let client = bridge_test_runtime();
-	let mut first = dial_until_rendering(&client, &url, &execution);
+	let mut first = dial_until_rendering(&client, &bridge.url, &bridge.execution);
 
 	client.block_on(first.close(None)).expect("close first");
 	drop(first);
 	crate::test_support::wait_until(
-		|| matches!(render_outcome(&execution), Err(crate::ProductRuntimeError::NotConnected)),
+		|| {
+			matches!(
+				render_outcome(&bridge.execution),
+				Err(crate::ProductRuntimeError::NotConnected)
+			)
+		},
 		"a hung up product did not read as not connected",
 	);
 
-	let _again = dial_until_rendering(&client, &url, &execution);
+	let _again = dial_until_rendering(&client, &bridge.url, &bridge.execution);
 }
 
 /// A stopped bridge and a closed execution give different answers.
@@ -3974,19 +3969,19 @@ fn a_product_that_hung_up_reads_as_not_connected_until_one_dials_in() {
 /// again, so the hosts must keep telling them apart.
 #[test]
 fn a_stopped_bridge_and_a_closed_execution_keep_their_answers() {
-	let (_callbacks, execution, url) = worker_bridge();
+	let bridge = worker_bridge();
 	let client = bridge_test_runtime();
-	let _first = dial_until_rendering(&client, &url, &execution);
+	let _first = dial_until_rendering(&client, &bridge.url, &bridge.execution);
 
-	execution.stop_ws_bridge();
-	let stopped = render_outcome(&execution);
+	bridge.execution.stop_ws_bridge();
+	let stopped = render_outcome(&bridge.execution);
 	assert!(
 		matches!(stopped, Err(crate::ProductRuntimeError::NotConnected)),
 		"a stopped bridge answered {stopped:?}"
 	);
 
-	execution.shutdown();
-	let closed = render_outcome(&execution);
+	bridge.execution.shutdown();
+	let closed = render_outcome(&bridge.execution);
 	assert!(
 		matches!(closed, Err(crate::ProductRuntimeError::Closed)),
 		"a closed execution answered {closed:?}"
@@ -4028,19 +4023,18 @@ where
 /// and only the newest belongs to the worker that is running now.
 #[test]
 fn render_uses_the_newest_open_connection() {
-	let (_callbacks, execution, url) = worker_bridge();
+	let bridge = worker_bridge();
 	let client = bridge_test_runtime();
-	let _first = dial_until_rendering(&client, &url, &execution);
+	let _first = dial_until_rendering(&client, &bridge.url, &bridge.execution);
 
-	let (mut second, _) =
-		client.block_on(tokio_tungstenite::connect_async(&url)).expect("dial second");
+	let (mut second, _) = client
+		.block_on(tokio_tungstenite::connect_async(&bridge.url))
+		.expect("dial second");
 	let reached_second = (0..40).any(|_| {
-		let outcome = render_outcome(&execution);
+		let outcome = render_outcome(&bridge.execution);
 		assert!(outcome.is_ok(), "both connections are open, got {outcome:?}");
-		client.block_on(next_frame_starts_a_render(
-			&mut second,
-			std::time::Duration::from_millis(50),
-		))
+		client
+			.block_on(next_frame_starts_a_render(&mut second, std::time::Duration::from_millis(50)))
 	});
 	assert!(reached_second, "no render reached the newest connection");
 }
@@ -4127,27 +4121,33 @@ where
 fn presses_reach_an_open_connection_after_another_one_closes() {
 	use futures::SinkExt;
 
-	let (callbacks, execution, url) = worker_bridge();
+	let bridge = worker_bridge();
 	let client = bridge_test_runtime();
 	let wait = std::time::Duration::from_secs(5);
-	let mut first = dial_until_rendering(&client, &url, &execution);
-	client.block_on(first.send(start_renderer_actions("presses"))).expect("subscribe");
-	execution.publish_renderer_action(card_press("subscribed")).expect("publish");
+	let mut first = dial_until_rendering(&client, &bridge.url, &bridge.execution);
+	client
+		.block_on(first.send(start_renderer_actions("presses")))
+		.expect("subscribe");
+	bridge
+		.execution
+		.publish_renderer_action(card_press("subscribed"))
+		.expect("publish");
 	assert_eq!(
 		client.block_on(next_press(&mut first, "presses", wait)),
 		Some("subscribed".to_string())
 	);
 
 	client.block_on(async {
-		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		let (mut second, _) =
+			tokio_tungstenite::connect_async(&bridge.url).await.expect("dial second");
 		second.close(None).await.expect("close second");
 	});
 	crate::test_support::wait_until(
-		|| bridge_closed_leaving(&callbacks, 1),
+		|| bridge_closed_leaving(&bridge.callbacks, 1),
 		"the second connection never closed",
 	);
 
-	execution.publish_renderer_action(card_press("after")).expect("publish");
+	bridge.execution.publish_renderer_action(card_press("after")).expect("publish");
 	assert_eq!(client.block_on(next_press(&mut first, "presses", wait)), Some("after".to_string()));
 }
 

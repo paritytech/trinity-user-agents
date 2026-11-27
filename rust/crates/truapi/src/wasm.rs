@@ -48,8 +48,7 @@ use crate::SigningHost;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
-	host_logic::{root_entropy::RootEntropy, worker::WorkerTransition},
-	runtime::HostRole,
+	host_logic::root_entropy::RootEntropy, runtime::HostRole,
 };
 
 mod generated_bridge;
@@ -932,34 +931,28 @@ struct WasmCoreInner {
 }
 
 /// Forwards every worker transition request to the host's
-/// `requestWorkerTransition(productId, transition)` callback, and a worker
-/// that keeps crashing to its optional `workerCrashing(productId, crashes)`.
+/// `requestWorkerTransition(productId, transition)` callback.
 struct WasmWorkerController {
 	request: SendWrapper<Function>,
-	crashing: Option<SendWrapper<Function>>,
 }
 
-impl crate::host_logic::worker::WorkerController for WasmWorkerController {
-	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-		let name = match transition {
-			WorkerTransition::Start => "Start",
-			WorkerTransition::Stop => "Stop",
-		};
+impl WasmWorkerController {
+	fn request(&self, product_id: &ProductId, transition: &str) {
 		let _ = self.request.call2(
 			&JsValue::NULL,
 			&JsValue::from_str(product_id.as_str()),
-			&JsValue::from_str(name),
+			&JsValue::from_str(transition),
 		);
 	}
+}
 
-	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
-		if let Some(crashing) = &self.crashing {
-			let _ = crashing.call2(
-				&JsValue::NULL,
-				&JsValue::from_str(product_id.as_str()),
-				&JsValue::from(crashes),
-			);
-		}
+impl crate::host_logic::worker::WorkerController for WasmWorkerController {
+	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
+		self.request(product_id, "Start");
+	}
+
+	fn stop_worker(&self, product_id: &ProductId) {
+		self.request(product_id, "Stop");
 	}
 }
 
@@ -970,11 +963,9 @@ fn install_worker_controller(
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
 	let request = get_function(callbacks, "requestWorkerTransition")?;
-	let crashing = get_optional_function(callbacks, "workerCrashing")?;
 	assert!(
 		ledger.install_worker_controller(Arc::new(WasmWorkerController {
 			request: SendWrapper::new(request),
-			crashing: crashing.map(SendWrapper::new),
 		})),
 		"a freshly built runtime installs its worker controller once"
 	);
@@ -995,13 +986,6 @@ fn claim_worker<Role>(runtime: &HostRuntime<Role>, raw_id: &str) -> Option<WasmW
 		)
 		.ok()?;
 	Some(WasmWorkerClaim { _reference: runtime.hold_worker(&product)? })
-}
-
-fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
-	match product_id.parse::<ProductId>() {
-		Ok(product_id) => runtime.worker_exited(&product_id),
-		Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
-	}
 }
 
 /// JS-callable handle to a long-lived pairing-host runtime shared by product
@@ -1249,15 +1233,6 @@ impl WasmPairingHostRuntime {
 	#[wasm_bindgen(js_name = claimWorker)]
 	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
 		claim_worker(&self.runtime, &raw_product_id)
-	}
-
-	/// Report that the product's worker stopped running without being asked
-	/// to. While references remain, `"Start"` is reported again to the
-	/// host's `requestWorkerTransition` callback. An id that is not a product
-	/// id is logged and dropped.
-	#[wasm_bindgen(js_name = workerExited)]
-	pub fn worker_exited(&self, product_id: String) {
-		worker_exited(&self.runtime, &product_id);
 	}
 
 	/// Whether `productId` is a first-party product the host grants every
@@ -1534,15 +1509,6 @@ impl WasmSigningHostRuntime {
 	#[wasm_bindgen(js_name = claimWorker)]
 	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
 		claim_worker(&self.runtime, &raw_product_id)
-	}
-
-	/// Report that the product's worker stopped running without being asked
-	/// to. While references remain, `"Start"` is reported again to the
-	/// host's `requestWorkerTransition` callback. An id that is not a product
-	/// id is logged and dropped.
-	#[wasm_bindgen(js_name = workerExited)]
-	pub fn worker_exited(&self, product_id: String) {
-		worker_exited(&self.runtime, &product_id);
 	}
 
 	/// Whether `productId` is a first-party product the host grants every

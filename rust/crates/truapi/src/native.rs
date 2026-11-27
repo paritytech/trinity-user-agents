@@ -47,9 +47,9 @@ pub use crate::{
 	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeStackCallbacks, NativeTopUpCallbacks,
+	ExecutionCallbacks, HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+	NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+	NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
@@ -72,7 +72,8 @@ pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
-	NativeWorkerClaim,
+	NativeWorkerAttempt, NativeWorkerClaim, NativeWorkerEngine, NativeWorkerExecution,
+	NativeWorkerExecutionObserver, NativeWorkerExecutionState,
 };
 pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};

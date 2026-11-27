@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use crate::platform::{
 	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
 	StackFetchResponse, StackStatus, UserConfirmationReview,
 };
 use truapi::latest;
 
-use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
+use crate::PairedSsoPeer;
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
@@ -184,12 +186,6 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
 
-	/// Report a product's first claim (`Start`) or final release (`Stop`) in ledger order.
-	///
-	/// The callback belongs to the host runtime and can run synchronously on the thread that
-	/// acquires or releases a claim. Dispatch work to the appropriate thread without blocking.
-	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
-
 	/// The product's worker crashed `crashes` times in a row while it was
 	/// needed: tell the user that product is not working. The core keeps
 	/// starting it again, waiting longer each time, so this needs no answer.
@@ -284,9 +280,8 @@ pub trait HostCallbacks: Send + Sync {
 }
 
 /// Native Chat storage and UI adapter. Hosts that support the Chat modality
-/// pass an implementation to
-/// [`NativeTrUApiHostRuntime::open_product_execution`]; hosts that do not
-/// simply pass `None`. Callbacks run on the process-wide dispatch pool shared by
+/// pass an implementation in [`ExecutionCallbacks::chat`]; hosts that do not
+/// leave it `None`. Callbacks run on the process-wide dispatch pool shared by
 /// every product execution.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
@@ -342,8 +337,8 @@ pub trait NativeChatCallbacks: Send + Sync {
 }
 
 /// Native game-reminder adapter. Hosts that can hold reminders pass an
-/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
-/// hosts without one pass `None`. Both callbacks are async, so a host may hop
+/// implementation in [`ExecutionCallbacks::game`]; hosts without one leave
+/// it `None`. Both callbacks are async, so a host may hop
 /// to its own thread to answer without blocking the core's dispatch pool.
 ///
 /// The execution is bound to one product, so neither call names it. The host
@@ -358,6 +353,19 @@ pub trait NativeGameCallbacks: Send + Sync {
 
 	/// Drop this product's reminder. Idempotent.
 	async fn cancel_reminder(&self) -> Result<(), HostRejection>;
+}
+
+/// The host callbacks one product execution is opened with.
+#[derive(uniffi::Record)]
+pub struct ExecutionCallbacks {
+	/// Serves the execution's host calls.
+	pub host: Arc<dyn HostCallbacks>,
+	/// The host's Chat adapter, for hosts that support the Chat modality.
+	#[uniffi(default = None)]
+	pub chat: Option<Arc<dyn NativeChatCallbacks>>,
+	/// The host's game-reminder adapter, for hosts that can hold reminders.
+	#[uniffi(default = None)]
+	pub game: Option<Arc<dyn NativeGameCallbacks>>,
 }
 
 /// Native contacts adapter. A host with a contact list and a picker passes an
