@@ -4,13 +4,13 @@ This doc describes how a screen pushed on a navigation stack draws its own push 
 
 ## Summary
 
-A Pocket item's screen is a pushed screen that conforms to `NavigationTransitionAnimating`. For each push and pop it returns its own animator from `navigationAnimator(for:)`, and `AppNavigationController` hands that animator to UIKit. A screen whose item flies conforms to `PocketFlightScreen` too and returns a `PocketFlight`. The card is not moved from the Pocket to the screen. The Pocket and the screen each draw a copy: the Pocket draws its copy during the flight, and the screen draws its copy at rest. A flight runs on a clock, or a finger drives it one frame at a time.
+A Pocket item's screen is a pushed screen that conforms to `NavigationTransitionAnimating`. For each push and pop it returns its own animator from `navigationAnimator(for:)`, The screen is pushed on a `CustomTransitionNavigationController`, the Wallet tab's stack, which hands that animator to UIKit and adds the left-edge swipe. A screen whose item flies conforms to `PocketFlightScreen` too and returns a `PocketFlight`. The card is not moved from the Pocket to the screen. The Pocket and the screen each draw a copy: the Pocket draws its copy during the flight, and the screen draws its copy at rest. A flight runs on a clock, or a finger drives it one frame at a time.
 
 ## The Approach
 
 These rules hold for every screen that draws its own push and pop. The concrete screens below are examples of them.
 
-1. **The screen owns its motion, the stack owns the input.** The screen conforms to `NavigationTransitionAnimating`. It returns a new animator for each push and pop, and says through `allowsBackSwipe` when a back swipe may start. `AppNavigationController` owns the edge pan, starts the pop and connects the animator to UIKit. A screen never adds its own back-swipe recognizer.
+1. **The screen owns its motion, the stack owns the input.** The screen conforms to `NavigationTransitionAnimating`. It returns a new animator for each push and pop, and says through `allowsBackSwipe` when a back swipe may start. `CustomTransitionNavigationController` owns the edge pan, starts the pop and connects the animator to UIKit. A screen never adds its own back-swipe recognizer.
 2. **One animator serves both a tap and a finger.** The pop animator conforms to `UIViewControllerAnimatedTransitioning` for the timed path and to `BackSwipeScrubbing` for the scrubbed path. Both paths share one setup step. `animateTransition` returns at once when the context is interactive, so a pop never runs both.
 3. **Motion is a pure function of progress.** What is on screen at progress 0 to 1 comes from one pure model, such as `PocketFlightChoreography`. A finger applies a frame with no animation. A release animates from the current frame to frame 0 or frame 1. Progress 0 and 1 match the start and end of the timed pop, and tests prove it.
 4. **The commit rule and release timing are shared.** The stack reads the finger with `BackSwipe.progress` and `BackSwipe.commits`, and passes the result to the animator. A release runs the remaining share of the timed duration on the same curve, with a floor so a short leg does not flash.
@@ -23,9 +23,11 @@ These rules hold for every screen that draws its own push and pop. The concrete 
 ## Layers
 
 ```
-AppNavigationController                  owns the left-edge pan and the scrubbed pop
-│  asks the moving screen, through NavigationTransitionAnimating,
-│  for its animator and allowsBackSwipe
+AppNavigationController                  every stack: bar, back button, willShow hook
+└ CustomTransitionNavigationController   Wallet tab: asks the moving screen, through
+│                                        NavigationTransitionAnimating, for its animator and
+│                                        allowsBackSwipe; owns the left-edge pan, the scrubbed
+│                                        pop and the system swipe switch
 ▼
 Screen: NavigationTransitionAnimating    owns its page, its card copy and any pull-down
 │  + PocketFlightScreen                  when its item flies on the Pocket curve
@@ -65,7 +67,7 @@ Pocket SwiftUI (WalletView)              draws each card from PocketCardMotion
 
 ## Push
 
-1. `navigationController(_:animationControllerFor:...)` asks the pushed screen, if it is a `NavigationTransitionAnimating`, for `navigationAnimator(for: .push)`. A `PocketFlightScreen` returns `PocketFlight(opening: true)`. A screen that is not a `NavigationTransitionAnimating` gets UIKit's default push.
+1. `CustomTransitionNavigationController`'s `navigationController(_:animationControllerFor:...)` asks the pushed screen, if it is a `NavigationTransitionAnimating`, for `navigationAnimator(for: .push)`. A `PocketFlightScreen` returns `PocketFlight(opening: true)`. A screen that is not a `NavigationTransitionAnimating` gets UIKit's default push.
 2. `prepare` adds the screen's view at its final frame, calls `beginFlight()`, lays out, and measures the slot. The slot offset is the slot's frame minus `itemFrame(in:)`. It is nil when `frame(of:)` returns nil.
 3. The motion from the table above runs.
 4. **Fly.** The screen hides its card and moves its card and page to the slot, with the page at alpha 0. On the next main turn, so the start is drawn first, the Pocket clears to 1 and moves its item to the open place. The screen's card and page animate to rest. The page fades in from 35% into the flight.
@@ -100,7 +102,7 @@ A pop that no finger drives runs the reverse. The pull-down close is one such po
 
 ## Scrubbed Pop (Left-Edge Swipe)
 
-`AppNavigationController` owns the swipe. A screen takes part through `NavigationTransitionAnimating` alone: it answers `allowsBackSwipe` and returns an animator. The swipe scrubs the pop when that animator is a `BackSwipeScrubbing`, as `PocketFlight` and `CollectiblesBookReturn` are. The default `allowsBackSwipe` is false. Screens that do not conform keep the system back swipe.
+`CustomTransitionNavigationController` owns the swipe. A screen takes part through `NavigationTransitionAnimating` alone: it answers `allowsBackSwipe` and returns an animator. The swipe scrubs the pop when that animator is a `BackSwipeScrubbing`, as `PocketFlight` and `CollectiblesBookReturn` are. The default `allowsBackSwipe` is false. Screens that do not conform keep the system back swipe.
 
 - `backSwipe` is a left-edge `UIScreenEdgePanGestureRecognizer`. It begins only when the stack holds more than one controller, no transition runs, and `topViewController.allowsBackSwipe` is true. Other pan recognizers wait for it to fail, which it does at once for a touch away from the edge.
 - `.began` calls `popViewController(animated: true)`. UIKit then asks `interactionControllerFor`. That method returns the animator as `scrubbedPop` only while the swipe is `began` or `changed`. Any other pop stays timed.
@@ -143,7 +145,7 @@ The book is the Pocket's peek. Setting `.collectibles` as the open item lifts th
 - One pure function from progress to frame: `PocketFlightChoreography.frame(progress:)`. A finger sets it, and a release lands on its ends.
 - One `PocketFlight` per transition. `navigationAnimator(for:)` creates it.
 - The navigation stack owns the swipe and the scrubbed pop. A screen takes part only through `NavigationTransitionAnimating`: it answers `allowsBackSwipe` and returns an animator.
-- `AppNavigationController` turns the system back swipes (`interactivePopGestureRecognizer`, and `interactiveContentPopGestureRecognizer` on iOS 26 and later) off while a `NavigationTransitionAnimating` screen is on top, and on otherwise. It decides in `willShow`, after the transition ends, so a cancelled pop keeps them off. The edge pan is the only back swipe on these screens.
+- `CustomTransitionNavigationController` turns the system back swipes (`interactivePopGestureRecognizer`, and `interactiveContentPopGestureRecognizer` on iOS 26 and later) off while a `NavigationTransitionAnimating` screen is on top, and on otherwise. It decides in `navigationWillShow(_:)`, a hook `AppNavigationController` calls from `willShow`, after the transition ends, so a cancelled pop keeps them off. The edge pan is the only back swipe on these screens.
 - `endFlight()` restores everything a flight changed, on every exit path, including a cancelled pop.
 - `setOpenItem` runs in `willMove(toParent:)` with a parent. It clears in `didMove(toParent:)` without one.
 
@@ -158,9 +160,11 @@ Pure models have unit tests. The wiring does not, and the simulator checks it.
 - `polkadot-appTests/Common/Navigation/BackSwipeTests.swift`: swipe progress and the commit rule.
 - `polkadot-appTests/Products/CollectiblesOpeningTests.swift`: the Collectibles opening.
 
-`PocketPullDown`, `PocketFadeScrub`, the flight classes' UIKit calls and the gesture rules in `AppNavigationController` have no unit tests.
+`PocketPullDown`, `PocketFadeScrub`, the flight classes' UIKit calls and the gesture rules in `CustomTransitionNavigationController` have no unit tests.
 
 ## Adding a Screen
+
+Push the screen on a `CustomTransitionNavigationController`. On a plain `AppNavigationController` its animator never runs: the screen gets UIKit's default push and pop, and the system back swipe.
 
 Every screen with its own push and pop does these steps:
 

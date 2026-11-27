@@ -18,24 +18,6 @@ protocol NavigationControlling: AnyObject {
     func setNavigationBarHidden(_ hidden: Bool, animated: Bool)
 }
 
-/// A screen that animates its own push and pop. Nil keeps the default transition.
-///
-/// The system back swipes are off while the screen is on top: they would run UIKit's own pop, not the screen's
-/// animator. The stack's edge swipe is its only back swipe.
-protocol NavigationTransitionAnimating: AnyObject {
-    func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning?
-
-    /// Whether a swipe from the left edge may start this screen's pop now. The swipe scrubs the pop when the
-    /// screen's animator is a `BackSwipeScrubbing`.
-    var allowsBackSwipe: Bool { get }
-}
-
-extension NavigationTransitionAnimating {
-    var allowsBackSwipe: Bool {
-        false
-    }
-}
-
 protocol AppNavigationControllerTransitionObserving: AnyObject {
     func appNavigationController(
         _ navigationController: AppNavigationController,
@@ -51,11 +33,6 @@ protocol AppNavigationControllerTransitionObserving: AnyObject {
 
 class AppNavigationController: UINavigationController {
     weak var transitionObserver: AppNavigationControllerTransitionObserving?
-
-    private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(followBackSwipe))
-
-    /// The pop the back swipe is scrubbing, from when it started until the finger lets go.
-    private var scrubbedPop: BackSwipeScrubbing?
 
     var closeButtonImage: UIImage = .buttonClose
 
@@ -131,6 +108,9 @@ class AppNavigationController: UINavigationController {
             tint: tint
         )
     }
+
+    /// Called as the stack is about to show `viewController`, so a subclass can follow the stack.
+    func navigationWillShow(_: UIViewController) {}
 }
 
 // MARK: - Private
@@ -138,9 +118,6 @@ class AppNavigationController: UINavigationController {
 private extension AppNavigationController {
     func setup() {
         delegate = self
-        backSwipe.edges = .left
-        backSwipe.delegate = self
-        view.addGestureRecognizer(backSwipe)
 
         view.backgroundColor = .bgSurfaceMain
 
@@ -192,22 +169,6 @@ private extension AppNavigationController {
         viewController.navigationItem.backButtonDisplayMode = mode
     }
 
-    /// Waits for the transition to end, since a cancelled pop leaves the screen it started from on top.
-    func updateSystemBackSwipes() {
-        guard let transitionCoordinator else {
-            matchSystemBackSwipesToTopScreen()
-            return
-        }
-
-        transitionCoordinator.animate(alongsideTransition: nil) { [weak self] _ in
-            self?.matchSystemBackSwipesToTopScreen()
-        }
-    }
-
-    func matchSystemBackSwipesToTopScreen() {
-        setSystemBackSwipesEnabled(!(topViewController is NavigationTransitionAnimating))
-    }
-
     func insertCloseButtonToRootIfNeeded() {
         guard
             barSettings.shouldSetCloseButton,
@@ -229,36 +190,6 @@ private extension AppNavigationController {
     @objc func actionClose() {
         presentingViewController?.dismiss(animated: true, completion: nil)
     }
-
-    var isBackSwiping: Bool {
-        backSwipe.state == .began || backSwipe.state == .changed
-    }
-
-    @objc func followBackSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        let width = view.bounds.width
-        let travel = gesture.translation(in: view).x
-        let progress = BackSwipe.progress(travel: travel, width: width)
-        switch gesture.state {
-        case .began:
-            popViewController(animated: true)
-        case .changed:
-            scrubbedPop?.update(progress: progress)
-        case .ended:
-            let velocity = gesture.velocity(in: view).x
-            let commits = BackSwipe.commits(travel: travel, velocity: velocity, width: width)
-            releaseBackSwipe(progress: progress, commits: commits)
-        case .cancelled,
-             .failed:
-            releaseBackSwipe(progress: progress, commits: false)
-        default:
-            break
-        }
-    }
-
-    func releaseBackSwipe(progress: CGFloat, commits: Bool) {
-        scrubbedPop?.release(progress: progress, commits: commits)
-        scrubbedPop = nil
-    }
 }
 
 // MARK: - UINavigationControllerDelegate
@@ -271,7 +202,7 @@ extension AppNavigationController: UINavigationControllerDelegate {
     ) {
         updateNavigationBarState(in: viewController)
         setupBackButtonItem(for: viewController)
-        updateSystemBackSwipes()
+        navigationWillShow(viewController)
         transitionObserver?.appNavigationController(
             self,
             willShow: viewController,
@@ -294,45 +225,6 @@ extension AppNavigationController: UINavigationControllerDelegate {
             didShow: viewController,
             animated: animated
         )
-    }
-
-    func navigationController(
-        _: UINavigationController,
-        animationControllerFor operation: UINavigationController.Operation,
-        from fromViewController: UIViewController,
-        to toViewController: UIViewController
-    ) -> UIViewControllerAnimatedTransitioning? {
-        let moving = operation == .push ? toViewController : fromViewController
-        return (moving as? NavigationTransitionAnimating)?.navigationAnimator(for: operation)
-    }
-
-    func navigationController(
-        _: UINavigationController,
-        interactionControllerFor animationController: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        guard isBackSwiping else { return nil }
-
-        scrubbedPop = animationController as? BackSwipeScrubbing
-        return scrubbedPop
-    }
-}
-
-// MARK: - UIGestureRecognizerDelegate
-
-/// The stack's own back swipes have no delegate, so this serves only the swipe that scrubs a screen's own pop.
-/// That swipe begins on a screen that allows it, and other pans wait for it.
-extension AppNavigationController: UIGestureRecognizerDelegate {
-    func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
-        guard viewControllers.count > 1, transitionCoordinator == nil else { return false }
-
-        return (topViewController as? NavigationTransitionAnimating)?.allowsBackSwipe == true
-    }
-
-    func gestureRecognizer(
-        _: UIGestureRecognizer,
-        shouldBeRequiredToFailBy other: UIGestureRecognizer
-    ) -> Bool {
-        other is UIPanGestureRecognizer
     }
 }
 
