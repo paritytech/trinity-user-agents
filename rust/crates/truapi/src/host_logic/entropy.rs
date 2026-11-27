@@ -7,6 +7,7 @@
 
 use thiserror::Error;
 
+use super::keyed_hash::blake2b_256_keyed;
 use crate::platform::ProductId;
 
 /// Error deriving product-scoped entropy.
@@ -31,19 +32,9 @@ pub fn derive_product_entropy_from_source(
 		return Err(ProductEntropyError::InvalidKeyLength(key.len()));
 	}
 
-	let product_id_hash = blake2b256_keyed(product_id.as_str().as_bytes(), &[]);
-	let per_product_entropy = blake2b256_keyed(root_entropy_source, &product_id_hash);
-	Ok(blake2b256_keyed(&per_product_entropy, key))
-}
-
-fn blake2b256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
-	blake2b_simd::Params::new()
-		.hash_length(32)
-		.key(key)
-		.hash(message)
-		.as_bytes()
-		.try_into()
-		.expect("hash_length(32) configures BLAKE2b output to exactly 32 bytes; qed")
+	let product_id_hash = blake2b_256_keyed(product_id.as_str().as_bytes(), &[]);
+	let per_product_entropy = blake2b_256_keyed(root_entropy_source, &product_id_hash);
+	Ok(blake2b_256_keyed(&per_product_entropy, key))
 }
 
 #[cfg(test)]

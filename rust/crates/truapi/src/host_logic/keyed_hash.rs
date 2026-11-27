@@ -11,3 +11,6 @@ pub fn blake2b_256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
 	let hash = blake2b_simd::Params::new().hash_length(32).key(key).hash(message);
 	hash.as_bytes().try_into().expect("the hash length is set to 32 bytes")
 }
+
+#[cfg(test)]
+mod tests;

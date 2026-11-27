@@ -140,7 +140,7 @@ fn the_personhood_product_id_is_under_the_network_suffix() {
 fn person_ring_vrf_entropy_matches_ios_vectors() {
 	let root_entropy: Vec<u8> = (1..=32).collect();
 	assert_eq!(
-		hex::encode(blake2b256_keyed(&root_entropy, b"ring-vrf")),
+		hex::encode(blake2b_256_keyed(&root_entropy, b"ring-vrf")),
 		"372b08255c7798fe3193756296005adc4c44adb9f3986fb718aa98a48b4bf725"
 	);
 	let root_entropy = RootEntropy::new(root_entropy);
