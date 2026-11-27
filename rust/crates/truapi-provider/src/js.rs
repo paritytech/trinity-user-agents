@@ -327,13 +327,6 @@ const SNAPSHOT_INTERVAL: core::time::Duration = core::time::Duration::from_secs(
 #[cfg(feature = "smoldot")]
 const SNAPSHOT_INTERVAL_MAX: core::time::Duration = core::time::Duration::from_secs(600);
 
-/// How long storage gets to answer before a chain gives up and syncs
-/// from the chain-spec checkpoint. A host-supplied store is arbitrary JS whose
-/// promise may never settle, and a stored blob must not be able to wedge a
-/// connection that would otherwise work.
-#[cfg(feature = "smoldot")]
-const STORAGE_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5);
-
 /// A built provider; hand out one per page/worker and stack.
 ///
 /// When a stack's `generation` changes, close every connection of the
@@ -419,42 +412,8 @@ impl ChainProviderHandle {
 	/// the light client already holds as many connections as it allows.
 	pub async fn connect(&self, genesis_hash: &str) -> Result<Connection, JsError> {
 		let genesis = parse_genesis(genesis_hash)?;
-		// Stored state is an optimisation, so storage that cannot answer leaves
-		// the chain to sync from the checkpoint rather than failing the connect.
-		// A host that supplied no storage is not asked at all, and neither is
-		// a chain that is already up, whose blob smoldot would discard anyway.
 		#[cfg(feature = "smoldot")]
-		if self.inner.has_storage() && !self.inner.is_connected(genesis) {
-			let deadline = futures_timer::Delay::new(STORAGE_DEADLINE);
-			futures::pin_mut!(deadline);
-			match futures::future::select(
-				core::pin::pin!(self.inner.load_database(genesis)),
-				deadline,
-			)
-			.await
-			{
-				futures::future::Either::Left((
-					Err(
-						error @ (crate::ProviderError::UnknownGenesis { .. } |
-						crate::ProviderError::UnknownRelay { .. }),
-					),
-					_,
-				)) => return Err(error.into()),
-				futures::future::Either::Left((Err(error), _)) => {
-					tracing::warn!(
-						reason = %error,
-						"storage unavailable, syncing from the chain-spec checkpoint"
-					)
-				},
-				futures::future::Either::Left((Ok(_), _)) => {},
-				futures::future::Either::Right(((), _)) => {
-					tracing::warn!(
-						"storage did not answer in {}s, syncing from the chain-spec checkpoint",
-						STORAGE_DEADLINE.as_secs()
-					)
-				},
-			}
-		}
+		self.inner.load_database_for_connect(genesis).await?;
 		let connection = self.inner.connect(genesis).await?;
 		#[cfg(feature = "smoldot")]
 		{
@@ -473,9 +432,9 @@ impl ChainProviderHandle {
 	/// provider, so the next [`connect`](ChainProviderHandle::connect) to that
 	/// chain resumes from it. Resolves with whether a blob is now in hand.
 	///
-	/// Call this before connecting. The store is read at most once per chain,
-	/// because only the first add of a chain consumes a blob. Rejects for a
-	/// chain this provider cannot connect to, as `connect` does.
+	/// `connect` reads the store itself for a chain that is not running, so
+	/// calling this first only moves the read earlier. Rejects for a chain
+	/// this provider cannot connect to, as `connect` does.
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = loadDatabase)]
 	pub async fn load_database(&self, genesis_hash: &str) -> Result<bool, JsError> {

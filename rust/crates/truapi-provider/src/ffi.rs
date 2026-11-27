@@ -419,11 +419,9 @@ impl ChainProvider {
 	/// fails for a genesis `connect` refuses too: one outside the bundled
 	/// catalog, or a stack's chain with no light spec yet.
 	///
-	/// Call it before `connect`, and never from a listener callback. `connect`
-	/// blocks its calling thread, so a store awaited underneath it would
-	/// deadlock. The store is read at most once per chain: smoldot keys a chain
-	/// by its genesis hash, so only the first connect to a chain can consume a
-	/// blob.
+	/// [`connect`](Self::connect) reads the store itself for a chain that is
+	/// not running, so calling this first only moves the read earlier. Never
+	/// call it from a listener callback.
 	pub async fn load_database(&self, genesis_hash: Vec<u8>) -> Result<bool, ChainProviderError> {
 		self.inner
 			.load_database(genesis_from(genesis_hash)?)
@@ -461,6 +459,12 @@ impl ChainProvider {
 	/// Open a connection to the chain identified by `genesis_hash` (32 bytes).
 	/// The chain is resolved from the provider's stack or from the catalog;
 	/// responses are delivered to `listener` until the connection closes.
+	///
+	/// On a provider with storage, a chain the light client is not running
+	/// first resumes from the stored blob: smoldot stops a chain when its last
+	/// connection closes, so this is every connect after one. The store is
+	/// awaited on the calling thread, which this call blocks, so a store that
+	/// needs that thread stalls the connect for 5 s and the chain starts cold.
 	pub fn connect(
 		&self,
 		genesis_hash: Vec<u8>,
@@ -479,8 +483,11 @@ impl ChainProvider {
 			});
 		}
 		let genesis = genesis_from(genesis_hash)?;
-		let connection = block_on(self.inner.connect(genesis))
-			.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
+		let connection = block_on(async {
+			self.inner.load_database_for_connect(genesis).await?;
+			self.inner.connect(genesis).await
+		})
+		.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
 		let connection: Arc<dyn JsonRpcConnection> = Arc::from(connection);
 
 		let responses = connection.responses();

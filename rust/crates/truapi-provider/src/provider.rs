@@ -370,6 +370,13 @@ const SNAPSHOT_MAX_BYTES: usize = 8_000_000;
 #[cfg(feature = "smoldot")]
 const SNAPSHOT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(60);
 
+/// How long storage gets to answer before a connect gives up on it and the
+/// chain syncs from the chain-spec checkpoint. A host-supplied store may never
+/// answer, and a stored blob must not be able to wedge a connection that would
+/// otherwise work.
+#[cfg(feature = "smoldot")]
+const STORAGE_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5);
+
 #[cfg(feature = "smoldot")]
 impl EmbeddedChainProvider {
 	/// Whether this provider was built with somewhere to keep blobs.
@@ -507,15 +514,15 @@ impl EmbeddedChainProvider {
 	/// connect to that chain resumes from it instead of warp syncing from the
 	/// chain-spec checkpoint. Returns whether a blob is now in hand.
 	///
-	/// The store is read at most once per chain. smoldot keys a chain by its
-	/// genesis hash, so only the first add of a chain consumes a blob and a
-	/// later read could not take effect. A blob registered through
-	/// [`EmbeddedChainProviderBuilder::database`] wins and is not overwritten.
+	/// smoldot consumes a blob only when it adds a chain, and stops the chain
+	/// when its last connection closes, so a read takes effect whenever the
+	/// chain is not running, including after it stopped. A blob registered
+	/// through [`EmbeddedChainProviderBuilder::database`] wins and is not
+	/// overwritten.
 	///
-	/// Call this before [`connect`](crate::platform::ChainProvider::connect),
-	/// not from inside a connection callback: on the native bindings `connect`
-	/// blocks the calling thread, and a store that needs the main thread would
-	/// deadlock underneath it.
+	/// Never call this from inside a connection callback: on the native
+	/// bindings `connect` blocks the calling thread, and a store that needs the
+	/// main thread would deadlock underneath it.
 	///
 	/// Fails when a read is needed and the provider was built without storage.
 	/// A chain that silently never resumes is indistinguishable from one that
@@ -555,6 +562,52 @@ impl EmbeddedChainProvider {
 		};
 		lock(&self.seeded_databases).entry(genesis_hash).or_insert(blob);
 		Ok(true)
+	}
+
+	/// [`load_database`](Self::load_database) for a connect about to happen:
+	/// the bindings call it before every connect, so a chain that stopped when
+	/// its last connection closed resumes from stored state when it comes back.
+	///
+	/// Stored state is an optimisation. A provider without storage, or a chain
+	/// the client is already running, reads nothing, and a store that fails or
+	/// does not answer within 5 s leaves the chain to sync from the checkpoint.
+	/// Fails only for a chain this provider cannot connect to, as `connect`
+	/// would.
+	pub async fn load_database_for_connect(
+		&self,
+		genesis_hash: [u8; 32],
+	) -> Result<(), ProviderError> {
+		use futures::future::{Either, select};
+
+		if !self.has_storage() || self.is_connected(genesis_hash) {
+			return Ok(());
+		}
+		let deadline = futures_timer::Delay::new(STORAGE_DEADLINE);
+		futures::pin_mut!(deadline);
+		match select(core::pin::pin!(self.load_database(genesis_hash)), deadline).await {
+			Either::Left((
+				Err(
+					error @ (ProviderError::UnknownGenesis { .. } |
+					ProviderError::UnknownRelay { .. }),
+				),
+				_,
+			)) => Err(error),
+			Either::Left((Err(error), _)) => {
+				tracing::warn!(
+					reason = %error,
+					"storage unavailable, syncing from the chain-spec checkpoint"
+				);
+				Ok(())
+			},
+			Either::Left((Ok(_), _)) => Ok(()),
+			Either::Right(((), _)) => {
+				tracing::warn!(
+					"storage did not answer in {}s, syncing from the chain-spec checkpoint",
+					STORAGE_DEADLINE.as_secs()
+				);
+				Ok(())
+			},
+		}
 	}
 
 	/// Snapshot the finalized state for `genesis_hash` and hand it to storage.
