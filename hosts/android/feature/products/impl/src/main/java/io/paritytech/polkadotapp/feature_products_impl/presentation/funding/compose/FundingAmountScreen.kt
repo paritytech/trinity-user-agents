@@ -50,7 +50,6 @@ private val BADGE_DOT = 8.dp
 private val BADGE_RING = 2.dp
 private val BADGE_INSET = 4.dp
 
-/** The overlay's first screen: which rail, and how much. */
 @Composable
 fun FundingAmountScreen(
     modifier: Modifier = Modifier,

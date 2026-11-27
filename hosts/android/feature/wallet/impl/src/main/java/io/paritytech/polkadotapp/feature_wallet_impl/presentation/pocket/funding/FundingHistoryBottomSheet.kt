@@ -6,8 +6,6 @@ import androidx.compose.runtime.getValue
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
-import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
-import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
 import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeBottomSheet
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetSurface
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
@@ -24,9 +22,6 @@ class FundingHistoryBottomSheet : BaseComposeBottomSheet<FundingHistoryViewModel
     override val viewModel: FundingHistoryViewModel by viewModels()
 
     @Inject
-    lateinit var timeFormatter: TimeFormatter
-
-    @Inject
     lateinit var tokenAmountFormatter: TokenAmountFormatter
 
     @Composable
@@ -34,7 +29,6 @@ class FundingHistoryBottomSheet : BaseComposeBottomSheet<FundingHistoryViewModel
         val state by viewModel.activity.collectAsStateWithLifecycle()
 
         CompositionLocalProvider(
-            LocalTimeFormatter provides timeFormatter,
             LocalTokenAmountFormatter provides tokenAmountFormatter,
         ) {
             NovaBottomSheetSurface {

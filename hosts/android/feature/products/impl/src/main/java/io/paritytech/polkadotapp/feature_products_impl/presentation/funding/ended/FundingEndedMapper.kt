@@ -24,19 +24,13 @@ import java.math.BigDecimal
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** The dot a released payout still on its way sits on: between Received and Sent, once sending. */
+// Between Received and Sent, where a released payout still on its way sits.
 private const val SENDING_DOT = 5
 
-/**
- * Builds an ended session's detail screen from the core's summary of it. The core says how it went, what it moved and
- * where it stopped; the wording, the figures and the dots are the app's.
- */
 class FundingEndedMapper(
-    /** The balance's decimals. */
     private val cashPrecision: Int,
     private val format: FundingCashFormat,
 ) {
-    /** `null` for a session that has not ended. */
     fun map(summary: FundingSessionSummary): FundingEndedUiState? {
         val ended = summary.ended
         val outcome = ended.outcome
@@ -62,7 +56,6 @@ class FundingEndedMapper(
         )
     }
 
-    /** Every milestone done once it succeeded; a released payout still on its way sits on Sending; a failure is red where it stopped. */
     private fun timeline(summary: FundingSessionSummary, outcome: FundingEndedOutcome): FundingTimelineUi {
         val labels = FundingTimeline.labels(summary.direction)
         val stopped = summary.ended.stoppedAt?.milestone()
@@ -172,7 +165,6 @@ class FundingEndedMapper(
         }
     }
 
-    /** What the quoted amount was: paid or sent in, received out, or the amount of a withdrawal that failed. */
     private fun paidCaption(summary: FundingSessionSummary, succeeded: Boolean): Int = when {
         summary.direction == FundingDirection.IN && summary.choice?.rail == FundingRail.CARD -> RCommon.string.funding_ended_paid
         summary.direction == FundingDirection.IN -> RCommon.string.funding_ended_sent
@@ -189,17 +181,14 @@ class FundingEndedMapper(
 
     private fun label(units: U128): String = format.label(cash(units))
 
-    /** A core amount in the balance's units; zero when it is not a number. */
     private fun cash(units: U128): BigDecimal =
         units.toBalanceOrNull()?.amountFromPlanks(cashPrecision)?.canonical() ?: BigDecimal.ZERO
 
     private fun res(res: Int, vararg args: String) = FundingEndedText.Res(res, args.toList().toImmutableList())
 }
 
-/** Whether the balance moved: credited in, or debited out. */
 private fun FundingSessionSummary.settled(): Boolean = stage is FundingStage.Delivered || stage is FundingStage.Released
 
-/** When it ended. */
 private fun FundingSessionSummary.settledAt(): Instant? = when (val stage = stage) {
     FundingStage.Open -> null
     is FundingStage.Delivered -> stage.settledAtMs
@@ -207,7 +196,6 @@ private fun FundingSessionSummary.settledAt(): Instant? = when (val stage = stag
     is FundingStage.Failed -> stage.settledAtMs
 }?.let { Instant.fromEpochMilliseconds(it.toLong()) }
 
-/** What the user paid for value in, or received for value out, in the quote's asset at the decimals it states. */
 private fun FundingSessionSummary.quotedAmount(): String? = choice?.let { choice ->
     val units = if (direction == FundingDirection.IN) choice.quote.sendAmount else choice.quote.receiveAmount
     FundingAssetUnit.of(choice.asset, choice.quote.assetDecimals.toInt()).format(units.toBalanceOrNull().orZero())

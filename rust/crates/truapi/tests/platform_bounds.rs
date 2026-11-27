@@ -3,8 +3,9 @@
 //! `async_trait`.
 
 use truapi::platform::{
-	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductId, ProductIdError,
-	ProductStorageKey, RuntimeConfigValidationError,
+	ExecutableKind, HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo,
+	ProductContext, ProductId, ProductIdError, ProductStorageKey, RuntimeConfigValidationError,
+	UnservedProduct,
 };
 
 fn _assert_platform_bounds<T: Platform + Send + Sync + 'static>() {}
@@ -119,14 +120,45 @@ fn product_id_validation_cases() {
 			"{raw:?}"
 		);
 	}
-	for domain in ["example.com", "example.org", "dotli.dotty"] {
+	for malformed in ["example", "localhost.dot", "my_app.dot"] {
 		assert_eq!(
-			domain.parse::<ProductId>(),
-			Err(ProductIdError::Invalid { input: domain.to_string() }),
-			"{domain} must not be accepted as a product identifier"
+			malformed.parse::<ProductId>(),
+			Err(ProductIdError::Invalid { input: malformed.to_string() }),
+			"{malformed} must not be accepted as a product identifier"
 		);
 	}
 	assert_eq!(" ".parse::<ProductId>(), Err(ProductIdError::Empty));
+}
+
+/// A web domain parses, because any DNS label is a valid TLD. The host runs
+/// a product only under an id its stack serves. A name under `dot` is not one
+/// on a `paseo` stack, and the refusal says which id to open instead.
+#[test]
+fn a_host_runs_only_products_its_stack_serves() {
+	let stack = truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]);
+	let run = |raw: &str| {
+		let product_id: ProductId = raw.parse().expect("the id is well formed");
+		ProductContext::served_by(&stack, product_id.clone(), ExecutableKind::App)
+			.map(|product| product.product_id)
+			.map_err(|error| (error, product_id))
+	};
+
+	for served in ["host-playground44.paseo", "localhost:3000"] {
+		assert_eq!(run(served).map(String::from), Ok(served.to_string()));
+	}
+	for (unserved, served_as) in [
+		("example.com", None),
+		("browse.testnet", None),
+		("dotli.dotty", None),
+		("dotli.dot", Some("dotli.paseo")),
+	] {
+		let (error, product_id) = run(unserved).expect_err("the stack serves paseo only");
+		let served_as = served_as.map(ProductId::for_test);
+		assert_eq!(
+			error,
+			UnservedProduct { product_id, stack_tld: "paseo".to_string(), served_as }.into()
+		);
+	}
 }
 
 #[test]

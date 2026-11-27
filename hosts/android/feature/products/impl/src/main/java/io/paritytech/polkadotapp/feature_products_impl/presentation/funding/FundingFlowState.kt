@@ -47,8 +47,8 @@ data class FundingFlowState(
     val list: FundingQuoteList?,
     val quotesFailed: Boolean,
     val amountIssue: FundingAmountIssue?,
-    /** The core could not check the typed amount, which holds it back like an issue would. */
     val amountCheckFailed: Boolean,
+    val spendableUnread: Boolean,
 ) {
     companion object {
         fun initial(
@@ -59,6 +59,7 @@ data class FundingFlowState(
             options: FundingOptions?,
             amount: Balance?,
             country: FundingCountry?,
+            spendableUnread: Boolean,
         ) = FundingFlowState(
             direction = direction,
             cashPrecision = cashPrecision,
@@ -78,6 +79,7 @@ data class FundingFlowState(
             quotesFailed = false,
             amountIssue = null,
             amountCheckFailed = false,
+            spendableUnread = spendableUnread,
         )
 
         fun textFor(value: BigDecimal): String =
@@ -101,7 +103,11 @@ data class FundingFlowState(
         get() = rows.keys.mapNotNull { id -> candidates.firstOrNull { it.providerId == id } }
 
     val canContinue: Boolean
-        get() = amount.signum() > 0 && amountIssue == null && !amountCheckFailed && rail in availableRails
+        get() = amount.signum() > 0 && amountIssue == null && !amountCheckFailed && !withdrawalUnchecked && rail in availableRails
+
+    // Without the balance, the core would check a withdrawal's amount against no limit at all.
+    private val withdrawalUnchecked: Boolean
+        get() = spendableUnread && direction == FundingDirection.OUT
 
     val amountLimits: FundingLimits
         get() = options?.limits.toLimits()
@@ -112,7 +118,6 @@ data class FundingFlowState(
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
 
-    /** [units] of the balance, as the screens read them. */
     fun cashAmount(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
@@ -133,7 +138,6 @@ data class FundingFlowState(
     val isQuoting: Boolean
         get() = selectedQuote == null && (quoting || list?.complete == false)
 
-    /** An ask waits for its first list. */
     val quoting: Boolean
         get() = askedAmount != null && list == null && !quotesFailed
 

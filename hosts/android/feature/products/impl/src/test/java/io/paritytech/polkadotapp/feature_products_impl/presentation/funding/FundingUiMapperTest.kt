@@ -123,10 +123,8 @@ class FundingUiMapperTest {
         assertEquals(FundingCryptoIcon(monogram = "B", image = null), base.icon)
     }
 
-    /** Asks for quotes of the amount on screen, as the funding service reports a new ask of the same amount. */
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount, failed = false)
 
-    /** The ask's list, as the funding service reports it. */
     private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() }, failed = false)
 
     private fun flow() = FundingFlowState.initial(
@@ -134,6 +132,7 @@ class FundingUiMapperTest {
         cashPrecision = 6,
         format = testCashFormat(),
         spendable = null,
+        spendableUnread = false,
         options = FundingOptions(
             candidates = listOf(candidate(providerA), candidate(providerB)),
             countries = emptyList(),
@@ -153,6 +152,7 @@ class FundingUiMapperTest {
         cashPrecision = 6,
         format = testCashFormat(),
         spendable = null,
+        spendableUnread = false,
         options = FundingOptions(
             candidates = candidates.toList(),
             countries = emptyList(),
@@ -228,7 +228,7 @@ class FundingUiMapperTest {
         ),
     )
 
-    /** A fee under a cent still costs something, so it rounds up. A balance rounding down is in FundingUnitsTest. */
+    // A fee under a cent still costs something, so it rounds up. A balance rounding down is in FundingUnitsTest.
     @Test
     fun `a fee rounds up to the cent`() {
         assertEquals("$0.01 CASH", testCashFormat().cost(flow().cashAmount(9000.intoBalance())))

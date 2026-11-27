@@ -14,12 +14,12 @@ actor InMemoryPocketCardStore: PocketCardStore {
 
     private var stored: [PocketCardEntry]
     private var faces: [PocketCardKey: RendererNode] = [:]
-    private let pinned: any PinnedPocketCards
+    private let pinned: InMemoryPinnedCards
     private var readsFail = false
     private var writesFail = false
     private let snapshots: AsyncCurrentValueSubject<[PocketCardEntry]>
 
-    init(_ stored: [PocketCardEntry] = [], pinned: any PinnedPocketCards = InMemoryPinnedCards([])) {
+    init(_ stored: [PocketCardEntry] = [], pinned: InMemoryPinnedCards = InMemoryPinnedCards([])) {
         self.stored = stored
         self.pinned = pinned
         snapshots = AsyncCurrentValueSubject(stored)
@@ -88,29 +88,19 @@ actor InMemoryPocketCardStore: PocketCardStore {
         return placed + added.filter { !placedKeys.contains($0.key) }
     }
 
-    private static func placed(by pinned: any PinnedPocketCards) -> [PocketCardEntry] {
-        pinned.cards().map {
-            PocketCardEntry(
-                key: PocketCardKey(productId: $0.productId, cardId: PocketCardId(value: $0.cardId)),
-                title: $0.title,
-                privileged: true
-            )
-        }
+    private static func placed(by pinned: InMemoryPinnedCards) -> [PocketCardEntry] {
+        pinned.cardsHeld
     }
 }
 
 /// The cards the host itself places, as a test supplies them.
 struct InMemoryPinnedCards: PinnedPocketCards {
-    private let cardsHeld: [PocketCardEntry]
+    let cardsHeld: [PocketCardEntry]
     private let bundledFace: RendererNode?
 
     init(_ cardsHeld: [PocketCardEntry], face: RendererNode? = nil) {
         self.cardsHeld = cardsHeld
         bundledFace = face
-    }
-
-    func cards() -> [PinnedPocketCard] {
-        cardsHeld.map { PinnedPocketCard(productId: $0.key.productId, cardId: $0.key.cardId.value, title: $0.title) }
     }
 
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {

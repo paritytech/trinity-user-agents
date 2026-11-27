@@ -10,6 +10,8 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
+                         its `privileged_product` module names the products every host trusts
+                         (Humanity, Jollity, Collectibles),
                          its `stack` module resolves the Trinity stack the host runs, the
                          core's only chain configuration, from the descriptor its build
                          bundles, its `chain` module builds the core's own extrinsics through

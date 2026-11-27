@@ -5,7 +5,12 @@ import Testing
 
 @Suite("WebDeeplinkNormalizer Tests")
 struct WebDeeplinkNormalizerTests {
-    private let normalizer = WebDeeplinkNormalizer(appScheme: "polkadotapp")
+    private let normalizer: WebDeeplinkNormalizer
+
+    init() throws {
+        let stack = try TrUAPIBundledStack.paseoNextV2.open()
+        normalizer = WebDeeplinkNormalizer(appScheme: "polkadotapp", stack: stack)
+    }
 
     @Test("Maps bare host first path segment to action")
     func mapsBareHostAction() throws {
@@ -66,6 +71,21 @@ struct WebDeeplinkNormalizerTests {
     @Test("Ignores foreign hosts")
     func rejectsForeignHost() throws {
         let url = try #require(URL(string: "https://polkadot.network/pair"))
+
+        #expect(normalizer.appSchemeDeeplink(from: url) == nil)
+    }
+
+    @Test("Ignores another network's share host")
+    func rejectsAnotherNetworksHost() throws {
+        let url = try #require(URL(string: "https://testnet.li/pair"))
+
+        #expect(normalizer.appSchemeDeeplink(from: url) == nil)
+    }
+
+    @Test("Rewrites nothing when the bundled stack could not be opened")
+    func rewritesNothingWithoutAStack() throws {
+        let url = try #require(URL(string: "https://dot.li/pair"))
+        let normalizer = WebDeeplinkNormalizer(appScheme: "polkadotapp", stack: nil)
 
         #expect(normalizer.appSchemeDeeplink(from: url) == nil)
     }

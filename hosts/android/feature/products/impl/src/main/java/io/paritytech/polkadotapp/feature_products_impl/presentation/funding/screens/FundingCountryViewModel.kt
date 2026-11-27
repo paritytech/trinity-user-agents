@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 
-/** Every country, searched by name or currency, with what the core says of each on the rail and asset picked. */
 @HiltViewModel(assistedFactory = FundingCountryViewModel.Factory::class)
 class FundingCountryViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,

@@ -23,6 +23,8 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDE
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import io.paritytech.polkadotapp.common.R
+import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
+import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
@@ -38,6 +40,9 @@ abstract class BaseComposeBottomSheet<T : BaseViewModel> : BottomSheetDialogFrag
 
     @Inject
     lateinit var paymentAssetBrandProvider: PaymentAssetBrandProvider
+
+    @Inject
+    lateinit var timeFormatter: TimeFormatter
 
     protected val bottomSheetBehavior: BottomSheetBehavior<*>?
         get() = (dialog as? BottomSheetDialog)?.behavior
@@ -66,7 +71,10 @@ abstract class BaseComposeBottomSheet<T : BaseViewModel> : BottomSheetDialogFrag
         setContent {
             val paymentAssetBrand by paymentAssetBrandProvider.brand.collectAsStateWithLifecycle()
 
-            CompositionLocalProvider(LocalPaymentAssetBrand provides paymentAssetBrand) {
+            CompositionLocalProvider(
+                LocalPaymentAssetBrand provides paymentAssetBrand,
+                LocalTimeFormatter provides timeFormatter,
+            ) {
                 PolkadotTheme {
                     Box(
                         modifier = Modifier.semantics { testTagsAsResourceId = true }

@@ -29,7 +29,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 private const val DISABLED_ALPHA = 0.5f
 private val CHIP_ICON_SIZE = 16.dp
 
-/** The networks the providers' crypto routes name. */
 @Composable
 fun FundingNetworkScreen(
     modifier: Modifier = Modifier,
@@ -66,7 +65,6 @@ fun FundingNetworkScreen(
     }
 }
 
-/** The tokens the providers take on the chosen network. */
 @Composable
 fun FundingTokenScreen(
     modifier: Modifier = Modifier,

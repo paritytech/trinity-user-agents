@@ -102,7 +102,6 @@ class FundingIconsTest {
     private suspend fun fetch(model: String?): FetchResult? =
         requireNotNull(factory.create(uriOf(requireNotNull(model)), options, imageLoader)).fetch()
 
-    /** Unpacks [provider]'s worker archive with [paths] in it, as dotNS serves it locally. */
     private fun publish(provider: ProductId, vararg paths: String): File {
         val root = archives.newFolder(provider.value)
         paths.forEach { path -> File(root, path).apply { parentFile?.mkdirs() }.writeText("png") }

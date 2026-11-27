@@ -76,8 +76,11 @@ const productRoot = resolve(
   repoRoot,
   process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_DIR ?? "playground",
 );
+// A debug build runs previewnet, whose products are under `testnet`. For
+// another build, name the product under that build's TLD.
 const productHost =
-  process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_HOST ?? "truapi-playground.dot";
+  process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_HOST ??
+  "truapi-playground.testnet";
 const productName =
   process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_NAME ?? "TrUAPI Playground";
 const roomIdSource =

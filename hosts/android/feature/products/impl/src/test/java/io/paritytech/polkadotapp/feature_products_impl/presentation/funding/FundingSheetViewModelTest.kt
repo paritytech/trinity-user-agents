@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelStore
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
@@ -30,6 +31,7 @@ import org.junit.Test
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDeposit
+import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgressStep
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStep
@@ -94,6 +96,24 @@ class FundingSheetViewModelTest {
 
         assertTrue(sheet.isClosed)
         coVerify { router.closeFundingOverlay(FundingIntentId("intent")) }
+    }
+
+    @Test
+    fun `a withdrawal waits for the balance before it can go ahead`() = runTest(testDispatcher) {
+        val withdrawal = entry(session = FakeFundingCore.session("intent").copy(direction = FundingDirection.OUT))
+        service.entry.emit(withdrawal)
+        val unread = sheet()
+        advanceUntilIdle()
+        unread.update { it.withAmountText("5") }
+        advanceUntilIdle()
+        assertEquals(false, unread.flow.value?.canContinue)
+
+        coEvery { interactor.spendable() } returns Result.success(1_000_000_000.intoBalance())
+        val read = sheet()
+        advanceUntilIdle()
+        read.update { it.withAmountText("5") }
+        advanceUntilIdle()
+        assertEquals(true, read.flow.value?.canContinue)
     }
 
     @Test

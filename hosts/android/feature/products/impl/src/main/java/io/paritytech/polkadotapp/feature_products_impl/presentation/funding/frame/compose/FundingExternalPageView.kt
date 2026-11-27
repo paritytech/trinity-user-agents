@@ -36,16 +36,13 @@ import uniffi.truapi.fundingPageAllowsMedia
 import uniffi.truapi.fundingPageAllowsNavigation
 import uniffi.truapi.fundingPageMatchesReturn
 
-/** Back navigation inside the external page, which the frame's own back button tries first. */
 class FundingExternalPageState {
     internal var webView: WebView? = null
 
-    /** Loads the current page again, as after a failed load. */
     fun reload() {
         webView?.reload()
     }
 
-    /** Goes back a page and answers `true`, or answers `false` on the first page. */
     fun goBack(): Boolean {
         val view = webView ?: return false
         if (!view.canGoBack()) return false
@@ -57,7 +54,7 @@ class FundingExternalPageState {
 @Composable
 fun rememberFundingExternalPageState(): FundingExternalPageState = remember { FundingExternalPageState() }
 
-/** A WebView for an onramp's own https page at [url], with what KYC and card checks need: scripts, forms and storage. */
+// KYC and card checks need scripts, forms and storage.
 @SuppressLint("SetJavaScriptEnabled")
 fun createFundingPageWebView(context: Context, url: String): WebView = WebView(context).apply {
     settings.apply {
@@ -73,11 +70,6 @@ fun createFundingPageWebView(context: Context, url: String): WebView = WebView(c
     loadUrl(url)
 }
 
-/**
- * Shows [webView], an onramp's page that outlives this screen, moved onto this screen's context while it shows it:
- * popups open in place, the camera and file uploads through [onPickFiles]. Reaching [FundingExternalPage.returnUrl]
- * finishes it with the URL the page landed on.
- */
 @Composable
 fun FundingExternalPageView(
     modifier: Modifier = Modifier,

@@ -33,10 +33,6 @@ private val ICON_SIZE = 24.dp
 private const val DISABLED_ALPHA = 0.35f
 private val GREYSCALE = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
 
-/**
- * Crypto, Card and Bank as pills with the rail's icon. A rail no provider serves for this direction is shown dimmed and
- * grey, and cannot be picked.
- */
 @Composable
 fun FundingRailTabs(
     modifier: Modifier = Modifier,

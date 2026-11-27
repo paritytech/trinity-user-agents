@@ -5,7 +5,7 @@ import androidx.fragment.app.viewModels
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeBottomSheet
 
-/** An ended session's detail, read from the host's history, so it also comes back after process death. */
+// Read from the host history, so it also comes back after process death.
 @AndroidEntryPoint
 class FundingEndedBottomSheet : BaseComposeBottomSheet<FundingEndedViewModel>() {
     override val viewModel: FundingEndedViewModel by viewModels()

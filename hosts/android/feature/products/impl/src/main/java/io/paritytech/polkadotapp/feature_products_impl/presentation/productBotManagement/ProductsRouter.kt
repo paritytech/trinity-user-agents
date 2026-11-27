@@ -35,13 +35,9 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     suspend fun openTrUAPIProductScan()
     suspend fun closeTrUAPIProductScan()
 
-    /** The funding sheet for the session the core is waiting on. */
     suspend fun openFundingOverlay(intentId: FundingIntentId)
 
-    /**
-     * Takes down the funding sheet for [intentId], with its provider screen when that sits on top of it; anything else on
-     * top is left alone, and so is the sheet under it.
-     */
+    // Also takes down its provider screen on top of it; anything else on top, and the sheet under it, stays.
     suspend fun closeFundingOverlay(intentId: FundingIntentId)
 
     suspend fun openFundingEnded(intentId: FundingIntentId)
@@ -51,13 +47,12 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     /** Every funding session, in flight and ended, over whatever is on screen. */
     suspend fun openFundingHistory()
 
-    /** Whether the funding sheet for [intentId] is on top, alone or under its own provider screen. */
+    // Also while under its own provider screen.
     suspend fun isFundingOverlayShown(intentId: FundingIntentId): Boolean
 
-    /** A funding provider's own screen, full height, showing [request] over its session. */
     suspend fun openFundingProviderFrame(request: FundingFrameRequest)
 
-    /** Takes down the provider screen for [intentId], when it is the screen on top. */
+    // Only when it is the screen on top.
     suspend fun closeFundingProviderFrame(intentId: FundingIntentId)
 
     fun openProductSettings(productId: ProductId)

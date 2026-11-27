@@ -85,6 +85,14 @@ class FundingFlowStateTest {
     }
 
     @Test
+    fun `an unread balance holds back a withdrawal, not a top-up`() {
+        val unread = { direction: FundingDirection -> state(options(), direction = direction, amount = "50").copy(spendableUnread = true) }
+
+        assertFalse(unread(FundingDirection.OUT).canContinue)
+        assertTrue(unread(FundingDirection.IN).canContinue)
+    }
+
+    @Test
     fun `quoting lasts until every provider on the list answered`() {
         val asked = state(options(asset = "EUR"), amount = "50").asked()
         val pending = asked.received(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), complete = false))
@@ -183,10 +191,9 @@ class FundingFlowStateTest {
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 
-    /** Asks for quotes of the amount on screen, as the funding service reports a new ask. */
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount, failed = false)
 
-    /** The ask's list, as the funding service reports it; none is the core withdrawing it, which drops the ask. */
+    // No list is the core withdrawing it, which drops the ask.
     private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() }, failed = false)
 
     private fun state(
@@ -198,6 +205,7 @@ class FundingFlowStateTest {
         cashPrecision = 6,
         format = testCashFormat(),
         spendable = 226_780_000.intoBalance(),
+        spendableUnread = false,
         options = options,
         amount = null,
         country = germany,

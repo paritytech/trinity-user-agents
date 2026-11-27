@@ -39,7 +39,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSummaryProblem
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** A screen title with an optional back button on the left and actions on the right. */
 @Composable
 fun FundingHeader(
     modifier: Modifier = Modifier,
@@ -87,7 +86,6 @@ fun FundingCircleButton(
     )
 }
 
-/** A row of a summary card: a label on the left, a value and an optional chevron on the right. */
 @Composable
 fun FundingInfoRow(
     modifier: Modifier = Modifier,
@@ -129,7 +127,6 @@ fun FundingInfoRow(
     }
 }
 
-/** Rows that read as one card, rounded at its ends. */
 @Composable
 fun FundingCard(
     modifier: Modifier = Modifier,
@@ -146,10 +143,7 @@ fun FundingCard(
     }
 }
 
-/**
- * A crypto network's or token's icon from its provider's worker archive, or its first letter while that loads and when
- * there is none. Without [monogram] nothing is drawn until the icon loads.
- */
+// Without [monogram] nothing is drawn until the icon loads.
 @Composable
 fun FundingCryptoIconImage(
     modifier: Modifier = Modifier,
@@ -188,7 +182,6 @@ val FUNDING_CRYPTO_ICON_SIZE = 40.dp
 // Providers ship each icon as a 96×96 PNG.
 private const val FUNDING_ICON_PIXELS = 96
 
-/** What stands in the way, in the user's words. */
 @Composable
 fun fundingProblemText(problem: FundingSummaryProblem): String = when (problem) {
     FundingSummaryProblem.StartFailed -> stringResource(RCommon.string.funding_error_start_failed)

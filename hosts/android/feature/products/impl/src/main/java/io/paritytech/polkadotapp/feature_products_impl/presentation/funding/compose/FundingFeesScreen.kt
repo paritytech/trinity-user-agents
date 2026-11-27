@@ -22,7 +22,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val DIVIDER_HEIGHT = 1.dp
 
-/** How the chosen quote's charge breaks down. */
 @Composable
 fun FundingFeesScreen(
     modifier: Modifier = Modifier,

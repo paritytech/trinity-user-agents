@@ -13,7 +13,7 @@ import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
 
-/** The app formatter's CASH rules, in full: "$1,000.25 CASH", cents only when there are any, rounded down. */
+// "$1,000.25 CASH": cents only when there are any, rounded down, as the app formatter writes it.
 fun testCashFormat(): FundingCashFormat = FundingCashFormat(CashOnlyFormatter, CashOnlyMapper)
 
 private object CashOnlyFormatter : TokenAmountFormatter {
