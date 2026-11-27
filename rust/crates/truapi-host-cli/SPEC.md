@@ -1708,10 +1708,23 @@ written the same way:
 - atomically rename it over the target;
 - and sync the parent directory on Unix.
 
-A replaced file does not keep its mode, so a state file readable by other
-users becomes owner-only on its next write. Directories that
-already exist keep their permissions. Files written for other programs, such as
-`stack publish` and `stack bundle` output, take the umask's permissions.
+A failed write names the step that failed and the paths it was working on, and
+leaves the target as it was. Once the rename is done the write counts as
+complete: a directory that cannot be synced is logged as a warning.
+
+The other state directories, from the base path down to the network, session,
+pairing-user and materials directories and the script project root, are also
+created `0700` on Unix. The core database (`core.sqlite3` and the `-wal` and `-shm` files
+SQLite adds) and the lock files get the umask's permissions and rely on those
+directories. `installation` is created once, `0600`, and never replaced.
+
+A replaced file does not keep its mode, so a state file readable by other users
+becomes owner-only on its next write. A file written only once, such as
+`device-storage.json`, and directories that already exist keep their
+permissions, so an install made by an older version keeps them until
+`chmod -R go-rwx` is run on the base path. Files written for other programs,
+such as `stack publish` and `stack bundle` output, take the umask's
+permissions.
 
 Malformed account, session, or paired-host JSON is a startup or command error
 when that data is loaded. Malformed core JSON is warned about and loaded as

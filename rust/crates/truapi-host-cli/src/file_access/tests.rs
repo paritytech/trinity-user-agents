@@ -2,10 +2,6 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 use super::*;
 
-fn mode(path: &Path) -> u32 {
-	fs::metadata(path).expect("stat").permissions().mode() & 0o777
-}
-
 /// A private file holds keys, so it must never be readable by another user,
 /// whatever the umask would have allowed, and the directories created for it
 /// must not let another user list or open what they hold.
@@ -52,47 +48,43 @@ fn an_existing_directory_keeps_its_permissions() {
 	assert_eq!(mode(root.path()), 0o755);
 }
 
-/// A failed replacement leaves the old file to read and no temporary file
-/// behind to accumulate in the state directory.
+/// The message is all a user has to diagnose a failed state write, so it
+/// names the step and both paths. The failure must also leave the target as
+/// it was and no temporary file to pile up in the state directory.
 #[test]
-fn a_failed_write_leaves_the_target_and_no_temporary_file() {
-	let root = tempfile::tempdir().expect("temporary directory");
-	let path = root.path().join("current-session");
-	fs::create_dir(&path).expect("block the target with a directory");
-	fs::write(path.join("kept"), b"kept").expect("fill the directory");
-
-	let _failure = write_atomically(&path, b"name\n", FileAccess::Private)
-		.expect_err("rename over a directory");
-
-	let entries: Vec<String> = fs::read_dir(root.path())
-		.expect("list")
-		.map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
-		.collect();
-	assert_eq!(entries, ["current-session"]);
-}
-
-/// A failed state write is diagnosed from its message alone, so the error
-/// names the step that failed and the paths it was working on: here the
-/// temporary file beside the target and the target it could not replace.
-#[test]
-fn a_failed_rename_names_the_temporary_file_and_the_target() {
+fn a_failed_rename_names_its_paths_and_leaves_the_target_alone() {
 	let root = tempfile::tempdir().expect("temporary directory");
 	let path = root.path().join("core-storage.json");
 	fs::create_dir(&path).expect("block the target with a directory");
+	fs::write(path.join("kept"), b"kept").expect("fill the directory");
 
 	let error = write_atomically(&path, b"{}", FileAccess::Private).expect_err("rename fails");
 
 	let WriteError::Rename { temporary, path: target, .. } = &error else {
-		panic!("the rename failed, not another step: {error:?}");
+		panic!("only the rename can fail over a directory, so the error must name it: {error}");
 	};
 	let temporary_name = temporary.file_name().expect("a file name").to_string_lossy();
+	let entries: Vec<String> = fs::read_dir(root.path())
+		.expect("list")
+		.map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+		.collect();
 	assert_eq!(
-		(temporary.parent(), temporary_name.starts_with(".core-storage.json."), target),
-		(Some(root.path()), true, &path)
-	);
-	assert_eq!(
-		error.to_string(),
-		format!("rename {} over {}", temporary.display(), path.display())
+		(
+			temporary.parent(),
+			temporary_name.starts_with(".core-storage.json."),
+			target,
+			error.to_string(),
+			fs::read(path.join("kept")).expect("read the kept file"),
+			entries,
+		),
+		(
+			Some(root.path()),
+			true,
+			&path,
+			format!("rename {} over {}", temporary.display(), path.display()),
+			b"kept".to_vec(),
+			vec!["core-storage.json".to_string()],
+		)
 	);
 }
 

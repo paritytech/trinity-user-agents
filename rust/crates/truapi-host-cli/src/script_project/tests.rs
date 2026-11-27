@@ -14,15 +14,13 @@ fn new_projects_carry_the_matching_declarations_without_reading_a_checkout() -> 
 #[cfg(unix)]
 #[test]
 fn the_project_root_and_its_new_parents_are_readable_by_the_owner_only() -> Result<()> {
-	use std::os::unix::fs::PermissionsExt;
+	use crate::file_access::mode;
 
 	let temporary = tempfile::tempdir()?;
 	let base = temporary.path().join("truapi-host");
 	create_with_types(&base.join("scripts"), None, b"types")?;
 
-	let mode =
-		|path: &Path| -> Result<u32> { Ok(fs::metadata(path)?.permissions().mode() & 0o777) };
-	assert_eq!((mode(&base)?, mode(&base.join("scripts"))?), (0o700, 0o700));
+	assert_eq!((mode(&base), mode(&base.join("scripts"))), (0o700, 0o700));
 	Ok(())
 }
 

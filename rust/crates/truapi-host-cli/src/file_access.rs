@@ -12,6 +12,12 @@ use std::{
 
 use tempfile::NamedTempFile;
 
+#[cfg(all(test, unix))]
+mod testing;
+
+#[cfg(all(test, unix))]
+pub use testing::mode;
+
 /// Who may read a file the CLI writes and the directories it creates for one.
 ///
 /// On Unix the mode is set when a file or directory is created, so a file is
@@ -23,9 +29,10 @@ pub enum FileAccess {
 	/// State under the CLI's state directory, which holds sessions, device
 	/// identity, keys and mnemonics: files `0600`, directories `0700`.
 	Private,
-	/// Files written for other programs or users to read, such as a published
-	/// stack descriptor a web server serves: the umask decides, as for any
-	/// new file (`0666` and `0777` before it).
+	/// Files outside the state directory, such as a published stack
+	/// descriptor that a web server running as another user serves, or the
+	/// update check time beside the installed binaries: the umask decides, as
+	/// for any new file (`0666` and `0777` before it).
 	Shared,
 }
 

@@ -624,7 +624,7 @@ fn an_alias_whose_target_was_cleared_resolves_to_itself_again() -> Result<()> {
 #[cfg(unix)]
 #[test]
 fn session_directories_and_records_are_readable_by_their_owner_only() -> Result<()> {
-	use std::os::unix::fs::PermissionsExt;
+	use crate::file_access::mode;
 
 	let temporary = tempdir()?;
 	let base = temporary.path().join("v2");
@@ -644,10 +644,7 @@ fn session_directories_and_records_are_readable_by_their_owner_only() -> Result<
 		(profile.path.join(SESSION_INFO_FILE), 0o600),
 		(profile.path.join(PAIRED_HOSTS_FILE), 0o600),
 	];
-	let actual = expected
-		.iter()
-		.map(|(path, _)| Ok((path.clone(), fs::metadata(path)?.permissions().mode() & 0o777)))
-		.collect::<Result<Vec<_>>>()?;
+	let actual = expected.iter().map(|(path, _)| (path.clone(), mode(path))).collect::<Vec<_>>();
 	assert_eq!(actual, expected);
 	Ok(())
 }

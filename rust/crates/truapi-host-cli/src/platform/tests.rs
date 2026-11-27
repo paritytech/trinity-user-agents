@@ -737,13 +737,6 @@ fn product_storage_is_isolated_by_session_then_product() {
 	);
 }
 
-#[cfg(unix)]
-fn mode(path: &Path) -> u32 {
-	use std::os::unix::fs::PermissionsExt;
-
-	fs::metadata(path).expect("stat storage path").permissions().mode() & 0o777
-}
-
 /// Core storage holds the auth session and the allowance and auto-signing
 /// keys, device storage the key peers encrypt to, and product storage what
 /// products chose to keep. Another user on the machine must not read any of
@@ -752,6 +745,8 @@ fn mode(path: &Path) -> u32 {
 #[cfg(unix)]
 #[test]
 fn storage_the_host_creates_is_readable_by_its_owner_only() {
+	use crate::file_access::mode;
+
 	let temporary = tempdir().expect("create pairing storage root");
 	let network_dir = temporary.path().join("testnet");
 	let platform = CliPlatform::new(
@@ -795,35 +790,4 @@ fn storage_the_host_creates_is_readable_by_its_owner_only() {
 		.collect::<Vec<_>>();
 	let actual = expected.iter().map(|(path, _)| (path.clone(), mode(path))).collect::<Vec<_>>();
 	assert_eq!(actual, expected);
-}
-
-/// A storage file that is readable by everyone holds the same secrets, so
-/// the next write replaces it with an owner-only file rather than keeping its
-/// mode, and so does every write after it. The directory is the user's own,
-/// so it keeps its mode.
-#[cfg(unix)]
-#[test]
-fn a_storage_file_left_readable_becomes_owner_only_on_the_next_write() {
-	use std::os::unix::fs::PermissionsExt;
-
-	let temporary = tempdir().expect("create storage root");
-	let core_storage = temporary.path().join("core-storage.json");
-	fs::write(&core_storage, br#"{"values":{}}"#).expect("write the old core storage");
-	fs::set_permissions(&core_storage, fs::Permissions::from_mode(0o644)).expect("chmod file");
-	fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o755)).expect("chmod dir");
-	let platform = CliPlatform::new(
-		&test_network(),
-		Some(test_storage_paths(temporary.path(), "test")),
-		ApprovalPolicy::AutoAccept,
-		None,
-	);
-
-	for value in [vec![1], vec![2]] {
-		futures::executor::block_on(
-			platform.write_core_storage(CoreStorageKey::AuthSession, value),
-		)
-		.expect("write core storage");
-	}
-
-	assert_eq!((mode(temporary.path()), mode(&core_storage)), (0o755, 0o600));
 }
