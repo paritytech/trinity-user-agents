@@ -132,15 +132,12 @@ sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
 through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 `--base-path ./truapi-host-paseo` uses `./truapi-host-paseo/v2`.
-The state holds keys and mnemonics, so on Unix the directories the CLI creates
-under the base path are readable by their owner only (`0700`), and the JSON
-state files, pointers and saved log level are written `0600`. The core database
-(`core.sqlite3` and the `-wal` and `-shm` files SQLite adds) and the lock files
-get the umask's permissions and rely on those directories. On an existing
-install, a file the CLI rewrites becomes `0600` on its next write. A file
-written once, such as `device-storage.json`, and the directories that already
-exist keep their permissions until
-`chmod -R go-rwx ~/.local/state/truapi-host` (or the `--base-path` in use).
+The state holds keys and mnemonics, so on Unix the CLI creates its directories
+under the base path `0700` and writes its state files `0600`. The core database
+and the lock files get the umask's permissions and rely on those directories.
+An install made by an older version keeps its old permissions on files written
+only once, such as `device-storage.json`, and on existing directories. Run
+`chmod -R go-rwx` on the base path to fix that.
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
