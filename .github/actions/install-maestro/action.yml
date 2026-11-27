@@ -1,0 +1,38 @@
+name: Install Maestro
+description: >-
+  Puts a pinned Maestro CLI on PATH, verified by its checksum. It lives under
+  RUNNER_TEMP, so on the persistent Parity Macs it lasts for this job only.
+
+inputs:
+  version:
+    description: Maestro CLI release
+    required: false
+    default: "2.12.1"
+  sha256:
+    description: Checksum of that release's maestro.zip
+    required: false
+    default: 54dbb0716425626604973cbb374c585ca30272375d9ce15177a1152765ddd9d7
+
+runs:
+  using: composite
+  steps:
+    - name: Install Maestro
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        dir="${RUNNER_TEMP}/maestro-${VERSION}"
+        rm -rf "$dir"
+        mkdir -p "$dir"
+        archive="${dir}/maestro.zip"
+        curl -fsSL --retry 3 -o "$archive" \
+          "https://github.com/mobile-dev-inc/maestro/releases/download/cli-${VERSION}/maestro.zip"
+        echo "${SHA256}  ${archive}" | shasum -a 256 -c -
+        unzip -q "$archive" -d "$dir"
+        rm "$archive"
+        echo "MAESTRO_CLI_NO_ANALYTICS=1" >> "$GITHUB_ENV"
+        echo "MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true" >> "$GITHUB_ENV"
+        echo "${dir}/maestro/bin" >> "$GITHUB_PATH"
+        "${dir}/maestro/bin/maestro" --version

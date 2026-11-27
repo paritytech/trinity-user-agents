@@ -1,7 +1,8 @@
 name: host-playground e2e
 
-# Runs host-playground inside the iOS and Android host apps built from this commit.
-# See e2e/host-playground/README.md.
+# Runs host-playground inside the iOS and Android host apps built from this commit,
+# then, on iOS, the native UI flows against the same signed-in app.
+# See e2e/host-playground/README.md and e2e/native-ui/README.md.
 # Each nightly calls this for its own platform and commit. on-label.yml calls
 # it for both platforms on a pull request labelled ci:host-playground-e2e, never
 # one from a fork.
@@ -258,6 +259,13 @@ jobs:
           "${dir}/applesimutils" --version
           echo "$dir" >> "$GITHUB_PATH"
 
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: ./.github/actions/install-maestro
+
       - name: Write the test account's mnemonic
         env:
           MNEMONIC: ${{ secrets.E2E_IOS_MNEMONIC }}
@@ -271,6 +279,7 @@ jobs:
           printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/ios.mnemonic"
 
       - name: Run host-playground in the simulator
+        id: host-playground
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -283,6 +292,17 @@ jobs:
             --mnemonic-file "${RUNNER_TEMP}/ios.mnemonic" --out "${OUT}" \
             --timeout-minutes 90
 
+      # Against the app host-playground signed in, whatever its result.
+      - name: Run the native UI flows in the simulator
+        if: ${{ !cancelled() && steps.host-playground.outcome != 'skipped' }}
+        env:
+          # The lite username E2E_IOS_MNEMONIC's account holds.
+          NATIVE_UI_USERNAME: hpeiosthree.10
+        run: |
+          set -euo pipefail
+          node e2e/native-ui/run.mjs --platform ios --app-id "${IOS_BUNDLE_ID}" \
+            --username "${NATIVE_UI_USERNAME}" --out "${OUT}/native-ui"
+
       - name: Summary
         if: always()
         run: |
@@ -292,6 +312,9 @@ jobs:
             cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No report: the run did not reach the tests." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "${OUT}/native-ui/report.md" ]; then
+            cat "${OUT}/native-ui/report.md" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload the results

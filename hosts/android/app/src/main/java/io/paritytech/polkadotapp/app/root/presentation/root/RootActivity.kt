@@ -15,6 +15,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.StyleRes
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -22,6 +23,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -330,12 +333,14 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             setContent {
                 val chainsHealth by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 PolkadotTheme {
-                    RootNavBarHost(
-                        navController = navController,
-                        chainsHealth = chainsHealth,
-                        dockletInputs = dockletInputEvents.events,
-                        backdropSource = navHost,
-                    )
+                    Box(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+                        RootNavBarHost(
+                            navController = navController,
+                            chainsHealth = chainsHealth,
+                            dockletInputs = dockletInputEvents.events,
+                            backdropSource = navHost,
+                        )
+                    }
                 }
             }
         }

@@ -68,6 +68,7 @@ fun PolkadotMenuListItem(
 
 @Composable
 fun PolkadotMenuListScope.PolkadotMenuListItem(
+    modifier: Modifier = Modifier,
     leading: (@Composable BoxScope.() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     title: @Composable () -> Unit,
@@ -75,7 +76,7 @@ fun PolkadotMenuListScope.PolkadotMenuListItem(
     onClick: (() -> Unit)?,
 ) {
     PolkadotMenuListItemInternal(
-        modifier = Modifier,
+        modifier = modifier,
         shape = menuItemShape(),
         leading = leading,
         trailing = trailing,

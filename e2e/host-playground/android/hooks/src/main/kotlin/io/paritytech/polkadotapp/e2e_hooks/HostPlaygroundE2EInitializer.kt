@@ -7,6 +7,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.feature_backup_impl.ManualMnemonicInteractor
+import io.paritytech.polkadotapp.feature_settings_api.data.storage.DockletAutoHideStorage
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.RecoverUsernameUseCase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,11 +23,13 @@ private val STEP_TIMEOUT = 2.minutes
 /**
  * Opens WebViews to DevTools and, when the runner left `files/e2e-seed`, restores that account
  * through manual mnemonic recovery and reports the outcome as one logcat line under [TAG].
+ * A seeded run also keeps the docklet on screen, so UI flows can reach the tabs without racing its idle hide.
  */
 class HostPlaygroundE2EInitializer @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val manualMnemonicInteractor: ManualMnemonicInteractor,
     private val recoverUsername: RecoverUsernameUseCase,
+    private val dockletAutoHide: DockletAutoHideStorage,
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
@@ -38,6 +41,7 @@ class HostPlaygroundE2EInitializer @Inject constructor(
 
         val mnemonic = seedFile.readText().trim()
         seedFile.delete()
+        dockletAutoHide.setEnabled(false)
 
         scope.launch(Dispatchers.IO) {
             when (val failure = seed(mnemonic)) {

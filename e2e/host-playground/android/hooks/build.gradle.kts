@@ -17,5 +17,6 @@ android {
 dependencies {
     implementation(project(":common"))
     implementation(project(":feature:backup:impl"))
+    implementation(project(":feature:settings:api"))
     implementation(project(":feature:usernames:api"))
 }

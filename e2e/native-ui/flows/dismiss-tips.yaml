@@ -1,0 +1,17 @@
+# Closes the first-run tips that cover the tab bar.
+appId: ${APP_ID}
+---
+- repeat:
+    times: 5
+    while:
+      visible:
+        id: PopoverDismissRegion
+    commands:
+      - tapOn:
+          id: PopoverDismissRegion
+- repeat:
+    times: 5
+    while:
+      visible: "(These rings track|Scan to pay).*"
+    commands:
+      - tapOn: "(These rings track|Scan to pay).*"

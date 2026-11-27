@@ -178,6 +178,7 @@ hosts/android/             Android host app; resolves the core from this tree
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+e2e/native-ui/             Maestro flows through the native host apps' own screens; see its README
 stacks/                    Generated link and signed descriptor of each signed known Trinity stack, which
                            host builds bundle, and in light-specs/ the light specs truapi-host ships for
                            its built-ins; scripts/update-stacks.sh writes them from the crate's list
@@ -1064,7 +1065,7 @@ Prerequisites:
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
 (device, APK, product, room, message, username, URL, report path).
 
-The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
+The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md). On iOS the same workflow then drives the app's own screens with the Maestro flows in [e2e/native-ui/README.md](e2e/native-ui/README.md).
 
 ## Regenerate the TypeScript client
 

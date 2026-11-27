@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +72,7 @@ data class DockletSlot(
     val highlight: DockletSlotHighlight,
     val badgeCount: Int,
     val warning: Boolean,
+    val testTag: String? = null,
     val onClick: () -> Unit,
 )
 
@@ -202,6 +204,7 @@ private fun SlotItem(span: DockletSpan, slot: DockletSlot, iconShift: Dp, onClic
             .width(span.width)
             .fillMaxHeight()
             .semantics { contentDescription = slot.contentDescription }
+            .then(slot.testTag?.let { Modifier.testTag(it) } ?: Modifier)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,

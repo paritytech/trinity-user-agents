@@ -1,0 +1,14 @@
+# One step back: the system back on Android, the navigation bar's back button on iOS.
+appId: ${APP_ID}
+---
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: BackButton
