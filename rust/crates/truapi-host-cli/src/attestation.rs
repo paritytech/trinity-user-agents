@@ -419,12 +419,54 @@ struct UsernameSearchPage {
 	next_cursor: Option<String>,
 }
 
+/// One row of the identity backend's username search: a username, the account it
+/// was requested for, and its registration status.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UsernameSearchItem {
+pub struct UsernameSearchItem {
 	account_id: String,
 	username: String,
 	status: String,
+}
+
+/// Most rows a search listing prints before asking for a narrower prefix.
+const SEARCH_DISPLAY_LIMIT: usize = 50;
+
+/// Lists every username the identity backend holds that starts with `prefix`.
+///
+/// The search route is public, so no identity signs in. Rows of every status are
+/// returned, in the backend's order. Request and decoding failures return errors.
+pub async fn search_usernames(network: &Stack, prefix: &str) -> Result<Vec<UsernameSearchItem>> {
+	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	search_backend_prefix(&client, network, None, prefix.to_string()).await
+}
+
+/// Renders search rows as aligned `username  status  account` lines, at most
+/// [`SEARCH_DISPLAY_LIMIT`] of them.
+pub fn format_username_matches(prefix: &str, matches: &[UsernameSearchItem]) -> String {
+	if matches.is_empty() {
+		return format!("No username starts with {prefix:?}.");
+	}
+	let shown = &matches[..matches.len().min(SEARCH_DISPLAY_LIMIT)];
+	let usernames: Vec<String> =
+		shown.iter().map(|row| normalize_searched_username(&row.username)).collect();
+	let username_width = usernames.iter().map(String::len).max().unwrap_or_default();
+	let status_width = shown.iter().map(|row| row.status.len()).max().unwrap_or_default();
+	let mut lines: Vec<String> = usernames
+		.iter()
+		.zip(shown)
+		.map(|(username, row)| {
+			format!(
+				"{username:<username_width$}  {:<status_width$}  {}",
+				row.status, row.account_id
+			)
+		})
+		.collect();
+	let hidden = matches.len() - shown.len();
+	if hidden > 0 {
+		lines.push(format!("… and {hidden} more; narrow the prefix"));
+	}
+	lines.join("\n")
 }
 
 /// Reverse-resolve an assigned username from the identity backend.
@@ -442,20 +484,22 @@ pub async fn lookup_backend_username(
 	const SEARCH_CONCURRENCY: usize = 4;
 
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-	let matches = stream::iter(b'a'..=b'z')
+	let pages = stream::iter(b'a'..=b'z')
 		.map(|initial| {
 			search_backend_prefix(
 				&client,
 				network,
-				auth_entropy,
-				candidate_account_id,
-				char::from(initial),
+				Some(auth_entropy),
+				char::from(initial).to_string(),
 			)
 		})
 		.buffer_unordered(SEARCH_CONCURRENCY)
 		.try_collect::<Vec<_>>()
 		.await?;
-	let matches = matches.into_iter().flatten().collect::<BTreeSet<_>>();
+	let matches = pages
+		.into_iter()
+		.flat_map(|rows| matching_assigned_usernames(rows, candidate_account_id))
+		.collect::<BTreeSet<_>>();
 
 	match matches.len() {
 		0 => Ok(None),
@@ -472,29 +516,31 @@ pub async fn lookup_backend_username(
 async fn search_backend_prefix(
 	client: &reqwest::Client,
 	network: &Stack,
-	auth_entropy: &RootEntropy,
-	candidate_account_id: &str,
-	initial: char,
-) -> Result<Vec<String>> {
+	auth_entropy: Option<&RootEntropy>,
+	prefix: String,
+) -> Result<Vec<UsernameSearchItem>> {
 	const PAGE_LIMIT: &str = "1000";
 
 	let backend_base = network.identity_backend();
 	let url = format!("{backend_base}/usernames/search");
-	let prefix = initial.to_string();
 	let mut cursor = None;
 	let mut seen_cursors = BTreeSet::new();
-	let mut matches = Vec::new();
+	let mut rows = Vec::new();
 	loop {
 		let mut query = vec![("prefix", prefix.as_str()), ("limit", PAGE_LIMIT)];
 		if let Some(cursor) = cursor.as_deref() {
 			query.push(("cursor", cursor));
 		}
-		let response =
-			send_with_backend_auth(client, backend_base, auth_entropy, network.tld(), |token| {
-				client.get(&url).bearer_auth(token).query(&query)
-			})
-			.await
-			.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
+		let response = match auth_entropy {
+			Some(entropy) => {
+				send_with_backend_auth(client, backend_base, entropy, network.tld(), |token| {
+					client.get(&url).bearer_auth(token).query(&query)
+				})
+				.await
+			},
+			None => client.get(&url).query(&query).send().await.map_err(anyhow::Error::from),
+		}
+		.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
 		let status = response.status();
 		let text = response.text().await.unwrap_or_default();
 		if !status.is_success() {
@@ -502,7 +548,7 @@ async fn search_backend_prefix(
 		}
 		let page: UsernameSearchPage = serde_json::from_str(&text)
 			.with_context(|| format!("decode identity backend username search response: {text}"))?;
-		matches.extend(matching_assigned_usernames(page.usernames, candidate_account_id));
+		rows.extend(page.usernames);
 
 		let Some(next) = page.next_cursor else {
 			break;
@@ -512,7 +558,7 @@ async fn search_backend_prefix(
 		}
 		cursor = Some(next);
 	}
-	Ok(matches)
+	Ok(rows)
 }
 
 fn matching_assigned_usernames(

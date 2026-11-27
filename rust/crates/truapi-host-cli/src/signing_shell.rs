@@ -184,6 +184,8 @@ pub enum ShellCommand {
 	Product(ProductCommand),
 	/// Read a public profile or publish the active identity's avatar.
 	Profile(ProfileCommand),
+	/// List the usernames the identity backend holds under a prefix.
+	Search(String),
 	/// Inspect, list, or switch the active persistent session.
 	Session(SessionCommand),
 	/// Renew tracked statement-store allowances for the current period.
@@ -240,6 +242,10 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 				_ => return Err("usage: /profile [<username> | upload <image>]".into()),
 			};
 			Ok(ShellCommand::Profile(command))
+		},
+		"/search" => match argument.split_whitespace().collect::<Vec<_>>().as_slice() {
+			[prefix] => Ok(ShellCommand::Search(prefix.to_string())),
+			_ => Err("usage: /search <username prefix>".into()),
 		},
 		"/pair" => {
 			if argument.is_empty() {
@@ -414,6 +420,7 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
 	("/session", "show, switch, or clear sessions"),
 	("/renew", "renew statement-store allowances now"),
 	("/profile", "read a public profile or upload your avatar"),
+	("/search", "list usernames starting with a prefix"),
 	("/help", "show commands and keyboard shortcuts"),
 	("/clear", "clear the visible transcript"),
 	("/copy", "copy the transcript to the clipboard"),
@@ -906,6 +913,7 @@ pub const HELP_TEXT: &str = "\
 /profile                show the active identity's public ProfileRecord
 /profile <username>     show a username's public ProfileRecord
 /profile upload <image> upload an image and publish it as your avatar
+/search <prefix>        list usernames starting with a prefix, with status and account
 /session                show the current session and path
 /session <name>         restore or provision a session; retry unfinished setup
 /session --mnemonic \"<phrase>\" import an existing signer as its username session
