@@ -4,25 +4,42 @@ import PolkadotUI
 
 extension ChatViewModelFactory {
     func makeInputConfiguration(
-        for metadata: ChatMetadata,
+        for metadata: MessageListMetadata,
         actions: ChatViewModelActions
     ) -> (any ChatInputViewConfigurationProtocol)? {
         switch metadata.peerMetadata.input {
         case let .inputField(inputFieldMetadata):
-            makeTextInputConfiguration(inputFieldMetadata)
+            clearRoomFooterCard(of: metadata.chatMetadata.chatId)
+            return makeTextInputConfiguration(inputFieldMetadata)
         case .incomingRequest:
-            makeIncomingRequestInputConfiguration(for: metadata.peerMetadata, actions: actions)
+            return makeIncomingRequestInputConfiguration(for: metadata.peerMetadata, actions: actions)
         case .outgoingRequest:
-            makeOutgoingPendingRequestInputConfiguration(for: metadata)
+            return makeOutgoingPendingRequestInputConfiguration(for: metadata.chatMetadata, actions: actions)
+        case .cancelledRequest:
+            return ChatRequestCancelledBannerView.ViewModel(username: metadata.peerName)
         case .blockedUser:
-            makeBlockedUserInputConfiguration(for: metadata.peerMetadata, actions: actions)
+            return makeBlockedUserInputConfiguration(for: metadata.peerMetadata, actions: actions)
+        case let .productCard(messageType, payload):
+            guard case let .chatExtension(_, roomId?) = metadata.chatMetadata.chatId else { return nil }
+            return productMessageDecoder?
+                .makeRoomFooterCard(roomId: roomId, messageType: messageType, payload: payload)
         case .empty:
-            nil
+            clearRoomFooterCard(of: metadata.chatMetadata.chatId)
+            return nil
         }
     }
 }
 
 private extension ChatViewModelFactory {
+    var productMessageDecoder: ProductMessageDecoder? {
+        customDecodersById[MessageDecoderIdentifier.product.rawValue] as? ProductMessageDecoder
+    }
+
+    func clearRoomFooterCard(of chatId: Chat.Id) {
+        guard case let .chatExtension(_, roomId?) = chatId else { return }
+        productMessageDecoder?.clearRoomFooterCard(roomId: roomId)
+    }
+
     func makeTextInputConfiguration(
         _ inputFieldMetadata: Chat.PeerMetadataInput.InputField
     ) -> any ChatInputViewConfigurationProtocol {
@@ -54,12 +71,14 @@ private extension ChatViewModelFactory {
     }
 
     func makeOutgoingPendingRequestInputConfiguration(
-        for metadata: ChatMetadata
+        for metadata: ChatMetadata,
+        actions: ChatViewModelActions
     ) -> any ChatInputViewConfigurationProtocol {
         switch metadata.state {
         case .created:
             ChatRequestedBannerView.ViewModel(
-                username: metadata.peerMetadata.name
+                username: metadata.peerMetadata.name,
+                onCancel: actions.cancelChatRequest
             )
         case .pending:
             ChatRequestInProgressBannerView.ViewModel(

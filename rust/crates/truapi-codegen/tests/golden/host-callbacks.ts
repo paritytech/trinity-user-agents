@@ -9,8 +9,8 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
-  ChainIdentifier,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -31,11 +31,11 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomRegistrationStatus,
   FundingFrameOutcome,
   FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -61,7 +61,7 @@ import type {
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
-  HostWorkerBeginOperationResponse,
+  PocketCardSide,
   Result,
 } from "@parity/truapi";
 
@@ -250,7 +250,18 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -323,24 +334,23 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
+ * What the host did with a request to cover or uncover the expanded card.
  */
-export type ExecutableKind = "App" | "Widget" | "Worker";
-
-/**
- * What the host did with a request to show or hide the expanded card face.
- */
-export type ExpandedCardFaceOutcome =
+export type ExpandedCardCoverOutcome =
   | "Applied"
   | "NotPresented"
   | "UserMoving"
   | "Unsupported";
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export type ExpandedCardTurnOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported"
+  | "NoBack";
 
 /**
  * The chains a host builds as V5 general transactions. A chain not listed is
@@ -352,6 +362,23 @@ export interface ExtensionVersionMap {
    */
   chains: Array<ChainExtensionVersion>;
 }
+
+/**
+ * Why an amount cannot go ahead.
+ */
+export type FundingAmountIssue =
+  /**
+   * A withdrawal of more than the user can spend.
+   */
+  | { tag: "NotEnoughBalance"; value?: undefined }
+  /**
+   * Below the smallest amount any provider takes.
+   */
+  | { tag: "BelowMinimum"; value: { min: bigint } }
+  /**
+   * Above the largest amount any provider takes.
+   */
+  | { tag: "AboveMaximum"; value: { max: bigint } };
 
 /**
  * How the user left the funding overlay.
@@ -384,9 +411,8 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. Ids only grow, and a list can reach the host before the call that
-   * returns its id does, so a host shows a list only when its id is at
-   * least the latest it has seen, and drops the rest.
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
    */
   requestId: bigint;
 
@@ -407,6 +433,31 @@ export interface FundingQuoteList {
    * row keeps its answer until the provider answers again.
    */
   refreshAtMs: bigint;
+
+  /**
+   * The amount the list prices, in balance units, which `issue` is
+   * about.
+   */
+  amount: bigint;
+
+  /**
+   * Once every provider answered and none quoted, the reason they all
+   * gave. ``undefined`` while any is pending or quoted, or when they gave
+   * different reasons.
+   */
+  refusal?: FundingQuoteUnavailable;
+
+  /**
+   * Once every provider answered and none quoted, what their refusals
+   * say about the amount: the lowest minimum any showed, otherwise the
+   * highest maximum.
+   */
+  issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
 }
 
 /**
@@ -456,49 +507,19 @@ export type FundingQuoteUnavailable =
   | { tag: "Timeout"; value?: undefined };
 
 /**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export interface HostChainEntry {
-  /**
-   * Protocol role this entry answers for.
-   */
-  identifier: ChainIdentifier;
-
-  /**
-   * Genesis hash identifying the chain in all chain-scoped calls.
-   */
-  genesisHash: Bytes32;
-}
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export interface HostChainSet {
-  /**
-   * Ecosystem the host is configured for, e.g. "polkadot", "paseo".
-   */
-  network: string;
-
-  /**
-   * Chains this host serves, keyed by protocol role.
-   */
-  chains: Array<HostChainEntry>;
-}
-
-/**
  * Contact handles the core needs turned back into accounts, and the key they
  * were minted under.
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export interface HostContactLookup {
   /**
-   * The key every handle here was minted under. Per session, and never
-   * given to a product.
+   * The key every handle here was minted under. Per session and product,
+   * and never given to a product.
    */
   handleKey: Bytes32;
 
@@ -545,6 +566,21 @@ export type HostContactPick =
    * This host resolves contacts but cannot present a picker. The core
    * answers the product `Unsupported`, so it can tell "try again later"
    * apart from "this host will never pick".
+   */
+  | { tag: "Unsupported"; value?: undefined };
+
+/**
+ * The usernames a host lists for the game product.
+ */
+export type HostContactUsernames =
+  /**
+   * The dotNS usernames of the unblocked contacts the picker would offer,
+   * in host order, each the bare label with no top-level domain.
+   */
+  | { tag: "Listed"; value: { usernames: Array<string> } }
+  /**
+   * This host resolves contacts but does not list their usernames. The core
+   * answers the product `Unsupported`.
    */
   | { tag: "Unsupported"; value?: undefined };
 
@@ -774,14 +810,15 @@ export interface SessionUiInfo {
   /**
    * X25519 public key of the wallet device that answered pairing. Hosts
    * running their own encrypted device-sync channel key it against this.
+   * ``undefined`` on a signing host, which has no paired wallet device.
    */
-  deviceEncPublicKey?: Bytes32;
+  peerDeviceEncPublicKey?: Bytes32;
 
   /**
    * Statement-store account id the paired wallet signs every session-channel
    * statement with. Whether it is scoped to the wallet device or to the
    * wallet identity is the wallet's choice, so hosts must not treat it as a
-   * device discriminator; use `Self::device_enc_public_key` for that.
+   * device discriminator; use `Self::peer_device_enc_public_key` for that.
    */
   peerStatementAccountId?: Bytes32;
 
@@ -792,6 +829,16 @@ export interface SessionUiInfo {
    * login. Secret at `CoreAdmin::get_device_statement_key`.
    */
   deviceStatementAccountId?: Bytes32;
+
+  /**
+   * X25519 public key of this device, which the user's other devices and
+   * contacts encrypt to. A signing host's is its install-wide key; a pairing
+   * host's is the key it advertised next to
+   * `Self::device_statement_account_id`, which the wallet registered and
+   * announces, rotated per login. Secret at
+   * `CoreAdmin::get_device_encryption_key`.
+   */
+  deviceEncPublicKey?: Bytes32;
 
   /**
    * Short username from the dotNS identity record on Asset Hub.
@@ -1095,6 +1142,14 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
       FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
     }),
 );
 
@@ -1160,24 +1215,20 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
+ * What the host did with a request to cover or uncover the expanded card.
  */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
-);
+export const ExpandedCardCoverOutcome: S.Codec<ExpandedCardCoverOutcome> =
+  S.lazy(
+    (): S.Codec<ExpandedCardCoverOutcome> =>
+      S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+  );
 
 /**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to turn the expanded card.
  */
-export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
-  (): S.Codec<ExpandedCardFaceOutcome> =>
-    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+export const ExpandedCardTurnOutcome: S.Codec<ExpandedCardTurnOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardTurnOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported", "NoBack"),
 );
 
 /**
@@ -1189,6 +1240,18 @@ export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
     S.Struct({
       chains: S.Vector(ChainExtensionVersion),
     }) as S.Codec<ExtensionVersionMap>,
+);
+
+/**
+ * Why an amount cannot go ahead.
+ */
+export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
+  (): S.Codec<FundingAmountIssue> =>
+    S.TaggedUnion({
+      NotEnoughBalance: S._void,
+      BelowMinimum: S.Struct({ min: S.u128 }) as S.Codec<{ min: bigint }>,
+      AboveMaximum: S.Struct({ max: S.u128 }) as S.Codec<{ max: bigint }>,
+    }),
 );
 
 /**
@@ -1220,6 +1283,10 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       rows: S.Vector(FundingQuoteRow),
       best: S.Option(ProductId),
       refreshAtMs: S.u64,
+      amount: S.u128,
+      refusal: S.Option(FundingQuoteUnavailable),
+      issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
     }) as S.Codec<FundingQuoteList>,
 );
 
@@ -1264,36 +1331,14 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
 );
 
 /**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export const HostChainEntry: S.Codec<HostChainEntry> = S.lazy(
-  (): S.Codec<HostChainEntry> =>
-    S.Struct({
-      identifier: ChainIdentifier,
-      genesisHash: Bytes32,
-    }) as S.Codec<HostChainEntry>,
-);
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
-  (): S.Codec<HostChainSet> =>
-    S.Struct({
-      network: S.str,
-      chains: S.Vector(HostChainEntry),
-    }) as S.Codec<HostChainSet>,
-);
-
-/**
  * Contact handles the core needs turned back into accounts, and the key they
  * were minted under.
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export const HostContactLookup: S.Codec<HostContactLookup> = S.lazy(
   (): S.Codec<HostContactLookup> =>
@@ -1324,6 +1369,19 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
       Picked: S.Struct({ account: Bytes32 }) as S.Codec<{ account: Bytes32 }>,
       Dismissed: S._void,
       NoContacts: S._void,
+      Unsupported: S._void,
+    }),
+);
+
+/**
+ * The usernames a host lists for the game product.
+ */
+export const HostContactUsernames: S.Codec<HostContactUsernames> = S.lazy(
+  (): S.Codec<HostContactUsernames> =>
+    S.TaggedUnion({
+      Listed: S.Struct({ usernames: S.Vector(S.str) }) as S.Codec<{
+        usernames: Array<string>;
+      }>,
       Unsupported: S._void,
     }),
 );
@@ -1490,9 +1548,10 @@ export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
       publicKey: Bytes32,
       identityAccountId: S.Option(Bytes32),
       chatPublicKey: S.Option(Bytes32),
-      deviceEncPublicKey: S.Option(Bytes32),
+      peerDeviceEncPublicKey: S.Option(Bytes32),
       peerStatementAccountId: S.Option(Bytes32),
       deviceStatementAccountId: S.Option(Bytes32),
+      deviceEncPublicKey: S.Option(Bytes32),
       liteUsername: S.Option(S.str),
       fullUsername: S.Option(S.str),
     }) as S.Codec<SessionUiInfo>,
@@ -1698,12 +1757,17 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. `room_id` is the id
+   * that the core derived from the product and `request.room_id_source`, or,
+   * for a product built against the earlier client, the id that the product
+   * gave. The host stores the room under this id, and every later call names
+   * the room with it.
    */
   createChatRoom(
     product: ProductContext,
+    roomId: string,
     request: HostChatCreateRoomRequest,
-  ): Promise<HostChatCreateRoomResponse>;
+  ): Promise<ChatRoomRegistrationStatus>;
 
   /**
    * Register or resolve a product-scoped native chat bot. Host-owned in the
@@ -1749,9 +1813,11 @@ export interface ChatPlatform {
  * Optional, and listed on `OptionalPlatform` as `ChatPlatform` is.
  *
  * The host owns the UI and the list. It draws the names, so nothing it renders
- * reaches the product, and the list never crosses to the core either: the core
- * asks only about the handles a transaction names. A host omits contacts the
- * user has blocked, from the picker and from lookups alike.
+ * reaches the product, and the accounts on the list never cross to the core:
+ * the core asks only about the handles a transaction names. Usernames cross
+ * only through `Self::contact_usernames`, for the game product. A
+ * host omits contacts the user has blocked, from the picker, from lookups and
+ * from usernames alike.
  */
 export interface ContactsPlatform {
   /**
@@ -1786,6 +1852,19 @@ export interface ContactsPlatform {
    * `HostContactPick::NoContacts` instead of drawing an empty overlay.
    */
   pickContact?(product: ProductContext): Promise<HostContactPick>;
+
+  /**
+   * List the dotNS usernames of the unblocked contacts the picker would
+   * offer.
+   *
+   * The core calls this only for the game product, so a host does not
+   * check `product` itself: it says who is asking and is not a filter.
+   * Answer from the contacts the host already holds, without a prompt.
+   * Defaults to `HostContactUsernames::Unsupported`, so a host that lists
+   * nothing gives its products a truthful answer. A JS host passes it with
+   * the other two contacts callbacks, or the whole group counts as absent.
+   */
+  contactUsernames?(product: ProductContext): Promise<HostContactUsernames>;
 }
 
 /**
@@ -1864,13 +1943,20 @@ export interface CoreAdmin {
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
 
   /**
-   * Read this device's X25519 encryption secret, for hosts that run device
-   * sync against the peer's `SessionUiInfo::device_enc_public_key`.
+   * Read this device's X25519 encryption secret, for hosts that encrypt
+   * their own chat and device-sync traffic.
    *
-   * Generated and persisted on first read, so the returned key is stable for
-   * the install and matches the public key peers were told to address.
+   * The key behind `SessionUiInfo::device_enc_public_key`: decrypting with
+   * anything else misses what contacts send. The account holder decides
+   * which key that is. A signing host serves its install-wide key,
+   * generated and persisted on first read. A pairing host serves the key
+   * the wallet registered for it at pairing, ``undefined`` before pairing and
+   * rotated per login like `Self::get_device_statement_key`.
+   *
+   * Deliberately not on `SessionUiInfo`, for the reason given on
+   * `Self::get_session_chat_identity_key`.
    */
-  getDeviceEncryptionKey(): Promise<Bytes32>;
+  getDeviceEncryptionKey(): Promise<Bytes32 | undefined>;
 
   /**
    * Read `product_id`'s hard-subtree public key, so a host can name the
@@ -1930,7 +2016,7 @@ export interface CoreStorage {
 }
 
 /**
- * Host control of the card face drawn above an opened card's Widget.
+ * Host control of the card face drawn under an opened card's Widget.
  *
  * Carried per connection on `ConnectionAdapters`, because the host owns one
  * drawer per product execution. A connection without one tells products
@@ -1938,9 +2024,14 @@ export interface CoreStorage {
  */
 export interface ExpandedCardHost {
   /**
-   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   * Cover (`true`) or uncover (`false`) the card under the calling Widget.
    */
-  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+  setExpandedCardCovered(covered: boolean): Promise<ExpandedCardCoverOutcome>;
+
+  /**
+   * Turn the card above the calling Widget so `side` is up.
+   */
+  turnExpandedCard(side: PocketCardSide): Promise<ExpandedCardTurnOutcome>;
 }
 
 /**
@@ -1966,12 +2057,6 @@ export interface Features {
   featureSupported(
     request: HostFeatureSupportedRequest,
   ): Promise<HostFeatureSupportedResponse>;
-
-  /**
-   * Enumerate the chains this host serves (RFC 0026). The core resolves
-   * `get_chain_info` requests against the returned set.
-   */
-  supportedChains(): Promise<HostChainSet>;
 }
 
 /**
@@ -1982,7 +2067,9 @@ export interface Features {
 export interface FundingPlatform {
   /**
    * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
+   * host itself when `product` is ``undefined``. A cancel while the overlay is up
+   * drops this call, and the host takes the overlay down when it is
+   * dropped.
    */
   presentFunding(
     product: ProductContext | undefined,
@@ -1990,10 +2077,22 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
+   * `provider` asked to show a screen for session `intent`. The core
+   * holds it until the host calls `open_provider_frame(intent)`, which
+   * the host does at once while the user looks at the session, or once
+   * the user taps a notice that the provider wants to show something.
+   * A worker never puts a screen in front of the user on its own.
+   */
+  providerFrameRequested(provider: ProductContext, intent: string): void;
+
+  /**
    * Show `target` for `provider`'s session `intent` in a frame the host
-   * owns, and answer once it closes. A page is an https URL the core has
-   * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL.
+   * owns, and answer once it closes. Called only once the host opened the
+   * request `Self::provider_frame_requested` announced. A page is an
+   * https URL the core has checked: the host shows its origin, and closes
+   * the frame with `Returned` when the page reaches its return URL. The
+   * core closes the frame itself, through `Self::close_provider_frame`,
+   * once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,
@@ -2008,12 +2107,6 @@ export interface FundingPlatform {
    * open for it.
    */
   closeProviderFrame(provider: ProductContext, intent: string): void;
-
-  /**
-   * Whether `provider` ships an App, so an App route of its can be shown.
-   * A provider without one shows only external pages.
-   */
-  providerHasApp?(provider: ProductContext): Promise<boolean>;
 
   /**
    * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
@@ -2036,9 +2129,12 @@ export interface FundingPlatform {
   /**
    * Observe the quote list the host requested, for the provider list:
    * again whenever a provider answers, and each time the core asks every
-   * provider again.
+   * provider again. ``undefined`` once a selection on another route withdrew it.
    */
-  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
+  fundingQuotesChanged?(
+    intent: string,
+    quotes: FundingQuoteList | undefined,
+  ): void;
 }
 
 /**
@@ -2274,34 +2370,6 @@ export interface PreimageHost {
 }
 
 /**
- * Host store for a product's pending operations, which the host uses to keep
- * the product's worker runtime alive. Reached only through the `Worker`
- * protocol trait, so non-worker products never call these.
- */
-export interface ProductOperations {
-  /**
-   * Record a pending operation. `label` is a host log and UI hint, empty
-   * when the product gave none.
-   *
-   * The returned id must be unique among this product's open operations.
-   * The core keys the worker reference an operation holds by that id, so an
-   * id already open for the product records nothing the second time, and
-   * ending it once drops the demand both were holding. Ids may repeat
-   * across products, and may be reused once an operation has ended.
-   */
-  beginOperation(
-    product: ProductContext,
-    label: string,
-  ): Promise<HostWorkerBeginOperationResponse>;
-
-  /**
-   * Remove a pending operation. Idempotent: an unknown or already-ended id
-   * returns `Ok`, so a retry after an ambiguous failure is safe.
-   */
-  endOperation(product: ProductContext, id: number): Promise<void>;
-}
-
-/**
  * Product-scoped key-value storage.
  *
  * The core namespaces product keys before calling this trait, and the key
@@ -2335,6 +2403,18 @@ export interface ProductStorage {
    * Clear a value at a key.
    */
   clear(key: string): Promise<void>;
+
+  /**
+   * Remove every value `product_id` owns. Idempotent.
+   *
+   * The core calls this when it clears the product's state. A host that
+   * keeps one shared store removes every key starting with
+   * `ProductStorageKey::owner_prefix`; a host that separates storage by
+   * product drops that product's store. Values another product wrote stay.
+   * Every subscription to a removed key then sees it empty, as after
+   * `Self::clear`.
+   */
+  clearProduct(productId: ProductId): Promise<void>;
 
   /**
    * Emit `key`'s current value, then each later change from any of the
@@ -2457,7 +2537,6 @@ export interface HostCallbacks {
   theme: ThemeHost;
   locale: LocaleHost;
   preimage: PreimageHost;
-  productOperations: ProductOperations;
   chat?: ChatPlatform;
   contacts?: ContactsPlatform;
   game?: GamePlatform;
@@ -2480,7 +2559,6 @@ export interface RequiredHostCallbacks {
   theme: Required<ThemeHost>;
   locale: Required<LocaleHost>;
   preimage: Required<PreimageHost>;
-  productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
   contacts?: Required<ContactsPlatform>;
   game?: Required<GamePlatform>;

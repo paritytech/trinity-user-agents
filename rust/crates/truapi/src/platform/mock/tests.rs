@@ -140,6 +140,7 @@ fn navigation_records_and_can_error() {
 fn notifications_record_order_with_unique_ids() {
 	let p = MockPlatform::new();
 	let make = |text: &str| latest::HostPushNotificationRequest {
+		title: None,
 		text: text.to_string(),
 		deeplink: None,
 		scheduled_at: None,
@@ -161,6 +162,7 @@ fn notification_error_injected() {
 		..Default::default()
 	});
 	let request = latest::HostPushNotificationRequest {
+		title: None,
 		text: "x".into(),
 		deeplink: None,
 		scheduled_at: None,
@@ -214,33 +216,6 @@ fn a_storage_subscription_hears_nothing_from_another_key() {
 }
 
 #[test]
-fn an_operation_is_open_until_its_own_product_ends_it() {
-	let p = MockPlatform::new();
-	let mine = mock_product();
-	let theirs = ProductContext::new(ProductId::for_test("other.dot"));
-
-	let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
-	assert_eq!(
-		p.open_operations(),
-		vec![OpenOperation {
-			product_id: crate::platform::ProductId::for_test("mock.dot"),
-			id,
-			label: "sync".to_string(),
-		}]
-	);
-
-	// Ending is per product: another product holding the same id must not
-	// drop this one's demand.
-	block_on(p.end_operation(&theirs, id)).expect("a foreign end is Ok");
-	assert_eq!(p.open_operations().len(), 1);
-
-	block_on(p.end_operation(&mine, id)).expect("end succeeds");
-	assert!(p.open_operations().is_empty());
-	// Idempotent by contract.
-	block_on(p.end_operation(&mine, id)).expect("a repeat end is Ok");
-}
-
-#[test]
 fn storage_error_injected() {
 	let p = MockPlatform::with_config(MockConfig {
 		faults: MockFaults { storage_error: Some("disk".into()), ..Default::default() },
@@ -291,20 +266,21 @@ fn feature_supported_reflects_config() {
 }
 
 #[test]
-fn feature_supported_reports_unserved_chains_only_when_asked() {
+fn feature_supported_reports_unserved_chains_unless_told_otherwise() {
 	let supported = |p: &MockPlatform, genesis_hash: Vec<u8>| {
 		block_on(p.feature_supported(latest::HostFeatureSupportedRequest::Chain { genesis_hash }))
 			.unwrap()
 			.supported
 	};
 	let unserved = vec![0xab; 32];
-	// The default keeps answering every chain as supported.
-	assert!(supported(&MockPlatform::new(), unserved.clone()));
-	let strict =
-		MockPlatform::with_config(MockConfig { only_served_chains: true, ..Default::default() });
-	let served = strict.config.supported_chains.chains[0].genesis_hash.to_vec();
+	// The default answers from the served chains, as a real host does.
+	let strict = MockPlatform::new();
+	let served = strict.config.served_chains[0].to_vec();
 	assert!(supported(&strict, served));
-	assert!(!supported(&strict, unserved));
+	assert!(!supported(&strict, unserved.clone()));
+	let open =
+		MockPlatform::with_config(MockConfig { only_served_chains: false, ..Default::default() });
+	assert!(supported(&open, unserved));
 }
 
 #[test]
@@ -620,14 +596,15 @@ fn mock_product() -> ProductContext {
 fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
 	block_on(p.create_chat_room(
 		&mock_product(),
+		room_id.to_string(),
 		latest::HostChatCreateRoomRequest {
-			room_id: room_id.to_string(),
+			room_id_source: room_id.to_string(),
 			name: format!("{room_id} room"),
 			icon: "https://example.invalid/i.png".to_string(),
+			config: Default::default(),
 		},
 	))
 	.expect("room registration succeeds")
-	.status
 }
 
 fn post_text(
@@ -692,10 +669,12 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 
 	let room = block_on(p.create_chat_room(
 		&product,
+		"lobby".to_string(),
 		latest::HostChatCreateRoomRequest {
-			room_id: "lobby".to_string(),
+			room_id_source: "lobby".to_string(),
 			name: "lobby room".to_string(),
 			icon: "https://example.invalid/i.png".to_string(),
+			config: Default::default(),
 		},
 	))
 	.expect_err("room creation carries the injected reason");
@@ -910,47 +889,30 @@ fn injected_permission_and_feature_faults_surface_as_errors() {
 		))
 		.is_err()
 	);
-	assert!(block_on(p.supported_chains()).is_err());
 	// A failed prompt is not a recorded decision.
 	assert!(p.permission_log().is_empty());
 }
 
 #[test]
-fn declared_supported_chains_are_what_the_mock_reports() {
-	// The default set is spelled out rather than compared against
-	// `mock_genesis::chain_set()`, because the TypeScript mock declares
-	// these same three and a suite written against either has to be
-	// answered the same way.
-	let p = MockPlatform::new();
-	let default_set = block_on(p.supported_chains()).expect("default set");
-	assert_eq!(default_set.network, "mock");
+fn the_mock_stack_names_the_chains_the_mock_serves() {
+	// Spelled out rather than compared against `mock_genesis`, because the
+	// TypeScript mock declares these same three and a suite written against
+	// either has to be answered the same way.
+	let stack = mock_genesis::stack();
 	assert_eq!(
-		default_set
-			.chains
-			.iter()
-			.map(|entry| (entry.identifier, entry.genesis_hash))
-			.collect::<Vec<_>>(),
-		vec![
-			(latest::ChainIdentifier::People, [0x11; 32]),
-			(latest::ChainIdentifier::Bulletin, [0x22; 32]),
-			(latest::ChainIdentifier::AssetHub, [0x33; 32]),
-		]
+		(stack.network(), stack.tld(), stack.chains().clone()),
+		(
+			"mock",
+			"paseo",
+			crate::platform::StackChains {
+				relay: None,
+				asset_hub: [0x33; 32],
+				people: [0x11; 32],
+				bulletin: [0x22; 32],
+			}
+		)
 	);
-
-	let p = MockPlatform::with_config(MockConfig {
-		supported_chains: crate::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![crate::platform::HostChainEntry {
-				identifier: latest::ChainIdentifier::AssetHub,
-				genesis_hash: [0xaa; 32],
-			}],
-		},
-		..MockConfig::default()
-	});
-	let set = block_on(p.supported_chains()).expect("declared set");
-	assert_eq!(set.network, "paseo");
-	assert_eq!(set.chains.len(), 1);
-	assert_eq!(set.chains[0].genesis_hash, [0xaa; 32]);
+	assert_eq!(MockConfig::default().served_chains, vec![[0x11; 32], [0x22; 32], [0x33; 32]]);
 }
 
 #[test]

@@ -4,7 +4,6 @@ plugins {
     id("polkadotapp.android.application")
     id("polkadotapp.android.compose")
     id("polkadotapp.android.hilt")
-    alias(libs.plugins.firebase.crashlytics)
     alias(libs.plugins.google.services)
     alias(libs.plugins.sentry.android.gradle)
 }
@@ -124,6 +123,7 @@ dependencies {
 
     implementation(project(":common"))
     implementation(libs.sentry)
+    implementation(libs.sentry.android)
     implementation(project(":design"))
     implementation(project(":chains"))
     implementation(project(":database"))
@@ -182,10 +182,6 @@ dependencies {
     implementation(project(":tools:media-connection:api"))
     // Endregion tools
 
-    "gpImplementation"(platform(libs.firebase.bom))
-    "gpImplementation"(libs.firebase.crashlytics)
-    "gpImplementation"(libs.firebase.analytics)
-
     "gpImplementation"(libs.google.play.services.mlkit)
     "vanillaImplementation"(libs.google.mlkit.barcode.scanning)
 
@@ -230,9 +226,17 @@ sentry {
     }
 }
 
-// The iOS host turns no log line into a Sentry event, and SentryLogTree covers the truapi lines.
+// The iOS host turns no log line into a Sentry event, and HostLogSinkTree already matches the truapi lines.
 configurations.configureEach {
     exclude(group = "io.sentry", module = "sentry-android-timber")
 }
 
 apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))
+
+// The SDK bundle :bindings:truapi-host builds for instrumentation test pages.
+android.sourceSets.getByName("androidTest").assets.srcDir(
+    project(":bindings:truapi-host").layout.buildDirectory.dir("generated/truapi-test-assets"),
+)
+tasks.matching { it.name.endsWith("AndroidTestAssets") }.configureEach {
+    dependsOn(":bindings:truapi-host:copyTrUAPITestSdk")
+}

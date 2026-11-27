@@ -45,6 +45,9 @@ object DockletGeometry {
     val PillDiameter = 64.dp
     val PillProud = 10.dp
     val CutoutHalfWidth = 37.dp
+    internal val CutoutCenterY = 22.dp
+    internal val CutoutRadius = 34.dp
+    internal val CutoutOverhang = CutoutRadius - CutoutCenterY
     val SlotWidth = 80.dp
     val ItemRowPadding = 4.dp
     val ItemRowHeight = 54.dp
@@ -99,20 +102,27 @@ object DockletGeometry {
     )
 
     fun cutout(centerX: Float): DockletCutout {
+        val halfWidth = CutoutHalfWidth.value
+        val radius = CutoutRadius.value
+        val centerY = CutoutCenterY.value
+        val bottom = centerY + radius
         fun p(dx: Float, y: Float) = DockletPoint(centerX + dx, y)
 
         return DockletCutout(
-            start = p(-37f, 0f),
+            start = p(-halfWidth, 0f),
             segments = listOf(
                 CubicSegment(p(-33f, 0f), p(-31f, 5f), p(-32f, 9f)),
-                CubicSegment(p(-33f, 13f), p(-34f, 17f), p(-34f, 22f)),
-                CubicSegment(p(-34f, 41f), p(-19f, 56f), p(0f, 56f)),
-                CubicSegment(p(19f, 56f), p(34f, 41f), p(34f, 22f)),
-                CubicSegment(p(34f, 17f), p(33f, 13f), p(32f, 9f)),
-                CubicSegment(p(31f, 5f), p(33f, 0f), p(37f, 0f)),
+                CubicSegment(p(-33f, 13f), p(-radius, 17f), p(-radius, centerY)),
+                CubicSegment(p(-radius, 41f), p(-19f, bottom), p(0f, bottom)),
+                CubicSegment(p(19f, bottom), p(radius, 41f), p(radius, centerY)),
+                CubicSegment(p(radius, 17f), p(33f, 13f), p(32f, 9f)),
+                CubicSegment(p(31f, 5f), p(33f, 0f), p(halfWidth, 0f)),
             ),
         )
     }
+
+    internal fun shelfHeightPx(surfaceHeightPx: Float, density: Float): Float =
+        surfaceHeightPx - (DockHeight.value * density).roundToInt()
 
     fun slotCentres(dockWidth: Dp): List<Dp> {
         val centre = dockWidth / 2

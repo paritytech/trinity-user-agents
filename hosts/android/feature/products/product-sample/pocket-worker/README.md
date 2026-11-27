@@ -12,12 +12,12 @@ npm run build        # dist/: worker.js, widget.js, index.html, faces/
 
 The published `@parity/truapi` (0.16.0) predates the Pocket API, so `client.pocket` is undefined
 there and `npm run typecheck` fails against it. Until a release ships Pocket, build the client from
-the core checkout that `truapi_ref` pins and install it over the published one:
+the enclosing `trinity-user-agents` tree and install it over the published one:
 
 ```sh
-( cd "$TRUAPI_DIR" && ./scripts/codegen.sh )
-( cd "$TRUAPI_DIR/js/packages/truapi" && npm install && npm run build )
-npm install --no-save "$TRUAPI_DIR/js/packages/truapi"
+( cd ../../../../../.. && ./scripts/codegen.sh )
+( cd ../../../../../../js/packages/truapi && npm install && npm run build )
+npm install --no-save ../../../../../../js/packages/truapi
 ```
 
 ## Publish
@@ -45,14 +45,14 @@ and set that name's `executable` text record to `manifest/worker.json`. The root
 ## Try the expanded card
 
 `widget/index.html` is the page the host shows below the face when the card is opened. It has
-buttons that call `expandedCard.setFaceShown` (Hide face, Show face, Hide face in 2 s), a log with
+buttons that call `expandedCard.setCardCovered` (Cover card, Uncover card, Cover card in 2 s), a log with
 each call's answer (`ok`, `UserMoving`, `NotPresented`, `Unsupported`, `Denied`), the page's
 `innerHeight` (updated on resize) and a red BOTTOM EDGE bar pinned to the bottom of the page, which
-goes missing when the host sizes the page wrong. The card's `faceShown` in `manifest/worker.json`
-sets whether the face starts shown for a published card; in the debug loop the card comes from the
-product form, so its "Open with the face away" switch decides instead.
+goes missing when the host sizes the page wrong. The card's `startsCovered` in `manifest/worker.json`
+sets whether a published card opens covered by the page; in the debug loop the card comes from the
+product form, so its "Open covered by the page" switch decides instead.
 
 1. `npm run build`, then serve `dist/` on port 5173, for example `npx serve -l 5173 dist`.
 2. `adb reverse tcp:5173 tcp:5173` so the emulator reaches it.
 3. Point the debug product's App URL at `http://127.0.0.1:5173/index.html`, add the card and open it.
-   Add `?hideOnLoad` to the URL to hide the face as soon as the page loads.
+   Add `?coverOnLoad` to the URL to cover the card as soon as the page loads.

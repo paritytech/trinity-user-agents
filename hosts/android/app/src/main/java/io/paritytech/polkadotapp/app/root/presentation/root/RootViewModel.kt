@@ -5,12 +5,12 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.app.root.domain.RootInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
-import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.deeplink.flatten
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabbar.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServi
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.presentation.workerCrash.WorkerCrashNotifier
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
 import io.paritytech.polkadotapp.feature_splash_api.presentation.SplashPassedObserver
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
@@ -64,6 +65,7 @@ class RootViewModel @Inject constructor(
     private val exploreProductsService: ExploreProductsService,
     private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    private val workerCrashNotifier: WorkerCrashNotifier,
     navigationHolder: NavigationHolder,
     appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
@@ -123,6 +125,7 @@ class RootViewModel @Inject constructor(
             launch { chatBotStateController.applyDefaultBotStates() }
             launch { rootInteractor.printAccountAddresses() }
             launch { checkDevReset() }
+            launch { workerCrashNotifier.showNotices() }
         }
         watchSsoEvents(servicesScope)
     }

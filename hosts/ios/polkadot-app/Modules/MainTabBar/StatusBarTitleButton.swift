@@ -15,10 +15,28 @@ final class StatusBarTitleButton: UIButton {
         $0.textColor = .fgPrimary
     }
 
+    private let menuAnchorView: UIView = .create {
+        $0.backgroundColor = .clear
+        $0.isUserInteractionEnabled = false
+    }
+
+    private let contentStackView: UIStackView
+
+    private var backAction: (() -> Void)?
+
+    private var isMenuVisible = false {
+        didSet { updateContentAlpha() }
+    }
+
+    override var isHighlighted: Bool {
+        didSet { updateContentAlpha() }
+    }
+
     init() {
+        contentStackView = UIStackView(arrangedSubviews: [logoView, nameLabel])
         super.init(frame: .zero)
         setupLayout()
-        showsMenuAsPrimaryAction = true
+        addAction(UIAction { [weak self] _ in self?.backAction?() }, for: .touchUpInside)
     }
 
     @available(*, unavailable)
@@ -27,12 +45,49 @@ final class StatusBarTitleButton: UIButton {
     }
 
     func bind(viewModel: StatusBarTitleViewModel) {
-        nameLabel.text = viewModel.title
+        showTitle(viewModel.title)
         logoView.isHidden = !viewModel.showsLogo
         menu = viewModel.menu
-        isUserInteractionEnabled = viewModel.menu != nil
+        showsMenuAsPrimaryAction = viewModel.menu != nil
+        backAction = viewModel.backAction
+        isUserInteractionEnabled = viewModel.menu != nil || viewModel.backAction != nil
         accessibilityLabel = viewModel.title
-        accessibilityTraits = viewModel.menu == nil ? .staticText : .button
+        accessibilityHint = viewModel.backAction == nil ? nil : String(localized: .walletMainBackToPocket)
+        accessibilityTraits = isUserInteractionEnabled ? .button : .staticText
+    }
+
+    override func contextMenuInteraction(
+        _: UIContextMenuInteraction,
+        configuration _: UIContextMenuConfiguration,
+        highlightPreviewForItemWithIdentifier _: any NSCopying
+    ) -> UITargetedPreview? {
+        makeMenuAnchorPreview()
+    }
+
+    override func contextMenuInteraction(
+        _: UIContextMenuInteraction,
+        configuration _: UIContextMenuConfiguration,
+        dismissalPreviewForItemWithIdentifier _: any NSCopying
+    ) -> UITargetedPreview? {
+        makeMenuAnchorPreview()
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        willDisplayMenuFor configuration: UIContextMenuConfiguration,
+        animator: (any UIContextMenuInteractionAnimating)?
+    ) {
+        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
+        isMenuVisible = true
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        willEndFor configuration: UIContextMenuConfiguration,
+        animator: (any UIContextMenuInteractionAnimating)?
+    ) {
+        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+        isMenuVisible = false
     }
 }
 
@@ -40,6 +95,23 @@ private extension StatusBarTitleButton {
     enum Constants {
         static let logoSize: CGFloat = 16
         static let logoSpacing = DSSpacings.smallIncreased
+        static let pressedAlpha: CGFloat = 0.5
+        static let titleFadeDuration: TimeInterval = 0.25
+    }
+
+    func showTitle(_ title: String) {
+        guard let previousTitle = nameLabel.text, previousTitle != title else {
+            nameLabel.text = title
+            return
+        }
+
+        UIView.transition(
+            with: nameLabel,
+            duration: Constants.titleFadeDuration,
+            options: .transitionCrossDissolve
+        ) {
+            self.nameLabel.text = title
+        }
     }
 
     func setupLayout() {
@@ -47,15 +119,31 @@ private extension StatusBarTitleButton {
             make.size.equalTo(Constants.logoSize)
         }
 
-        let stackView = UIStackView(arrangedSubviews: [logoView, nameLabel])
-        stackView.axis = .horizontal
-        stackView.alignment = .center
-        stackView.spacing = Constants.logoSpacing
-        stackView.isUserInteractionEnabled = false
+        contentStackView.axis = .horizontal
+        contentStackView.alignment = .center
+        contentStackView.spacing = Constants.logoSpacing
+        contentStackView.isUserInteractionEnabled = false
 
-        addSubview(stackView)
-        stackView.snp.makeConstraints { make in
+        addSubview(contentStackView)
+        contentStackView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+
+        addSubview(menuAnchorView)
+        menuAnchorView.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            make.top.equalTo(snp.bottom)
+            make.height.equalTo(1)
+        }
+    }
+
+    func makeMenuAnchorPreview() -> UITargetedPreview {
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = .clear
+        return UITargetedPreview(view: menuAnchorView, parameters: parameters)
+    }
+
+    func updateContentAlpha() {
+        contentStackView.alpha = isHighlighted || isMenuVisible ? Constants.pressedAlpha : 1
     }
 }

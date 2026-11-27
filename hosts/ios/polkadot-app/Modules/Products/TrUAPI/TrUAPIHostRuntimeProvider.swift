@@ -1,3 +1,4 @@
+import AsyncExtensions
 import Foundation
 import UIKit
 import UIKitExt
@@ -9,11 +10,6 @@ import Products
 import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
-
-/// Runtime configuration error raised while assembling the shared host config.
-enum TrUAPIRuntimeConfigError: Error {
-    case missingGenesisHash(chain: String)
-}
 
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
 /// the single shared runtime, so its authentication and core services are
@@ -35,10 +31,10 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
-/// genesis hashes + the local session secret, activates the local session
-/// once, and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once chains are synced and a session secret exists.
+/// Builds one ``TrUAPIHostRuntime`` from host identity + the stack the build
+/// bundles + the local session secret, activates the local session once, and
+/// caches it. Built off the main thread by ``setup()``, or on first use
+/// before that, so startup is not blocked.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
@@ -46,12 +42,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
-    private let tldProvider: DotNsTldProviding
-    private let logger: LoggerProtocol
+    private let fundingHandler: FundingCoreEventHandling
+    private let remoteConfig: RemoteConfigObserving?
+    private let appliedConfig: () -> RemoteAppConfig?
+    private let deviceEncryptionKeys: DeviceEncryptionKeyManager
+    private let logger: CoreEventLoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+    private var fundingProvidersObservation: Task<Void, Never>?
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
@@ -67,16 +67,26 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
-        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
-        logger: LoggerProtocol
+        fundingHandler: FundingCoreEventHandling,
+        remoteConfig: RemoteConfigObserving? = nil,
+        appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
+        deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
+        logger: CoreEventLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
-        self.tldProvider = tldProvider
+        self.fundingHandler = fundingHandler
+        self.remoteConfig = remoteConfig
+        self.appliedConfig = appliedConfig
+        self.deviceEncryptionKeys = deviceEncryptionKeys
         self.logger = logger
+    }
+
+    deinit {
+        fundingProvidersObservation?.cancel()
     }
 
     @MainActor
@@ -98,16 +108,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+    func attach(paymentsSupport: PaymentsSupport) {
         backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
+                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),
@@ -124,6 +131,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
+    /// Builds the runtime now, off the caller's thread, rather than on first
+    /// use: the core resumes the funding sessions a provider was still working
+    /// on when it starts. Called once, after the worker manager and payments
+    /// are attached.
+    func setup() async throws -> TrUAPIHostRuntime {
+        try await Task.detached { [self] in try sharedRuntime() }.value
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -133,13 +148,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
 
         let secret = try entropyManager.fetchRootEntropy()
-        let networkSuffix = try tldProvider.currentTldOrError()
+        let handedOverKey = try deviceEncryptionKeys.keyToHandOver()
         let runtimeConfig = try Self.makeRuntimeConfig(
-            chainRegistry: chainRegistry,
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
-            networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            databaseDirectory: Self.coreDatabaseDirectory(),
+            deviceEncryptionKey: handedOverKey
         )
 
         let chainConnections = TrUAPIV2SpecConnectionPool(
@@ -161,6 +175,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
 
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        if handedOverKey != nil {
+            deviceEncryptionKeys.forgetHandedOverKey()
+        }
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
@@ -175,6 +192,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
+        // Also before any execution opens, so a product's Funding request
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names.
+        runtime.setFunding(AppFundingHostBridge(handler: fundingHandler))
+        bridge.onWorkerCrashing { [weak fundingHandler] productId in
+            fundingHandler?.workerCrashing(productId: productId)
+        }
+        listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -193,37 +218,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
-    /// Assemble the immutable host-wide config. Genesis hashes are fetched from
-    /// the registry and must resolve; a missing hash fails explicitly rather
-    /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
-    /// wallet's reserved identities under, so it has to be the one the app's own
-    /// built-in accounts derive from. Exposed for testing the genesis-validation
-    /// seam.
+    /// Assemble the immutable host-wide config. Every chain fact the core uses
+    /// comes from the stack this build bundles, ``TrUAPIBundledStack/current``.
     static func makeRuntimeConfig(
-        chainRegistry: ChainRegistryProtocol,
         secret: Data,
         liteUsername: String?,
-        networkSuffix: String,
-        databaseDirectory: String
+        databaseDirectory: String,
+        deviceEncryptionKey: Data?
     ) throws -> HostRuntimeConfig {
-        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)
-        let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
-        let assetHubChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.assethubChain)
-
-        guard let peopleGenesisHex = peopleChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "people")
-        }
-        guard let bulletinGenesisHex = bulletinChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "bulletin")
-        }
-        // Product manifests are read from the dotNS contracts on Asset Hub, so
-        // a missing hash here refuses every cross-product `trustedProducts`
-        // grant indistinguishably from the other product granting nothing.
-        // Fail explicitly, like its siblings, rather than passing all-zero.
-        guard let assetHubGenesisHex = assetHubChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "assetHub")
-        }
-
         let bundle = Bundle.main
         let version = bundle.appVersion.map { version in
             bundle.appBuild.map { "\(version) (\($0))" } ?? version
@@ -234,14 +236,11 @@ extension TrUAPIHostRuntimeProvider {
             hostVersion: version,
             platformType: "ios",
             platformVersion: UIDevice.current.systemVersion,
-            peopleChainGenesisHash: Data(hexString: peopleGenesisHex),
-            bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
-            assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
-            networkSuffix: networkSuffix,
+            stack: TrUAPIBundledStack.current.load(),
             databaseDirectory: databaseDirectory,
-            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            localSessionLiteUsername: liteUsername,
+            deviceEncryptionKey: deviceEncryptionKey
         )
     }
 
@@ -257,5 +256,39 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// List the providers `funding_config` names once per launch: the config
+    /// already applied, or else the first one remote config delivers, as it
+    /// usually lands after the runtime is built. Later refreshes are not
+    /// followed until known products carry the funding providers.
+    func listFundingProviders(on runtime: TrUAPIHostRuntime) {
+        if let config = appliedConfig() {
+            apply(publishedNames: config.fundingProviders, on: runtime)
+            return
+        }
+        apply(publishedNames: [], on: runtime)
+
+        guard let stream = remoteConfig?.remoteConfigStream() else { return }
+
+        fundingProvidersObservation?.cancel()
+        fundingProvidersObservation = Task { [weak self, weak runtime] in
+            do {
+                for try await config in stream {
+                    guard let self, let runtime, !Task.isCancelled else { return }
+
+                    apply(publishedNames: config.fundingProviders, on: runtime)
+                    return
+                }
+            } catch {
+                self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
+            }
+        }
+    }
+
+    func apply(publishedNames: [String], on runtime: TrUAPIHostRuntime) {
+        runtime.setFundingProviderConfig(publishedNames: publishedNames)
     }
 }

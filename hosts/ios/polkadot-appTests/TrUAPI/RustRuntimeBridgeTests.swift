@@ -66,10 +66,6 @@ private struct StubHostProvider: ProductHostProviding {
     func resolveHost(rawString _: String) async throws -> ProductHost? {
         nil
     }
-
-    func resolvePage(destination: String) async throws -> ProductPage {
-        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
-    }
 }
 
 // MARK: - Bridge factory
@@ -88,6 +84,7 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
+    card: (any ExpandedCardCovering)? = nil,
     router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
@@ -115,7 +112,7 @@ private func makeBridge(
         hostProvider: hostProvider,
         themeManager: themeManager,
         logger: Logger.shared
-    ))
+    ), card: card)
 }
 
 // MARK: - Tests
@@ -329,19 +326,21 @@ struct RustRuntimeBridgeTests {
 
     // MARK: pushNotification
 
-    /// `pushNotification` maps text/deeplink/scheduledAt onto the scheduler
-    /// request and returns its UInt32.
+    /// `pushNotification` maps title/text/deeplink/scheduledAt onto the
+    /// scheduler and returns its UInt32. The core has already cleared a title
+    /// the product may not set, so the bridge passes it through.
     @Test func pushNotificationSchedules() async throws {
         let scheduler = MockNotificationScheduler()
         scheduler.notificationIdToReturn = 99
         let bridge = makeBridge(productId: try! ProductId("push.product.dot"), notificationScheduler: scheduler)
 
         let notificationId = try await bridge.pushNotification(
-            request: HostPushNotificationRequest(text: "hi", deeplink: "d", scheduledAt: nil)
+            request: HostPushNotificationRequest(text: "hi", deeplink: "d", scheduledAt: nil, title: "Daily Dollar")
         )
 
         #expect(notificationId == 99)
         #expect(scheduler.scheduledProductId == (try! ProductId("push.product.dot")))
+        #expect(scheduler.scheduledTitle == "Daily Dollar")
         #expect(scheduler.scheduledRequest?.text == "hi")
         #expect(scheduler.scheduledRequest?.deeplink == "d")
         #expect(scheduler.scheduledRequest?.scheduledAtMs == nil)
@@ -608,6 +607,28 @@ struct RustRuntimeBridgeTests {
         let review = UserConfirmationReview
             .productSubtree(ProductSubtreeReview(productId: try! ProductId("test.product.dot")))
         #expect(await presenter.confirm(review: review, from: "test.product.dot") == false)
+    }
+
+    // MARK: setExpandedCardCovered
+
+    /// Called through `HostBridge` as the core does: an override whose signature drifts would lose
+    /// to the default and answer `.unsupported`.
+    @MainActor
+    @Test func expandedCardCoverReachesTheCard() async throws {
+        let card = StubCoveredCard()
+        let bridge: HostBridge = makeBridge(card: card)
+
+        #expect(try await bridge.setExpandedCardCovered(covered: true) == .userMoving)
+        #expect(card.requests == [true])
+    }
+
+    @MainActor
+    @Test func expandedCardCoverIsNotPresentedOnceTheCardIsGone() async throws {
+        var card: StubCoveredCard? = StubCoveredCard()
+        let bridge: HostBridge = makeBridge(card: card)
+        card = nil
+
+        #expect(try await bridge.setExpandedCardCovered(covered: true) == .notPresented)
     }
 
     // MARK: attach

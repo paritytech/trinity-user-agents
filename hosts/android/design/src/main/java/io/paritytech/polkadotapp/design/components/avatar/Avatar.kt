@@ -3,7 +3,12 @@ package io.paritytech.polkadotapp.design.components.avatar
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -11,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -21,7 +27,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toOffset
-import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
+import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
+import coil.request.ImageRequest
+import dagger.hilt.android.EntryPointAccessors
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -29,14 +40,20 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.typography.PolkadotTypography
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.collect
+import timber.log.Timber
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 sealed class AvatarUiModel {
     companion object;
 
-    /** [placeholder] shows until the image at [url] has loaded, and stays if it never does. */
     data class Image(val url: String, val placeholder: Name? = null) : AvatarUiModel()
+
+    data class PublicProfile(val username: String, val placeholder: Name?, val forceFresh: Boolean) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }
@@ -54,6 +71,17 @@ fun PolkadotAvatar(
             placeholder = model.placeholder,
             onClick = onClick
         )
+
+        is AvatarUiModel.PublicProfile -> {
+            val context = LocalContext.current
+            val source = remember(context) {
+                EntryPointAccessors.fromApplication(
+                    context.applicationContext,
+                    PublicProfileAvatarSourceEntryPoint::class.java
+                ).publicProfileAvatarSource()
+            }
+            PublicProfileAvatar(modifier, model, source, onClick)
+        }
 
         is AvatarUiModel.Name -> LetterAvatar(
             modifier = modifier,
@@ -78,14 +106,84 @@ private fun ImageAvatar(
         onClick = onClick
     ) {
         val letter = placeholder?.let { rememberLetterAvatarPainter(it.name, it.colorScheme) }
+        val context = LocalContext.current
+        val model = remember(context, url) {
+            ImageRequest.Builder(context)
+                .data(url)
+                .build()
+        }
 
-        NovaAsyncImage(
-            model = url,
+        AsyncImage(
+            model = model,
+            contentDescription = "",
             contentScale = ContentScale.Crop,
-            placeholder = letter,
-            error = letter
+            transform = { state -> state.withLetter(letter) }
         )
     }
+}
+
+@Composable
+fun PublicProfileAvatar(
+    modifier: Modifier,
+    model: AvatarUiModel.PublicProfile,
+    source: PublicProfileAvatarSource,
+    onClick: (() -> Unit)? = null
+) {
+    var request by remember(model.username) { mutableStateOf<ImageRequest?>(null) }
+    var retainedImage by remember(model.username) { mutableStateOf<Painter?>(null) }
+    var forceFresh by remember(model.username) { mutableStateOf(model.forceFresh) }
+
+    LaunchedEffect(source, model.username) {
+        try {
+            source.observe(model.username, forceFresh).collect { next ->
+                currentCoroutineContext().ensureActive()
+                if (next == null) retainedImage = null
+                request = next
+            }
+            currentCoroutineContext().ensureActive()
+            forceFresh = false
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            forceFresh = false
+            Timber.w(error, "Public profile of %s", model.username)
+        }
+    }
+
+    PolkadotSurface(
+        modifier = modifier,
+        shape = PolkadotTheme.shapes.full,
+        color = PolkadotTheme.colors.bg.surface.container,
+        onClick = onClick
+    ) {
+        val letter = model.placeholder?.let { rememberLetterAvatarPainter(it.name, it.colorScheme) }
+        val currentRequest = request
+        if (currentRequest == null) {
+            if (letter != null) Image(letter, contentDescription = null, modifier = Modifier.fillMaxSize())
+        } else {
+            SubcomposeAsyncImage(
+                model = currentRequest,
+                contentDescription = "",
+                contentScale = ContentScale.Crop,
+                transform = { state -> state.withLetter(letter) }
+            ) {
+                val state = painter.state
+                if (state is AsyncImagePainter.State.Success) {
+                    SideEffect { retainedImage = state.painter }
+                }
+                val displayed = if (state is AsyncImagePainter.State.Success) state.painter else retainedImage ?: painter
+                SubcomposeAsyncImageContent(painter = displayed)
+            }
+        }
+    }
+}
+
+private fun AsyncImagePainter.State.withLetter(letter: Painter?): AsyncImagePainter.State = when {
+    letter == null -> this
+    this is AsyncImagePainter.State.Loading && painter == null -> copy(painter = letter)
+    this is AsyncImagePainter.State.Error -> copy(painter = letter)
+    else -> this
 }
 
 @Composable

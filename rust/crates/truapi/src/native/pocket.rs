@@ -7,9 +7,9 @@ use futures::{
 	StreamExt,
 	channel::mpsc::{UnboundedSender, unbounded},
 };
-use truapi::latest::ProductRendererRenderItem;
+use truapi::latest::{PocketCardSide, ProductRendererRenderItem, RenderContext};
 
-use super::renderer::{NativeRendererObserver, NativeSubscription, spawn_observation};
+use super::renderer::{NativeRendererObserver, NativeSubscription};
 use crate::{
 	Spawner,
 	platform::ProductId,
@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Observer implemented by a native host to follow the Pocket collection.
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait NativePocketObserver: Send + Sync {
 	/// Deliver every card, pinned first, now and after each change.
 	fn on_cards(&self, cards: Vec<PocketEntry>);
@@ -35,7 +35,7 @@ pub fn observe_pocket_cards(
 	spawner: &Spawner,
 ) -> Arc<NativeSubscription> {
 	let mut cards = cards.observe();
-	spawn_observation(spawner, async move {
+	spawner.spawn_observation(async move {
 		while let Some(item) = cards.next().await {
 			match item {
 				Ok(cards) => observer.on_cards(cards),
@@ -45,20 +45,30 @@ pub fn observe_pocket_cards(
 	})
 }
 
+/// The card and side a render draws, when it draws one of a Pocket card's faces.
+pub fn card_side(context: &RenderContext) -> Option<(String, PocketCardSide)> {
+	match context {
+		RenderContext::PocketCard { card_id } => Some((card_id.clone(), PocketCardSide::Front)),
+		RenderContext::PocketCardBack { card_id } => Some((card_id.clone(), PocketCardSide::Back)),
+		_ => None,
+	}
+}
+
 /// Wraps the observer of one card's render so every face it draws is also
-/// kept as the card's newest. Keeping stops once the render's observer is
+/// kept as the newest on `side`. Keeping stops once the render's observer is
 /// dropped, after writing the last face.
 pub fn keeping_faces(
 	cards: PocketCards,
 	product_id: ProductId,
 	card_id: String,
+	side: PocketCardSide,
 	observer: Arc<dyn NativeRendererObserver>,
 	spawner: &Spawner,
 ) -> Arc<dyn NativeRendererObserver> {
 	let (faces, drawn) = unbounded();
 	let keeper = cards.clone();
 	spawner.spawn(async move {
-		keeper.keep_faces(product_id, card_id, drawn, Arc::new(RealTimer)).await;
+		keeper.keep_faces(product_id, card_id, side, drawn, Arc::new(RealTimer)).await;
 	});
 	Arc::new(FaceKeepingObserver { observer, faces, cards })
 }

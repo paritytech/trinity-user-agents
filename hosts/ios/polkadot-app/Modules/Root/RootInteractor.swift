@@ -8,6 +8,7 @@ import ChainRegistry
 import SubstrateSdkExt
 import Products
 import StructuredConcurrency
+import Kingfisher
 
 final class RootInteractor {
     private enum SetupWaitOutcome {
@@ -64,6 +65,7 @@ final class RootInteractor {
     let observer: RootSetupObserver
     let appliedConfigReader: () -> RemoteAppConfig?
     let paymentAssetBranding: PaymentAssetBranding
+    let coinagePrivacyConfigStore: CoinagePrivacyConfigStore
     let clock: any Clock<Duration>
 
     private var completionTask: Task<Void, Never>?
@@ -88,6 +90,7 @@ final class RootInteractor {
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         appliedConfigReader: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         paymentAssetBranding: PaymentAssetBranding = .shared,
+        coinagePrivacyConfigStore: CoinagePrivacyConfigStore = .shared,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.chainRegistryClosure = chainRegistryClosure
@@ -102,6 +105,7 @@ final class RootInteractor {
         self.tldProvider = tldProvider
         self.appliedConfigReader = appliedConfigReader
         self.paymentAssetBranding = paymentAssetBranding
+        self.coinagePrivacyConfigStore = coinagePrivacyConfigStore
         self.clock = clock
     }
 
@@ -261,9 +265,12 @@ extension RootInteractor: RootInteractorInputProtocol {
     }
 
     func setup() {
+        KingfisherManager.shared.cache.diskStorage.config.sizeLimit = 100 * 1_024 * 1_024
+
         initializer.start()
 
         paymentAssetBranding.start()
+        coinagePrivacyConfigStore.start()
 
         let chainRegistry = chainRegistryClosure()
         beginSetupAttempt(with: chainRegistry)

@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -61,7 +62,7 @@ class PocketViewModelTest {
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
-        coEvery { faceShownOnOpen(any()) } returns true
+        coEvery { startsCovered(any()) } returns false
     }
 
     private var collectiblesPage: Uri? = null
@@ -98,6 +99,8 @@ class PocketViewModelTest {
         dispatchers = dispatchers,
         cardOpenRequests = cardOpenRequests,
         tabSelection = tabSelection,
+        materialsGl = mockk(),
+        materialImages = mockk(),
         spaHost = spaHost,
     ).also { created += it }
 
@@ -461,7 +464,7 @@ class PocketViewModelTest {
     @Test
     fun `a card drawn again can read the face the first copy already holds`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
-        val face = JsWidget.Text(text = "Loyalty")
+        val face = PocketFace(JsWidget.Text(text = "Loyalty"), materials = null)
         every { interactor.observeProductCards() } returns flowOf(listOf(card))
         every { interactor.observeFace(card.key) } returns flowOf(face)
 
@@ -598,48 +601,48 @@ class PocketViewModelTest {
     // The card is on screen while its lookup runs, so what the screen shows first has to be
     // "not known yet" rather than a guess: a guessed face would flash shown before folding away.
     @Test
-    fun `a card published with its face away reports it once opened, and nothing once dismissed`() = runTest(testDispatcher) {
+    fun `a card published to start covered reports it once opened, and nothing once dismissed`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
         every { interactor.observeProductCards() } returns flowOf(listOf(card))
-        coEvery { interactor.faceShownOnOpen(card.key) } returns false
+        coEvery { interactor.startsCovered(card.key) } returns true
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
-        assertNull(viewModel.openingFaceShown.value)
+        assertNull(viewModel.startsCovered.value)
 
         viewModel.selectCard(uiCard)
         advanceUntilIdle()
-        assertEquals(false, viewModel.openingFaceShown.value)
+        assertEquals(true, viewModel.startsCovered.value)
 
         viewModel.dismissCard()
-        assertNull(viewModel.openingFaceShown.value)
+        assertNull(viewModel.startsCovered.value)
     }
 
     // A card whose product has not answered yet must not inherit the previous card's answer: it would
-    // fold a face the new card publishes as shown.
+    // cover a card the new card's product publishes as uncovered.
     @Test
-    fun `selecting another card forgets the previous card's opening face until its own answer arrives`() =
+    fun `selecting another card forgets the previous card's opening cover until its own answer arrives`() =
         runTest(testDispatcher) {
-            val away = productCard("away")
+            val covered = productCard("covered")
             val pending = productCard("pending")
-            every { interactor.observeProductCards() } returns flowOf(listOf(away, pending))
-            coEvery { interactor.faceShownOnOpen(away.key) } returns false
-            coEvery { interactor.faceShownOnOpen(pending.key) } coAnswers { awaitCancellation() }
+            every { interactor.observeProductCards() } returns flowOf(listOf(covered, pending))
+            coEvery { interactor.startsCovered(covered.key) } returns true
+            coEvery { interactor.startsCovered(pending.key) } coAnswers { awaitCancellation() }
 
             val viewModel = createViewModel()
             val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
-            viewModel.selectCard(cards.single { it.title == away.title })
+            viewModel.selectCard(cards.single { it.title == covered.title })
             advanceUntilIdle()
-            assertEquals(false, viewModel.openingFaceShown.value)
+            assertEquals(true, viewModel.startsCovered.value)
 
             viewModel.selectCard(cards.single { it.title == pending.title })
             advanceUntilIdle()
 
-            assertNull(viewModel.openingFaceShown.value)
+            assertNull(viewModel.startsCovered.value)
         }
 
     // The card being left is still drawn while it fades out, and it reports itself settled again when
-    // the next card's opening face arrives. Hosting its product then would put it under the next card.
+    // the next card's starts-covered answer arrives. Hosting its product then would put it under the next card.
     @Test
     fun `a card that is no longer selected does not get its product hosted`() = runTest(testDispatcher) {
         val left = productCard("left")

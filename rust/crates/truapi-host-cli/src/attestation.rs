@@ -27,9 +27,10 @@ use truapi::{
 		},
 		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 		product_account::{
-			ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-			derive_root_keypair_from_entropy, personhood_product_id, product_public_key_to_address,
+			ProductAccountError, SR25519_SIGNING_CONTEXT, personhood_product_id,
+			product_public_key_to_address,
 		},
+		root_entropy::RootEntropy,
 	},
 	statement_allowance as alloc,
 };
@@ -43,6 +44,9 @@ use crate::{
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
+
+/// Budget for each identity backend request.
+const BACKEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
 #[display("backend auth identity derivation failed")]
@@ -87,10 +91,11 @@ struct BackendToken {
 async fn backend_token(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	network_suffix: &str,
 ) -> Result<BackendToken> {
-	let auth_client_id = derive_identity_keypair(auth_entropy, network_suffix)
+	let auth_client_id = auth_entropy
+		.derive_identity_keypair(network_suffix)
 		.map_err(BackendIdentityDerivationError::from)?
 		.public
 		.to_bytes();
@@ -150,7 +155,7 @@ fn evict_rejected_backend_token(backend_base: &str, auth_client_id: &[u8; 32], r
 async fn mint_backend_token(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	network_suffix: &str,
 ) -> Result<String> {
 	let url = format!("{backend_base}/auth/challenges");
@@ -171,7 +176,8 @@ async fn mint_backend_token(
 		.to_string();
 	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
-	let keypair = derive_identity_keypair(auth_entropy, network_suffix)
+	let keypair = auth_entropy
+		.derive_identity_keypair(network_suffix)
 		.map_err(BackendIdentityDerivationError::from)?;
 	let client_id = keypair.public.to_bytes();
 
@@ -220,7 +226,7 @@ async fn mint_backend_token(
 async fn send_with_backend_auth<F>(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	network_suffix: &str,
 	request: F,
 ) -> Result<reqwest::Response>
@@ -250,7 +256,7 @@ pub struct AttestConfig<'a> {
 	/// reservation timestamp and the dotNS username poll.
 	pub network: &'a Stack,
 	/// BIP-39 entropy of the signing host's root account.
-	pub entropy: Vec<u8>,
+	pub entropy: RootEntropy,
 	/// Requested lite username base (6+ lowercase letters, no digits).
 	pub username_base: String,
 	/// Optional base name to queue on dotNS for a later full-person claim.
@@ -261,11 +267,11 @@ pub struct AttestConfig<'a> {
 /// backend. The username must be the base form without the digit suffix.
 pub async fn lite_username_available(
 	network: &Stack,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	username_base: &str,
 ) -> Result<bool> {
 	let backend_base = network.identity_backend();
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
 	let response =
@@ -296,7 +302,7 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
 	let backend_base = config.network.identity_backend();
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 
 	let mut reader = AssetHubReader::connect(config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
@@ -383,9 +389,10 @@ async fn signing_context_of(
 /// Resolves the on-chain lite username for an already-attested signer: the
 /// discriminated `name.NN` the dotNS contracts hold for its identity account,
 /// whatever base the account record asked for.
-pub async fn registered_lite_username(network: &Stack, entropy: &[u8]) -> Result<String> {
-	let identity =
-		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+pub async fn registered_lite_username(network: &Stack, entropy: &RootEntropy) -> Result<String> {
+	let identity = entropy
+		.derive_identity_keypair(network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::connect(network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
@@ -396,9 +403,13 @@ pub async fn registered_lite_username(network: &Stack, entropy: &[u8]) -> Result
 
 /// Resolve an existing full-person or Lite dotNS identity when one exists.
 /// An unlabeled account is a valid result and can still back a local session.
-pub async fn lookup_registered_username(network: &Stack, entropy: &[u8]) -> Result<Option<String>> {
-	let identity =
-		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+pub async fn lookup_registered_username(
+	network: &Stack,
+	entropy: &RootEntropy,
+) -> Result<Option<String>> {
+	let identity = entropy
+		.derive_identity_keypair(network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::connect(network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
 	Ok(identity.map(|identity| identity.primary_username().to_owned()))
@@ -411,12 +422,27 @@ struct UsernameSearchPage {
 	next_cursor: Option<String>,
 }
 
+/// One row of the identity backend's username search: a username, the account it
+/// was requested for, and its registration status.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UsernameSearchItem {
-	account_id: String,
-	username: String,
-	status: String,
+pub struct UsernameSearchItem {
+	/// SS58 address of the account the name was requested for.
+	pub account_id: String,
+	/// The username, with a lite name's two-digit discriminator restored.
+	#[serde(deserialize_with = "deserialize_searched_username")]
+	pub username: String,
+	/// The backend's registration status, such as `ASSIGNED`.
+	pub status: String,
+}
+
+/// Lists every username the identity backend holds that starts with `prefix`.
+///
+/// The search route is public, so no identity signs in. Rows of every status are
+/// returned, in the backend's order. Request and decoding failures return errors.
+pub async fn search_usernames(network: &Stack, prefix: &str) -> Result<Vec<UsernameSearchItem>> {
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
+	search_backend_prefix(&client, network, None, prefix.to_string()).await
 }
 
 /// Reverse-resolve an assigned username from the identity backend.
@@ -428,26 +454,28 @@ struct UsernameSearchItem {
 /// from the unauthenticated proof-of-compute challenge.
 pub async fn lookup_backend_username(
 	network: &Stack,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	candidate_account_id: &str,
 ) -> Result<Option<String>> {
 	const SEARCH_CONCURRENCY: usize = 4;
 
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-	let matches = stream::iter(b'a'..=b'z')
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
+	let pages = stream::iter(b'a'..=b'z')
 		.map(|initial| {
 			search_backend_prefix(
 				&client,
 				network,
-				auth_entropy,
-				candidate_account_id,
-				char::from(initial),
+				Some(auth_entropy),
+				char::from(initial).to_string(),
 			)
 		})
 		.buffer_unordered(SEARCH_CONCURRENCY)
 		.try_collect::<Vec<_>>()
 		.await?;
-	let matches = matches.into_iter().flatten().collect::<BTreeSet<_>>();
+	let matches = pages
+		.into_iter()
+		.flat_map(|rows| matching_assigned_usernames(rows, candidate_account_id))
+		.collect::<BTreeSet<_>>();
 
 	match matches.len() {
 		0 => Ok(None),
@@ -464,29 +492,32 @@ pub async fn lookup_backend_username(
 async fn search_backend_prefix(
 	client: &reqwest::Client,
 	network: &Stack,
-	auth_entropy: &[u8],
-	candidate_account_id: &str,
-	initial: char,
-) -> Result<Vec<String>> {
+	auth_entropy: Option<&RootEntropy>,
+	prefix: String,
+) -> Result<Vec<UsernameSearchItem>> {
 	const PAGE_LIMIT: &str = "1000";
 
 	let backend_base = network.identity_backend();
 	let url = format!("{backend_base}/usernames/search");
-	let prefix = initial.to_string();
 	let mut cursor = None;
 	let mut seen_cursors = BTreeSet::new();
-	let mut matches = Vec::new();
+	let mut rows = Vec::new();
 	loop {
 		let mut query = vec![("prefix", prefix.as_str()), ("limit", PAGE_LIMIT)];
 		if let Some(cursor) = cursor.as_deref() {
 			query.push(("cursor", cursor));
 		}
-		let response =
-			send_with_backend_auth(client, backend_base, auth_entropy, network.tld(), |token| {
-				client.get(&url).bearer_auth(token).query(&query)
-			})
-			.await
-			.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
+		let request = || client.get(&url).query(&query);
+		let response = match auth_entropy {
+			Some(entropy) => {
+				send_with_backend_auth(client, backend_base, entropy, network.tld(), |token| {
+					request().bearer_auth(token)
+				})
+				.await
+			},
+			None => request().send().await.map_err(anyhow::Error::from),
+		}
+		.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
 		let status = response.status();
 		let text = response.text().await.unwrap_or_default();
 		if !status.is_success() {
@@ -494,7 +525,7 @@ async fn search_backend_prefix(
 		}
 		let page: UsernameSearchPage = serde_json::from_str(&text)
 			.with_context(|| format!("decode identity backend username search response: {text}"))?;
-		matches.extend(matching_assigned_usernames(page.usernames, candidate_account_id));
+		rows.extend(page.usernames);
 
 		let Some(next) = page.next_cursor else {
 			break;
@@ -504,7 +535,7 @@ async fn search_backend_prefix(
 		}
 		cursor = Some(next);
 	}
-	Ok(matches)
+	Ok(rows)
 }
 
 fn matching_assigned_usernames(
@@ -515,7 +546,13 @@ fn matching_assigned_usernames(
 	items
 		.into_iter()
 		.filter(move |item| item.status == "ASSIGNED" && item.account_id == candidate_account_id)
-		.map(|item| normalize_searched_username(&item.username))
+		.map(|item| item.username)
+}
+
+fn deserialize_searched_username<'de, D: serde::Deserializer<'de>>(
+	deserializer: D,
+) -> core::result::Result<String, D::Error> {
+	String::deserialize(deserializer).map(|username| normalize_searched_username(&username))
 }
 
 /// `/usernames/search` decodes the discriminator as a number and therefore
@@ -536,10 +573,11 @@ fn normalize_searched_username(username: &str) -> String {
 /// Probes the dotNS contracts for the bare root and the network's RFC-0022
 /// `peopl.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
-pub async fn check_identity(network: &Stack, entropy: &[u8]) -> Result<()> {
-	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
-	let identity =
-		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+pub async fn check_identity(network: &Stack, entropy: &RootEntropy) -> Result<()> {
+	let root = entropy.derive_root_keypair().map_err(RootKeyDerivationError::from)?;
+	let identity = entropy
+		.derive_identity_keypair(network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::connect(network).await?;
 	let identity_path =
 		format!("//product//{}/index_bytes(0)", personhood_product_id(network.tld()));

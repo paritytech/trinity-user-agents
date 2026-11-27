@@ -18,7 +18,7 @@ struct PocketCardMotionTests {
         let shrunkAway = PocketCardMotion(offset: .zero, scale: 0.9, opacity: 0)
         let lifted = PocketCardMotion(offset: lift, scale: 1, opacity: 1)
 
-        #expect(motions(openAt: 1, cleared: true) == [shrunkAway, lifted, slidAway, slidAway])
+        #expect(motions(openAt: 1, clearance: 1) == [shrunkAway, lifted, slidAway, slidAway])
     }
 
     /// Before the Pocket clears and after it comes back, only the opened card
@@ -27,24 +27,40 @@ struct PocketCardMotionTests {
     func onlyTheOpenCardMovesWhileThePocketIsInPlace() {
         let lifted = PocketCardMotion(offset: lift, scale: 1, opacity: 1)
 
-        #expect(motions(openAt: 1, cleared: false) == [.resting, lifted, .resting, .resting])
+        #expect(motions(openAt: 1, clearance: 0) == [.resting, lifted, .resting, .resting])
+    }
+
+    /// A finger can hold the Pocket part way to cleared, so each card is drawn
+    /// part way between its slot and where it clears to, and the swipe shows
+    /// the same close as the timed one.
+    @Test
+    func eachCardIsHalfWayWhenThePocketIsHalfCleared() {
+        let halfSlid = PocketCardMotion(
+            offset: CGSize(width: 0, height: PocketCardSize.height * 2),
+            scale: 1,
+            opacity: 0.5
+        )
+        let halfShrunk = PocketCardMotion(offset: .zero, scale: 0.95, opacity: 0.5)
+        let lifted = PocketCardMotion(offset: lift, scale: 1, opacity: 1)
+
+        #expect(motions(openAt: 1, clearance: 0.5) == [halfShrunk, lifted, halfSlid, halfSlid])
     }
 
     @Test
     func nothingMovesWithoutAnOpenCard() {
-        #expect(motions(openAt: nil, cleared: false) == Array(repeating: .resting, count: 4))
+        #expect(motions(openAt: nil, clearance: 0) == Array(repeating: .resting, count: 4))
     }
 
     /// The whole Pocket clears behind an item that is not in the stack, such as
     /// Collectibles, so every card shrinks away while that item is open.
     @Test
     func everyCardShrinksAwayWhenThePocketClearsForAnItemOutsideTheStack() {
-        #expect(motions(openAt: nil, cleared: true) == Array(repeating: .shrunkAway, count: 4))
+        #expect(motions(openAt: nil, clearance: 1) == Array(repeating: .shrunkAway, count: 4))
     }
 
-    private func motions(openAt openIndex: Int?, cleared: Bool) -> [PocketCardMotion] {
+    private func motions(openAt openIndex: Int?, clearance: CGFloat) -> [PocketCardMotion] {
         (0 ..< 4).map { index in
-            PocketCardMotion.of(cardAt: index, openAt: openIndex, openOffset: lift, cleared: cleared)
+            PocketCardMotion.of(cardAt: index, openAt: openIndex, openOffset: lift, clearance: clearance)
         }
     }
 }

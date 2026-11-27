@@ -55,11 +55,28 @@ fn keep(cards: &PocketCards, product_id: &str, card_id: &str, text: &str) {
 }
 
 fn keep_drawn(cards: &PocketCards, product_id: &str, card_id: &str, text: &str, draw_order: u64) {
-	block_on(cards.keep_face(product(product_id), card_id.into(), face(text), draw_order)).unwrap();
+	let face = face(text);
+	block_on(cards.keep_face(
+		product(product_id),
+		card_id.into(),
+		PocketCardSide::Front,
+		face,
+		draw_order,
+	))
+	.unwrap();
 }
 
 fn kept_face(cards: &PocketCards, product_id: &str, card_id: &str) -> Option<RendererNode> {
-	block_on(cards.face(product(product_id), card_id.into())).unwrap()
+	kept_side(cards, product_id, card_id, PocketCardSide::Front)
+}
+
+fn kept_side(
+	cards: &PocketCards,
+	product_id: &str,
+	card_id: &str,
+	side: PocketCardSide,
+) -> Option<RendererNode> {
+	block_on(cards.face(product(product_id), card_id.into(), side)).unwrap()
 }
 
 #[test]
@@ -77,6 +94,34 @@ fn pinned_cards_come_first_then_added_cards_in_the_order_they_were_added() {
 			entry(LOYALTY, "coffee", false),
 		]
 	);
+}
+
+#[test]
+fn a_card_keeps_its_front_and_back_apart_and_loses_both_when_removed() {
+	// Turning a card shows the back the product last drew, never its front,
+	// and a card added again starts with neither.
+	let (_dir, cards) = open(Vec::new());
+	add(&cards, LOYALTY, "stamps", "front");
+	let back = face("back");
+	block_on(cards.keep_face(
+		product(LOYALTY),
+		"stamps".into(),
+		PocketCardSide::Back,
+		back.clone(),
+		cards.next_draw(),
+	))
+	.unwrap();
+
+	let sides = |cards: &PocketCards| {
+		(
+			kept_side(cards, LOYALTY, "stamps", PocketCardSide::Front),
+			kept_side(cards, LOYALTY, "stamps", PocketCardSide::Back),
+		)
+	};
+	assert_eq!(sides(&cards), (Some(face("front")), Some(back)));
+
+	block_on(cards.remove(product(LOYALTY), "stamps".into())).unwrap();
+	assert_eq!(sides(&cards), (None, None));
 }
 
 #[test]
@@ -236,11 +281,25 @@ fn an_added_card_is_screened_like_a_product_would_address_it() {
 }
 
 #[test]
-fn a_pinned_card_is_screened_like_an_added_one() {
-	let blank = PinnedPocketCard { card_id: "   ".into(), ..humanity() };
+fn every_host_pins_humanity_on_its_own_network() {
+	assert_eq!(
+		PinnedPocketCard::privileged("paseo").unwrap(),
+		vec![PinnedPocketCard {
+			product_id: product("peopl.paseo"),
+			card_id: "humanity".into(),
+			title: "Humanity".into(),
+		}]
+	);
+}
 
-	assert_eq!(humanity().screened().unwrap(), humanity());
-	assert!(blank.screened().is_err());
+#[test]
+fn a_privileged_card_is_one_a_product_could_address() {
+	// The product removes and renders its card by id, so an id that screening
+	// would rewrite leaves the pinned card out of the product's reach.
+	for card in PinnedPocketCard::privileged("dot").unwrap() {
+		assert_eq!(normalize_chat_identifier("cardId", &card.card_id).unwrap(), card.card_id);
+		assert_eq!(validate_chat_name("title", &card.title).unwrap(), card.title);
+	}
 }
 
 #[test]
@@ -330,7 +389,9 @@ fn the_newest_face_is_kept_at_most_every_interval_and_at_once_when_drawing_stops
 	let keeper = cards.clone();
 	let keeper_timer = timer.clone();
 	Spawner::for_test().spawn(async move {
-		keeper.keep_faces(product(LOYALTY), "stamps".into(), drawn, keeper_timer).await;
+		keeper
+			.keep_faces(product(LOYALTY), "stamps".into(), PocketCardSide::Front, drawn, keeper_timer)
+			.await;
 	});
 	let kept = || kept_face(&cards, LOYALTY, "stamps");
 	let drawn = |text: &str| (face(text), cards.next_draw());

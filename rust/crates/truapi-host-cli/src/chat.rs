@@ -23,11 +23,11 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::{
 	latest::{
-		ChatBotRegistrationStatus, ChatMessageContent, ChatRoomRegistrationStatus, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		ChatBotRegistrationStatus, ChatRoomRegistrationStatus, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest,
 	},
 	platform::{ChatPlatform, ProductContext},
 	v01::{ChatRoom, ChatRoomParticipation},
@@ -101,7 +101,7 @@ impl CliChatHost {
 			"kind": "message",
 			"messageId": message_id,
 			"roomId": request.room_id,
-			"variant": variant_name(&request.payload),
+			"variant": <&str>::from(&request.payload),
 			// The payload as the host received it. A summary would let a
 			// difference between what a product sent and what a host stored
 			// hide behind the summary.
@@ -123,37 +123,25 @@ impl CliChatHost {
 	}
 }
 
-/// The variant name a transcript reader matches on.
-fn variant_name(content: &ChatMessageContent) -> &'static str {
-	match content {
-		ChatMessageContent::Text { .. } => "Text",
-		ChatMessageContent::RichText(_) => "RichText",
-		ChatMessageContent::Actions(_) => "Actions",
-		ChatMessageContent::File(_) => "File",
-		ChatMessageContent::Reaction(_) => "Reaction",
-		ChatMessageContent::ReactionRemoved(_) => "ReactionRemoved",
-		ChatMessageContent::Custom(_) => "Custom",
-	}
-}
-
 #[async_trait::async_trait]
 impl ChatPlatform for CliChatHost {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
 		let mut state = self.lock();
-		let status = if state.rooms.contains_key(&request.room_id) {
+		let status = if state.rooms.contains_key(&room_id) {
 			ChatRoomRegistrationStatus::Exists
 		} else {
-			state.rooms.insert(request.room_id.clone(), ChatRoomParticipation::RoomHost);
+			state.rooms.insert(room_id.clone(), ChatRoomParticipation::RoomHost);
 			Self::republish(&mut state);
 			ChatRoomRegistrationStatus::New
 		};
 		drop(state);
-		self.record_registration("room", &request.room_id, &request.name, &request.icon);
-		Ok(HostChatCreateRoomResponse { status })
+		self.record_registration("room", &room_id, &request.name, &request.icon);
+		Ok(status)
 	}
 
 	async fn register_chat_bot(

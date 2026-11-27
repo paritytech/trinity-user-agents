@@ -6,7 +6,7 @@ struct ProductUpdateNoticeView: View {
     private static let iconSize: CGFloat = 24
 
     let productName: String
-    let icon: any ImageViewModelProtocol
+    let icon: AnyImageViewModel
     let onUpdate: () -> Void
     let onDismiss: () -> Void
 

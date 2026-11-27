@@ -6,7 +6,7 @@ import UIKit
 public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public let avatarViewModel: AvatarViewModel
     /// Loaded over ``avatarViewModel``, which shows until it arrives.
-    public let icon: (any ImageViewModelProtocol)?
+    public let icon: AnyImageViewModel?
     public let sender: String
     public let message: String?
     public let messageKind: DSChatMessage.Kind
@@ -22,7 +22,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public init(
         dateFormatter: TimestampFormatting,
         avatarViewModel: AvatarViewModel,
-        icon: (any ImageViewModelProtocol)? = nil,
+        icon: AnyImageViewModel? = nil,
         sender: String,
         message: String? = nil,
         messageKind: DSChatMessage.Kind = .default,
@@ -60,6 +60,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(avatarViewModel)
+        hasher.combine(icon)
         hasher.combine(sender)
         hasher.combine(message)
         hasher.combine(messageKind)
@@ -73,6 +74,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
 
     public static func == (lhs: DSChatListItemConfiguration, rhs: DSChatListItemConfiguration) -> Bool {
         lhs.avatarViewModel == rhs.avatarViewModel &&
+            lhs.icon == rhs.icon &&
             lhs.sender == rhs.sender &&
             lhs.message == rhs.message &&
             lhs.messageKind == rhs.messageKind &&

@@ -60,6 +60,7 @@ extension Chat.RemoteMessage {
              .compactedMessages,
              .deviceAdded,
              .deviceRemoved,
+             .seen,
              .none:
             false
         }
@@ -88,6 +89,7 @@ extension Chat.RemoteMessage {
              .compactedMessages,
              .deviceAdded,
              .deviceRemoved,
+             .seen,
              .none:
             false
         }
@@ -134,6 +136,7 @@ extension Chat.RemoteMessageContentV1 {
         case deviceAdded(DeviceAddedContent)
         case deviceRemoved(DeviceRemovedContent)
         case multiChatAccepted(DeviceChatAccepted)
+        case seen(SeenContent)
     }
 }
 
@@ -226,6 +229,11 @@ extension Chat.RemoteMessageContentV1.MessageContent {
     struct DeviceChatAccepted: Equatable {
         let requestId: String
         let device: Chat.PeerDevice
+    }
+
+    struct SeenContent: Equatable {
+        let messageId: String
+        let timestamp: UInt64
     }
 }
 
@@ -342,6 +350,7 @@ extension Chat.RemoteMessageContentV1.MessageContent: ScaleCodable {
         case .deviceRemoved: 18
         case .compactedMessages: 19
         case .multiChatAccepted: 20
+        case .seen: 22
         }
     }
 
@@ -389,6 +398,8 @@ extension Chat.RemoteMessageContentV1.MessageContent: ScaleCodable {
             self = try .compactedMessages(CompactedMessagesContent(scaleDecoder: scaleDecoder))
         case 20:
             self = try .multiChatAccepted(DeviceChatAccepted(scaleDecoder: scaleDecoder))
+        case 22:
+            self = try .seen(SeenContent(scaleDecoder: scaleDecoder))
         default:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -437,6 +448,8 @@ extension Chat.RemoteMessageContentV1.MessageContent: ScaleCodable {
         case let .deviceRemoved(content):
             try content.encode(scaleEncoder: scaleEncoder)
         case let .multiChatAccepted(content):
+            try content.encode(scaleEncoder: scaleEncoder)
+        case let .seen(content):
             try content.encode(scaleEncoder: scaleEncoder)
         }
     }
@@ -639,5 +652,17 @@ extension Chat.RemoteMessageContentV1.MessageContent.DeviceChatAccepted: ScaleCo
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try requestId.encode(scaleEncoder: scaleEncoder)
         try device.encode(scaleEncoder: scaleEncoder)
+    }
+}
+
+extension Chat.RemoteMessageContentV1.MessageContent.SeenContent: ScaleCodable {
+    init(scaleDecoder: any ScaleDecoding) throws {
+        messageId = try String(scaleDecoder: scaleDecoder)
+        timestamp = try UInt64(scaleDecoder: scaleDecoder)
+    }
+
+    func encode(scaleEncoder: any ScaleEncoding) throws {
+        try messageId.encode(scaleEncoder: scaleEncoder)
+        try timestamp.encode(scaleEncoder: scaleEncoder)
     }
 }

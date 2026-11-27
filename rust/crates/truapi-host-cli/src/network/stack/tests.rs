@@ -1,14 +1,15 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_chain, edit_stack},
+		testing::{edit_chain, edit_descriptor, edit_stack, test_access},
 	},
 	*,
 };
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	Stack::new(descriptor, ChainBackend::Rpc)
+	Stack::new("test-stack".to_string(), descriptor, &ChainAccess::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
@@ -40,23 +41,45 @@ fn test_stack_from_descriptor() {
 	assert_eq!(*stack.chains(), Roles { people, ..paseo.chains().clone() });
 }
 
-/// Reserved identities derive under the TLD, and navigation accepts only the
-/// TLDs the core serves.
+/// The core serves names under a stack's TLD without knowing that TLD
+/// in advance, and reads a `dot` name as one of them.
 #[test]
-fn test_stack_unserved_tld_error() {
+fn test_stack_runs_on_its_own_tld() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-	let error = read_stack(staging).unwrap_err();
-	assert!(error.to_string().contains("staging"));
+	let stack = read_stack(staging)
+		.expect("any label is a TLD")
+		.core_stack()
+		.expect("core stack");
+	let served = |product_id: &str| {
+		stack
+			.served_id(&truapi::platform::ProductId::for_test(product_id))
+			.ok()
+			.map(String::from)
+	};
+	assert_eq!(
+		["app.staging", "app.dot", "app.paseo"].map(served),
+		[Some("app.staging".to_string()), Some("app.staging".to_string()), None]
+	);
 }
 
 /// The host routes each role by its genesis, so two roles on one genesis
-/// would send one role's traffic to the other's chain.
+/// would send one role's traffic to the other's chain. Such a descriptor is
+/// refused as it is read, before it can become a stack.
 #[test]
 fn test_stack_shared_genesis_error() {
 	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let shared = format!("0x{}", hex::encode(paseo.genesis().people));
-	let descriptor = edit_chain("Bulletin", |chain| chain["genesisHash"] = shared.into());
-	assert!(read_stack(descriptor).is_err());
+	let descriptor = edit_descriptor(|descriptor| {
+		let chains = descriptor["chains"].as_array_mut().expect("chains is an array");
+		let bulletin =
+			chains.iter_mut().find(|chain| chain["role"] == "Bulletin").expect("Bulletin");
+		bulletin["genesisHash"] = shared.clone().into();
+	});
+
+	assert_eq!(
+		trinity_stack::Document::parse(&descriptor).map(|_| ()),
+		Err(trinity_stack::Error::DuplicateGenesisHash(shared))
+	);
 }
 
 /// A stack id becomes a state directory name, so one that is not a plain
@@ -120,4 +143,35 @@ fn test_stack_missing_dub_or_pop_controller_error() {
 	});
 	let error = read_stack(without_pop_controller).unwrap_err();
 	assert!(error.to_string().contains("no dotns.popController"));
+}
+
+/// Every built-in network runs on the light client, whether or not
+/// `truapi-provider` bundles its specs: the descriptor names them.
+#[test]
+fn test_built_in_networks_name_their_light_specs() {
+	use clap::ValueEnum as _;
+
+	for network in Network::value_variants() {
+		assert!(network.bundled_stack(ChainBackend::LightClient).light_client().is_some());
+	}
+}
+
+/// A stack with no light spec for a chain the light client runs fails before
+/// the command starts, naming the chain, rather than on every connect.
+#[test]
+fn test_light_client_without_a_light_spec_error() {
+	let descriptor = edit_chain("Bulletin", |chain| {
+		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
+	});
+
+	let error = Stack::new(
+		"test-stack".to_string(),
+		descriptor.clone(),
+		&test_access(ChainBackend::LightClient),
+	)
+	.unwrap_err()
+	.to_string();
+
+	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
+	read_stack(descriptor).expect("RPC needs no light spec");
 }

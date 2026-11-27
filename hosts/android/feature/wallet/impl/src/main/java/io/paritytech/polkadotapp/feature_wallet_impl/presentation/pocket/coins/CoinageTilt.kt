@@ -5,12 +5,12 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.SystemClock
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.hypot
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -20,14 +20,10 @@ import kotlin.math.sqrt
  * still the highlight sits in the same place however the phone is held. Feeding the device's own tilt back
  * in turns the studio the other way, and a coin catches the light as you tilt it, the way a real one does.
  *
- * The studio is turned by the inverse of the phone's own rotation — pitch for leaning it, yaw for dipping an
- * edge — so the room stays put while the phone moves under it: tilt the screen to face upward and a face-on
- * coin mirrors the ceiling; dip the right edge and it mirrors the right wall. The coins themselves never move
- * with the phone.
- *
- * An earlier version rolled the room about the view axis for a sideways tilt, to hide a dead side that came
- * from the key light sitting off axis against a near-black wall. The room is lifted now (see
- * [CoinageTuning.ROOM_LIFT]) and the wall is no longer black, so the physical turn is back.
+ * The turn is the one rotation that carries the neutral gravity reading onto the current one, scaled into the
+ * travel and reversed, so the room stays put while the phone moves under it: tilt the screen to face upward and
+ * a face-on coin mirrors the ceiling. Gravity cannot see a turn about the vertical, so this is the part of the
+ * phone's movement it can see. The coins themselves never move with the phone.
  *
  * `TYPE_GRAVITY` needs no permission and no prompt. It is a fused reading and not present on every device,
  * so the plain accelerometer stands in; at rest the two agree, which is when the studio is allowed to move.
@@ -50,18 +46,6 @@ class CoinageTilt(context: Context) : SensorEventListener {
      */
     class Pose private constructor(val downX: Double, val downY: Double, val downZ: Double) {
         /**
-         * How far the right edge has dipped, and how far the screen has leaned back from vertical.
-         *
-         * Each against everything left over rather than against one other component. Anything of the form
-         * `atan2(x, y)` between two components that both shrink is a bearing, and a bearing is
-         * ill-conditioned wherever the phone is leaned well back — the way it is held to look at something.
-         * A five degree roll once read as five degrees upright, twenty-seven leaned back and a hundred and
-         * seventy past flat.
-         */
-        val sideways: Double get() = atan2(downX, hypot(downY, downZ))
-        val lean: Double get() = atan2(-downZ, hypot(downX, downY))
-
-        /**
          * How far the phone turned between two readings, whatever axis it turned about. Against the cross
          * product rather than from the dot alone: `acos` loses most of its precision for the small angles
          * between consecutive readings, which is where this is asked most.
@@ -76,8 +60,19 @@ class CoinageTilt(context: Context) : SensorEventListener {
         }
 
         /** Where the studio sits with the phone here, against this reading as square. */
-        fun turnTo(other: Pose): Turn =
-            studioTurn(lean = scaled(other.lean - lean), sideways = scaled(other.sideways - sideways))
+        fun turnTo(other: Pose): Turn {
+            val axisX = downY * other.downZ - downZ * other.downY
+            val axisY = downZ * other.downX - downX * other.downZ
+            val axisZ = downX * other.downY - downY * other.downX
+            val sine = sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ)
+
+            if (sine < 1e-9) return Turn()
+
+            val dot = downX * other.downX + downY * other.downY + downZ * other.downZ
+            val turned = -scaled(atan2(sine, dot)) / sine
+
+            return Turn(axisX * turned, axisY * turned, axisZ * turned)
+        }
 
         /**
          * Eases toward another reading, staying a direction rather than shrinking toward the middle: neutral
@@ -115,7 +110,16 @@ class CoinageTilt(context: Context) : SensorEventListener {
     private var previous: Pose? = null
     private var stillFor = 0.0
     private var lastReading = 0L
+    private var lastChange = 0L
+
+    @Volatile
+    private var readings: HandlerThread? = null
+
+    @Volatile
     private var target = Turn()
+
+    @Volatile
+    var onReading: ((sensed: Long, delivered: Long) -> Unit)? = null
 
     @Volatile
     var turn = Turn()
@@ -128,10 +132,18 @@ class CoinageTilt(context: Context) : SensorEventListener {
      */
     var onMove: (() -> Unit)? = null
 
+    /**
+     * Readings arrive on a thread of their own rather than the main one, so a busy UI frame never leaves
+     * them queued and ageing behind it.
+     */
     fun start() {
         val sensor = sensor ?: return
+        val thread = readings ?: HandlerThread("coinage-tilt").also {
+            it.start()
+            readings = it
+        }
 
-        sensors?.registerListener(this, sensor, INTERVAL_MICROSECONDS)
+        sensors?.registerListener(this, sensor, INTERVAL_MICROSECONDS, Handler(thread.looper))
     }
 
     /**
@@ -143,6 +155,20 @@ class CoinageTilt(context: Context) : SensorEventListener {
      */
     fun stop() {
         sensors?.unregisterListener(this)
+
+        val thread = readings
+        readings = null
+
+        // Reset on the readings thread, behind any reading already queued there, so none lands afterwards.
+        if (thread != null) {
+            Handler(thread.looper).post(::reset)
+            thread.quitSafely()
+        } else {
+            reset()
+        }
+    }
+
+    private fun reset() {
         neutral = null
         previous = null
         stillFor = 0.0
@@ -150,21 +176,24 @@ class CoinageTilt(context: Context) : SensorEventListener {
     }
 
     /**
-     * Eases toward the latest turn. Returns whether the studio is still catching up, so a field at rest
-     * under a still hand goes back to sleep.
+     * Takes the latest reading outright: the fused gravity is steady enough not to shimmer, and the filter
+     * that chased it was a longer delay than the rest of the pipeline put together.
+     *
+     * Returns whether the studio is still moving. It counts as moving for [LINGER] after the last change,
+     * since readings come slower than frames and a hand mid-gesture should not put the loop to sleep between
+     * two of them.
      */
-    fun advance(seconds: Float): Boolean {
-        if (isSettled) return false
+    fun advance(now: Long): Boolean {
+        val next = target
 
-        val blend = minOf(seconds.toDouble() * SMOOTHING, 1.0)
+        if (distance(next, turn) > REST_BAND) {
+            turn = next
+            lastChange = now
 
-        turn = Turn(
-            x = turn.x + (target.x - turn.x) * blend,
-            y = turn.y + (target.y - turn.y) * blend,
-            z = turn.z + (target.z - turn.z) * blend
-        )
+            return true
+        }
 
-        return true
+        return now - lastChange < LINGER
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -177,6 +206,15 @@ class CoinageTilt(context: Context) : SensorEventListener {
         lastReading = event.timestamp
 
         absorb(Pose.ofSensor(event.values), elapsed)
+
+        val onReading = onReading
+
+        if (onReading != null && distance(target, turn) > REST_BAND) {
+            // Sensor time is on the boot clock; the frame timeline is on the monotonic one.
+            val now = System.nanoTime()
+
+            onReading(event.timestamp - SystemClock.elapsedRealtimeNanos() + now, now)
+        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -211,21 +249,18 @@ class CoinageTilt(context: Context) : SensorEventListener {
         if (isWorthWaking) onMove?.invoke()
     }
 
-    /** Where the studio is against where it is heading, on whichever axis is furthest off. */
-    private val offset: Double
-        get() = maxOf(abs(target.x - turn.x), abs(target.y - turn.y), abs(target.z - turn.z))
+    private fun distance(a: Turn, b: Turn) = maxOf(abs(a.x - b.x), abs(a.y - b.y), abs(a.z - b.z))
 
-    /** Arrived: close enough that another frame would move nothing. */
-    private val isSettled: Boolean get() = offset <= REST_BAND
+    /** Where the studio is against where it is heading, on whichever axis is furthest off. */
+    private val offset: Double get() = distance(target, turn)
 
     /**
      * Far enough out to be worth a frame.
      *
-     * Deliberately much coarser than [isSettled]. Waking on the resting threshold meant waking on anything
+     * Deliberately much coarser than [REST_BAND]. Waking on the resting threshold meant waking on anything
      * at all: it works out to four hundredths of a degree of tilt, which is under the sensor's own noise
      * floor, so a phone merely held in a hand woke the renderer sixty times a second and redrew every coin
-     * for as long as the card was open. This is only the lighting — a degree of it is not visible — and
-     * once awake the studio still eases the whole way in, so a real movement is as smooth as it ever was.
+     * for as long as the card was open. Once awake, every reading past [REST_BAND] is drawn.
      */
     private val isWorthWaking: Boolean get() = offset > WAKE_BAND
 
@@ -267,14 +302,11 @@ class CoinageTilt(context: Context) : SensorEventListener {
          */
         const val DWELL = 0.4
 
-        /**
-         * Chases the device rather than tracking it exactly: raw attitude is noisy enough to make a specular
-         * highlight shimmer while the phone is held still.
-         */
-        const val SMOOTHING = 8.0
+        /** Under sensor noise, so a field at rest does not keep redrawing for it. */
+        private const val REST_BAND = 0.002
 
-        /** Arrived. Fine, because it only decides when to stop easing, not when to start. */
-        private const val REST_BAND = 0.0008
+        /** A few readings' worth, in nanoseconds. */
+        private const val LINGER = 100_000_000L
 
         /**
          * A degree of the phone's own tilt, converted into the studio's turn.
@@ -284,8 +316,8 @@ class CoinageTilt(context: Context) : SensorEventListener {
          */
         private val WAKE_BAND = TRAVEL / RANGE * (PI / 180)
 
-        private const val INTERVAL_MICROSECONDS = 16_667
-        private const val INTERVAL_SECONDS = 1.0 / 60
+        private const val INTERVAL_MICROSECONDS = 25_000
+        private const val INTERVAL_SECONDS = 1.0 / 40
         private const val MIN_INTERVAL = 1.0 / 240
         private const val MAX_INTERVAL = 1.0 / 20
         private const val NANOSECONDS = 1_000_000_000.0
@@ -295,43 +327,5 @@ class CoinageTilt(context: Context) : SensorEventListener {
          * studio's and no tilt can push it further.
          */
         fun scaled(angle: Double): Double = angle.coerceIn(-RANGE, RANGE) / RANGE * TRAVEL
-
-        /**
-         * Where the studio sits for a phone leaned back by [lean] and with its right edge dipped by
-         * [sideways], both already scaled into the travel: the inverse of the phone's own rotation.
-         */
-        fun studioTurn(lean: Double, sideways: Double): Turn {
-            val turn = leaned(pitch = lean, yaw = -sideways)
-
-            return Turn(-turn.x, -turn.y, -turn.z)
-        }
-
-        /**
-         * A pitch and then a yaw as one turn: the two turns that show a disc's wall. Composed as rotations
-         * rather than added as a vector, because turns about different axes do not add.
-         */
-        fun leaned(pitch: Double, yaw: Double): Turn {
-            // Quaternion about x, then about y, as a product; then read back as axis times angle.
-            val halfPitch = pitch / 2
-            val halfYaw = yaw / 2
-            val cosPitch = cos(halfPitch)
-            val sinPitch = sin(halfPitch)
-            val cosYaw = cos(halfYaw)
-            val sinYaw = sin(halfYaw)
-
-            val w = cosPitch * cosYaw
-            val x = sinPitch * cosYaw
-            val y = cosPitch * sinYaw
-            // The cross term of the two axes, which is what makes a product of rotations differ from a sum.
-            val z = sinPitch * sinYaw
-
-            val sine = sqrt(x * x + y * y + z * z)
-
-            if (sine < 1e-9) return Turn()
-
-            val angle = 2 * atan2(sine, w)
-
-            return Turn(x / sine * angle, y / sine * angle, z / sine * angle)
-        }
     }
 }

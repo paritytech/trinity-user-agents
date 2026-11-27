@@ -15,7 +15,7 @@ Polkadot iOS — a production-grade iOS wallet and social app for the Polkadot b
 - **Operation-iOS** (3.0.0) — Core Data service (writer/observer/reader modes), repositories, operations
 - **CoreData** — Local persistence (SubstrateDataModel + UserDataModel)
 - **WebRTC** — Peer-to-peer voice/video calls
-- **Firebase** — Remote Config
+- **Firebase** — Remote Config (a known centralised dependency, see `README.md` › Centralised dependencies)
 - **Fastlane + GitHub Actions** — CI/CD pipeline
 
 ## Build Commands

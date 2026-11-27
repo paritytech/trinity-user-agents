@@ -138,35 +138,40 @@ struct PublishedPocketCardsTests {
         }
     }
 
-    // MARK: - The face a card opens with
+    // MARK: - Whether a card opens covered
 
     @Test
-    func opensACardWithItsFaceAwayWhenItsProductPublishesItSo() async {
-        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
+    func opensACardCoveredWhenItsProductPublishesItSo() async {
+        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([coveredLoyalty])))
 
-        let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards)
+        let startsCovered = await PocketCardCoverOnOpen.startsCovered(for: loyaltyKey, cards: cards)
 
-        #expect(!faceShown)
+        #expect(startsCovered)
     }
 
-    /// A chain read that hangs must not fold the face long after the card
+    /// A chain read that hangs must not cover the face long after the card
     /// opened, nor keep running once the open stops counting on its answer.
     @Test
-    func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async throws {
+    func opensUncoveredWhenTheProductDoesNotAnswerInTime() async throws {
         let clock = ManualClock()
 
         try await confirmation { lookupStopped in
             let cards = LateCards(clock: clock) { lookupStopped() }
             let opening = Task {
-                await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .seconds(5), clock: clock)
+                await PocketCardCoverOnOpen.startsCovered(
+                    for: loyaltyKey,
+                    cards: cards,
+                    timeout: .seconds(5),
+                    clock: clock
+                )
             }
 
             try await withTimeout(.hangGuard) { await clock.resumeSleep(for: .seconds(5)) }
-            let faceShown = try await withTimeout(.hangGuard) {
+            let startsCovered = try await withTimeout(.hangGuard) {
                 await withTaskCancellationHandler { await opening.value } onCancel: { opening.cancel() }
             }
 
-            #expect(faceShown)
+            #expect(!startsCovered)
         }
     }
 }
@@ -179,11 +184,11 @@ private let loyalty = PocketCardDefinition(
     preview: .archive(path: "faces/loyalty.json")
 )
 
-private let faceAwayLoyalty = PocketCardDefinition(
+private let coveredLoyalty = PocketCardDefinition(
     id: PocketCardId(value: "loyalty"),
     title: "Loyalty",
     preview: .archive(path: "faces/loyalty.json"),
-    faceShown: false
+    startsCovered: true
 )
 
 private let loyaltyKey = PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
@@ -214,7 +219,7 @@ private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResol
     ))
 }
 
-/// Publishes the card with its face away ten seconds after being asked on
+/// Publishes the card covered ten seconds after being asked on
 /// `clock`, unless cancelled first, which it reports.
 private struct LateCards: PublishedPocketCardsResolving {
     let clock: ManualClock
@@ -227,7 +232,7 @@ private struct LateCards: PublishedPocketCardsResolving {
                 productId: productId,
                 productName: "Game",
                 workerContentId: productId,
-                definition: faceAwayLoyalty
+                definition: coveredLoyalty
             )
         } onCancel: {
             onCancel()

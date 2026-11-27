@@ -37,6 +37,7 @@ public enum CoinageSubmissionParams {
     public static let splitPolicyId = SubmissionPolicyId("coinage-split")
     public static let unloadPolicyId = SubmissionPolicyId("coinage-unload")
     public static let claimPolicyId = SubmissionPolicyId("coinage-claim")
+    public static let reclaimPolicyId = SubmissionPolicyId("coinage-reclaim")
 
     public static func splitPolicy(_ params: TransferSubmissionParams) throws -> SubmissionPolicy {
         try SubmissionPolicy(id: splitPolicyId, params: encode(params))
@@ -44,6 +45,10 @@ public enum CoinageSubmissionParams {
 
     public static func unloadPolicy(_ params: TransferSubmissionParams) throws -> SubmissionPolicy {
         try SubmissionPolicy(id: unloadPolicyId, params: encode(params))
+    }
+
+    public static func reclaimPolicy(_ params: TransferSubmissionParams) throws -> SubmissionPolicy {
+        try SubmissionPolicy(id: reclaimPolicyId, params: encode(params))
     }
 
     public static func claimPolicy(_ params: ClaimSubmissionParams) throws -> SubmissionPolicy {
@@ -70,13 +75,10 @@ public enum CoinageSubmissionParams {
 }
 
 public extension TransferSubmissionParams {
-    /// A transfer that keeps being rebuilt for as long as the recipient keeps trying to claim.
-    ///
-    /// The same window ``CoinageConstants/claimRetryWindow`` gives the claim, so neither side gives up
-    /// while the other still tries.
+    /// A transfer that keeps being rebuilt for ``CoinageConstants/chatPaymentRetryWindow``.
     static func retriedTransfer(from start: Date) -> TransferSubmissionParams {
         TransferSubmissionParams(
-            buildUntil: start.addingTimeInterval(CoinageConstants.claimRetryWindow),
+            buildUntil: start.addingTimeInterval(CoinageConstants.chatPaymentRetryWindow),
             retryFailures: true
         )
     }

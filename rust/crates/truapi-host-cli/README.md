@@ -29,6 +29,7 @@ One binary, `truapi-host`:
 | `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
+| `materials` | `resolve` a card face's materials as a phone would: each node loading, ready with its shaders, or drawn plain and why. Checks a material end to end without a phone. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -54,6 +55,7 @@ moves that one link.
 | `TRUAPI_HOST_VERSION` | Install this version instead of the current stable one. |
 | `TRUAPI_HOST_INSTALL_DIR` | Version store, default `$XDG_DATA_HOME/truapi-host`. |
 | `TRUAPI_HOST_BIN_DIR` | Directory the `PATH` symlink goes in, default `~/.local/bin`. |
+| `TRUAPI_HOST_PRESERVE_CARGO_INSTALL` | Leave a `cargo install` copy in place instead of removing it. |
 
 Product scripts (`--script`, `/script`) work from an installed binary: the
 archive ships a self-contained `runner.js` with the `@parity/truapi` client and
@@ -66,6 +68,25 @@ Product frames use a private, per-process WebSocket-over-Unix-domain-socket by
 default, so starting either host does not reserve a TCP port. Pass
 `--frame-listen 127.0.0.1:0` to expose an ordinary loopback WebSocket instead;
 this is required for browser clients, which cannot open filesystem sockets.
+
+### In GitHub Actions
+
+```yaml
+- uses: paritytech/trinity-user-agents/.github/actions/install-truapi-host@truapi-host-cli-v<version>
+- run: truapi-host --version
+```
+
+Every CLI release tags the action as `truapi-host-cli-v<version>`, and the
+action installs the CLI version of the commit it is checked out at, so that tag
+installs that release. On a branch it installs the version that branch's
+`Cargo.toml` names, which only exists once that version is published. Pass
+`version: latest` to install the current stable release instead, or any
+published version such as `version: 0.29.0`. The action works on the same
+platforms as the installer, puts `truapi-host` on `PATH` for the rest of the
+job, sets `TRUAPI_HOST_NO_UPDATE=1` so the binary does not update itself
+mid-job, and outputs the installed `version` and the binary's `path`. A remote
+`uses:` downloads the repository at that ref, about 25 MB, so a job with a
+large matrix pays that per job.
 
 ### Staying current
 
@@ -160,10 +181,10 @@ itself:
 
 That script installs the SDK bridge and the shared `js/container` sandbox
 synchronously. Keep it before application scripts, without `async` or `defer`.
-Updated SDKs use the injected `__HOST_API_CLIENT__` across reconnects. Older SDKs
-can still start through the `__HOST_API_PORT__` adapter but require a page reload
-after a disconnect. SDK calls and sandbox permission checks share one host
-WebSocket and its temporary permissions.
+Updated SDKs build their own client over the injected `__HOST_API_TRANSPORT__`
+and keep it across reconnects. Older SDKs use the `__HOST_API_PORT__` adapter,
+which survives a reconnect too. SDK calls and sandbox permission checks share
+one host WebSocket and its temporary permissions.
 `/script` uses the same fetch and WebSocket permission checks in Bun, and the
 XHR wrapper when that API is available. Dev keeps automatic approvals, and the
 app server handles assets and hot reload. `--app-port` names the development
@@ -204,7 +225,7 @@ client could drive a host that auto-approves confirmations. Unix-socket clients
 and loopback TCP clients that send no `Origin` are treated as local processes.
 
 The product is then detected as hosted and holds the real product account for
-its own `.dot` name, so signing, statements, entropy, permissions and storage
+its own name, so signing, statements, entropy, permissions and storage
 all take their production code paths with no phone involved. `--product-id` is
 not optional: the host derives the product account from it and refuses to _sign_
 for any other product id, and a mismatch only surfaces later, as a
@@ -260,6 +281,10 @@ Commands always start with `/`:
 | `/log <level>` | Save tracing as `error`, `warn`, `info`, `debug`, or `trace`, and apply it now. |
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
+| `/profile` | Resolve the active identity's public avatar metadata from dotNS (signing host). |
+| `/profile <username>` | Resolve another username's public avatar metadata without provisioning an identity (signing host). |
+| `/profile upload <image>` | Publish a local PNG, JPEG, GIF, or WebP image as the active identity's avatar (signing host). |
+| `/search <prefix>` | List the usernames the network's identity backend holds under a prefix, with what Asset Hub records for each: the `DotnsGateway` pallet's `LiteLabelOwner` and `AccountNames` entries, and the username the dotNS contracts resolve for the account (signing host). Apps only find names whose `AccountNames` entry matches. |
 | `/session` | Show the current session name, path, and user id (signing host). |
 | `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
@@ -270,6 +295,19 @@ Commands always start with `/`:
 | `/clear` | Clear the visible transcript. |
 | `/copy` | Copy the retained transcript to the system clipboard. |
 | `/quit` | Shut down cleanly. |
+
+`/profile upload` requires an existing identity with a username. It accepts the
+images the core loads: up to 2 MiB and 4096 pixels on each side. Quote paths
+containing spaces, for example `/profile upload "pictures/my avatar.png"`.
+
+The command acts as the identity's Humanity product, `peopl.<network TLD>`. It
+calls the core's TrUAPI methods for that product in process, the same calls the
+product makes: a smart contract allowance for account 0, then a preimage upload
+of the image to Bulletin. Both go through the normal permission and confirmation
+flow. It then updates the username's dotNS `profile` text record, signed with the
+identity key. Unrelated entries are kept, and the record is not overwritten if it
+changed during the upload. Profile reads and uploads also work through
+`signing-host exec`, for example `truapi-host signing-host exec '/profile alice.01'`.
 
 ### Pasting a pairing QR image
 
@@ -298,8 +336,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` completes filesystem paths. Enter submits `/session <name>` as
-typed; use Tab first to insert a suggested exact session name.
+and `/script` and `/profile upload` complete filesystem paths. Profile uploads
+also complete quoted directories containing spaces. Enter submits `/session <name>`
+as typed; use Tab first to insert a suggested exact session name.
 Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a
@@ -703,9 +742,11 @@ try {
 }
 ```
 
-`--product-id` (a dotNS name ending in `.dot`, `.paseo` or `.testnet`, or a
+`--product-id` (a dotNS name ending in `.dot` or in the stack's TLD, or a
 `localhost` identifier; default
-`headless-playground.dot`) sets the initial product. `/product <id>` changes it
+`headless-playground.dot`) sets the initial product. On a stack whose TLD is
+not `dot`, a `.dot` name selects the same name under the stack's TLD, so the
+default is `headless-playground.paseo` on Paseo. `/product <id>` changes it
 for the lifetime of the process. Switching disconnects active product
 WebSockets. Reload browser dev pages to use the new product context. The
 network, pairing relationship, signing-host session, and wallet identity stay active.
@@ -776,8 +817,13 @@ Scripts under `js/scripts/` include:
   only execution Pocket is served to. It seeds the in-memory Pocket host from
   `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), so one card is
   removable and one privileged, and records every removal the host is asked for
-  in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
-  host and the product agree rather than resting on the product's word.
+  in `TRUAPI_POCKET_LOG`. As the product connects, the host opens a render
+  stream for each card, as a phone does when a card comes on screen, and closes
+  it when the card is removed. It resolves the materials of every face the
+  product draws, reports each fallback through
+  `Renderer::failure_subscribe`, and records each result in the same transcript.
+  The cases read that transcript, so a pass means the host and the product agree
+  rather than resting on the product's word.
 
   The funding phase builds the host with `--features test-host` and installs
   a scripted funding overlay: each request the product makes is answered with
@@ -795,8 +841,10 @@ Scripts under `js/scripts/` include:
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
-  list so `contacts.pick` has someone to return. An empty spec is an empty list,
-  which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
+  list so `contacts.pick` has someone to return. Each name is also the username
+  `contacts.usernames` serves to the game product, so it is a bare dotNS label
+  such as `alice` or `alice.07`, and the core drops any other name. An empty
+  spec is an empty list, which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
   the picker offers; the approval surface asks about it like any other action,
   so a headless run approves it and an interactive one does not.
 
@@ -942,6 +990,22 @@ Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
 
+## Materials
+
+`truapi-host materials resolve` checks a material the way a phone uses it: fetched
+from Bulletin (or kept from a file), checked, limited and built into shaders by
+the same core:
+
+```sh
+truapi-host materials resolve face.json --out shaders            # fetches from Bulletin
+truapi-host materials resolve face.json --materials ./materials  # keeps local files first
+truapi-host materials resolve face.json --metal --out shaders    # iOS shaders instead of Android's
+```
+
+`face.json` is a card face as the generated client writes a renderer tree, with
+`Materials` nodes naming material IDs. Each line of the output is a node:
+`ready`, `loading`, or `plain` with its reason. See [SPEC.md](SPEC.md#68-top-level-materials).
+
 ## Trinity stacks
 
 `truapi-host stack` publishes and checks the descriptor that tells hosts and
@@ -974,11 +1038,15 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
 copy was signed with another key (every derived account, or the namespace every
 session is stored under, would change; remove the copy to bundle it on purpose),
-and a built-in network's copy the CLI cannot run on.
+and a built-in network's copy the CLI cannot run on over either chain backend.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
-copy that differs from the one at `--out` only in fields truapi-host does not read
-leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
-has every option.
+copy that differs from the one at `--out` only in fields neither truapi-host nor
+the core reads, and names the same light specs, leaves it in place and reports it
+as current. `--light-specs <file>` also fetches the light specs of the relay,
+People, Asset Hub and Bulletin, checks them against the descriptor and writes
+them to `<file>` by `sha256`; the script passes it for each stack with a
+`stacks/light-specs/<name>.json`, which the binary ships.
+[SPEC.md](SPEC.md#67-top-level-stack) has every option.
 
 ## Statement-store allowance
 
@@ -1078,7 +1146,8 @@ that reports a genesis other than the one it is routed as is an error; for a bui
 it reports that the stack restarted from genesis and which descriptor is in use, after
 fetching the published descriptor once more when it could not be fetched before. A
 `NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
-within 3 seconds is logged and left to fail on first use.
+within 3 seconds is logged and left to fail on first use. On the light client the
+light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
 with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
 Polkadot, whose signed descriptor the binary ships as a reference, with every node the
@@ -1105,13 +1174,13 @@ People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
 role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
-`tld` the core does not serve (`dot`, `paseo`, `testnet`), has no `dub` service or
-no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
+`tld` that is not a lowercase DNS label, has no `dub` service or no
+`dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
-chain. The product namespace (`HostChainSet.network` and the state directory) is the
-descriptor's `id` without a trailing `-fork`, except that the `polkadot-fork`
-namespace is its full `id`. Use a
+chain. `get_chain_info` reports the descriptor's `network`. The product
+namespace (the state directory) is the descriptor's `id` without a trailing
+`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that
@@ -1133,9 +1202,12 @@ the CLI creates and cleans up a unique temporary Unix socket.
 `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
-command uses the selected backend. The light client is slower than RPC,
-supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
-claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
+command uses the selected backend. The light client takes its chain specs from
+the stack's descriptor, so it runs every built-in network and any `--stack`. The
+binary ships the specs of the built-in networks, so they need no spec server; a
+`--stack` naming other specs fetches them once and keeps them under the state
+directory. It is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
+run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 

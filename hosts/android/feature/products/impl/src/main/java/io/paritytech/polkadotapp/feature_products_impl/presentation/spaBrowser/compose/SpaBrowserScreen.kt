@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitle
+import io.paritytech.polkadotapp.common.presentation.tabbar.ShowTabBarTucked
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -39,6 +40,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
+    ShowTabBarTucked()
+
     val state by viewModel.state.collectAsStateWithLifecycle()
     val webView by viewModel.webView.collectAsStateWithLifecycle()
 

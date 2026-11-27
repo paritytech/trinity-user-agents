@@ -112,3 +112,26 @@ jobs:
             curl -fsSL "${url}.sha256" -o "${name}.sha256"
             sha256sum -c "${name}.sha256"
           done
+
+      # Workflows pin the install action to this tag, so it exists only once
+      # the archives above are verified and is never moved. The action reads
+      # the CLI version from the commit it is checked out at, so the tag
+      # installs its own release without carrying a second copy of the number.
+      - name: Tag the install action
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          tag="truapi-host-cli-v${VERSION}"
+
+          existing="$(git ls-remote --tags "https://github.com/${GH_REPO}" "refs/tags/${tag}" | cut -f1)"
+          if [ -z "${existing}" ]; then
+            gh api --method POST "repos/${GH_REPO}/git/refs" \
+              -f ref="refs/tags/${tag}" \
+              -f sha="${RELEASE_REF}" >/dev/null
+          elif [ "${existing}" != "${RELEASE_REF}" ]; then
+            echo "::error::${tag} already points at ${existing}, not ${RELEASE_REF}"
+            exit 1
+          fi

@@ -1,13 +1,14 @@
 use super::*;
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, atomic::Ordering},
+	sync::{Arc, Mutex, atomic::Ordering, mpsc},
 };
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError,
+	StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost,
 	UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
@@ -16,8 +17,12 @@ use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
 use crate::{
-	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	PairedSsoPeer, PairingProposal,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
+	markers::{
+		MARKERS, MarkerClass, NATIVE_PUSH_NOTIFICATION, Severity, TRACING_ERROR, TRACING_WARN,
+	},
 };
 
 use super::{
@@ -96,15 +101,17 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
-	pub face_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
+	pub cover_requests: Mutex<Vec<bool>>,
+	pub turn_requests: Mutex<Vec<truapi::latest::PocketCardSide>>,
+	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
 	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_rejection: Mutex<Option<String>>,
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
-	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -116,6 +123,7 @@ pub struct EventCallbacks {
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 	pub chain_connects: Mutex<Vec<Vec<u8>>>,
 	pub chain_sends: Mutex<Vec<(u32, String)>>,
+	pub chain_send_rejection: Mutex<Option<String>>,
 	pub chain_closes: Mutex<Vec<u32>>,
 	/// Worker demand transitions, in arrival order.
 	pub worker_demand: Mutex<Vec<(ProductId, WorkerTransition)>>,
@@ -149,7 +157,8 @@ impl EventCallbacks {
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+			events: Mutex::new(Vec::new()),
+			chat_room_status: Mutex::new(truapi::latest::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
 			chat_registered_bots: Mutex::new(Vec::new()),
@@ -170,6 +179,7 @@ impl EventCallbacks {
 			on_chain_connect: Mutex::new(None),
 			chain_connects: Mutex::new(Vec::new()),
 			chain_sends: Mutex::new(Vec::new()),
+			chain_send_rejection: Mutex::new(None),
 			chain_closes: Mutex::new(Vec::new()),
 			worker_demand: Mutex::new(Vec::new()),
 			paired_devices: Mutex::new(Vec::new()),
@@ -182,8 +192,19 @@ impl EventCallbacks {
 			remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
-			face_requests: Mutex::new(Vec::new()),
+			cover_requests: Mutex::new(Vec::new()),
+			turn_requests: Mutex::new(Vec::new()),
 		}
+	}
+
+	/// Whether this execution's card was asked to be covered, in order.
+	pub fn cover_requests(&self) -> Vec<bool> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").clone()
+	}
+
+	/// The sides this execution's card was asked to turn to, in order.
+	pub fn turn_requests(&self) -> Vec<truapi::latest::PocketCardSide> {
+		self.turn_requests.lock().expect("turn requests mutex poisoned").clone()
 	}
 }
 
@@ -191,6 +212,10 @@ impl EventCallbacks {
 impl HostCallbacks for EventCallbacks {
 	fn on_core_log(&self, marker: String, detail: String) {
 		self.logs.lock().expect("logs mutex poisoned").push((marker, detail));
+	}
+
+	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>) {
+		self.events.lock().expect("events mutex poisoned").push((marker, attributes));
 	}
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
@@ -233,7 +258,7 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn push_notification(
 		&self,
-		_request: v01::HostPushNotificationRequest,
+		_request: truapi::latest::HostPushNotificationRequest,
 	) -> Result<u32, HostRejection> {
 		Ok(0)
 	}
@@ -258,12 +283,19 @@ impl HostCallbacks for EventCallbacks {
 			DevicePermissionStatus::NotApplicable
 		})
 	}
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").push(covered);
+		Ok(crate::platform::ExpandedCardCoverOutcome::Applied)
+	}
+	async fn turn_expanded_card(
+		&self,
+		side: truapi::latest::PocketCardSide,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+		self.turn_requests.lock().expect("turn requests mutex poisoned").push(side);
+		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
 		&self,
@@ -307,6 +339,9 @@ impl HostCallbacks for EventCallbacks {
 		Ok(*self.chain_id.lock().expect("chain id mutex poisoned"))
 	}
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection> {
+		if let Some(reason) = self.chain_send_rejection.lock().unwrap().clone() {
+			return Err(HostRejection::Rejected { reason });
+		}
 		self.chain_sends
 			.lock()
 			.expect("chain sends mutex poisoned")
@@ -362,9 +397,6 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<bool, HostRejection> {
 		Ok(false)
 	}
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-		Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-	}
 
 	async fn transaction_extension_versions(
 		&self,
@@ -390,14 +422,10 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
-	async fn begin_operation(
+	async fn clear_product_storage(
 		&self,
 		_product_id: ProductId,
-		_label: String,
-	) -> Result<u32, HostRejection> {
-		Ok(1)
-	}
-	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
+	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
 }
@@ -409,7 +437,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection> {
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
@@ -456,7 +484,7 @@ impl NativeChatCallbacks for EventCallbacks {
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection> {
 		self.chat_room_footers
 			.lock()
@@ -518,6 +546,31 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
 	);
 }
 
+// A running product follows its keys; once its storage is cleared it must stop
+// seeing the values the host just deleted, while a product whose id extends
+// the cleared one keeps its own.
+#[test]
+fn clearing_a_product_reaches_its_storage_subscriptions_only() {
+	let (_callbacks, _events, platform) = event_platform();
+	let cleared = ProductId::for_test("myapp.dot");
+	let other = ProductId::for_test("myapp.dotapp.dot");
+	let mut own =
+		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
+	let mut others = platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	for subscription in [&mut own, &mut others] {
+		futures::executor::block_on(futures::StreamExt::next(subscription));
+	}
+
+	futures::executor::block_on(ProductStorage::clear_product(&platform, cleared))
+		.expect("clear product");
+
+	assert_eq!(
+		futures::FutureExt::now_or_never(futures::StreamExt::next(&mut own)),
+		Some(Some(Ok(v01::HostLocalStorageChangeItem { value: None })))
+	);
+	assert_eq!(futures::FutureExt::now_or_never(futures::StreamExt::next(&mut others)), None);
+}
+
 pub fn native_host_runtime_config() -> HostRuntimeConfig {
 	HostRuntimeConfig {
 		host_name: "Polkadot Web".to_string(),
@@ -525,16 +578,39 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		host_version: None,
 		platform_type: None,
 		platform_version: None,
-		people_chain_genesis_hash: vec![0xa2; 32],
-		bulletin_chain_genesis_hash: vec![0xbb; 32],
-		asset_hub_chain_genesis_hash: vec![0xcc; 32],
-		network_suffix: "paseo".to_string(),
+		// On `dot`, the TLD the tests' products are under, in a build that
+		// allows it.
+		stack: crate::native::BundledStack {
+			reserved_values: crate::platform::ReservedValuesPolicy::ALLOWED,
+			..native_bundled_stack(&crate::test_support::test_descriptor(
+				"dot", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+			))
+		},
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
-		pinned_pocket_cards: Vec::new(),
+		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
+		device_encryption_key: None,
+	}
+}
+
+/// The bundled copy [`crate::test_support::published_test_descriptor`] is a
+/// later publication of: the same chains on `paseo`.
+fn native_bundled_paseo_stack() -> crate::native::BundledStack {
+	native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	))
+}
+
+/// `descriptor` signed, as a native host bundles it.
+pub fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
+	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
+	crate::native::BundledStack {
+		pointer,
+		descriptor,
+		reserved_values: crate::platform::ReservedValuesPolicy::default(),
 	}
 }
 
@@ -760,10 +836,16 @@ fn process_runtime_counts_worker_references_per_product() {
 	.expect("host runtime config should be valid");
 	let product = || ProductId::for_test("shared.dot");
 
-	host.acquire_worker(product());
-	host.acquire_worker(product());
-	host.release_worker(product());
-	host.release_worker(product());
+	let first = host.claim_worker(product());
+	let second = host.claim_worker(product());
+	first.release();
+	first.release();
+	drop(first);
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start)]
+	);
+	drop(second);
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
@@ -805,6 +887,70 @@ fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	});
 
 	assert_eq!(*callbacks.calls.lock().expect("game calls mutex poisoned"), vec![Some(42), None]);
+}
+
+/// A host hands over the device key it announced to contacts before the core
+/// kept one. The core adopts it before the local session activates, so the
+/// first `Connected` already names it and the host reads it back.
+#[test]
+fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let config =
+		HostRuntimeConfig { device_encryption_key: Some([9; 32]), ..native_host_runtime_config() };
+	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+		.expect("host runtime config should be valid");
+
+	let first_connected_key = callbacks
+		.auth_states
+		.lock()
+		.expect("auth state mutex poisoned")
+		.iter()
+		.find_map(|state| match state {
+			AuthState::Connected(info) => Some(info.device_enc_public_key),
+			_ => None,
+		});
+	let handed_over_public_key =
+		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
+	assert_eq!(
+		(host.device_encryption_key().expect("device key should read"), first_connected_key),
+		([9; 32], Some(Some(handed_over_public_key)))
+	);
+}
+
+#[test]
+fn the_runtime_pins_humanity_on_the_network_of_the_stack_it_runs() {
+	struct Recorder(Mutex<Vec<(String, String, bool)>>);
+	impl super::NativePocketObserver for Recorder {
+		fn on_cards(&self, cards: Vec<crate::pocket_cards::PocketEntry>) {
+			*self.0.lock().unwrap() = cards
+				.into_iter()
+				.map(|card| (card.product_id.to_string(), card.card_id, card.privileged))
+				.collect();
+		}
+
+		fn on_error(&self, reason: String) {
+			panic!("the Pocket must read: {reason}");
+		}
+	}
+	let mut config = native_host_runtime_config();
+	config.stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"testnet", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	));
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+	let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+
+	let _subscription = host.observe_pocket_cards(recorder.clone());
+
+	crate::test_support::wait_until(
+		|| !recorder.0.lock().unwrap().is_empty(),
+		"the Pocket must list its pinned cards",
+	);
+	assert_eq!(
+		*recorder.0.lock().unwrap(),
+		vec![("peopl.testnet".to_string(), "humanity".to_string(), true)]
+	);
 }
 
 #[test]
@@ -878,9 +1024,10 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 			public_key: [7; 32],
 			identity_account_id: None,
 			chat_public_key: None,
-			device_enc_public_key: None,
+			peer_device_enc_public_key: None,
 			peer_statement_account_id: None,
 			device_statement_account_id: None,
+			device_enc_public_key: None,
 			lite_username: Some("alice".to_string()),
 			full_username: None,
 		},
@@ -895,9 +1042,10 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 				public_key: [7; 32],
 				identity_account_id: None,
 				chat_public_key: None,
-				device_enc_public_key: None,
+				peer_device_enc_public_key: None,
 				peer_statement_account_id: None,
 				device_statement_account_id: None,
+				device_enc_public_key: None,
 				lite_username: Some("alice".to_string()),
 				full_username: None,
 			})),
@@ -1434,7 +1582,7 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 	))
 	.expect("an action set must reach the host");
 
-	let mut actions = connection.subscribe::<truapi::latest::GenericError>();
+	let mut actions = connection.subscribe::<truapi::latest::GenericError>(1);
 	connection
 		.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(
 			v01::HostChatActionSubscribeItem {
@@ -1611,10 +1759,11 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	};
 	let product =
 		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
-	let request = v01::HostChatCreateRoomRequest {
-		room_id: "support".to_string(),
+	let request = truapi::latest::HostChatCreateRoomRequest {
+		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -1622,14 +1771,18 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
+		"support".to_string(),
 		request.clone(),
 	))
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
-		&platform, &product, request,
+		&platform,
+		&product,
+		"support".to_string(),
+		request,
 	))
 	.unwrap();
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1643,10 +1796,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	))
 	.unwrap();
 
-	assert_eq!(created.status, v01::ChatRoomRegistrationStatus::New);
+	assert_eq!(created, truapi::latest::ChatRoomRegistrationStatus::New);
 	assert_eq!(updated_rooms.rooms.len(), 1);
 	assert_eq!(updated_rooms.rooms[0].room_id, "support");
-	assert_eq!(existing.status, v01::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(existing, truapi::latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(posted.message_id, "message-1");
 	assert_eq!(
 		callbacks
@@ -1682,16 +1835,16 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
 		&product,
-		v01::HostChatSetRoomFooterRequest {
+		truapi::latest::HostChatSetRoomFooterRequest {
 			room_id: "support".to_string(),
-			footer: v01::ChatRoomFooter::Empty,
+			footer: truapi::latest::ChatRoomFooter::Empty,
 		},
 	))
 	.unwrap();
 
 	assert_eq!(
 		*callbacks.chat_room_footers.lock().expect("room footers mutex poisoned"),
-		[("support".to_string(), v01::ChatRoomFooter::Empty)]
+		[("support".to_string(), truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -1787,86 +1940,261 @@ fn native_chain_provider_forwards_send_response_and_close() {
 	);
 }
 
+/// A request the host refuses to send is never answered, so the connection
+/// ends its response stream and the client fails what it waits on.
+#[test]
+fn native_chain_provider_closes_when_the_host_refuses_a_send() {
+	let (callbacks, _events, platform) = event_platform();
+	*callbacks.chain_id.lock().unwrap() = Some(42);
+	let connection =
+		futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let mut responses = connection.responses();
+	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
+
+	connection.send(r#"{"jsonrpc":"2.0","id":1}"#.to_string());
+
+	assert_eq!(futures::FutureExt::now_or_never(responses.next()), Some(None));
+	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
+}
+
 #[test]
 fn runtime_config_reports_the_platform_the_library_was_built_for() {
 	let resolved = NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config())
 		.expect("config is valid");
 
-	assert_eq!(resolved.signing.host.host_info.platform, native_host_platform());
+	assert_eq!(resolved.host.host_info.platform, native_host_platform());
 }
 
-#[test]
-fn runtime_config_rejects_wrong_size_genesis_hash() {
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		people_chain_genesis_hash: vec![0; 31],
-		..native_host_runtime_config()
-	})
-	.unwrap_err();
-
-	assert_eq!(
-		err,
-		NativeRuntimeConfigError::Invalid {
-			reason: "people_chain_genesis_hash must be exactly 32 bytes, got 31".to_string(),
-		}
-	);
+/// A host HTTP client that serves one published descriptor, and passes on
+/// each status the core reports.
+struct PublishedStack {
+	document: Vec<u8>,
+	statuses: mpsc::Sender<StackStatus>,
 }
 
-#[test]
-fn each_configured_genesis_hash_reaches_its_own_field() {
-	// Three adjacent `Vec<u8>` feeding a positional constructor:
-	// transposing any two compiles and, without this, passes.
-	let resolved = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		people_chain_genesis_hash: vec![0xa1; 32],
-		bulletin_chain_genesis_hash: vec![0xb2; 32],
-		asset_hub_chain_genesis_hash: vec![0xc3; 32],
-		..native_host_runtime_config()
-	})
-	.expect("config is valid");
+#[async_trait::async_trait]
+impl NativeStackCallbacks for PublishedStack {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection> {
+		Ok(StackFetchResponse::Document { bytes: self.document.clone(), etag: None })
+	}
 
-	assert_eq!(
-		(
-			resolved.signing.people_chain_genesis_hash,
-			resolved.signing.bulletin_chain_genesis_hash,
-			resolved.signing.asset_hub_chain_genesis_hash,
-		),
-		([0xa1; 32], [0xb2; 32], [0xc3; 32]),
-	);
-}
-
-#[test]
-fn a_wrong_size_asset_hub_genesis_hash_is_rejected_as_its_own_field() {
-	// An empty vec must be an error, never a silent all-zero "no Asset
-	// Hub".
-	for len in [0usize, 31, 33] {
-		let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-			asset_hub_chain_genesis_hash: vec![0; len],
-			..native_host_runtime_config()
-		})
-		.unwrap_err();
-
-		assert_eq!(
-			err,
-			NativeRuntimeConfigError::Invalid {
-				reason: format!("asset_hub_chain_genesis_hash must be exactly 32 bytes, got {len}"),
-			}
-		);
+	fn stack_changed(&self, status: StackStatus) {
+		let _ = self.statuses.send(status);
 	}
 }
 
+/// A wiped stack has to reach an installed app without a release: the
+/// running core fetches the new descriptor and keeps it in its database, and
+/// the next runtime the host builds starts from it instead of the bundle.
 #[test]
-fn runtime_config_rejects_a_network_suffix_that_is_not_a_bare_tld() {
-	// The suffix ends every reserved derivation (`peopl.<suffix>`), so a
-	// shell passing the dotted form would silently derive a stranger.
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		network_suffix: ".paseo".to_string(),
+fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
+	let config = HostRuntimeConfig {
+		stack: native_bundled_paseo_stack(),
+		local_session_secret: None,
+		local_session_lite_username: None,
 		..native_host_runtime_config()
+	};
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let sequence = |status: &StackStatus| {
+		serde_json::from_str::<serde_json::Value>(&status.descriptor)
+			.expect("the status carries descriptor JSON")["sequence"]
+			.clone()
+	};
+
+	let first = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config.clone(),
+	)
+	.expect("host runtime config should be valid");
+	assert!(
+		first.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let at_start = next_status();
+	let after_fetch = next_status();
+	drop(first);
+	let rebuilt =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+
+	let rebuilt_status = rebuilt.stack_status();
+	assert_eq!(
+		(
+			sequence(&at_start),
+			sequence(&after_fetch),
+			after_fetch.restart_required,
+			sequence(&rebuilt_status),
+			rebuilt_status.generation.as_str(),
+		),
+		(1.into(), 1.into(), true, 2.into(), "second")
+	);
+}
+
+/// A record the database refuses must not send the host into a restart: the
+/// next runtime would read the old copy and be told to restart again. The
+/// status says why the copy waits instead.
+#[test]
+fn a_record_the_database_refuses_asks_for_no_restart() {
+	let config =
+		HostRuntimeConfig { stack: native_bundled_paseo_stack(), ..native_host_runtime_config() };
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let runtime = build_runtime(config.clone()).expect("host runtime config should be valid");
+	rusqlite::Connection::open(
+		std::path::Path::new(&config.database_directory).join(crate::store::CORE_DB_FILE),
+	)
+	.and_then(|db| {
+		db.execute_batch(
+			"CREATE TRIGGER disk_full BEFORE INSERT ON stack_record
+			 BEGIN SELECT RAISE(FAIL, 'disk full'); END;",
+		)
 	})
-	.unwrap_err();
+	.expect("the test can make the database refuse a record");
+
+	assert!(
+		runtime.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let _at_start = next_status();
+	let after_fetch = next_status();
+
+	assert_eq!(
+		(
+			after_fetch.restart_required,
+			matches!(
+				&after_fetch.last_refresh,
+				Some(StackRefreshOutcome::NotStored { reason }) if reason.contains("disk full")
+			),
+		),
+		(false, true),
+		"{:?}",
+		after_fetch.last_refresh
+	);
+}
+
+/// A runtime the app builds from `config`, or why it was refused. No local
+/// session, so building it touches only the stack and the database.
+fn build_runtime(
+	config: HostRuntimeConfig,
+) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
+	NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		HostRuntimeConfig {
+			local_session_secret: None,
+			local_session_lite_username: None,
+			..config
+		},
+	)
+}
+
+#[test]
+fn runtime_config_refuses_a_stack_pointer_without_a_key() {
+	// A copy the host fetches later is checked against the pointer's key, so
+	// only a signed stack may start.
+	let mut stack = native_host_runtime_config().stack;
+	stack.pointer = crate::test_support::test_stack_link(None);
+	let err = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() }).err();
+
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
-			reason: r#"network_suffix must be a supported dotNS TLD, got ".paseo""#.to_string(),
-		}
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: crate::platform::StackError::Unsigned.to_string()
+		})
+	);
+}
+
+#[test]
+fn runtime_config_passes_the_reserved_values_through() {
+	// A testnet build must not run a stack on `dot`; a Polkadot build may.
+	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let refused =
+		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
+	stack.reserved_values.allowed = true;
+	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
+	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
+		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
+			.expect("the status carries descriptor JSON")["tld"]
+			.clone()
+	};
+
+	assert_eq!(
+		(refused.err(), allowed.map(tld).ok()),
+		(
+			Some(NativeRuntimeConfigError::Invalid {
+				reason: "stack uses the reserved tld dot, which this build does not allow"
+					.to_string(),
+			}),
+			Some("dot".into()),
+		),
+	);
+}
+
+#[test]
+fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
+	// A build that reserves a TLD or a genesis hash must not start a stack on it.
+	let stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let reserving = |reserved_values| {
+		build_runtime(HostRuntimeConfig {
+			stack: crate::native::BundledStack { reserved_values, ..stack.clone() },
+			..native_host_runtime_config()
+		})
+		.err()
+	};
+	let refused = |reason: &str| {
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: format!("{reason}, which this build does not allow"),
+		})
+	};
+
+	assert_eq!(
+		[
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_tlds: vec!["paseo".to_string()],
+				..Default::default()
+			}),
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_genesis_hashes: vec![[0xc3; 32]],
+				..Default::default()
+			}),
+		],
+		[
+			refused("stack uses the reserved tld paseo"),
+			refused(&format!("stack uses the reserved genesis hash 0x{}", "c3".repeat(32))),
+		],
 	);
 }
 
@@ -1890,14 +2218,14 @@ fn runtime_config_rejects_relative_host_icon() {
 		host_icon: Some("/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: "host_info.icon must be an absolute HTTPS URL: relative URL without a base"
 				.to_string(),
-		}
+		})
 	);
 }
 
@@ -1907,13 +2235,13 @@ fn runtime_config_rejects_non_https_host_icon() {
 		host_icon: Some("http://localhost:3000/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: r#"host_info.icon must use https scheme, got "http""#.to_string(),
-		}
+		})
 	);
 }
 
@@ -1934,6 +2262,8 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
+
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -1965,7 +2295,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -1985,11 +2315,17 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
+		}
+		async fn turn_expanded_card(
+			&self,
+			_side: truapi::latest::PocketCardSide,
+		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -2045,9 +2381,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<bool, HostRejection> {
 			Ok(false)
 		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-		}
 
 		async fn transaction_extension_versions(
 			&self,
@@ -2073,18 +2406,10 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
+		async fn clear_product_storage(
 			&self,
 			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
+		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
 	}
@@ -2126,6 +2451,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
+
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2157,7 +2484,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2179,11 +2506,17 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
+		}
+		async fn turn_expanded_card(
+			&self,
+			_side: truapi::latest::PocketCardSide,
+		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -2239,9 +2572,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<bool, HostRejection> {
 			Ok(true)
 		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-		}
 
 		async fn transaction_extension_versions(
 			&self,
@@ -2267,18 +2597,10 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
-		async fn begin_operation(
+		async fn clear_product_storage(
 			&self,
 			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
+		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
 	}
@@ -2707,10 +3029,111 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 }
 
 #[test]
-fn handle_sso_request_rejects_undecodable_bytes() {
-	let runtime = native_host_runtime_no_session();
-	let result = futures::executor::block_on(runtime.handle_sso_request(vec![0xFF, 0xFF, 0xFF]));
-	assert!(result.is_err(), "garbage bytes must be a decode error");
+fn native_sso_binding_verifies_transport_and_retains_its_activation() {
+	use crate::{
+		host_internal::sso_messages::{
+			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
+		},
+		host_logic::root_entropy::RootEntropy,
+	};
+	use parity_scale_codec::Encode;
+
+	let entropy = [7; 32];
+	let root_entropy = RootEntropy::new(entropy);
+	let statement = root_entropy.derive_identity_keypair("dot").unwrap().public.to_bytes();
+	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
+	assert!(
+		native_host_runtime_no_session()
+			.open_sso_service(statement, encryption)
+			.is_err()
+	);
+	for replacement in [vec![8; 32], entropy.to_vec()] {
+		let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				runtime.open_sso_service([0; 32], encryption).is_err(),
+				runtime.open_sso_service(statement, [0; 32]).is_err(),
+			),
+			(true, true),
+		);
+		let service = runtime.open_sso_service(statement, encryption).unwrap();
+		let request = RemoteMessage::request(
+			"subtree".to_string(),
+			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
+		)
+		.encode();
+		let response = |payload| SsoRequestOutcome::Response {
+			message: RemoteMessage {
+				message_id: "subtree:response".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: "subtree".to_string(),
+					payload,
+				})),
+			}
+			.encode(),
+		};
+		let public_key = root_entropy
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.unwrap()
+			.public
+			.to_bytes();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		let other_peer = runtime.open_sso_service(statement, encryption).unwrap();
+		let cancel = RemoteMessage {
+			message_id: "cancel".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(
+				crate::host_internal::sso_messages::Withdrawal {
+					message_id: "subtree".to_string(),
+				},
+			)),
+		}
+		.encode();
+		assert_eq!(service.handle_sso_control(cancel).unwrap(), Some(SsoRequestOutcome::Ignored));
+		assert_eq!(
+			futures::executor::block_on(other_peer.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		assert_eq!(service.handle_sso_control(request.clone()).unwrap(), None);
+		assert!(futures::executor::block_on(service.handle_sso_request(vec![0xff; 3])).is_err());
+		assert!(service.handle_sso_control(vec![0xff; 3]).is_err());
+		let response_variant = RemoteMessage {
+			message_id: "response".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+				responding_to: "subtree".to_string(),
+				payload: Ok(public_key),
+			})),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(response_variant)).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		let disconnected = RemoteMessage {
+			message_id: "disconnect".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(disconnected)).unwrap(),
+			SsoRequestOutcome::Disconnected
+		);
+		runtime.activate_local_session(replacement, None).unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request)).unwrap(),
+			response(Err("signing host session is not active".to_string()))
+		);
+	}
 }
 
 #[test]
@@ -2993,17 +3416,63 @@ fn reads_an_inline_image_from_hex() {
 	};
 
 	assert_eq!(
-		parse_renderer_node_json(image("0x89504e47")).expect("hex reads"),
+		parse_renderer_node_json(image("0x89504e470d0a1a0a")).expect("hex reads"),
 		latest::RendererNode::Image {
 			modifiers: Vec::new(),
 			props: latest::ImageProps {
-				source: latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]),
+				source: latest::ImageSource::Inline(b"\x89PNG\r\n\x1a\n".to_vec()),
 				fit: None,
 			},
 		}
 	);
 	assert!(parse_renderer_node_json(image("not hex")).is_err());
 	assert!(parse_renderer_node_json(image("89504e47")).is_err());
+}
+
+/// A face file reaches every host through this reader, so a refused inline
+/// image is emptied here once, and still takes its place as empty space.
+#[test]
+fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
+	let svg = "0x3c7376672f3e";
+	let json = format!(
+		r#"{{"tag":"Image","value":{{"modifiers":[],"props":{{"source":{{"tag":"Inline","value":"{svg}"}}}}}}}}"#
+	);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("the face reads"),
+		latest::RendererNode::Image {
+			modifiers: Vec::new(),
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(Vec::new()),
+				fit: None
+			},
+		}
+	);
+}
+
+/// The bridge drops a log whose target is not in the marker table, so an
+/// expanded card call logged under any other name is never seen.
+#[test]
+fn expanded_card_calls_log_registered_markers() {
+	let (callbacks, _events, platform) = event_platform();
+
+	futures::executor::block_on(async {
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_covered(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::turn_expanded_card(
+			&platform,
+			truapi::latest::PocketCardSide::Back,
+		)
+		.await;
+	});
+
+	let classes: Vec<_> = callbacks
+		.logs
+		.lock()
+		.expect("logs mutex poisoned")
+		.iter()
+		.map(|(target, _)| crate::markers::class_of(target))
+		.collect();
+	assert_eq!(classes, vec![Some(crate::markers::MarkerClass::Local); 2]);
 }
 
 /// `depth` boxes around an empty node, three brackets per box.
@@ -3023,9 +3492,102 @@ fn nested_boxes(depth: usize) -> String {
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize)).is_ok());
 	assert!(matches!(
 		parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `children` wrapped in a `Materials` node with one layer, in the shape the
+/// generated client writes: the ID as hex, numbers as their bit patterns.
+fn materials_around(material_hex: &str, children: &str) -> String {
+	format!(
+		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}},{{"tag":"SamplerVec4","value":{{"tag":"Source","value":{{"tag":"Archive","value":"mask.png"}}}}}}]}}]}},"children":[{children}]}}}}"#
+	)
+}
+
+#[test]
+fn reads_a_materials_node_as_the_client_writes_it() {
+	let json = materials_around(&"07".repeat(32), r#"{"tag":"Nil"}"#);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("a materials face reads"),
+		latest::RendererNode::Materials {
+			props: latest::MaterialsProps {
+				layers: vec![latest::MaterialInstance {
+					material: [7; 32],
+					args: vec![
+						latest::Parameter::Float(1.5f32.to_bits()),
+						latest::Parameter::Vec2([1, 2]),
+						latest::Parameter::SamplerFloat(latest::ImageRef::Noise),
+						latest::Parameter::SamplerVec4(latest::ImageRef::Source(
+							latest::ImageSource::Archive("mask.png".to_string()),
+						)),
+					],
+				}],
+			},
+			children: vec![latest::RendererNode::Nil],
+		}
+	);
+}
+
+#[test]
+fn refuses_a_material_id_that_is_not_32_bytes() {
+	let json = materials_around(&"07".repeat(31), r#"{"tag":"Nil"}"#);
+
+	assert!(matches!(parse_renderer_node_json(json), Err(NativeRendererError::Malformed { .. })));
+}
+
+/// A `Materials` node holds children like any container, so it cannot hide a
+/// tree deeper than the core carries.
+#[test]
+fn counts_depth_through_a_materials_node() {
+	let one_too_deep = nested_boxes(MAX_FACE_DEPTH as usize);
+
+	assert!(matches!(
+		parse_renderer_node_json(materials_around(&"07".repeat(32), &one_too_deep)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `boxes` boxes around a `Materials` node with one layer.
+fn materials_under_boxes(boxes: usize) -> String {
+	let open = r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#.repeat(boxes);
+	format!("{open}{}{}", materials_around(&"07".repeat(32), ""), "]}}".repeat(boxes))
+}
+
+/// Whatever face the reader accepts reads back after it is kept, layers
+/// included, so a host never draws a face it cannot keep.
+#[test]
+fn the_deepest_face_with_materials_reads_back_once_kept() {
+	let layer_levels = 2;
+	let deepest =
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels))
+			.expect("the deepest materials face reads");
+
+	let (_dir, db) = crate::store::open_temporary_core_db();
+	let cards = futures::executor::block_on(crate::pocket_cards::PocketCards::open(db, Vec::new()))
+		.unwrap();
+	let product = ProductId::for_test("loyalty.dot");
+	futures::executor::block_on(cards.add(
+		product.clone(),
+		"stamps".into(),
+		"Stamps".into(),
+		deepest.clone(),
+	))
+	.unwrap();
+	assert_eq!(
+		futures::executor::block_on(cards.face(
+			product,
+			"stamps".into(),
+			truapi::latest::PocketCardSide::Front,
+		))
+		.unwrap(),
+		Some(deepest)
+	);
+	assert!(matches!(
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels + 1)),
 		Err(NativeRendererError::TooDeep { .. })
 	));
 }
@@ -3100,23 +3662,14 @@ fn screening_normalizes_and_trims() {
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
 
-/// A session change as the core pushed it: the intent, the session and its
-/// progress.
-type PushedChange = (
-	String,
-	Option<crate::host_logic::funding::FundingSession>,
-	Option<crate::host_logic::funding::FundingProgress>,
-);
-
 /// A native funding overlay the user starts at once, recording what the
-/// core hands it.
+/// core tells it changed and what it could read back when it was shown.
 #[derive(Default)]
 struct RecordingNativeFunding {
-	changes: Mutex<Vec<PushedChange>>,
-	/// The intents whose options the overlay held when it was shown.
-	options_before_shown: Mutex<Vec<String>>,
-	options: Mutex<Vec<String>>,
-	in_progress: Mutex<Vec<bool>>,
+	host: std::sync::OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
+	changes: Mutex<Vec<(Option<String>, super::funding_feed::FundingChangeKind)>>,
+	/// Whether the overlay could read its options when it was shown.
+	options_when_shown: Mutex<Option<bool>>,
 }
 
 #[async_trait::async_trait]
@@ -3124,12 +3677,13 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 	async fn present_funding(
 		&self,
 		_product_id: Option<ProductId>,
-		_intent: String,
+		intent: String,
 		_direction: v01::FundingDirection,
 		_amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection> {
-		let options = self.options.lock().expect("options mutex poisoned").clone();
-		*self.options_before_shown.lock().expect("options mutex poisoned") = options;
+		let host = self.host.get().and_then(std::sync::Weak::upgrade).expect("host alive");
+		*self.options_when_shown.lock().expect("options mutex poisoned") =
+			Some(host.funding_options(intent).is_some());
 		Ok(crate::platform::FundingPresentOutcome::Started)
 	}
 
@@ -3144,54 +3698,35 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
-	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
-		true
-	}
-
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		_status: v01::HostFundingStatusSubscribeItem,
-		session: Option<crate::host_logic::funding::FundingSession>,
-		progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
-		self.changes
-			.lock()
-			.expect("changes mutex poisoned")
-			.push((intent, session, progress));
-	}
-
-	fn funding_in_progress_changed(&self, in_progress: bool) {
-		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
-	}
-
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		_options: crate::host_logic::funding_providers::FundingOptions,
-	) {
-		self.options.lock().expect("options mutex poisoned").push(intent);
-	}
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
 
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}
 
-	fn funding_quotes_changed(&self, _intent: String, _quotes: crate::platform::FundingQuoteList) {}
+	fn funding_changed(
+		&self,
+		intent: Option<String>,
+		kind: super::funding_feed::FundingChangeKind,
+	) {
+		self.changes.lock().expect("changes mutex poisoned").push((intent, kind));
+	}
 }
 
-// The host draws a session only from what the core pushes: the overlay's
-// options arrive before it is shown, and each change carries the session
-// and its progress as the core holds them, followed by whether a provider
-// works on any session.
+// The host reads funding state back from the runtime once the core says
+// what changed: the overlay's options while it is up, then the started
+// session and its progress; no resume marker is left while no
+// provider works on a session.
 #[test]
-fn the_core_pushes_what_the_host_draws() {
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
+fn the_host_reads_back_what_the_core_says_changed() {
+	use super::funding_feed::FundingChangeKind;
+	let config = native_host_runtime_config();
+	let database_directory = config.database_directory.clone();
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(funding.host.set(Arc::downgrade(&host)).is_ok());
 	assert!(host.set_funding_callbacks(funding.clone()));
 
 	let intent =
@@ -3200,23 +3735,73 @@ fn the_core_pushes_what_the_host_draws() {
 			.expect("started");
 
 	let changes = funding.changes.lock().expect("changes mutex poisoned").clone();
-	let (announced, session, progress) = changes.last().cloned().expect("a change");
-	let session = session.expect("session kept");
+	let session = host.funding_session(intent.clone()).expect("session held");
 	assert_eq!(
 		(
-			announced,
+			host.funding_session_open(intent.clone()),
+			host.funding_session_open("unknown".to_string())
+		),
+		(true, false)
+	);
+	assert_eq!(
+		(
+			changes.contains(&(Some(intent.clone()), FundingChangeKind::Options)),
+			changes.contains(&(Some(intent.clone()), FundingChangeKind::Session)),
+			*funding.options_when_shown.lock().expect("options mutex poisoned"),
+			host.funding_options(intent.clone()).is_some(),
 			session.intent.clone(),
-			progress,
-			funding.options_before_shown.lock().expect("options mutex poisoned").clone(),
-			funding.in_progress.lock().expect("in-progress mutex poisoned").last().copied(),
+			host.funding_progress(intent.clone()).map(|progress| progress.status),
+			host.funding_entries()
+				.into_iter()
+				.map(|entry| entry.session.intent)
+				.collect::<Vec<_>>(),
+			host.funding_quotes(intent.clone()).is_some(),
+			super::funding_resume_pending(database_directory),
 		),
 		(
+			true,
+			true,
+			Some(true),
+			false,
 			intent.clone(),
-			intent.clone(),
-			Some(session.progress(crate::unix_time::current_unix_millis())),
+			Some(session.progress(crate::unix_time::current_unix_millis()).status),
 			vec![intent],
-			Some(false),
+			false,
+			false,
 		)
+	);
+}
+
+// Funding is available once the configuration offers a provider, and the
+// host hears so only when the list really changed, not on each refresh; a
+// list that went empty comes back with the next refresh naming it.
+#[test]
+fn providers_change_is_announced_only_when_the_list_changes() {
+	use super::funding_feed::FundingChangeKind;
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(host.set_funding_callbacks(funding.clone()));
+	let configure = |names: &[&str]| {
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect());
+		let changes = funding.changes.lock().expect("changes mutex poisoned");
+		let announced =
+			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
+		(announced.count(), host.funding_available())
+	};
+
+	assert_eq!(
+		(
+			host.funding_available(),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
+			configure(&[]),
+			configure(&["ramp"])
+		),
+		(false, (1, true), (1, true), (2, false), (3, true))
 	);
 }
 
@@ -3253,4 +3838,363 @@ mod bridge_lines {
 		assert_eq!(logs.len(), 1);
 		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
 	}
+}
+
+#[test]
+fn the_exported_map_holds_every_entry_and_nothing_else() {
+	let exported = core_markers();
+	assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
+	for marker in MARKERS {
+		assert_eq!(
+			exported.get(marker.target),
+			Some(&marker.class),
+			"{} did not survive the crossing",
+			marker.target
+		);
+	}
+}
+
+#[test]
+fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
+	let exported = core_markers();
+	assert_eq!(
+		exported.get(TRACING_ERROR.target),
+		Some(&MarkerClass::Export { severity: Severity::Error })
+	);
+	assert_eq!(
+		exported.get(TRACING_WARN.target),
+		Some(&MarkerClass::Export { severity: Severity::Warn })
+	);
+	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
+}
+
+/// A worker execution with its bridge started, the callbacks that receive its
+/// bridge lines, and the URL a product dials.
+fn worker_bridge() -> (Arc<EventCallbacks>, Arc<NativeProductExecution>, String) {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let execution = native_host_runtime_no_session()
+		.open_product_execution(
+			callbacks.clone(),
+			None,
+			None,
+			native_execution_config("draw.dot", ExecutableKind::Worker),
+		)
+		.expect("open execution");
+	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
+	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+	(callbacks, execution, url)
+}
+
+struct IgnoredRender;
+
+impl super::NativeRendererObserver for IgnoredRender {
+	fn on_update(&self, _node: truapi::latest::ProductRendererRenderItem) {}
+
+	fn on_complete(&self) {}
+
+	fn on_error(&self, _reason: String) {}
+}
+
+fn render_outcome(execution: &NativeProductExecution) -> Result<(), crate::ProductRuntimeError> {
+	let request = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		payload: Vec::new(),
+	};
+	execution.render(request, Arc::new(IgnoredRender)).map(drop)
+}
+
+fn bridge_closed_leaving(callbacks: &EventCallbacks, open: usize) -> bool {
+	let left = format!("this execution now holds {open} of");
+	callbacks.logs.lock().expect("logs mutex poisoned").iter().any(|(marker, detail)| {
+		marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target && detail.contains(&left)
+	})
+}
+
+fn dial_until_rendering(
+	client: &tokio::runtime::Runtime,
+	url: &str,
+	execution: &NativeProductExecution,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+	let (ws, _) = client.block_on(tokio_tungstenite::connect_async(url)).expect("dial");
+	crate::test_support::wait_until(
+		|| render_outcome(execution).is_ok(),
+		"the dialled connection never served a render",
+	);
+	ws
+}
+
+/// Cards draw on an early connection after a later one hangs up.
+///
+/// A worker that reconnects can open several connections and keep an early one.
+#[test]
+fn render_uses_an_open_connection_when_the_newest_hung_up() {
+	let (callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	client.block_on(async {
+		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		second.close(None).await.expect("close second");
+	});
+	crate::test_support::wait_until(
+		|| bridge_closed_leaving(&callbacks, 1),
+		"the second connection never closed",
+	);
+
+	let outcome = render_outcome(&execution);
+	assert!(outcome.is_ok(), "a connection is still open, got {outcome:?}");
+}
+
+/// A product that hung up reads as not connected until it dials back in.
+///
+/// Hosts wait out `NotConnected` and give up on `Closed`.
+#[test]
+fn a_product_that_hung_up_reads_as_not_connected_until_one_dials_in() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let mut first = dial_until_rendering(&client, &url, &execution);
+
+	client.block_on(first.close(None)).expect("close first");
+	drop(first);
+	crate::test_support::wait_until(
+		|| matches!(render_outcome(&execution), Err(crate::ProductRuntimeError::NotConnected)),
+		"a hung up product did not read as not connected",
+	);
+
+	let _again = dial_until_rendering(&client, &url, &execution);
+}
+
+/// A stopped bridge and a closed execution give different answers.
+///
+/// A stopped bridge waits for a new one, while a closed execution never renders
+/// again, so the hosts must keep telling them apart.
+#[test]
+fn a_stopped_bridge_and_a_closed_execution_keep_their_answers() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	execution.stop_ws_bridge();
+	let stopped = render_outcome(&execution);
+	assert!(
+		matches!(stopped, Err(crate::ProductRuntimeError::NotConnected)),
+		"a stopped bridge answered {stopped:?}"
+	);
+
+	execution.shutdown();
+	let closed = render_outcome(&execution);
+	assert!(
+		matches!(closed, Err(crate::ProductRuntimeError::Closed)),
+		"a closed execution answered {closed:?}"
+	);
+}
+
+/// Whether the next frame the product reads on `ws` within `wait` starts a render.
+async fn next_frame_starts_a_render<S>(ws: &mut S, wait: std::time::Duration) -> bool
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+	use crate::frame::{MESSAGE_TYPE_START, ProtocolMessage, subscription_ids};
+
+	let render = subscription_ids("renderer_render").expect("known subscription");
+	match tokio::time::timeout(wait, ws.next()).await {
+		Ok(Some(Ok(WsMessage::Binary(bytes)))) => {
+			let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+			frame.payload.trait_id == render.trait_id &&
+				frame.payload.method_id == render.method_id &&
+				frame.payload.message_type == MESSAGE_TYPE_START
+		},
+		Ok(Some(Ok(_))) | Err(_) => false,
+		Ok(Some(Err(error))) => panic!("bridge error: {error}"),
+		Ok(None) => panic!("bridge closed"),
+	}
+}
+
+/// Cards draw on the newest connection that is still open.
+///
+/// A reconnecting worker dials a new connection while an older one may linger,
+/// and only the newest belongs to the worker that is running now.
+#[test]
+fn render_uses_the_newest_open_connection() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	let (mut second, _) =
+		client.block_on(tokio_tungstenite::connect_async(&url)).expect("dial second");
+	let reached_second = (0..40).any(|_| {
+		let outcome = render_outcome(&execution);
+		assert!(outcome.is_ok(), "both connections are open, got {outcome:?}");
+		client.block_on(next_frame_starts_a_render(
+			&mut second,
+			std::time::Duration::from_millis(50),
+		))
+	});
+	assert!(reached_second, "no render reached the newest connection");
+}
+
+/// A `renderer_action_subscribe` Start a product sends as `request_id`.
+fn start_renderer_actions(request_id: &str) -> tokio_tungstenite::tungstenite::Message {
+	use crate::frame::{MESSAGE_TYPE_START, Payload, ProtocolMessage, subscription_ids};
+
+	let ids = subscription_ids("renderer_action_subscribe").expect("known subscription");
+	let frame = ProtocolMessage {
+		request_id: request_id.into(),
+		payload: Payload {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			message_type: MESSAGE_TYPE_START,
+			value: truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+		},
+	};
+	tokio_tungstenite::tungstenite::Message::Binary(frame.encode())
+}
+
+fn card_press(action_id: &str) -> truapi::latest::HostRendererActionSubscribeItem {
+	truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		action_id: action_id.into(),
+		payload: Vec::new(),
+	}
+}
+
+/// The action id of the next press subscription `request_id` hears on `ws`,
+/// or `None` if none arrives within `wait`.
+///
+/// Panics when the subscription ends instead.
+async fn next_press<S>(ws: &mut S, request_id: &str, wait: std::time::Duration) -> Option<String>
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+	use truapi::versioned::{IntoLatest, renderer::HostRendererActionSubscribeItem};
+
+	use crate::frame::{MESSAGE_TYPE_RECEIVE, ProtocolMessage};
+
+	let press = async {
+		loop {
+			match ws.next().await {
+				Some(Ok(WsMessage::Binary(bytes))) => {
+					let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+					if frame.request_id != request_id {
+						continue;
+					}
+					assert_eq!(
+						frame.payload.message_type, MESSAGE_TYPE_RECEIVE,
+						"the press subscription ended"
+					);
+					let item = HostRendererActionSubscribeItem::decode(&mut &frame.payload.value[..])
+						.expect("decode press");
+					return item.into_latest().action_id;
+				},
+				Some(Ok(_)) => {},
+				Some(Err(error)) => panic!("bridge error: {error}"),
+				None => panic!("bridge closed"),
+			}
+		}
+	};
+	tokio::time::timeout(wait, press).await.ok()
+}
+
+/// Presses reach a connection that stays open after another one closes.
+///
+/// The connections of one execution share its action streams, and a worker
+/// opens its press stream once, so a stream another connection's end cut off
+/// would leave its cards drawn but deaf to taps.
+#[test]
+fn presses_reach_an_open_connection_after_another_one_closes() {
+	use futures::SinkExt;
+
+	let (callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let wait = std::time::Duration::from_secs(5);
+	let mut first = dial_until_rendering(&client, &url, &execution);
+	client.block_on(first.send(start_renderer_actions("presses"))).expect("subscribe");
+	execution.publish_renderer_action(card_press("subscribed")).expect("publish");
+	assert_eq!(
+		client.block_on(next_press(&mut first, "presses", wait)),
+		Some("subscribed".to_string())
+	);
+
+	client.block_on(async {
+		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		second.close(None).await.expect("close second");
+	});
+	crate::test_support::wait_until(
+		|| bridge_closed_leaving(&callbacks, 1),
+		"the second connection never closed",
+	);
+
+	execution.publish_renderer_action(card_press("after")).expect("publish");
+	assert_eq!(client.block_on(next_press(&mut first, "presses", wait)), Some("after".to_string()));
+}
+
+/// A share host names a product by the id the stack serves it under, so a
+/// `dot.li` link opens the stack's own product.
+#[test]
+fn share_hosts_require_a_tld_the_stack_accepts() {
+	let stack = crate::test_support::test_stack("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	for (input, expected) in [
+		("BROWSE.TESTNET.LI", Some("browse.testnet")),
+		("browse.dot.li", Some("browse.testnet")),
+		("browse.paseo.li", None),
+		("browse.test.li", None),
+		("browse.dot", None),
+		("https://browse.dot.li", None),
+		("localhost.li", None),
+	] {
+		assert_eq!(
+			stack.parse_product_share_host(input.to_string()),
+			expected.map(ProductId::for_test),
+			"{input}"
+		);
+	}
+}
+
+/// A host opens the stack its build bundles before the runtime starts and
+/// takes its share hosts and trusted products from it, so it never supplies a
+/// TLD of its own. A copy the build does not allow is refused the same way the
+/// runtime refuses it.
+#[test]
+fn a_host_reads_links_and_trust_from_the_bundled_stack() {
+	let open = |tld: &str| {
+		let descriptor =
+			crate::test_support::test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+		let (pointer, descriptor) = crate::test_support::sign_test_descriptor(&descriptor);
+		let reserved_values = crate::platform::ReservedValuesPolicy::default();
+		Stack::open_bundled(BundledStack { pointer, descriptor, reserved_values })
+	};
+
+	let fork = open("fork").expect("a fork's stack opens");
+	assert_eq!(
+		(
+			fork.product_share_hosts(),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.fork")),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.paseo")),
+		),
+		(vec!["dot.li".to_owned(), "fork.li".to_owned()], true, false)
+	);
+	assert!(matches!(open("dot"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }

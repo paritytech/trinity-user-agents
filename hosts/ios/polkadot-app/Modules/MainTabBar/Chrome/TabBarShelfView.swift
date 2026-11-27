@@ -41,6 +41,7 @@ private struct TabBarShelfIconRow: View {
             iconButton(
                 UIImage.tabSettings,
                 label: .tabSettings,
+                showsAttention: model.showsSettingsAttention,
                 action: { model.onShelfSettingsTapped?() }
             )
             .accessibilityId(AccessibilityID.Tab.settings)
@@ -52,7 +53,12 @@ private extension TabBarShelfIconRow {
     static let iconSize: CGFloat = 28
     static let touchSize: CGFloat = 44
 
-    func iconButton(_ image: UIImage, label: LocalizedStringResource, action: @escaping () -> Void) -> some View {
+    func iconButton(
+        _ image: UIImage,
+        label: LocalizedStringResource,
+        showsAttention: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(uiImage: image)
                 .renderingMode(.template)
@@ -60,6 +66,7 @@ private extension TabBarShelfIconRow {
                 .scaledToFit()
                 .frame(width: Self.iconSize, height: Self.iconSize)
                 .foregroundStyle(Color.fgSecondary)
+                .attentionDot(showsAttention)
                 .frame(width: Self.touchSize, height: Self.touchSize)
                 .contentShape(Rectangle())
         }

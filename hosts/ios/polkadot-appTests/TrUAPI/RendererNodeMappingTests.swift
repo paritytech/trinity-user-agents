@@ -1,3 +1,4 @@
+import DesignSystem
 import Foundation
 import PolkadotUI
 import Products
@@ -135,21 +136,58 @@ struct RendererNodeMappingTests {
         #expect(props.color.rgba != tokens.color(for: .textPrimary).rgba)
     }
 
-    @Test func textNodeUsesTheTypographyStyleItNames() {
+    @Test func textNodeDrawsTheBodyStylesAndTheDefaultInTheInHouseStyles() {
         let tokens = WidgetDesignTokenResolver()
-        let node = RendererNode.text(
-            modifiers: [],
-            props: TextProps(style: .bodySmallRegular, color: nil),
-            children: [.string(text: "Fine print")]
-        )
+        let expected: [(TrUAPIHostTypographyStyle?, PolkadotUI.LabelStyle)] = [
+            (.bodyLargeRegular, .body16Regular()),
+            (.bodyMediumRegular, .body14Regular()),
+            (.bodySmallRegular, .caption12Regular()),
+            (nil, .body16Regular())
+        ]
 
-        let mapped = node.toWidgetNode(resolver: tokens)
+        for (style, labelStyle) in expected {
+            let node = RendererNode.text(
+                modifiers: [],
+                props: TextProps(style: style, color: nil),
+                children: [.string(text: "Fine print")]
+            )
 
-        guard case let .text(props) = mapped?.content else {
-            Issue.record("expected a text node, got \(String(describing: mapped?.content))")
-            return
+            guard case let .text(props) = node.toWidgetNode(resolver: tokens)?.content else {
+                Issue.record("expected a text node for \(String(describing: style))")
+                continue
+            }
+            #expect(props.labelStyle.font == labelStyle.font)
+            #expect(props.labelStyle.tracking == labelStyle.tracking)
+            #expect(props.labelStyle.lineHeight == labelStyle.lineHeight)
         }
-        #expect(props.labelStyle.font == PolkadotUI.LabelStyle.caption12Regular().font)
+    }
+
+    @Test func textNodeDrawsTheHeadlineAndTitleStylesFromTheDesignSystem() {
+        let tokens = WidgetDesignTokenResolver()
+        let expected: [(TrUAPIHostTypographyStyle, DesignSystem.TypographyStyle)] = [
+            (.headlineLarge, .headlineLarge),
+            (.headlineMedium, .headlineMedium),
+            (.headlineSmall, .headlineSmall),
+            (.titleExtraLarge, .titleExtraLarge),
+            (.titleLarge, .titleLarge),
+            (.titleMediumRegular, .titleMedium)
+        ]
+
+        for (style, token) in expected {
+            let node = RendererNode.text(
+                modifiers: [],
+                props: TextProps(style: style, color: nil),
+                children: [.string(text: "Score")]
+            )
+
+            guard case let .text(props) = node.toWidgetNode(resolver: tokens)?.content else {
+                Issue.record("expected a text node for \(style)")
+                continue
+            }
+            #expect(props.labelStyle.font == UIFont.app(token))
+            #expect(props.labelStyle.tracking == token.resolvedSpec.tracking)
+            #expect(props.labelStyle.lineHeight == token.resolvedSpec.lineHeight)
+        }
     }
 
     /// A box that names no alignment places its children at the top start.
@@ -350,24 +388,21 @@ struct RendererNodeMappingTests {
         #expect(radius == 0)
     }
 
-    /// The effect is a shader drawn over whatever is inside it, so the node has
-    /// to survive the mapping with its children under it: no node leaves the
-    /// shader unapplied, no children leave it nothing to draw over.
-    @Test func anEffectKeepsItsChildrenAndItsOwnNode() throws {
-        let effect = RendererNode.effect(
-            props: EffectProps(effect: .rainbow),
+    @Test func materialsDrawTheirChildrenPlain() throws {
+        let materials = RendererNode.materials(
+            props: MaterialsProps(layers: []),
             children: [
                 .text(modifiers: [], props: TextProps(style: nil, color: nil), children: [.string(text: "kept")])
             ]
         )
 
-        guard case let .effect(props, children) = try #require(effect.toWidgetNode(resolver: resolver)).content,
+        guard case let .box(props, children) = try #require(materials.toWidgetNode(resolver: resolver)).content,
               case let .text(textProps) = children.first?.content
         else {
-            Issue.record("an effect should keep both its own node and its children")
+            Issue.record("a materials node should draw as a box around its children")
             return
         }
-        #expect(props.effect == .rainbow)
+        #expect(props.alignment == .topLeading)
         #expect(textProps.text == "kept")
     }
 }
@@ -406,8 +441,16 @@ private extension Color {
 
 private extension PolkadotUI.LabelStyle {
     /// `LabelStyle` is not `Equatable` and its fields are internal to PolkadotUI,
-    /// so the font it carries is read back through its public attributes.
+    /// so what it carries is read back through its public attributes.
     var font: UIFont? {
         attributes()[.font] as? UIFont
+    }
+
+    var tracking: CGFloat? {
+        attributes()[.kern] as? CGFloat
+    }
+
+    var lineHeight: CGFloat? {
+        (attributes()[.paragraphStyle] as? NSParagraphStyle)?.minimumLineHeight
     }
 }

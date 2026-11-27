@@ -96,6 +96,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 		)),
 		..Default::default()
 	});
+	cache_manifest(&platform, "other-product.dot", r#"{"myapp":["context"]}"#, 0);
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session.clone());
@@ -152,6 +153,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 		)),
 		..Default::default()
 	});
+	cache_manifest(&platform, "other-product.dot", r#"{"myapp":["context"]}"#, 0);
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session);
@@ -358,7 +360,10 @@ fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session);
 	let mut cx = CallContext::with_request_id(message_id.to_string());
-	cx.set_timeout(std::time::Duration::from_millis(1));
+	// The People connection is dialled in a task of its own, so the timeout
+	// leaves it time to subscribe. No sign response is scripted, so the call
+	// still ends by the timeout.
+	cx.set_timeout(std::time::Duration::from_millis(500));
 	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
 		account: account_id("myapp.dot", 0),
 		payload: raw_payload(),
@@ -367,7 +372,10 @@ fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
 
 	match err {
 		CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { reason })) => {
-			assert_eq!(reason, "Account authority request timed out after 1ms for sign-raw-timeout")
+			assert_eq!(
+				reason,
+				"Account authority request timed out after 500ms for sign-raw-timeout"
+			)
 		},
 		other => panic!("expected SSO response timeout, got {other:?}"),
 	}
@@ -565,7 +573,7 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("create-tx-1".to_string());
-	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let request = ProductAccountTxPayload::V1(product_tx_payload("myapp.dot"));
 	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
 	assert_eq!(
 		response,
@@ -586,7 +594,7 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 /// halt error, with a phone that signs.
 fn create_transaction_over_halted_store(
 	halted_subscribes: usize,
-) -> (Arc<StubPlatform>, ProductRuntimeHost) {
+) -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccountHolder>) {
 	let session = sso_session_info();
 	let platform = Arc::new(StubPlatform {
 		create_transaction_confirmed: true,
@@ -619,7 +627,7 @@ fn create_transaction_over_halted_store(
 fn a_relayed_create_transaction_waits_out_a_halt_before_it_is_sent() {
 	let (platform, host) = create_transaction_over_halted_store(1);
 	let cx = CallContext::with_request_id("create-tx-halted".to_string());
-	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let request = ProductAccountTxPayload::V1(product_tx_payload("myapp.dot"));
 
 	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
 
@@ -645,7 +653,7 @@ fn a_relayed_create_transaction_withdrawn_during_a_halt_is_never_sent() {
 	let (platform, host) = create_transaction_over_halted_store(usize::MAX);
 	let cancel = truapi::CancellationToken::default();
 	let cx = CallContext::with_parts("create-tx-halted".to_string(), cancel.clone());
-	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let request = ProductAccountTxPayload::V1(product_tx_payload("myapp.dot"));
 	let call = std::thread::spawn(move || {
 		futures::executor::block_on(host.create_transaction(&cx, request)).unwrap_err()
 	});
@@ -682,7 +690,12 @@ fn a_relayed_create_transaction_withdrawn_during_a_halt_is_never_sent() {
 
 fn gated_create_transaction(
 	request_id: &str,
-) -> (Arc<StubPlatform>, ProductRuntimeHost, CallContext, futures::channel::oneshot::Sender<()>) {
+) -> (
+	Arc<StubPlatform>,
+	ProductRuntimeHost<RemoteAccountHolder>,
+	CallContext,
+	futures::channel::oneshot::Sender<()>,
+) {
 	let (release, gate) = futures::channel::oneshot::channel();
 	let platform = Arc::new(StubPlatform {
 		create_transaction_confirmed: true,
@@ -699,7 +712,7 @@ fn gated_create_transaction(
 #[test]
 fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
 	let (platform, host, cx, _release) = gated_create_transaction("create-tx-withdrawn");
-	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let request = ProductAccountTxPayload::V1(product_tx_payload("myapp.dot"));
 	let mut call = Box::pin(host.create_transaction(&cx, request));
 	assert!(call.as_mut().now_or_never().is_none());
 	assert_eq!(platform.create_transaction_reviews.lock().unwrap().len(), 1);
@@ -725,7 +738,7 @@ fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
 #[test]
 fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() {
 	let (platform, host, cx, release) = gated_create_transaction("create-tx-approved-late");
-	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let request = ProductAccountTxPayload::V1(product_tx_payload("myapp.dot"));
 	let mut call = Box::pin(host.create_transaction(&cx, request));
 	assert!(call.as_mut().now_or_never().is_none());
 
@@ -1034,7 +1047,7 @@ fn create_transaction_rejects_invalid_product_account() {
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session_info());
 	let cx = CallContext::default();
-	let request = HostCreateTransactionRequest::V1(product_tx_payload("other.dot"));
+	let request = ProductAccountTxPayload::V1(product_tx_payload("other.dot"));
 	let err = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap_err();
 	assert!(matches!(
 		err,

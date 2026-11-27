@@ -50,6 +50,8 @@ enum ChatViewFactory {
         // at this time we should already have chains and assets
         let chainRegistry = ChainRegistryFacade.sharedRegistry
         guard
+            let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
+            RootDependencyLocator.getDependency(),
             let chain = chainRegistry.getChain(for: AppConfig.Assets.mainAsset.chainId),
             let asset = chain.chainAsset(for: AppConfig.Assets.mainAsset.assetId),
             let uploadAttachmentStore = AttachmentStore.uploads(),
@@ -83,18 +85,30 @@ enum ChatViewFactory {
             targetAssetInfo: asset.asset.digitalDollarDisplayInfo,
             formatterFactory: AssetBalanceFormatterFactory()
         )
+        let fiatAmountFormatter = TransferAmountViewModelFactory(
+            targetAssetInfo: asset.asset.digitalDollarFigureDisplayInfo,
+            formatterFactory: AssetBalanceFormatterFactory()
+        )
         let viewModelFactory = ChatViewModelFactory(
-            balanceFactory: amountFormatter,
-            customDecoders: messageDecoders,
-            attachmentViewModelFactory: ChatAttachmentViewModelFactory(
-                uploadAttachmentStore: uploadAttachmentStore,
-                attachmentUploadStateProvider: flowState.attachmentUploadStateProvider,
-                downloadAttachmentStore: downloadAttachmentStore,
-                attachmentDownloadStateProvider: flowState.attachmentDownloadStateProvider
-            ),
-            productRepository: ProductRepositoryFactory().createRepository(),
-            productNameCache: ProductNameCache(),
-            flowState: flowState.flowState
+            dependencies: .init(
+                balanceFactory: amountFormatter,
+                fiatAmountFactory: fiatAmountFormatter,
+                customDecoders: messageDecoders,
+                attachmentViewModelFactory: ChatAttachmentViewModelFactory(
+                    uploadAttachmentStore: uploadAttachmentStore,
+                    attachmentUploadStateProvider: flowState.attachmentUploadStateProvider,
+                    downloadAttachmentStore: downloadAttachmentStore,
+                    attachmentDownloadStateProvider: flowState.attachmentDownloadStateProvider
+                ),
+                productRepository: ProductRepositoryFactory().createRepository(),
+                productNameCache: ProductNameCache(),
+                flowState: flowState.flowState,
+                iconViewModelFactory: ChatIconViewModelFactory(
+                    productFactory: flowState.flowState.iconViewModelFactory,
+                    publicProfileFactory: publicProfileAvatarViewModelFactory,
+                    options: .init(forceFresh: true, skipStale: false)
+                )
+            )
         )
 
         let presenter = ChatPresenter(
@@ -105,6 +119,7 @@ enum ChatViewFactory {
         )
 
         let view = ChatViewController(presenter: presenter)
+        view.hidesBottomBarWhenPushed = true
 
         documentAdapter.use(presenter: view)
         presenter.view = view
@@ -150,6 +165,7 @@ enum ChatViewFactory {
             chatId: chatId,
             engine: chatEngine,
             reactionRepository: reactionRepository,
+            reclaimCoinsService: flowState.coinageService.reclaimCoinsService,
             foregroundVisibilityReporter: flowState.foregroundVisibilityReporter,
             notificationsCleaner: flowState.notificationsCleaner
         )

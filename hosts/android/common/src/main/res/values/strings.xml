@@ -181,6 +181,7 @@
 
     <string name="coinage_recovery_worker_notification_title">Confirming payments</string>
     <string name="coinage_recovery_worker_notification_message">Waiting for your recent payments to settle on chain</string>
+    <string name="worker_crashing_notice">%1$s stopped working. Retrying…</string>
     <string name="core_recovery_worker_notification_title">Confirming transactions</string>
     <string name="core_recovery_worker_notification_message">Waiting for your recent transactions to settle on chain</string>
 
@@ -280,7 +281,7 @@
     <string name="product_bot_management_card_title_hint">Pocket card title</string>
     <string name="product_bot_management_preview_url_hint">Pocket card face URL</string>
     <string name="product_bot_management_app_url_hint">App URL</string>
-    <string name="product_bot_management_face_away_label">Open with the face away</string>
+    <string name="product_bot_management_starts_covered_label">Open covered by the page</string>
     <string name="product_bot_management_name_hint">product%1$s</string>
     <string name="product_bot_management_confirm">Save</string>
     <string name="spa_browser_menu_proceed_in_chat">Proceed in Chat</string>
@@ -311,7 +312,7 @@
     <string name="debug_spa_browser_open">Open</string>
     <string name="debug_menu_open_dev_server">Open dev server</string>
     <string name="debug_dev_server_title">Open dev server</string>
-    <string name="debug_dev_server_address_hint">192.168.x.x:3000, add ?product_id=name.dot to run as that product</string>
+    <string name="debug_dev_server_address_hint">192.168.x.x:3000, add ?product_id=name.tld (the TLD of this network) to run as that product</string>
 
     <string name="settings_mnemonic_reveal_title">Recovery phrase</string>
     <string name="settings_mnemonic_reveal_description">Never share the recovery phrase. Anyone with the recovery phrase has full access to your account, cash and collectables.</string>
@@ -578,9 +579,17 @@
     <string name="chat_request_pending">Pending</string>
     <string name="chat_request_welcome_message_hint">Add a welcome message (optional)</string>
     <string name="chat_request_decline_dialog_title">Decline message request?</string>
+    <string name="chat_request_decline_title">Decline chat request?</string>
+    <string name="chat_request_decline_message">%1$s will not be notified. The chat will be removed.</string>
+    <string name="chat_request_decline_keep">Keep request</string>
     <string name="chat_request_you_approved">You approved the request</string>
     <string name="chat_request_accept_title">Accept chat request from %s</string>
     <string name="chat_request_wait_accept_title">Wait for %s to accept your message request.</string>
+    <string name="chat_request_cancel_button">Cancel request</string>
+    <string name="chat_request_cancel_dialog_title">Cancel request?</string>
+    <string name="chat_request_cancel_dialog_message">%s will no longer see your request.</string>
+    <string name="chat_request_cancel_dialog_keep">Keep request</string>
+    <string name="chat_request_cancelled_by_peer">%s cancelled this chat request.</string>
     <string name="chat_request_accept_description">Add %s to your contacts to accept the chat request. They won\'t know you\'ve seen their message until you accept.</string>
     <string name="chat_request_invite_title">Invite %s to chat</string>
     <string name="chat_request_invite_description">You can only send one message in this request.</string>
@@ -668,6 +677,11 @@
     <string name="search_section_recents">RECENTS</string>
     <string name="search_section_results">RESULTS</string>
     <string name="docklet_close_search">Close search</string>
+    <string name="docklet_show_dock">Show dock</string>
+    <string name="docklet_tucked_tip_title">Your dock is tucked away</string>
+    <string name="docklet_tucked_tip_message">Drag in from the right edge, or tap here</string>
+    <string name="docklet_auto_hidden_tip_title">Docklet tucked itself away</string>
+    <string name="docklet_auto_hidden_tip_message">It hides when you\'re not using it. Drag it in from the glow, or tap here</string>
 
     <string name="add_contact_search_placeholder">Type username</string>
     <string name="add_contact_no_recent_searches">No recent searches</string>
@@ -742,7 +756,7 @@
     <string name="chat_notification_reaction_added">reacted with %1$s</string>
 
     <string name="chat_notification_contact_added">added you</string>
-    <string name="chat_notification_payment">is sending you %1$s</string>
+    <string name="chat_notification_payment">is sending you %1$s. Open the app to receive it.</string>
     <string name="chat_notification_request_approved">approved the chat request</string>
 
     <string name="card_currency_title">Local currency</string>
@@ -787,6 +801,7 @@
     <string name="settings_theme_preview_message_first">Hey, are you going to Web3Summit? 🎉</string>
     <string name="settings_theme_preview_message_second">Of course! You?</string>
     <string name="settings_theme_preview_message_third">Wouldn\'t miss it 👋 See you there!</string>
+    <string name="settings_auto_hide_docklet">Auto-hide docklet</string>
     <string name="settings_connected_devices">Connected Devices</string>
     <string name="settings_revoke_payments">Revoke Payments</string>
 
@@ -917,8 +932,6 @@
     <string name="pocket_error_withdraw_unavailable">Withdrawing %1$s isn\'t available right now. Try again later.</string>
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
     <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
-    <string name="pocket_pinned_card_humanity">Humanity</string>
-    <string name="host_placed_chat_jollity">Jollity</string>
     <string name="pocket_add_card_title">Add to Pocket</string>
     <string name="pocket_add_card_subtitle">%1$s wants to add a card to your Pocket. This is how it will look.</string>
     <string name="pocket_add_card_action">Add</string>
@@ -962,15 +975,28 @@
     <string name="pocket_coinage_trace_quality_high">High</string>
 
     <string name="payment_privacy_mode_title">%1$s Privacy Mode</string>
+    <string name="payment_privacy_mode_subtitle">Choose the balance between coin quality and waiting time.</string>
+    <string name="payment_privacy_mode_coin_quality_title">What is coin quality?</string>
+    <string name="payment_privacy_mode_coin_quality_description">%1$s describes how %2$s coins of the same denomination are from one another.\n\nCoins with %3$s behave more like real coins: they are harder to tell apart based on their individual histories or distinguishing characteristics.</string>
+    <string name="payment_privacy_mode_coin_quality_highlight_coin_quality">Coin quality</string>
+    <string name="payment_privacy_mode_coin_quality_highlight_indistinguishable">indistinguishable</string>
+    <string name="payment_privacy_mode_coin_quality_highlight_higher_quality">higher quality</string>
+    <string name="payment_privacy_mode_why_it_matters_title">Why does it matter?</string>
+    <string name="payment_privacy_mode_why_it_matters_description">When coins of the %1$s are %2$s, they can be treated as interchangeable, regardless of their individual histories. This property is called %3$s.\n\nGreater %3$s means fewer differences between individual coins.</string>
+    <string name="payment_privacy_mode_why_it_matters_highlight_same_denomination">same denomination</string>
+    <string name="payment_privacy_mode_why_it_matters_highlight_fungibility">fungibility</string>
     <string name="payment_privacy_mode_fastest_label">Fastest</string>
-    <string name="payment_privacy_mode_fastest_description">Fastest payments, lower privacy</string>
-    <string name="payment_privacy_mode_fastest_accessibility">Fastest. Fastest payments, lower privacy.</string>
+    <string name="payment_privacy_mode_fastest_bullet_1">Minimises waiting time</string>
+    <string name="payment_privacy_mode_fastest_bullet_2">Funds typically ready in seconds</string>
+    <string name="payment_privacy_mode_fastest_bullet_3">Coins somewhat distinguishable</string>
     <string name="payment_privacy_mode_balanced_label">Balanced</string>
-    <string name="payment_privacy_mode_balanced_description">Stronger privacy, moderate speed</string>
-    <string name="payment_privacy_mode_balanced_accessibility">Balanced. Stronger privacy, moderate speed.</string>
+    <string name="payment_privacy_mode_balanced_bullet_1">Balances coin quality and waiting time</string>
+    <string name="payment_privacy_mode_balanced_bullet_2">Most funds ready in seconds, the rest in minutes</string>
+    <string name="payment_privacy_mode_balanced_bullet_3">Coins typically indistinguishable</string>
     <string name="payment_privacy_mode_most_private_label">Most Private</string>
-    <string name="payment_privacy_mode_most_private_description">Maximum privacy, lowest speed</string>
-    <string name="payment_privacy_mode_most_private_accessibility">Most private. Maximum privacy, lowest speed.</string>
+    <string name="payment_privacy_mode_most_private_bullet_1">Maximises coin quality</string>
+    <string name="payment_privacy_mode_most_private_bullet_2">Funds ready in minutes</string>
+    <string name="payment_privacy_mode_most_private_bullet_3">Coins practically indistinguishable</string>
     <string name="payment_privacy_mode_state_selected">Selected</string>
     <string name="payment_privacy_mode_state_not_selected">Not selected</string>
 
@@ -1046,4 +1072,19 @@
     <string name="debug_report_capture_failed">Could not capture the app screen. Please try another screenshot.</string>
     <string name="debug_report_unavailable">Issue reporting is not configured for this build yet.</string>
     <string name="debug_report_too_large">The screenshot or logs are too large to send.</string>
+
+    <string name="funding_failure_above_maximum">Above the maximum</string>
+    <string name="funding_failure_below_minimum">Below the minimum</string>
+    <string name="funding_failure_cancelled">Cancelled</string>
+    <string name="funding_failure_declined">Payment declined</string>
+    <string name="funding_failure_expired">Expired</string>
+    <string name="funding_failure_failed">Failed · %1$s</string>
+    <string name="funding_failure_insufficient_balance">Not enough balance</string>
+    <string name="funding_failure_provider_timeout">Provider didn\'t respond</string>
+    <string name="funding_failure_refunded">Refunded</string>
+    <string name="funding_failure_region_unavailable">Not available in your region</string>
+    <string name="funding_failure_unknown">Something went wrong</string>
+    <string name="funding_failure_verification_refused">Verification declined</string>
+    <string name="funding_failure_verification_required">Verification needed</string>
+    <string name="funding_failure_wrong_asset_or_chain">Wrong asset or network</string>
 </resources>

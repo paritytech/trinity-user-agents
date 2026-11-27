@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -47,8 +48,10 @@ import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
@@ -63,6 +66,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.DigitalDollarCardDetails
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.ProductPocketCard
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.ProductPocketCardDetails
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.ImmutableList
@@ -82,7 +86,7 @@ fun PocketScreen() {
     val screenState by viewModel.state.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val shownProduct by viewModel.shownProduct.collectAsStateWithLifecycle()
-    val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
+    val startsCovered by viewModel.startsCovered.collectAsStateWithLifecycle()
     val collectiblesProduct by viewModel.collectiblesProduct.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
@@ -91,7 +95,7 @@ fun PocketScreen() {
         screenState = screenState,
         cards = cards,
         shownProduct = shownProduct,
-        openingFaceShown = openingFaceShown,
+        startsCovered = startsCovered,
         collectiblesProduct = collectiblesProduct,
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
@@ -110,7 +114,7 @@ private fun PocketScreenInternal(
     screenState: PocketScreenState,
     cards: ImmutableList<PocketCardUiModel>,
     shownProduct: ShownProduct?,
-    openingFaceShown: Boolean?,
+    startsCovered: Boolean?,
     collectiblesProduct: ShownProduct?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
@@ -186,7 +190,7 @@ private fun PocketScreenInternal(
                                     selectedCard = current.selectedCard,
                                     allCards = cards,
                                     shownProduct = shownProduct,
-                                    openingFaceShown = openingFaceShown,
+                                    startsCovered = startsCovered,
                                     bindingsOf = bindingsOf,
                                     onSettled = onExpandedCardSettled,
                                     onBack = onCardDismissed,
@@ -213,7 +217,7 @@ private fun SelectedCardDetails(
     selectedCard: PocketCardUiModel,
     allCards: ImmutableList<PocketCardUiModel>,
     shownProduct: ShownProduct?,
-    openingFaceShown: Boolean?,
+    startsCovered: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onBack: () -> Unit,
@@ -230,7 +234,7 @@ private fun SelectedCardDetails(
             card = selectedCard,
             bindings = bindingsOf(selectedCard),
             shownProduct = shownProduct,
-            openingFaceShown = openingFaceShown,
+            startsCovered = startsCovered,
             cardIndex = cardIndex,
             onSettled = { onSettled(selectedCard) },
             onBack = onBack,
@@ -372,6 +376,8 @@ private fun Transition<PocketScreenState>.extractAnchorCard(): PocketCardUiModel
 @Preview
 @Composable
 private fun PocketScreenPreview() {
+    val gl = MaterialsGl(LocalContext.current)
+    val scope = rememberCoroutineScope()
     PolkadotTheme {
         CompositionLocalProvider(
             LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
@@ -393,13 +399,14 @@ private fun PocketScreenPreview() {
                     )
                 ),
                 shownProduct = null,
-                openingFaceShown = null,
+                startsCovered = null,
                 collectiblesProduct = null,
                 bindingsOf = { card ->
                     ProductFaceBindings(
-                        face = MutableStateFlow(JsWidget.Text(text = card.title)),
+                        face = MutableStateFlow(PocketFace(JsWidget.Text(text = card.title), materials = null)),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
+                        materials = CardMaterialsSlot(gl, { Result.failure(UnsupportedOperationException()) }, scope),
                     )
                 },
                 onExpandedCardSettled = {},

@@ -9,7 +9,11 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::platform::ProductId;
+use crate::{
+	host_internal::bulletin::BulletinCid,
+	image_loader::{ImageFormat, ImageReference},
+	platform::ProductId,
+};
 
 /// Manifest schema version this core parses.
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -33,9 +37,7 @@ pub enum Granted {
 	Unrecognised,
 }
 
-/// Manifest JSON for tests. Only `$v` and `trustedProducts` are modelled, so a
-/// fixture carrying the display name, description and icon a publisher also
-/// writes would be exercising serde's tolerance rather than this parser.
+/// Manifest JSON for tests, with only `$v` and `trustedProducts`.
 #[cfg(test)]
 pub fn test_manifest_json(trusted: &str) -> String {
 	format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)
@@ -54,6 +56,67 @@ pub struct RootManifest {
 	pub trusted_products: BTreeMap<String, Vec<Granted>>,
 }
 
+/// How a product is shown: the name and icon its root manifest gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ProductBrand {
+	/// The product's name, never blank.
+	pub display_name: String,
+	/// Its icon, for `load_image`. `None` when the manifest's icon has a CID
+	/// that does not parse or a format other than `png` or `jpeg`, which
+	/// costs the product its icon and nothing else.
+	pub icon: Option<ImageReference>,
+}
+
+/// The fields of a root manifest a brand is read from.
+#[derive(Deserialize)]
+struct PublishedBrand {
+	#[serde(rename = "$v")]
+	schema_version: u32,
+	#[serde(rename = "displayName")]
+	display_name: Option<String>,
+	description: Option<String>,
+	icon: Option<PublishedIcon>,
+}
+
+#[derive(Deserialize)]
+struct PublishedIcon {
+	cid: Option<String>,
+	format: Option<String>,
+}
+
+impl ProductBrand {
+	/// The brand of a root manifest, under the RFC's schema: `$v` 1, a
+	/// non-blank `displayName`, a `description` and an `icon` with a `cid` and
+	/// a `format`. A manifest that breaks any of these gives no brand. The
+	/// icon itself is presentational, so one that cannot be loaded leaves
+	/// only the icon out.
+	pub fn parse(json: &str) -> Result<Self, ManifestParseError> {
+		let published: PublishedBrand = serde_json::from_str(json)?;
+		if published.schema_version != SUPPORTED_SCHEMA_VERSION {
+			return Err(ManifestParseError::UnsupportedSchemaVersion(published.schema_version));
+		}
+		let display_name = published
+			.display_name
+			.filter(|name| !name.trim().is_empty())
+			.ok_or(ManifestParseError::Missing("displayName"))?;
+		published.description.ok_or(ManifestParseError::Missing("description"))?;
+		let icon = published.icon.ok_or(ManifestParseError::Missing("icon"))?;
+		let (Some(cid), Some(format)) = (icon.cid, icon.format) else {
+			return Err(ManifestParseError::Missing("icon cid and format"));
+		};
+		let declared_format = match format.to_ascii_lowercase().as_str() {
+			"png" => Some(ImageFormat::Png),
+			"jpeg" => Some(ImageFormat::Jpeg),
+			_ => None,
+		};
+		let icon = declared_format
+			.zip(cid.parse::<BulletinCid>().ok())
+			.map(|(format, cid)| ImageReference::Bulletin { cid, declared_format: Some(format) });
+		Ok(Self { display_name, icon })
+	}
+}
+
 /// A manifest that cannot be decoded or uses an unsupported schema.
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 pub enum ManifestParseError {
@@ -64,6 +127,9 @@ pub enum ManifestParseError {
 	/// The manifest names a schema this core cannot read.
 	#[display("manifest schema version {_0} is not supported")]
 	UnsupportedSchemaVersion(#[error(not(source))] u32),
+	/// The manifest lacks a field its schema requires, or leaves it blank.
+	#[display("manifest has no usable {_0}")]
+	Missing(#[error(not(source))] &'static str),
 }
 
 impl RootManifest {

@@ -26,35 +26,38 @@ use truapi::Bytes32;
 #[cfg(feature = "mock")]
 pub mod mock;
 
+use crate::runtime::NamesProducts;
 pub use crate::{
-	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
-	product_id::{
-		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
+	dotns_name::{MAX_DNS_LABEL_LEN, is_dns_label},
+	privileged_product::PrivilegedProduct,
+	product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError},
+	stack::{
+		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
+		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,
+		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus, UnservedProduct,
 	},
 };
 
 use truapi::{
 	latest::{
-		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
-		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
-		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
-		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
-		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
-		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
-		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
-		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
-		RemotePermission, RemotePermissionRequest, RingLocation,
+		AllocatableResource, ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoomRegistrationStatus, CodeFormat,
+		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
+		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
+		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
+		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
+		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
+		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
+		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
+		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, LegacyAccountTxPayload,
+		NftPurseOwner, PocketCardSide, ProductAccountId, ProductAccountTxPayload,
+		ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -79,17 +82,8 @@ pub struct PairingHostConfig {
 	/// Host-spec B.1.3 defines the host metadata consumed by the signing host:
 	/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/B-inter-host.md?plain=1#L48-L60>
 	pub host: HostIdentity,
-	/// People-chain genesis hash used for statement-store SSO.
-	pub people_chain_genesis_hash: [u8; 32],
-	/// Bulletin-chain genesis hash used for in-core preimage submission.
-	pub bulletin_chain_genesis_hash: [u8; 32],
-	/// Asset Hub genesis hash. Session usernames and product manifests are
-	/// both read from the dotNS contracts deployed there, so without a usable
-	/// value no manifest resolves and every cross-product `trustedProducts`
-	/// grant not already cached is refused, indistinguishably from the other
-	/// product having granted nothing. All-zero says this host has no Asset
-	/// Hub.
-	pub asset_hub_chain_genesis_hash: [u8; 32],
+	/// The stack the host runs.
+	pub stack: Stack,
 	/// Deeplink URI scheme used in pairing QR payloads, without `://`.
 	///
 	/// Host-spec L.2-L.3 define the `polkadotapp://pair` route and construction
@@ -106,22 +100,13 @@ pub struct SigningHostConfig {
 	/// parity with [`PairingHostConfig`] and for the future signer-side SSO
 	/// responder, which advertises host identity in handshake responses.
 	pub host: HostIdentity,
-	/// People-chain genesis hash used for statement-store product calls.
-	pub people_chain_genesis_hash: [u8; 32],
-	/// Bulletin-chain genesis hash used for in-core preimage submission.
-	pub bulletin_chain_genesis_hash: [u8; 32],
-	/// Asset Hub genesis hash the dotNS contracts are deployed on, used to
-	/// resolve the product manifests that carry `trustedProducts` grants.
-	///
-	/// All-zero says this host has no Asset Hub, which refuses every grant not
-	/// already in the manifest cache.
-	pub asset_hub_chain_genesis_hash: [u8; 32],
-	/// The network's dotNS TLD without the leading dot: `dot`, `paseo`,
-	/// `testnet`. Every reserved RFC-0022 identity the wallet derives ends in
-	/// it: the `peopl.<suffix>` identity account and the `peopl.<suffix>` person
-	/// ring-VRF keys. Must match the People chain's
-	/// `NetworkSuffix.NetworkSuffix` value used for proof contexts.
-	pub network_suffix: String,
+	/// The stack the host runs. Every reserved RFC-0022 identity the wallet
+	/// derives ends in its TLD, which has to equal the People chain's
+	/// `NetworkSuffix.NetworkSuffix`. For a stack a [`StackRefresh`] handed out
+	/// the core reports a difference in [`StackStatus::mismatches`].
+	pub stack: Stack,
+	/// Whether the host draws materials. Off by default: `new` leaves it off.
+	pub materials_enabled: bool,
 }
 
 /// Product identity attached to one product-facing TrUAPI connection.
@@ -139,37 +124,6 @@ pub struct ProductContext {
 	pub product_id: ProductId,
 	/// Trusted kind of executable attached to this connection by the host.
 	pub execution_kind: ExecutableKind,
-}
-
-/// Trusted kind of product executable attached to a TrUAPI connection.
-///
-/// Mirrors the executable kinds a product manifest declares. The variants are
-/// capability classes: a connection reaches an execution-gated service only
-/// when its kind matches exactly, so `App` and `Widget` carry the same
-/// capability and differ only in how the host presents them, and `Worker` is
-/// the only kind that may serve the Chat modality.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ExecutableKind {
-	/// Visible full-page entrypoint such as `app/index.html`.
-	#[default]
-	App,
-	/// Visible embedded surface such as a dashboard card.
-	Widget,
-	/// Headless executable the host runs while a modality holds a reference
-	/// to it; the only kind that may serve the Chat modality.
-	Worker,
-}
-
-impl ExecutableKind {
-	/// The dotNS prefix used for this kind's executable records.
-	pub fn dotns_label(self) -> &'static str {
-		match self {
-			Self::App => "app",
-			Self::Widget => "widget",
-			Self::Worker => "worker",
-		}
-	}
 }
 
 /// Host metadata.
@@ -222,9 +176,7 @@ impl PairingHostConfig {
 	pub fn new(
 		host_info: HostInfo,
 		platform_info: PlatformInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
+		stack: Stack,
 		pairing_deeplink_scheme: String,
 	) -> Result<Self, RuntimeConfigValidationError> {
 		require_non_empty("pairing_deeplink_scheme", &pairing_deeplink_scheme)?;
@@ -235,9 +187,7 @@ impl PairingHostConfig {
 		}
 		let config = Self {
 			host: HostIdentity::new(host_info, platform_info)?,
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
+			stack,
 			pairing_deeplink_scheme,
 		};
 		Ok(config)
@@ -250,34 +200,22 @@ impl SigningHostConfig {
 	pub fn new(
 		host_info: HostInfo,
 		platform_info: PlatformInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
-		network_suffix: String,
+		stack: Stack,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		validate_network_suffix(&network_suffix)?;
 		Ok(Self {
 			host: HostIdentity::new(host_info, platform_info)?,
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			network_suffix,
+			stack,
+			materials_enabled: false,
 		})
 	}
 }
 
-fn validate_network_suffix(network_suffix: &str) -> Result<(), RuntimeConfigValidationError> {
-	require_non_empty("network_suffix", network_suffix)?;
-	if !DOTNS_TLDS.contains(&network_suffix) {
-		return Err(RuntimeConfigValidationError::InvalidNetworkSuffix {
-			network_suffix: network_suffix.to_string(),
-		});
-	}
-	Ok(())
-}
-
 impl ProductContext {
 	/// A product context for an app.
+	///
+	/// Does not check the stack, because host administration works on products
+	/// of any network, for example to clear their data. Build a product the core
+	/// will run with [`Self::served_by`].
 	pub fn new(product_id: ProductId) -> Self {
 		Self::new_with_execution(product_id, ExecutableKind::App)
 	}
@@ -285,6 +223,22 @@ impl ProductContext {
 	/// A product context for a host-selected executable kind.
 	pub fn new_with_execution(product_id: ProductId, execution_kind: ExecutableKind) -> Self {
 		Self { product_id, execution_kind }
+	}
+
+	/// The product a host asks the core to run on `stack`.
+	///
+	/// Fails when `product_id` is not an id the stack serves, so the host and
+	/// the core never hold two ids for one product. A name under `dot` on a
+	/// stack with another TLD is refused too: the host passes what
+	/// [`Stack::served_id`] gives for it. Every bridge builds a host-supplied
+	/// product through here.
+	pub fn served_by(
+		stack: &Stack,
+		product_id: ProductId,
+		execution_kind: ExecutableKind,
+	) -> Result<Self, RuntimeConfigValidationError> {
+		stack.require_served(&product_id)?;
+		Ok(Self::new_with_execution(product_id, execution_kind))
 	}
 }
 
@@ -399,18 +353,23 @@ pub fn validate_chat_message_content(
 		Content::ReactionRemoved(reaction) => {
 			Content::ReactionRemoved(validate_chat_reaction(reaction)?)
 		},
-		Content::Custom(custom) => {
-			if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
-				return Err(ChatFieldError::TooLong {
-					field: "payload",
-					limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
-				});
-			}
-			Content::Custom(ChatCustomMessage {
-				message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
-				payload: custom.payload,
-			})
-		},
+		Content::Custom(custom) => Content::Custom(validate_chat_custom_message(custom)?),
+	})
+}
+
+/// Screen a product-drawn custom message, wherever a host renders it.
+pub fn validate_chat_custom_message(
+	custom: ChatCustomMessage,
+) -> Result<ChatCustomMessage, ChatFieldError> {
+	if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
+		return Err(ChatFieldError::TooLong {
+			field: "payload",
+			limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
+		});
+	}
+	Ok(ChatCustomMessage {
+		message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
+		payload: custom.payload,
 	})
 }
 
@@ -778,12 +737,10 @@ pub enum RuntimeConfigValidationError {
 	#[display("{_0}")]
 	#[from]
 	InvalidProductId(#[error(not(source))] ProductIdError),
-	/// Network suffix was not a supported dotNS TLD.
-	#[display("network_suffix must be a supported dotNS TLD, got {network_suffix:?}")]
-	InvalidNetworkSuffix {
-		/// Actual network suffix value.
-		network_suffix: String,
-	},
+	/// The id is not one the host's stack serves.
+	#[display("{_0}")]
+	#[from]
+	UnservedProduct(UnservedProduct),
 }
 
 const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
@@ -846,12 +803,16 @@ impl ProductStorageKey {
 
 	/// Encode the stable opaque key used by existing host callbacks.
 	pub fn encode(&self) -> String {
-		format!(
-			"{PRODUCT_STORAGE_KEY_PREFIX}{}:{}:{}",
-			self.product_id.as_str().len(),
-			self.product_id,
-			self.key
-		)
+		format!("{}{}", Self::owner_prefix(&self.product_id), self.key)
+	}
+
+	/// The prefix every encoded key `product_id` owns starts with, and no key
+	/// of another product does.
+	///
+	/// The product id is length-prefixed, so one product's prefix never
+	/// matches a key owned by a product whose id merely starts with it.
+	pub fn owner_prefix(product_id: &ProductId) -> String {
+		format!("{PRODUCT_STORAGE_KEY_PREFIX}{}:{product_id}:", product_id.as_str().len())
 	}
 }
 
@@ -889,6 +850,19 @@ pub trait ProductStorage: Send + Sync {
 
 	/// Clear a value at a key.
 	async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError>;
+
+	/// Remove every value `product_id` owns. Idempotent.
+	///
+	/// The core calls this when it clears the product's state. A host that
+	/// keeps one shared store removes every key starting with
+	/// [`ProductStorageKey::owner_prefix`]; a host that separates storage by
+	/// product drops that product's store. Values another product wrote stay.
+	/// Every subscription to a removed key then sees it empty, as after
+	/// [`Self::clear`].
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Emit `key`'s current value, then each later change from any of the
 	/// product's runtimes. `key` is namespaced exactly as [`Self::read`] takes
@@ -994,6 +968,19 @@ pub enum PermissionAuthorizationRequest {
 	},
 }
 
+/// The products a request names besides the one the status belongs to: the
+/// target of an access or a signature, and the owner of an NFT purse.
+impl NamesProducts for PermissionAuthorizationRequest {
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		match self {
+			Self::AccountAccess { target_product_id } |
+			Self::CrossProductSignature { target_product_id, .. } => vec![target_product_id],
+			Self::Remote(request) => request.products(),
+			Self::Device(_) | Self::IdentityDisclosure => vec![],
+		}
+	}
+}
+
 /// A kind of signature a product makes with another product's account.
 ///
 /// The user approves each kind separately: approving one never lets another
@@ -1091,12 +1078,19 @@ pub trait CoreAdmin: Send + Sync {
 	/// [`Self::get_session_chat_identity_key`].
 	async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, GenericError>;
 
-	/// Read this device's X25519 encryption secret, for hosts that run device
-	/// sync against the peer's [`SessionUiInfo::device_enc_public_key`].
+	/// Read this device's X25519 encryption secret, for hosts that encrypt
+	/// their own chat and device-sync traffic.
 	///
-	/// Generated and persisted on first read, so the returned key is stable for
-	/// the install and matches the public key peers were told to address.
-	async fn get_device_encryption_key(&self) -> Result<Bytes32, GenericError>;
+	/// The key behind [`SessionUiInfo::device_enc_public_key`]: decrypting with
+	/// anything else misses what contacts send. The account holder decides
+	/// which key that is. A signing host serves its install-wide key,
+	/// generated and persisted on first read. A pairing host serves the key
+	/// the wallet registered for it at pairing, `None` before pairing and
+	/// rotated per login like [`Self::get_device_statement_key`].
+	///
+	/// Deliberately not on [`SessionUiInfo`], for the reason given on
+	/// [`Self::get_session_chat_identity_key`].
+	async fn get_device_encryption_key(&self) -> Result<Option<Bytes32>, GenericError>;
 
 	/// Read `product_id`'s hard-subtree public key, so a host can name the
 	/// account a review will sign with instead of showing a bare derivation
@@ -1135,27 +1129,6 @@ pub trait PairingHostAdmin: Send + Sync {
 	fn notify_session_store_changed(&self);
 }
 
-/// One chain a host serves: a protocol chain role mapped to the concrete
-/// chain of the host's configured environment.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct HostChainEntry {
-	/// Protocol role this entry answers for.
-	pub identifier: ChainIdentifier,
-	/// Genesis hash identifying the chain in all chain-scoped calls.
-	pub genesis_hash: Bytes32,
-}
-
-/// The chain set a host serves: its environment plus one entry per chain role.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct HostChainSet {
-	/// Ecosystem the host is configured for, e.g. "polkadot", "paseo".
-	pub network: String,
-	/// Chains this host serves, keyed by protocol role.
-	pub chains: Vec<HostChainEntry>,
-}
-
 /// Feature-support probing. The host answers whether it can service a given
 /// capability (currently scoped to per-chain support).
 #[async_trait::async_trait]
@@ -1165,10 +1138,6 @@ pub trait Features: Send + Sync {
 		&self,
 		request: HostFeatureSupportedRequest,
 	) -> Result<HostFeatureSupportedResponse, GenericError>;
-
-	/// Enumerate the chains this host serves (RFC 0026). The core resolves
-	/// `get_chain_info` requests against the returned set.
-	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
 }
 
 /// A chain the host builds as V5 general transactions, and the transaction
@@ -1303,6 +1272,21 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 15)]
 	FundingSupport,
+	/// A product's App executable manifest as last read from dotNS, and when,
+	/// cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 16)]
+	AppManifest {
+		/// Bare label of the product whose App manifest was cached.
+		product_label: String,
+	},
+	/// The last descriptor a browser core verified for a stack, so its next
+	/// start does not go back to the bundled copy. A native core keeps this
+	/// record in its own database instead.
+	#[codec(index = 17)]
+	StackRecord {
+		/// The stack's `stack_id`, the key in its link.
+		stack_id: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1418,6 +1402,10 @@ pub fn describe_core_storage_key(
 			("WorkerManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
+		CoreStorageKey::AppManifest { product_label } => {
+			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
+		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
@@ -1667,17 +1655,25 @@ pub struct SessionUiInfo {
 	pub chat_public_key: Option<Bytes32>,
 	/// X25519 public key of the wallet device that answered pairing. Hosts
 	/// running their own encrypted device-sync channel key it against this.
-	pub device_enc_public_key: Option<Bytes32>,
+	/// `None` on a signing host, which has no paired wallet device.
+	pub peer_device_enc_public_key: Option<Bytes32>,
 	/// Statement-store account id the paired wallet signs every session-channel
 	/// statement with. Whether it is scoped to the wallet device or to the
 	/// wallet identity is the wallet's choice, so hosts must not treat it as a
-	/// device discriminator; use [`Self::device_enc_public_key`] for that.
+	/// device discriminator; use [`Self::peer_device_enc_public_key`] for that.
 	pub peer_statement_account_id: Option<Bytes32>,
 	/// Statement-store account id this device advertises in the pairing
 	/// proposal; the paired wallet registers the statement-store allowance for
 	/// it, and peers address this host on topics derived from it. Rotated per
 	/// login. Secret at [`CoreAdmin::get_device_statement_key`].
 	pub device_statement_account_id: Option<Bytes32>,
+	/// X25519 public key of this device, which the user's other devices and
+	/// contacts encrypt to. A signing host's is its install-wide key; a pairing
+	/// host's is the key it advertised next to
+	/// [`Self::device_statement_account_id`], which the wallet registered and
+	/// announces, rotated per login. Secret at
+	/// [`CoreAdmin::get_device_encryption_key`].
+	pub device_enc_public_key: Option<Bytes32>,
 	/// Short username from the dotNS identity record on Asset Hub.
 	pub lite_username: Option<String>,
 	/// Fully qualified username from the dotNS identity record on Asset Hub.
@@ -1993,6 +1989,66 @@ pub enum UserConfirmationReview {
 	NftPurseDrain(NftPurseDrainReview),
 }
 
+/// The products a review names to the user: the caller, and the owner of each
+/// account, context or purse it asks about.
+impl NamesProducts for UserConfirmationReview {
+	fn products(&mut self) -> Vec<&mut ProductId> {
+		fn account<'a>(
+			calling: &'a mut Option<ProductId>,
+			account: &'a mut ProductAccountId,
+		) -> Vec<&'a mut ProductId> {
+			calling.iter_mut().chain([&mut account.dot_ns_identifier]).collect()
+		}
+		fn legacy(account: &mut LegacySigningAccount) -> Vec<&mut ProductId> {
+			match account {
+				LegacySigningAccount::Identity => vec![],
+				LegacySigningAccount::Product(account) => vec![&mut account.dot_ns_identifier],
+			}
+		}
+		match self {
+			Self::SignPayload(SignPayloadReview::Product { calling_product_id, request }) => {
+				account(calling_product_id, &mut request.account)
+			},
+			Self::SignPayload(SignPayloadReview::LegacyAccount { account, .. }) => {
+				vec![&mut account.dot_ns_identifier]
+			},
+			Self::SignRaw(SignRawReview::Product { calling_product_id, request, .. }) => {
+				account(calling_product_id, &mut request.account)
+			},
+			Self::SignRaw(SignRawReview::LegacyAccount { account, .. }) => legacy(account),
+			Self::StatementStoreProductSign(review) => {
+				account(&mut review.calling_product_id, &mut review.account)
+			},
+			Self::CreateTransaction(CreateTransactionReview::Product {
+				calling_product_id,
+				payload,
+			}) => account(calling_product_id, &mut payload.signer),
+			Self::CreateTransaction(CreateTransactionReview::LegacyAccount { account, .. }) => {
+				legacy(account)
+			},
+			Self::AccountAlias(review) => {
+				vec![&mut review.calling_product_id, &mut review.context.product_id]
+			},
+			Self::CreateProof(review) => {
+				vec![&mut review.calling_product_id, &mut review.context.product_id]
+			},
+			Self::IdentityDisclosure(review) => vec![&mut review.product_id],
+			Self::ResourceAllocation(review) => vec![&mut review.calling_product_id],
+			Self::AccountAccess(review) => {
+				vec![&mut review.requesting_product_id, &mut review.target_product_id]
+			},
+			Self::SignVrf(review) => {
+				vec![&mut review.calling_product_id, &mut review.request.account.dot_ns_identifier]
+			},
+			Self::ProductSubtree(review) => vec![&mut review.product_id],
+			Self::NftPurseDrain(review) => match &mut review.owner {
+				NftPurseOwner::Product(owner) => vec![&mut review.calling_product_id, owner],
+				NftPurseOwner::Root => vec![&mut review.calling_product_id],
+			},
+		}
+	}
+}
+
 /// Local user confirmation UI for sensitive core-owned operations.
 #[async_trait::async_trait]
 pub trait UserConfirmation: Send + Sync {
@@ -2072,12 +2128,17 @@ pub trait PreimageHost: Send + Sync {
 /// anything a host derives from product-supplied values remain host-owned.
 #[async_trait::async_trait]
 pub trait ChatPlatform: Send + Sync {
-	/// Create or resolve a product-scoped native chat room.
+	/// Create or resolve a product-scoped native chat room. `room_id` is the id
+	/// that the core derived from the product and `request.room_id_source`, or,
+	/// for a product built against the earlier client, the id that the product
+	/// gave. The host stores the room under this id, and every later call names
+	/// the room with it.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError>;
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError>;
 
 	/// Register or resolve a product-scoped native chat bot. Host-owned in the
 	/// same way rooms are.
@@ -2199,12 +2260,11 @@ pub struct FundingPresentation {
 
 /// The providers' quotes for one ask, as the host draws its provider list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteList {
 	/// The request this list answers, as `request_funding_quotes` returned
-	/// it. Ids only grow, and a list can reach the host before the call that
-	/// returns its id does, so a host shows a list only when its id is at
-	/// least the latest it has seen, and drops the rest.
+	/// it. The core keeps only the current request's list, so a list read
+	/// back is always the one to show.
 	pub request_id: u64,
 	/// One row per provider asked, in the host's provider order.
 	pub rows: Vec<FundingQuoteRow>,
@@ -2215,11 +2275,43 @@ pub struct FundingQuoteList {
 	/// When the core asks every provider again, in Unix milliseconds. Each
 	/// row keeps its answer until the provider answers again.
 	pub refresh_at_ms: u64,
+	/// The amount the list prices, in balance units, which `issue` is
+	/// about.
+	pub amount: u128,
+	/// Once every provider answered and none quoted, the reason they all
+	/// gave. `None` while any is pending or quoted, or when they gave
+	/// different reasons.
+	pub refusal: Option<FundingQuoteUnavailable>,
+	/// Once every provider answered and none quoted, what their refusals
+	/// say about the amount: the lowest minimum any showed, otherwise the
+	/// highest maximum.
+	pub issue: Option<FundingAmountIssue>,
+	/// Whether every provider answered: no row is pending.
+	pub complete: bool,
+}
+
+/// Why an amount cannot go ahead.
+#[derive(Debug, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
+pub enum FundingAmountIssue {
+	/// A withdrawal of more than the user can spend.
+	NotEnoughBalance,
+	/// Below the smallest amount any provider takes.
+	BelowMinimum {
+		/// That smallest amount, in balance units.
+		min: u128,
+	},
+	/// Above the largest amount any provider takes.
+	AboveMaximum {
+		/// That largest amount, in balance units.
+		max: u128,
+	},
 }
 
 /// One provider's place in the list a quote request fills in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteRow {
 	/// The provider.
 	pub provider_id: ProductId,
@@ -2229,7 +2321,7 @@ pub struct FundingQuoteRow {
 
 /// Where a provider's quote stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteState {
 	/// Asked, not answered yet.
 	Pending,
@@ -2248,7 +2340,7 @@ pub enum FundingQuoteState {
 
 /// Why a provider cannot be offered for an ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteUnavailable {
 	/// The provider refused to price it.
 	Refused {
@@ -2276,17 +2368,29 @@ pub enum FundingPresentOutcome {
 #[async_trait::async_trait]
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
+	/// host itself when `product` is `None`. A cancel while the overlay is up
+	/// drops this call, and the host takes the overlay down when it is
+	/// dropped.
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,
 		session: FundingPresentation,
 	) -> Result<FundingPresentOutcome, GenericError>;
 
+	/// `provider` asked to show a screen for session `intent`. The core
+	/// holds it until the host calls `open_provider_frame(intent)`, which
+	/// the host does at once while the user looks at the session, or once
+	/// the user taps a notice that the provider wants to show something.
+	/// A worker never puts a screen in front of the user on its own.
+	fn provider_frame_requested(&self, provider: &ProductContext, intent: String);
+
 	/// Show `target` for `provider`'s session `intent` in a frame the host
-	/// owns, and answer once it closes. A page is an https URL the core has
-	/// checked: the host shows its origin, and closes the frame with
-	/// `Returned` when the page reaches its return URL.
+	/// owns, and answer once it closes. Called only once the host opened the
+	/// request [`Self::provider_frame_requested`] announced. A page is an
+	/// https URL the core has checked: the host shows its origin, and closes
+	/// the frame with `Returned` when the page reaches its return URL. The
+	/// core closes the frame itself, through [`Self::close_provider_frame`],
+	/// once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider: &ProductContext,
@@ -2299,12 +2403,6 @@ pub trait FundingPlatform: Send + Sync {
 	/// session's progress in its place. Does nothing when no frame is
 	/// open for it.
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String);
-
-	/// Whether `provider` ships an App, so an App route of its can be shown.
-	/// A provider without one shows only external pages.
-	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
-		true
-	}
 
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
 	/// the quotes the core asks before the user picks one. Best effort,
@@ -2323,8 +2421,8 @@ pub trait FundingPlatform: Send + Sync {
 
 	/// Observe the quote list the host requested, for the provider list:
 	/// again whenever a provider answers, and each time the core asks every
-	/// provider again.
-	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
+	/// provider again. `None` once a selection on another route withdrew it.
+	fn funding_quotes_changed(&self, intent: String, quotes: Option<FundingQuoteList>) {
 		let _ = (intent, quotes);
 	}
 }
@@ -2422,60 +2520,54 @@ pub trait PermissionStatusHost: Send + Sync {
 	) -> Result<DevicePermissionStatus, GenericError>;
 }
 
-/// What the host did with a request to show or hide the expanded card face.
+/// What the host did with a request to cover or uncover the expanded card.
 #[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ExpandedCardFaceOutcome {
-	/// The face is now in the requested state, including when it already was.
+pub enum ExpandedCardCoverOutcome {
+	/// The card is now in the requested state, including when it already was.
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face, so the request had no effect.
+	/// The user is moving or turning the card, so the request had no effect.
 	UserMoving,
-	/// The host cannot move the face at all.
+	/// The host draws no card face.
 	Unsupported,
 }
 
-/// Host control of the card face drawn above an opened card's Widget.
+/// What the host did with a request to turn the expanded card.
+#[derive(Debug, Clone, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardTurnOutcome {
+	/// The requested side is now up, including when it already was.
+	Applied,
+	/// The Widget is not shown under its card right now.
+	NotPresented,
+	/// The user is moving or turning the card, so the request had no effect.
+	UserMoving,
+	/// The host cannot turn cards at all.
+	Unsupported,
+	/// The card has no back to show right now.
+	NoBack,
+}
+
+/// Host control of the card face drawn under an opened card's Widget.
 ///
 /// Carried per connection on `ConnectionAdapters`, because the host owns one
 /// drawer per product execution. A connection without one tells products
 /// `Unsupported`.
 #[async_trait::async_trait]
 pub trait ExpandedCardHost: Send + Sync {
-	/// Show (`true`) or hide (`false`) the face above the calling Widget.
-	async fn set_expanded_card_face_shown(
+	/// Cover (`true`) or uncover (`false`) the card under the calling Widget.
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<ExpandedCardFaceOutcome, GenericError>;
-}
+		covered: bool,
+	) -> Result<ExpandedCardCoverOutcome, GenericError>;
 
-/// Host store for a product's pending operations, which the host uses to keep
-/// the product's worker runtime alive. Reached only through the `Worker`
-/// protocol trait, so non-worker products never call these.
-#[async_trait::async_trait]
-pub trait ProductOperations: Send + Sync {
-	/// Record a pending operation. `label` is a host log and UI hint, empty
-	/// when the product gave none.
-	///
-	/// The returned id must be unique among this product's open operations.
-	/// The core keys the worker reference an operation holds by that id, so an
-	/// id already open for the product records nothing the second time, and
-	/// ending it once drops the demand both were holding. Ids may repeat
-	/// across products, and may be reused once an operation has ended.
-	async fn begin_operation(
+	/// Turn the card above the calling Widget so `side` is up.
+	async fn turn_expanded_card(
 		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-	/// Remove a pending operation. Idempotent: an unknown or already-ended id
-	/// returns `Ok`, so a retry after an ambiguous failure is safe.
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), HostWorkerOperationError>;
+		side: PocketCardSide,
+	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
 /// Contact handles the core needs turned back into accounts, and the key they
@@ -2483,13 +2575,14 @@ pub trait ProductOperations: Send + Sync {
 ///
 /// A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
 /// being its 32 raw bytes. The host holds the accounts, so it is the one that
-/// can match: hash each contact's account under `handle_key`, or keep that hash
-/// as an indexed column for the session, and look the handles up.
+/// can match: hash each contact's account under `handle_key` and look the
+/// handles up. The key differs per product and per session, so a host that
+/// keeps the hashes keeps them per key.
 #[derive(Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostContactLookup {
-	/// The key every handle here was minted under. Per session, and never
-	/// given to a product.
+	/// The key every handle here was minted under. Per session and product,
+	/// and never given to a product.
 	pub handle_key: Bytes32,
 	/// The handles to resolve, in the order the answer must follow.
 	pub handles: Vec<Bytes32>,
@@ -2529,15 +2622,32 @@ pub enum HostContactPick {
 	Unsupported,
 }
 
+/// The usernames a host lists for the game product.
+#[derive(Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostContactUsernames {
+	/// The dotNS usernames of the unblocked contacts the picker would offer,
+	/// in host order, each the bare label with no top-level domain.
+	Listed {
+		/// One username per contact that has one.
+		usernames: Vec<String>,
+	},
+	/// This host resolves contacts but does not list their usernames. The core
+	/// answers the product `Unsupported`.
+	Unsupported,
+}
+
 /// Host-owned contact picker, drawn from the chat lists the host's chat
 /// extensions hold.
 ///
 /// Optional, and listed on [`OptionalPlatform`] as [`ChatPlatform`] is.
 ///
 /// The host owns the UI and the list. It draws the names, so nothing it renders
-/// reaches the product, and the list never crosses to the core either: the core
-/// asks only about the handles a transaction names. A host omits contacts the
-/// user has blocked, from the picker and from lookups alike.
+/// reaches the product, and the accounts on the list never cross to the core:
+/// the core asks only about the handles a transaction names. Usernames cross
+/// only through [`Self::contact_usernames`], for the game product. A
+/// host omits contacts the user has blocked, from the picker, from lookups and
+/// from usernames alike.
 #[async_trait::async_trait]
 pub trait ContactsPlatform: Send + Sync {
 	/// Resolve `lookup.handles` to the contacts they name.
@@ -2575,6 +2685,22 @@ pub trait ContactsPlatform: Send + Sync {
 		_product: &ProductContext,
 	) -> Result<HostContactPick, GenericError> {
 		Ok(HostContactPick::Unsupported)
+	}
+
+	/// List the dotNS usernames of the unblocked contacts the picker would
+	/// offer.
+	///
+	/// The core calls this only for the game product, so a host does not
+	/// check `product` itself: it says who is asking and is not a filter.
+	/// Answer from the contacts the host already holds, without a prompt.
+	/// Defaults to [`HostContactUsernames::Unsupported`], so a host that lists
+	/// nothing gives its products a truthful answer. A JS host passes it with
+	/// the other two contacts callbacks, or the whole group counts as absent.
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<HostContactUsernames, GenericError> {
+		Ok(HostContactUsernames::Unsupported)
 	}
 }
 
@@ -2637,7 +2763,6 @@ pub trait Platform:
 	+ ThemeHost
 	+ LocaleHost
 	+ PreimageHost
-	+ ProductOperations
 {
 }
 
@@ -2655,7 +2780,6 @@ impl<T> Platform for T where
 		+ ThemeHost
 		+ LocaleHost
 		+ PreimageHost
-		+ ProductOperations
 {
 }
 

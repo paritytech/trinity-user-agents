@@ -3,7 +3,6 @@ import PolkadotUI
 import Products
 import SnapKit
 import UIKit
-import UIKitExt
 import WebKit
 
 /// The Collectibles screen pushed over the Wallet, with the stash product filling it.
@@ -25,6 +24,12 @@ final class CollectiblesViewController: UIViewController {
     private var pendingClose: (() -> Void)?
     private var loadObservation: NSKeyValueObservation?
     private var loadTimeout: Task<Void, Never>?
+    private var pageTopBelowBars: Constraint?
+    private var pageTopAtScreenTop: Constraint?
+    /// The page's shrink while a back swipe scrubs it. Nil when the swipe has only a resting page to fade.
+    private var pageScrub: UIViewPropertyAnimator?
+    /// Whether a back swipe has already drawn the expanded page where it rests, so the close does not shrink it.
+    private var isPageShrunkBySwipe = false
 
     init(product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.product = product
@@ -60,18 +65,6 @@ final class CollectiblesViewController: UIViewController {
         }
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
@@ -102,11 +95,21 @@ final class CollectiblesViewController: UIViewController {
     }
 }
 
-extension CollectiblesViewController: TabBarRootStandIn {}
-
 extension CollectiblesViewController: PocketItemScreen {
     var pocketItem: PocketItem {
         .collectibles
+    }
+
+    var statusStripTitle: String {
+        String(localized: .Products.collectibles)
+    }
+}
+
+// MARK: - NavigationBarHiding
+
+extension CollectiblesViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
     }
 }
 
@@ -122,6 +125,10 @@ extension CollectiblesViewController: NavigationTransitionAnimating {
         default:
             nil
         }
+    }
+
+    var allowsBackSwipe: Bool {
+        hasStartedOpening && !isBookAnimating && pendingClose == nil
     }
 }
 
@@ -154,6 +161,56 @@ extension CollectiblesViewController {
         }
         closeFromCurrentState(then: completion)
     }
+
+    /// Readies the first stage of the close for a back swipe to scrub: an expanded page shrinks to its resting
+    /// inset with the finger, and a resting page fades.
+    func beginScrub() {
+        guard pageExpanded else { return }
+
+        let shrink = UIViewPropertyAnimator(
+            duration: CollectiblesBookTiming.pageExpandDuration,
+            curve: .easeIn
+        ) { [self] in
+            pageView.transform = shrinkTransform()
+            pageView.layer.cornerRadius = CollectiblesBookTiming.pageCornerRadius / restingPageScale
+        }
+        pageScrub = shrink
+        shrink.pauseAnimation()
+    }
+
+    /// Draws the first stage of the close at `progress`, from 0, the page as it was, to 1.
+    func scrub(to progress: CGFloat) {
+        if let pageScrub {
+            pageScrub.fractionComplete = progress
+        } else {
+            pageView.alpha = 1 - progress
+        }
+    }
+
+    /// Runs the first stage to its end, or back to where it started, then calls `completion`.
+    func endScrub(finishing: Bool, then completion: @escaping () -> Void) {
+        guard let shrink = pageScrub else {
+            if finishing {
+                completion()
+            } else {
+                restorePageAlpha(then: completion)
+            }
+            return
+        }
+
+        let remaining = finishing ? 1 - shrink.fractionComplete : shrink.fractionComplete
+        if remaining > 0 {
+            shrink.isReversed = !finishing
+            shrink.addCompletion { [self] _ in
+                finishPageScrub(finishing: finishing, then: completion)
+            }
+            shrink.continueAnimation(withTimingParameters: nil, durationFactor: remaining)
+        } else {
+            shrink.stopAnimation(false)
+            shrink.finishAnimation(at: finishing ? .end : .start)
+            finishPageScrub(finishing: finishing, then: completion)
+        }
+    }
 }
 
 // MARK: - Private
@@ -162,9 +219,11 @@ private extension CollectiblesViewController {
     func setupPage() {
         view.addSubview(pageView)
         pageView.snp.makeConstraints { make in
-            make.top.equalTo(view.safeAreaLayoutGuide)
+            pageTopBelowBars = make.top.equalTo(view.safeAreaLayoutGuide).constraint
+            pageTopAtScreenTop = make.top.equalToSuperview().constraint
             make.leading.trailing.bottom.equalToSuperview()
         }
+        pageTopAtScreenTop?.deactivate()
         pageView.alpha = 0
         pageView.clipsToBounds = true
         pageView.layer.cornerCurve = .continuous
@@ -217,6 +276,7 @@ private extension CollectiblesViewController {
     /// With Reduce Motion the book is not drawn, the page is shown at once, and only the skeleton fades away.
     func openWithoutMotion() {
         pageExpanded = true
+        setPageReachesScreenTop(true)
         book.isHidden = true
         pageView.transform = .identity
         pageView.layer.cornerRadius = 0
@@ -285,6 +345,7 @@ private extension CollectiblesViewController {
             curve: .easeOut
         ) { [self] in
             pageView.transform = .identity
+            setPageReachesScreenTop(true)
             pageView.layer.cornerRadius = 0
             skeleton.alpha = 0
         }
@@ -296,42 +357,120 @@ private extension CollectiblesViewController {
         expand.startAnimation()
     }
 
-    /// The book sits at the top of the screen, inset as the Pocket's peek is.
+    /// An expanded page reaches the top of the screen, so the product draws under the bars. A resting page starts
+    /// below them, where the book sits.
+    func setPageReachesScreenTop(_ reachesTop: Bool) {
+        if reachesTop {
+            pageTopBelowBars?.deactivate()
+            pageTopAtScreenTop?.activate()
+        } else {
+            pageTopAtScreenTop?.deactivate()
+            pageTopBelowBars?.activate()
+        }
+        view.layoutIfNeeded()
+    }
+
+    /// The book sits at the top of the screen, inset as the Pocket's peek is, its art scaled to its width.
     func layoutBook() {
         let inset = CollectiblesBookTiming.pageInset
-        let size = CGSize(width: view.bounds.width - 2 * inset, height: UIImage.collectiblesBook.size.height)
+        let width = view.bounds.width - 2 * inset
+        let imageSize = UIImage.collectiblesBook.size
+        let size = CGSize(width: width, height: width * imageSize.height / imageSize.width)
         book.bounds = CGRect(origin: .zero, size: size)
         book.center = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + inset + size.height / 2)
     }
 
     /// Shrinks the page to the book's inset, scaling from its top centre, so the page sits under the book.
     func layoutRestingPage() {
-        let width = view.bounds.width
-        let scale = (width - 2 * CollectiblesBookTiming.pageInset) / width
-        pageView.transform = CGAffineTransform(translationX: -width / 2, y: 0)
-            .scaledBy(x: scale, y: scale)
-            .translatedBy(x: width / 2, y: CollectiblesBookTiming.pageInset)
-        pageView.layer.cornerRadius = CollectiblesBookTiming.pageCornerRadius / scale
+        pageView.transform = restingPageTransform()
+        pageView.layer.cornerRadius = CollectiblesBookTiming.pageCornerRadius / restingPageScale
     }
 
-    /// Shrinks an expanded page back to its resting inset, then calls `completion`.
+    /// The scale that fits an expanded page inside the book's inset on each side.
+    var restingPageScale: CGFloat {
+        let width = view.bounds.width
+        return (width - 2 * CollectiblesBookTiming.pageInset) / width
+    }
+
+    func restingPageTransform() -> CGAffineTransform {
+        let width = view.bounds.width
+        return CGAffineTransform(translationX: -width / 2, y: 0)
+            .scaledBy(x: restingPageScale, y: restingPageScale)
+            .translatedBy(x: width / 2, y: CollectiblesBookTiming.pageInset)
+    }
+
+    /// The transform that draws an expanded page where it rests, without laying its content out again.
+    func shrinkTransform() -> CGAffineTransform {
+        let bounds = view.bounds
+        let top = view.safeAreaInsets.top
+        let restingFrame = CGRect(x: 0, y: top, width: bounds.width, height: bounds.height - top)
+        let restingDrawn = restingFrame
+            .offsetBy(dx: -restingFrame.midX, dy: -restingFrame.midY)
+            .applying(restingPageTransform())
+            .offsetBy(dx: restingFrame.midX, dy: restingFrame.midY)
+        let scale = restingPageScale
+        return CGAffineTransform(
+            a: scale,
+            b: 0,
+            c: 0,
+            d: scale,
+            tx: restingDrawn.minX - (1 - scale) * bounds.width / 2,
+            ty: restingDrawn.minY - (1 - scale) * bounds.height / 2
+        )
+    }
+
+    /// Shrinks an expanded page back to its resting inset, unless a back swipe already drew it there, then calls
+    /// `completion`.
     func collapsePage(then completion: @escaping () -> Void) {
-        guard pageExpanded else {
+        guard pageExpanded, !isPageShrunkBySwipe else {
             completion()
             return
         }
 
         pageExpanded = false
-        let collapse = UIViewPropertyAnimator(
-            duration: CollectiblesBookTiming.pageExpandDuration,
-            curve: .easeIn
-        ) { [self] in
-            layoutRestingPage()
-        }
+        let collapse = makeCollapseAnimator()
         collapse.addCompletion { _ in
             completion()
         }
         collapse.startAnimation()
+    }
+
+    /// The shrink of an expanded page to its resting inset, which the timed close runs.
+    func makeCollapseAnimator() -> UIViewPropertyAnimator {
+        UIViewPropertyAnimator(
+            duration: CollectiblesBookTiming.pageExpandDuration,
+            curve: .easeIn
+        ) { [self] in
+            setPageReachesScreenTop(false)
+            layoutRestingPage()
+        }
+    }
+
+    /// Brings a resting page back to full opacity after a back swipe that did not commit, then calls `completion`.
+    func restorePageAlpha(then completion: @escaping () -> Void) {
+        let restore = UIViewPropertyAnimator(
+            duration: CollectiblesBookTiming.coverDuration,
+            curve: .linear
+        ) { [self] in
+            pageView.alpha = 1
+        }
+        restore.addCompletion { _ in
+            completion()
+        }
+        restore.startAnimation()
+    }
+
+    /// Clears the page's shrink once the close has ended. A finished close leaves the page shrunk for the close to
+    /// skip, and a cancelled one lets it rest at full size.
+    func finishPageScrub(finishing: Bool, then completion: @escaping () -> Void) {
+        pageScrub = nil
+        if finishing {
+            isPageShrunkBySwipe = true
+        } else {
+            pageView.transform = .identity
+            pageView.layer.cornerRadius = 0
+        }
+        completion()
     }
 
     func stopWatchingLoad() {

@@ -281,6 +281,81 @@ describe("generated client transport", () => {
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
 
+    it("sends a push notification without a title as V1, which hosts before v0.2 serve", () => {
+        const fixture = providerFixture();
+        const client = createClient(createTransport(fixture.provider));
+        const untitled = { text: "hi", deeplink: undefined, scheduledAt: undefined };
+        const titled = { ...untitled, title: "Daily Dollar" };
+
+        void client.notifications.sendPushNotification(untitled);
+        void client.notifications.sendPushNotification(titled);
+
+        const payloads = fixture.sent.map((frame, index) =>
+            toHex(frame.slice(str.enc(`p:${index + 1}`).length + 3)),
+        );
+        expect(payloads).toEqual([
+            toHex(T.VersionedHostPushNotificationRequest.enc({ tag: "V1", value: untitled })),
+            toHex(T.VersionedHostPushNotificationRequest.enc({ tag: "V2", value: titled })),
+        ]);
+    });
+
+    it("reports a push notification domain error as V2 whichever version was sent", async () => {
+        const fixture = providerFixture();
+        const client = createClient(createTransport(fixture.provider));
+        const response = client.notifications.sendPushNotification({
+            text: "hi",
+            deeplink: undefined,
+            scheduledAt: undefined,
+        });
+        const reason = { tag: "ScheduleLimitReached", value: undefined } as const;
+        fixture.receive(
+            wireFrame(
+                "p:1",
+                W.NOTIFICATIONS_SEND_PUSH_NOTIFICATION,
+                MESSAGE_TYPE_RESPONSE,
+                S.Result(
+                    T.VersionedHostPushNotificationResponse,
+                    S.CallError(T.VersionedHostPushNotificationError),
+                ).enc({
+                    success: false,
+                    value: { tag: "Domain", value: { tag: "V1", value: reason } },
+                }),
+            ),
+        );
+
+        const result = await response;
+        expect(result._unsafeUnwrapErr()).toEqual({
+            tag: "Domain",
+            value: { tag: "V2", value: reason },
+        });
+    });
+
+    it("sends a plain string room footer as the frame of its tagged value", () => {
+        for (const footer of ["Empty", "TextInput"] as const) {
+            const fixture = providerFixture();
+            const client = createClient(createTransport(fixture.provider));
+
+            void client.chat.setRoomFooter({ roomId: "room", footer });
+            void client.chat.setRoomFooter({ roomId: "room", footer: { tag: footer } });
+
+            const [plain, tagged] = fixture.sent.map((frame) =>
+                toHex(frame.slice(str.enc("p:1").length)),
+            );
+            expect(plain).toBe(tagged);
+        }
+    });
+
+    it("refuses a room footer string that names no unit variant", () => {
+        const client = createClient(createTransport(providerFixture().provider));
+
+        expect(() =>
+            client.chat.setRoomFooter({
+                roomId: "room",
+                footer: "Card" as "Empty",
+            }),
+        ).toThrow("Unknown enum variant: Card");
+    });
+
     it("uses the transport codec version for generated handshake calls", () => {
         const fixture = providerFixture();
         const transport = createTransport(fixture.provider);

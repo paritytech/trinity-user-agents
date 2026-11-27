@@ -1,6 +1,8 @@
 //! Wallet account execution and access to other products' keys.
 
 use super::{WalletAccountHolder, WalletKeys, allowance::AllowanceAllocationError};
+use std::sync::Arc;
+
 use crate::{
 	host_internal::{
 		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
@@ -8,9 +10,9 @@ use crate::{
 		transaction::sign_extrinsic_payload,
 	},
 	host_logic::{
-		features::genesis_for,
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
+		session::{SessionInfo, SessionState},
 	},
 	platform::{PermissionAuthorizationStatus, ProductId},
 	runtime::{
@@ -19,16 +21,17 @@ use crate::{
 			AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		authority_cancellation_error,
-		contacts::ContactHandles,
+		contacts::ContactHandleKey,
 		product_manifest::{
 			AuthorizedAccess, require_context_access, ring_vrf_key_access_granted,
 			ring_vrf_key_access_granted_or_consent,
 		},
 		remote_authority_call, remote_authority_context,
 		ring_vrf_registry::apply_ring_vrf_disclosure,
+		served::Served,
 		signing_host::ring_vrf::{MemberCandidate, context_bytes, create_proof},
 		statement_allowance::collection::PersonhoodCollection,
 		until_cancelled,
@@ -42,10 +45,9 @@ use futures::{
 use truapi::{
 	latest as api,
 	latest::{
-		ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest, ProductAccountId,
-		RingLocation, RingLocationJunction,
+		DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 	},
 };
 
@@ -132,17 +134,10 @@ impl WalletAccountHolder {
 		session: &AuthoritySession,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		if owner != &personhood_product_id(&self.network_suffix) {
+		if owner != &personhood_product_id(self.services.stack().tld()) {
 			return Ok(());
 		}
-		let chains = self
-			.services
-			.platform
-			.supported_chains()
-			.await
-			.map_err(|error| RingVrfError::Unknown { reason: error.reason })?;
-		let chain_id =
-			genesis_for(&chains, ChainIdentifier::People).ok_or(RingVrfError::RingNotFound)?;
+		let chain_id = self.services.stack().chains().people;
 		let entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
 		let missing = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.into_iter()
@@ -281,12 +276,27 @@ impl AccountHolder for WalletAccountHolder {
 		Some(state.session(&session))
 	}
 
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
+	fn session_state(&self) -> Arc<SessionState> {
+		WalletAccountHolder::session_state(self)
+	}
+
+	fn require_current_session(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError> {
 		self.lifecycle
 			.lock()
 			.expect("wallet lifecycle mutex poisoned")
 			.require_session(self.session_state.current(), session)
-			.map(|_| ())
+	}
+
+	/// The install-wide secret this host answers pairing proposals with,
+	/// generated and persisted on first read.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.encryption_secret()
+			.await
+			.map(Some)
+			.map_err(|reason| AuthorityError::Unknown { reason })
 	}
 
 	async fn allocate_grants<'a>(
@@ -408,13 +418,15 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		self.with_keys(invocation.session, |keys| {
-			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
+			Ok(SubtreeResolution::Known(
+				keys.product_subtree_keypair(product_id)?.public.to_bytes(),
+			))
 		})
 	}
 
@@ -445,10 +457,11 @@ impl AccountHolder for WalletAccountHolder {
 			self.with_keys(invocation.session, |keys| {
 				let (account, payload) = match request {
 					SignPayloadAuthorityRequest::Product(request) => {
+						let request = request.into_inner();
 						(request.account, request.payload)
 					},
 					SignPayloadAuthorityRequest::LegacyAccount { product_account, request } => {
-						(product_account, request.payload)
+						(product_account.into_inner(), request.payload)
 					},
 				};
 				Ok(sign_extrinsic_payload(&keys.product_keypair(&account)?, payload)?)
@@ -469,9 +482,13 @@ impl AccountHolder for WalletAccountHolder {
 			self.with_keys(invocation.session, |keys| {
 				let (keypair, payload) = match request {
 					SignRawAuthorityRequest::Product(request) => {
+						let request = request.into_inner();
 						(keys.product_keypair(&request.account)?, request.payload)
 					},
-					SignRawAuthorityRequest::LegacyAccount { account, request } => {
+					SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+						(keys.product_keypair(&product_account)?, request.payload)
+					},
+					SignRawAuthorityRequest::IdentityAccount { account, request } => {
 						(keys.identity_keypair_for(account)?, request.payload)
 					},
 				};
@@ -536,7 +553,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn account_alias(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountGetAliasRequest,
+		request: Served<HostAccountGetAliasRequest>,
 	) -> Result<api::ContextualAlias, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -592,7 +609,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn create_proof(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountCreateProofRequest,
+		request: Served<HostAccountCreateProofRequest>,
 	) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -639,10 +656,27 @@ impl AccountHolder for WalletAccountHolder {
 		Ok(public_key)
 	}
 
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		self.require_current_session(invocation.session)?;
+		let handle = Self::caller_key_handle(&invocation, request.index)?;
+		if self.derive_ring_vrf_member(invocation.session, &handle).await? != public_key {
+			return Err(RingVrfError::Unknown {
+				reason: "the kept AutoSigning key derives a different ring-VRF key".to_string(),
+			});
+		}
+		self.record_registration(invocation.session, handle, request.ring, public_key)
+			.await
+	}
+
 	async fn list_ring_vrf_keys(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountListRingVrfKeysRequest,
+		request: Served<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -662,7 +696,7 @@ impl AccountHolder for WalletAccountHolder {
 	async fn ring_vrf_sign(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: HostAccountRingVrfSignRequest,
+		request: Served<HostAccountRingVrfSignRequest>,
 	) -> Result<Vec<u8>, RingVrfError> {
 		let session = invocation.session;
 		self.require_current_session(session)?;
@@ -708,10 +742,11 @@ impl AccountHolder for WalletAccountHolder {
 		self.with_keys(session, |keys| keys.derive_entropy(product_id, context))
 	}
 
-	fn contact_handles(
+	fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<ContactHandles, AuthorityError> {
-		self.with_keys(session, |keys| Ok(keys.contact_handles()))
+		product_id: &ProductId,
+	) -> Result<ContactHandleKey, AuthorityError> {
+		self.with_keys(session, |keys| Ok(keys.contact_handle_key(product_id)))
 	}
 }

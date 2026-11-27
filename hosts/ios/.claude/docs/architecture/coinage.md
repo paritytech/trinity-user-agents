@@ -55,11 +55,10 @@ installation in the same Room table under an `isCurrent` flag; iOS keeps a separ
 counters in the Keychain.
 
 Backup: the seed's `//datastore` sr25519 account (public key, 64-byte secret and encryption key pinned
-against polkadot-js and Android in `DataStoreKeyParityTests`; the encryption key is keyed by the secret in
-schnorrkel's ed25519 form via `DataStoreAccountKeys.ed25519Form(of:)` over NovaCrypto's `SNPrivateKey.toEd25519Data()`,
-since the iOS SDK holds the canonical scalar) registers each installation in the `AccountDataStore`
-contract on Asset Hub (record = ChaCha20-Poly1305 of the id under `"encryption".blake2b32WithKey(secret64)`,
-deterministic nonce). Contract reads and the `Revive.call` extrinsic go through the `Revive` package
+against Android's `DataStoreKeyParityTest` in `DataStoreKeyParityTests`) registers each installation in the
+`AccountDataStore` contract on Asset Hub (record = ChaCha20-Poly1305 of the id under
+`"encryption".blake2b32WithKey(secret64)`, deterministic nonce). `secret64` is the SDK's canonical secret —
+scalar (mod l) followed by the nonce, `SNPrivateKey.rawData()`. Contract reads and the `Revive.call` extrinsic go through the `Revive` package
 (`ReviveContractApiProtocol`, `RevivePallet.Call`; see architecture/revive.md); the contract ABI table is
 `AccountDataStoreAbi` over `EvmAbi`, and the address is an `EvmAddress`. Registration is a durable-transaction domain (`coinage-installation`, see
 architecture/durable-transactions.md); `CoinageInstallationRegistrar` runs it once per process and
@@ -111,6 +110,24 @@ Transfer plans determine how coins are spent:
 - Integrates with chat for payment request/confirmation messages
 - See `architecture/chat-extension.md` for chat integration
 
+### Transfer state rows (chat bubbles)
+
+`CoinageTransferMonitor` writes one row per coinage message (`CDIncomingTransferState` /
+`CDOutgoingTransferState`, `Modules/Coinage/Model/TransferState.swift`) and subscribes to every message whose
+row is not terminal (`NSPredicate.withoutTerminalTransferState`). Statuses come in best-head and finalized pairs:
+incoming `claimed` → `claimedFinalized`, outgoing `sent` → `sentFinalized`, `claimed` → `claimedFinalized` and
+`reclaimed` → `reclaimedFinalized`. A best-head reading is one a fork can still undo, so only the finalized
+variants and `failed` are terminal — an explicit set (`Status.terminal`). A relaunch while a row is
+`claimed`/`sent`/`reclaimed` therefore tracks the message again until the finalized chain agrees; the bubbles
+render a finalized status like its best-head twin. The incoming `returnedToSender` (coins absent after the
+6h claim window, from the claim's `noCoinsOnChain` look or its give-up) is not terminal either: the claim keeps
+running, so a late mint still turns it into a claim. Outgoing `unclaimed`, `reclaiming` and `reclaimFailed` are
+best-head readings too. Per coin, the package ladder (`CoinageTransferStatusService.status`) routes a coin with
+a live or landed consumer, or a failed reclaim still on chain, to reclaim tracking (`reclaiming`,
+`reclaimed(finalized:)`, `reclaimFailed`); everything else goes through the presence ladder
+(`awaitingClaim(finalized:)` / `claimed(finalized:)` from the finalized head's presence map). Failed reclaims are
+read from the `chat-reclaim:<messageId>` group, because coin state keeps no failed consumer.
+
 ## Submission Policies (retries)
 
 A coinage transaction proven unable to land is **built again** rather than failed. Each of the three
@@ -140,11 +157,11 @@ written and tested once.
 - **Params** (`CoinageSubmissionParams`) are SCALE and persisted with the row, so a shape change needs
   a versioned decoder. A transfer carries `buildUntil` + `retryFailures`; a claim carries `retryUntil`
   and the peer's key, which only the payment message holds. The transfer window is
-  `CoinageConstants.claimRetryWindow` (6h) — the same one the recipient's claim gets, so neither side
-  gives up while the other still tries.
+  `CoinageConstants.chatPaymentRetryWindow` (6h). The claim's is `claimRetryWindow`, `nil` (no window).
 - **Bounding**: `retryableFailure` lets an `.expired` attempt be rebuilt however late, but a
   `.dispatchFailed` or `.rejected` one only while the window is open — nothing else stops a failure
-  that always repeats from being rebuilt for ever.
+  that always repeats from being rebuilt for ever. A chat payment's claim has no window, so its
+  failures are rebuilt indefinitely by design (Android parity).
 - **Building** is shared with the first attempt through the extracted declarers
   (`SplitExtrinsicBuilder`, `UnloadExtrinsicBuilder`, `ClaimExtrinsicBuilder` over
   `CoinageExtrinsicParts`), which go through `DurableTxServicing.buildExtrinsics` — one build path, not

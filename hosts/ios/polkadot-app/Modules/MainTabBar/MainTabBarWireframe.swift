@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import UIKit
 import PolkadotUI
 import Products
@@ -14,6 +14,7 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private weak var windowScene: UIWindowScene?
     private var paymentsSetupNotice: TopNoticeWindow?
     private var isPaymentsSetupNoticeDismissed = false
+    private var funding: FundingScreens?
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
@@ -77,6 +78,55 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         }
         presentedSettings = settings
         view?.controller.topmostPresented.present(settings, animated: true)
+    }
+
+    func showBackupSettings(from view: MainTabBarViewProtocol?) {
+        guard
+            let presenter = view?.controller.topmostPresented,
+            let backup = BackupViewFactory.createView(serviceCoordinator: serviceCoordinator)
+        else {
+            return
+        }
+
+        if let settings = presentedSettings, settings.presentingViewController != nil {
+            settings.pushViewController(backup.controller, animated: true)
+            return
+        }
+
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
+        }
+        presentedSettings = settings
+        settings.pushViewController(backup.controller, animated: false)
+        presenter.present(settings, animated: true)
+    }
+}
+
+extension MainTabBarWireframe {
+    func attachFunding(view: MainTabBarViewProtocol?) {
+        guard funding == nil, let view else { return }
+
+        funding = FundingScreensFactory.createScreens(serviceCoordinator: serviceCoordinator, presentationView: view)
+    }
+
+    func presentFunding(_ entry: FundingEntry) {
+        funding?.present(entry)
+    }
+
+    func presentProviderFrame(_ frame: FundingFrame) {
+        funding?.present(frame)
+    }
+
+    func closeProviderFrames(entryId: String) {
+        funding?.closeFrames(entryId: entryId)
+    }
+
+    func showProviderFrameNotice(for request: FundingFrameRequest, onShow: @escaping () -> Void) {
+        funding?.showFrameNotice(for: request, onShow: onShow)
+    }
+
+    func showProviderNotWorking(_ providerId: ProductId) {
+        funding?.showProviderNotWorking(providerId)
     }
 }
 

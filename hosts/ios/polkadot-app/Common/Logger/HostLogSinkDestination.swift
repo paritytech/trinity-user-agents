@@ -3,7 +3,10 @@ import IssueMonitoring
 import SwiftyBeaver
 
 /// Forwards `[truapi.*]` lines at info and above to a `HostLogSink`, as the Android host does with its
-/// `truapi.*` Timber tags. Every other line stays on the device.
+/// `truapi.*` Timber tags. A core event arrives with a `CoreEventContext` and reaches the sink as its marker,
+/// with its attributes as fields. Every other line stays on the device.
+///
+/// How many of the forwarded lines reach Sentry is decided at the SDK's own gate, in `HostLogFilter`.
 final class HostLogSinkDestination: BaseDestination {
     private let sink: HostLogSink
 
@@ -20,10 +23,14 @@ final class HostLogSinkDestination: BaseDestination {
         file _: String,
         function _: String,
         line _: Int,
-        context _: Any? = nil
+        context: Any? = nil
     ) -> String? {
         guard let line = TaggedLogLine(msg), line.tag.hasPrefix("truapi.") else { return nil }
 
+        if let event = context as? CoreEventContext {
+            sink.log(level: level.hostLogLevel, tag: line.tag, message: event.marker, attributes: event.attributes)
+            return nil
+        }
         sink.log(level: level.hostLogLevel, tag: line.tag, message: line.message)
         return nil
     }

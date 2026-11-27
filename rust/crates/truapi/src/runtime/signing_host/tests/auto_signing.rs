@@ -4,26 +4,13 @@
 use super::*;
 use crate::{
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
-	runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
+use futures::FutureExt;
 use truapi::versioned::{
 	account::HostAccountSignVrfRequest,
 	signing::{HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse},
 };
-
-/// Allocate an AutoSigning grant for the runtime's own product.
-pub fn grant_auto_signing(runtime: &ProductRuntimeHost) {
-	let allocation = futures::executor::block_on(ResourceAllocation::request(
-		runtime,
-		&CallContext::default(),
-		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-			resources: vec![v01::AllocatableResource::AutoSigning],
-		}),
-	))
-	.expect("approved AutoSigning allocation succeeds");
-	let HostRequestResourceAllocationResponse::V1(allocation) = allocation;
-	assert_eq!(allocation.outcomes, vec![v01::AllocationOutcome::Allocated]);
-}
 
 /// A platform that approves the allocation and declines every signing prompt,
 /// so any call that succeeds did so without asking.
@@ -51,7 +38,7 @@ fn raw_request(product_id: &str) -> HostSignRawRequest {
 fn a_granted_product_signs_raw_without_a_prompt() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 	grant_auto_signing(&runtime);
@@ -69,9 +56,9 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 			.is_empty(),
 		"the grant waives the prompt",
 	);
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(
@@ -87,7 +74,7 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 fn an_ungranted_product_still_prompts_for_raw_signing() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 
@@ -117,7 +104,7 @@ fn a_grant_does_not_cover_the_unwatermarked_raw_signing_api() {
 	// transaction signatures, so a standing grant must not waive its prompt.
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 	grant_auto_signing(&runtime);
@@ -146,10 +133,10 @@ fn a_grant_does_not_cover_the_unwatermarked_raw_signing_api() {
 
 #[test]
 fn a_blessed_product_signs_its_own_account_without_a_grant() {
-	for (product_id, blessed) in [("dim2.paseo", true), ("app.dim2.paseo", false)] {
+	for (product_id, blessed) in [("dim2.dot", true), ("app.dim2.dot", false)] {
 		let platform = granting_platform();
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("activation succeeds");
 		let runtime = product_runtime_for(services, activation, product_id);
 
@@ -166,34 +153,30 @@ fn a_blessed_product_signs_its_own_account_without_a_grant() {
 	}
 }
 
-/// Only the local runtime vouches for its caller, and only for its own account;
-/// a relayed request can claim any product id.
+/// Only the local runtime vouches for its caller; a relayed request can claim
+/// any product id.
 #[test]
-fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
+fn a_blessed_vrf_signature_skips_the_prompt_only_locally() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
-	let runtime = product_runtime_for(services, activation.clone(), "dim2.paseo");
-	let request = vrf_request("dim2.paseo");
+	let runtime = product_runtime_for(services, activation.clone(), "dim2.dot");
+	let request = vrf_request("dim2.dot");
 
-	let sign_locally = |request| {
-		futures::executor::block_on(
-			runtime.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(request)),
-		)
-		.is_ok()
-	};
-	let own_signed = sign_locally(request.clone());
-	let foreign_signed = sign_locally(vrf_request("other.paseo"));
-	let Dispatch::Response(answer) = futures::executor::block_on(
-		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+	let local_signed = futures::executor::block_on(
+		runtime.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(request.clone())),
+	)
+	.is_ok();
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
 			ProductRequest {
-				calling_product_id: ProductId::for_test("dim2.paseo"),
+				calling_product_id: ProductId::for_test("dim2.dot"),
 				payload: request,
 			},
-		)),
-	) else {
+		)))
+	else {
 		panic!("expected a VRF response")
 	};
 	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
@@ -203,12 +186,11 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 
 	assert_eq!(
 		(
-			own_signed,
-			foreign_signed,
+			local_signed,
 			response.payload.map(|_| ()),
-			platform.sign_vrf_reviews.lock().unwrap().len(),
+			platform.sign_vrf_reviews.lock().unwrap().len()
 		),
-		(true, false, Err(v01::HostAccountSignVrfError::Rejected), 2),
+		(true, Err(v01::HostAccountSignVrfError::Rejected), 1),
 	);
 }
 
@@ -218,19 +200,19 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime(services, activation.clone()));
 
-	let Dispatch::Response(answer) = futures::executor::block_on(
-		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
 			ProductRequest {
 				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: vrf_request("myapp.dot"),
 			},
-		)),
-	) else {
+		)))
+	else {
 		panic!("expected a VRF response")
 	};
 	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
@@ -241,6 +223,202 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 	assert_eq!(
 		(response.payload.map(|_| ()), platform.sign_vrf_reviews.lock().unwrap().len()),
 		(Err(v01::HostAccountSignVrfError::Rejected), 1),
+	);
+}
+
+/// A signing host on which `myapp.dot` keeps its AutoSigning key, registered in
+/// a ring of that key alone.
+///
+/// The host's resolver holds the first ring resolution until
+/// `resolution_gate`, when given, is released.
+fn kept_key_in_its_own_ring(
+	resolution_gate: Option<futures::channel::oneshot::Receiver<()>>,
+) -> Arc<SigningHost> {
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
+	let entropy = RootEntropy::new(ENTROPY)
+		.derive_ring_vrf_entropy(&product.product_id, &v01::DerivationIndex::Index(0))
+		.unwrap();
+	let member = futures::executor::block_on(crate::runtime::vrf::load())
+		.expect("verifiable is linked")
+		.member(&entropy)
+		.unwrap();
+	let resolver = Arc::new(StubRingResolver {
+		validation_gate: Default::default(),
+		resolution_gate: Arc::new(std::sync::Mutex::new(resolution_gate)),
+		collection: *b"pop:polkadot.network/people     ",
+		ring: ResolvedRing {
+			selected: MemberCandidate { member },
+			ring_index: 7,
+			ring_revision: 11,
+			domain_size: crate::runtime::vrf::DOMAIN_2E11,
+			members: vec![member],
+		},
+	});
+	let platform =
+		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
+	let (services, activation) = signing_runtime_with_ring_resolver(platform, resolver);
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.expect("activation succeeds");
+	grant_auto_signing(&product_runtime(services, activation.clone()));
+	let session = activation.accounts().current_session().expect("an active wallet");
+	futures::executor::block_on(activation.accounts().register_ring_vrf_key(
+		&session,
+		&CallContext::default(),
+		&product,
+		HostAccountRegisterRingVrfKeyRequest {
+			index: v01::DerivationIndex::Index(0),
+			ring: full_person_ring_location(),
+		},
+	))
+	.expect("the kept key registers");
+	activation
+}
+
+/// A proof with `myapp.dot`'s first account in its own context.
+fn own_proof_request() -> HostAccountCreateProofRequest {
+	let product_id = ProductId::for_test("myapp.dot");
+	HostAccountCreateProofRequest {
+		key_handle: v01::ProductAccountId {
+			dot_ns_identifier: product_id.clone(),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+		context: v01::ProductProofContext { product_id, suffix: v01::DerivationIndex::Index(0) },
+		ring_location: full_person_ring_location(),
+		message: b"prove me".to_vec(),
+	}
+}
+
+/// A product with a kept AutoSigning key proves membership with that key
+/// itself, so the proof carries the alias its own key has in the context and
+/// the ring the host resolved.
+#[test]
+fn a_kept_key_proves_with_its_own_alias() {
+	let activation = kept_key_in_its_own_ring(None);
+	let session = activation.accounts().current_session().expect("an active wallet");
+	let product_id = ProductId::for_test("myapp.dot");
+	let request = own_proof_request();
+	let context = crate::runtime::signing_host::ring_vrf::context_bytes(&request.context);
+
+	let proof = futures::executor::block_on(activation.accounts().create_proof(
+		&session,
+		&CallContext::default(),
+		&ProductContext::new(product_id.clone()),
+		served(request),
+	))
+	.expect("the kept key proves");
+
+	let entropy = RootEntropy::new(ENTROPY)
+		.derive_ring_vrf_entropy(&product_id, &v01::DerivationIndex::Index(0))
+		.unwrap();
+	let vrf =
+		futures::executor::block_on(crate::runtime::vrf::load()).expect("verifiable is linked");
+	let alias =
+		v01::ContextualAlias { context, alias: vrf.alias(&entropy, &context).unwrap().to_vec() };
+	assert_eq!(
+		(proof.contextual_alias, proof.ring_index, proof.ring_revision, proof.proof.is_empty()),
+		(alias, 7, 11, false)
+	);
+}
+
+/// A product reset revokes the kept key a ring proof is being made with, so a
+/// proof that finishes after the reset is refused and never reaches the
+/// product.
+#[test]
+fn a_kept_key_proof_finished_after_a_product_reset_is_refused() {
+	let (release, gate) = futures::channel::oneshot::channel();
+	let activation = kept_key_in_its_own_ring(Some(gate));
+	let runtime = product_runtime(activation.services.clone(), activation.clone());
+	let cx = CallContext::default();
+	let proof = runtime.create_account_proof(
+		&cx,
+		truapi::versioned::account::HostAccountCreateProofRequest::V1(own_proof_request()),
+	);
+	futures::pin_mut!(proof);
+	assert!(proof.as_mut().now_or_never().is_none(), "the proof waits on its ring");
+
+	activation.clear_product_state(&ProductId::for_test("myapp.dot"));
+	release.send(()).unwrap();
+
+	assert_eq!(
+		futures::executor::block_on(proof).map(|_| ()),
+		Err(CallError::Domain(truapi::versioned::account::HostAccountCreateProofError::V1(
+			v01::HostAccountCreateProofError::Unknown {
+				reason: AuthorityError::Disconnected.to_string()
+			}
+		)))
+	);
+}
+
+/// A product that withdrew its call gets no statement proof signed for it,
+/// even when a kept key could sign without asking anyone.
+#[test]
+fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.expect("activation succeeds");
+	grant_auto_signing(&product_runtime(services, activation.clone()));
+	let session = activation.accounts().current_session().expect("an active wallet");
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("withdrawn-proof".to_string(), cancel);
+
+	let signed =
+		futures::executor::block_on(activation.accounts().sign_statement_store_product_payload(
+			&session,
+			&cx,
+			&connection(&activation, "myapp.dot"),
+			served(v01::ProductAccountId {
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
+				derivation_index: v01::DerivationIndex::Index(0),
+			}),
+			b"statement".to_vec(),
+		));
+
+	assert_eq!(
+		signed,
+		Err(AuthorityError::Cancelled(crate::runtime::authority::AuthorityCancelError::new(
+			"withdrawn-proof",
+			truapi::CancellationReason::Cancelled,
+		)))
+	);
+}
+
+/// A paired host on an older core can still relay a request for a product
+/// this stack does not serve. It is refused before the user sees it,
+/// because the wallet could not sign it anyway. Both the caller and the
+/// account are checked; a relayed raw signature has no caller.
+#[test]
+fn a_relayed_request_naming_an_unserved_product_never_prompts() {
+	let platform = granting_platform();
+	let (_services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.expect("activation succeeds");
+	let service = sso_service(&activation);
+	let relay = |message| {
+		futures::executor::block_on(service.answer(message)).expect("the request is answered");
+	};
+
+	for (caller, account) in [("myapp.paseo", "myapp.paseo"), ("myapp.dot", "other.paseo")] {
+		relay(RemoteMessage::request(
+			format!("vrf-{caller}"),
+			ProductRequest {
+				calling_product_id: ProductId::for_test(caller),
+				payload: vrf_request(account),
+			},
+		));
+	}
+	let HostSignRawRequest::V1(raw) = raw_request("other.paseo");
+	relay(RemoteMessage::request(
+		"raw".to_string(),
+		crate::host_internal::sso_messages::SignRequest::Raw(raw),
+	));
+
+	assert_eq!(
+		(
+			platform.sign_vrf_reviews.lock().unwrap().len(),
+			platform.sign_raw_reviews.lock().unwrap().len()
+		),
+		(0, 0),
 	);
 }
 
@@ -259,10 +437,10 @@ fn identity_raw_request(identity: &schnorrkel::Keypair) -> HostSignRawWithLegacy
 fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_prompt() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
-	let runtime = product_runtime_for(services, activation, "dim2.paseo");
-	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+	let runtime = product_runtime_for(services, activation, "dim2.dot");
+	let identity = RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 
 	let HostSignRawWithLegacyAccountResponse::V1(response) = futures::executor::block_on(
 		runtime
@@ -284,13 +462,14 @@ fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_pr
 /// that is not trusted never skips the prompt.
 #[test]
 fn other_raw_signatures_with_the_users_account_still_ask() {
-	for (product_id, watermarked) in [("dim2.paseo", false), ("myapp.dot", true)] {
+	for (product_id, watermarked) in [("dim2.dot", false), ("myapp.dot", true)] {
 		let platform = granting_platform();
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("activation succeeds");
 		let runtime = product_runtime_for(services, activation, product_id);
-		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+		let identity =
+			RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 		let request = identity_raw_request(&identity);
 		let cx = CallContext::default();
 

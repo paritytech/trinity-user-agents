@@ -1,47 +1,5 @@
 use super::*;
 
-fn signing_host_config(
-	network_suffix: &str,
-) -> Result<SigningHostConfig, RuntimeConfigValidationError> {
-	SigningHostConfig::new(
-		HostInfo {
-			name: "Test host".to_string(),
-			icon: None,
-			version: None,
-			platform: HostPlatform::Unknown,
-		},
-		PlatformInfo::default(),
-		[0; 32],
-		[1; 32],
-		[2; 32],
-		network_suffix.to_string(),
-	)
-}
-
-#[test]
-fn a_signing_host_is_configured_for_one_dotns_tld() {
-	for tld in DOTNS_TLDS {
-		let config = signing_host_config(tld).expect("a known TLD is a valid suffix");
-		assert_eq!(config.network_suffix, *tld);
-	}
-
-	assert_eq!(
-		signing_host_config(""),
-		Err(RuntimeConfigValidationError::EmptyField { field: "network_suffix" })
-	);
-	for malformed in
-		["pasoe", "unknown", ".paseo", "peopl.paseo", "Paseo", "pas eo", "a-b", "abcdefghijklmnopq"]
-	{
-		assert_eq!(
-			signing_host_config(malformed),
-			Err(RuntimeConfigValidationError::InvalidNetworkSuffix {
-				network_suffix: malformed.to_string()
-			}),
-			"{malformed:?} must be rejected"
-		);
-	}
-}
-
 fn file_with_url(url: &str) -> ChatMessageContent {
 	ChatMessageContent::File(ChatFile {
 		url: url.to_string(),
@@ -557,7 +515,7 @@ fn product_context_decoding_rejects_ids_the_constructor_rejects() {
 	// Hand-built frames, not values this crate can encode: `Decode` must
 	// apply the same product-id policy as the constructor so decoding
 	// cannot mint a context with an unscoped or empty product id.
-	for product_id in ["evil.com", "", "  "] {
+	for product_id in ["evil", "", "  "] {
 		let frame = (product_id.to_string(), ExecutableKind::App).encode();
 		assert!(
 			ProductContext::decode(&mut frame.as_slice()).is_err(),
@@ -624,6 +582,12 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
 		),
 		(CoreStorageKey::FundingSupport, "FundingSupport", None),
+		(CoreStorageKey::StackRecord { stack_id: "stack".to_string() }, "StackRecord", None),
+		(
+			CoreStorageKey::AppManifest { product_label: "ramp".to_string() },
+			"AppManifest",
+			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
+		),
 	] {
 		let description = describe_core_storage_key(&key.encode()).expect("valid key");
 		assert_eq!(description, CoreStorageKeyDescription { kind, owner });
@@ -953,4 +917,185 @@ fn review_discriminants_do_not_move() {
 	.map(|review| review.encode()[0]);
 
 	assert_eq!(discriminants, [9, 11]);
+}
+
+/// A paired request is refused before the prompt if its review names a product
+/// the stack does not serve. For that, each review must list the caller and
+/// every product whose account or context it asks about.
+#[test]
+fn a_review_names_the_caller_and_every_product_it_asks_about() {
+	use crate::test_support::{
+		account_id, product_proof_context, raw_payload, ring_location_fixture, sign_payload_data,
+	};
+
+	let caller = || ProductId::for_test("caller.dot");
+	let owner = account_id("owner.dot", 0);
+	let both = vec!["caller.dot", "owner.dot"];
+	let legacy_signer = || "5LegacySigner".to_string();
+	let legacy_raw =
+		|| HostSignRawWithLegacyAccountRequest { signer: legacy_signer(), payload: raw_payload() };
+	let legacy_transaction = || LegacyAccountTxPayload {
+		signer: [2; 32],
+		genesis_hash: [1; 32],
+		call_data: vec![],
+		extensions: vec![],
+		tx_ext_version: 0,
+	};
+	let purse_drain = |owner| NftPurseDrainReview {
+		calling_product_id: caller(),
+		from_purse: 0,
+		owner,
+		item_count: 1,
+		destination: NftPurseDrainDestination::Cheque,
+	};
+	let reviews = [
+		(
+			UserConfirmationReview::SignPayload(SignPayloadReview::Product {
+				calling_product_id: Some(caller()),
+				request: HostSignPayloadRequest {
+					account: owner.clone(),
+					payload: sign_payload_data(),
+				},
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::SignRaw(SignRawReview::Product {
+				calling_product_id: None,
+				request: HostSignRawRequest { account: owner.clone(), payload: raw_payload() },
+				watermarked: true,
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {
+				calling_product_id: Some(caller()),
+				account: owner.clone(),
+				payload: vec![],
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product {
+				calling_product_id: Some(caller()),
+				payload: ProductAccountTxPayload {
+					signer: owner.clone(),
+					genesis_hash: [1; 32],
+					call_data: vec![],
+					extensions: vec![],
+					tx_ext_version: 0,
+					contacts: vec![],
+				},
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::AccountAlias(AccountAliasReview {
+				calling_product_id: caller(),
+				context: product_proof_context("owner.dot"),
+				ring_location: ring_location_fixture(),
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::CreateProof(CreateProofReview {
+				calling_product_id: caller(),
+				context: product_proof_context("owner.dot"),
+				ring_location: ring_location_fixture(),
+				message: vec![],
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::IdentityDisclosure(IdentityDisclosureReview {
+				product_id: caller(),
+			}),
+			vec!["caller.dot"],
+		),
+		(
+			UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+				calling_product_id: caller(),
+				resources: vec![],
+			}),
+			vec!["caller.dot"],
+		),
+		(
+			UserConfirmationReview::AccountAccess(AccountAccessReview {
+				requesting_product_id: caller(),
+				target_product_id: ProductId::for_test("owner.dot"),
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::SignVrf(SignVrfReview {
+				calling_product_id: caller(),
+				request: HostAccountSignVrfRequest {
+					account: owner.clone(),
+					transcript_label: vec![],
+					items: vec![],
+				},
+			}),
+			both.clone(),
+		),
+		(
+			UserConfirmationReview::ProductSubtree(ProductSubtreeReview { product_id: caller() }),
+			vec!["caller.dot"],
+		),
+		(
+			UserConfirmationReview::SignPayload(SignPayloadReview::LegacyAccount {
+				account: owner.clone(),
+				request: HostSignPayloadWithLegacyAccountRequest {
+					signer: legacy_signer(),
+					payload: sign_payload_data(),
+				},
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Product(owner.clone()),
+				request: legacy_raw(),
+				watermarked: true,
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				request: legacy_raw(),
+				watermarked: true,
+			}),
+			vec![],
+		),
+		(
+			UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Product(owner),
+				payload: legacy_transaction(),
+			}),
+			vec!["owner.dot"],
+		),
+		(
+			UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: legacy_transaction(),
+			}),
+			vec![],
+		),
+		(
+			UserConfirmationReview::NftPurseDrain(purse_drain(NftPurseOwner::Product(
+				ProductId::for_test("owner.dot"),
+			))),
+			both,
+		),
+		(
+			UserConfirmationReview::NftPurseDrain(purse_drain(NftPurseOwner::Root)),
+			vec!["caller.dot"],
+		),
+	];
+
+	for (mut review, expected) in reviews {
+		let named: Vec<String> =
+			review.products().into_iter().map(|product_id| product_id.to_string()).collect();
+		assert_eq!(named, expected, "{review:?}");
+	}
 }

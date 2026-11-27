@@ -4,7 +4,7 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::v01;
 
 use crate::{
-	SigningHostRuntime, Spawner,
+	HostRuntime, SigningHost, Spawner,
 	frame::{Payload, ProtocolMessage, request_ids},
 	test_support::StubPlatform,
 };
@@ -26,13 +26,10 @@ fn runtime_factory_for(platform: Arc<StubPlatform>) -> Arc<dyn WsProductRuntimeF
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
-		"paseo".to_string(),
+		crate::test_support::dot_test_stack(),
 	)
 	.expect("test signing host config is valid");
-	let runtime = Arc::new(SigningHostRuntime::new(platform, config, Spawner::for_test()));
+	let runtime = Arc::new(HostRuntime::<SigningHost>::new(platform, config, Spawner::for_test()));
 	let product = ProductContext::new(ProductId::for_test("dotli.dot"));
 	Arc::new(move |sink| runtime.product_runtime(product.clone(), sink))
 }

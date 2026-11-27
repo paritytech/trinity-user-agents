@@ -16,7 +16,7 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     }
 
     func showBackupFlow(from view: (any SettingsViewProtocol)?) {
-        guard let backup = BackupViewFactory.createView() else {
+        guard let backup = BackupViewFactory.createView(serviceCoordinator: serviceCoordinator) else {
             return
         }
 
@@ -85,5 +85,10 @@ final class SettingsWireframe: SettingsWireframeProtocol {
         controller.hidesBottomBarWhenPushed = true
 
         view.controller.navigationController?.pushViewController(controller, animated: true)
+    }
+
+    func showPrivacyModeInfo(from view: (any SettingsViewProtocol)?) {
+        let controller = PaymentPrivacyInfoViewFactory.createView()
+        view?.controller.present(controller, animated: true)
     }
 }

@@ -105,6 +105,8 @@ private extension TabFactory {
             depositService: serviceCoordinator.depositService,
             coinageService: serviceCoordinator.coinageService,
             coinageBackupSyncService: serviceCoordinator.coinageBackupSyncService,
+            fundingService: serviceCoordinator.fundingService,
+            fundingActivityCenter: serviceCoordinator.fundingActivityCenter,
             networkStatusService: serviceCoordinator.networkStatusService,
             flowState: spaFlowState
         )
@@ -116,7 +118,7 @@ private extension TabFactory {
             return nil
         }
 
-        let navigation = AppNavigationController(rootViewController: view.controller)
+        let navigation = CustomTransitionNavigationController(rootViewController: view.controller)
 
         return navigation
     }

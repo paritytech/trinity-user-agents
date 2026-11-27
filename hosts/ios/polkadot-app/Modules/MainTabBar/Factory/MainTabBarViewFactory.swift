@@ -81,7 +81,8 @@ enum MainTabBarViewFactory {
         let presenter = MainTabBarPresenter(
             interactor: interactor,
             wireframe: wireframe,
-            chipViewModelFactory: chipViewModelFactory
+            chipViewModelFactory: chipViewModelFactory,
+            fundingActivity: serviceCoordinator.fundingActivityCenter
         )
 
         interactor.presenter = presenter
@@ -94,6 +95,9 @@ enum MainTabBarViewFactory {
             flowStateProvider: flowStateProvider
         )
 
+        qrHandler.closeEmbeddedScanner = { [weak view] in
+            view?.closeScanPanel()
+        }
         presenter.view = view
         presenter.configureViews()
 
@@ -122,10 +126,17 @@ enum MainTabBarViewFactory {
             messageDecoder: messageDecoder
         )
 
+        let seenReceiptService = SeenReceiptService(
+            storageFacade: storageFacade,
+            sender: serviceCoordinator.chatCoordinator.outboxService,
+            logger: Logger.shared
+        )
+
         return ChatFlowState(
             extensionsRegistry: serviceCoordinator.chatExtensionsRegistry,
             callCoordinator: serviceCoordinator.callCoordinator,
             outboxService: serviceCoordinator.chatCoordinator.outboxService,
+            seenReceiptService: seenReceiptService,
             attachmentUploadStateProvider: serviceCoordinator.attachmentUploadService,
             attachmentDownloadStateProvider: serviceCoordinator.attachmentDownloadService,
             foregroundVisibilityReporter: foregroundVisibilityReporter,
@@ -134,6 +145,7 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             networkStatusService: serviceCoordinator.networkStatusService,
             allowanceCleanupService: serviceCoordinator.allowanceManagerFacade.cleanupService,
+            chatRequestCancelService: serviceCoordinator.chatRequestCancelService,
             flowState: spaFlowState
         )
     }

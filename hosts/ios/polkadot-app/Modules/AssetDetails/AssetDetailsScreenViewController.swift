@@ -4,7 +4,6 @@ import PolkadotUI
 import SnapKit
 import SwiftUI
 import UIKit
-import UIKitExt
 
 /// The Balance card opened onto a screen of its own, titled Purse, pushed on the Wallet stack above the Pocket.
 ///
@@ -18,10 +17,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private let titleLabel: PolkadotUI.Label = .create { view in
-        view.typography = .headlineSmall
-        view.textColor = .fgPrimary
-    }
 
     private var isInFlight = false
 
@@ -41,21 +36,8 @@ final class AssetDetailsScreenViewController: UIViewController {
         super.viewDidLoad()
 
         view.backgroundColor = .bgSurfaceMain
-        setupTitle()
         setupHosting()
         pullDown.install()
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -74,18 +56,24 @@ final class AssetDetailsScreenViewController: UIViewController {
         origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
         origin.setOpenItem(nil)
     }
-}
 
-extension AssetDetailsScreenViewController: TabBarRootStandIn {}
+    override func contentScrollView(for edge: NSDirectionalRectEdge) -> UIScrollView? {
+        hosting.contentScrollView(for: edge) ?? super.contentScrollView(for: edge)
+    }
+}
 
 extension AssetDetailsScreenViewController: PocketFlightScreen {
     var pocketItem: PocketItem {
         .balance
     }
 
+    var statusStripTitle: String {
+        String(localized: .walletMainPurse)
+    }
+
     /// The card's frame on screen, wherever scrolling and a pull have moved it. The flight uses its top-left corner.
     func itemFrame(in view: UIView) -> CGRect {
-        let card = state.cardFrame.offsetBy(dx: hosting.view.transform.tx, dy: hosting.view.transform.ty)
+        let card = state.cardFrame.offsetBy(dx: state.itemOffset.x, dy: state.itemOffset.y)
         return view.convert(card, from: nil)
     }
 
@@ -96,6 +84,7 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
 
     /// Moves the card with its page, so the page never covers the card the Pocket draws in its place.
     func moveItem(by offset: CGPoint) {
+        state.itemOffset = offset
         hosting.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
     }
 
@@ -120,17 +109,33 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
     }
 }
 
+// MARK: - NavigationBarHiding
+
+extension AssetDetailsScreenViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
+}
+
 // MARK: - NavigationTransitionAnimating
 
 extension AssetDetailsScreenViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
         flight(opening: operation == .push)
     }
+
+    var allowsBackSwipe: Bool {
+        canSwipeBack
+    }
 }
 
 // MARK: - Private
 
 private extension AssetDetailsScreenViewController {
+    var canSwipeBack: Bool {
+        !isInFlight && !pullDown.isPulling
+    }
+
     /// From here on, not from when the flight starts, so the card is never drawn folded away when it flies in.
     func flight(opening: Bool) -> PocketFlight {
         isInFlight = true
@@ -141,26 +146,6 @@ private extension AssetDetailsScreenViewController {
         guard !isInFlight else { return }
 
         navigationController?.popViewController(animated: true)
-    }
-
-    func setupTitle() {
-        let title = String(localized: .walletMainPurse)
-        navigationItem.style = .navigator
-
-        guard #available(iOS 26, *) else {
-            navigationItem.title = title
-            return
-        }
-
-        titleLabel.typography = .titleLarge
-        titleLabel.attributedText = CashLogo.styled(
-            title,
-            symbol: PaymentAssetBranding.shared.current.symbol,
-            font: UIFont.app(.titleLarge)
-        )
-        titleLabel.accessibilityLabel = title
-        titleLabel.sizeToFit()
-        navigationItem.titleView = titleLabel
     }
 
     func setupHosting() {
@@ -179,7 +164,9 @@ private extension AssetDetailsScreenViewController {
 @Observable
 private final class AssetDetailsScreenState {
     var isCardHidden = false
+    /// The card's frame on screen without the flight's offset.
     @ObservationIgnored var cardFrame: CGRect = .zero
+    @ObservationIgnored var itemOffset: CGPoint = .zero
 }
 
 /// The Balance card with its details open, the details under the card.
@@ -197,7 +184,7 @@ private struct AssetDetailsScreenRoot: View {
                 onCardTapped: {},
                 overscroll: overscroll,
                 isCardHidden: state.isCardHidden,
-                onCardFrame: { state.cardFrame = $0 }
+                onCardFrame: { state.cardFrame = $0.offsetBy(dx: -state.itemOffset.x, dy: -state.itemOffset.y) }
             )
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)

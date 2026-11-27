@@ -26,7 +26,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
-    // On Main the bar is always available and can never be hidden.
     ForceShowTabBar()
 
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()

@@ -1,5 +1,6 @@
 import Coinage
 import Foundation
+import SubstrateSdk
 import Revive
 import Operation_iOS
 import KeyDerivation
@@ -24,7 +25,7 @@ extension ServiceCoordinator {
 
     /// `allowanceManager` is the coordinator's PGAS manager: the data store account is topped up through
     /// the same one as everything else.
-    static func createCoinageServices(allowanceManager: AllowanceManaging) -> CoinageServices? {
+    static func createCoinageServices(allowanceManager: any AllowanceManaging<AccountId>) -> CoinageServices? {
         let databaseFactory = CoinageDatabaseDependencyFactory(storageFacade: UserDataStorageFacade.shared)
 
         let externalPaymentStore = ExternalPaymentCoreDataStore(
@@ -94,7 +95,7 @@ extension ServiceCoordinator {
 
 private extension ServiceCoordinator {
     static func createCoinageService(
-        allowanceManager: AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         databaseFactory: DatabaseDependencyFactoring,
         externalPaymentStore: ExternalPaymentStoring,
         incomingPaymentStore: IncomingPaymentStoring,
@@ -204,6 +205,7 @@ private extension ServiceCoordinator {
             incomingPaymentAcknowledger: incomingPaymentAcknowledger,
             backgroundExecutor: ConnectionRetainingExecutor(provider: chainRegistry),
             recyclingStrategySettings: CoinageRecyclingStrategyStore.shared,
+            privacyConfigProvider: CoinagePrivacyConfigStore.shared,
             personOriginProvider: coinageOriginFactory.personOriginProvider,
             viewFunctionFetcher: viewFunctionFetcher,
             installation: installation,
@@ -214,7 +216,7 @@ private extension ServiceCoordinator {
     /// Registration and recovery of installations run against the `AccountDataStore` contract on
     /// Asset Hub, paid in PGAS by the seed's `//datastore` account.
     static func createInstallationDependency(
-        allowanceManager: AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         chainRegistry: ChainRegistryProtocol,
         extrinsicMonitorFacade: ExtrinsicSubmissionMonitorFacade,
         logger: LoggerProtocol

@@ -1,14 +1,20 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +52,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.GlobeAltFilled
 import io.paritytech.polkadotapp.design.components.icon.vectors.SettingsFilled
 import io.paritytech.polkadotapp.design.components.icon.vectors.WalletFilled
 import io.paritytech.polkadotapp.design.components.navigationbar.NotificationDot
+import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.blurEffect
@@ -55,11 +62,13 @@ import kotlinx.collections.immutable.persistentListOf
 private val SlotIconSize = 28.dp
 private val HighlightMillis = DockletMotion.HighlightDuration.inWholeMilliseconds.toInt()
 
+enum class DockletSlotHighlight { None, Emphasized, Selected }
+
 @Immutable
 data class DockletSlot(
     val icon: ImageVector,
     val contentDescription: String,
-    val selected: Boolean,
+    val highlight: DockletSlotHighlight,
     val badgeCount: Int,
     val warning: Boolean,
     val onClick: () -> Unit,
@@ -70,12 +79,15 @@ fun Docklet(
     modifier: Modifier,
     slots: ImmutableList<DockletSlot>,
     cardProgress: () -> Float,
+    quietFade: () -> Float,
     backdrop: DockletBackdrop?,
+    contentAboveSlotsVisible: Boolean,
+    contentAboveSlots: @Composable () -> Unit,
 ) {
     val haptics = rememberDockletHaptics()
     Box(modifier = modifier) {
         DockletGlassTheme {
-            DockSurface(slots, cardProgress, backdrop) { slot ->
+            DockSurface(slots, cardProgress, quietFade, backdrop, contentAboveSlotsVisible, contentAboveSlots) { slot ->
                 if (cardProgress() <= 0f) haptics.perform(DockletMoment.SlotTap)
                 slot.onClick()
             }
@@ -87,28 +99,41 @@ fun Docklet(
 private fun DockSurface(
     slots: ImmutableList<DockletSlot>,
     cardProgress: () -> Float,
+    quietFade: () -> Float,
     backdrop: DockletBackdrop?,
+    contentAboveSlotsVisible: Boolean,
+    contentAboveSlots: @Composable () -> Unit,
     onSlotTap: (DockletSlot) -> Unit,
 ) {
     val palette = LocalDockletPalette.current
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(DockletGeometry.DockHeight),
+            .dockletBackdrop(
+                backdrop = backdrop,
+                shape = DockShape,
+                sigma = { DockletMaterials.DockBlurSigma },
+            )
+            .drawWithCache {
+                val path = dockPath(size, density)
+                onDrawBehind { drawDockletGlass(path, palette) }
+            }
+            .clip(DockShape),
     ) {
+        AnimatedVisibility(
+            visible = contentAboveSlotsVisible,
+            enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                contentAboveSlots()
+                VerticalSpacer { DockletGeometry.CutoutOverhang }
+            }
+        }
         Box(
             modifier = Modifier
-                .matchParentSize()
-                .dockletBackdrop(
-                    backdrop = backdrop,
-                    shape = DockShape,
-                    sigma = { DockletMaterials.DockBlurSigma },
-                )
-                .drawWithCache {
-                    val path = dockPath(size, density)
-                    onDrawBehind { drawDockletGlass(path, palette) }
-                }
-                .clip(DockShape),
+                .fillMaxWidth()
+                .height(DockletGeometry.DockHeight),
         ) {
             SlotRow(
                 modifier = Modifier
@@ -117,7 +142,7 @@ private fun DockSurface(
                     .height(DockletGeometry.ItemRowHeight)
                     .graphicsLayer {
                         val dim = cardProgress().coerceIn(0f, 1f)
-                        alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim)
+                        alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim) * DockletDrawbridge.quietFadeAlpha(quietFade())
                         renderEffect = blurEffect(DockletMaterials.DockItemsBlurSigma * dim, density)
                     },
                 slots = slots,
@@ -136,7 +161,7 @@ private fun SlotRow(
     BoxWithConstraints(modifier = modifier) {
         val centres = DockletGeometry.slotCentres(maxWidth)
         val spans = DockletGeometry.touchSpans(maxWidth)
-        val selectedIndex = slots.indexOfFirst { it.selected }
+        val selectedIndex = slots.indexOfFirst { it.highlight == DockletSlotHighlight.Selected }
         val highlightCentre by animateDpAsState(
             targetValue = centres.getOrElse(selectedIndex) { centres.first() },
             animationSpec = tween(HighlightMillis, easing = DockletMotion.HighlightEasing),
@@ -166,7 +191,7 @@ private fun SlotRow(
 private fun SlotItem(span: DockletSpan, slot: DockletSlot, iconShift: Dp, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val selection by animateFloatAsState(
-        targetValue = if (slot.selected) 1f else 0f,
+        targetValue = if (slot.highlight == DockletSlotHighlight.None) 0f else 1f,
         animationSpec = tween(HighlightMillis, easing = DockletMotion.HighlightEasing),
         label = "DockletSlotSelection",
     )
@@ -221,13 +246,16 @@ private fun DockletPreview() {
                 .padding(DockletGeometry.ItemRowPadding)
                 .width(372.dp),
             slots = persistentListOf(
-                DockletSlot(NovaIcons.ChatFilled, "", selected = true, badgeCount = 0, warning = false) {},
-                DockletSlot(NovaIcons.WalletFilled, "", selected = false, badgeCount = 0, warning = true) {},
-                DockletSlot(NovaIcons.GlobeAltFilled, "", selected = false, badgeCount = 3, warning = false) {},
-                DockletSlot(NovaIcons.SettingsFilled, "", selected = false, badgeCount = 0, warning = false) {},
+                DockletSlot(NovaIcons.ChatFilled, "", highlight = DockletSlotHighlight.Selected, badgeCount = 0, warning = false) {},
+                DockletSlot(NovaIcons.WalletFilled, "", highlight = DockletSlotHighlight.None, badgeCount = 0, warning = true) {},
+                DockletSlot(NovaIcons.GlobeAltFilled, "", highlight = DockletSlotHighlight.None, badgeCount = 3, warning = false) {},
+                DockletSlot(NovaIcons.SettingsFilled, "", highlight = DockletSlotHighlight.Emphasized, badgeCount = 0, warning = false) {},
             ),
             cardProgress = { 0f },
+            quietFade = { 0f },
             backdrop = null,
+            contentAboveSlotsVisible = false,
+            contentAboveSlots = {},
         )
     }
 }

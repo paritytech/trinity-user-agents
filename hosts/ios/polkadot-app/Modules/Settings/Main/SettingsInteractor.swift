@@ -9,6 +9,7 @@ final class SettingsInteractor {
     let logger: LoggerProtocol
     let mnemonicBackupHelper: MnemonicBackupHelperProtocol
     private let coinageService: CoinageServicing
+    private let coinageBackupSyncService: CoinageBackupSyncServicing
     let selectedCurrencyManager: SelectedCurrencyManaging
     private let notificationCenter: NotificationCenter
     private let eventCenter: EventCenterProtocol
@@ -20,11 +21,13 @@ final class SettingsInteractor {
     private var privacyStrategyTask: Task<Void, Never>?
     private var tabBarLabelsTask: Task<Void, Never>?
     private var paymentsBackupTask: Task<Void, Never>?
+    private var restoredBalanceTask: Task<Void, Never>?
 
     init(
         logger: LoggerProtocol,
         mnemonicBackupHelper: MnemonicBackupHelperProtocol,
         coinageService: CoinageServicing,
+        coinageBackupSyncService: CoinageBackupSyncServicing,
         selectedCurrencyManager: SelectedCurrencyManaging = SelectedCurrencyManager.shared,
         notificationCenter: NotificationCenter = .default,
         eventCenter: EventCenterProtocol = EventCenter.shared,
@@ -35,6 +38,7 @@ final class SettingsInteractor {
         self.logger = logger
         self.mnemonicBackupHelper = mnemonicBackupHelper
         self.coinageService = coinageService
+        self.coinageBackupSyncService = coinageBackupSyncService
         self.selectedCurrencyManager = selectedCurrencyManager
         self.notificationCenter = notificationCenter
         self.eventCenter = eventCenter
@@ -51,6 +55,7 @@ final class SettingsInteractor {
         privacyStrategyTask?.cancel()
         tabBarLabelsTask?.cancel()
         paymentsBackupTask?.cancel()
+        restoredBalanceTask?.cancel()
     }
 }
 
@@ -147,6 +152,18 @@ private extension SettingsInteractor {
         }
     }
 
+    func subscribeToRestoredBalance() {
+        restoredBalanceTask = Task { [weak self, coinageBackupSyncService, logger] in
+            do {
+                for try await isWaiting in coinageBackupSyncService.showsRecoveredBalanceStream {
+                    await self?.presenter?.didReceiveRestoredBalanceWaiting(isWaiting)
+                }
+            } catch {
+                logger.error("Restored balance subscription error: \(error)")
+            }
+        }
+    }
+
     func subscribeToTabBarLabels() {
         tabBarLabelsTask = Task { [weak self, tabBarLabelsStore, logger] in
             do {
@@ -167,6 +184,7 @@ extension SettingsInteractor: SettingsInteractorInputProtocol {
         subscribeToPrivacyStrategy()
         subscribeToTabBarLabels()
         subscribeToPaymentsBackupStatus()
+        subscribeToRestoredBalance()
         configureAppVersion()
         subscribeToAvailabilityChanges()
         subscribeToBackupStatusChanges()

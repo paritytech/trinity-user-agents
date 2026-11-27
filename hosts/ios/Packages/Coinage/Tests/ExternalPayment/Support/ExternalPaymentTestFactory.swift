@@ -45,7 +45,12 @@ enum ExternalPaymentTestFactory {
             allocatedAt: Date(timeIntervalSince1970: 0),
             readyAt: .distantPast,
             remoteState: inRecycler
-                ? .inRecycler(Voucher.Recycler(index: 1, membersCount: 64, enteredAt: Date(timeIntervalSince1970: 0)))
+                ? .inRecycler(Voucher.Recycler(
+                    index: 1,
+                    membersCount: 64,
+                    enteredAt: Date(timeIntervalSince1970: 0),
+                    unloadedCount: 0
+                ))
                 : .unlocated,
             publicKey: Data(repeating: UInt8(truncatingIfNeeded: index.item), count: 32)
         )

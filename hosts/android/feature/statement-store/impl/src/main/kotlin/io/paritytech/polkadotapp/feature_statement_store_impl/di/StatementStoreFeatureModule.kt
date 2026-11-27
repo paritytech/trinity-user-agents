@@ -10,10 +10,10 @@ import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementStore
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.CommunicationSessionCreator
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OneShotSessionRequestPublisher
-import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStoreMessageProver
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStorePeer
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NotificationStatementAccountAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.notificationAllocator.NotificationStatementMaxSizeProvider
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.RealStatementRequestDecoder
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.RealStatementStorePeer
@@ -27,13 +27,13 @@ import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.St
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.repository.StatementStoreSlotRepository
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.signer.origins.RealStatementStoreOrigins
 import io.paritytech.polkadotapp.feature_statement_store_impl.data.signer.origins.StatementStoreOrigins
-import io.paritytech.polkadotapp.feature_statement_store_impl.domain.RealOurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.RealStatementStoreMessageProverFactory
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NOTIFICATION_SLOT_DOMAIN_ID
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NOTIFICATION_SLOT_POLICY_ID
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NotificationAllowanceOracle
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NotificationSlotSubmissionPolicy
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.RealNotificationStatementAccountAllocator
+import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.RealNotificationStatementMaxSizeProvider
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.CommunicationSessionCreatorFactory
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.RealOneShotSessionRequestPublisher
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.codec.IncomingTopicsProvider
@@ -100,11 +100,10 @@ interface StatementStoreFeatureApiModule {
     fun bindIncomingTopicsProviderFactory(impl: RealIncomingTopicsProviderFactory): IncomingTopicsProvider.Factory
 
     @Binds
-    @Singleton
-    fun bindOurDeviceKeypairProvider(impl: RealOurDeviceKeypairProvider): OurDeviceKeypairProvider
+    fun bindNotificationStatementAccountAllocator(impl: RealNotificationStatementAccountAllocator): NotificationStatementAccountAllocator
 
     @Binds
-    fun bindNotificationStatementAccountAllocator(impl: RealNotificationStatementAccountAllocator): NotificationStatementAccountAllocator
+    fun bindNotificationStatementMaxSizeProvider(impl: RealNotificationStatementMaxSizeProvider): NotificationStatementMaxSizeProvider
 
     @Binds
     @Singleton

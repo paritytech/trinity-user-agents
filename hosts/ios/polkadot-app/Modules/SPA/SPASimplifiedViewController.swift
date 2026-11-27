@@ -70,6 +70,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
+        setContentScrollView(rootView.webView.scrollView, for: .top)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -124,8 +125,7 @@ private extension SPASimplifiedViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs,
-                 .bundled:
+            case .dotNs:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
@@ -216,7 +216,8 @@ private extension SPASimplifiedViewController {
         rootView.statusBarTitleButton.bind(viewModel: StatusBarTitleViewModel(
             title: navigationItem.title ?? configuration.page.host.name,
             showsLogo: true,
-            menu: makeStatusBarMenu()
+            menu: makeStatusBarMenu(),
+            backAction: nil
         ))
     }
 
@@ -238,7 +239,6 @@ private extension SPASimplifiedViewController {
 // MARK: - SPAViewProtocol
 
 extension SPASimplifiedViewController: SPAViewProtocol {
-    var pageScrollView: UIScrollView { rootView.webView.scrollView }
     var pageWebView: WKWebView { rootView.webView }
 
     func navigate(to url: URL) {

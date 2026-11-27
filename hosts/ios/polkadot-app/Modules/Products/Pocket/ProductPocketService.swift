@@ -21,7 +21,7 @@ final class ProductPocketService: @unchecked Sendable {
     /// actor because what it holds is a web view.
     @MainActor let cardHosts = PocketCardHosts()
 
-    private let logger: LoggerProtocol
+    private let logger: CoreEventLoggerProtocol
     private let running = OSAllocatedUnfairLock(initialState: Running())
 
     /// What this session started, and what a stop gives back. Held under one
@@ -43,30 +43,17 @@ final class ProductPocketService: @unchecked Sendable {
         let productImages: ProductImageSources
     }
 
-    init(collection: any PocketCardStore, logger: LoggerProtocol = Logger.shared) {
+    init(collection: any PocketCardStore, logger: CoreEventLoggerProtocol = Logger.shared) {
         self.collection = collection
         self.logger = logger
     }
 
-    /// The reserved product a host-placed card sits on is named per network, so
-    /// the collection needs the network's dotNS suffix. It is resolved before
-    /// anything the Pocket is reachable from exists, which is why this is not
-    /// waited on here.
     static func make(
         runtimeProvider: any TrUAPIHostRuntimeProviding,
-        tld: any DotNsTldProviding = DotNsTldProviderFacade.shared,
-        logger: LoggerProtocol = Logger.shared
-    ) -> ProductPocketService? {
-        guard let suffix = try? tld.currentTldOrError() else {
-            logger.error("[pocket] no network suffix yet, so there is no Pocket to serve")
-            return nil
-        }
-
-        return ProductPocketService(
-            collection: CorePocketCardStore(
-                runtimeProvider: runtimeProvider,
-                pinned: AssetPinnedPocketCards(tld: suffix)
-            ),
+        logger: CoreEventLoggerProtocol = Logger.shared
+    ) -> ProductPocketService {
+        ProductPocketService(
+            collection: CorePocketCardStore(runtimeProvider: runtimeProvider, pinned: AssetPinnedPocketCards()),
             logger: logger
         )
     }
@@ -186,12 +173,10 @@ final class ProductPocketService: @unchecked Sendable {
         follow()
     }
 
-    /// Stops the handlers and the workers behind them, and gives up the product
-    /// behind an opened card. All of it belongs to the session's runtime
-    /// provider, so none of it may outlive it.
+    /// Stops the handlers and the workers behind them. All of it belongs to the
+    /// session's runtime provider, so none of it may outlive it.
     func stop() {
         install(manager: nil, drawing: nil, handlers: nil)
-        Task { @MainActor in cardHosts.release() }
     }
 }
 

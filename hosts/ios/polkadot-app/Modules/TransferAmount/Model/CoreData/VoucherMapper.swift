@@ -32,7 +32,8 @@ extension VoucherMapper: CoreDataMapperProtocol {
                 Voucher.Recycler(
                     index: UInt32(entity.recyclerIndex),
                     membersCount: UInt32(max(0, entity.recyclerMembers)),
-                    enteredAt: entity.enteredAt
+                    enteredAt: entity.enteredAt,
+                    unloadedCount: entity.recyclerUnloaded.map { UInt32(clamping: $0.int64Value) }
                 )
             } else {
                 nil
@@ -77,6 +78,7 @@ extension VoucherMapper: CoreDataMapperProtocol {
         entity.recyclerIndex = model.recycler.flatMap { Int64($0.index) } ?? -1
         entity.recyclerMembers = model.recycler.map { Int64($0.membersCount) } ?? 0
         entity.enteredAt = model.recycler?.enteredAt
+        entity.recyclerUnloaded = model.recycler?.unloadedCount.map { NSNumber(value: Int64($0)) }
         entity.publicKey = model.publicKey.toHex()
         entity.recyclerFungibility = Int16(model.recyclerFungibility)
         entity.maxRecyclerFungibility = Int16(model.maxRecyclerFungibility)

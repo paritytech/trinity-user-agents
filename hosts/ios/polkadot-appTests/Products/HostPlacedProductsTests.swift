@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import Testing
 import Keystore_iOS
 @testable import polkadot_app
@@ -9,10 +9,9 @@ struct HostPlacedProductsTests {
     /// or discover step. The list is what the host places; whether it places at all is the setting.
     @Test("Jollity is the host-placed product")
     func jollityIsTheHostPlacedProduct() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
-
-        #expect(HostPlacedProducts.all.count == 1)
-        #expect(hostPlaced.fallbackName == "Jollity")
+        #expect(try HostPlacedProducts.all(tld: "paseo") == [
+            HostPlacedChat(productId: ProductId("dim2.paseo"), roomId: "jollity", name: "Jollity")
+        ])
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
@@ -63,8 +62,8 @@ struct HostPlacedChatPinningTests {
     /// on a fresh install is every chat.
     @Test("A host-placed product's bot is pinned")
     func hostPlacedBotIsPinned() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
-        let peer = try Chat.Peer.chatExtension(hostPlaced.productId("paseo").rawValue, roomId: nil)
+        let hostPlaced = try #require(try HostPlacedProducts.all(tld: "paseo").first)
+        let peer = Chat.Peer.chatExtension(hostPlaced.productId.rawValue, roomId: nil)
 
         #expect(peer.isPinnedToTop)
     }

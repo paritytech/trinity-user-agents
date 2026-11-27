@@ -28,8 +28,9 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import { stackGenesisHashes } from "./networks.js";
 import {
   resolveAccount,
   type DevAccount,
@@ -41,7 +42,7 @@ export interface MockClientOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /** Account the host signs as. Defaults to `"alice"`. */
   account?: DevAccountName | DevAccount;
   /**
@@ -82,21 +83,23 @@ export async function createMockClient(
     new URL("../../dist/wasm/testing/truapi_server.js", import.meta.url).href;
   const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
     default: () => Promise<unknown>;
-    WasmSigningHostRuntime: new (
-      callbacks: unknown,
-      config: unknown,
-    ) => SigningRuntime;
+    WasmSigningHostRuntime: {
+      create(callbacks: unknown, config: unknown): Promise<SigningRuntime>;
+    };
   };
   await glue.default();
 
   const { createWasmRawCallbacks } =
     await import("../generated/host-callbacks-adapter.js");
 
-  const host = createMockHost(options.mock);
-  const { productId, ...hostConfig } = mockRuntimeConfig(
+  const { productId: requestedProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
-  const runtime = new glue.WasmSigningHostRuntime(
+  const host = createMockHost({
+    servedChains: stackGenesisHashes(hostConfig.testStack),
+    ...options.mock,
+  });
+  const runtime = await glue.WasmSigningHostRuntime.create(
     {
       // Supplied outside the generated adapter, as the worker runtime does.
       ...createWasmRawCallbacks(host.callbacks),
@@ -107,6 +110,10 @@ export async function createMockClient(
 
   const account = resolveAccount(options.account ?? "alice");
   await runtime.activateLocalSession(account.entropy);
+
+  // A suite names its product as it likes, and the core opens a product only
+  // under an id the test stack serves, so ask for that id first.
+  const productId = runtime.parseProductId(requestedProduct);
 
   // Both ends in one process, but still over a real MessagePort: the frames
   // crossing here are the same bytes that cross an iframe boundary.
@@ -144,6 +151,7 @@ export async function createMockClient(
 /** The subset of the generated signing runtime this module drives. */
 interface SigningRuntime {
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  parseProductId(name: string): ProductId;
   productRuntime(
     product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },

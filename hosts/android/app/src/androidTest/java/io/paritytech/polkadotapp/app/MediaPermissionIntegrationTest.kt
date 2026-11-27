@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIStack
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
         for (permission in listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) {
             instrumentation.uiAutomation.grantRuntimePermission(context.packageName, permission)
         }
+        val testSdk = instrumentation.context.assets.open("truapi-test-sdk.js").bufferedReader().use { it.readText() }
         val bridge = PermissionBridge()
         val reports = Reports()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -66,14 +68,11 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
         }
         val config = HostRuntimeConfig(
             hostName = "Media permission test",
-            peopleChainGenesisHash = ByteArray(32),
-            bulletinChainGenesisHash = ByteArray(32),
-            assetHubChainGenesisHash = ByteArray(32),
-            networkSuffix = "paseo",
+            stack = TrUAPIStack.PREVIEWNET.bundled(context),
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("media.paseo").getOrThrow(), ExecutableKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("media.testnet").getOrThrow(), ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
@@ -81,7 +80,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                     webView.settings.javaScriptEnabled = true
                     webView.webChromeClient = ProductWebChromeClient(
                         unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker),
-                        unused(), unused(), "Media test", FixedProductId(ProductId.parse("media.paseo").getOrThrow()), scope, null,
+                        unused(), unused(), "Media test", FixedProductId(ProductId.parse("media.testnet").getOrThrow()), scope, null,
                     )
                     webView.addJavascriptInterface(reports, "mediaReport")
                     webView.webViewClient = object : WebViewClient() {
@@ -92,7 +91,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                         setOf("http://localhost"),
                         "media-permission-test",
                     )(
-                        LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token),
+                        LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token) + "\n" + testSdk,
                     )(webView)
                     webView.loadUrl("http://localhost/")
                 }
@@ -123,7 +122,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                         )
                         bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
                         call(
-                            "window.__HOST_API_CLIENT__.client.permissions.requestDevicePermission('$name')" +
+                            "truapiTestSdk.getClientSync().permissions.requestDevicePermission('$name')" +
                                 ".match(value => value.granted, error => { throw error; })",
                             "true",
                         )

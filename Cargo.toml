@@ -16,6 +16,7 @@ license = "MIT"
 alloy-primitives = { version = "1.7", default-features = false }
 alloy-sol-types = { version = "1.7", default-features = false }
 anyhow = "1"
+async-lock = "3"
 async-sqlite = { version = "0.6", default-features = false }
 arboard = { version = "3.6.1", default-features = false }
 async-trait = "0.1"
@@ -26,6 +27,7 @@ blake2b_simd = { version = "1", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false }
 clap = "4"
 console_error_panic_hook = "0.1"
+const_format = "0.2"
 convert_case = "0.6"
 crossterm = "0.29"
 curve25519-dalek = { version = "4", default-features = false }
@@ -47,6 +49,7 @@ indoc = "2"
 itertools = "0.14"
 js-sys = "0.3"
 jsonrpsee = "0.26"
+mime_guess = { version = "2.0.5", default-features = false }
 jsonrpsee-client-transport = "0.26"
 jsonrpsee-core = "0.26"
 libc = "0.2"
@@ -65,6 +68,9 @@ ratatui = { version = "0.30.2", default-features = false }
 reqwest = { version = "0.12", default-features = false }
 rqrr = { version = "0.10.1", default-features = false }
 rusqlite = "0.40"
+# The GLSL reader and Metal writer that build iOS material shaders. naga 30 builds its
+# GLSL reader only beside another reader, so the WGSL one comes too, unused.
+naga = { version = "30.0.1", default-features = false, features = ["glsl-in", "msl-out", "wgsl-in"] }
 rusqlite_migration = "2.6"
 rustix = "1"
 scale-decode = "0.16"
@@ -76,8 +82,8 @@ serde_json = "1"
 serde_with = { version = "3", default-features = false, features = ["macros"] }
 sha2 = "0.10"
 shlex = "1"
-smoldot = { version = "4", default-features = false }
-smoldot-light = { version = "2.1", default-features = false }
+smoldot = { version = "7", default-features = false }
+smoldot-light = { version = "5", default-features = false }
 socket2 = "0.6"
 sp-crypto-hashing = { version = "0.1", default-features = false }
 strum = { version = "0.28", features = ["derive"] }

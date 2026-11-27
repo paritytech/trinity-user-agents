@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.database.dao.StatementStoreSlotAllocationDao
 import io.paritytech.polkadotapp.database.model.StatementStoreSlotAllocationLocal
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.SlotPriority
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotHolder
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
@@ -21,7 +22,7 @@ class RealStatementStoreSlotAllocationRepository @Inject constructor(
     override suspend fun insert(
         chainId: ChainId,
         collection: PeopleCollection,
-        accountId: AccountId,
+        holder: StatementStoreSlotHolder,
         seq: UInt,
         latestRenewedPeriod: UInt,
         since: Instant,
@@ -32,12 +33,13 @@ class RealStatementStoreSlotAllocationRepository @Inject constructor(
             id = 0,
             chainId = chainId,
             collection = collection.name,
-            accountId = accountId.value,
+            accountId = holder.accountId.value,
             seq = seq.toInt(),
             latestRenewedPeriod = latestRenewedPeriod.toLong(),
             sinceMillis = since.toEpochMilliseconds(),
             priorityLevel = priority.level,
             tag = tag?.value,
+            signerDerivationPath = holder.signerDerivationPath(),
         )
         return dao.insert(row)
     }
@@ -100,8 +102,25 @@ class RealStatementStoreSlotAllocationRepository @Inject constructor(
         )
     }
 
+    override suspend fun signerDerivationPathsFor(
+        chainId: ChainId,
+        accountIds: Collection<AccountId>,
+    ): Map<AccountId, String> {
+        if (accountIds.isEmpty()) return emptyMap()
+
+        return dao.signerDerivationPathsFor(chainId, accountIds.map { it.value }).associateBy(
+            keySelector = { it.accountId.toDataByteArray() },
+            valueTransform = { it.signerDerivationPath },
+        )
+    }
+
     override suspend fun markRenewed(id: Long, period: UInt, since: Instant, newSeq: UInt, newCollection: PeopleCollection) {
         dao.markRenewed(id, period.toLong(), since.toEpochMilliseconds(), newSeq.toInt(), newCollection.name)
+    }
+
+    private fun StatementStoreSlotHolder.signerDerivationPath(): String? = when (this) {
+        is StatementStoreSlotHolder.Local -> derivationPath
+        is StatementStoreSlotHolder.Remote -> null
     }
 
     private fun StatementStoreSlotAllocationLocal.toRecord() = StatementStoreSlotAllocationRecord(

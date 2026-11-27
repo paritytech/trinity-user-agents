@@ -38,9 +38,9 @@ use tracing::{debug, warn};
 
 use crate::bootstrap;
 use truapi::{
-	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime,
-	platform::{ExecutableKind, ProductId},
+	ChannelId, DebugSink, FrameSink, HostRuntime, PairingHost, ProductContext, ProductRuntime,
+	ProductRuntimeError, SigningHost,
+	platform::{ExecutableKind, ProductId, RuntimeConfigValidationError, Stack},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -73,12 +73,29 @@ pub struct ProductSelection {
 	execution_kind: ExecutableKind,
 }
 
+/// The product a person names with `product_id`, under the id `stack` serves
+/// it under.
+fn named_product(
+	stack: &Stack,
+	product_id: &ProductId,
+	execution_kind: ExecutableKind,
+) -> Result<ProductContext, RuntimeConfigValidationError> {
+	ProductContext::served_by(stack, stack.served_id(product_id)?, execution_kind)
+}
+
 impl ProductSelection {
-	/// Select the initial product identity.
-	pub fn new(product_id: ProductId, execution_kind: ExecutableKind) -> Arc<Self> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind);
+	/// Select the initial product identity. `product_id` is a name a person
+	/// typed, so it is read as `stack`, the stack the host runs, reads it: the
+	/// selection is the id the stack serves the product under. Fails when it
+	/// does not serve the product.
+	pub fn new(
+		product_id: ProductId,
+		execution_kind: ExecutableKind,
+		stack: &Stack,
+	) -> Result<Arc<Self>, RuntimeConfigValidationError> {
+		let product = named_product(stack, &product_id, execution_kind)?;
 		let (current, _) = watch::channel(product);
-		Arc::new(Self { current, execution_kind })
+		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
 	/// The current product id.
@@ -86,17 +103,23 @@ impl ProductSelection {
 		self.current.borrow().product_id.clone()
 	}
 
-	/// Select a product, returning whether the selection changed.
-	pub fn select(&self, product_id: ProductId) -> bool {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind);
-		self.current.send_if_modified(|current| {
+	/// Select a product, read as [`Self::new`] reads it, returning whether
+	/// the selection changed. Fails, and keeps the selection, when `stack`,
+	/// the stack the host runs, does not serve the product.
+	pub fn select(
+		&self,
+		product_id: ProductId,
+		stack: &Stack,
+	) -> Result<bool, RuntimeConfigValidationError> {
+		let product = named_product(stack, &product_id, self.execution_kind)?;
+		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false
 			} else {
 				*current = product;
 				true
 			}
-		})
+		}))
 	}
 
 	fn subscribe(&self) -> watch::Receiver<ProductContext> {
@@ -130,15 +153,15 @@ impl ConnectionRuntime for ProductRuntime {
 	}
 }
 
-impl ProductRuntimeFactory for PairingHostRuntime {
+impl ProductRuntimeFactory for HostRuntime<PairingHost> {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		PairingHostRuntime::product_runtime(self, product, sink)
+		HostRuntime::product_runtime(self, product, sink)
 	}
 }
 
-impl ProductRuntimeFactory for SigningHostRuntime {
+impl ProductRuntimeFactory for HostRuntime<SigningHost> {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		SigningHostRuntime::product_runtime(self, product, sink)
+		HostRuntime::product_runtime(self, product, sink)
 	}
 }
 
@@ -188,18 +211,18 @@ impl ProductRuntimeFactory for DebugTappedRuntime {
 /// Signing runtime factory whose active session can be replaced without
 /// restarting the frame listener.
 pub struct SwitchableSigningRuntime {
-	current: RwLock<Arc<SigningHostRuntime>>,
+	current: RwLock<Arc<HostRuntime<SigningHost>>>,
 	generation: watch::Sender<u64>,
 }
 
 impl SwitchableSigningRuntime {
-	pub fn new(runtime: Arc<SigningHostRuntime>) -> Arc<Self> {
+	pub fn new(runtime: Arc<HostRuntime<SigningHost>>) -> Arc<Self> {
 		let (generation, _) = watch::channel(0);
 		Arc::new(Self { current: RwLock::new(runtime), generation })
 	}
 
 	/// Replace the runtime and disconnect every product using the old one.
-	pub fn replace(&self, runtime: Arc<SigningHostRuntime>) {
+	pub fn replace(&self, runtime: Arc<HostRuntime<SigningHost>>) {
 		*self.current.write().expect("runtime lock poisoned") = runtime;
 		self.reset_connections();
 	}

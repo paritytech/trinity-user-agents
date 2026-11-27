@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.chains.util.Modules
 import io.paritytech.polkadotapp.chains.util.call
 import io.paritytech.polkadotapp.common.data.substrate.model.MultiSignature
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.model.NotificationReference
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.model.UsernameChoice
 
@@ -54,6 +55,26 @@ fun ResourcesCalls.setStatementStoreAccount(
             "period" to period,
             "seq" to seq,
             "target_account" to targetAccount,
+        )
+    )
+}
+
+const val REPLACE_STATEMENT_STORE_ACCOUNT_CALL = "replace_statement_store_account"
+
+fun ResourcesCalls.replaceStatementStoreAccount(
+    period: UInt,
+    alias: DataByteArray,
+    newAccount: AccountId,
+    since: ULong,
+) {
+    extrinsicBuilder.call(
+        moduleName = Modules.RESOURCES,
+        callName = REPLACE_STATEMENT_STORE_ACCOUNT_CALL,
+        arguments = autoEncodedArgs(
+            "period" to period,
+            "alias" to alias,
+            "new_account" to newAccount,
+            "since" to since,
         )
     )
 }

@@ -1,17 +1,17 @@
 use super::{
-	super::{LocalActivation, RuntimeServices, SigningHostRole},
+	super::{
+		HostRole, LocalActivation, RuntimeServices, SigningHost, signing_host::WalletAccountHolder,
+	},
 	*,
 };
 use crate::{
 	Spawner,
 	host_logic::{
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
-			index_bytes,
-		},
+		product_account::{SR25519_SIGNING_CONTEXT, index_bytes},
+		root_entropy::RootEntropy,
 		statement_store::{MAX_MATCH_ANY_TOPICS, SUBMIT_STATEMENT_METHOD, TopicFilterKind},
 	},
-	platform::{CoreStorageKey, ProductContext},
+	platform::{CoreStorageKey, ProductContext, ProductId},
 	test_support::{
 		StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 		sso_session_info, sso_success_response_script, statement, stub_platform,
@@ -56,14 +56,16 @@ fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	.expect("stub core storage accepts the entry");
 }
 
-fn signing_host_runtime(product_id: &str) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+fn signing_host_runtime(
+	product_id: &str,
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	signing_host_runtime_on(product_id, Arc::new(StubPlatform::default()))
 }
 
 fn signing_host_runtime_on(
 	product_id: &str,
 	platform: Arc<StubPlatform>,
-) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	let platform: Arc<dyn crate::platform::Platform> = platform;
 	let services = RuntimeServices::new(
 		platform.clone(),
@@ -73,18 +75,16 @@ fn signing_host_runtime_on(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		crate::test_support::dot_test_stack(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone(), "paseo".to_string());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	let signing_host = SigningHost::new(services.clone());
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
-		signing_host.clone(),
+		signing_host.accounts().clone(),
 		signing_host.clone(),
 		ProductContext::new(ProductId::for_test(product_id)),
 	);
@@ -126,9 +126,9 @@ fn statement_store_create_proof_signing_host_uses_product_key() {
 	let (host, _signing_host) = signing_host_runtime("myapp.dot");
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let product_keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let product_keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let expected_signer = product_keypair.public.to_bytes();
 	let cx = CallContext::default();
 	let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -156,16 +156,16 @@ fn statement_store_create_proof_signing_host_uses_product_key() {
 #[test]
 fn statement_store_create_proof_confirms_a_cross_product_account() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform.clone());
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let owner =
-		derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0)).unwrap();
+	let owner = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("dim2.dot"), index_bytes(0))
+		.unwrap();
 	let request = RemoteStatementStoreCreateProofRequest::V1(
 		latest::RemoteStatementStoreCreateProofRequest {
-			product_account_id: account_id("dim2.paseo", 0),
+			product_account_id: account_id("dim2.dot", 0),
 			statement,
 		},
 	);
@@ -191,7 +191,7 @@ fn statement_store_create_proof_confirms_a_cross_product_account() {
 	assert_eq!(reviews.len(), 1, "the user saw the signature");
 	assert_eq!(
 		reviews[0].calling_product_id,
-		Some(ProductId::for_test("dim2next.paseo")),
+		Some(ProductId::for_test("dim2next.dot")),
 		"and saw which product asked",
 	);
 }
@@ -199,11 +199,11 @@ fn statement_store_create_proof_confirms_a_cross_product_account() {
 #[test]
 fn statement_store_create_proof_refuses_a_cross_product_account_the_user_declines() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: false, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform);
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform);
 	let request = RemoteStatementStoreCreateProofRequest::V1(
 		latest::RemoteStatementStoreCreateProofRequest {
-			product_account_id: account_id("dim2.paseo", 0),
+			product_account_id: account_id("dim2.dot", 0),
 			statement: statement(),
 		},
 	);
@@ -224,7 +224,7 @@ fn statement_store_create_proof_refuses_a_cross_product_account_the_user_decline
 }
 
 fn create_proof_as(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<WalletAccountHolder>,
 	account: latest::ProductAccountId,
 ) -> Result<RemoteStatementStoreCreateProofResponse, CallError<RemoteStatementStoreCreateProofError>>
 {
@@ -247,15 +247,15 @@ fn create_proof_as(
 #[test]
 fn statement_store_create_proof_asks_once_per_cross_product_owner() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform.clone());
 
 	for _ in 0..3 {
-		create_proof_as(&host, account_id("dim2.paseo", 0)).expect("the grant admits the account");
+		create_proof_as(&host, account_id("dim2.dot", 0)).expect("the grant admits the account");
 	}
-	create_proof_as(&host, account_id("dim2.paseo", 1)).expect("the grant admits the account");
-	cache_context_grant(&platform, "stash.paseo", "dim2next");
-	create_proof_as(&host, account_id("stash.paseo", 0)).expect("the grant admits the account");
+	create_proof_as(&host, account_id("dim2.dot", 1)).expect("the grant admits the account");
+	cache_context_grant(&platform, "stash.dot", "dim2next");
+	create_proof_as(&host, account_id("stash.dot", 0)).expect("the grant admits the account");
 
 	let reviewed: Vec<_> = platform
 		.statement_store_product_sign_reviews
@@ -264,17 +264,17 @@ fn statement_store_create_proof_asks_once_per_cross_product_owner() {
 		.iter()
 		.map(|review| review.account.clone())
 		.collect();
-	assert_eq!(reviewed, vec![account_id("dim2.paseo", 0), account_id("stash.paseo", 0)]);
+	assert_eq!(reviewed, vec![account_id("dim2.dot", 0), account_id("stash.dot", 0)]);
 }
 
 #[test]
 fn statement_store_create_proof_asks_again_after_a_refusal() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: false, ..Default::default() });
-	cache_context_grant(&platform, "dim2.paseo", "dim2next");
-	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+	cache_context_grant(&platform, "dim2.dot", "dim2next");
+	let (host, _signing_host) = signing_host_runtime_on("dim2next.dot", platform.clone());
 
 	for _ in 0..2 {
-		create_proof_as(&host, account_id("dim2.paseo", 0)).expect_err("the user refused");
+		create_proof_as(&host, account_id("dim2.dot", 0)).expect_err("the user refused");
 	}
 
 	let reviews = platform

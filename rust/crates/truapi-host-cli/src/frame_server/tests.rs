@@ -58,7 +58,7 @@ async fn start_tcp_server(
 	let listener = TcpListener::bind("127.0.0.1:0").await?;
 	let address = listener.local_addr()?;
 	let endpoint = format!("ws://{address}");
-	let product = ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
+	let product = selection("localhost:3000");
 	let container = tempfile::NamedTempFile::new()?;
 	std::fs::write(container.path(), "installSandbox();")?;
 	let server = tokio::spawn(async move {
@@ -66,6 +66,20 @@ async fn start_tcp_server(
 		serve_tcp_connection(runtime, product, stream, &endpoint, container.path()).await
 	});
 	Ok((address, server))
+}
+
+/// The default network's stack.
+fn stack() -> Stack {
+	crate::network::Network::default()
+		.bundled_stack(ChainBackend::Rpc)
+		.core_stack()
+		.expect("the bundled stack is valid")
+}
+
+/// An App selection on [`stack`].
+fn selection(product_id: &str) -> Arc<ProductSelection> {
+	ProductSelection::new(ProductId::for_test(product_id), ExecutableKind::App, &stack())
+		.expect("the stack serves the product")
 }
 
 fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
@@ -84,15 +98,12 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
-		network.tld().to_string(),
+		network.core_stack()?,
 	)?;
 	let executor = tokio::runtime::Builder::new_current_thread().build()?;
 	let spawner = Spawner::new(executor.handle().clone());
 	executor.shutdown_background();
-	Ok(Arc::new(SigningHostRuntime::new(platform, config, spawner)))
+	Ok(Arc::new(HostRuntime::<SigningHost>::new(platform, config, spawner)))
 }
 
 #[test]
@@ -220,7 +231,7 @@ async fn fragmented_request_heads_do_not_starve_the_executor() -> Result<()> {
 	let mut client = TcpStream::connect(address).await?;
 	let (server_stream, _) = listener.accept().await?;
 	client.write_all(b"GET /boot").await?;
-	let product = ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
+	let product = selection("localhost:3000");
 	let endpoint = format!("ws://{address}");
 
 	let client_exchange = async move {
@@ -267,7 +278,7 @@ async fn disconnect_cancels_pending_dispatch_and_disposes_runtime() -> Result<()
 	let address = listener.local_addr()?;
 	let runtime = Arc::new(PendingRuntime::default());
 	let server_runtime = runtime.clone();
-	let product = ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
+	let product = selection("localhost:3000");
 	let product_updates = product.subscribe();
 	let server = tokio::spawn(async move {
 		let (stream, _) = listener.accept().await?;
@@ -346,25 +357,52 @@ async fn a_non_loopback_origin_cannot_open_the_tcp_websocket() -> Result<()> {
 	Ok(())
 }
 
+/// A selection is the id the stack serves the product under, so the default
+/// network's `paseo` stack reads a `dot` name as its own product.
 #[test]
 fn product_selection_compares_canonical_ids() {
-	let product = ProductSelection::new(ProductId::for_test(" Dotli.DOT "), ExecutableKind::App);
+	let product = selection(" Dotli.DOT ");
 
-	assert_eq!(product.current().as_str(), "dotli.dot");
-	assert!(product.select(ProductId::for_test("localhost:3000")));
+	assert_eq!(product.current().as_str(), "dotli.paseo");
+	assert_eq!(product.select(ProductId::for_test("dotli.paseo"), &stack()), Ok(false));
+	assert_eq!(product.select(ProductId::for_test("Other.DOT"), &stack()), Ok(true));
+	assert_eq!(product.current().as_str(), "other.paseo");
+	assert_eq!(product.select(ProductId::for_test("localhost:3000"), &stack()), Ok(true));
 	assert_eq!(product.current().as_str(), "localhost:3000");
-	assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
+	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000"), &stack()), Ok(false));
+}
+
+/// Selecting a product on a TLD the stack does not serve fails and
+/// keeps the current selection.
+#[test]
+fn product_selection_refuses_a_tld_the_stack_does_not_serve() {
+	let stack = stack();
+	let product = selection("first.dot");
+	let tld = stack.tld().to_owned();
+
+	assert_eq!(product.select(ProductId::for_test(&format!("second.{tld}")), &stack), Ok(true));
+	let unserved = ProductId::for_test("third.elsewhere");
+	assert_eq!(
+		product.select(unserved.clone(), &stack),
+		Err(truapi::platform::UnservedProduct {
+			product_id: unserved,
+			stack_tld: tld.clone(),
+			served_as: None
+		}
+		.into())
+	);
+	assert_eq!(product.current().as_str(), format!("second.{tld}"));
 }
 
 #[tokio::test]
 async fn changing_product_notifies_connections() -> Result<()> {
-	let product = ProductSelection::new(ProductId::for_test("first.dot"), ExecutableKind::App);
+	let product = selection("first.dot");
 	let mut connection = product.subscribe();
 
-	assert!(product.select(ProductId::for_test("second.dot")));
+	assert_eq!(product.select(ProductId::for_test("second.paseo"), &stack()), Ok(true));
 	connection.changed().await?;
-	assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-	assert!(!product.select(ProductId::for_test("SECOND.DOT")));
+	assert_eq!(connection.borrow().product_id.as_str(), "second.paseo");
+	assert_eq!(product.select(ProductId::for_test("SECOND.PASEO"), &stack()), Ok(false));
 	assert!(!connection.has_changed()?);
 	Ok(())
 }
@@ -468,7 +506,7 @@ mod cross_product_storage {
 		}
 	}
 
-	fn host() -> Result<(Arc<crate::platform::CliPlatform>, SigningHostRuntime)> {
+	fn host() -> Result<(Arc<crate::platform::CliPlatform>, HostRuntime<SigningHost>)> {
 		// Every chain routes to a closed port, so nothing connects to live Paseo.
 		let network = crate::network::Network::default()
 			.bundled_stack(ChainBackend::Rpc)
@@ -488,10 +526,7 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.genesis().people,
-			network.genesis().bulletin,
-			network.genesis().asset_hub,
-			network.tld().to_string(),
+			network.core_stack()?,
 		)?;
 		assert_eq!(
 			platform.routed_url(&asset_hub_genesis),
@@ -501,7 +536,7 @@ mod cross_product_storage {
 		let executor = tokio::runtime::Builder::new_current_thread().build()?;
 		let spawner = Spawner::new(executor.handle().clone());
 		executor.shutdown_background();
-		Ok((platform.clone(), SigningHostRuntime::new(platform, config, spawner)))
+		Ok((platform.clone(), HostRuntime::<SigningHost>::new(platform, config, spawner)))
 	}
 
 	/// Apply `OWNER`'s local product config, `trusted` being the
@@ -523,7 +558,7 @@ mod cross_product_storage {
 	}
 
 	async fn call(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		product: &str,
 		method: &str,
 		payload: Vec<u8>,
@@ -554,7 +589,7 @@ mod cross_product_storage {
 	}
 
 	/// Store a value in `OWNER`'s own storage, through `OWNER`'s connection.
-	async fn write_owner_value(runtime: &SigningHostRuntime) {
+	async fn write_owner_value(runtime: &HostRuntime<SigningHost>) {
 		let payload = HostLocalStorageWriteRequest::V1(v01::HostLocalStorageWriteRequest {
 			key: KEY.to_string(),
 			value: VALUE.to_vec(),
@@ -565,7 +600,7 @@ mod cross_product_storage {
 
 	/// `CALLER` reads `OWNER`'s storage at `KEY`.
 	async fn read_across(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 	) -> Result<Option<Vec<u8>>, v02::HostLocalStorageReadError> {
 		let payload = HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
 			product: Some(ProductId::for_test(OWNER)),

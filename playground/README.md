@@ -96,28 +96,9 @@ An example **passes** when its promise resolves and **fails** when it throws. Us
 
 The Diagnosis view exercises every App-compatible TrUAPI method against the connected host and emits a per-host pass/fail report you can copy out. Per-host reports feed the explorer's **Compatibility** page, which renders the host × method matrix; aggregation lives in the explorer (see [`explorer/README.md`](../explorer/README.md#host-compatibility-matrix)). Chat APIs are diagnosed separately by the `Worker` executable.
 
-Run the iOS Chat diagnosis from the repository root:
-
-```bash
-make ios-chat-run
-```
-
-Select a prepared simulator by name or UDID when more than one runtime is
-installed. The validated local target is iOS 18.3; iOS 26 can surface an
-unrelated keychain/onboarding reset before Chat starts.
-
-```bash
-make ios-chat-run IOS_SIMULATOR_DEVICE="TrUAPI SSO E2E 18.3"
-```
-
-When no device is specified, the launcher prefers an available simulator whose
-name contains both `TrUAPI` and `E2E`, then falls back to a booted iPhone.
-
-It writes a Chat-only report to
-`playground/test-results/ios-chat/diagnosis-report.md`. The native diagnosis
-widget also provides **Copy report**; save the result as
-`explorer/diagnosis-reports/chat/ios.md` to update the explorer's separate Chat
-compatibility section.
+The iOS host's native Chat diagnosis widget provides **Copy report**; save the
+result as `explorer/diagnosis-reports/chat/ios.md` to update the explorer's
+separate Chat compatibility section.
 
 Open the playground inside a TrUAPI host (it cannot run standalone in a browser tab):
 

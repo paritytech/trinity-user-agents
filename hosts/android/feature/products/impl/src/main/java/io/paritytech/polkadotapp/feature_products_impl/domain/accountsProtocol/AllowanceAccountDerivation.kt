@@ -22,7 +22,7 @@ class AllowanceAccountDerivation @Inject constructor(
             }
     }
 
-    private fun allowancePath(system: AllowanceSystem, productId: ProductId): String {
+    fun allowancePath(system: AllowanceSystem, productId: ProductId): String {
         return "//allowance//${system.slug}//${productId.value}"
     }
 }

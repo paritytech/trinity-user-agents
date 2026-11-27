@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   REGISTER_BOT_GAP,
-  decodeTextMessage,
   diagnosisFailures,
   labelChatDiagnosisReport,
 } from "./chat-diagnosis-report.mjs";
@@ -27,17 +26,6 @@ const WITH_GAP = [
   "| `Chat/create_room` | ✅ | created |",
   "| `Chat/register_bot` | ❌ | registerBot failed: this host has no bot registry |",
 ].join("\n");
-
-test("decodes the multi-byte compact length used by a Chat report", () => {
-  const text = `## Truapi Chat Diagnosis\n${"result ".repeat(20)}`;
-  const body = Buffer.from(text);
-  const compact = Buffer.alloc(2);
-  compact.writeUInt16LE((body.length << 2) | 1);
-  const encoded = Buffer.concat([Buffer.of(0), compact, body]);
-
-  assert.equal(decodeTextMessage(encoded.toString("hex")), text);
-  assert.equal(decodeTextMessage(Buffer.of(252).toString("hex")), undefined);
-});
 
 test("lists only the failed method rows", () => {
   assert.deepEqual(diagnosisFailures(WITH_GAP), [

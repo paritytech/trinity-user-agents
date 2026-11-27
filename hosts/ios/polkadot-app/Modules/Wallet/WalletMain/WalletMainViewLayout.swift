@@ -112,7 +112,7 @@ private extension WalletView {
             cardAt: position,
             openAt: openPosition,
             openOffset: viewModel.openPocketCardOffset,
-            cleared: viewModel.isPocketCleared
+            clearance: viewModel.pocketClearance
         )
     }
 
@@ -123,7 +123,7 @@ private extension WalletView {
         } label: {
             CollectiblesCardView(isColoured: viewModel.collectiblesPeek != .resting)
         }
-        .buttonStyle(CollectiblesPressStyle())
+        .buttonStyle(CollectiblesPressStyle { viewModel.onCollectiblesPress?($0) })
         .accessibilityLabel(String(localized: .Products.collectibles))
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .global)
@@ -134,7 +134,7 @@ private extension WalletView {
         .alignmentGuide(.bottom) { dimensions in
             dimensions[.top] + collectiblesPeekHeight
         }
-        .opacity(viewModel.isPocketCleared || viewModel.collectiblesPeek == .lifted ? 0 : 1)
+        .opacity(viewModel.collectiblesPeek == .lifted ? 0 : 1 - viewModel.pocketClearance)
     }
 }
 
@@ -166,22 +166,26 @@ private struct ConditionalOverlayModifier<V: View>: ViewModifier {
     let overlay: () -> V
 
     func body(content: Content) -> some View {
-        if available {
-            content
-                .overlay(alignment: .bottom) {
-                    overlay()
-                }
-        } else {
-            content
-        }
+        content
+            .overlay(alignment: .bottom) {
+                overlay()
+                    .opacity(available ? 1 : 0)
+                    .allowsHitTesting(available)
+                    .accessibilityHidden(!available)
+            }
     }
 }
 
 /// The Collectibles peek shrinks a little while it is pressed, as Android's does.
 private struct CollectiblesPressStyle: ButtonStyle {
+    let onPressChange: (Bool) -> Void
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? CollectiblesBookTiming.pressedScale : 1)
             .animation(.easeOut(duration: CollectiblesBookTiming.pressDuration), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, isPressed in
+                onPressChange(isPressed)
+            }
     }
 }

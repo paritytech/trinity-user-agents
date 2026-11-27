@@ -3,9 +3,7 @@
 package io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator
 
 import io.paritytech.polkadotapp.common.domain.model.AccountId
-import io.paritytech.polkadotapp.common.domain.model.CurrentTimeContext
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
-import kotlin.time.Duration
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -59,17 +57,13 @@ fun StatementStoreSlots.freeSlots(): List<CollectionSlot<StatementStoreSlot.Free
 fun StatementStoreSlots.findFreeSlot(): CollectionSlot<StatementStoreSlot.Free>? = freeSlots().firstOrNull()
 
 /**
- * Taken slots across all collections whose cooldown has elapsed and may be replaced, each
- * tagged with its collection. Does not filter by the incoming account — callers add their
- * own predicates (e.g. excluding their own slots).
+ * Taken slots across all collections, each tagged with its collection. Does not filter by the
+ * incoming account — callers add their own predicates (e.g. excluding their own slots).
  */
-context(currentTimeContext: CurrentTimeContext)
-fun StatementStoreSlots.filterReplaceableSlots(cooldown: Duration): List<CollectionSlot<StatementStoreSlot.Taken>> {
-    val now = currentTimeContext.currentTime()
+fun StatementStoreSlots.takenSlots(): List<CollectionSlot<StatementStoreSlot.Taken>> {
     return perCollection.flatMap { forCollection ->
         forCollection.slots
             .filterIsInstance<StatementStoreSlot.Taken>()
-            .filter { now - it.since >= cooldown }
             .map { CollectionSlot(forCollection.collection, it) }
     }
 }

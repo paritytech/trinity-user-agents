@@ -40,17 +40,16 @@ use crate::{
 		live_asset_hub, live_asset_hub_genesis, tokio_spawner,
 	},
 	chain_runtime::ChainRuntime,
-	durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+	durable::{DurableRegistry, live_engine},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
-	host_logic::product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
+	host_logic::root_entropy::RootEntropy,
 	nft::HoldingTracker,
 	nft_purse::{
 		FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize, ScriptedStatements,
 	},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
-	time::RealTimer,
 };
 
 const DEV_PHRASE: &str = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
@@ -73,10 +72,11 @@ impl CollectionOwner {
 	fn from_env(chain: ChainRuntime, genesis: H256) -> Self {
 		let mnemonic = std::env::var("LIVE_NFT_OWNER_MNEMONIC").ok();
 		let phrase = mnemonic.as_deref().unwrap_or(DEV_PHRASE);
-		let entropy = bip39::Mnemonic::parse(phrase).expect("a BIP-39 phrase").to_entropy();
+		let entropy =
+			RootEntropy::new(bip39::Mnemonic::parse(phrase).expect("a BIP-39 phrase").to_entropy());
 		let keypair = match mnemonic {
-			Some(_) => derive_root_keypair_from_entropy(&entropy),
-			None => derive_sr25519_hard_path(&entropy, &["Alice"]),
+			Some(_) => entropy.derive_root_keypair(),
+			None => entropy.derive_sr25519_hard_path(&["Alice"]),
 		}
 		.expect("the owner key derives");
 		let versions = Arc::new(FixedExtensionVersions::one_chain(genesis, ASSET_HUB_PIPELINE));
@@ -137,7 +137,7 @@ struct LivePurses {
 
 fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	let (dir, db) = open_temporary_core_db();
-	let keys = Arc::new(FixedEntropy(rand::random::<[u8; 16]>().to_vec()));
+	let keys = Arc::new(FixedEntropy::new(rand::random::<[u8; 16]>()));
 	let imported = ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default()));
 	let storage: Arc<dyn WatchedStorage> = Arc::new(chain.clone());
 	let heads = Arc::new(chain.clone());
@@ -154,8 +154,15 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));
 	let installation = Arc::new(FixedInstallation(TEST_INSTALLATION));
 	let secrets = keys.clone();
-	let deps =
-		NftLedgerDeps { db: db.clone(), installation, keys, durable: engine, secrets, imported };
+	let deps = NftLedgerDeps {
+		db: db.clone(),
+		installation,
+		keys,
+		durable: engine,
+		secrets,
+		imported,
+		recovery: Arc::new(super::NftRecovery::off()),
+	};
 	let ledger = NftLedger::new(deps);
 	let tracking = super::HoldingTrackerDeps {
 		ledger: ledger.clone(),
@@ -164,33 +171,6 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		spawner: tokio_spawner(),
 	};
 	LivePurses { _dir: dir, db, ledger, _tracker: HoldingTracker::start(tracking) }
-}
-
-/// An engine over the live chain that builds and settles transfers on its own.
-fn live_engine(
-	chain: &ChainRuntime,
-	db: crate::store::Db,
-	registry: DurableRegistry,
-) -> Arc<DurableTxEngine> {
-	let chain = Arc::new(chain.clone());
-	let engine = DurableTxEngine::new(DurableDeps {
-		db,
-		registry,
-		heads: chain.clone(),
-		blocks: chain.clone(),
-		validator: chain.clone(),
-		submitter: chain,
-		timer: Arc::new(RealTimer),
-		spawner: tokio_spawner(),
-	});
-	engine.ensure_submissions_started();
-	let settling = engine.clone();
-	tokio::spawn(async move {
-		while settling.run_until_settled().await.is_ok() {
-			tokio::time::sleep(POLL).await
-		}
-	});
-	engine
 }
 
 impl CollectionOwner {
@@ -472,7 +452,7 @@ impl LiveRun<'_> {
 		let prepared = self.purses.prepare_cheque(&sender(), from, to, items).await;
 		prepared
 			.expect("the cheque is not refused")
-			.create()
+			.create(0)
 			.await
 			.expect("the cheque is made")
 	}

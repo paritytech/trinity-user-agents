@@ -13,6 +13,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                  |
 | `@parity/truapi-host/markers`        | `CORE_MARKERS`, the core's table of which log markers may leave the device and how loud each one is.                |
 | `@parity/truapi-host/web`            | Browser pairing host: `createIframeHost` (iframe MessageChannel handshake) and `createWebWorkerPairingHostRuntime`. |
+| `@parity/truapi-host/node`           | Node pairing host: `createNodePairingHostRuntime` (core in a worker thread) and `createHeadlessHostCallbacks`.      |
 | `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread. |
 | `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                  |
 | `@parity/truapi-host/testing`        | `createMockHost`: the in-memory host seam a product is tested against.                                              |
@@ -23,25 +24,111 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/testing/host-page` | The browser half the fixture drives, for a suite that boots its own page.                                        |
 | `@parity/truapi-host/wasm/testing`   | The raw glue for the signing-enabled bundle the test host runs on.                                                  |
 
+A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](../../../docs/migration/test-host.md).
+
 `scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`.
 `wasm/web` is the production browser host and excludes
 `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
-`ProductRuntimeConfig` configures the pairing host and requires no network
-suffix. The signing constructor's configuration requires
-`runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
-`testnet`) matching the People chain and the wallet's onboarding
-configuration.
 
-`runtimeConfig.assetHub` is required by both configurations, pairing and
-signing. It is the Asset Hub genesis hash, in the same shape as
-`runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read
-from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. A config
-omitting it is rejected.
+A host that uses the raw glue builds each runtime with an async `create`, as in
+`await WasmPairingHostRuntime.create(callbacks, hostConfig)`. Building one reads
+the core's stack record from the host's core storage, which answers
+asynchronously.
+
+`ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
+the host build runs:
+
+- `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
+- `descriptor`: the bytes of the signed copy the build bundles. The core checks
+  it against the pointer's key.
+- `reservedValues`: the build's `ReservedValuesPolicy`. Its doc in
+  [`src/runtime.ts`](src/runtime.ts) says what the core reserves and which
+  policies it refuses.
+
+The core takes every chain it uses, the network `getChainInfo` reports and the
+signing host's TLD from the descriptor. It refuses a pointer without a key, a
+descriptor without an Asset Hub, People or Bulletin chain, a field `stack` does
+not have, and the TLDs `li`, which share hosts end in, and `localhost`, whose
+names all resolve to the local machine.
+
+The core runs products under the stack's TLD. A product can also be named
+under `dot`: on a stack with another TLD that name is the stack's own product,
+so on `paseo` `chat-bot.dot` is `chat-bot.paseo`. `runtime.parseProductId(name)`
+answers the id for a name and rejects a name the stack does not serve. Pass its
+answer wherever the runtime takes a product id, so the host and the core hold
+one id for a product. With `chat-bot.dot` on a `paseo` stack:
+
+- `createProvider` rejects, and the error names `chat-bot.paseo`;
+- `claimWorker` holds nothing, which the core logs at `warn`, so no demand is
+  reported for it;
+- `getPermissionAuthorizationStatus`, `getPermissionAuthorizationStatuses` and
+  `setPermissionAuthorizationStatus` reject, since a status stored under that
+  name is one no product reads, and they reject a request that names it too;
+- `clearProductState` clears the grants and the product storage kept under
+  exactly that id, which is how a host drops them for an id an earlier release
+  ran. It does not touch `chat-bot.paseo`.
+
+Ids the core hands to a host are ids the stack serves, also when a product
+wrote a `dot` name in a call.
+
+A pairing or signing host runtime keeps the descriptor current when the host
+passes two raw callbacks to `create`, typed as `StackCallbacks`. A
+`WasmProductRuntime` built on its own starts from the stored copy but does not
+refresh it.
+
+- `fetchStackDescriptor(request)`: fetch `request.url` with a `GET`, without
+  following redirects, and answer `document` or `notModified`. Throw for
+  anything else.
+  The core asks once its copy is an hour old, which is at start unless the
+  copy it stored was fetched less than an hour ago, and on `refreshStack()`.
+  A sleeping device can stretch that hour, so call `refreshStack()` when the
+  page becomes visible again.
+- `stackChanged(status)`: the `StackStatus` at start, and on each change. For a
+  host without `fetchStackDescriptor` only `mismatches` changes, when a chain's
+  answer changes it. `restartRequired` means a newer copy changes a chain, the
+  network or the generation, and applies once the runtime is built again. A
+  copy on another TLD than the bundled descriptor is refused, and `lastRefresh`
+  says so. `generation` changes when the stack restarts its chains: key cached
+  chain data by it. `mismatches` lists each chain whose last connection reached
+  one with a different genesis hash from the descriptor's. On a signing host it
+  also lists People's `NetworkSuffix` once the runtime's allowance work has read
+  one that is not the descriptor's `tld`. The suffix is kept in memory only, so
+  a runtime built again lists none until it reads the suffix itself.
+
+After a stack's chains restart from genesis, the same endpoints serve new
+chains with new genesis hashes. To catch that, the core asks every chain
+connection for its genesis hash before anything else uses it. If the hash is
+not the descriptor's, calls to that chain fail and `stackStatus()` lists the
+chain in `mismatches`. The core also asks the connections it opened earlier for
+that chain again, apart from statement subscriptions, and closes those that now
+give a different hash or say the chain is halted.
+While a chain is listed, the core asks `fetchStackDescriptor` every five
+minutes instead of every hour, until `restartRequired` is set.
+
+A chain that cannot be reached is unavailable and is not listed. A light client
+never lists a restarted chain either, because it answers from its own chain
+spec. A `WasmProductRuntime` built on its own also refuses a chain with a
+different hash, but has no status to report it in.
+
+The core keeps the last copy it verified in core storage, under the
+`StackRecord` key, and starts from it when it is newer than the bundled one.
+`create` waits a few seconds at most for that read, then starts from the
+bundled copy.
+
+Without `fetchStackDescriptor` the core stays on the copy it started from. The
+`/web` and `/node` hosts run the core in a worker, `worker-runtime`, that does
+not pass these callbacks yet and exposes no `stackStatus()` to the host, so a
+host on them sees a refused chain only as failing calls.
+
+The test host has no descriptor, so it passes `testStack` instead: an `id` and
+a `generation`, the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it, and refuses a field it does not have. A runtime
+built from it does not refresh: it calls neither stack callback, and
+`stackStatus()` returns `undefined`.
+`mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
+fixture builds it from `networks`.
 
 ## Bundler requirements
 
@@ -145,9 +232,9 @@ needs, and a rejected schedule reaches the product as a host failure. A host
 keeps one reminder per product. The core serves
 `game` to the game product, `dim2`, alone. The mock test host
 (`@parity/truapi-host/testing`) accepts every reminder and cancel without
-holding them once it runs as that product; its default `mock.dot` gets
+holding them once it runs as that product; its default `mock.paseo` gets
 `Unsupported`, so a suite that exercises `game` passes
-`productId: "dim2.dot"`.
+`productId: "dim2.dot"`, which the test host runs as `dim2.paseo`.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
@@ -196,9 +283,8 @@ render cannot take the surrounding surface with it. Exactly one terminal fires
 per render: `onComplete` means the last tree delivered stands, `onError` means
 it is partial and must not be shown as final. A product that declines the
 render, a tree that fails to decode, a closed connection, and a throwing
-renderer all arrive as `onError`. An open render holds one worker reference for
-the provider's product, released when the stream ends or the disposer runs, so
-the product's worker stays up for as long as something is being drawn.
+renderer all arrive as `onError`. A surface that needs the worker takes a claim and releases it when the surface leaves.
+It can end or replace a render without changing worker demand.
 
 `publishChatAction` is the path for posted messages, commands and host-drawn
 `Actions` buttons. Each action entry point sits behind its own service's access
@@ -257,6 +343,11 @@ const address = await productAccountAddress({
 });
 ```
 
+The address is the one the host gives the product, so the product id is read as
+the host's stack reads it. The mock test stack's TLD is `paseo`, which makes
+`tx-demo.dot` the product `tx-demo.paseo`. A suite whose host runs another test
+stack passes it as `testStack`.
+
 Which one to reach for:
 
 - `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
@@ -265,17 +356,20 @@ Which one to reach for:
 - `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
   is asynchronous and runs the whole derivation from a dev account's session
   root. It needs the built testing bundle, so it is for suites only. Because
-  the address depends on nothing but the root, the product id and the index, a
-  suite can work it out in a `globalSetup` and fund it once rather than per
-  test.
+  the address depends on nothing but the root, the id the stack serves the
+  product under and the index, a suite can work it out in a `globalSetup` and
+  fund it once rather than per test.
 
 A running fixture answers the same address through
 `testHost.getProductAccountAddress(productId?, index?)`, which reads the session
 the host actually holds and so returns `undefined` while it is signed out.
 
-`contacts` needs both callbacks, or the group counts as absent. `pickContact`
-draws the picker and returns the chosen account, or `NoContacts` when there is
-nobody to show. `contacts({ handleKey, handles })` resolves the handles a
+`contacts` needs all three callbacks, `contacts`, `pickContact` and
+`contactUsernames`, or the group counts as absent. `pickContact` draws the
+picker and returns the chosen account, or `NoContacts` when there is nobody to
+show. `contactUsernames` returns the dotNS usernames of the unblocked contacts,
+which the core serves only to the game product, or `{ tag: "Unsupported" }`
+when the host cannot list them. `contacts({ handleKey, handles })` resolves the handles a
 transaction names: one entry per handle, in order, the account or `undefined`.
 A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
 account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
@@ -330,7 +424,51 @@ connects again: `onPort` is called with a fresh port once the new document
 sends a frame, and the function `onPort` returned for the previous port runs
 then. Each port is a new product session, so give it a core connection of its
 own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
-and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker and answers the id the host's stack serves the name under. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+
+## Example — Node (worker thread)
+
+For a host with no browser, such as a CLI that pairs with the user's wallet.
+`createNodePairingHostRuntime` takes the same callbacks and options as
+`createWebWorkerPairingHostRuntime` and returns the same runtime; the core runs
+in a `node:worker_threads` thread and its WASM is read from disk.
+
+```ts
+import { createClient, createTransport } from "@parity/truapi";
+import { createNodePairingHostRuntime, createHeadlessHostCallbacks } from "@parity/truapi-host/node";
+
+const runtime = await createNodePairingHostRuntime(
+  createHeadlessHostCallbacks({
+    coreStorage, // persists the paired session; files on disk for a CLI
+    chain, // opens a JSON-RPC WebSocket per genesis hash
+    auth: { authStateChanged: (state) => state.tag === "Pairing" && showQr(state.value.deeplink) },
+    productStorage,
+    servedChains, // genesis hashes `chain` can reach
+    userConfirmation, // the user's answer to reviews, e.g. a CLI prompt
+    permissions,
+  }),
+  { hostConfig },
+);
+const productId = await runtime.parseProductId("my-cli.dot");
+const client = createClient(createTransport(await runtime.createProvider({ productId })));
+await client.account.requestLogin({});
+```
+
+`createHeadlessHostCallbacks` fills in what a host without a screen cannot do:
+navigation and push notifications reject, and theme, locale and preimage lookup
+answer with fixed values. Every chain builds V4 transactions unless the host
+passes `extrinsicVersion` with the chains it builds as V5. The host still passes `userConfirmation` and
+`permissions`, because they are the user's answers: `getAccount` asks to
+disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
+permission and a signing review. A CLI asks at its prompt. A host with a UI
+passes the full callback set instead, exactly as on the web.
+
+`./node` loads the production bundle, which has no signing host, so it runs
+pairing hosts only: `role: "signing"` is refused.
+
+Call `runtime.dispose()` when done: the core's thread keeps the process alive
+until then. Install the package rather than bundling `./node` into a single
+file, since the worker thread and the WASM are loaded from files beside it.
 
 ## Session lifecycle
 
@@ -378,11 +516,17 @@ with `no allowance set for account`.
 | ---------------------------------------- | -------------------------------------- |
 | `SessionUiInfo.deviceStatementAccountId` | On every `AuthState.Connected`         |
 | `getDeviceStatementKey()`                | Runtime method, 64-byte sr25519 secret |
+| `SessionUiInfo.deviceEncPublicKey`       | On every `AuthState.Connected`         |
+| `getDeviceEncryptionKey()`               | Runtime method, 32-byte X25519 secret  |
 
 Peers are told to address that same account, so it is also what a host derives
-its own statement topics from. Both are `undefined` without an active session,
-and the account is rotated per login: read it from the current session rather
-than caching it across sign-ins.
+its own statement topics from. The wallet announces the account and the
+encryption public key together as this device, so contacts encrypt to that key:
+decrypt and encrypt with `getDeviceEncryptionKey()`, not a key of the host's
+own. All four are `undefined` without an active session, and both keys are
+rotated per login: read them from the current session rather than caching them
+across sign-ins. The paired wallet device's own encryption key is
+`SessionUiInfo.peerDeviceEncPublicKey`.
 
 ## Worker lifecycle
 
@@ -392,8 +536,7 @@ leaves. The host runs and stops the worker executable itself; the runtime only t
 
 | Runtime method                    | Use it to                                                        |
 | --------------------------------- | ---------------------------------------------------------------- |
-| `acquireWorker(productId)`        | Take one reference while a holder is on screen or in flight.     |
-| `releaseWorker(productId)`        | Release one reference; with none held it is a no-op.             |
+| `claimWorker(productId)`          | Hold one reference until the returned handle's `release()` runs.  |
 | `subscribeWorkerDemand(listener)` | Learn which workers to run: current set first, then each change. |
 
 ```ts
@@ -402,8 +545,9 @@ const stop = runtime.subscribeWorkerDemand(({ productId, wanted }) => {
   else stopProductWorker(productId);
 });
 
-runtime.acquireWorker("chat-bot.dot"); // a room it serves came on screen
-runtime.releaseWorker("chat-bot.dot"); // the room left the screen
+const productId = await runtime.parseProductId("chat-bot.dot");
+const room = runtime.claimWorker(productId); // the room came on screen
+room.release(); // the room left the screen
 ```
 
 Two holders of one product hold one worker: the listener hears `wanted: true` once, on the first, and `wanted: false`

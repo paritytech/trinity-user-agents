@@ -10,7 +10,7 @@ pub struct HostRemindNextGameRequest {
 
 /// Why a reminder was not taken.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostRemindNextGameError {
 	/// `starts_at` is not after the device's current time.
 	#[display("the game has already started")]

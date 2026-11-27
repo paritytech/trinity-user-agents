@@ -9,14 +9,14 @@ public struct AppsListViewLayout<Identifier: Hashable>: View {
         public let subtitle: String?
         /// Shown until ``icon`` loads, and for products that never resolve one.
         public let avatar: AvatarViewModel
-        public let icon: (any ImageViewModelProtocol)?
+        public let icon: AnyImageViewModel?
 
         public init(
             id: Identifier,
             name: String,
             subtitle: String?,
             avatar: AvatarViewModel,
-            icon: (any ImageViewModelProtocol)?
+            icon: AnyImageViewModel?
         ) {
             self.id = id
             self.name = name

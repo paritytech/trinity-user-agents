@@ -1,20 +1,23 @@
 use parity_scale_codec::{Decode, Encode};
 
-/// Request to show or hide the face above the calling Widget.
+use super::PocketCardSide;
+
+/// Request to cover or uncover the card under the calling Widget.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct HostExpandedCardSetFaceShownRequest {
-	/// `true` brings the face back, `false` moves it out of the way.
-	pub shown: bool,
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct HostExpandedCardSetCardCoveredRequest {
+	/// `true` covers the card so touches over it go to the Widget, `false`
+	/// gives them back to the card.
+	pub covered: bool,
 }
 
-/// Face visibility change failure.
+/// Card cover change failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum HostExpandedCardSetFaceShownError {
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostExpandedCardSetCardCoveredError {
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face or turning the card; the request had no effect.
+	/// The user is moving or turning the card; the request had no effect.
 	UserMoving,
 	/// Catch-all.
 	Unknown {
@@ -23,22 +26,22 @@ pub enum HostExpandedCardSetFaceShownError {
 	},
 }
 
-/// Request to turn the card above the calling Widget to one side.
+/// Request to turn the card under the calling Widget to one side.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct HostExpandedCardSetBackShownRequest {
-	/// `true` turns the back up, `false` turns the front up.
-	pub shown: bool,
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct HostExpandedCardTurnCardRequest {
+	/// The side to turn up.
+	pub side: PocketCardSide,
 }
 
 /// Card turn failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum HostExpandedCardSetBackShownError {
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostExpandedCardTurnCardError {
 	/// The Widget is not shown under its card right now, such as one the host
 	/// keeps loaded after the card closed.
 	NotPresented,
-	/// The user is turning the card or moving its face; the request had no effect.
+	/// The user is moving or turning the card; the request had no effect.
 	UserMoving,
 	/// The card has no back to show right now.
 	NoBack,

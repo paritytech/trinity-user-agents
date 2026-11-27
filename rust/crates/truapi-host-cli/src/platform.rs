@@ -26,26 +26,26 @@ use tokio::{
 	sync::Mutex as AsyncMutex,
 };
 use truapi::{
-	latest as api,
+	BulletinLookup, latest as api,
 	platform::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
 		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
-		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
-		ThemeHost, UserConfirmation, UserConfirmationReview,
+		Permissions, PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey,
+		ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost,
+		UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
 
 use crate::{
-	bulletin_lookup::{BitswapRpc, BulletinLookup},
+	bulletin_lookup::BitswapRpc,
 	chain::CliChainProvider,
+	stack_descriptor::Roles,
 	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
 };
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
-static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
 
 /// A persistence failure with its filesystem operation or serialization cause.
 #[derive(derive_more::Display, derive_more::From, Debug)]
@@ -76,6 +76,9 @@ pub enum StorageError {
 	#[cfg(windows)]
 	#[display("replace {}", path.display())]
 	Replace { path: PathBuf, source: std::io::Error },
+	/// A storage file could not be removed.
+	#[display("remove {}", path.display())]
+	Remove { path: PathBuf, source: std::io::Error },
 	/// A completed write could not be moved to its destination.
 	#[display("persist {}", path.display())]
 	Persist { path: PathBuf, source: std::io::Error },
@@ -98,6 +101,7 @@ impl std::error::Error for StorageError {
 			Self::Create { source, .. } |
 			Self::Write { source, .. } |
 			Self::Sync { source, .. } |
+			Self::Remove { source, .. } |
 			Self::Persist { source, .. } |
 			Self::RecordNavigation { source, .. } => Some(source),
 			#[cfg(windows)]
@@ -167,8 +171,9 @@ impl CliStoragePaths {
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
 	chain: Arc<CliChainProvider>,
-	/// Chain roles this host serves, answered by `Features::supported_chains`.
-	chains: truapi::platform::HostChainSet,
+	/// Genesis hashes of the chains this host serves, which
+	/// `Features::feature_supported` answers from.
+	served_chains: Roles<[u8; 32]>,
 	extension_versions: truapi::platform::ExtensionVersionMap,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
@@ -181,7 +186,7 @@ pub struct CliPlatform {
 	device_storage_path: Option<PathBuf>,
 	state_dir: Mutex<Option<PathBuf>>,
 	pairing_scope: Option<PairingStorageScope>,
-	bulletin: Arc<BulletinLookup<BitswapRpc>>,
+	bulletin: BulletinLookup<BitswapRpc>,
 	next_notification_id: AtomicU32,
 	scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
 	approval: Mutex<ApprovalPolicy>,
@@ -256,7 +261,7 @@ impl CliPlatform {
 		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.genesis().bulletin);
 		Arc::new(Self {
 			chain,
-			chains: network.host_chain_set(),
+			served_chains: network.genesis(),
 			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
@@ -266,7 +271,7 @@ impl CliPlatform {
 			device_storage_path,
 			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
 			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-			bulletin: Arc::new(BulletinLookup::new(bitswap)),
+			bulletin: BulletinLookup::new(Arc::new(bitswap), Arc::new(truapi::time::RealTimer)),
 			next_notification_id: AtomicU32::new(1),
 			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
 			approval: Mutex::new(approval),
@@ -306,6 +311,24 @@ impl CliPlatform {
 			return Ok(());
 		};
 		save_product_storage(&directory, product_id, values)
+	}
+
+	fn remove_product_storage(&self, product_id: &ProductId) -> Result<(), StorageError> {
+		let Some(directory) = self
+			.product_storage_dir
+			.lock()
+			.expect("product storage path mutex poisoned")
+			.clone()
+		else {
+			return Ok(());
+		};
+		let path = product_storage_path(&directory, product_id);
+		match fs::remove_file(&path) {
+			Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
+				Err(StorageError::Remove { path, source })
+			},
+			_ => Ok(()),
+		}
 	}
 
 	/// Whether a slot belongs to the install rather than the signed-in user.
@@ -527,6 +550,16 @@ impl ProductStorage for CliPlatform {
 		Ok(())
 	}
 
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
+		storage.remove(&product_id);
+		self.remove_product_storage(&product_id)?;
+		Ok(())
+	}
+
 	fn subscribe_storage(
 		&self,
 		key: String,
@@ -542,29 +575,6 @@ impl ProductStorage for CliPlatform {
 				.cloned()
 		});
 		Box::pin(stream::once(async move { Ok(api::HostLocalStorageChangeItem { value }) }))
-	}
-}
-
-#[async_trait::async_trait]
-impl ProductOperations for CliPlatform {
-	async fn begin_operation(
-		&self,
-		_product: &ProductContext,
-		_label: String,
-	) -> Result<api::HostWorkerBeginOperationResponse, api::HostWorkerOperationError> {
-		// The headless CLI has no worker to keep alive, so the id exists only so
-		// a product can pair begin/end.
-		Ok(api::HostWorkerBeginOperationResponse {
-			id: NEXT_OPERATION_ID.fetch_add(1, Ordering::Relaxed),
-		})
-	}
-
-	async fn end_operation(
-		&self,
-		_product: &ProductContext,
-		_id: u32,
-	) -> Result<(), api::HostWorkerOperationError> {
-		Ok(())
 	}
 }
 
@@ -686,6 +696,7 @@ impl Notifications for CliPlatform {
 				self.ui.as_ref(),
 				SystemEvent::NotificationScheduled {
 					id,
+					title: notification.title.clone(),
 					text: notification.text.clone(),
 					scheduled_at,
 				},
@@ -700,6 +711,7 @@ impl Notifications for CliPlatform {
 						ui.as_ref(),
 						SystemEvent::NotificationDelivered {
 							id,
+							title: notification.title,
 							text: notification.text,
 							deeplink: notification.deeplink,
 						},
@@ -711,6 +723,7 @@ impl Notifications for CliPlatform {
 				self.ui.as_ref(),
 				SystemEvent::NotificationDelivered {
 					id,
+					title: notification.title,
 					text: notification.text,
 					deeplink: notification.deeplink,
 				},
@@ -804,17 +817,17 @@ impl Features for CliPlatform {
 		&self,
 		request: api::HostFeatureSupportedRequest,
 	) -> Result<api::HostFeatureSupportedResponse, api::GenericError> {
-		let api::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
+		let genesis_hash = match request {
+			api::HostFeatureSupportedRequest::Chain { genesis_hash } => genesis_hash,
+			api::HostFeatureSupportedRequest::Materials { .. } => {
+				return Ok(api::HostFeatureSupportedResponse { supported: false });
+			},
+		};
 		let supported = self
-			.chains
-			.chains
+			.served_chains
 			.iter()
-			.any(|entry| entry.genesis_hash.as_slice() == genesis_hash.as_slice());
+			.any(|served| served.as_slice() == genesis_hash.as_slice());
 		Ok(api::HostFeatureSupportedResponse { supported })
-	}
-
-	async fn supported_chains(&self) -> Result<truapi::platform::HostChainSet, api::GenericError> {
-		Ok(self.chains.clone())
 	}
 }
 
@@ -1061,7 +1074,7 @@ impl PreimageHost for CliPlatform {
 		&self,
 		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
-		self.bulletin.subscribe(key)
+		self.bulletin.lookup_preimage(key)
 	}
 }
 

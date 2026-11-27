@@ -102,7 +102,25 @@ fn expand_versioned(input: &VersionedInput) -> syn::Result<proc_macro2::TokenStr
 	for enum_def in &input.enums {
 		out.extend(expand_versioned_enum(enum_def)?);
 	}
+	out.extend(expand_latest_aliases(&input.enums));
 	Ok(out)
+}
+
+fn expand_latest_aliases(enums: &[VersionedEnum]) -> proc_macro2::TokenStream {
+	let aliases = enums.iter().map(|VersionedEnum { name, .. }| {
+		let doc = format!("Latest payload of [`{name}`](super::{name}).");
+		quote! {
+			#[doc = #doc]
+			pub type #name = <super::#name as crate::versioned::Versioned>::Latest;
+		}
+	});
+	quote! {
+		/// Latest payload of each envelope declared beside this module, under
+		/// the envelope's name.
+		pub mod latest {
+			#(#aliases)*
+		}
+	}
 }
 
 fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenStream> {
@@ -112,19 +130,23 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 		return Err(syn::Error::new(name.span(), "versioned enum needs at least one variant"));
 	}
 
+	let first = variant_version(&variants[0].ident)?;
+	if first == 0 {
+		return Err(syn::Error::new(variants[0].ident.span(), "versions start at `V1`"));
+	}
 	let mut variant_defs = Vec::new();
 	let mut version_arms = Vec::new();
 	for (i, variant) in variants.iter().enumerate() {
-		let expected = i + 1;
+		let expected = usize::from(first) + i;
 		let version = variant_version(&variant.ident)?;
 		if usize::from(version) != expected {
 			return Err(syn::Error::new(
 				variant.ident.span(),
-				format!("expected variant `V{expected}`; versions must be contiguous from 1"),
+				format!("expected variant `V{expected}`; versions must be contiguous"),
 			));
 		}
 
-		let index = Literal::u8_unsuffixed(u8::try_from(i).expect("variant index fits in u8"));
+		let index = Literal::u8_unsuffixed(version - 1);
 		let version_lit = Literal::u8_unsuffixed(version);
 		let vattrs = &variant.attrs;
 		let vident = &variant.ident;
@@ -151,9 +173,9 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 	}
 
 	let doc = format!("Versioned envelope for [`{name}`].");
-	let latest_lit =
-		Literal::u8_unsuffixed(u8::try_from(variants.len()).expect("variant count fits in u8"));
-	let latest_ty = match &variants.last().expect("checked non-empty").ty {
+	let newest = variants.last().expect("checked non-empty");
+	let latest_lit = Literal::u8_unsuffixed(variant_version(&newest.ident)?);
+	let latest_ty = match &newest.ty {
 		Some(ty) => quote! { #ty },
 		None => quote! { () },
 	};
@@ -177,7 +199,6 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 		}
 	};
 
-	let newest = variants.last().expect("checked non-empty");
 	if let Some(ty) = &newest.ty {
 		let vident = &newest.ident;
 		tokens.extend(quote! {

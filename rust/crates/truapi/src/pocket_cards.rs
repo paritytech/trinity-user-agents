@@ -1,10 +1,10 @@
 //! The Pocket collection in the core database: which cards are in the Pocket,
 //! and the newest face drawn for each.
 //!
-//! The host hands over the cards it pins when the runtime starts and adds the
-//! cards the user approves. Products read their own cards and may remove them.
-//! The faces their renders draw are kept here, so a card has one to show
-//! offline and at the next start.
+//! The runtime pins the privileged products' cards when it starts, and the
+//! host adds the cards the user approves. Products read their own cards and
+//! may remove them. The faces their renders draw are kept here, so a card has
+//! one to show offline and at the next start.
 
 use core::time::Duration;
 use std::sync::{
@@ -20,17 +20,17 @@ use futures::{
 	stream::BoxStream,
 };
 use parity_scale_codec::{DecodeLimit, Encode};
-use rusqlite::{OptionalExtension, Row, Transaction, named_params, types::Type};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Type};
 use truapi::latest::{
 	GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-	HostPocketRemoveCardRequest, PocketCard, RendererNode,
+	HostPocketRemoveCardRequest, PocketCard, PocketCardSide, RendererNode,
 };
 
 use crate::{
 	native::MAX_FACE_DEPTH,
 	platform::{
-		ChatFieldError, PocketPlatform, ProductContext, ProductId, normalize_chat_identifier,
-		validate_chat_name,
+		ChatFieldError, PocketPlatform, PrivilegedProduct, ProductContext, ProductId,
+		ProductIdError, normalize_chat_identifier, validate_chat_name,
 	},
 	store::{Db, DbError},
 	time::Timer,
@@ -48,14 +48,16 @@ pub struct PinnedPocketCard {
 }
 
 impl PinnedPocketCard {
-	/// The card with its id and title screened as a product's would be, so a
-	/// product can address it.
-	pub fn screened(self) -> Result<Self, ChatFieldError> {
-		Ok(Self {
-			card_id: normalize_chat_identifier("cardId", &self.card_id)?,
-			title: validate_chat_name("title", &self.title)?,
-			..self
-		})
+	/// The cards every host pins on the network with `network_suffix`, each
+	/// backed by a [`PrivilegedProduct`].
+	///
+	/// Fails when `network_suffix` is not a dotNS TLD.
+	pub fn privileged(network_suffix: &str) -> Result<Vec<Self>, ProductIdError> {
+		Ok(vec![Self {
+			product_id: PrivilegedProduct::Personhood.product_id(network_suffix)?,
+			card_id: "humanity".into(),
+			title: "Humanity".into(),
+		}])
 	}
 }
 
@@ -70,6 +72,13 @@ pub struct PocketEntry {
 	pub title: String,
 	/// Pinned by the host, so removable by nobody.
 	pub privileged: bool,
+}
+
+fn side_column(side: PocketCardSide) -> &'static str {
+	match side {
+		PocketCardSide::Front => "FRONT",
+		PocketCardSide::Back => "BACK",
+	}
 }
 
 /// What a removal did.
@@ -179,7 +188,7 @@ impl PocketCards {
 					":card": card_id,
 					":title": title,
 				})?;
-				upsert_face(tx, &product_id, &card_id, &face, draw_order)
+				upsert_face(tx, &product_id, &card_id, PocketCardSide::Front, &face, draw_order)
 			})
 			.await?;
 		Ok(())
@@ -210,38 +219,41 @@ impl PocketCards {
 			.await
 	}
 
-	/// The newest face kept for a card. One that no longer decodes reads as
-	/// none, and the card waits for its product to draw again.
+	/// The newest face kept for one side of a card. One that no longer
+	/// decodes reads as none, and the card waits for its product to draw again.
 	pub async fn face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 	) -> Result<Option<RendererNode>, DbError> {
 		let kept: Option<Vec<u8>> = self
 			.db
 			.read(move |conn| {
-				let params = named_params! { ":product": product_id.as_str(), ":card": card_id };
+				let params = named_params! {
+					":product": product_id.as_str(),
+					":card": card_id,
+					":side": side_column(side),
+				};
 				Ok(conn.prepare_cached(FACE)?.query_row(params, |row| row.get(0)).optional()?)
 			})
 			.await?;
-		Ok(kept.and_then(|bytes| {
-			RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
-				.inspect_err(|error| tracing::warn!(%error, "a kept Pocket face no longer decodes"))
-				.ok()
-		}))
+		Ok(kept.and_then(|bytes| decode_face(&bytes)))
 	}
 
-	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the card's
-	/// newest, if the card is in the Pocket and no later face is kept.
+	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the newest
+	/// on that side of the card, if the card is in the Pocket and no later
+	/// face is kept there.
 	async fn keep_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 		face: RendererNode,
 		draw_order: u64,
 	) -> Result<(), DbError> {
 		self.db
-			.write(move |tx| upsert_face(tx, &product_id, &card_id, &face, draw_order))
+			.write(move |tx| upsert_face(tx, &product_id, &card_id, side, &face, draw_order))
 			.await
 	}
 
@@ -252,6 +264,7 @@ impl PocketCards {
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 		mut faces: UnboundedReceiver<(RendererNode, u64)>,
 		timer: Arc<dyn Timer>,
 	) {
@@ -273,12 +286,12 @@ impl PocketCards {
 				newest = Some(newer);
 			}
 			if let Some(drawn) = newest.take() {
-				self.keep_newest(&product_id, &card_id, drawn).await;
+				self.keep_newest(&product_id, &card_id, side, drawn).await;
 				interval = timer.sleep(FACE_WRITE_INTERVAL).fuse();
 			}
 		}
 		if let Some(drawn) = newest {
-			self.keep_newest(&product_id, &card_id, drawn).await;
+			self.keep_newest(&product_id, &card_id, side, drawn).await;
 		}
 	}
 
@@ -286,10 +299,12 @@ impl PocketCards {
 		&self,
 		product_id: &ProductId,
 		card_id: &str,
+		side: PocketCardSide,
 		(face, draw_order): (RendererNode, u64),
 	) {
-		if let Err(error) =
-			self.keep_face(product_id.clone(), card_id.to_owned(), face, draw_order).await
+		if let Err(error) = self
+			.keep_face(product_id.clone(), card_id.to_owned(), side, face, draw_order)
+			.await
 		{
 			tracing::warn!(%error, card_id, "a Pocket face was not kept");
 		}
@@ -360,25 +375,46 @@ const PRIVILEGED: &str =
 
 const DELETE: &str = "DELETE FROM pocket_card WHERE product_id = :product AND card_id = :card";
 
-const FACE: &str =
-	"SELECT face FROM pocket_card_face WHERE product_id = :product AND card_id = :card";
+const FACE: &str = "SELECT face FROM pocket_card_face
+	WHERE product_id = :product AND card_id = :card AND side = :side";
 
-const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, face, draw_order)
-	SELECT :product, :card, :face, :draw_order WHERE EXISTS
+const ALL_FACES: &str = "SELECT face FROM pocket_card_face";
+
+const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, side, face, draw_order)
+	SELECT :product, :card, :side, :face, :draw_order WHERE EXISTS
 		(SELECT 1 FROM pocket_card WHERE product_id = :product AND card_id = :card)
-	ON CONFLICT (product_id, card_id) DO UPDATE SET face = excluded.face, draw_order = excluded.draw_order
+	ON CONFLICT (product_id, card_id, side) DO UPDATE SET face = excluded.face, draw_order = excluded.draw_order
 		WHERE excluded.draw_order > pocket_card_face.draw_order";
+
+/// Every face kept for a card, in a read or inside a write. One that no longer
+/// decodes is left out.
+pub fn saved_faces(conn: &Connection) -> Result<Vec<RendererNode>, DbError> {
+	let mut faces = conn.prepare_cached(ALL_FACES)?;
+	let mut decoded = Vec::new();
+	for bytes in faces.query_map([], |row| row.get::<_, Vec<u8>>(0))? {
+		decoded.extend(decode_face(&bytes?));
+	}
+	Ok(decoded)
+}
+
+fn decode_face(bytes: &[u8]) -> Option<RendererNode> {
+	RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut &*bytes)
+		.inspect_err(|error| tracing::warn!(%error, "a kept Pocket face no longer decodes"))
+		.ok()
+}
 
 fn upsert_face(
 	tx: &Transaction<'_>,
 	product_id: &ProductId,
 	card_id: &str,
+	side: PocketCardSide,
 	face: &RendererNode,
 	draw_order: u64,
 ) -> Result<(), DbError> {
 	tx.prepare_cached(UPSERT_FACE)?.execute(named_params! {
 		":product": product_id.as_str(),
 		":card": card_id,
+		":side": side_column(side),
 		":face": face.encode(),
 		":draw_order": draw_order,
 	})?;

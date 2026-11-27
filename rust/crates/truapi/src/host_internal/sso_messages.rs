@@ -109,21 +109,6 @@ pub struct Response<P> {
 	pub payload: P,
 }
 
-/// Result of answering an SSO message for a caller-owned session.
-#[derive(Debug, Clone)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum SsoRequestOutcome {
-	/// Encoded response to post on the session.
-	Response {
-		/// SCALE-encoded `RemoteMessage` response.
-		message: Vec<u8>,
-	},
-	/// The peer ended the session.
-	Disconnected,
-	/// The message did not require a response.
-	Ignored,
-}
-
 /// A product's canonical request payload and the identity of its caller.
 ///
 /// SCALE encodes the caller followed directly by the payload fields.
@@ -256,7 +241,11 @@ pub enum SsoAllocationOutcome {
 }
 
 /// Resource material allocated by the signing host.
-#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+///
+/// Its `&'static str` form is a stable, non-secret discriminant for errors
+/// and logs; `Debug` prints only that, so key material never reaches a log.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SsoAllocatedResource {
 	/// Statement Store slot allowance material.
 	StatementStoreAllowance {
@@ -279,21 +268,9 @@ pub enum SsoAllocatedResource {
 	},
 }
 
-impl SsoAllocatedResource {
-	/// Stable, non-secret resource discriminant suitable for errors and logs.
-	pub const fn kind(&self) -> &'static str {
-		match self {
-			Self::StatementStoreAllowance { .. } => "statement-store-allowance",
-			Self::BulletinAllowance { .. } => "bulletin-allowance",
-			Self::SmartContractAllowance => "smart-contract-allowance",
-			Self::AutoSigning { .. } => "auto-signing",
-		}
-	}
-}
-
 impl fmt::Debug for SsoAllocatedResource {
 	fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-		formatter.write_str(self.kind())
+		formatter.write_str(self.into())
 	}
 }
 

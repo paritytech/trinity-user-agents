@@ -29,13 +29,13 @@ mod block_backend;
 mod extrinsic;
 mod heads;
 mod mortality;
-mod revive;
 mod runtime_api;
 mod storage_watch;
 mod subxt_chain;
 mod tx_submitter;
 mod tx_validator;
 
+pub use crate::evm_contract::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
 pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
@@ -45,8 +45,7 @@ pub use extrinsic::{
 };
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
-pub use revive::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
-pub use runtime_api::RuntimeApiCaller;
+pub use runtime_api::{RpcClientAtBlock, RuntimeApiCaller};
 pub use storage_watch::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
 	StorageWatchError, WatchedHead, WatchedStorage,
@@ -55,14 +54,16 @@ pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
 #[cfg(test)]
-pub use revive::{ContractResult, ExecReturnValue, RawDispatchError, StorageDeposit, Weight};
+pub use crate::evm_contract::{
+	ContractResult, ExecReturnValue, RawDispatchError, StorageDeposit, Weight,
+};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub use tests::{
-	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, live_asset_hub,
-	live_asset_hub_genesis, method_count, serve, tokio_spawner,
+	FixedExtensionVersions, Node, V4OnlyHost, bundled_paseo_next_v2, extrinsic_service_serving,
+	live_asset_hub, live_asset_hub_genesis, live_chains, method_count, serve, tokio_spawner,
 };
 
 /// An encoded extrinsic, ready to submit.

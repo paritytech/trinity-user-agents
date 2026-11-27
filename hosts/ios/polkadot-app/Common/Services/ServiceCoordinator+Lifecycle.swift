@@ -41,6 +41,7 @@ extension ServiceCoordinator {
         statementRenewalLoop.setup()
 
         interactiveStart = Task { [self] in
+            await ProductNotificationScheduler.shared.start()
             await chainStatusProvider.start()
             await signInHostCoordinator.setup()
             await setupDeviceSyncService()
@@ -89,7 +90,7 @@ extension ServiceCoordinator {
         // rather than in stopInteractive, because the Pocket is started once
         // when the coordinator is built and a coordinator kept alive by a
         // background run is started again when the dashboard returns.
-        pocket?.stop()
+        pocket.stop()
     }
 }
 

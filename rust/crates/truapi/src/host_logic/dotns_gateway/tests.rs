@@ -171,6 +171,14 @@ impl DotnsTransport for RevertingSecondClaimPage {
 		assert_eq!(page.offset, U256::from(CLAIM_PAGE_LIMIT));
 		Err(EvmContractError::Reverted { detail: "offset past end".to_string() })
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 #[test]
@@ -218,6 +226,14 @@ fn labels_classify_into_lite_and_full_usernames() {
 				returns::<DotnsPopController::isPopIssuedCall>(
 					!self.denied.contains(&asked.label.as_str()),
 				)
+			}
+
+			async fn views(
+				&mut self,
+				_dest: &[u8; 20],
+				_inputs: Vec<Vec<u8>>,
+			) -> Vec<Result<Vec<u8>, EvmContractError>> {
+				unreachable!("this lookup uses individual views")
 			}
 		}
 		let identity = |lite: Option<&str>, full: Option<&str>| {
@@ -377,6 +393,14 @@ impl DotnsTransport for ScriptedDiscovery {
 			panic!("unscripted view {}", hex::encode(input));
 		}
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 fn address_answer(byte: u8) -> Result<Vec<u8>, EvmContractError> {
@@ -493,6 +517,14 @@ impl DotnsTransport for ScriptedTld {
 			panic!("unscripted view {}", hex::encode(input));
 		}
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 #[test]
@@ -563,6 +595,14 @@ impl DotnsTransport for ScriptedAvailability {
 			panic!("unscripted view {}", hex::encode(input));
 		}
 	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
+	}
 }
 
 /// `available` must fail closed: a registrar that reverts (a wrong or
@@ -623,6 +663,12 @@ fn storage_keys_have_the_expected_layout() {
 	// Blake2_128Concat over the raw account bytes.
 	assert_eq!(&alias_key[48..], &[0x11; 32]);
 
+	// The key Asset Hub's own metadata derives for this account.
+	assert_eq!(
+		hex::encode(account_names_key(&[0x11; 32])),
+		"57ca9018d648b40a8286a471e82c3808de072516e985ec03dec70088d3f16ce37f9c299f1d9bbe856fbf2c98f0f914351111111111111111111111111111111111111111111111111111111111111111"
+	);
+
 	assert_eq!(dispatcher_address_key().len(), 32);
 	assert_eq!(timestamp_now_key().len(), 32);
 }
@@ -647,6 +693,14 @@ const LEFT: [u8; 20] = [0u8; 20];
 impl DotnsTransport for ScriptedQueue {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 		panic!("unscripted storage read {}", hex::encode(key));
+	}
+
+	async fn views(
+		&mut self,
+		_dest: &[u8; 20],
+		_inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		unreachable!("this lookup uses individual views")
 	}
 
 	async fn view(

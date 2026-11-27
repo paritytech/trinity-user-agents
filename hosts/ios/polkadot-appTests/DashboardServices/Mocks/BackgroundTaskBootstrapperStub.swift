@@ -13,6 +13,8 @@ final class BackgroundTaskBootstrapperStub: BackgroundTaskBootstrapping, @unchec
     private let readiness: BackgroundTaskReadiness
     private let state: OSAllocatedUnfairLock<State>
 
+    let changes = StateChangeSignal()
+
     init(readiness: BackgroundTaskReadiness = .dashboard, holdsReadiness: Bool = false) {
         self.readiness = readiness
         state = OSAllocatedUnfairLock(initialState: State(isHolding: holdsReadiness))
@@ -30,6 +32,8 @@ final class BackgroundTaskBootstrapperStub: BackgroundTaskBootstrapping, @unchec
                 state.heldWaits.append(continuation)
                 return false
             }
+
+            changes.signal()
 
             if resumeNow {
                 continuation.resume()

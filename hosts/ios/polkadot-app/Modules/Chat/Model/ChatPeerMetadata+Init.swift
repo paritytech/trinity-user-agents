@@ -5,7 +5,7 @@ extension Chat.LocalModel {
         switch peer {
         case let .person(contact):
             return contact.toPeerMetadata()
-        case let .chatExtension(extId, _):
+        case let .chatExtension(extId, roomId):
             // Name and icon come from the list metadata, so a room reached without the list's
             // wait for the bot still shows the product; input and actions need the bot.
             let listMetadata = peerListMetadata(using: registry)
@@ -14,7 +14,7 @@ extension Chat.LocalModel {
             return Chat.PeerMetadata(
                 name: listMetadata.name,
                 icon: listMetadata.icon,
-                input: roomFooter == .empty ? .empty : botMetadata.input,
+                input: footerInput(for: roomFooter ?? .textInput, roomId: roomId, botInput: botMetadata.input),
                 moreActions: botMetadata.moreActions
             )
         }
@@ -42,7 +42,27 @@ extension Chat.LocalModel {
     func chatMetadata(using registry: ChatExtensionsRegistering) -> ChatMetadata {
         let peerMetadata = peerMetadata(using: registry)
 
-        return ChatMetadata(chatId: chatId, peerMetadata: peerMetadata, state: .created)
+        return ChatMetadata(
+            chatId: chatId,
+            peerMetadata: peerMetadata,
+            state: .created,
+            peerSeenOrder: peerSeenOrder
+        )
+    }
+
+    private func footerInput(
+        for footer: Chat.RoomFooter,
+        roomId: String?,
+        botInput: Chat.PeerMetadataInput
+    ) -> Chat.PeerMetadataInput {
+        switch footer {
+        case .textInput:
+            botInput
+        case .empty:
+            .empty
+        case let .card(messageType, payload):
+            roomId == nil ? .empty : .productCard(messageType: messageType, payload: payload)
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use super::*;
 use std::fs::read_to_string;
-use truapi::platform::ProductId;
+use truapi::{latest::ChatMessageContent, platform::ProductId};
 
 fn product() -> ProductContext {
 	ProductContext::new(ProductId::for_test("chat.dot"))
@@ -10,11 +10,12 @@ fn text(text: &str) -> ChatMessageContent {
 	ChatMessageContent::Text { text: text.to_string() }
 }
 
-fn room(room_id: &str) -> HostChatCreateRoomRequest {
+fn room(room_id_source: &str) -> HostChatCreateRoomRequest {
 	HostChatCreateRoomRequest {
-		room_id: room_id.to_string(),
+		room_id_source: room_id_source.to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	}
 }
 
@@ -42,8 +43,12 @@ fn a_message_needs_a_room_this_host_created() {
 fn a_stored_message_is_recorded_as_the_host_received_it() {
 	let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
 	let host = CliChatHost::new(Transcript::new(Some(transcript.path().to_path_buf()), "chat"));
-	futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-		.expect("a new room is created");
+	futures::executor::block_on(host.create_chat_room(
+		&product(),
+		"support".to_string(),
+		room("support"),
+	))
+	.expect("a new room is created");
 
 	let payload = text("line one\nline two");
 	let posted = futures::executor::block_on(host.post_chat_message(
@@ -85,8 +90,12 @@ fn a_room_appears_in_the_list_a_subscriber_already_holds() {
 		.expect("the snapshot is not an error");
 	assert!(snapshot.rooms.is_empty());
 
-	futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-		.expect("a new room is created");
+	futures::executor::block_on(host.create_chat_room(
+		&product(),
+		"support".to_string(),
+		room("support"),
+	))
+	.expect("a new room is created");
 
 	let replacement = futures::executor::block_on(rooms.next())
 		.expect("creating a room republishes the list")

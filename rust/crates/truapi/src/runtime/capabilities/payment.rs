@@ -47,10 +47,10 @@ use crate::{
 	host_logic::funding::StartRecord,
 	platform::{
 		ExecutableKind, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-		ProductContext,
+		ProductContext, Stack,
 	},
 	runtime::{
-		ProductRuntimeHost,
+		AccountHolder, ProductRuntimeHost,
 		funding::{Claim, FundsAsked, engine_holds},
 		payment_id::host_payment_id,
 		versioning::version,
@@ -58,7 +58,7 @@ use crate::{
 };
 
 #[async_trait::async_trait]
-impl CoinPayment for ProductRuntimeHost {
+impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
 	async fn create_purse(
 		&self,
@@ -180,7 +180,7 @@ enum EngineAnswer {
 	Unsure,
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Take `host_id` for a call that starts funds outside any funding
 	/// session. Refused with `already_exists` while a call under it is in
 	/// flight or a session holds funds under it.
@@ -278,7 +278,7 @@ impl ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Payment for ProductRuntimeHost {
+impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "payment.balance_subscribe"))]
 	async fn balance_subscribe(
 		&self,
@@ -387,7 +387,7 @@ impl Payment for ProductRuntimeHost {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// `Denied` unless a pairing session is connected.
 	pub(crate) fn require_session<E>(&self) -> Result<(), CallError<E>> {
 		match self.accounts.current_session() {
@@ -450,6 +450,7 @@ impl ProductRuntimeHost {
 			status: self.connection.permission_status.clone(),
 			temporary: self.connection.temporary_permissions.clone(),
 			product: self.connection.product.clone(),
+			stack: self.connection.services.stack().clone(),
 		}
 	}
 
@@ -573,19 +574,25 @@ struct BalanceAccessCheck {
 	status: Option<Arc<dyn PermissionStatusHost>>,
 	temporary: Arc<TemporaryPermissions>,
 	product: ProductContext,
+	stack: Stack,
 }
 
 impl BalanceAccessCheck {
 	/// Whether the product holds balance access, without asking.
 	async fn holds(&self) -> bool {
 		matches!(
-			PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
-				.with_status_host(self.status.as_deref())
-				.with_temporary_permissions(self.temporary.clone())
-				.peek_remote(&latest::RemotePermissionRequest {
-					permission: latest::RemotePermission::BalanceAccess,
-				})
-				.await,
+			PermissionsService::new(
+				self.platform.as_ref(),
+				self.platform.as_ref(),
+				&self.product,
+				&self.stack,
+			)
+			.with_status_host(self.status.as_deref())
+			.with_temporary_permissions(self.temporary.clone())
+			.peek_remote(&latest::RemotePermissionRequest {
+				permission: latest::RemotePermission::BalanceAccess,
+			})
+			.await,
 			Ok(PermissionAuthorizationStatus::Authorized)
 		)
 	}

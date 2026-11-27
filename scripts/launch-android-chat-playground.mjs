@@ -28,6 +28,7 @@ import {
   REGISTER_BOT_GAP,
   labelChatDiagnosisReport,
 } from "./lib/chat-diagnosis-report.mjs";
+import { chatRoomId } from "./lib/chat-room-id.mjs";
 import { delay, runAsync, waitFor } from "./lib/process.mjs";
 import { startProductServer } from "./lib/product-server.mjs";
 
@@ -75,12 +76,17 @@ const productRoot = resolve(
   repoRoot,
   process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_DIR ?? "playground",
 );
+// A debug build runs previewnet, whose products are under `testnet`. For
+// another build, name the product under that build's TLD.
 const productHost =
-  process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_HOST ?? "truapi-playground.dot";
+  process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_HOST ??
+  "truapi-playground.testnet";
 const productName =
   process.env.TRUAPI_ANDROID_E2E_CHAT_PRODUCT_NAME ?? "TrUAPI Playground";
-const roomId =
-  process.env.TRUAPI_ANDROID_E2E_CHAT_ROOM_ID ?? "truapi-playground";
+const roomIdSource =
+  process.env.TRUAPI_ANDROID_E2E_CHAT_ROOM_ID_SOURCE ?? "truapi-playground";
+// The core makes the id of the room that the product creates with this source.
+const roomId = chatRoomId(productHost, roomIdSource);
 const expectDiagnosis = process.env.TRUAPI_ANDROID_E2E_CHAT_DIAGNOSIS !== "0";
 const message =
   process.env.TRUAPI_ANDROID_E2E_CHAT_MESSAGE ??

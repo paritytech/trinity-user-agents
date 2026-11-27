@@ -59,9 +59,6 @@ jobs:
           }
           JSON
 
-      # No truapi.dir: the core resolves two levels up, which is one of the
-      # properties this job keeps true.
-      #
       # Compiling the modules that consume the bindings is the bindings check.
       # Generated bindings cannot disagree with the library they were generated
       # from, so compiling them alone proves nothing; the signal is in the app

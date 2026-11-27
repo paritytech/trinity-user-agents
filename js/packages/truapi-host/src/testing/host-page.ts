@@ -37,8 +37,9 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import { stackGenesisHashes } from "./networks.js";
 import {
   checkDerivationIndex,
   resolveAccount,
@@ -63,7 +64,7 @@ export interface TestHostPageOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Resolved WASM entry. Defaults to the signing-enabled `testing` bundle,
    * which is what lets the host own dev accounts instead of waiting on a
@@ -257,10 +258,13 @@ export function publishTestHostGlobals(control: TestHostControl): () => void {
 export async function startTestHost(
   options: TestHostPageOptions,
 ): Promise<TestHostPage> {
-  const host = createMockHost(options.mock);
-  const { productId: hostProduct, ...hostConfig } = mockRuntimeConfig(
+  const { productId: requestedProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
+  const host = createMockHost({
+    servedChains: stackGenesisHashes(hostConfig.testStack),
+    ...options.mock,
+  });
 
   // A signing host, not a pairing host: a test host owns its keys. Note the
   // behavioural consequence -- a signing host answers `request_login` with
@@ -316,16 +320,18 @@ export async function startTestHost(
     const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
       default: () => Promise<unknown>;
       setLogLevel?: (level: string) => void;
-      WasmSigningHostRuntime: new (
-        callbacks: unknown,
-        config: unknown,
-      ) => DirectSigningRuntime;
+      WasmSigningHostRuntime: {
+        create(
+          callbacks: unknown,
+          config: unknown,
+        ): Promise<DirectSigningRuntime>;
+      };
     };
     await glue.default();
     if (options.logLevel) glue.setLogLevel?.(options.logLevel);
     const { createWasmRawCallbacks } =
       await import("../generated/host-callbacks-adapter.js");
-    directRuntime = new glue.WasmSigningHostRuntime(
+    directRuntime = await glue.WasmSigningHostRuntime.create(
       {
         // A raw bridge callback rather than a generated host callback, so it
         // is supplied here the way the worker runtime does. The test host runs
@@ -398,18 +404,33 @@ export async function startTestHost(
   // normalised to the same "pipe this port" step.
   // Set when the product connects, by whichever topology is running.
   let publishChatAction: ((action: unknown) => Promise<void>) | undefined;
+  // A suite names a product as it likes, and the core opens a product only
+  // under an id its stack serves: `tx-demo.dot` names `tx-demo.paseo` on the
+  // mock stack. The host asks for that id once and uses it for everything it
+  // does for the product.
+  const servedId = async (name: ProductId): Promise<ProductId> =>
+    directRuntime
+      ? directRuntime.parseProductId(name)
+      : workerRuntime!.parseProductId(name);
+  const hostProduct = await servedId(requestedProduct).catch(
+    (error: unknown) => {
+      // The stack serves no such product, so nothing here will be used.
+      worker?.terminate();
+      host.dispose();
+      throw error;
+    },
+  );
+  const seedKey = async (served: ProductId, key: string) =>
+    (await deriveHelpers()).productStorageKey(served, key);
   // Before the iframe exists, so a product that reads its storage once at
   // startup finds these entries rather than racing a seed.
   const seeded = Object.entries(options.productStorage ?? {});
   const bootStorage: [string, Uint8Array][] = [];
-  if (seeded.length) {
-    const helpers = await deriveHelpers();
-    for (const [key, value] of seeded) {
-      bootStorage.push([
-        helpers.productStorageKey(hostProduct, key),
-        new TextEncoder().encode(value),
-      ]);
-    }
+  for (const [key, value] of seeded) {
+    bootStorage.push([
+      await seedKey(hostProduct, key),
+      new TextEncoder().encode(value),
+    ]);
   }
   const writeBootStorage = () => {
     for (const [storedKey, value] of bootStorage) {
@@ -517,14 +538,14 @@ export async function startTestHost(
       value: Uint8Array | string,
       productId?: ProductId,
     ) {
-      const helpers = await deriveHelpers();
+      const served = productId ? await servedId(productId) : hostProduct;
       host.writeProductStorage(
-        helpers.productStorageKey(productId ?? hostProduct, key),
+        await seedKey(served, key),
         typeof value === "string" ? new TextEncoder().encode(value) : value,
       );
     },
     async getProductAccountAddress(productId?: ProductId, index = 0) {
-      const target = productId ?? hostProduct;
+      const target = productId ? await servedId(productId) : hostProduct;
       const subtree = await (directRuntime
         ? directRuntime.productSubtreePublicKey(target)
         : workerRuntime?.getProductSubtreePublicKey(target));
@@ -610,6 +631,7 @@ interface ProductAccountDerivation {
 
 /** The main-thread signing runtime: hands back a product core directly. */
 interface DirectSigningRuntime {
+  parseProductId(name: string): ProductId;
   setGrantAllowancesUnchecked?(granted: boolean): void;
   productSubtreePublicKey(
     productId: ProductId,
@@ -635,6 +657,7 @@ interface WorkerSigningRuntime {
     liteUsername?: string,
   ): Promise<void>;
   disconnectSession(): Promise<void>;
+  parseProductId(name: string): Promise<ProductId>;
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
   getProductSubtreePublicKey(

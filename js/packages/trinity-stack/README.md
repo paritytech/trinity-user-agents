@@ -26,12 +26,26 @@ webUrl(stack.descriptor, "my-app"); // https://my-app.testnet.li/?network=previe
 store gets no rollback protection. Errors from a rule of the RFC carry a `code`, such as `bad-signature`, which
 `isTrinityStackError` recognises.
 
+## Known stacks
+
+`knownStacks` maps the name of each known Trinity stack to its link, signed or unsigned, and `trinity-stack add <name>`
+without a link adds the known stack of that name:
+
+```sh
+npx @parity/trinity-stack add previewnet
+```
+
+`trinity-stack known` prints each name and link. An unsigned known stack, marked `(unsigned)`, is listed for its link
+only: a build copy must be signed, so `add` refuses it, and a reader loads it from its link. The
+[trinity-stack crate's README](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack#known-stacks)
+lists each stack and how to add one.
+
 ## Running from build copies
 
 A project ships the stacks it uses, so it keeps working when a descriptor's server is down:
 
 ```sh
-npx trinity-stack add previewnet "polkadotapp://stack?key=0x4d43…&url=…"
+npx trinity-stack add previewnet   # a known stack; any other takes its link: add <name> "polkadotapp://stack?key=…&url=…"
 npx trinity-stack update   # exits 2 when a committed file changed, so a scheduled job can open a pull request
 ```
 
@@ -70,6 +84,20 @@ It never fetches per request. A fetch that fails leaves the copy it has in use, 
 a restart start from the last copy fetched. A conditional fetch the server's CORS blocks is retried at once without
 `If-None-Match`. Every other decision is the crate's `StackReader`, so a host that drives the same reader behaves the
 same way.
+
+A GitHub Actions job that runs the CLI, such as a scheduled `update`, installs it with the action this repository ships:
+
+```yaml
+- uses: actions/setup-node@v4
+  with: { node-version: 22 }
+- uses: paritytech/trinity-user-agents/.github/actions/install-trinity-stack@trinity-stack-v<version>
+- run: trinity-stack update
+```
+
+Every release tags the action `trinity-stack-v<version>`, and the action installs the package version of the commit it
+is checked out at, so that tag installs that release. Pass `version: latest` for the newest release or a version such as
+`version: 0.2.0`. The action installs under `RUNNER_TEMP`, puts `trinity-stack` on `PATH` for the rest of the job, and
+outputs the installed `version` and the executable's `path`.
 
 ## Publishing a stack
 

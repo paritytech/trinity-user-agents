@@ -245,28 +245,6 @@
         }
       }
     },
-    "Chat.call.cancelled.audio" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Canceled voice call"
-          }
-        }
-      }
-    },
-    "Chat.call.cancelled.video" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Canceled video call"
-          }
-        }
-      }
-    },
     "Chat.call.finished.audio" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -317,7 +295,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Missing voice call"
+            "value" : "Missed voice call"
           }
         }
       }
@@ -328,7 +306,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Missing video call"
+            "value" : "Missed video call"
           }
         }
       }
@@ -350,7 +328,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Outgoing video sall"
+            "value" : "Outgoing video call"
           }
         }
       }
@@ -384,6 +362,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tap to call back"
+          }
+        }
+      }
+    },
+    "Chat.call.subtitle.no.answer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No answer"
           }
         }
       }
@@ -612,6 +601,18 @@
         }
       }
     },
+    "chat.request.cancelled.banner.message" : {
+      "comment" : "Displayed in the bottom of the chat when the peer cancelled their chat request",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ cancelled this chat request."
+          }
+        }
+      }
+    },
     "chat.request.in.progress.message" : {
       "comment" : "Display when message for chat request is being entered by the user",
       "extractionState" : "manual",
@@ -644,6 +645,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Request message sent"
+          }
+        }
+      }
+    },
+    "chat.requested.banner.cancel" : {
+      "comment" : "Button in the bottom of the chat that cancels the pending request",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel request"
           }
         }
       }
@@ -688,7 +701,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You Sent"
+            "value" : "You sent"
           }
         }
       }
@@ -1202,6 +1215,28 @@
         }
       }
     },
+    "transfer.reclaim.action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return to my balance"
+          }
+        }
+      }
+    },
+    "transfer.reclaim.retryAction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        }
+      }
+    },
     "transfer.status.amount.differs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1213,13 +1248,35 @@
         }
       }
     },
+    "transfer.status.amount.received" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You received %1$(received)@ of %2$(sent)@"
+          }
+        }
+      }
+    },
+    "transfer.status.amount.receivedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ received %2$(received)@ of %3$(sent)@"
+          }
+        }
+      }
+    },
     "transfer.status.claiming" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claiming"
+            "value" : "Adding to your balance"
           }
         }
       }
@@ -1230,7 +1287,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Detecting"
+            "value" : "Incoming…"
           }
         }
       }
@@ -1240,8 +1297,8 @@
       "localizations" : {
         "en" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Transaction failed"
+            "state" : "translated",
+            "value" : "Payment didn’t arrive"
           }
         }
       }
@@ -1252,7 +1309,84 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claimed"
+            "value" : "Added to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.notSent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not sent"
+          }
+        }
+      }
+    },
+    "transfer.status.receivedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received by %1$(username)@"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Returned to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimedPartially" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(amount)@ returned to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t return it"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaiming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Returning to your balance…"
+          }
+        }
+      }
+    },
+    "transfer.status.returnedToSender" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expired · you didn’t receive it in time"
           }
         }
       }
@@ -1263,7 +1397,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending"
+            "value" : "Sending…"
           }
         }
       }
@@ -1274,7 +1408,29 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sent, waiting to be claimed"
+            "value" : "Sent · not received yet"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recipient didn't claim it in time"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ didn’t receive it in time"
           }
         }
       }

@@ -21,13 +21,19 @@ final class PocketPullDown: NSObject, UIGestureRecognizerDelegate {
         self.close = close
     }
 
+    var isEnabled = true
+
+    var isPulling: Bool {
+        pan.state == .began || pan.state == .changed
+    }
+
     func install() {
         pan.delegate = self
         screen?.view.addGestureRecognizer(pan)
     }
 
     func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
-        guard let screen, screen.transitionCoordinator == nil else { return false }
+        guard isEnabled, let screen, screen.transitionCoordinator == nil else { return false }
 
         let velocity = pan.velocity(in: screen.view)
         let card = screen.itemFrame(in: screen.view)
@@ -96,11 +102,12 @@ private extension PocketPullDown {
     }
 
     /// The card's flight starts where the snapshot card is, so the real card is moved to that spot,
-    /// wherever the scroll underneath has left it.
+    /// wherever the scroll underneath has left it. The real page also keeps the pull's fade.
     func closeCard(draggedBy travel: CGFloat) {
         if let overlay, let screen {
             let realCard = screen.itemFrame(in: screen.view)
             screen.moveItem(by: CGPoint(x: 0, y: overlay.startCard.minY + max(travel, 0) - realCard.minY))
+            screen.setPageAlpha(overlay.body.alpha)
         }
         overlay?.view.removeFromSuperview()
         overlay = nil

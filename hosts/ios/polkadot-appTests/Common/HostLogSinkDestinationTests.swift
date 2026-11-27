@@ -43,6 +43,35 @@ struct HostLogSinkDestinationTests {
         ])
     }
 
+    /// How many lines reach Sentry is decided at the SDK's gate, so every line this matches is handed
+    /// to the sink and `HostLogFilterTests` covers what happens to it after.
+    @Test func aCoreEventReachesTheSinkAsItsMarkerWithItsAttributes() {
+        let sink = RecordingHostLogSink()
+        let destination = HostLogSinkDestination(sink: sink)
+
+        _ = destination.send(
+            .warning,
+            msg: "[truapi.core] ignored",
+            thread: "",
+            file: "",
+            function: "",
+            line: 0,
+            context: CoreEventContext(
+                marker: "truapi.chain.follow_budget_reached",
+                attributes: ["held": .count(8)]
+            )
+        )
+
+        #expect(sink.lines == [
+            RecordingHostLogSink.Line(
+                level: .warning,
+                tag: "truapi.core",
+                message: "truapi.chain.follow_budget_reached",
+                attributes: ["held": .count(8)]
+            )
+        ])
+    }
+
     @Test func aTaggedLineSplitsAtTheFirstClosingBracket() {
         #expect(TaggedLogLine("[truapi.core] marker: [nested] detail") == TaggedLogLine(
             tag: "truapi.core",
@@ -63,6 +92,7 @@ final class RecordingHostLogSink: HostLogSink, @unchecked Sendable {
         let level: HostLogLevel
         let tag: String
         let message: String
+        var attributes: [String: HostLogAttribute] = [:]
     }
 
     private let lock = NSLock()
@@ -72,7 +102,9 @@ final class RecordingHostLogSink: HostLogSink, @unchecked Sendable {
         lock.withLock { recorded }
     }
 
-    func log(level: HostLogLevel, tag: String, message: String) {
-        lock.withLock { recorded.append(Line(level: level, tag: tag, message: message)) }
+    func log(level: HostLogLevel, tag: String, message: String, attributes: [String: HostLogAttribute]) {
+        lock.withLock {
+            recorded.append(Line(level: level, tag: tag, message: message, attributes: attributes))
+        }
     }
 }

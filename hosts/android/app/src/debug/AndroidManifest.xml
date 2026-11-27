@@ -16,12 +16,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- SentryLogGate starts the SDK, so it can install the log gate before the first log. -->
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
+
         <!-- Required: set your sentry.io project identifier (DSN) -->
         <meta-data android:name="io.sentry.dsn" android:value="${sentryDsn}" />
         <!-- Add data like request headers, user ip address and device name, see https://docs.sentry.io/platforms/android/data-management/data-collected/ for more info -->
         <meta-data android:name="io.sentry.send-default-pii" android:value="false" />
 
-        <!-- The options match the iOS host. SentryLogTree is the only source of Sentry logs. -->
+        <!-- The options match the iOS host. Sentry logs come only from SentryHostLogSink. -->
         <meta-data android:name="io.sentry.logs.enabled" android:value="true" />
         <!-- Breadcrumbs can carry log lines and URLs, so events carry none. -->
         <meta-data android:name="io.sentry.max-breadcrumbs" android:value="0" />

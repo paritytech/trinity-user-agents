@@ -1,5 +1,31 @@
 use super::*;
-use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+use crate::dotns_name::MAX_DNS_LABEL_LEN;
+
+// Hosts store rooms under this id, so a change to the derivation loses
+// every stored room.
+#[test]
+fn a_chat_room_id_is_stable_for_one_product_and_source() {
+	assert_eq!(
+		ProductId::for_test("chat.dot").chat_room_id("support"),
+		"0x4fb691cd1a1d7eb11cfd0b127b02f995c63329cad7e0fbcf470129d592d64d75"
+	);
+}
+
+#[test]
+fn a_chat_room_id_is_unique_to_its_product_and_source() {
+	let chat = ProductId::for_test("chat.dot");
+
+	assert_ne!(
+		chat.chat_room_id("support"),
+		ProductId::for_test("shop.dot").chat_room_id("support")
+	);
+	assert_ne!(chat.chat_room_id("support"), chat.chat_room_id("sales"));
+	// Without the length prefixes, both pairs give `localhost:3000a`.
+	assert_ne!(
+		ProductId::for_test("localhost:300").chat_room_id("0a"),
+		ProductId::for_test("localhost:3000").chat_room_id("a")
+	);
+}
 
 #[test]
 fn named_products_preserve_their_full_namespace() {
@@ -17,13 +43,21 @@ fn named_products_preserve_their_full_namespace() {
 }
 
 #[test]
-fn named_products_require_a_supported_network_suffix() {
-	for suffix in ["", "com", "test", "dot.li", "other.dot"] {
+fn named_products_take_one_label_as_the_network_suffix() {
+	// A dotted suffix would move labels of the name into the network.
+	for suffix in ["", "dot.li", "other.dot", "DOT", "-dot"] {
 		assert!(ProductId::from_name("browse", suffix).is_err(), "{suffix}");
 	}
+	assert_eq!(ProductId::from_name("browse", "fork"), Ok(ProductId::for_test("browse.fork")));
 	let localhost = ProductId::for_test("localhost:3000");
 	assert_eq!((localhost.dotns_name(), localhost.network_suffix()), (None, None));
 	assert!(!localhost.matches_network("dot"));
+}
+
+/// Whether `raw` parses to an id with a trusted label. The stack tests
+/// cover the TLD.
+fn has_trusted_label(raw: &str) -> bool {
+	raw.parse::<ProductId>().is_ok_and(|id| id.has_trusted_remote_permissions())
 }
 
 #[test]
@@ -38,7 +72,7 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 		"stash.dot",
 	] {
 		assert!(
-			ProductId::normalizes_to_trusted_remote_permissions(product_id),
+			has_trusted_label(product_id),
 			"{product_id} must hold remote permissions without a prompt"
 		);
 	}
@@ -46,10 +80,8 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 		"app.peopl.dot",
 		"sub.dim2.paseo",
 		"app.dim2.testnet",
-		"dim2.com",
 		"notdim2.dot",
 		"peopl",
-		"peopl.com",
 		"peoplx.dot",
 		"my-peopl.dot",
 		"localhost",
@@ -58,7 +90,7 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 		"dot",
 	] {
 		assert!(
-			!ProductId::normalizes_to_trusted_remote_permissions(product_id),
+			!has_trusted_label(product_id),
 			"{product_id} is a separate product and must prompt"
 		);
 	}
@@ -68,7 +100,7 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 fn a_published_product_cannot_take_the_localhost_label() {
 	// Hosts grant a development wildcard to a localhost product, so the
 	// label must not be reachable from dotNS.
-	for product_id in ["localhost.dot", "localhost.paseo", "LOCALHOST.DOT"] {
+	for product_id in ["localhost.dot", "localhost.paseo", "localhost.fork", "LOCALHOST.DOT"] {
 		assert!(
 			product_id.parse::<ProductId>().is_err(),
 			"{product_id} must not be a valid product identifier"
@@ -105,44 +137,24 @@ fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
 		["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", " DIM2.TESTNET ", "stash.dot"]
 	{
 		assert!(
-			ProductId::normalizes_to_trusted_remote_permissions(product_id),
+			has_trusted_label(product_id),
 			"{product_id} is a first-party product in any accepted spelling"
 		);
 	}
 	for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
-		assert!(
-			!ProductId::normalizes_to_trusted_remote_permissions(product_id),
-			"{product_id} must not be read as trusted"
-		);
+		assert!(!has_trusted_label(product_id), "{product_id} must not be read as trusted");
 	}
 }
 
+/// Parsing has no stack to ask, so it accepts any TLD dotNS could register.
+/// The stack decides which TLDs it serves.
 #[test]
-fn every_trusted_remote_permission_label_is_a_product_identifier() {
-	// A label that product-id validation rejects would never reach the
-	// permission engine, so the whitelist entry would be silently inert.
-	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		for tld in DOTNS_TLDS {
-			let product_id = format!("{label}.{tld}");
-			assert!(
-				product_id.parse::<ProductId>().is_ok(),
-				"{product_id} must be an accepted product identifier"
-			);
-			assert!(
-				ProductId::normalizes_to_trusted_remote_permissions(&product_id),
-				"{product_id} must be recognized as trusted"
-			);
-		}
+fn any_dns_label_is_a_tld_and_a_name_needs_one() {
+	for id in ["browse.fork", "browse.com", "app.browse.x1"] {
+		assert!(id.parse::<ProductId>().is_ok(), "{id:?} is well formed");
 	}
-}
-
-#[test]
-fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
-	// The predicate compares against the label of an already-normalized id,
-	// so an entry carrying a TLD or an uppercase letter can never match.
-	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		assert!(!label.contains('.'), "{label} must not carry a TLD");
-		assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
+	for id in ["browse", "browse.", "browse.-x", "browse.my_tld"] {
+		assert!(id.parse::<ProductId>().is_err(), "{id:?} has no well-formed TLD");
 	}
 }
 
@@ -203,7 +215,6 @@ fn an_overlong_product_id_is_not_an_identifier() {
 	);
 }
 
-#[cfg(feature = "runtime")]
 #[test]
 fn persisted_json_is_a_canonical_string_and_validates_on_restore() {
 	let id = ProductId::for_test(" App.Peopl.DOT ");
@@ -252,6 +263,70 @@ fn one_product_on_one_network_is_its_executables_under_one_tld() {
 fn decoding_normalizes_and_rejects_what_parsing_rejects() {
 	let frame = "DIM2.Dot".to_string().encode();
 	assert_eq!(ProductId::decode(&mut frame.as_slice()), Ok(ProductId::for_test("dim2.dot")));
-	let frame = "evil.com".to_string().encode();
+	let frame = "localhost.dot".to_string().encode();
 	assert!(ProductId::decode(&mut frame.as_slice()).is_err());
+}
+
+#[test]
+fn a_share_host_is_read_by_its_syntax_alone() {
+	for (input, expected) in [
+		("BROWSE.TESTNET.LI", Some("browse.testnet")),
+		("browse.test.li", Some("browse.test")),
+		("browse.dot", None),
+		("https://browse.dot.li", None),
+		("localhost.li", None),
+	] {
+		assert_eq!(ProductId::from_share_host(input), expected.map(ProductId::for_test), "{input}");
+	}
+}
+
+#[test]
+fn share_hosts_preserve_the_product_network() {
+	for (input, expected) in [
+		("browse.dot", Some("browse.dot.li")),
+		("browse.paseo", Some("browse.paseo.li")),
+		("widget.browse.testnet", Some("widget.browse.testnet.li")),
+		("localhost", None),
+		("localhost:3000", None),
+	] {
+		assert_eq!(ProductId::for_test(input).to_share_host().as_deref(), expected);
+	}
+}
+
+#[test]
+fn executable_owners_preserve_nested_product_names() {
+	let owner = ProductId::for_test("arena.coinflip.paseo");
+	for (kind, expected) in [
+		(ExecutableKind::App, "app.arena.coinflip.paseo"),
+		(ExecutableKind::Widget, "widget.arena.coinflip.paseo"),
+		(ExecutableKind::Worker, "worker.arena.coinflip.paseo"),
+	] {
+		let executable = owner.executable(kind).unwrap();
+		assert_eq!(executable, ProductId::for_test(expected));
+		assert_eq!(executable.executable_owner().unwrap(), owner);
+	}
+}
+
+#[test]
+fn only_an_executable_prefix_with_a_complete_owner_is_removed() {
+	for (input, expected) in [
+		("app.dot", "app.dot"),
+		("arena.coinflip.dot", "arena.coinflip.dot"),
+		("app.worker.coinflip.dot", "worker.coinflip.dot"),
+		("localhost:3000", "localhost:3000"),
+	] {
+		assert_eq!(
+			ProductId::for_test(input).executable_owner().unwrap(),
+			ProductId::for_test(expected)
+		);
+	}
+}
+
+#[test]
+fn executable_names_cannot_create_invalid_product_ids() {
+	assert!(ProductId::for_test("app.localhost.dot").executable_owner().is_err());
+	assert!(ProductId::for_test("localhost:3000").executable(ExecutableKind::App).is_err());
+	let label = "a".repeat(63);
+	let longest = ProductId::for_test(&format!("{label}.{label}.{label}.{}.dot", "b".repeat(60)));
+	assert!(longest.executable(ExecutableKind::Worker).is_err());
 }
