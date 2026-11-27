@@ -3,17 +3,15 @@ import SDKLogger
 import TrUAPIHost
 
 /// The level each core marker is logged at, read once from the core's own
-/// table. The three levels here are exactly the ones `HostLogSinkDestination`
-/// forwards, so a marker with no level stays on the device: either the core
-/// keeps it local because its detail describes what the person is doing, or
-/// the table does not list it and nothing downstream knows what it carries.
+/// table. A marker with no level here stays on the device: the core keeps it
+/// local, either because its detail describes what the person is doing or
+/// because it records something going normally, or the table does not list it
+/// and nothing downstream knows what it carries.
 let exportedCoreMarkerLevels: [String: HostLogLevel] = coreMarkers()
     .compactMapValues { markerClass -> HostLogLevel? in
         switch markerClass {
         case .local:
             nil
-        case .export(severity: .info):
-            .info
         case .export(severity: .warn):
             .warning
         case .export(severity: .error):
