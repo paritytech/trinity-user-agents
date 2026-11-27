@@ -45,18 +45,14 @@ as a `BundledStack`:
   served. The core verifies it under the pointer's key.
 - `reservedValues` is the build's `ReservedValuesPolicy`. Its
   [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
-  which policies it refuses. Each `extraGenesisHashes` entry must be 32 bytes.
+  which policies it refuses. Each `extraGenesisHashes` entry must be 32 bytes:
+  the bindings reject any other length before the core sees the config, so the
+  constructor throws `InternalException` without naming the field.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
 one the wallet's reserved identities derive under. An invalid stack makes the
 `TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
-An `extraGenesisHashes` entry of another length fails earlier, where the
-bindings convert the config, and the constructor throws `InternalException`
-instead. Its message starts with `Failed to convert arg 'runtime_config'` and
-gives the cause as `could not convert slice to array`, without naming the
-field. Include this configuration update in the embedding app's package
-upgrade.
 
 ### Compatibility
 
