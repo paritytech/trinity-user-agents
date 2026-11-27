@@ -22,22 +22,16 @@ use schnorrkel::{
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::platform::ProductId;
+use crate::platform::{PrivilegedProduct, ProductId};
 
 const JUNCTION_ID_LEN: usize = 32;
-/// Reserved RFC-0022 dotNS label of the personhood product: its ring-VRF
-/// domain holds the person keys and its account 0 is the RFC-0028 identity
-/// account; the product id is `peopl.<network suffix>`, see
-/// [`personhood_product_id`].
-pub const PERSONHOOD_LABEL: &str = "peopl";
-
 /// The reserved personhood product id on the network with `network_suffix`:
 /// `peopl.dot` on Polkadot, `peopl.paseo` on paseo-next-v2, `peopl.testnet` on
 /// previewnet. It is the product id a personhood app is opened under on that
 /// network, so the keys derived here are the ones such an app owns through
 /// the RFC-0024 registry. Requires the TLD of a validated stack.
 pub fn personhood_product_id(network_suffix: &str) -> ProductId {
-	format!("{PERSONHOOD_LABEL}.{network_suffix}").parse().expect(
+	PrivilegedProduct::Personhood.product_id(network_suffix).expect(
 		"reserved personhood label and validated network suffix form a valid product id; qed",
 	)
 }

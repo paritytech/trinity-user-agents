@@ -29,10 +29,8 @@ pub mod mock;
 use crate::runtime::NamesProducts;
 pub use crate::{
 	dotns_name::{MAX_DNS_LABEL_LEN, is_dns_label},
-	product_id::{
-		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
-		REMOTE_PERMISSION_TRUSTED_LABELS,
-	},
+	privileged_product::PrivilegedProduct,
+	product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError},
 	stack::{
 		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
 		StackFetchRequest, StackFetchResponse, StackHost, StackIdentity, StackMismatch,

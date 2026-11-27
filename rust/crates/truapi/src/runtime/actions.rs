@@ -11,11 +11,12 @@ use crate::host_core::ProductRuntimeError;
 const ACTION_BUFFER_CAPACITY: usize = 64;
 
 struct State<Item> {
-	/// Every open subscription of this connection. A product may subscribe more
-	/// than once (an SDK keeps one stream per surface it draws), and each one
-	/// hears every item published while it is open. Items buffered while none
-	/// was open go only to the next subscription.
-	subscribers: Vec<mpsc::UnboundedSender<Item>>,
+	/// Every open subscription, beside the `core_instance` of the connection
+	/// that opened it. A product may subscribe more than once (an SDK keeps one
+	/// stream per surface it draws), and each one hears every item published
+	/// while it is open. Items buffered while none was open go only to the next
+	/// subscription.
+	subscribers: Vec<(u64, mpsc::UnboundedSender<Item>)>,
 	buffer: VecDeque<Item>,
 	closed: bool,
 }
@@ -63,8 +64,13 @@ impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 	}
 
 	/// Open one more subscription for the product, draining buffered items into it first.
+	///
 	/// Buffered items go to this subscription only, so one opened later never hears them.
-	pub fn subscribe<E: Send + 'static>(&self) -> Subscription<Item, CallError<E>> {
+	/// `core_instance` names the connection that opens it, whose `detach` ends it.
+	pub fn subscribe<E: Send + 'static>(
+		&self,
+		core_instance: u64,
+	) -> Subscription<Item, CallError<E>> {
 		let (sender, receiver) = mpsc::unbounded();
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
 		if state.closed {
@@ -75,8 +81,8 @@ impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 		for item in state.buffer.drain(..) {
 			let _ = sender.unbounded_send(item);
 		}
-		state.subscribers.retain(|subscriber| !subscriber.is_closed());
-		state.subscribers.push(sender);
+		state.subscribers.retain(|(_, subscriber)| !subscriber.is_closed());
+		state.subscribers.push((core_instance, sender));
 		Subscription::new(receiver.map(Ok))
 	}
 
@@ -88,7 +94,9 @@ impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 		}
 		if !state.subscribers.is_empty() {
 			self.note_published_now();
-			state.subscribers.retain(|subscriber| subscriber.unbounded_send(item.clone()).is_ok());
+			state
+				.subscribers
+				.retain(|(_, subscriber)| subscriber.unbounded_send(item.clone()).is_ok());
 			if !state.subscribers.is_empty() {
 				return Ok(());
 			}
@@ -119,11 +127,14 @@ impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 		self.last_published_secs.store(unix_secs, Ordering::Release);
 	}
 
-	/// End the current subscribers' streams while keeping buffered items for
-	/// the next product connection that subscribes.
-	pub fn detach(&self) {
+	/// End the streams of the connection `core_instance` while keeping buffered
+	/// items for the next product connection that subscribes.
+	///
+	/// Other connections of the same execution keep their streams, so one that
+	/// ends does not cut the taps off from one still open.
+	pub fn detach(&self, core_instance: u64) {
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
-		state.subscribers.clear();
+		state.subscribers.retain(|(owner, _)| *owner != core_instance);
 	}
 
 	/// Close the channel and discard buffered items.
