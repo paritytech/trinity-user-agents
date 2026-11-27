@@ -11,6 +11,7 @@ enum FundingDepositViewFactory {
             viewModelFactory: wireframe.viewModelFactory
         )
         interactor.entryOutput = presenter
+        interactor.depositOutput = presenter
 
         let view = FundingDepositViewController(presenter: presenter)
         presenter.view = view

@@ -91,22 +91,7 @@ extension DepositViewLayout {
 
         var body: some View {
             VStack(alignment: .center, spacing: 24) {
-                // QR code
-                Group {
-                    if let qrCode = viewModel.qrCodeImage {
-                        Image(uiImage: qrCode).resizable()
-                    } else {
-                        Rectangle()
-                            .foregroundStyle(.fgStaticWhite)
-                    }
-                }
-                .aspectRatio(1, contentMode: .fit)
-                .padding(8)
-                .frame(height: 230) // TODO: Pass outside
-                .background(
-                    .fgStaticWhite,
-                    in: RoundedRectangle(cornerRadius: 20)
-                )
+                QRCodeTile(image: viewModel.qrCodeImage, side: 214, padding: 8, cornerRadius: 20)
 
                 Text(viewModel.address)
                     .textStyle(.body16Regular())

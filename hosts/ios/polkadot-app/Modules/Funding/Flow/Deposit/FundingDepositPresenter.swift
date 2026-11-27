@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 
 /// Where to send the funds, as the provider reported it, over the session's
 /// progress.
@@ -7,6 +7,9 @@ final class FundingDepositPresenter: FundingScreenPresenter {
     private let interactor: FundingDepositInteractorInputProtocol
     private let wireframe: FundingDepositWireframeProtocol
     private let viewModelFactory: FundingViewModelFactoryProtocol
+    /// The QR code drawn last, with the payload it carries.
+    private var qrCode: (payload: String, image: UIImage)?
+    private var requestedQRPayload: String?
 
     init(
         context: FundingFlowContext,
@@ -21,7 +24,25 @@ final class FundingDepositPresenter: FundingScreenPresenter {
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeDepositViewModel(for: state))
+        let viewModel = viewModelFactory.makeDepositViewModel(for: state)
+        guard case let .crypto(deposit) = viewModel.content else {
+            view?.didReceive(viewModel: viewModel, qrCode: nil)
+            return
+        }
+
+        if requestedQRPayload != deposit.payload {
+            requestedQRPayload = deposit.payload
+            interactor.createQRCode(for: deposit.payload)
+        }
+        let image = qrCode.flatMap { $0.payload == deposit.payload ? $0.image : nil }
+        view?.didReceive(viewModel: viewModel, qrCode: image)
+    }
+}
+
+extension FundingDepositPresenter: FundingDepositInteractorOutputProtocol {
+    func didReceive(qrCode image: UIImage, for payload: String) {
+        qrCode = (payload, image)
+        render()
     }
 }
 

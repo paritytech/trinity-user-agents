@@ -1,4 +1,3 @@
-import CoreImage.CIFilterBuiltins
 import DesignSystem
 import PolkadotUI
 import SwiftUI
@@ -8,6 +7,8 @@ import TrUAPIHost
 /// waits for them.
 struct FundingDepositView: View {
     let viewModel: FundingDepositViewModel
+    /// The deposit's QR code, once drawn.
+    let qrCode: UIImage?
     let presenter: FundingDepositPresenterProtocol
 
     var body: some View {
@@ -77,10 +78,7 @@ private extension FundingDepositView {
 
     func cryptoDeposit(_ deposit: FundingDepositViewModel.Crypto) -> some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingQRCode(payload: deposit.payload)
-                .frame(width: 220, height: 220)
-                .padding(DSSpacings.medium)
-                .background(.white, in: RoundedRectangle(cornerRadius: DSRadii.large))
+            QRCodeTile(image: qrCode, side: FundingDepositConstants.qrSide)
 
             VStack(spacing: DSSpacings.small) {
                 if let amount = deposit.amount {
@@ -112,39 +110,5 @@ private extension FundingDepositView {
     static func shortened(_ address: String) -> String {
         guard address.count > 14 else { return address }
         return "\(address.prefix(6))…\(address.suffix(5))"
-    }
-}
-
-/// A QR code for `payload`, drawn sharp at any size. Each payload's image is
-/// built once, not on every redraw of the deposit screen.
-struct FundingQRCode: View {
-    let payload: String
-
-    private static let images = NSCache<NSString, UIImage>()
-
-    var body: some View {
-        if let image = Self.cachedImage(for: payload) {
-            Image(uiImage: image)
-                .interpolation(.none)
-                .resizable()
-                .scaledToFit()
-        }
-    }
-
-    static func cachedImage(for payload: String) -> UIImage? {
-        if let image = images.object(forKey: payload as NSString) { return image }
-        guard let image = image(for: payload) else { return nil }
-
-        images.setObject(image, forKey: payload as NSString)
-        return image
-    }
-
-    static func image(for payload: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(payload.utf8)
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage,
-              let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
-        return UIImage(cgImage: cgImage)
     }
 }
