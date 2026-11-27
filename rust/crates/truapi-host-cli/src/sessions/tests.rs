@@ -402,6 +402,25 @@ fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
 	Ok(())
 }
 
+/// Clearing every session is the way out of a default account store that no
+/// longer decodes, so it must not need to read that store first.
+#[test]
+fn clearing_all_sessions_removes_an_account_store_that_does_not_decode() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let default_store = catalog.profile(DEFAULT_SESSION_NAME)?.account_base_path;
+	let alice = catalog.ensure_profile("alice")?;
+	fs::write(default_store.join("accounts.json"), "{ half written")?;
+
+	let cleared = clear(&catalog, SessionClearTarget::All)?;
+
+	assert_eq!(
+		(cleared, catalog.role_path.exists(), alice.path.exists()),
+		(vec!["alice".to_string()], false, false)
+	);
+	Ok(())
+}
+
 /// Two stacks under one base path keep their default sessions' accounts, and
 /// the lock over them, apart, so neither reads the other's mnemonics.
 #[test]
