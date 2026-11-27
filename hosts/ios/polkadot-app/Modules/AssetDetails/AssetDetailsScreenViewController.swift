@@ -4,7 +4,6 @@ import PolkadotUI
 import SnapKit
 import SwiftUI
 import UIKit
-import UIKitExt
 
 /// The Balance card opened onto a screen of its own, titled Purse, pushed on the Wallet stack above the Pocket.
 ///
@@ -18,10 +17,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private let titleLabel: PolkadotUI.Label = .create { view in
-        view.typography = .headlineSmall
-        view.textColor = .fgPrimary
-    }
 
     private var isInFlight = false
 
@@ -41,33 +36,8 @@ final class AssetDetailsScreenViewController: UIViewController {
         super.viewDidLoad()
 
         view.backgroundColor = .bgSurfaceMain
-        setupTitle()
         setupHosting()
         pullDown.install()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(reduceTransparencyDidChange),
-            name: UIAccessibility.reduceTransparencyStatusDidChangeNotification,
-            object: nil
-        )
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-
-        applyBarBackground()
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -86,6 +56,10 @@ final class AssetDetailsScreenViewController: UIViewController {
         origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
         origin.setOpenItem(nil)
     }
+
+    override func contentScrollView(for edge: NSDirectionalRectEdge) -> UIScrollView? {
+        hosting.contentScrollView(for: edge) ?? super.contentScrollView(for: edge)
+    }
 }
 
 extension AssetDetailsScreenViewController: PocketFlightScreen {
@@ -93,9 +67,13 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
         .balance
     }
 
+    var statusStripTitle: String {
+        String(localized: .walletMainPurse)
+    }
+
     /// The card's frame on screen, wherever scrolling and a pull have moved it. The flight uses its top-left corner.
     func itemFrame(in view: UIView) -> CGRect {
-        let card = state.cardFrame.offsetBy(dx: hosting.view.transform.tx, dy: hosting.view.transform.ty)
+        let card = state.cardFrame.offsetBy(dx: state.itemOffset.x, dy: state.itemOffset.y)
         return view.convert(card, from: nil)
     }
 
@@ -106,6 +84,7 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
 
     /// Moves the card with its page, so the page never covers the card the Pocket draws in its place.
     func moveItem(by offset: CGPoint) {
+        state.itemOffset = offset
         hosting.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
     }
 
@@ -130,17 +109,33 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
     }
 }
 
+// MARK: - NavigationBarHiding
+
+extension AssetDetailsScreenViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
+}
+
 // MARK: - NavigationTransitionAnimating
 
 extension AssetDetailsScreenViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
         flight(opening: operation == .push)
     }
+
+    var allowsBackSwipe: Bool {
+        canSwipeBack
+    }
 }
 
 // MARK: - Private
 
 private extension AssetDetailsScreenViewController {
+    var canSwipeBack: Bool {
+        !isInFlight && !pullDown.isPulling
+    }
+
     /// From here on, not from when the flight starts, so the card is never drawn folded away when it flies in.
     func flight(opening: Bool) -> PocketFlight {
         isInFlight = true
@@ -153,26 +148,6 @@ private extension AssetDetailsScreenViewController {
         navigationController?.popViewController(animated: true)
     }
 
-    func setupTitle() {
-        let title = String(localized: .walletMainPurse)
-        navigationItem.style = .navigator
-
-        guard #available(iOS 26, *) else {
-            navigationItem.title = title
-            return
-        }
-
-        titleLabel.typography = .titleLarge
-        titleLabel.attributedText = CashLogo.styled(
-            title,
-            symbol: PaymentAssetBranding.shared.current.symbol,
-            font: UIFont.app(.titleLarge)
-        )
-        titleLabel.accessibilityLabel = title
-        titleLabel.sizeToFit()
-        navigationItem.titleView = titleLabel
-    }
-
     func setupHosting() {
         addChild(hosting)
         view.addSubview(hosting.view)
@@ -182,27 +157,6 @@ private extension AssetDetailsScreenViewController {
         }
         hosting.didMove(toParent: self)
     }
-
-    /// On iOS 26 with Reduce Transparency, the scroll edge effect that backs the bar is hidden, so the bar draws
-    /// its own opaque background there.
-    func applyBarBackground() {
-        guard #unavailable(iOS 27), UIAccessibility.isReduceTransparencyEnabled else {
-            navigationItem.standardAppearance = nil
-            navigationItem.scrollEdgeAppearance = nil
-            return
-        }
-
-        let appearance = (navigationController?.navigationBar.standardAppearance ?? UINavigationBarAppearance()).copy()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = .bgSurfaceMain
-        appearance.shadowColor = nil
-        navigationItem.standardAppearance = appearance
-        navigationItem.scrollEdgeAppearance = appearance
-    }
-
-    @objc func reduceTransparencyDidChange() {
-        applyBarBackground()
-    }
 }
 
 /// The state the flight changes, which the screen's SwiftUI root draws from.
@@ -210,7 +164,9 @@ private extension AssetDetailsScreenViewController {
 @Observable
 private final class AssetDetailsScreenState {
     var isCardHidden = false
+    /// The card's frame on screen without the flight's offset.
     @ObservationIgnored var cardFrame: CGRect = .zero
+    @ObservationIgnored var itemOffset: CGPoint = .zero
 }
 
 /// The Balance card with its details open, the details under the card.
@@ -219,7 +175,6 @@ private struct AssetDetailsScreenRoot: View {
     let state: AssetDetailsScreenState
 
     @State private var overscroll = DSOverscroll()
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         ScrollView {
@@ -229,13 +184,12 @@ private struct AssetDetailsScreenRoot: View {
                 onCardTapped: {},
                 overscroll: overscroll,
                 isCardHidden: state.isCardHidden,
-                onCardFrame: { state.cardFrame = $0 }
+                onCardFrame: { state.cardFrame = $0.offsetBy(dx: -state.itemOffset.x, dy: -state.itemOffset.y) }
             )
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)
         }
         .modifier(OverscrollReader(overscroll: overscroll))
-        .modifier(OpaqueTopEdgeHidden(reduceTransparency: reduceTransparency))
     }
 }
 
@@ -252,22 +206,6 @@ private struct OverscrollReader: ViewModifier {
                 } action: { _, newValue in
                     overscroll.distance = newValue
                 }
-        } else {
-            content
-        }
-    }
-}
-
-/// On iOS 26 with Reduce Transparency, the top scroll edge effect is drawn opaque and its height follows the
-/// content, so it covers the top of the card. It is hidden there.
-private struct OpaqueTopEdgeHidden: ViewModifier {
-    let reduceTransparency: Bool
-
-    func body(content: Content) -> some View {
-        if #available(iOS 27, *) {
-            content
-        } else if #available(iOS 26, *) {
-            content.scrollEdgeEffectHidden(reduceTransparency, for: .top)
         } else {
             content
         }

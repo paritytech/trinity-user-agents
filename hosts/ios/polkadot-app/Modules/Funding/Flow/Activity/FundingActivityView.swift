@@ -24,8 +24,8 @@ struct FundingHistoryView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DSSpacings.large) {
-                        section(String(localized: .Funding.activityInProgress), items: model.state.inFlight)
-                        section(String(localized: .Funding.activityCompleted), items: model.state.history)
+                        section(String(localized: .Common.inProgress), items: model.state.inFlight)
+                        section(String(localized: .Common.completed), items: model.state.history)
                     }
                 }
             }
@@ -71,7 +71,7 @@ struct FundingPendingView: View {
                         .font(.system(size: 16, weight: .semibold))
                 }
                 .buttonStyle(.dsIcon(style: .secondary, shape: .pill, size: .small))
-                .accessibilityLabel(Text(.Funding.historyOpen))
+                .accessibilityLabel(Text(.Funding.historyTitle))
             }
 
             ScrollView {
@@ -95,7 +95,7 @@ struct FundingPendingView: View {
     }
 
     private var title: String {
-        direction == .in ? String(localized: .Funding.activityToppingUp) : String(localized: .Funding.activitySending)
+        direction == .in ? String(localized: .Funding.activityToppingUp) : String(localized: .transferStatusSending)
     }
 
     private var buttonTitle: String {

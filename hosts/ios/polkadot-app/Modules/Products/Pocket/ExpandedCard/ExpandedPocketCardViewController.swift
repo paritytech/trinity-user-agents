@@ -61,11 +61,9 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = card.title
         setupFace()
         setupPage()
         pullDown.install()
-        setContentScrollView(widgetView.webView.scrollView, for: .top)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -80,18 +78,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         super.viewSafeAreaInsetsDidChange()
 
         widgetView.scrollIndicatorInsets = view.safeAreaInsets
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -175,6 +161,10 @@ extension ExpandedPocketCardViewController: PocketFlightScreen {
         .card(card.key)
     }
 
+    var statusStripTitle: String {
+        card.title
+    }
+
     /// Without the margins the screen draws around the card.
     func itemFrame(in view: UIView) -> CGRect {
         let card = face.view.bounds.insetBy(
@@ -213,14 +203,28 @@ extension ExpandedPocketCardViewController: PocketFlightScreen {
     }
 }
 
+extension ExpandedPocketCardViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
+}
+
 extension ExpandedPocketCardViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
         isInFlight = true
         return PocketFlight(screen: self, origin: origin, opening: operation == .push)
     }
+
+    var allowsBackSwipe: Bool {
+        canSwipeBack
+    }
 }
 
 private extension ExpandedPocketCardViewController {
+    var canSwipeBack: Bool {
+        !isInFlight && !isClosing && !pullDown.isPulling
+    }
+
     func setupFace() {
         addChild(face)
         rootView.embedFace(face.view)
