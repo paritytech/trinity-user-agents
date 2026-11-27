@@ -731,8 +731,13 @@ impl JsonRpcConnection for LightConnection {
 	}
 
 	fn close(&self) {
-		let mut guard = mutex::lock(&self.pipe.inner);
-		if mutex::lock(&self.pipe.closing).take().is_none() {
+		let Some(mut guard) = mutex::lock_unless_poisoned(&self.pipe.inner) else {
+			return;
+		};
+		if mutex::lock_unless_poisoned(&self.pipe.closing)
+			.and_then(|mut closing| closing.take())
+			.is_none()
+		{
 			return;
 		}
 		guard.connections -= 1;
@@ -751,10 +756,14 @@ impl JsonRpcConnection for LightConnection {
 			release_chain(&mut guard, relay_genesis);
 		}
 
-		mutex::lock(&self.pipe.errors_tx).close_channel();
+		if let Some(mut errors_tx) = mutex::lock_unless_poisoned(&self.pipe.errors_tx) {
+			errors_tx.close_channel();
+		}
 		// An untaken response stream keeps smoldot's JSON-RPC service for the
 		// chain alive, and with it the chain's lifecycle.
-		mutex::lock(&self.responses).take();
+		if let Some(mut responses) = mutex::lock_unless_poisoned(&self.responses) {
+			responses.take();
+		}
 	}
 }
 

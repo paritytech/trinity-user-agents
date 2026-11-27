@@ -193,7 +193,9 @@ impl JsonRpcConnection for WebWsConnection {
 		}
 		let _ = self.socket.close();
 		self.responses_close.close_channel();
-		mutex::lock(&self.responses).take();
+		if let Some(mut responses) = mutex::lock_unless_poisoned(&self.responses) {
+			responses.take();
+		}
 	}
 }
 

@@ -61,11 +61,10 @@ fn a_dead_tunnel_is_not_reused() {
 
 fn mark_dead(host: &str, port: u16) {
 	let tunnels = TUNNELS.get().expect("tunnel map initialised");
-	mutex::lock(tunnels)
+	let alive = mutex::lock(tunnels)
 		.get(&(host.to_owned(), port))
-		.expect("the tunnel just created")
-		.alive
-		.store(false, Ordering::Release);
+		.map(|tunnel| Arc::clone(&tunnel.alive));
+	alive.expect("the tunnel just created").store(false, Ordering::Release);
 }
 
 /// The cached port, or `None` when the entry is absent or marked dead.

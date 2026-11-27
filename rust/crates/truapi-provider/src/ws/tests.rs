@@ -433,3 +433,22 @@ async fn drop_closes_the_connection() {
 	drop(harness.connection);
 	assert_eq!(responses.next().await, None);
 }
+
+/// A panic under one of the connection's locks must not make its drop panic
+/// again, which during that unwind would abort the process. The cleanup that
+/// the poisoned lock does not guard still runs.
+#[tokio::test]
+async fn drop_after_a_panic_under_a_lock_still_closes_the_transport() {
+	let mut harness = harness();
+	std::thread::scope(|scope| {
+		let holder = scope.spawn(|| {
+			let _guard = harness.connection.responses.lock().expect("not poisoned yet");
+			panic!("a holder panics");
+		});
+		assert!(holder.join().is_err(), "only a holder that panicked poisons the lock");
+	});
+	drop(harness.connection);
+	assert_eq!(harness.sent.next().await, None);
+	tokio::task::yield_now().await;
+	assert!(*harness.sender_closed.lock().expect("lock"));
+}

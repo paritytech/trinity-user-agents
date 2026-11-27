@@ -385,9 +385,13 @@ impl JsonRpcConnection for WsConnection {
 		if self.closed.swap(true, Ordering::SeqCst) {
 			return;
 		}
-		mutex::lock(&self.requests).close_channel();
+		if let Some(mut requests) = mutex::lock_unless_poisoned(&self.requests) {
+			requests.close_channel();
+		}
 		self.stream_abort.abort();
-		mutex::lock(&self.responses).take();
+		if let Some(mut responses) = mutex::lock_unless_poisoned(&self.responses) {
+			responses.take();
+		}
 	}
 }
 
