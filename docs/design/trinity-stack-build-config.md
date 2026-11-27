@@ -239,6 +239,10 @@ skip `*.build.json`. `scripts/write-refresh-changeset.sh` should skip them too, 
 config. `scripts/update-stacks.sh` needs no change. It writes the `.link` and `.json` of each signed known stack and
 deletes that pair for any other `.link` it finds, so it never touches a `*.build.json`.
 
+`.github/CODEOWNERS` lets the refresh be approved without either team, through a rule for `/stacks/*.json`. That rule
+would match the configs too, and a config is where a build gets `allowed: true` and its publisher key. So the rule has
+to leave out `*.build.json`, and a config change is approved by the teams like any other code.
+
 ## Alternatives we rejected
 
 - **Downloading the descriptor during every app build.** This is what #1899 asks for as written. Every build would then
