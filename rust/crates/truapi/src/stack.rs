@@ -114,6 +114,11 @@ impl<D> From<UnservedProduct> for CallError<D> {
 /// `dotns` or `coinage` is refused, and the bundled relay `lightSpec` is
 /// kept. Reads are protected only if the host starts its light client from
 /// the bundled descriptor.
+///
+/// The pins hold for a stack the core resolves with [`StackRefresh::load`]. A
+/// host that builds its stack with [`Stack::new`] and fetches newer copies
+/// itself, as the CLI does, has to refuse such a copy itself. The CLI does
+/// not.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
