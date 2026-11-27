@@ -7,6 +7,7 @@ import UIKitExt
 final class MockNavigationRouter: ProductsNavigationRouting {
     var openedURL: URL?
     var navigatedPage: ProductPage?
+    var openedNotificationSettings = false
     var errorToThrow: Error?
 
     func setPresentationView(_: ControllerBackedProtocol) {}
@@ -24,5 +25,10 @@ final class MockNavigationRouter: ProductsNavigationRouting {
     func openExternalURL(_ url: URL) async throws {
         if let error = errorToThrow { throw error }
         openedURL = url
+    }
+
+    func openNotificationSettings() async throws {
+        if let error = errorToThrow { throw error }
+        openedNotificationSettings = true
     }
 }

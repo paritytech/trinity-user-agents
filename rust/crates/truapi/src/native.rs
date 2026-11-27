@@ -144,6 +144,13 @@ pub fn app_deeplink_scheme() -> String {
 	dotns::APP_SCHEME.to_owned()
 }
 
+/// The link `navigate_to` hands the host for the notification settings of
+/// the application.
+#[uniffi::export]
+pub fn notification_settings_url() -> String {
+	dotns::NOTIFICATION_SETTINGS_URL.to_owned()
+}
+
 /// The internal scheme under which native hosts serve product content.
 #[uniffi::export]
 pub fn product_content_scheme() -> String {

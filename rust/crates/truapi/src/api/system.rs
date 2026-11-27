@@ -71,6 +71,10 @@ pub trait System: Send + Sync {
 	/// per host and shared with outbound data access to that host, so approving
 	/// one covers the other.
 	///
+	/// `polkadotapp://settings/notifications` opens the notification settings the
+	/// operating system keeps for the host application, with no prompt. A host
+	/// without such a page can answer `Ok` and open nothing.
+	///
 	/// ```ts
 	/// const result = await truapi.system.navigateTo({
 	///   url: "https://example.com",

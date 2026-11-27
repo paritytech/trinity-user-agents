@@ -7,4 +7,7 @@ import Foundation
 public protocol ProductsNavigationRouting: ProductsRouting {
     func navigateTo(destination: ProductPage) async throws
     func openExternalURL(_ url: URL) async throws
+    /// Opens the notification settings the operating system keeps for this app, and
+    /// throws when the system does not open them.
+    func openNotificationSettings() async throws
 }
