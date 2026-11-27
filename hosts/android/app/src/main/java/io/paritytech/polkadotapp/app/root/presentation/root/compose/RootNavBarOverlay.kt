@@ -172,6 +172,10 @@ fun RootNavBarOverlay(
             keyboardRequested = step == DockletStep.Step2
             if (step == DockletStep.Step1) focusManager.clearFocus()
         }
+        val openSearch = {
+            openCard(DockletStep.Step2)
+            keyboardRequested = true
+        }
         var searchAfterRestore by remember { mutableStateOf(false) }
         var dockletAreas by remember { mutableStateOf<ImmutableList<DockletFrame>>(persistentListOf()) }
         val hideState = rememberDockletHideState(drawbridge) { landing ->
@@ -185,7 +189,7 @@ fun RootNavBarOverlay(
                     onDockletTipDismiss()
                     if (searchAfterRestore) {
                         searchAfterRestore = false
-                        openCard(DockletStep.Step1)
+                        openSearch()
                     }
                 }
             }
@@ -200,7 +204,9 @@ fun RootNavBarOverlay(
         barVisibility.targetState = barShown
         var previousBarMode by remember { mutableStateOf<TabBarMode?>(null) }
         LaunchedEffect(barMode) {
-            if (barMode is TabBarMode.TuckedOverScreen) {
+            val tucksOnArrival = barMode is TabBarMode.TuckedOverScreen ||
+                (barMode is TabBarMode.TuckedOverScreenIfAutoHideOn && dockletAutoHideEnabled)
+            if (tucksOnArrival) {
                 val barWasShown = previousBarMode?.showsBar == true && barVisibility.isIdle && barVisibility.currentState
                 if (barWasShown) hideState.slideTuck() else hideState.tuck()
             }
@@ -216,7 +222,7 @@ fun RootNavBarOverlay(
                 searchAfterRestore = true
                 hideState.restore()
             } else {
-                openCard(DockletStep.Step1)
+                openSearch()
             }
         }
 
