@@ -4,7 +4,12 @@ use futures::{StreamExt, channel::mpsc::unbounded, executor::block_on};
 use tempfile::TempDir;
 
 use super::*;
-use crate::{Spawner, store::open_temporary_core_db, test_support::wait_until, time::ManualTimer};
+use crate::{
+	Spawner,
+	store::open_temporary_core_db,
+	test_support::wait_until,
+	time::{ManualTimer, RealTimer},
+};
 
 const LOYALTY: &str = "loyalty.dot";
 const PERSONHOOD: &str = "personhood.dot";
@@ -413,4 +418,25 @@ fn the_newest_face_is_kept_at_most_every_interval_and_at_once_when_drawing_stops
 	faces.unbounded_send(drawn("4")).unwrap();
 	drop(faces);
 	wait_until(|| kept() == Some(face("4")), "the last face is kept as soon as drawing stops");
+}
+
+#[test]
+fn the_keeper_ends_when_drawing_stopped_before_it_read_the_last_face() {
+	// A render can draw a face and end before the keeper runs, and a panic
+	// in the keeper aborts a release build.
+	let (_dir, cards) = open(Vec::new());
+	add(&cards, LOYALTY, "stamps", "approved");
+	let (faces, drawn) = unbounded();
+	faces.unbounded_send((face("1"), cards.next_draw())).unwrap();
+	drop(faces);
+
+	block_on(cards.keep_faces(
+		product(LOYALTY),
+		"stamps".into(),
+		PocketCardSide::Front,
+		drawn,
+		Arc::new(RealTimer),
+	));
+
+	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), Some(face("1")));
 }

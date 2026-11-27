@@ -268,6 +268,8 @@ impl PocketCards {
 		mut faces: UnboundedReceiver<(RendererNode, u64)>,
 		timer: Arc<dyn Timer>,
 	) {
+		use futures::stream::FusedStream;
+
 		let mut newest = None;
 		let mut interval = Fuse::terminated();
 		loop {
@@ -284,6 +286,10 @@ impl PocketCards {
 			// A face already queued is newer than the one in hand.
 			while let Ok(newer) = faces.try_recv() {
 				newest = Some(newer);
+			}
+			// `try_recv` took the end of the stream, which `select!` then never sees.
+			if faces.is_terminated() {
+				break;
 			}
 			if let Some(drawn) = newest.take() {
 				self.keep_newest(&product_id, &card_id, side, drawn).await;
