@@ -18,20 +18,14 @@ import org.junit.Test
 
 class SentryLogGateTest {
     @Test
-    fun `a log carrying no tag this host writes is turned away`() {
+    fun `the gate sends only the logs the filter admits`() {
         val callback = SentryLogGate.beforeSendLog(HostLogFilter { 0 })
+        val ours = logEvent(body = "connection 1 closing", tag = "truapi.chain")
 
         assertNull(callback.execute(logEvent(body = "peer lost", tag = "DeviceSync")))
         assertNull(callback.execute(logEvent(body = "peer lost", tag = null)))
-    }
-
-    @Test
-    fun `a log carrying a host tag is sent`() {
-        val callback = SentryLogGate.beforeSendLog(HostLogFilter { 0 })
-        val event = logEvent(body = "connection 1 closing", tag = "truapi.chain")
-
-        assertEquals(event, callback.execute(event))
-        assertNull(event.attributes?.get(HostLogFilter.DROPPED_ATTRIBUTE))
+        assertEquals(ours, callback.execute(ours))
+        assertNull(ours.attributes?.get(HostLogFilter.DROPPED_ATTRIBUTE))
     }
 
     @Test
@@ -51,13 +45,9 @@ class SentryLogGateTest {
     }
 
     @Test
-    fun `a build whose manifest carries no dsn starts nothing`() {
+    fun `a build starts sentry only when its manifest carries a dsn`() {
         assertFalse(SentryLogGate.startsSentry(application(dsn = null)))
         assertFalse(SentryLogGate.startsSentry(application(dsn = "")))
-    }
-
-    @Test
-    fun `a build whose manifest carries a dsn starts sentry`() {
         assertTrue(SentryLogGate.startsSentry(application(dsn = "https://key@example.invalid/1")))
     }
 
