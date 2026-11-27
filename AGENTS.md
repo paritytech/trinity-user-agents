@@ -358,10 +358,11 @@ Two ways to lose work that involve no pushing at all:
   the core's marker table decides. Its `Adding a signal` subsection shows what
   a host event looks like on each host, how a core log line is registered and
   raised, and how to check one in Sentry.
-- A funding fact the core emits is a `CoreEvent` under an exported
-  `truapi.funding.*` marker whose entry in `markers.rs` documents its
-  attributes, built in `runtime/funding_telemetry.rs`; the `Funding events`
-  section of the same doc says what one may carry and how it reaches Sentry.
+- A funding fact the core emits is a `CoreEvent` under a `truapi.funding.*`
+  marker whose entry in `markers.rs` documents its attributes, built in
+  `runtime/funding_telemetry.rs`. The table keeps every one of them on the
+  device bar `ended_unexpectedly`, and the `Funding events` section of the
+  same doc says what one may carry and where it lands.
 
 ## Scope of a change
 

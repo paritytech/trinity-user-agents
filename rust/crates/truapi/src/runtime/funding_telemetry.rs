@@ -1,5 +1,6 @@
-//! Funding facts for telemetry, emitted as [`CoreEvent`]s under exported
-//! `truapi.funding.*` markers.
+//! Funding facts for telemetry, emitted as [`CoreEvent`]s under
+//! `truapi.funding.*` markers. The table keeps every one of them on the
+//! device bar the fault, which is exported at error.
 //!
 //! A fact is a [`CoreEvent`] carrying closed values only: labels from enum
 //! names and fixed buckets, conditions, and counts or durations. Before it

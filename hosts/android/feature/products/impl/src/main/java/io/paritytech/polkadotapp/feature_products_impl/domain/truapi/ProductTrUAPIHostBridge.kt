@@ -448,7 +448,6 @@ internal val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
         when (markerClass) {
             is MarkerClass.Export ->
                 marker to when (markerClass.severity) {
-                    Severity.INFO -> Log.INFO
                     Severity.WARN -> Log.WARN
                     Severity.ERROR -> Log.ERROR
                 }
