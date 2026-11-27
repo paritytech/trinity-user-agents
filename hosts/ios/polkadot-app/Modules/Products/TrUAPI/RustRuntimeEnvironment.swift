@@ -108,25 +108,25 @@ struct ProductExecutionServices {
         let bridges = purpose.makeBridges(dependencies: dependencies)
 
         let game = gameReminders == nil ? nil : bridges.host
-        let execution: TrUAPIProductExecution
-        switch purpose {
-        case let .worker(_, attempt):
-            execution = try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
-        case let .app(runtime):
-            execution = runtime.openAppExecution(
-                bridge: bridges.host,
-                productId: productId,
-                chat: bridges.chat,
-                game: game
-            )
-        case let .expandedCard(runtime, _):
-            execution = runtime.openWidgetExecution(
-                bridge: bridges.host,
-                productId: productId,
-                chat: bridges.chat,
-                game: game
-            )
-        }
+        let execution: TrUAPIProductExecution =
+            switch purpose {
+            case let .worker(_, attempt):
+                try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
+            case let .app(runtime):
+                runtime.openAppExecution(
+                    bridge: bridges.host,
+                    productId: productId,
+                    chat: bridges.chat,
+                    game: game
+                )
+            case let .expandedCard(runtime, _):
+                runtime.openWidgetExecution(
+                    bridge: bridges.host,
+                    productId: productId,
+                    chat: bridges.chat,
+                    game: game
+                )
+            }
 
         bridges.host.attach(execution)
 
