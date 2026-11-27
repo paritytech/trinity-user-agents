@@ -8,6 +8,7 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashes
 import io.paritytech.polkadotapp.test_shared.testDispatchers
@@ -53,6 +54,15 @@ class TrUAPIHostRuntimeProviderTest {
         assertEquals("1.0.0 (1022)", runtimeConfig.captured.hostVersion)
     }
 
+    // Products open through the runtime this hands out, so the core must already have the funding callbacks: a product
+    // asking for funding before them would be told the host does not support it.
+    @Test
+    fun `installs the funding callbacks before handing the runtime out`() = runTest {
+        provider().runtime().getOrThrow()
+
+        verify(exactly = 1) { nativeRuntime.setFundingCallbacks(any()) }
+    }
+
     // The core derives the wallet's identities under the stack's TLD, so a build on another
     // network's stack mints keys for that network. Only the Polkadot build may use its reserved values.
     @Test
@@ -94,6 +104,7 @@ class TrUAPIHostRuntimeProviderTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
+        fundingBridge = mockk(relaxed = true),
         fundingProviders = mockk(relaxed = true),
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),

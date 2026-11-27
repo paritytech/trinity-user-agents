@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingStartError
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
@@ -12,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.scre
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens.FundingCountryViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens.FundingSummaryViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens.FundingTokenViewModel
+import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -32,13 +35,16 @@ import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingStage
 import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingScreenViewModelsTest {
     private val testDispatcher = StandardTestDispatcher()
     private val service = FakeFunding()
+    private val router: ProductsRouter = mockk(relaxed = true)
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)
@@ -49,7 +55,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `the amount is quoted once the user stops typing for 0_6 s`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service, service)
+        val model = FundingAmountViewModel(sheet, service, service, router)
 
         model.onKey(FundingKey.Digit('5'))
         advanceTimeBy(300)
@@ -67,7 +73,7 @@ class FundingScreenViewModelsTest {
     @Test
     fun `continuing with a quote still waiting asks it at once and shows the summary`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service, service)
+        val model = FundingAmountViewModel(sheet, service, service, router)
         model.state.launchIn(backgroundScope)
         model.onKey(FundingKey.Digit('5'))
         runCurrent()
@@ -79,9 +85,34 @@ class FundingScreenViewModelsTest {
     }
 
     @Test
+    fun `the clock shows once a session started, wears a dot while one runs, and opens the history`() = runTest(testDispatcher) {
+        val model = FundingAmountViewModel(FakeFundingSheet(flow(), entry()), service, service, router)
+        model.state.launchIn(backgroundScope)
+        val settingUp = entry(session = FakeFundingCore.session("new"))
+        val ended = entry(session = FakeFundingCore.session("old", providerId = ramp, stage = FundingStage.Failed(FundingFailure.Expired, 2uL)))
+        val running = entry(session = FakeFundingCore.session("run", providerId = ramp))
+
+        service.listed.value = listOf(settingUp)
+        runCurrent()
+        assertEquals(FundingHistoryClock.HIDDEN, model.state.value?.history)
+
+        service.listed.value = listOf(settingUp, ended)
+        runCurrent()
+        assertEquals(FundingHistoryClock.SHOWN, model.state.value?.history)
+
+        service.listed.value = listOf(ended, running)
+        runCurrent()
+        assertEquals(FundingHistoryClock.RUNNING, model.state.value?.history)
+
+        model.onHistory()
+        runCurrent()
+        coVerify { router.openFundingHistory() }
+    }
+
+    @Test
     fun `switching rail drops the quotes on screen`() = runTest(testDispatcher) {
         val sheet = FakeFundingSheet(flow(), entry())
-        val model = FundingAmountViewModel(sheet, service, service)
+        val model = FundingAmountViewModel(sheet, service, service, router)
 
         model.onRailSelected(FundingRail.BANK)
 

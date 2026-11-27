@@ -18,6 +18,8 @@ import uniffi.truapi.ProductId
 interface FundingCore {
     suspend fun start(): Result<Unit>
 
+    suspend fun available(): Result<Boolean>
+
     suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingIntentId?>
 
     suspend fun session(intentId: FundingIntentId): Result<FundingSession?>

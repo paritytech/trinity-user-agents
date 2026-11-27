@@ -2,12 +2,15 @@ package io.paritytech.polkadotapp.app.telemetry
 
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import io.paritytech.polkadotapp.app.BuildConfig
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostLogSink
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
 import io.paritytech.polkadotapp.common.data.telemetry.baseTags
@@ -20,6 +23,7 @@ import io.sentry.SentryLevel
 import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
+import javax.inject.Provider
 
 internal fun interface HostTelemetryEnabledProvider {
     fun isEnabled(): Boolean
@@ -42,10 +46,17 @@ internal class RealSentryEventCapture @Inject constructor() : SentryEventCapture
 internal class RealHostEventCapture @Inject constructor(
     private val enabledProvider: HostTelemetryEnabledProvider,
     private val sentryCapture: SentryEventCapture,
+    // A Provider, so the sink reads the Sentry logger once Sentry has started rather than when this is built.
+    private val logSink: Provider<HostLogSink>,
 ) : HostEventCapture {
     override fun capture(event: () -> HostEvent) {
         if (enabledProvider.isEnabled()) {
-            sentryCapture.capture(event().toSentryEvent())
+            val hostEvent = event()
+            when (hostEvent.level) {
+                HostEventLevel.INFO ->
+                    logSink.get().log(Log.INFO, HOST_TELEMETRY_LOGGER, hostEvent.name, hostEvent.toLogAttributes())
+                HostEventLevel.WARNING, HostEventLevel.ERROR -> sentryCapture.capture(hostEvent.toSentryEvent())
+            }
         }
     }
 }
@@ -83,6 +94,7 @@ internal class HostProcessTelemetryInitializer @Inject constructor(
 
 private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = HostEvent(
     name = "host.process.started",
+    level = HostEventLevel.INFO,
     tags = baseTags() + ("host.os_version" to osVersion),
     extras = baseExtras() + mapOf(
         "app.launch_id" to launchId.toString(),
@@ -95,8 +107,20 @@ private fun HostEvent.toSentryEvent() = SentryEvent().apply {
     // One group per event name. Sentry would otherwise group these by the stack
     // trace it attaches, which splits one name across several groups.
     fingerprints = listOf(this@toSentryEvent.name)
-    level = SentryLevel.INFO
-    logger = "host.telemetry"
+    level = this@toSentryEvent.level.toSentryLevel()
+    logger = HOST_TELEMETRY_LOGGER
     this@toSentryEvent.tags.forEach(::setTag)
     this@toSentryEvent.extras.forEach(::setExtra)
 }
+
+private fun HostEventLevel.toSentryLevel() = when (this) {
+    HostEventLevel.INFO -> SentryLevel.INFO
+    HostEventLevel.WARNING -> SentryLevel.WARNING
+    HostEventLevel.ERROR -> SentryLevel.ERROR
+}
+
+// Tags and extras share one attribute namespace on a log line, so an extra wins
+// over a tag of the same key. The sink adds `tag` itself.
+private fun HostEvent.toLogAttributes(): Map<String, Any> = tags + extras + ("event.name" to name)
+
+private const val HOST_TELEMETRY_LOGGER = "host.telemetry"

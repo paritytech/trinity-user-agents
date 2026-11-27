@@ -36,6 +36,8 @@ import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.FundingEntriesSheet
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingEntriesUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchResultUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchResults
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchSectionUiModel
@@ -45,6 +47,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.co
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendPaymentEmptySearch
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendToYourselfItem
 import kotlinx.collections.immutable.persistentListOf
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -63,6 +66,16 @@ fun SendPaymentScreen(contract: SendPaymentContract) {
         onPasteClick = contract::onPasteClick,
         onBackClick = contract::onBackClick,
         onScannerClick = contract::onScannerClick,
+    )
+
+    FundingEntriesSheet(
+        sheet = uiState.fundingSheet,
+        state = uiState.funding,
+        onHistory = contract::onFundingHistoryClick,
+        onBack = contract::onFundingSheetBack,
+        onStartNew = contract::onSendMoneyOutClick,
+        onRowClick = contract::onFundingRowClick,
+        onDismiss = contract::onFundingSheetDismiss,
     )
 }
 
@@ -210,7 +223,9 @@ private fun SendPaymentScreenPreview() {
                             )
                         )
                     )
-                )
+                ),
+                funding = FundingEntriesUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = Instant.fromEpochMilliseconds(0)),
+                fundingSheet = null,
             ),
             onInputChange = {},
             onRecipientSelect = {},

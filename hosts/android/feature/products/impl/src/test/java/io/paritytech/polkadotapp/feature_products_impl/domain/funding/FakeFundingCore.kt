@@ -100,6 +100,8 @@ class FakeFundingCore : FundingCore {
 
     override suspend fun frameWaiting(intentId: FundingIntentId): Result<Boolean> = Result.success(intentId.value in waitingFrames)
 
+    override suspend fun available(): Result<Boolean> = Result.success(true)
+
     companion object {
         fun session(
             intent: String,

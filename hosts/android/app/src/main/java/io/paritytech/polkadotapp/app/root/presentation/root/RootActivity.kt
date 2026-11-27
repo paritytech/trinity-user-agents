@@ -26,7 +26,10 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import androidx.navigation.fragment.DialogFragmentNavigator
 import androidx.navigation.fragment.NavHostFragment
@@ -68,6 +71,8 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthIndicatorsWithTooltip
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
+import kotlinx.coroutines.launch
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -105,6 +110,9 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     @Inject
     lateinit var hostEventCapture: HostEventCapture
 
+    @Inject
+    lateinit var hostFunding: HostFunding
+
     private val viewModel by viewModels<RootViewModel>()
 
     private val dockletInputEvents = DockletInputEvents()
@@ -131,6 +139,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
         navigationHolder.attach(navController)
         contextManager.attachActivity(this)
+        lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { hostFunding.presentScreens() } }
 
         intent?.let {
             if (isFreshNotificationLaunch(isRestored = savedInstanceState != null, intentFlags = it.flags)) {

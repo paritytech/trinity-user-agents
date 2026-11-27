@@ -85,6 +85,8 @@ fun DigitalDollarCardDetails(
     val viewModel = hiltViewModel<DigitalDollarCardDetailsViewModel>()
     val loadingState by viewModel.coinageState.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val fundingActivity by viewModel.fundingActivity.collectAsStateWithLifecycle()
+    val fundingSheet by viewModel.fundingSheet.collectAsStateWithLifecycle()
 
     BackHandler { onBack() }
 
@@ -105,6 +107,16 @@ fun DigitalDollarCardDetails(
         onShareLogsClick = viewModel::onShareLogsClick,
         onBackupUpdateClick = viewModel::onBackupUpdateClick,
         onBackupCloseClick = viewModel::onBackupCloseClick
+    )
+
+    FundingEntriesSheet(
+        sheet = fundingSheet,
+        state = fundingActivity,
+        onHistory = viewModel::onHistoryClick,
+        onBack = viewModel::onSheetBack,
+        onStartNew = viewModel::onNewTopUpClick,
+        onRowClick = viewModel::onFundingRowClick,
+        onDismiss = viewModel::onSheetDismiss,
     )
 }
 

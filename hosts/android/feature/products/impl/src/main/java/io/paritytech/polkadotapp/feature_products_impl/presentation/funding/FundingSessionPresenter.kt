@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFra
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIntentId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderFrames
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingFrames
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -37,9 +38,9 @@ class FundingSessionPresenter @Inject constructor(
     // Outlives the screen that asks for a new session, which closes before the sheet for it opens.
     @param:ProcessScope private val scope: CoroutineScope,
     private val dispatchers: CoroutineDispatchers,
-) {
+) : FundingSessionScreens {
     // A provider's screen still waiting from before the app's screens were recreated is asked for again.
-    suspend fun present() {
+    override suspend fun present() {
         coroutineScope {
             launch { askWaitingFramesAgain() }
             launch { sessions.presentationRequests.collect { router.openFundingOverlay(it.id) } }
@@ -47,7 +48,7 @@ class FundingSessionPresenter @Inject constructor(
         }
     }
 
-    suspend fun show(intentId: FundingIntentId) {
+    override suspend fun show(intentId: FundingIntentId) {
         val entry = sessions.entryState(intentId).firstOrNull()
         if (entry == null || entry.hasEnded) {
             router.openFundingEnded(intentId)

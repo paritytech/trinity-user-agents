@@ -58,6 +58,7 @@ fun FundingSheetScreen(sheet: FundingSheetViewModel) {
                         onKey = viewModel::onKey,
                         onPreset = viewModel::onPreset,
                         onContinue = viewModel::onContinue,
+                        onHistory = viewModel::onHistory,
                         onClose = viewModel::onClose,
                     )
                 } ?: FundingSkeleton(contentModifier)

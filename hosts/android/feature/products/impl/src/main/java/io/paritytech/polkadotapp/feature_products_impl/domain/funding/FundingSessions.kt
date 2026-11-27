@@ -51,6 +51,8 @@ interface FundingSessions {
 
     fun shown(intentId: FundingIntentId)
 
+    suspend fun isAvailable(): Result<Boolean>
+
     suspend fun resume(): Result<Unit>
 
     // Answers `null` once the user left the session.
@@ -120,6 +122,8 @@ class RealFundingSessions @Inject constructor(
     override fun shown(intentId: FundingIntentId) {
         synchronized(lock) { presentations[intentId]?.shown?.complete(Unit) }
     }
+
+    override suspend fun isAvailable(): Result<Boolean> = core.available().logFailure("Funding providers read failed")
 
     override suspend fun resume(): Result<Unit> = core.start()
 

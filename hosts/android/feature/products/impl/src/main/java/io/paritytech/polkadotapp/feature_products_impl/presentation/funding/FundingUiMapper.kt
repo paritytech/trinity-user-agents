@@ -36,7 +36,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESETS = listOf(BigDecimal("10"), BigDecimal("50"), BigDecimal("100"))
 
-fun FundingFlowState.toAmountUiState(): FundingAmountUiState {
+fun FundingFlowState.toAmountUiState(history: FundingHistoryClock): FundingAmountUiState {
     val withdraw = direction == FundingDirection.OUT
     val available = availableRails
 
@@ -49,6 +49,7 @@ fun FundingFlowState.toAmountUiState(): FundingAmountUiState {
         note = amountNote(),
         presets = if (withdraw) persistentListOf() else PRESETS.map { FundingPreset(it, format.figure(it)) }.toImmutableList(),
         canContinue = canContinue,
+        history = history,
     )
 }
 

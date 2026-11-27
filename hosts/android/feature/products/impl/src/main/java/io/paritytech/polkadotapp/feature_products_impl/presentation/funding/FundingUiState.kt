@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPhase
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import kotlinx.collections.immutable.ImmutableList
 import uniffi.truapi.FundingCancelAvailability
@@ -33,7 +35,26 @@ data class FundingAmountUiState(
     val note: FundingAmountNote?,
     val presets: ImmutableList<FundingPreset>,
     val canContinue: Boolean,
+    val history: FundingHistoryClock,
 )
+
+enum class FundingHistoryClock {
+    /** No session has started: the history would be empty. */
+    HIDDEN,
+    SHOWN,
+
+    /** A session has started and not ended: the clock wears a dot. */
+    RUNNING,
+    ;
+
+    companion object {
+        fun of(entries: List<FundingEntry>): FundingHistoryClock = when {
+            entries.any { it.phase == FundingPhase.RUNNING } -> RUNNING
+            entries.any { it.hasEnded } -> SHOWN
+            else -> HIDDEN
+        }
+    }
+}
 
 data class FundingRailTab(
     val rail: FundingRail,

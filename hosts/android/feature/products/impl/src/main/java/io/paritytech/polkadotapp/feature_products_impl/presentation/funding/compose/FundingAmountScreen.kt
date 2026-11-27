@@ -1,27 +1,37 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
+import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountNote
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingHistoryClock
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingPreset
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingRailTab
@@ -36,6 +46,9 @@ import java.math.BigDecimal
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESET_HEIGHT = 36.dp
+private val BADGE_DOT = 8.dp
+private val BADGE_RING = 2.dp
+private val BADGE_INSET = 4.dp
 
 @Composable
 fun FundingAmountScreen(
@@ -45,6 +58,7 @@ fun FundingAmountScreen(
     onKey: (FundingKey) -> Unit,
     onPreset: (BigDecimal) -> Unit,
     onContinue: () -> Unit,
+    onHistory: () -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -56,6 +70,10 @@ fun FundingAmountScreen(
             title = stringResource(if (state.isWithdraw) RCommon.string.funding_amount_withdraw_title else RCommon.string.funding_amount_add_title),
             onBack = null,
         ) {
+            if (state.history != FundingHistoryClock.HIDDEN) {
+                HistoryButton(running = state.history == FundingHistoryClock.RUNNING, onClick = onHistory)
+                HorizontalSpacer { small }
+            }
             FundingCircleButton(icon = NovaIcons.Close, onClick = onClose)
         }
 
@@ -75,6 +93,26 @@ fun FundingAmountScreen(
             enabled = state.canContinue,
             onClick = onContinue,
         )
+    }
+}
+
+/** Opens the history over the sheet; the dot, ringed in the sheet's colour, says a session is still running. */
+@Composable
+private fun HistoryButton(running: Boolean, onClick: () -> Unit) {
+    val label = stringResource(RCommon.string.funding_history_title)
+    Box(modifier = Modifier.semantics { contentDescription = label }) {
+        FundingCircleButton(icon = NovaIcons.Clock, onClick = onClick)
+        if (running) {
+            PolkadotSurface(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = -BADGE_INSET, y = -BADGE_INSET)
+                    .size(BADGE_DOT + BADGE_RING * 2),
+                shape = CircleShape,
+                color = PolkadotTheme.colors.fg.error,
+                border = BorderStroke(BADGE_RING, PolkadotTheme.colors.bg.surface.container),
+            ) {}
+        }
     }
 }
 
@@ -172,11 +210,13 @@ private fun FundingAmountScreenPreview() {
                 note = FundingAmountNote.Minimum("$10 CASH", withdraw = false),
                 presets = persistentListOf(FundingPreset(BigDecimal.TEN, "$10")),
                 canContinue = true,
+                history = FundingHistoryClock.RUNNING,
             ),
             onRailSelected = {},
             onKey = {},
             onPreset = {},
             onContinue = {},
+            onHistory = {},
             onClose = {},
         )
     }

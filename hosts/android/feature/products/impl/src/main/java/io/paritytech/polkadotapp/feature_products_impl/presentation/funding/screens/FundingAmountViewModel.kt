@@ -5,16 +5,19 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFlowState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingHistoryClock
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.WhileOnScreen
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.toAmountUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import uniffi.truapi.FundingRail
@@ -36,6 +40,7 @@ class FundingAmountViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
     private val sessions: FundingSessions,
     private val quotes: FundingQuotes,
+    private val router: ProductsRouter,
 ) : BaseViewModel() {
     private var quoteJob: Job? = null
 
@@ -51,7 +56,11 @@ class FundingAmountViewModel @AssistedInject constructor(
         flow.withAmountCheck(issue)
     }.stateIn(this, WhileOnScreen, null)
 
-    val state: StateFlow<FundingAmountUiState?> = checked.map { it?.toAmountUiState() }.stateIn(this, WhileOnScreen, null)
+    private val history = sessions.entries().map(FundingHistoryClock::of).onStart { emit(FundingHistoryClock.HIDDEN) }
+
+    val state: StateFlow<FundingAmountUiState?> = combine(checked, history) { checked, history ->
+        checked?.toAmountUiState(history)
+    }.stateIn(this, WhileOnScreen, null)
 
     fun onRailSelected(rail: FundingRail) {
         if (sheet.flow.value?.rail != rail) quotes.quote(null, sheet.intentId)
@@ -85,6 +94,9 @@ class FundingAmountViewModel @AssistedInject constructor(
     }
 
     fun onClose() = sheet.close()
+
+    /** The history over the sheet, which stays up underneath: leaving the history comes back here. */
+    fun onHistory() = launchUnit { router.openFundingHistory() }
 
     // So a provider's limit shows before Continue.
     private fun scheduleQuote() {
