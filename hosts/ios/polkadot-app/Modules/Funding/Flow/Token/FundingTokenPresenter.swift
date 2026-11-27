@@ -8,24 +8,24 @@ final class FundingTokenPresenter: FundingScreenPresenter {
     private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingTokenInteractor,
         wireframe: FundingTokenWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeTokenViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeTokenViewModel(for: model))
     }
 }
 
 extension FundingTokenPresenter: FundingTokenPresenterProtocol {
     func chooseToken(_ symbol: String) {
-        context.update { $0.asset = symbol }
+        flowState.update { $0.asset = symbol }
         requestQuote()
         wireframe.show(.summary)
     }

@@ -6,52 +6,52 @@ import TrUAPIHost
 // MARK: - Deposit
 
 extension FundingViewModelFactory {
-    func makeDepositViewModel(for state: FundingFlowState) -> FundingDepositViewModel {
+    func makeDepositViewModel(for model: FundingEntryModel) -> FundingDepositViewModel {
         let title =
-            switch state.rail {
+            switch model.rail {
             case .card: String(localized: .Funding.summaryCardTitle)
             case .bank: String(localized: .Funding.summaryBankTitle)
             case .crypto: String(localized: .Funding.summaryCryptoTitle)
             }
         let action: FundingDepositViewModel.Action =
-            if state.failure != nil {
+            if model.failure != nil {
                 .close
-            } else if state.hasStarted {
+            } else if model.hasStarted {
                 .cancel
             } else {
                 .none
             }
-        let isEnded = state.session.map { !$0.stage.isOpen } ?? false
+        let isEnded = model.session.map { !$0.stage.isOpen } ?? false
 
         return FundingDepositViewModel(
             title: title,
-            content: depositContent(for: state),
+            content: depositContent(for: model),
             action: action,
-            paymentSeen: state.hasStarted && (isEnded || state.hasReached(.received))
+            paymentSeen: model.hasStarted && (isEnded || model.hasReached(.received))
         )
     }
 }
 
 private extension FundingViewModelFactory {
-    func depositContent(for state: FundingFlowState) -> FundingDepositViewModel.Content {
-        if let failure = state.failure {
+    func depositContent(for model: FundingEntryModel) -> FundingDepositViewModel.Content {
+        if let failure = model.failure {
             return .error(failure.failedText)
         }
-        if let deposit = state.progress?.deposit {
+        if let deposit = model.progress?.deposit {
             return depositDetails(deposit)
         }
-        if let startError = state.startError {
+        if let startError = model.startError {
             return .error(startError)
         }
-        if state.noProviderQuoted, !state.hasStarted {
-            return .error(state.quoteFailureText ?? String(localized: .Funding.errorNoProvider))
+        if model.noProviderQuoted, !model.hasStarted {
+            return .error(model.quoteFailureText ?? String(localized: .Funding.errorNoProvider))
         }
 
         let pending: LocalizedStringResource =
-            if !state.hasStarted {
+            if !model.hasStarted {
                 .Funding.depositFindingProvider
             } else {
-                state.rail == .card ? .Funding.depositCardInProgress : .Funding.depositPreparing
+                model.rail == .card ? .Funding.depositCardInProgress : .Funding.depositPreparing
             }
         return .pending(String(localized: pending))
     }
@@ -107,21 +107,21 @@ private extension FundingViewModelFactory {
 // MARK: - Progress
 
 extension FundingViewModelFactory {
-    func makeProgressViewModel(for state: FundingFlowState) -> FundingProgressViewModel {
-        let quote = state.chosenQuote
-        let cashAmount = state.session
-            .flatMap { FundingActivityItem(session: $0, progress: state.progress).amount }
-            ?? quote.flatMap { Balance(units: state.direction == .in ? $0.receiveAmount : $0.sendAmount) }
-        let progress = state.progress
+    func makeProgressViewModel(for model: FundingEntryModel) -> FundingProgressViewModel {
+        let quote = model.chosenQuote
+        let cashAmount = model.session
+            .flatMap { FundingActivityItem(session: $0, progress: model.progress).amount }
+            ?? quote.flatMap { Balance(units: model.direction == .in ? $0.receiveAmount : $0.sendAmount) }
+        let progress = model.progress
         let isSlow = progress.map { [.retrying, .delayed].contains($0.band) } ?? false
 
         return FundingProgressViewModel(
             figure: cashAmount.map(cashFigure),
             symbol: cashSymbol,
             isSlow: isSlow,
-            steps: progressSteps(for: state, isSlow: isSlow),
+            steps: progressSteps(for: model, isSlow: isSlow),
             stepsBetween: FundingStepBar.between(progress?.band),
-            note: progressNote(for: state, amount: cashAmount.map(cashLabel)),
+            note: progressNote(for: model, amount: cashAmount.map(cashLabel)),
             liveLine: progress.flatMap { progress in
                 guard progress.lastHeardAtMs != nil || progress.detail != nil else { return nil }
                 return FundingProgressViewModel.LiveLine(
@@ -129,34 +129,34 @@ extension FundingViewModelFactory {
                     detail: progress.detail
                 )
             },
-            details: progressDetails(for: state),
+            details: progressDetails(for: model),
             hasFees: quote != nil,
             arrival: quote?.etaSecs.flatMap(etaText(seconds:)).map { eta in
                 FundingProgressViewModel.Arrival(
                     eta: eta,
-                    rateNote: state.direction == .in && state.rail != .card ? bankRateNote : nil
+                    rateNote: model.direction == .in && model.rail != .card ? bankRateNote : nil
                 )
             },
-            cancelTitle: state.canRequestCancel ? state.cancelTitle : nil,
-            cancelOffer: state.cancelOffer.map { offer in
+            cancelTitle: model.canRequestCancel ? model.cancelTitle : nil,
+            cancelOffer: model.cancelOffer.map { offer in
                 FundingProgressViewModel.CancelOffer(
-                    title: String(localized: state.direction == .out ? .Funding.offerTitleWithdraw : .Funding
+                    title: String(localized: model.direction == .out ? .Funding.offerTitleWithdraw : .Funding
                         .offerTitle),
                     fee: cashLabel(offer.fee),
                     refund: cashLabel(offer.refund),
                     terms: CancelTerms(fee: offer.fee.units, refund: offer.refund.units)
                 )
             },
-            isAnsweringOffer: state.isAnsweringOffer,
-            ended: state.ended
+            isAnsweringOffer: model.isAnsweringOffer,
+            ended: model.ended
                 .map { FundingProgressViewModel.Ended(session: $0, viewModel: makeEndedViewModel(for: $0)) }
         )
     }
 }
 
 private extension FundingViewModelFactory {
-    func progressSteps(for state: FundingFlowState, isSlow: Bool) -> [FundingStepBar.Step] {
-        let reported = state.progress?.steps ?? []
+    func progressSteps(for model: FundingEntryModel, isSlow: Bool) -> [FundingStepBar.Step] {
+        let reported = model.progress?.steps ?? []
         let firstUnreached = reported.firstIndex { $0.reachedAtMs == nil }
 
         return reported.enumerated().map { index, step in
@@ -169,7 +169,7 @@ private extension FundingViewModelFactory {
                     .upcoming
                 }
             return FundingStepBar.Step(
-                title: FundingStepBar.title(step.step, direction: state.direction),
+                title: FundingStepBar.title(step.step, direction: model.direction),
                 state: stepState
             )
         }
@@ -177,10 +177,10 @@ private extension FundingViewModelFactory {
 
     /// Where a cancel stands, else the band's line, worded for the session's
     /// rail and amount.
-    func progressNote(for state: FundingFlowState, amount: String?) -> FundingProgressViewModel.Note? {
-        guard let progress = state.progress else { return nil }
+    func progressNote(for model: FundingEntryModel, amount: String?) -> FundingProgressViewModel.Note? {
+        guard let progress = model.progress else { return nil }
 
-        if let line = progress.status.cancelLine(direction: state.direction) {
+        if let line = progress.status.cancelLine(direction: model.direction) {
             return FundingProgressViewModel.Note(text: line.text, isWarning: line.isWarning)
         }
         if progress.status.cancelCameTooLate {
@@ -188,57 +188,57 @@ private extension FundingViewModelFactory {
         }
         let band = FundingWording.band(
             progress.band,
-            direction: state.direction,
-            rail: state.rail,
-            asset: state.asset,
+            direction: model.direction,
+            rail: model.rail,
+            asset: model.asset,
             amount: amount
         )
         return band.map { FundingProgressViewModel.Note(text: $0.text, isWarning: $0.isWarning) }
     }
 
-    func progressDetails(for state: FundingFlowState) -> FundingProgressViewModel.Details {
-        let quote = state.chosenQuote
+    func progressDetails(for model: FundingEntryModel) -> FundingProgressViewModel.Details {
+        let quote = model.chosenQuote
 
-        switch (state.direction, state.rail) {
+        switch (model.direction, model.rail) {
         case (.in, .card):
             return .amount(
                 title: String(localized: .Funding.progressYouSent),
-                amount: quote.flatMap { quoteAmount($0.sendAmount, of: $0, in: state) }
+                amount: quote.flatMap { quoteAmount($0.sendAmount, of: $0, in: model) }
             )
         case (.in, .bank):
-            return .bank(progressBank(for: state))
+            return .bank(progressBank(for: model))
         case (.in, .crypto):
-            return .crypto(progressCryptoDeposit(for: state))
+            return .crypto(progressCryptoDeposit(for: model))
         case (.out, _):
             return .amount(
                 title: String(localized: .Funding.summaryWithdrawCaption),
-                amount: quote.flatMap { quoteAmount($0.receiveAmount, of: $0, in: state) }
+                amount: quote.flatMap { quoteAmount($0.receiveAmount, of: $0, in: model) }
             )
         }
     }
 
     /// "Send this exact amount" until the transfer is seen, then what was
     /// sent, with the account to pay into once the provider named it.
-    func progressBank(for state: FundingFlowState) -> FundingProgressViewModel.Bank {
-        let isReceived = state.hasReached(.received)
+    func progressBank(for model: FundingEntryModel) -> FundingProgressViewModel.Bank {
+        let isReceived = model.hasReached(.received)
         let amountTitle = isReceived
             ? String(localized: .Funding.progressYouSent)
             : String(localized: .Funding.summaryBankCaption)
 
-        if case let .bank(_, _, _, beneficiary, account, bankCode, reference, _)? = state.progress?.deposit {
+        if case let .bank(_, _, _, beneficiary, account, bankCode, reference, _)? = model.progress?.deposit {
             let lines = bankLines(beneficiary: beneficiary, account: account, bankCode: bankCode, reference: reference)
             return FundingProgressViewModel.Bank(
                 amountTitle: amountTitle,
-                amount: depositAmount(state.progress?.deposit),
+                amount: depositAmount(model.progress?.deposit),
                 copyLines: lines.compactMap(\.self),
                 isPreparing: false
             )
         }
 
-        let reference = state.progress?.reference
+        let reference = model.progress?.reference
         return FundingProgressViewModel.Bank(
             amountTitle: amountTitle,
-            amount: state.chosenQuote.flatMap { quoteAmount($0.sendAmount, of: $0, in: state) },
+            amount: model.chosenQuote.flatMap { quoteAmount($0.sendAmount, of: $0, in: model) },
             copyLines: reference.map {
                 [FundingCopyLineViewModel(title: String(localized: .Funding.depositReference), text: $0)]
             } ?? [],
@@ -247,13 +247,13 @@ private extension FundingViewModelFactory {
     }
 
     /// While the funds are not seen, the way back to the address to pay.
-    func progressCryptoDeposit(for state: FundingFlowState) -> FundingProgressViewModel.CryptoDeposit {
-        guard !state.hasReached(.received) else { return .hidden }
-        guard case let .crypto(_, _, _, _, _, exact, _, _)? = state.progress?.deposit else { return .preparing }
+    func progressCryptoDeposit(for model: FundingEntryModel) -> FundingProgressViewModel.CryptoDeposit {
+        guard !model.hasReached(.received) else { return .hidden }
+        guard case let .crypto(_, _, _, _, _, exact, _, _)? = model.progress?.deposit else { return .preparing }
 
         return .deposit(
             title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
-            amount: depositAmount(state.progress?.deposit)
+            amount: depositAmount(model.progress?.deposit)
         )
     }
 }

@@ -13,7 +13,7 @@ final class FundingProgressPresenter: FundingScreenPresenter {
     private var hasShownDeposit = false
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingProgressInteractor,
         wireframe: FundingProgressWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol,
@@ -23,11 +23,11 @@ final class FundingProgressPresenter: FundingScreenPresenter {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeProgressViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeProgressViewModel(for: model))
     }
 
     override func setup() {
@@ -52,7 +52,7 @@ private extension FundingProgressPresenter {
     /// while a provider that serves another network with its own screen
     /// reports no address, so only its screen opens.
     func showDepositOnceReported() {
-        let current = state
+        let current = model
         guard !hasShownDeposit, current.direction == .in, !current.hasReached(.received),
               case .crypto? = current.progress?.deposit
         else { return }
@@ -62,7 +62,7 @@ private extension FundingProgressPresenter {
     }
 
     func refreshWhenTakingLonger() {
-        let current = state
+        let current = model
         interactor.refreshWhenTakingLonger(atMs: current.hasStarted ? current.progress?.longerAtMs : nil)
     }
 }
@@ -74,7 +74,7 @@ extension FundingProgressPresenter: FundingProgressInteractorOutputProtocol {
         case let .success(answer):
             answer.toast.map(wireframe.showToast)
         case let .failure(error):
-            logger.error("[funding] \(context.entryId): answering the cancel offer failed: \(error)")
+            logger.error("[funding] \(flowState.entryId): answering the cancel offer failed: \(error)")
             wireframe.showToast(String(localized: .Funding.errorCancelFailed))
         }
     }

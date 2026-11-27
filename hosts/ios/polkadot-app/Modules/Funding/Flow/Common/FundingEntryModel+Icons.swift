@@ -9,7 +9,7 @@ struct FundingIconKey: Hashable {
     let provider: ProductId
 }
 
-extension FundingFlowState {
+extension FundingEntryModel {
     /// The network's icon, from the provider it is drawn for, once read.
     func icon(network id: String) -> UIImage? {
         iconKey(network: id).flatMap { icons[$0] }
@@ -27,7 +27,7 @@ extension FundingFlowState {
     }
 }
 
-private extension FundingFlowState {
+private extension FundingEntryModel {
     func iconKey(network id: String) -> FundingIconKey? {
         iconProvider { $0.offersNetwork(id) }.map { FundingIconKey(kind: .network, id: id, provider: $0) }
     }

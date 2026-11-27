@@ -7,7 +7,7 @@ import TrUAPIHost
 /// model, and adds its own actions.
 @MainActor
 class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
-    let context: FundingFlowContext
+    let flowState: FundingFlowState
     let entryInteractor: FundingEntryInteractor
     private(set) var entry: FundingEntry
     /// What this screen is doing, drawn over the shared state.
@@ -15,36 +15,36 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
         didSet { render() }
     }
 
-    init(context: FundingFlowContext, interactor: FundingEntryInteractor) {
-        self.context = context
+    init(flowState: FundingFlowState, interactor: FundingEntryInteractor) {
+        self.flowState = flowState
         entryInteractor = interactor
-        entry = context.latestEntry
+        entry = flowState.latestEntry
     }
 
     func setup() {
-        context.observe(self) { [weak self] in self?.render() }
+        flowState.observe(self) { [weak self] in self?.render() }
         render()
         entryInteractor.setup()
     }
 
-    var state: FundingFlowState {
-        var state = context.state(for: entry)
-        state.amountIssue = activity.amountIssue
-        state.isStarting = activity.isStarting
-        state.startError = activity.startError
-        state.isCancelling = activity.isCancelling
-        state.isAnsweringOffer = activity.isAnsweringOffer
-        state.historyClock = activity.historyClock
-        return state
+    var model: FundingEntryModel {
+        var model = flowState.model(for: entry)
+        model.amountIssue = activity.amountIssue
+        model.isStarting = activity.isStarting
+        model.startError = activity.startError
+        model.isCancelling = activity.isCancelling
+        model.isAnsweringOffer = activity.isAnsweringOffer
+        model.historyClock = activity.historyClock
+        return model
     }
 
-    /// Builds the screen's view model from `state` and pushes it to the view.
+    /// Builds the screen's view model from `model` and pushes it to the view.
     func render() {}
 
     /// Tells the core of the draft's selection when it changed since the
     /// core was last told, and the session has not started.
     func reportSelection() {
-        guard let selection = context.selectionToReport(hasStarted: entry.hasStarted) else { return }
+        guard let selection = flowState.selectionToReport(hasStarted: entry.hasStarted) else { return }
         entryInteractor.select(selection)
     }
 
@@ -52,7 +52,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     /// which it is told of first.
     func requestQuote() {
         reportSelection()
-        entryInteractor.quote(amount: state.amount)
+        entryInteractor.quote(amount: model.amount)
     }
 
     /// A hook for a screen that acts on the session's new state.
@@ -63,7 +63,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     func didReceive(entry newEntry: FundingEntry) {
         let previous = entry
         entry = newEntry
-        context.absorb(newEntry)
+        flowState.absorb(newEntry)
         reportSelection()
         render()
         entryDidChange(from: previous)

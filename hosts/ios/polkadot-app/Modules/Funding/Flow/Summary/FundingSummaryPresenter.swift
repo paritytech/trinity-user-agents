@@ -11,7 +11,7 @@ final class FundingSummaryPresenter: FundingScreenPresenter {
     private let logger: LoggerProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingSummaryInteractor,
         wireframe: FundingSummaryWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol,
@@ -21,11 +21,11 @@ final class FundingSummaryPresenter: FundingScreenPresenter {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeSummaryViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeSummaryViewModel(for: model))
     }
 }
 
@@ -34,7 +34,7 @@ extension FundingSummaryPresenter: FundingSummaryPresenterProtocol {
     /// can leave while it is being selected, when the core drops the session
     /// and nothing more is shown.
     func start() {
-        let current = state
+        let current = model
         guard !current.isStarting, !current.hasStarted, let providerId = current.selectedProviderId,
               current.selectedQuote != nil
         else { return }
@@ -54,7 +54,7 @@ extension FundingSummaryPresenter: FundingSummaryPresenterProtocol {
             } catch let FundingStartError.notSelected(failure) {
                 activity.startError = failure?.failedText ?? String(localized: .Funding.errorStartFailed)
             } catch {
-                logger.error("[funding] \(context.entryId): selecting \(providerId) failed: \(error)")
+                logger.error("[funding] \(flowState.entryId): selecting \(providerId) failed: \(error)")
                 activity.startError = String(localized: .Funding.errorStartFailed)
             }
         }

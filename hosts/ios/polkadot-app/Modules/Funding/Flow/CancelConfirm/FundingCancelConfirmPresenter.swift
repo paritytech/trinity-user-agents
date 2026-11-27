@@ -11,7 +11,7 @@ final class FundingCancelConfirmPresenter: FundingScreenPresenter {
     private let logger: LoggerProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingCancelConfirmInteractor,
         wireframe: FundingCancelConfirmWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol,
@@ -21,11 +21,11 @@ final class FundingCancelConfirmPresenter: FundingScreenPresenter {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeCancelConfirmViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeCancelConfirmViewModel(for: model))
     }
 }
 
@@ -38,7 +38,7 @@ extension FundingCancelConfirmPresenter: FundingCancelConfirmPresenterProtocol {
             defer { activity.isCancelling = false }
             do {
                 var outcome = try await interactor.cancel()
-                if outcome == .requested, state.isUnpaidTopUp {
+                if outcome == .requested, model.isUnpaidTopUp {
                     // Nothing was paid, so the second cancel ends the session.
                     outcome = try await interactor.cancel()
                 }
@@ -49,7 +49,7 @@ extension FundingCancelConfirmPresenter: FundingCancelConfirmPresenterProtocol {
                     leave(toast: message)
                 }
             } catch {
-                logger.error("[funding] \(context.entryId): cancel failed: \(error)")
+                logger.error("[funding] \(flowState.entryId): cancel failed: \(error)")
                 leave(toast: String(localized: .Funding.errorCancelFailed))
             }
         }

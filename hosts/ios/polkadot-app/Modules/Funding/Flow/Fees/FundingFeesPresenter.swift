@@ -7,18 +7,18 @@ final class FundingFeesPresenter: FundingScreenPresenter {
     private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         interactor: FundingFeesInteractor,
         wireframe: FundingFeesWireframeProtocol,
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        super.init(context: context, interactor: interactor)
+        super.init(flowState: flowState, interactor: interactor)
     }
 
     override func render() {
-        view?.didReceive(viewModel: viewModelFactory.makeFeesViewModel(for: state))
+        view?.didReceive(viewModel: viewModelFactory.makeFeesViewModel(for: model))
     }
 }
 

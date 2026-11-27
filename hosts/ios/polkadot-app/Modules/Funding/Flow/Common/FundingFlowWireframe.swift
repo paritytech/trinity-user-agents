@@ -27,26 +27,19 @@ protocol FundingFlowEnvironment: AnyObject {
 /// move on the same sheet.
 @MainActor
 final class FundingFlowWireframe {
-    let context: FundingFlowContext
+    let flowState: FundingFlowState
     let service: FundingServiceProtocol
     let environment: FundingFlowEnvironment
     let viewModelFactory: FundingViewModelFactoryProtocol
     private(set) weak var navigation: FundingFlowNavigationController?
 
-    /// The flow's sheet went away.
-    var onClose: (() -> Void)?
-    /// Shows the history of every session over the flow.
-    var onHistory: (() -> Void)?
-    /// Leaves the flow for a new session the same way.
-    var onStartOver: ((FundingDirection) -> Void)?
-
     init(
-        context: FundingFlowContext,
+        flowState: FundingFlowState,
         service: FundingServiceProtocol,
         environment: FundingFlowEnvironment,
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
-        self.context = context
+        self.flowState = flowState
         self.service = service
         self.environment = environment
         self.viewModelFactory = viewModelFactory
@@ -137,12 +130,12 @@ extension FundingFlowWireframe {
     /// The history over the flow, which stays up underneath: closing the
     /// history comes back to the screen it was opened from.
     func showHistory() {
-        onHistory?()
+        flowState.onHistory?()
     }
 
     func startOver() {
-        let direction = context.direction
-        let onStartOver = onStartOver
+        let direction = flowState.direction
+        let onStartOver = flowState.onStartOver
         close { onStartOver?(direction) }
     }
 }
@@ -151,9 +144,9 @@ extension FundingFlowWireframe: FundingToastPresentable {}
 
 private extension FundingFlowWireframe {
     func didLeave() {
-        service.leave(context.entryId)
-        onClose?()
-        onClose = nil
+        service.leave(flowState.entryId)
+        flowState.onClose?()
+        flowState.onClose = nil
     }
 
     func makeScreen(_ screen: FundingFlowScreen) -> UIViewController {
