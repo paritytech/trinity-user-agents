@@ -113,7 +113,7 @@ extension FundingViewModelFactory {
     func issueText(_ issue: FundingAmountIssue) -> String {
         switch issue {
         case let .belowMinimum(minimum):
-            String(localized: .Funding.errorMinimum(amount: cashLabel(units: minimum) ?? ""))
+            String(localized: .Funding.amountMinimum(amount: cashLabel(units: minimum) ?? ""))
         case let .aboveMaximum(maximum):
             String(localized: .Funding.errorMaximum(amount: cashLabel(units: maximum) ?? ""))
         case .notEnoughBalance:
@@ -427,7 +427,7 @@ private extension FundingViewModelFactory {
     func unavailableText(_ reason: FundingQuoteUnavailable) -> String {
         switch reason {
         case let .refused(.belowMinimum(min)):
-            cashLabel(units: min).map { String(localized: .Funding.errorMinimum(amount: $0)) }
+            cashLabel(units: min).map { String(localized: .Funding.amountMinimum(amount: $0)) }
                 ?? String(localized: .Funding.providersUnavailable)
         case let .refused(.aboveMaximum(max)):
             cashLabel(units: max).map { String(localized: .Funding.errorMaximum(amount: $0)) }

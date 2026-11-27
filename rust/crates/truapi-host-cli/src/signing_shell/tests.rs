@@ -26,6 +26,18 @@ fn profile_commands_distinguish_reads_from_uploads_and_preserve_quoted_paths() {
 }
 
 #[test]
+fn search_takes_exactly_one_username_prefix() {
+	assert_eq!(
+		["/search schtrule", "/search", "/search sch trule"].map(parse_command),
+		[
+			Ok(ShellCommand::Search("schtrule".to_string())),
+			Err("usage: /search <username prefix>".into()),
+			Err("usage: /search <username prefix>".into()),
+		]
+	);
+}
+
+#[test]
 fn profile_completion_can_continue_inside_a_quoted_directory() {
 	let directory = tempfile::tempdir().expect("create image directory");
 	let pictures = directory.path().join("my pictures");

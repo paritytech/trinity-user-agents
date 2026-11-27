@@ -14,12 +14,11 @@ import kotlin.math.sqrt
  */
 object CoinageTuning {
     /**
-     * Light added to the whole studio, as if its grey walls were painted a lighter grey. The exported room
-     * runs from five to sixteen percent of white against softboxes at seventy and more, and that seven-to-one
-     * step is what a coin fell off as it tilted. This brings it to about two to one. Linear, so it is the same
-     * room at every level of blur.
+     * Light added to the whole studio, as if its grey walls were painted a lighter grey: a tenth in linear
+     * light takes the room from about twenty to forty percent in sRGB, and the lamps still read as highlights.
+     * Linear, so it is the same room at every level of blur.
      */
-    const val ROOM_LIFT = 0.28f
+    const val ROOM_LIFT = 0.10f
 
     /**
      * How much harder the struck relief slopes than the atlas says. The atlas is baked for a face hundreds of
@@ -31,15 +30,14 @@ object CoinageTuning {
     class Panel(val x: Float, val y: Float, val z: Float, val halfAngleDegrees: Float, val gain: Float)
 
     /**
-     * One straight ahead over the key light, so the resting pose is the brightest the coin ever gets — the
-     * export's own ceiling strip is as bright as its key, so without it a coin leaned back outshone one at
-     * rest. One high and a fainter one low, so a coin leaned either way still finds some light. The shader
-     * reads exactly three.
+     * Four panels around the coins: above, to each side and below, so a coin tipped to any extreme still
+     * mirrors a light rather than the dark beyond the studio's lamps. The shader reads four slots.
      */
     val panels = listOf(
-        Panel(x = 0f, y = 0.15f, z = 1f, halfAngleDegrees = 28f, gain = 0.45f),
-        Panel(x = 0f, y = 0.87f, z = 0.5f, halfAngleDegrees = 18f, gain = 0.3f),
-        Panel(x = 0f, y = -0.87f, z = 0.5f, halfAngleDegrees = 18f, gain = 0.2f)
+        Panel(x = 0f, y = 0.87f, z = 0.5f, halfAngleDegrees = 22f, gain = 0.5f),
+        Panel(x = -0.9f, y = 0.1f, z = 0.45f, halfAngleDegrees = 22f, gain = 0.45f),
+        Panel(x = 0.9f, y = 0.1f, z = 0.45f, halfAngleDegrees = 22f, gain = 0.45f),
+        Panel(x = 0f, y = -0.87f, z = 0.5f, halfAngleDegrees = 22f, gain = 0.4f)
     )
 
     /** As the shader reads them: unit direction and the cosine of the half angle, then gain and padding. */

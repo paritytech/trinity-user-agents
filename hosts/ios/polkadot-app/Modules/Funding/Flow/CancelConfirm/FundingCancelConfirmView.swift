@@ -23,7 +23,7 @@ struct FundingCancelConfirmView: View {
             Spacer(minLength: 0)
 
             DSButton(
-                .Funding.depositCancel,
+                .Common.cancel,
                 style: .destructive,
                 expands: true,
                 isLoading: viewModel.isCancelling,

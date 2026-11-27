@@ -19,6 +19,7 @@ import uniffi.truapi.ProductId
 class ScheduledProductNotificationLocal(
     val productId: ProductId,
     val notificationId: Int,
+    val title: String?,
     val text: String,
     val deeplink: String?,
     val scheduledAtMs: Long,

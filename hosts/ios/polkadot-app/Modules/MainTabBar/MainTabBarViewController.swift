@@ -225,22 +225,48 @@ private extension MainTabBarViewController {
         ChainConnectionStatusBarView.bottomPadding + ChainConnectionStatusBarView.preferredHeight / 2
     }
 
-    func makeStatusBarTitleViewModel() -> StatusBarTitleViewModel {
+    func makeStatusBarTitleViewModel(showing screen: UIViewController?) -> StatusBarTitleViewModel {
         switch container.selection {
         case let .spa(tabId):
             let provider = container.selectedController as? StatusBarTitleProviding
             return StatusBarTitleViewModel(
                 title: provider?.statusBarTitle ?? spaChipViewModels.first { $0.id == tabId }?.name ?? "",
                 showsLogo: true,
-                menu: provider?.makeStatusBarMenu()
+                menu: provider?.makeStatusBarMenu(),
+                backAction: nil
             )
         case let .tab(index):
+            guard tabs.indices.contains(index) else {
+                return StatusBarTitleViewModel(title: "", showsLogo: false, menu: nil, backAction: nil)
+            }
+            let item = tabs[index]
+            if item == .wallet, let navigation = container.selectedController as? UINavigationController {
+                return makeWalletStatusBarTitleViewModel(navigation: navigation, showing: screen)
+            }
             return StatusBarTitleViewModel(
-                title: tabs.indices.contains(index) ? Self.statusBarTitle(for: tabs[index]) : "",
+                title: Self.statusBarTitle(for: item),
                 showsLogo: false,
-                menu: nil
+                menu: nil,
+                backAction: nil
             )
         }
+    }
+
+    func makeWalletStatusBarTitleViewModel(
+        navigation: UINavigationController,
+        showing screen: UIViewController?
+    ) -> StatusBarTitleViewModel {
+        let shown = screen ?? navigation.topViewController
+        let openItem = shown as? PocketItemScreen
+        let backAction: (() -> Void)? = openItem == nil
+            ? nil
+            : { [weak navigation] in navigation?.popViewController(animated: true) }
+        return StatusBarTitleViewModel(
+            title: (openItem ?? navigation.nearestPocketItem)?.statusStripTitle ?? Self.statusBarTitle(for: .wallet),
+            showsLogo: false,
+            menu: nil,
+            backAction: backAction
+        )
     }
 
     static func statusBarTitle(for item: TabBarItem) -> String {
@@ -512,11 +538,21 @@ extension MainTabBarViewController {
     ) {
         chromeController.apply(context)
         applyWidgetLayout(for: context, animatingAlongside: transitionCoordinator)
-        refreshStatusBarTitle()
+        refreshStatusBarTitle(showing: context.screen)
     }
 
-    func refreshStatusBarTitle() {
-        statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
+    /// `screen` is the screen being shown. Nil reads the top of the selected Wallet stack.
+    func refreshStatusBarTitle(showing screen: UIViewController? = nil) {
+        statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel(showing: screen))
+    }
+}
+
+// MARK: - Navigation Stack
+
+private extension UINavigationController {
+    /// The topmost Pocket item on the stack, at the top or below a deeper screen.
+    var nearestPocketItem: PocketItemScreen? {
+        viewControllers.reversed().lazy.compactMap { $0 as? PocketItemScreen }.first
     }
 }
 

@@ -19,7 +19,7 @@ struct FundingFeesView: View {
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.backAction, style: .secondary, expands: true, action: presenter.back)
+            DSButton(.Common.back, style: .secondary, expands: true, action: presenter.back)
         }
         .fundingScreen()
     }
