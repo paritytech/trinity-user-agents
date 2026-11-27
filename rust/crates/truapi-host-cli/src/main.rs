@@ -913,6 +913,11 @@ fn log_target_is_visible(target: &str) -> bool {
 		!target.starts_with("tungstenite::protocol::")
 }
 
+/// How long `alloc-check --submit` waits for a registered allowance to be
+/// readable at the People node's best block.
+const ALLOWANCE_AT_BEST_TIMEOUT: Duration = Duration::from_secs(60);
+const ALLOWANCE_AT_BEST_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Check statement-store allowance for a mnemonic: ring membership, the chosen
 /// slot, and (with `submit`) the `set_statement_store_account` extrinsic.
 async fn run_alloc_check(
@@ -1063,8 +1068,16 @@ async fn run_alloc_check(
 				ring_index,
 				collection,
 			}) => {
+				let best = alloc::wait_statement_allowance_at_best(
+					&rpc,
+					&target,
+					ALLOWANCE_AT_BEST_TIMEOUT,
+					ALLOWANCE_AT_BEST_POLL_INTERVAL,
+				)
+				.await
+				.map_err(|err| anyhow::anyhow!("registered in block {block_hash}, but {err}"))?;
 				println!(
-					"REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash}"
+					"REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash} best={best}"
 				)
 			},
 			Ok(alloc::RegistrationOutcome::AlreadyAllocated { seq, collection }) => {

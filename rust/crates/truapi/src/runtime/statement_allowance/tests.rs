@@ -110,6 +110,51 @@ fn an_extension_too_small_for_the_payload_fails_at_once() {
 	);
 }
 
+/// `sp_statement_store::statement_allowance_key([0x22; 32])`.
+const ALLOWANCE_KEY_0X22: &str = concat!(
+	"0x3a73746174656d656e745f616c6c6f77616e63653a",
+	"2222222222222222222222222222222222222222222222222222222222222222",
+);
+
+/// The node checks a statement against its best block, so a registration in a
+/// block the node has not made best is not usable yet, and the wait continues
+/// until a best block has the allowance.
+#[test]
+fn wait_returns_first_best_block_with_allowance() {
+	let scripted = ScriptedRpc::new([r#""0xa1""#, "null", r#""0xb2""#, r#""0x0200000000d00700""#]);
+	let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
+
+	let best = futures::executor::block_on(wait_statement_allowance_at_best(
+		&rpc,
+		&[0x22; 32],
+		Duration::from_secs(60),
+		Duration::from_millis(1),
+	))
+	.unwrap();
+
+	assert_eq!(best, "0xb2");
+	let read_at = |block: &str| {
+		("state_getStorage".to_string(), format!(r#"["{ALLOWANCE_KEY_0X22}","{block}"]"#))
+	};
+	let best_head = ("chain_getBlockHash".to_string(), "[]".to_string());
+	assert_eq!(scripted.calls(), [best_head.clone(), read_at("0xa1"), best_head, read_at("0xb2")]);
+}
+
+#[test]
+fn statement_allowance_missing_at_best_times_out() {
+	let scripted = ScriptedRpc::new([r#""0xa1""#, "null"]);
+	let rpc = RpcClient::new(HostRpcClient::new(scripted));
+
+	let result = futures::executor::block_on(wait_statement_allowance_at_best(
+		&rpc,
+		&[0x22; 32],
+		Duration::ZERO,
+		Duration::from_millis(1),
+	));
+
+	assert!(matches!(result.unwrap_err(), StatementAllowanceError::StatementAllowanceTimeout));
+}
+
 #[test]
 fn banned_submissions_are_not_classified_as_duplicates() {
 	let classified: Vec<bool> = [

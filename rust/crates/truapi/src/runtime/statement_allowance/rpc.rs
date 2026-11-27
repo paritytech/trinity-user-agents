@@ -52,6 +52,9 @@ pub enum RpcError {
 	/// `chain_getFinalizedHead` did not return a hash string.
 	#[error("chain_getFinalizedHead returned non-string")]
 	FinalizedHeadNotString,
+	/// `chain_getBlockHash` without a height did not return a hash string.
+	#[error("chain_getBlockHash returned non-string")]
+	BestHeadNotString,
 	/// Extrinsic status subscription ended before inclusion.
 	#[error("author_submitAndWatchExtrinsic subscription ended")]
 	SubmitSubscriptionEnded,
@@ -193,6 +196,15 @@ impl RpcClient {
 			.as_str()
 			.map(str::to_owned)
 			.ok_or_else(|| RpcError::FinalizedHeadNotString.into())
+	}
+
+	/// `chain_getBlockHash` without a height -> hash of the node's best block.
+	pub async fn best_head(&self) -> Result<String, StatementAllowanceError> {
+		let value = self.call("chain_getBlockHash", json!([])).await?;
+		value
+			.as_str()
+			.map(str::to_owned)
+			.ok_or_else(|| RpcError::BestHeadNotString.into())
 	}
 
 	/// Submit an extrinsic and wait for `inBlock` or `finalized`; returns the block hash.

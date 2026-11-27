@@ -101,6 +101,9 @@ pub enum StatementAllowanceError {
 	/// Bulletin allowance polling timed out.
 	#[error("timed out waiting for Bulletin authorization")]
 	BulletinAuthorizationTimeout,
+	/// The statement allowance was not readable at the node's best block in time.
+	#[error("timed out waiting for the statement allowance at the node's best block")]
+	StatementAllowanceTimeout,
 	/// The extended Bulletin authorization still cannot hold the payload.
 	#[error("Bulletin authorization holds {remained_size} bytes after extension, {size} needed")]
 	BulletinAuthorizationTooSmall {
@@ -1000,6 +1003,42 @@ pub async fn register_statement_account_pooled(
 	})
 }
 
+/// Returns the hash of the first best block of `rpc`'s node at which `target`
+/// has a statement allowance, the state its statement store checks a
+/// submitted statement against; polls every `poll_interval`.
+///
+/// The block a registration is included in can be on a fork the node has not
+/// made best, and until it does the node rejects `target`'s statements. Fails
+/// with [`StatementAllowanceError::StatementAllowanceTimeout`] after `timeout`.
+pub async fn wait_statement_allowance_at_best(
+	rpc: &RpcClient,
+	target: &[u8; 32],
+	timeout: Duration,
+	poll_interval: Duration,
+) -> Result<String, StatementAllowanceError> {
+	let started = Instant::now();
+	let key = statement_allowance_key(target);
+	loop {
+		let best = rpc.best_head().await?;
+		if rpc.get_storage_at(&key, &best).await?.is_some() {
+			return Ok(best);
+		}
+		wait_before_next_poll(
+			started,
+			timeout,
+			poll_interval,
+			StatementAllowanceError::StatementAllowanceTimeout,
+		)
+		.await?;
+	}
+}
+
+/// `sp_statement_store::statement_allowance_key`: where the statement store
+/// reads `account`'s allowance.
+fn statement_allowance_key(account: &[u8; 32]) -> Vec<u8> {
+	[b":statement_allowance:".as_slice(), account].concat()
+}
+
 /// Claim long-term Bulletin storage authorization for `target`, proving
 /// membership in the already-located `ring`, at People-chain `period`.
 pub async fn claim_long_term_storage(
@@ -1100,7 +1139,13 @@ pub async fn wait_bulletin_authorization(
 	let baseline = current.filter(|info| info.available());
 	loop {
 		let Some(info) = fetch_bulletin_allowance(rpc, target).await? else {
-			wait_before_next_bulletin_authorization_poll(started, timeout).await?;
+			wait_before_next_poll(
+				started,
+				timeout,
+				BULLETIN_POLL_INTERVAL,
+				StatementAllowanceError::BulletinAuthorizationTimeout,
+			)
+			.await?;
 			continue;
 		};
 		if authorization_refreshed(info, baseline) {
@@ -1112,18 +1157,28 @@ pub async fn wait_bulletin_authorization(
 			}
 			return Ok(info);
 		}
-		wait_before_next_bulletin_authorization_poll(started, timeout).await?;
+		wait_before_next_poll(
+			started,
+			timeout,
+			BULLETIN_POLL_INTERVAL,
+			StatementAllowanceError::BulletinAuthorizationTimeout,
+		)
+		.await?;
 	}
 }
 
-async fn wait_before_next_bulletin_authorization_poll(
+const BULLETIN_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+async fn wait_before_next_poll(
 	started: Instant,
 	timeout: Duration,
+	poll_interval: Duration,
+	timeout_error: StatementAllowanceError,
 ) -> Result<(), StatementAllowanceError> {
 	let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
-		return Err(StatementAllowanceError::BulletinAuthorizationTimeout);
+		return Err(timeout_error);
 	};
-	let delay = futures_timer::Delay::new(remaining.min(Duration::from_secs(2))).fuse();
+	let delay = futures_timer::Delay::new(remaining.min(poll_interval)).fuse();
 	futures::pin_mut!(delay);
 	delay.await;
 	Ok(())
