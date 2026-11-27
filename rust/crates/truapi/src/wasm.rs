@@ -1260,27 +1260,26 @@ impl WasmPairingHostRuntime {
 		worker_exited(&self.runtime, &product_id);
 	}
 
-	/// Whether `productId` is a first-party product the host grants every
-	/// `RemotePermission` without prompting: a trusted label under an id this
-	/// host's stack serves.
+	/// Whether the host grants `productId` every `RemotePermission` without
+	/// prompting, under an id this host's stack serves: a privileged product,
+	/// or a funding provider the host lists, while it lists it.
 	///
-	/// Trusted products bypass recorded permissions and permission prompts.
-	/// Device permissions still need the OS grant. Hosts mediating product
-	/// network access can use this check before storage. An id that does not
-	/// normalize is never trusted.
+	/// Trusted products bypass recorded remote permissions and their prompts.
+	/// Hosts mediating product network access can use this check before
+	/// storage. An id that does not normalize is never trusted.
 	#[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
 	pub fn has_trusted_remote_permissions(&self, raw_product_id: String) -> bool {
-		trusts_raw_product_id(self.runtime.stack(), &raw_product_id)
+		has_trusted_remote_permissions(&self.runtime, &raw_product_id)
 	}
 }
 
-/// Whether `stack` trusts the product `raw_product_id` names, and `false` for
-/// an id that does not normalize, so an unknown spelling is never read as
-/// trusted.
-fn trusts_raw_product_id(stack: &Stack, raw_product_id: &str) -> bool {
+/// Whether `runtime` gives the product `raw_product_id` names every
+/// `RemotePermission` without a prompt, and `false` for an id that does not
+/// normalize, so an unknown spelling is never read as trusted.
+fn has_trusted_remote_permissions<Role>(runtime: &HostRuntime<Role>, raw_product_id: &str) -> bool {
 	raw_product_id
 		.parse::<ProductId>()
-		.is_ok_and(|product_id| stack.trusts(&product_id))
+		.is_ok_and(|product_id| runtime.has_trusted_remote_permissions(&product_id))
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1545,17 +1544,16 @@ impl WasmSigningHostRuntime {
 		worker_exited(&self.runtime, &product_id);
 	}
 
-	/// Whether `productId` is a first-party product the host grants every
-	/// `RemotePermission` without prompting: a trusted label under an id this
-	/// host's stack serves.
+	/// Whether the host grants `productId` every `RemotePermission` without
+	/// prompting, under an id this host's stack serves: a privileged product,
+	/// or a funding provider the host lists, while it lists it.
 	///
-	/// Trusted products bypass recorded permissions and permission prompts.
-	/// Device permissions still need the OS grant. Hosts mediating product
-	/// network access can use this check before storage. An id that does not
-	/// normalize is never trusted.
+	/// Trusted products bypass recorded remote permissions and their prompts.
+	/// Hosts mediating product network access can use this check before
+	/// storage. An id that does not normalize is never trusted.
 	#[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
 	pub fn has_trusted_remote_permissions(&self, raw_product_id: String) -> bool {
-		trusts_raw_product_id(self.runtime.stack(), &raw_product_id)
+		has_trusted_remote_permissions(&self.runtime, &raw_product_id)
 	}
 }
 

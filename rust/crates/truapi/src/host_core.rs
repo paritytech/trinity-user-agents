@@ -318,6 +318,13 @@ impl<Role> HostRuntime<Role> {
 		self.services.stack()
 	}
 
+	/// Whether `product_id` gets every `RemotePermission` without a prompt,
+	/// under an id the stack serves: a privileged product, or a funding
+	/// provider the host lists, for as long as it lists it.
+	pub fn has_trusted_remote_permissions(&self, product_id: &ProductId) -> bool {
+		self.services.has_trusted_remote_permissions(product_id)
+	}
+
 	/// Reference counts per product worker, shared by every connection of
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {

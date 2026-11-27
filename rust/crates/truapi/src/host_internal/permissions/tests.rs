@@ -1145,6 +1145,59 @@ fn an_untrusted_product_still_prompts_for_every_remote_permission() {
 	assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), permissions.len());
 }
 
+/// A product trusted for remote permissions alone, such as a funding provider
+/// the host lists, gets every remote permission the way a privileged product
+/// does, stored denials included, and nothing else: device permissions,
+/// identity disclosure and account access are asked and stored as for any
+/// product.
+#[test]
+fn trust_for_remote_permissions_covers_remote_permissions_alone() {
+	let storage = MemStorage::default();
+	let prompt = ScriptedPrompt::new(vec![true], vec![]);
+	let service = PermissionsService::new(&storage, &prompt, &PRODUCT, &STACK)
+		.with_trusted_remote_permissions(true);
+	futures::executor::block_on(service.set_authorization_status(
+		&PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit)),
+		PermissionAuthorizationStatus::Denied,
+	))
+	.unwrap();
+	let status =
+		|request| futures::executor::block_on(service.authorization_status(&request)).unwrap();
+
+	let remote_statuses: Vec<_> = every_remote_permission()
+		.into_iter()
+		.map(|permission| {
+			futures::executor::block_on(service.check_or_prompt_remote(remote(permission)))
+				.unwrap()
+		})
+		.collect();
+	assert_eq!(
+		(
+			remote_statuses,
+			[
+				status(PermissionAuthorizationRequest::IdentityDisclosure),
+				status(PermissionAuthorizationRequest::AccountAccess {
+					target_product_id: ProductId::for_test("other.dot"),
+				}),
+				status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
+			],
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			prompt.remote_calls.load(Ordering::SeqCst),
+			prompt.device_calls.load(Ordering::SeqCst),
+		),
+		(
+			vec![PermissionAuthorizationStatus::Authorized; every_remote_permission().len()],
+			[PermissionAuthorizationStatus::NotDetermined; 3],
+			PermissionAuthorizationStatus::Authorized,
+			0,
+			1,
+		)
+	);
+}
+
 #[test]
 fn a_trusted_product_holds_every_device_permission_without_prompting() {
 	let storage = MemStorage::default();

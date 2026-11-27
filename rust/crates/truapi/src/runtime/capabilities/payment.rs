@@ -47,10 +47,10 @@ use crate::{
 	host_logic::funding::StartRecord,
 	platform::{
 		ExecutableKind, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-		ProductContext, Stack,
+		ProductContext,
 	},
 	runtime::{
-		AccountHolder, ProductRuntimeHost,
+		AccountHolder, ProductRuntimeHost, RuntimeServices,
 		funding::{Claim, FundsAsked, engine_holds},
 		payment_id::host_payment_id,
 		versioning::version,
@@ -450,7 +450,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			status: self.connection.permission_status.clone(),
 			temporary: self.connection.temporary_permissions.clone(),
 			product: self.connection.product.clone(),
-			stack: self.connection.services.stack().clone(),
+			services: self.connection.services.clone(),
 		}
 	}
 
@@ -574,7 +574,7 @@ struct BalanceAccessCheck {
 	status: Option<Arc<dyn PermissionStatusHost>>,
 	temporary: Arc<TemporaryPermissions>,
 	product: ProductContext,
-	stack: Stack,
+	services: Arc<RuntimeServices>,
 }
 
 impl BalanceAccessCheck {
@@ -585,7 +585,10 @@ impl BalanceAccessCheck {
 				self.platform.as_ref(),
 				self.platform.as_ref(),
 				&self.product,
-				&self.stack,
+				self.services.stack(),
+			)
+			.with_trusted_remote_permissions(
+				self.services.has_trusted_remote_permissions(&self.product.product_id),
 			)
 			.with_status_host(self.status.as_deref())
 			.with_temporary_permissions(self.temporary.clone())

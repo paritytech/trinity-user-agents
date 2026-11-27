@@ -483,6 +483,9 @@ impl ProductConnection {
 			&self.product,
 			self.services.stack(),
 		)
+		.with_trusted_remote_permissions(
+			self.services.has_trusted_remote_permissions(&self.product.product_id),
+		)
 		.with_status_host(self.permission_status.as_deref())
 		.with_temporary_permissions(self.temporary_permissions.clone())
 	}

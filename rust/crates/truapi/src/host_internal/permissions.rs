@@ -32,7 +32,10 @@
 //!
 //! A [`crate::platform::PrivilegedProduct`] gets remote permissions, device
 //! permissions, identity disclosure and account access without a prompt or a
-//! stored record. Device permissions still need the OS grant.
+//! stored record. Device permissions still need the OS grant. A funding
+//! provider the host lists gets remote permissions that way and nothing else,
+//! for as long as it is listed
+//! ([`PermissionsService::with_trusted_remote_permissions`]).
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -169,8 +172,12 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
 	/// Live OS permission state, when the host serves that capability. Absent
 	/// leaves the stored decision governing on its own.
 	status: Option<&'a dyn PermissionStatusHost>,
-	/// Whether permissions are granted without a prompt or a stored record.
-	trusted_product: bool,
+	/// Whether the product is privileged: every permission is granted without
+	/// a prompt or a stored record.
+	privileged_product: bool,
+	/// Whether remote permissions are granted without a prompt or a stored
+	/// record. Always set for a privileged product.
+	trusted_remote_permissions: bool,
 	/// One-use grants remain local to the execution that requested them.
 	temporary_permissions: Arc<TemporaryPermissions>,
 }
@@ -178,22 +185,33 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
 impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a, S, P> {
 	/// Construct a service backed by the given storage + prompt callbacks.
 	///
-	/// The product is trusted only when `stack` trusts it, so a trusted label
-	/// under an id the stack does not serve reads its stored decisions like
-	/// any other product.
+	/// The product is privileged only when `stack` trusts it, so a trusted
+	/// label under an id the stack does not serve reads its stored decisions
+	/// like any other product.
 	///
 	/// Device grants resolve without an OS check by default. Use
 	/// [`Self::with_status_host`] on paths that enforce a device capability, so
 	/// a grant the OS has since withdrawn stops reading as usable.
 	pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext, stack: &Stack) -> Self {
+		let privileged_product = stack.trusts(&product.product_id);
 		Self {
 			storage,
 			prompt,
 			product,
 			status: None,
-			trusted_product: stack.trusts(&product.product_id),
+			privileged_product,
+			trusted_remote_permissions: privileged_product,
 			temporary_permissions: Arc::default(),
 		}
+	}
+
+	/// Also grant every remote permission without a prompt or a stored record
+	/// when `trusted`, as for a privileged product; stored decisions don't
+	/// change it. Device permissions, identity disclosure and account access
+	/// are unaffected.
+	pub fn with_trusted_remote_permissions(mut self, trusted: bool) -> Self {
+		self.trusted_remote_permissions |= trusted;
+		self
 	}
 
 	pub fn with_temporary_permissions(mut self, permissions: Arc<TemporaryPermissions>) -> Self {
@@ -238,6 +256,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		if self.os_refuses(*permission).await {
 			return Ok(PermissionAuthorizationStatus::Denied);
 		}
+		if self.privileged_product {
+			return Ok(PermissionAuthorizationStatus::Authorized);
+		}
 		let key = CoreStorageKey::device_permission_authorization(self.product_id(), permission);
 		self.cached_authorization(&key, false).await
 	}
@@ -252,6 +273,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		request: &RemotePermissionRequest,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
 		let Some(domains) = requested_domains(request) else {
+			if self.trusted_remote_permissions {
+				return Ok(PermissionAuthorizationStatus::Authorized);
+			}
 			let key = CoreStorageKey::remote_permission_authorization(self.product_id(), request);
 			return self.cached_authorization(&key, false).await;
 		};
@@ -276,7 +300,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		{
 			return Ok((BundleResolution::Denied, Vec::new()));
 		}
-		if self.trusted_product {
+		if self.trusted_remote_permissions {
 			return Ok((BundleResolution::Authorized, Vec::new()));
 		}
 		let mut undecided = Vec::new();
@@ -351,9 +375,6 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		key: &CoreStorageKey,
 		consume: bool,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product {
-			return Ok(PermissionAuthorizationStatus::Authorized);
-		}
 		if let Some(stored) = peek_stored(self.storage, key.clone()).await? {
 			return Ok(stored.into());
 		}
@@ -370,7 +391,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		&self,
 		request: &PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product &&
+		if self.privileged_product &&
 			matches!(
 				request,
 				PermissionAuthorizationRequest::IdentityDisclosure |
@@ -521,6 +542,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		if self.os_refuses(permission).await {
 			return Ok(PermissionAuthorizationStatus::Denied);
 		}
+		if self.privileged_product {
+			return Ok(PermissionAuthorizationStatus::Authorized);
+		}
 		match self.cached_authorization(&key, consume).await? {
 			PermissionAuthorizationStatus::NotDetermined => {},
 			decided => return Ok(decided),
@@ -562,7 +586,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		request: RemotePermissionRequest,
 		consume: bool,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product {
+		if self.trusted_remote_permissions {
 			return self.peek_remote(&request).await;
 		}
 		let _guard = self.temporary_permissions.authorization.lock().await;

@@ -515,10 +515,13 @@ impl Stack {
 		})
 	}
 
-	/// Whether this stack gives `product_id` every `RemotePermission` without
-	/// a prompt.
+	/// Whether this stack trusts `product_id` as part of the host: a
+	/// privileged product under an id it serves. It gets every permission
+	/// without a prompt, and first-party standing for consent and the
+	/// `Context` manifest scope.
 	///
-	/// It does for a trusted label under an id it serves.
+	/// A funding provider the host lists gets remote permissions without a
+	/// prompt too, but is not trusted here.
 	pub fn trusts(&self, product_id: &ProductId) -> bool {
 		self.serves(product_id) && product_id.has_trusted_remote_permissions()
 	}

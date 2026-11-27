@@ -68,6 +68,13 @@ AutoSigning proceed without approval. Legacy-account signing still asks the user
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
 transaction's signing payload.
 
+A funding provider the host lists (`RuntimeServices::funding_providers`) gets
+every `RemotePermission` without a prompt or a recorded decision, while it is
+listed and under an id the stack serves
+(`RuntimeServices::has_trusted_remote_permissions`). It is otherwise an
+ordinary product: device permissions, account access, signing and the `Context`
+manifest scope follow `Stack::trusts`, which covers privileged products only.
+
 ```text
 Product app
 (product_id = "my-product")

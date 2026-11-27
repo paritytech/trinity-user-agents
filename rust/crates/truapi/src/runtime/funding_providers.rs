@@ -256,6 +256,12 @@ impl FundingProviders {
 		lock(&self.entries).is_empty()
 	}
 
+	/// Whether the host lists `product_id` among its providers, whatever its
+	/// manifest serves.
+	pub fn lists(&self, product_id: &ProductId) -> bool {
+		lock(&self.entries).iter().any(|entry| entry.product_id == *product_id)
+	}
+
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
 	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
 		self.quote_targets().contains(provider_id)

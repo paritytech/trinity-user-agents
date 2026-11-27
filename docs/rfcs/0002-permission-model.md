@@ -20,6 +20,9 @@ owner: "@johnthecat"
 > **NOTE (2026-10-20): first-party products get device permissions without a prompt.**
 > Products in `truapi::platform::PrivilegedProduct` get device permissions without a prompt. They still need the OS grant. Stored device decisions are not read or written for them.
 
+> **NOTE (2026-11-27): listed funding providers hold remote permissions without a prompt.**
+> A funding provider the host lists in its funding configuration holds every `RemotePermission` without a prompt, as a privileged product does, under an id the host's stack serves. Stored remote decisions are not read or written for it. This lasts only while the host lists it: a provider the configuration drops is asked again like any other product. Nothing else extends to it: device permissions, identity disclosure, cross-product account access, signing reviews and the `Context` manifest scope treat it as any other product.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.
