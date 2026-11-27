@@ -150,17 +150,6 @@ pub enum SessionClearTarget {
 	All,
 }
 
-impl SessionClearTarget {
-	/// The lite username of the default session's records the clear removes:
-	/// the session's name, or `None` for every record of the network.
-	fn lite_username(&self) -> Option<&str> {
-		match self {
-			Self::Named(name) => Some(name),
-			Self::All => None,
-		}
-	}
-}
-
 /// A clear whose account store locks are held, made by
 /// [`SessionCatalog::prepare_clear`] and carried out by
 /// [`SessionCatalog::clear`].
@@ -514,12 +503,14 @@ impl SessionCatalog {
 	/// Stop a running host on one of these sessions first. Nothing outside
 	/// this stack's directory is removed. A session's accounts in the default
 	/// session's store go before its directory, so a clear that stops halfway
-	/// still lists the session and can be run again.
+	/// still lists the session and can be run again. Clearing every session
+	/// removes that store whole and first, for the same reason, so it works
+	/// on a store that no longer decodes.
 	pub fn clear(&self, clear: PreparedClear) -> Result<Vec<String>> {
 		let PreparedClear { target, names, default_store, _session_stores } = clear;
-		default_store.remove_managed_accounts(&self.network_id, target.lite_username())?;
 		match &target {
 			SessionClearTarget::Named(name) => {
+				default_store.remove_managed_accounts(&self.network_id, name)?;
 				let was_current = matches!(
 					self.current_session()?,
 					CurrentSession::Pointed(current) if current == *name
@@ -530,10 +521,10 @@ impl SessionCatalog {
 				}
 			},
 			SessionClearTarget::All => {
+				remove_dir_if_exists(&self.role_path)?;
 				for name in &names {
 					self.remove_named_data(name)?;
 				}
-				remove_dir_if_exists(&self.role_path)?;
 			},
 		}
 		Ok(names)

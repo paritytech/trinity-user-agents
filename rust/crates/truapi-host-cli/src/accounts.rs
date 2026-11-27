@@ -205,23 +205,19 @@ impl AccountStoreLock {
 		Ok(Self { file, base_path: base_path.to_path_buf() })
 	}
 
-	/// Remove cached local accounts owned by one network and, optionally, one
-	/// durable Lite username, from the store this lock guards. Records for
-	/// other networks are always preserved.
-	pub fn remove_managed_accounts(
-		&self,
-		network_id: &str,
-		lite_username: Option<&str>,
-	) -> Result<usize> {
+	/// Remove cached local accounts owned by one network and one durable Lite
+	/// username from the store this lock guards. Records for other networks
+	/// are always preserved.
+	pub fn remove_managed_accounts(&self, network_id: &str, lite_username: &str) -> Result<usize> {
 		if !self.base_path.join(ACCOUNT_STORE_FILE).is_file() {
 			return Ok(0);
 		}
 		let mut store = AccountStore::load(&self.base_path)?;
 		let before = store.data.accounts.len();
-		store.data.accounts.retain(|record| {
-			record.network != network_id ||
-				lite_username.is_some_and(|username| record.lite_username != username)
-		});
+		store
+			.data
+			.accounts
+			.retain(|record| record.network != network_id || record.lite_username != lite_username);
 		let removed = before - store.data.accounts.len();
 		if removed > 0 {
 			store.save()?;
