@@ -6,11 +6,18 @@ final class FundingProgressInteractor: FundingEntryInteractor, FundingProgressIn
     weak var presenter: FundingProgressInteractorOutputProtocol?
 
     private let clock: any Clock<Duration>
+    private let dateProvider: CurrentDateProviding
     private var longerAtMs: UInt64?
     private var longerTask: Task<Void, Never>?
 
-    init(service: FundingServiceProtocol, entryId: String, clock: any Clock<Duration> = ContinuousClock()) {
+    init(
+        service: FundingServiceProtocol,
+        entryId: String,
+        clock: any Clock<Duration> = ContinuousClock(),
+        dateProvider: CurrentDateProviding = NowDateProvider()
+    ) {
         self.clock = clock
+        self.dateProvider = dateProvider
         super.init(service: service, entryId: entryId)
     }
 
@@ -25,7 +32,7 @@ final class FundingProgressInteractor: FundingEntryInteractor, FundingProgressIn
         longerTask?.cancel()
         guard let longerAtMs else { return }
 
-        let wait = Date(milliseconds: longerAtMs).timeIntervalSinceNow
+        let wait = Date(milliseconds: longerAtMs).timeIntervalSince(dateProvider.now)
         longerTask = Task { [weak self, clock] in
             if wait > 0 {
                 guard await (try? clock.sleep(for: .seconds(wait))) != nil else { return }
