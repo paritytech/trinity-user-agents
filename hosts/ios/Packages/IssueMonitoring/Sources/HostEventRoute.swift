@@ -31,8 +31,8 @@ extension HostEvent {
     private var logAttributes: [String: HostEventValue] {
         var attributes = tags.mapValues(HostEventValue.string)
         attributes.merge(extras) { _, extra in extra }
-        attributes["tag"] = .string(Self.logTag)
-        attributes["event.name"] = .string(name)
+        attributes[HostLogFilter.tagAttribute] = .string(Self.logTag)
+        attributes[HostLogFilter.eventNameAttribute] = .string(name)
         return attributes
     }
 }
