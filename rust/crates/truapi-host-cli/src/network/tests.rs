@@ -164,3 +164,18 @@ fn a_polkadot_fork_starts_the_core() {
 		Ok(polkadot_people.to_string())
 	);
 }
+
+/// The core orders a stack's runs by the descriptor's `sequence`, and keeps
+/// what a later run stored. Only a stack signed under its key makes its
+/// `sequence` grow, so only such a stack passes it on. A stack without a key
+/// passes 0: published again with a lower `sequence`, it must not find the
+/// values its earlier copy stored locked as a later run's.
+#[test]
+fn only_a_keyed_stack_orders_the_cores_runs() {
+	let stack = Network::PaseoNextV2.bundled_stack(crate::chain::ChainBackend::Rpc);
+	let sequence = stack.descriptor().sequence;
+	let keyed = stack.core_stack().expect("the bundled stack runs").sequence();
+	let keyless = stack.without_key().core_stack().expect("the bundled stack runs").sequence();
+
+	assert_eq!((keyed, keyless), (sequence, 0));
+}

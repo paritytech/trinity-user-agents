@@ -17,6 +17,7 @@ mod records;
 mod refresh;
 mod source;
 
+use parity_scale_codec::{Decode, Encode};
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
@@ -179,7 +180,8 @@ impl ReservedValuesPolicy {
 
 /// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
 /// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
-/// and the Asset Hub contracts the core reads.
+/// the Asset Hub contracts the core reads, and the `sequence` of the
+/// descriptor it was read from.
 ///
 /// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
 /// hands out also carries the checks of its chains, which equality ignores.
@@ -191,6 +193,7 @@ pub struct Stack {
 	tld: String,
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
+	sequence: u32,
 	#[debug(skip)]
 	#[partial_eq(skip)]
 	checks: Option<StackChecks>,
@@ -210,6 +213,130 @@ pub struct StackIdentity {
 	/// The descriptor's `generation`, which changes whenever the stack
 	/// restarts its chains, as after a wipe. Must not be empty.
 	pub generation: String,
+}
+
+/// One run of a stack's chains, from one wipe to the next, with the stack's
+/// id and the `sequence` of the descriptor a runtime in it started from.
+///
+/// A run is the descriptor's `generation` and the genesis hashes of the chains
+/// the core reads. A wipe changes `generation`, and the genesis hashes too
+/// unless the chains restart from the same spec. Both are compared, so a wipe
+/// is noticed when the operator changed either. The relay chain is left out:
+/// the core never reads it, so adding or removing it is not a wipe.
+///
+/// Two values are the same run when they name the same stack and those
+/// match, whatever their `sequence`. The `sequence` orders the runs of one
+/// stack: a signed stack's `sequence` only grows, so a run it started from a
+/// higher one came later. What the core stored in an earlier run is stale.
+/// What a later run of the same stack stored, which a runtime finds when it
+/// started from an older copy of the descriptor, is left as it is. Another
+/// stack's `sequence` says nothing about this one's, so what another stack
+/// stored is from another run, and stale.
+#[derive(Encode, Decode)]
+pub struct StackRun {
+	stack_id: String,
+	chains: RunChains,
+	sequence: u32,
+}
+
+/// What tells one run of a stack's chains from another.
+#[derive(PartialEq, Encode, Decode)]
+struct RunChains {
+	generation: String,
+	asset_hub: [u8; 32],
+	people: [u8; 32],
+	bulletin: [u8; 32],
+}
+
+impl PartialEq for StackRun {
+	fn eq(&self, other: &Self) -> bool {
+		self.stack_id == other.stack_id && self.chains == other.chains
+	}
+}
+
+/// The byte that leads a value [`StackRun::stamp`] wrote, ahead of the run.
+/// A value led by another byte, or too short to hold a run after it, reads as
+/// stored without a run.
+const STAMP_TAG: u8 = 2;
+
+/// What a value [`StackRun::stamp`] may have written holds for a run.
+pub enum Stamped<'a> {
+	/// This run stamped the value.
+	ThisRun(&'a [u8]),
+	/// A later run of the same stack stamped it. It reads as nothing, and is
+	/// neither cleared nor written over.
+	LaterRun,
+	/// Another run that did not come later stamped it, another stack did, or
+	/// nothing this core reads did. It reads as nothing and is replaced.
+	Stale,
+}
+
+impl StackRun {
+	/// `value` led by this run, for a value read from the chains that is
+	/// stored. [`Self::read`] gives it back only in the same run.
+	pub fn stamp(&self, value: &[u8]) -> Vec<u8> {
+		let mut stamped = vec![STAMP_TAG];
+		self.encode_to(&mut stamped);
+		stamped.extend_from_slice(value);
+		stamped
+	}
+
+	/// What `stamped` holds for this run.
+	pub fn read<'a>(&self, stamped: &'a [u8]) -> Stamped<'a> {
+		match Self::split_stamped(stamped) {
+			Some((run, value)) if run == *self => Stamped::ThisRun(value),
+			Some((run, _)) if run.is_later_than(self) => Stamped::LaterRun,
+			_ => Stamped::Stale,
+		}
+	}
+
+	/// The value [`Self::stamp`] stored in `stamped` in this run, or `None`
+	/// when another run stamped it or nothing did.
+	pub fn read_stamped<'a>(&self, stamped: &'a [u8]) -> Option<&'a [u8]> {
+		match self.read(stamped) {
+			Stamped::ThisRun(value) => Some(value),
+			Stamped::LaterRun | Stamped::Stale => None,
+		}
+	}
+
+	/// Whether `stamped` holds a value a later run stamped, which this run
+	/// leaves as it is.
+	pub fn later_run_stamped(&self, stamped: &[u8]) -> bool {
+		matches!(self.read(stamped), Stamped::LaterRun)
+	}
+
+	/// The run that stamped `stamped` and the value it leads, or `None` when
+	/// `stamped` carries no stamp.
+	pub fn split_stamped(stamped: &[u8]) -> Option<(Self, &[u8])> {
+		let mut value = stamped.strip_prefix(&[STAMP_TAG])?;
+		Some((Self::decode(&mut value).ok()?, value))
+	}
+
+	/// Whether this is another run of `other`'s stack that came after it.
+	pub fn is_later_than(&self, other: &Self) -> bool {
+		self.stack_id == other.stack_id && *self != *other && self.sequence > other.sequence
+	}
+
+	/// Whether one of the chains of this run has `genesis_hash`.
+	fn has_chain(&self, genesis_hash: [u8; 32]) -> bool {
+		let RunChains { asset_hub, people, bulletin, .. } = self.chains;
+		[asset_hub, people, bulletin].contains(&genesis_hash)
+	}
+
+	/// Whether what `earlier` stored about `chain` is stale in this run.
+	///
+	/// It is when `chain` is a chain of `earlier` and either the generation
+	/// changed, which restarts every chain, or this run no longer has the
+	/// chain. A chain `earlier` did not have is never lost, since the run
+	/// says nothing about it.
+	///
+	/// This is for a value that names its chain. [`Self::read_stamped`] gives
+	/// up a value when anything in the run changed. Here a chain restarted
+	/// under the same generation leaves what was stored about the others.
+	pub fn lost_since(&self, earlier: &Self, chain: [u8; 32]) -> bool {
+		earlier.has_chain(chain) &&
+			(earlier.chains.generation != self.chains.generation || !self.has_chain(chain))
+	}
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -364,6 +491,7 @@ impl Stack {
 			descriptor.network.clone(),
 			descriptor.tld.clone(),
 			chains,
+			descriptor.sequence,
 			reserved_values,
 		)?;
 		Ok(Self { account_data_store: account_data_store_in(descriptor), ..stack })
@@ -371,6 +499,10 @@ impl Stack {
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's. It names no contracts.
+	/// `sequence` is that of the descriptor the host read the stack from, and
+	/// orders the stack's runs, as [`StackRun`] says. Only a stack whose id is
+	/// its key makes its `sequence` grow, so a host passes `0` for any other
+	/// stack, and for one with no descriptor, such as a test host's.
 	///
 	/// Applies the same policy, TLD and reserved-value rules as
 	/// [`Self::bundled`], and refuses an empty id or generation and an
@@ -380,10 +512,11 @@ impl Stack {
 		network: String,
 		tld: String,
 		chains: StackChains,
+		sequence: u32,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		reserved_values.refuse_extras_that_reserve_nothing()?;
-		Self::from_chains(identity, network, tld, chains, reserved_values)
+		Self::from_chains(identity, network, tld, chains, sequence, reserved_values)
 	}
 
 	/// Checks a stack's identity, TLD and chains under a policy already
@@ -393,6 +526,7 @@ impl Stack {
 		network: String,
 		tld: String,
 		chains: StackChains,
+		sequence: u32,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let fields = [("id", &identity.id), ("generation", &identity.generation)];
@@ -414,7 +548,15 @@ impl Stack {
 		}
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
-		Ok(Self { identity, network, tld, chains, account_data_store: None, checks: None })
+		Ok(Self {
+			identity,
+			network,
+			tld,
+			chains,
+			account_data_store: None,
+			sequence,
+			checks: None,
+		})
 	}
 
 	/// The stack's identity. See [`StackIdentity::id`].
@@ -422,9 +564,29 @@ impl Stack {
 		&self.identity.id
 	}
 
-	/// The run of the stack's chains. See [`StackIdentity::generation`].
+	/// The descriptor's `generation`. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
+	}
+
+	/// The `sequence` of the descriptor the stack was read from.
+	pub fn sequence(&self) -> u32 {
+		self.sequence
+	}
+
+	/// The run the stack's chains are in, started from this descriptor.
+	pub fn run(&self) -> StackRun {
+		let StackChains { asset_hub, people, bulletin, .. } = self.chains;
+		let generation = self.identity.generation.clone();
+		let chains = RunChains { generation, asset_hub, people, bulletin };
+		StackRun { stack_id: self.identity.id.clone(), chains, sequence: self.sequence }
+	}
+
+	/// Whether the core can run `other` without starting again: it is this
+	/// stack in everything the core builds its services from, and only the
+	/// descriptor's `sequence` may differ.
+	pub fn runs_as(&self, other: &Self) -> bool {
+		*self == Self { sequence: self.sequence, ..other.clone() }
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

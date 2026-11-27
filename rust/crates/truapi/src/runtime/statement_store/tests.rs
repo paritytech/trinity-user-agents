@@ -13,8 +13,8 @@ use crate::{
 	},
 	platform::{CoreStorageKey, ProductContext, ProductId},
 	test_support::{
-		StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
-		sso_session_info, sso_success_response_script, statement, stub_platform,
+		StubPlatform, account_id, dot_test_stack, new_statements_frame, runtime_config,
+		signed_statement, sso_session_info, sso_success_response_script, statement, stub_platform,
 		submitted_remote_message, subscribe_ack_frame,
 	},
 };
@@ -44,14 +44,15 @@ fn assert_sr25519_signature(signer: [u8; 32], signature: [u8; 64], payload: &[u8
 /// Seed `owner`'s manifest cache so its `context` grant to `grantee`
 /// resolves without a chain.
 fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
-	let entry = crate::runtime::product_manifest::CachedManifest {
-		fetched_at_secs: crate::unix_time::current_unix_secs(),
-		json: Some(format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
-	};
+	let entry = crate::runtime::product_manifest::encode_cached_root_manifest(
+		&dot_test_stack().run(),
+		Some(&format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
+		crate::unix_time::current_unix_secs(),
+	);
 	futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 		platform,
 		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
+		entry,
 	))
 	.expect("stub core storage accepts the entry");
 }
@@ -75,7 +76,7 @@ fn signing_host_runtime_on(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::dot_test_stack(),
+		dot_test_stack(),
 		Spawner::for_test(),
 	);
 	let signing_host = SigningHost::new(services.clone());

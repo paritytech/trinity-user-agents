@@ -164,15 +164,15 @@ fn test_restart_hint_by_copy() {
 	let unreachable = BuiltInOrigin { copy: BuiltInCopy::Unreachable, ..published };
 	assert_eq!(
 		unreachable.restart_hint(),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json could not be fetched"
+		"the previewnet stack restarted from genesis after the descriptor in use was published, \
+		 and the published copy at https://stack.example/s.json could not be fetched"
 	);
 	let rejected = BuiltInOrigin { copy: BuiltInCopy::Rejected, ..unreachable };
 	assert_eq!(
 		rejected.restart_hint(),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json was rejected, as the \
-		 warning above reports"
+		"the previewnet stack restarted from genesis after the descriptor in use was published, \
+		 and the published copy at https://stack.example/s.json was rejected, as the warning \
+		 above reports"
 	);
 }
 
@@ -203,7 +203,8 @@ fn refresh_on(
 	bundled: &[u8],
 	fetched: Fetched,
 ) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, chain_access)
+	let name = "published test stack descriptor";
+	refresh_stack("test", name, &test_pointer(), bundled, fetched, NOW, chain_access)
 }
 
 const NOW: i64 = 1_800_000_000;
@@ -394,6 +395,7 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
+			bundled.sequence(),
 			&allowed,
 		);
 
@@ -419,4 +421,354 @@ fn a_built_in_stack_named_by_its_url_keeps_its_key() {
 	}
 	assert_eq!(built_in_key("https://stack.test.invalid/other.json"), None);
 	assert_eq!(built_in_key("./stack.json"), None);
+}
+
+/// After a wipe the bundled copy names chains that are gone. A host that ran
+/// on the published descriptor since must not go back to them when that
+/// descriptor is unreachable: the core would take the older run for a wipe
+/// and drop what the session read from the chains. The published copy still
+/// wins once it arrives, a kept copy older than the bundled one is not used,
+/// and neither a published copy older than the kept one nor one the CLI
+/// refuses, here for a changed TLD, replaces it.
+#[test]
+fn an_unreachable_built_in_starts_from_the_descriptor_a_host_kept() {
+	let bundled = sign_copy(10, "g1");
+	let (after_wipe, republished, outdated) =
+		(sign_copy(11, "g2"), sign_copy(12, "g2"), sign_copy(9, "g0"));
+	let rollback = sign_copy(10, "g1");
+	let other_tld = sign_edited(|descriptor| {
+		descriptor["sequence"] = 12.into();
+		descriptor["generation"] = "g2".into();
+		descriptor["tld"] = "testnet".into();
+	});
+	let run = |published: Option<&[u8]>, last_run: Option<&[u8]>| {
+		let copies = Copies { bundled: &bundled, published, last_run };
+		let refresh =
+			refresh_from_last_run("test", &test_pointer(), &copies, NOW, &ChainAccess::Rpc)
+				.expect("a descriptor is usable");
+		(refresh.stack.descriptor().sequence, refresh.copy)
+	};
+
+	assert_eq!(
+		[
+			run(None, Some(&after_wipe)),
+			run(Some(&republished), Some(&after_wipe)),
+			run(None, Some(&outdated)),
+			run(None, None),
+			run(Some(&rollback), Some(&after_wipe)),
+			run(Some(&other_tld), Some(&after_wipe)),
+		],
+		[
+			(11, BuiltInCopy::Unreachable),
+			(12, BuiltInCopy::Published),
+			(10, BuiltInCopy::Unreachable),
+			(10, BuiltInCopy::Unreachable),
+			(11, BuiltInCopy::Rejected),
+			(11, BuiltInCopy::Rejected),
+		]
+	);
+}
+
+/// A copies directory, and the path in it a host keeps the test stack's
+/// descriptor at, holding `kept` when given.
+fn copies_directory(kept: Option<&[u8]>) -> (tempfile::TempDir, std::path::PathBuf) {
+	let base = tempfile::tempdir().expect("a temporary directory");
+	let path = base.path().join("stacks").join("test.json");
+	if let Some(kept) = kept {
+		fs::create_dir_all(base.path().join("stacks")).expect("the copies directory");
+		fs::write(&path, kept).expect("the kept copy");
+	}
+	(base, path)
+}
+
+/// What the next run reads from the copies directory at `path`.
+fn read_back(path: &Path) -> Option<Vec<u8>> {
+	read_kept_copy(path).expect("the kept copy reads")
+}
+
+/// A run of a host on the bundled copy of sequence 10, with `published`
+/// fetched when given and `kept` in its copies directory: the sequence it runs
+/// on, which copy that is, and what the next run reads from the directory.
+fn run_and_keep(
+	published: Option<&[u8]>,
+	kept: Option<&[u8]>,
+) -> (u32, BuiltInCopy, Option<Vec<u8>>) {
+	let (_base, path) = copies_directory(kept);
+	let bundled = sign_copy(10, "g1");
+	let refresh = refresh_with_kept_copy(
+		"test",
+		&test_pointer(),
+		&bundled,
+		published,
+		Some(&path),
+		NOW,
+		&ChainAccess::Rpc,
+	)
+	.expect("a descriptor is usable");
+	(refresh.stack.descriptor().sequence, refresh.copy, read_back(&path))
+}
+
+/// The copy a host keeps has to be there for its next run, which starts from
+/// it when the published descriptor is unreachable. A host that has kept
+/// nothing reads none, its first copy creates the directory, and a later one
+/// replaces it.
+#[test]
+fn a_kept_copy_is_read_back_by_the_next_run() {
+	let (_base, path) = copies_directory(None);
+	let (published, republished) = (sign_copy(11, "g2"), sign_copy(12, "g2"));
+	let before = read_back(&path);
+
+	keep_copy(&path, &test_pointer(), &published, NOW);
+	let kept = read_back(&path);
+	keep_copy(&path, &test_pointer(), &republished, NOW);
+
+	assert_eq!((before, kept, read_back(&path)), (None, Some(published), Some(republished)));
+}
+
+/// A kept copy that is not a descriptor, such as one cut short, or that is
+/// larger than any descriptor the CLI fetches, is not one the host kept. The
+/// host passes it over, starting from the bundled copy while the published
+/// one is unreachable, and keeps the published one over it once that arrives.
+/// A file that large is not read.
+#[test]
+fn a_corrupt_kept_copy_is_passed_over_and_replaced() {
+	let published = sign_copy(11, "g2");
+	let cut_short = published[..published.len() / 2].to_vec();
+	let oversized = vec![b' '; MAX_FETCH_BYTES + 1];
+
+	assert_eq!(
+		[
+			run_and_keep(None, Some(&cut_short)),
+			run_and_keep(Some(&published), Some(&cut_short)),
+			run_and_keep(None, Some(&oversized)),
+			run_and_keep(Some(&published), Some(&oversized)),
+		],
+		[
+			(10, BuiltInCopy::Unreachable, Some(cut_short.clone())),
+			(11, BuiltInCopy::Published, Some(published.clone())),
+			(10, BuiltInCopy::Unreachable, None),
+			(11, BuiltInCopy::Published, Some(published.clone())),
+		]
+	);
+}
+
+/// Log lines written into a shared buffer.
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl io::Write for Captured {
+	fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+		self.0.lock().unwrap().extend_from_slice(bytes);
+		Ok(bytes.len())
+	}
+
+	fn flush(&mut self) -> io::Result<()> {
+		Ok(())
+	}
+}
+
+/// A kept copy too large to be a descriptor is reported once per resolve, not
+/// again when the host keeps the published copy over it.
+#[test]
+fn an_oversized_kept_copy_is_reported_once() {
+	let lines = std::sync::Arc::<std::sync::Mutex<Vec<u8>>>::default();
+	let subscriber = tracing_subscriber::fmt()
+		.with_writer({
+			let lines = std::sync::Arc::clone(&lines);
+			move || Captured(lines.clone())
+		})
+		.with_ansi(false)
+		.finish();
+	let (published, oversized) = (sign_copy(11, "g2"), vec![b' '; MAX_FETCH_BYTES + 1]);
+
+	let run = tracing::subscriber::with_default(subscriber, || {
+		run_and_keep(Some(&published), Some(&oversized))
+	});
+
+	let logged = String::from_utf8(lines.lock().unwrap().clone()).expect("log lines are text");
+	assert_eq!(
+		(run, logged.matches("is larger than").count()),
+		((11, BuiltInCopy::Published, Some(published.clone())), 1)
+	);
+}
+
+/// A kept copy that cannot be read stops the command, also when the published
+/// copy arrives and would be taken: the kept copy is what tells a published
+/// copy served stale from a current one, so without it the host could go back
+/// to chains a wipe replaced. The error names the file and how to recover.
+#[test]
+fn a_kept_copy_that_cannot_be_read_stops_the_command() {
+	let (_base, path) = copies_directory(None);
+	fs::create_dir_all(&path).expect("a directory where the copy goes");
+	let published = sign_copy(11, "g2");
+	let stopped_with = |published: Option<&[u8]>| {
+		let bundled = sign_copy(10, "g1");
+		refresh_with_kept_copy(
+			"test",
+			&test_pointer(),
+			&bundled,
+			published,
+			Some(&path),
+			NOW,
+			&ChainAccess::Rpc,
+		)
+		.err()
+		.map(|error| error.to_string())
+	};
+	let recovery = format!(
+		"could not read the stack descriptor kept at {}; fix its permissions, or remove it to \
+		 start from the published or the bundled copy",
+		path.display()
+	);
+
+	assert_eq!(
+		[stopped_with(None), stopped_with(Some(&published))],
+		[Some(recovery.clone()), Some(recovery)]
+	);
+}
+
+/// Another host holds the lock on the kept copy, as the test does here, until
+/// `released` fires or the test ends. The lock file is `path` with `.lock`
+/// added.
+fn hold_lock(path: &Path, released: std::sync::mpsc::Receiver<()>) {
+	let lock = fs::File::create(path.with_extension("json.lock")).expect("the lock file");
+	lock.lock_exclusive().expect("another host holds the lock");
+	std::thread::spawn(move || {
+		let _ = released.recv_timeout(std::time::Duration::from_secs(10));
+		drop(lock);
+	});
+}
+
+/// `published` kept at `path` from another thread: whether keeping it ended
+/// within five seconds, and how. That is well past the second a host waits
+/// for the lock and short of the ten a [`hold_lock`] holder keeps it.
+fn kept_within_deadline(path: &Path, published: Vec<u8>) -> Option<Result<(), String>> {
+	let (kept_it, keeping) = std::sync::mpsc::channel();
+	std::thread::spawn({
+		let path = path.to_path_buf();
+		move || {
+			let kept = replace_older_copy(&path, &test_pointer(), &published, NOW);
+			let _ = kept_it.send(kept.map_err(|error| format!("{error:#}")));
+		}
+	});
+	keeping.recv_timeout(std::time::Duration::from_secs(5)).ok()
+}
+
+/// Keeping the copy is best effort. A host that finds the lock held for
+/// longer than a moment, as by another host stopped in a debugger, starts
+/// without keeping its copy instead of waiting for the lock, and that is no
+/// failure.
+#[test]
+fn a_host_does_not_wait_for_a_held_lock_to_keep_its_copy() {
+	let kept = sign_copy(11, "g2");
+	let (_base, path) = copies_directory(Some(&kept));
+	let (_release, released) = std::sync::mpsc::channel();
+	hold_lock(&path, released);
+
+	let keeping = kept_within_deadline(&path, sign_copy(12, "g2"));
+
+	assert_eq!((keeping, read_back(&path)), (Some(Ok(())), Some(kept)));
+}
+
+/// Two hosts that start together contend for the lock for as long as one
+/// takes to keep its copy. The other waits for it, so a later copy it ran on
+/// is still kept, and its next offline start does not go back to the earlier
+/// one.
+#[test]
+fn a_host_keeps_its_copy_once_a_brief_lock_is_released() {
+	let (_base, path) = copies_directory(Some(&sign_copy(11, "g2")));
+	let (release, released) = std::sync::mpsc::channel();
+	hold_lock(&path, released);
+	std::thread::spawn(move || {
+		std::thread::sleep(std::time::Duration::from_millis(200));
+		let _ = release.send(());
+	});
+	let later = sign_copy(12, "g2");
+
+	let keeping = kept_within_deadline(&path, later.clone());
+
+	assert_eq!((keeping, read_back(&path)), (Some(Ok(())), Some(later)));
+}
+
+/// A published copy the CLI does not run, here for a changed TLD, leaves the
+/// copy a host kept in use. The bundled copy is not the fall back then, so a
+/// bundled copy past its `expiresAt` does not stop a host that has a later
+/// one.
+#[test]
+fn a_kept_copy_stands_in_for_a_published_copy_the_cli_does_not_run() {
+	let expired_bundle = sign_edited(|descriptor| {
+		descriptor["sequence"] = 10.into();
+		descriptor["generation"] = "g1".into();
+		descriptor["expiresAt"] = (NOW as u32 - 1).into();
+	});
+	let other_tld = sign_edited(|descriptor| {
+		descriptor["sequence"] = 12.into();
+		descriptor["generation"] = "g2".into();
+		descriptor["tld"] = "testnet".into();
+	});
+	let kept = sign_copy(11, "g2");
+	let copies =
+		Copies { bundled: &expired_bundle, published: Some(&other_tld), last_run: Some(&kept) };
+
+	let refresh = refresh_from_last_run("test", &test_pointer(), &copies, NOW, &ChainAccess::Rpc)
+		.map(|refresh| (refresh.stack.descriptor().sequence, refresh.copy))
+		.map_err(|error| error.to_string());
+
+	assert_eq!(refresh, Ok((11, BuiltInCopy::Rejected)));
+}
+
+/// A CLI update can ship a later descriptor than the one the host kept. That
+/// is no rollback to warn about, so the kept copy is passed over before the
+/// refresh rules see it. A copy that does not verify is left to them, which
+/// say why it is not used.
+#[test]
+fn a_kept_copy_older_than_the_bundled_one_is_passed_over() {
+	let bundled = sign_copy(10, "g1");
+	let older = |last_run: &[u8]| is_older_than_bundled(&test_pointer(), &bundled, last_run, NOW);
+
+	assert_eq!(
+		[
+			older(&sign_copy(9, "g0")),
+			older(&sign_copy(11, "g2")),
+			older(&bundled),
+			older(b"not a descriptor")
+		],
+		[true, false, false, false]
+	);
+}
+
+/// A host keeps the published copy it runs on, and only that one, so a copy
+/// it did not take never becomes the copy its next offline run starts from.
+/// Nor does it keep one over a later copy, such as the one another host
+/// starting at the same time kept after this one read the file.
+#[test]
+fn only_a_published_copy_in_use_replaces_the_kept_one() {
+	let (kept, published, later) = (sign_copy(11, "g2"), sign_copy(12, "g2"), sign_copy(13, "g2"));
+	let other_tld = sign_edited(|descriptor| {
+		descriptor["sequence"] = 12.into();
+		descriptor["generation"] = "g2".into();
+		descriptor["tld"] = "testnet".into();
+	});
+	let kept_after =
+		|published: Option<&[u8]>, kept: Option<&[u8]>| run_and_keep(published, kept).2;
+	let (_base, raced) = copies_directory(Some(&later));
+	keep_copy(&raced, &test_pointer(), &published, NOW);
+
+	assert_eq!(
+		[
+			kept_after(Some(&published), None),
+			kept_after(Some(&published), Some(&kept)),
+			kept_after(Some(&other_tld), None),
+			kept_after(Some(&other_tld), Some(&kept)),
+			kept_after(None, Some(&kept)),
+			read_back(&raced),
+		],
+		[
+			Some(published.clone()),
+			Some(published),
+			None,
+			Some(kept.clone()),
+			Some(kept),
+			Some(later),
+		]
+	);
 }

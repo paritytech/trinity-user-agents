@@ -1521,6 +1521,9 @@ The layout may contain compatibility paths as well as identity-owned paths:
   accounts.json
   accounts.json.lock
   log-level
+  stacks/
+    <network>.json                    # published descriptor a host kept (§14.1)
+    <network>.json.lock
 
   <network>/
     signing-host/
@@ -1584,11 +1587,17 @@ When switching from one resolved user to another, only transient authentication
 keys move:
 
 - `AuthSession`;
+- `SessionUsernamesRun`, which vouches for the usernames in that value;
 - `PairingDeviceIdentity`; and
 - `LastProcessedPairingStatement`.
 
 The previous user's product KV and other core state remain in that user's
 directory. The new user's existing product/core state is loaded.
+
+The storage identity is the username, not the account. The same account under
+another username, as when a lookup after a wipe finds a new one, is another
+user: it starts with no permissions, allowances or product KV, and the old ones
+stay in the old username's directory.
 
 Remembered pairing scripts are scoped to whichever bootstrap/user directory is
 active. Resolving another user loads that directory's `session.json`.
@@ -1806,11 +1815,13 @@ stderr with both sequences, saying it is in use and that a later release ships
 it; the line says the stack restarted from genesis when its `generation`
 changed. A newer copy that changes none of them is used without a line. A
 published copy that changes the `tld` or the `id`, or that the CLI cannot run on
-(for instance one without a `dub` service), is not used: the shipped copy stays
-in use with a warning that names the published URL, since every account derives
-under the TLD and is stored under the namespace. A refused, rolled-back or
-conflicting published copy leaves the shipped copy in use with a warning; an
-unreachable one does so without a message. A result past `expiresAt` is an
+(for instance one without a `dub` service), is not used: the copy a host command
+kept (below), or else the shipped copy, stays in use with a warning that names
+the published URL, since every account derives under the TLD and is stored
+under the namespace. A refused, rolled-back or
+conflicting published copy is not used, with a warning; an unreachable one is
+passed over without a message. The copy in use is then the one a host command
+kept (below), or else the shipped copy. A result past `expiresAt` is an
 error, and one past `validUntil` is used with a warning. `--chain-backend
 light-client` fails at start when the descriptor in use names no `lightSpec` for
 the relay, People, Asset Hub or Bulletin; a newer published copy that runs over
@@ -1822,15 +1833,39 @@ with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 `tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
 on over either chain backend.
 
+A host command (`pairing-host`, `signing-host`, `dev`) keeps the published
+descriptor it takes for a built-in network in
+`<base-path>/<version>/stacks/<network>.json`, before the chain checks below.
+To write it, the host takes `<network>.json.lock`, reads the kept copy again
+under it, and leaves a copy that is the same or later, such as one another host
+starting at the same time kept. A host that finds the lock held tries again
+for up to a second, which covers another host keeping its copy. The read that
+chooses the stack at start is not under the lock. Keeping the copy is best
+effort: a failed write is a warning, and a host that still finds the lock held
+after that second, as when another host stopped in a debugger holds it, keeps
+nothing on that run. The kept copy can then be older than the copy that host
+ran on, until a later run keeps one, and an offline start in between runs on
+the older copy, or else the bundled one.
+While the published descriptor cannot be fetched, and when it is refused or
+older than that copy, the host starts from that copy, under the same rules as a
+fetched one. A kept copy older than the bundled one, as after an update of the
+CLI, is not used, nor is one larger than any descriptor the CLI fetches, which
+is reported with a warning. A kept copy that cannot be read stops the command,
+also when the published copy arrives, since the kept copy is what tells a
+published copy served stale from a current one; the error names the file and
+says to fix its permissions or remove it. Other commands neither keep nor read
+a copy. A host that ran on a stack after a wipe therefore does not go back to
+the bundled copy's chains, which the core would take for another wipe.
+
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
 the same connection once its genesis matches, for its `NetworkSuffix`. An
 endpoint that reports another genesis is an error; for a built-in it reports that
 the stack restarted from genesis and which descriptor is in use: the published
-one and its URL, or the bundled one because the published copy at its URL could
+one and its URL, or an earlier one because the published copy at its URL could
 not be fetched or was rejected (refused, a rollback, a conflict, a TLD or id
 change, or a copy the CLI cannot run on).
-When the bundled copy is in use because the published one could not be fetched,
+When the published descriptor could not be fetched,
 a failed check first fetches the published descriptor again (10-second timeout);
 the checks repeat only when that fetch puts the published copy in use, and
 otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
@@ -1865,7 +1900,19 @@ key of the link when it has one, and otherwise the URL. The URL of a built-in
 stack with no key is read with that stack's key, so it is verified and is the
 same stack as under its network name. A local file's id is `file:` followed by
 its canonical path: two files are two stacks, and a file that moves becomes
-another stack.
+another stack. The core orders a stack's runs by the descriptor's `sequence`
+only when the id is a key, which signs every copy, so the `sequence` only
+grows. A stack without a key passes the core `sequence` 0, so a copy published
+again with a lower `sequence` does not leave what the earlier copy stored
+locked as a later run's.
+
+A fork and its source share one namespace, and so one core storage, but are
+two stacks with their own ids and generations. Each start of one finds what
+the other stored about the chains and treats it as another run's: cached
+manifests, allowance keys and the record of the session's usernames are
+replaced, and the ring-VRF registry loses the other stack's rings. On the
+signing host, switching between a source and its fork therefore loses the
+ring-VRF registrations each time; products register their keys again.
 
 #### `network-check`
 

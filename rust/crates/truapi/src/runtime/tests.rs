@@ -93,20 +93,23 @@ use truapi::{
 };
 
 use super::{
-	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	product_manifest::{MANIFEST_TTL_SECS, encode_cached_root_manifest},
 	sso_request_service::SsoRequestService,
 	*,
 };
 use crate::{
 	host_internal::{
+		permissions::{authorization_status, set_authorization_status},
 		product_manifest::test_manifest_json,
 		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
 	},
 	host_logic::{
 		product_account::{derive_product_public_key, index_bytes},
 		root_entropy::RootEntropy,
+		session::encode_persisted_session,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
+	platform::{Stack, StackIdentity, StackRun},
 	test_support::*,
 	unix_time::current_unix_secs,
 };
@@ -486,22 +489,37 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	let entry = encode_cached_root_manifest(&dot_test_stack().run(), Some(&json), fetched_at_secs);
+	futures::executor::block_on(
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
-	let entry =
-		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
-	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-		entry.encode(),
-	))
+	cache_manifest_entry_in(platform, &dot_test_stack().run(), owner, json, age_secs);
+}
+
+/// [`cache_manifest_entry`] for a host whose stack is in `run`.
+fn cache_manifest_entry_in(
+	platform: &StubPlatform,
+	run: &StackRun,
+	owner: &str,
+	json: Option<String>,
+	age_secs: u64,
+) {
+	let fetched_at_secs = current_unix_secs().saturating_sub(age_secs);
+	let entry = encode_cached_root_manifest(run, json.as_deref(), fetched_at_secs);
+	futures::executor::block_on(
+		platform.write_core_storage(
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+			entry,
+		),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
@@ -712,6 +730,93 @@ fn a_cached_grant_stops_being_honoured_once_it_expires() {
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, MANIFEST_TTL_SECS + 1);
 	seed_owner_value(&platform, "wallet.dot");
 	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+/// A product runtime for `unknown.dot` on a stack in this `generation`. The
+/// id and the chains are the same for every generation.
+fn host_in_generation(
+	platform: Arc<StubPlatform>,
+	generation: &str,
+) -> ProductRuntimeHost<RemoteAccountHolder> {
+	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
+	let chains = dot_test_stack().chains().clone();
+	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
+	let stack = Stack::new(identity, "paseo".to_string(), "dot".to_string(), chains, 0, &allowed)
+		.expect("test stack is valid");
+	let product = ProductContext::new(ProductId::for_test("unknown.dot"));
+	ProductRuntimeHost::new_pairing_for_tests(
+		platform,
+		pairing_config_on(stack),
+		product,
+		Spawner::for_test(),
+	)
+	.0
+}
+
+/// Stores, on `platform`, a manifest cached in the run of `host`'s stack in
+/// which `wallet.dot` grants storage access, and an allowed identity
+/// disclosure.
+fn store_grant_and_permission(
+	platform: &StubPlatform,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) {
+	let run = host.connection.services.stack().run();
+	let grant = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	cache_manifest_entry_in(platform, &run, "wallet.dot", Some(grant), 0);
+	futures::executor::block_on(set_authorization_status(
+		platform,
+		identity_disclosure_key(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("stub core storage accepts the decision");
+}
+
+fn identity_disclosure_key() -> CoreStorageKey {
+	CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("unknown.dot"))
+}
+
+fn stored_identity_disclosure(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) -> PermissionAuthorizationStatus {
+	futures::executor::block_on(authorization_status(
+		host.connection.services.platform.as_ref(),
+		identity_disclosure_key(),
+	))
+	.expect("stub core storage reads")
+}
+
+/// After a wipe the stack has a new generation. A grant cached in the old
+/// one must not apply. The stored permission is kept.
+#[test]
+fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
+	let platform = stub_platform();
+	seed_owner_value(&platform, "wallet.dot");
+	let before_wipe = host_in_generation(platform.clone(), "first");
+	store_grant_and_permission(&platform, &before_wipe);
+	assert!(granted_value(&before_wipe, "wallet.dot").is_some());
+
+	let after_wipe = host_in_generation(platform, "second");
+	assert_eq!(
+		(
+			read_storage(&after_wipe, Some("wallet.dot"), "k").unwrap_err(),
+			stored_identity_disclosure(&after_wipe),
+		),
+		(access_not_granted(), PermissionAuthorizationStatus::Authorized)
+	);
+}
+
+/// An operator can wipe a stack and leave `generation` as it was. The genesis
+/// hashes still change, so a grant read from the old Asset Hub must not apply.
+#[test]
+fn a_grant_cached_from_another_asset_hub_is_not_honoured() {
+	let platform = stub_platform();
+	let manifest = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	let other_asset_hub = test_run([0x99; 32]);
+	cache_manifest_entry_in(&platform, &other_asset_hub, "wallet.dot", Some(manifest), 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+
 	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
 }
 
@@ -5715,8 +5820,8 @@ fn an_unserved_product_is_not_answered_with_its_namesakes_manifest() {
 		),
 	] {
 		let entry =
-			CachedManifest { fetched_at_secs: current_unix_secs(), json: Some(json.to_string()) };
-		block_on(platform.write_core_storage(key, entry.encode()))
+			encode_cached_root_manifest(&dot_test_stack().run(), Some(json), current_unix_secs());
+		block_on(platform.write_core_storage(key, entry))
 			.expect("stub core storage accepts the entry");
 	}
 	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
@@ -8517,10 +8622,13 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 #[test]
 fn stored_session_activation_resolves_after_connected_installation() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -8554,37 +8662,51 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 	assert_eq!(*session_clears.lock().expect("session clear counter mutex poisoned"), 1);
 }
 
-/// An untagged blob restores and the slot is rewritten in the written form, so
-/// a host upgrades its stored session by activating once rather than by pairing
-/// again. `SessionInfo::encode` is the untagged eight-field layout; the canary in
-/// `host_logic::session` is what keeps that true.
+/// An untagged blob restores, and the lookup that follows rewrites the slot in
+/// the written form, so a host upgrades its stored session by activating once
+/// rather than by pairing again. `SessionInfo::encode` is the untagged
+/// eight-field layout; the canary in `host_logic::session` is what keeps that
+/// true.
 #[test]
-fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
-	let stored = sso_session_info();
+fn an_untagged_stored_session_restores_and_is_rewritten_once_its_usernames_are_read() {
+	let stored = SessionInfo {
+		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
+		lite_username: None,
+		full_username: None,
+		..sso_session_info()
+	};
 	let untagged = stored.encode();
-	let platform =
-		Arc::new(StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() });
+	assert_ne!(
+		untagged,
+		encode_persisted_session(&stored),
+		"the fixture must not already be in the written form, or this proves nothing"
+	);
+	let platform = Arc::new(StubPlatform {
+		session_blob: Some(untagged),
+		rpc_responder: Some(dotns_usernames_responder()),
+		..Default::default()
+	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
 	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("an untagged stored session activates");
 
-	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
-	let written = crate::host_logic::session::encode_persisted_session(&stored);
-	assert_ne!(
-		untagged, written,
-		"the fixture must not already be in the written form, or this proves nothing"
+	let named = SessionInfo {
+		lite_username: Some("alice.01".to_string()),
+		full_username: Some("myproject".to_string()),
+		..stored
+	};
+	let written = encode_persisted_session(&named);
+	let rewritten = || {
+		let writes = platform.session_writes.lock().expect("session write list mutex poisoned");
+		writes.last() == Some(&written)
+	};
+	wait_until(
+		rewritten,
+		"the slot still holds the untagged blob, so it is re-read on every start",
 	);
-	assert_eq!(
-		platform
-			.session_writes
-			.lock()
-			.expect("session write list mutex poisoned")
-			.last(),
-		Some(&written),
-		"the slot still holds the untagged blob, so it would be re-read on every start"
-	);
+	assert_eq!(host.test_session_state().current(), Some(named));
 }
 
 #[test]

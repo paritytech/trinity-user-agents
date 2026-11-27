@@ -1,6 +1,6 @@
 //! Retained allowance scopes and paired-session storage encoding.
 
-use crate::platform::{CoreStorage, CoreStorageKey, ProductId};
+use crate::platform::{CoreStorage, CoreStorageKey, ProductId, StackRun, Stamped};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
@@ -80,11 +80,12 @@ struct StoredAllowanceEntry {
 /// Read the persisted allowance key for `(product_id, resource)`, if any.
 pub async fn read_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
+	run: &StackRun,
 	session: &SessionInfo,
 	product_id: &ProductId,
 	resource: AllowanceResource,
 ) -> Result<Option<Vec<u8>>, AuthorityError> {
-	let entries = read_entries(storage, session).await?;
+	let entries = read_entries(storage, run, session).await?;
 	Ok(entries
 		.into_iter()
 		.find(|entry| &entry.product_id == product_id && entry.resource == resource)
@@ -93,14 +94,26 @@ pub async fn read_allowance_key(
 
 /// Persist an allowance key, replacing any prior key for the same
 /// `(product_id, resource)`.
+///
+/// Keys a later run of the stack stored are left as they are, and this key
+/// is not stored: a runtime started from an older copy of the descriptor
+/// must not write over them.
 pub async fn write_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
+	run: &StackRun,
 	session: &SessionInfo,
 	product_id: &ProductId,
 	resource: AllowanceResource,
 	slot_account_key: Vec<u8>,
 ) -> Result<(), AuthorityError> {
-	let mut entries = read_entries(storage, session).await?;
+	let stored = storage.read_core_storage(storage_key(session)?).await.map_err(storage_error)?;
+	if stored.as_deref().is_some_and(|blob| run.later_run_stamped(blob)) {
+		tracing::warn!(
+			"allowance keys a later run of the stack stored are kept; not storing this one"
+		);
+		return Ok(());
+	}
+	let mut entries = entries_in(run, stored.as_deref())?;
 	entries.retain(|entry| !(&entry.product_id == product_id && entry.resource == resource));
 	entries.push(StoredAllowanceEntry {
 		product_id: product_id.clone(),
@@ -108,7 +121,7 @@ pub async fn write_allowance_key(
 		slot_account_key,
 	});
 	storage
-		.write_core_storage(storage_key(session)?, encode_entries(entries))
+		.write_core_storage(storage_key(session)?, encode_entries(run, entries))
 		.await
 		.map_err(storage_error)
 }
@@ -117,26 +130,33 @@ pub async fn write_allowance_key(
 /// not an error.
 pub async fn remove_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
+	run: &StackRun,
 	session: &SessionInfo,
 	product_id: &ProductId,
 	resource: AllowanceResource,
 ) -> Result<(), AuthorityError> {
-	let mut entries = read_entries(storage, session).await?;
+	let mut entries = read_entries(storage, run, session).await?;
 	let before = entries.len();
 	entries.retain(|entry| !(&entry.product_id == product_id && entry.resource == resource));
 	if entries.len() == before {
 		return Ok(());
 	}
 	storage
-		.write_core_storage(storage_key(session)?, encode_entries(entries))
+		.write_core_storage(storage_key(session)?, encode_entries(run, entries))
 		.await
 		.map_err(storage_error)
 }
 
 /// Remove every persisted allowance key for `product_id` in the active SSO
 /// session while preserving entries owned by other products.
+///
+/// Keys stored in an earlier run, or without a run, are cleared whole rather
+/// than sorted by product: the product's key must not come back when the
+/// stack returns to that run, and this run would replace them on its next
+/// write anyway. Keys a later run stored are left as they are.
 pub async fn clear_product_allowance_keys(
 	storage: &(impl CoreStorage + ?Sized),
+	run: &StackRun,
 	session: &SessionInfo,
 	product_id: &ProductId,
 ) -> Result<(), AuthorityError> {
@@ -144,11 +164,13 @@ pub async fn clear_product_allowance_keys(
 	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
 		return Ok(());
 	};
-	let mut entries = match decode_entries(&blob) {
-		Ok(entries) => entries,
-		Err(_) => {
-			return storage.clear_core_storage(key).await.map_err(storage_error);
-		},
+	let entries = match run.read(&blob) {
+		Stamped::ThisRun(blob) => decode_entries(blob).ok(),
+		Stamped::LaterRun => return Ok(()),
+		Stamped::Stale => None,
+	};
+	let Some(mut entries) = entries else {
+		return storage.clear_core_storage(key).await.map_err(storage_error);
 	};
 	let before = entries.len();
 	entries.retain(|entry| &entry.product_id != product_id);
@@ -159,7 +181,7 @@ pub async fn clear_product_allowance_keys(
 		storage.clear_core_storage(key).await.map_err(storage_error)
 	} else {
 		storage
-			.write_core_storage(key, encode_entries(entries))
+			.write_core_storage(key, encode_entries(run, entries))
 			.await
 			.map_err(storage_error)
 	}
@@ -173,20 +195,31 @@ pub async fn clear_session_allowance_keys(
 	storage.clear_core_storage(storage_key(session)?).await.map_err(storage_error)
 }
 
+/// The keys stored for `session` in `run`. Keys stored in another run of the
+/// chains name slot accounts that are not this run's, so they read as none.
 async fn read_entries(
 	storage: &(impl CoreStorage + ?Sized),
+	run: &StackRun,
 	session: &SessionInfo,
 ) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
-	let Some(blob) =
-		storage.read_core_storage(storage_key(session)?).await.map_err(storage_error)?
-	else {
-		return Ok(Vec::new());
-	};
-	decode_entries(&blob)
+	let stored = storage.read_core_storage(storage_key(session)?).await.map_err(storage_error)?;
+	entries_in(run, stored.as_deref())
 }
 
-fn encode_entries(entries: Vec<StoredAllowanceEntry>) -> Vec<u8> {
-	entries.encode()
+/// The keys in `stored`, a value read from storage, that `run` stamped.
+fn entries_in(
+	run: &StackRun,
+	stored: Option<&[u8]>,
+) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
+	match stored.and_then(|blob| run.read_stamped(blob)) {
+		Some(blob) => decode_entries(blob),
+		None => Ok(Vec::new()),
+	}
+}
+
+/// `entries` as stored in `run`, which [`read_entries`] reads back in it.
+fn encode_entries(run: &StackRun, entries: Vec<StoredAllowanceEntry>) -> Vec<u8> {
+	run.stamp(&entries.encode())
 }
 
 fn decode_entries(blob: &[u8]) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {

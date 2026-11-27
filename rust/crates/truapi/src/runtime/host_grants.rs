@@ -10,7 +10,8 @@ use super::{
 };
 use crate::{
 	host_logic::session::{SessionInfo, SessionState},
-	platform::{CoreStorage, CoreStorageKey, ProductId},
+	platform::{CoreStorage, CoreStorageKey, ProductId, StackRun},
+	session_usernames::SessionUsernames,
 };
 use futures::lock::OwnedMutexGuard;
 use parity_scale_codec::{Decode, Encode};
@@ -107,6 +108,7 @@ impl GrantState {
 /// advanced it.
 pub struct HostGrantStore {
 	storage: Arc<dyn CoreStorage>,
+	run: StackRun,
 	keeping: GrantKeeping,
 	state: Mutex<GrantState>,
 	persistence: Arc<futures::lock::Mutex<()>>,
@@ -188,14 +190,18 @@ enum Barrier<'a> {
 impl HostGrantStore {
 	/// Bind retained capabilities to the host's storage, kept as `keeping` says.
 	///
-	/// Grants are only kept for the session `session_state` selects.
+	/// Grants are only kept for the session `session_state` selects. Allowance
+	/// keys are stored with `run`, the run of the stack's chains, and read back
+	/// only in it.
 	pub fn new(
 		storage: Arc<dyn CoreStorage>,
+		run: StackRun,
 		keeping: GrantKeeping,
 		session_state: Arc<SessionState>,
 	) -> Self {
 		Self {
 			storage,
+			run,
 			keeping,
 			state: Mutex::new(GrantState::default()),
 			persistence: Arc::new(futures::lock::Mutex::new(())),
@@ -393,6 +399,7 @@ impl HostGrantStore {
 		if self.keeping == GrantKeeping::Paired {
 			allowances::write_allowance_key(
 				&*self.storage,
+				&self.run,
 				session,
 				product_id,
 				resource,
@@ -403,9 +410,14 @@ impl HostGrantStore {
 		if let Err(error) = self.remember_allowance(session, grant_revision, product_id, allowance)
 		{
 			if self.keeping == GrantKeeping::Paired {
-				let _ =
-					allowances::remove_allowance_key(&*self.storage, session, product_id, resource)
-						.await;
+				let _ = allowances::remove_allowance_key(
+					&*self.storage,
+					&self.run,
+					session,
+					product_id,
+					resource,
+				)
+				.await;
 			}
 			return Err(error);
 		}
@@ -478,9 +490,14 @@ impl HostGrantStore {
 			return Ok(None);
 		}
 		let allowance = {
-			let Some(secret) =
-				allowances::read_allowance_key(&*self.storage, session, product_id, resource)
-					.await?
+			let Some(secret) = allowances::read_allowance_key(
+				&*self.storage,
+				&self.run,
+				session,
+				product_id,
+				resource,
+			)
+			.await?
 			else {
 				return Ok(None);
 			};
@@ -829,7 +846,7 @@ impl HostGrantPersistence<'_> {
 		{
 			warn!(%reason, "AutoSigning capability owner reconciliation failed");
 		}
-		if let Some(previous) = previous.filter(|previous| *previous != session) {
+		if let Some(previous) = previous.filter(|previous| !previous.is_same_session(session)) {
 			self.store.caches().forget_allowances(Some(previous));
 			if let Err(reason) =
 				allowances::clear_session_allowance_keys(&*self.store.storage, previous).await
@@ -851,6 +868,7 @@ impl HostGrantPersistence<'_> {
 			self.store.keeping == GrantKeeping::Paired &&
 			let Err(error) = allowances::clear_product_allowance_keys(
 				&*self.store.storage,
+				&self.store.run,
 				session,
 				product_id,
 			)

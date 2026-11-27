@@ -118,7 +118,8 @@ pub fn test_stack_served_id(test_stack: &JsValue, product_id: &str) -> Result<St
 
 /// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
 /// `assetHub`, `people`, `bulletin` and the optional `relay`, each
-/// `{ genesisHash }`, and the optional `reservedValues`.
+/// `{ genesisHash }`, and the optional `reservedValues`. A test stack has no
+/// descriptor, so its `sequence` is 0.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	refuse_unknown_fields(
@@ -168,6 +169,7 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,
+		0,
 		&reserved_values_from_js(stack, "runtimeConfig.testStack.reservedValues")?,
 	)
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))

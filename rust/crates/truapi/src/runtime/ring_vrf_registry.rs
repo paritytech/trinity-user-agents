@@ -5,7 +5,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, ProductId};
+use crate::platform::{CoreStorageKey, Platform, ProductId, Stack, StackRun};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
@@ -26,9 +26,34 @@ struct RegistrySnapshot {
 	selected_providers: Vec<SelectedProvider>,
 }
 
+impl RegistrySnapshot {
+	/// The snapshot stored in the run `stored_in`, without the rings on the
+	/// chains that are lost in `run`, as [`StackRun::lost_since`] tells.
+	///
+	/// An entry left with no ring is dropped, and an owner that lost a ring is
+	/// no longer listed completely, so its listing is read again.
+	fn without_rings_lost(mut self, stored_in: &StackRun, run: &StackRun) -> Self {
+		let gone = |ring: &RingLocation| run.lost_since(stored_in, ring.chain_id);
+		let incomplete: Vec<_> = self
+			.entries
+			.iter()
+			.filter(|entry| entry.rings.iter().any(&gone))
+			.map(|entry| entry.handle.dot_ns_identifier.clone())
+			.collect();
+		for entry in &mut self.entries {
+			entry.rings.retain(|ring| !gone(ring));
+		}
+		self.entries.retain(|entry| !entry.rings.is_empty());
+		self.complete_owners.retain(|owner| !incomplete.contains(owner));
+		self.selected_providers.retain(|provider| !gone(&provider.ring));
+		self
+	}
+}
+
 /// Shared durable repository used by both account-authority roles.
 pub struct RingVrfRegistryStore {
 	platform: Arc<dyn Platform>,
+	run: StackRun,
 	cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
 	storage_guard: futures::lock::Mutex<()>,
 }
@@ -150,9 +175,20 @@ impl RegistryUpdate<'_> {
 }
 
 impl RingVrfRegistryStore {
-	pub fn new(platform: Arc<dyn Platform>) -> Arc<Self> {
+	/// A registry kept in `platform`'s storage for the host that runs `stack`.
+	///
+	/// A wipe replaces a stack's chains and the rings on them, so a registry
+	/// is stored with the run it was written in. One read in a later run
+	/// loses the rings on the chains that run lost, as
+	/// [`StackRun::lost_since`] tells, and keeps every other ring. One stored
+	/// without a run is not read. One a later run of the stack stored, which a
+	/// runtime started from an older copy of the descriptor finds, reads as
+	/// empty and is left as it is: updates are kept in this store only, and
+	/// each write checks the stored registry again first.
+	pub fn new(platform: Arc<dyn Platform>, stack: &Stack) -> Arc<Self> {
 		Arc::new(Self {
 			platform,
+			run: stack.run(),
 			cache: Mutex::new(HashMap::new()),
 			storage_guard: futures::lock::Mutex::new(()),
 		})
@@ -313,17 +349,20 @@ impl RingVrfRegistryStore {
 			return Ok(snapshot);
 		}
 		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-		let snapshot =
-			match self.platform.read_core_storage(key.clone()).await.map_err(storage_error)? {
-				Some(blob) => match decode_snapshot(&blob) {
-					Ok(snapshot) => snapshot,
-					Err(error) => {
-						let _ = self.platform.clear_core_storage(key).await;
-						return Err(error);
-					},
+		let stored = self.platform.read_core_storage(key.clone()).await.map_err(storage_error)?;
+		let snapshot = match stored.as_deref().and_then(StackRun::split_stamped) {
+			Some((stored_in, _)) if stored_in.is_later_than(&self.run) => {
+				RegistrySnapshot::default()
+			},
+			Some((stored_in, value)) => match decode_snapshot(value) {
+				Ok(snapshot) => snapshot.without_rings_lost(&stored_in, &self.run),
+				Err(error) => {
+					let _ = self.platform.clear_core_storage(key).await;
+					return Err(error);
 				},
-				None => RegistrySnapshot::default(),
-			};
+			},
+			None => RegistrySnapshot::default(),
+		};
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")
@@ -346,13 +385,19 @@ impl RingVrfRegistryStore {
 		{
 			return Ok(());
 		}
-		self.platform
-			.write_core_storage(
-				CoreStorageKey::RingVrfRegistry { root_public_key },
-				snapshot.encode(),
-			)
-			.await
-			.map_err(storage_error)?;
+		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
+		let stored = self.platform.read_core_storage(key.clone()).await.map_err(storage_error)?;
+		if stored.as_deref().is_some_and(|stored| self.run.later_run_stamped(stored)) {
+			tracing::warn!(
+				"a later run of the stack stored the ring-VRF registry; keeping this update in \
+				 memory only"
+			);
+		} else {
+			self.platform
+				.write_core_storage(key, self.run.stamp(&snapshot.encode()))
+				.await
+				.map_err(storage_error)?;
+		}
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")

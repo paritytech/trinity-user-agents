@@ -816,6 +816,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 			format!("core:worker-manifest:{product_label}")
 		},
 		CoreStorageKey::FundingSupport => "core:funding-support".to_string(),
+		CoreStorageKey::SessionUsernamesRun => "core:session-usernames-run".to_string(),
 		CoreStorageKey::AppManifest { product_label } => {
 			format!("core:app-manifest:{product_label}")
 		},
@@ -1009,6 +1010,7 @@ pub fn mock_stack(
 		"mock".to_string(),
 		"paseo".to_string(),
 		chains,
+		0,
 		&reserved_values,
 	)
 	.expect("a mock stack names no reserved value")

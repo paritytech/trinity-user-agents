@@ -1,8 +1,11 @@
 //! Session and session-store tests driven through the pairing host.
 
 use crate::{
-	host_logic::statement_store::SUBMIT_STATEMENT_METHOD,
-	platform::AuthState,
+	host_logic::{
+		session::{SessionInfo, encode_persisted_session, usernames_record},
+		statement_store::SUBMIT_STATEMENT_METHOD,
+	},
+	platform::{AuthState, CoreStorage, CoreStorageKey, Stack, StackRun},
 	runtime::{
 		ProductRuntimeHost,
 		sso_request_service::SsoRequestService,
@@ -247,10 +250,13 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
 #[test]
 fn store_notification_during_external_activation_restores_persisted_session() {
 	let persisted = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&persisted)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(encode_persisted_session(&persisted)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
@@ -261,7 +267,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 
 	let mut stale_external = persisted.clone();
 	stale_external.public_key = [0x44; 32];
-	let stale_blob = crate::host_logic::session::encode_persisted_session(&stale_external);
+	let stale_blob = encode_persisted_session(&stale_external);
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
@@ -295,7 +301,7 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
+	let stale_blob = encode_persisted_session(&sso_session_info());
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
@@ -331,7 +337,7 @@ fn a_product_reset_during_activation_keeps_the_new_session() {
 		Spawner::for_test(),
 	);
 	let session = sso_session_info();
-	let blob = crate::host_logic::session::encode_persisted_session(&session);
+	let blob = encode_persisted_session(&session);
 	let (activation_entered, resume_activation) =
 		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
@@ -357,10 +363,13 @@ fn a_product_reset_during_activation_keeps_the_new_session() {
 #[test]
 fn session_store_sync_restores_valid_blob_from_tick() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -407,10 +416,13 @@ fn session_store_sync_announces_a_signed_out_boot() {
 #[test]
 fn session_store_sync_announces_a_restored_boot_once() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -431,10 +443,13 @@ fn session_store_sync_announces_a_restored_boot_once() {
 #[test]
 fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -463,10 +478,13 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
 	let mut replacement = sso_session_info();
 	replacement.public_key = [0x44; 32];
 	let (host, pairing_host) = ProductRuntimeHost::new_compat_with_pairing(
-		Arc::new(StubPlatform {
-			session_blob: Some(crate::host_logic::session::encode_persisted_session(&replacement)),
-			..Default::default()
-		}),
+		Arc::new(
+			StubPlatform {
+				session_blob: Some(encode_persisted_session(&replacement)),
+				..Default::default()
+			}
+			.with_usernames_read_in_this_run(),
+		),
 		Spawner::for_test(),
 	);
 	install_pairing_session(&host, sso_session_info());
@@ -558,10 +576,13 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
 #[test]
 fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
@@ -629,5 +650,170 @@ fn a_paired_registration_records_the_phones_key_locally() {
 			),
 		),
 		(Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
+	);
+}
+
+/// A stack whose Asset Hub the stub does not serve, so a session's usernames
+/// resolve to nothing on it.
+fn unserved_stack() -> Stack {
+	test_stack("paseo", [0; 32], [0xbb; 32], UNSERVED_GENESIS)
+}
+
+/// The run of the [`unserved_stack`] before a wipe replaced its Asset Hub.
+fn run_before_the_wipe() -> StackRun {
+	test_run([0x99; 32])
+}
+
+/// A pairing host over `storage` on the [`unserved_stack`].
+fn pairing_host_on_unserved_asset_hub(storage: Arc<MemoryCoreStorage>) -> Arc<PairingHost> {
+	let platform =
+		Arc::new(StubPlatform { core_storage_override: Some(storage), ..StubPlatform::default() });
+	let config = pairing_config_on(unserved_stack());
+	let services = RuntimeServices::new(
+		platform,
+		config.host.host_info.clone(),
+		config.stack.clone(),
+		Spawner::for_test(),
+	);
+	PairingHost::new(services, config)
+}
+
+/// Stores `blob` as the core's session and `record` as what the core recorded
+/// about its usernames.
+fn seed_session(storage: &MemoryCoreStorage, blob: &[u8], record: Option<Vec<u8>>) {
+	futures::executor::block_on(async {
+		storage
+			.write_core_storage(CoreStorageKey::AuthSession, blob.to_vec())
+			.await
+			.expect("memory storage writes");
+		if let Some(record) = record {
+			storage
+				.write_core_storage(CoreStorageKey::SessionUsernamesRun, record)
+				.await
+				.expect("memory storage writes");
+		}
+	});
+}
+
+/// The username of the session `pairing_host` has installed.
+fn installed_username(pairing_host: &PairingHost) -> Option<Option<String>> {
+	pairing_host
+		.session()
+		.session_state()
+		.current()
+		.map(|session| session.lite_username)
+}
+
+/// After a wipe a stack keeps its id and its chains are new. A username read
+/// from the old chains names an account that may not exist on the new ones,
+/// so the session comes back at once without it, to be looked up again. A
+/// blob with nothing recorded, as when a host keeps the session itself, keeps
+/// its username until a lookup answers, and so does one recorded in this run.
+/// The stored and the external path agree, so a host that starts offline
+/// still shows the username.
+#[test]
+fn a_session_comes_back_at_once_with_only_the_usernames_it_may_keep() {
+	let blob = encode_persisted_session(&sso_session_info());
+	for (record, kept) in [
+		(Some(usernames_record(&run_before_the_wipe(), &blob)), false),
+		(None, true),
+		(Some(usernames_record(&unserved_stack().run(), &blob)), true),
+	] {
+		let storage = Arc::new(MemoryCoreStorage::default());
+		seed_session(&storage, &blob, record);
+
+		let stored = pairing_host_on_unserved_asset_hub(storage.clone());
+		futures::executor::block_on(stored.session().activate_stored_session())
+			.expect("the stored session activates");
+		let external = pairing_host_on_unserved_asset_hub(storage);
+		futures::executor::block_on(external.session().activate_external_session(&blob))
+			.expect("the external session activates");
+
+		let username = Some(kept.then(|| "alice".to_string()));
+		assert_eq!(
+			(installed_username(&stored), installed_username(&external)),
+			(username.clone(), username),
+			"kept: {kept}"
+		);
+	}
+}
+
+/// A host that keeps the session itself hands the core the same copy on every
+/// start, and the core never rewrites it. The core vouches only for the blob
+/// it stored: once it rewrote its own copy in the new run, a copy kept from
+/// before the wipe still does not bring back the username read from the old
+/// chains, on this start or the next. The blob the core vouches for keeps its
+/// username.
+#[test]
+fn a_session_the_host_keeps_never_brings_back_a_username_from_before_a_wipe() {
+	let run = unserved_stack().run();
+	let kept_copy = encode_persisted_session(&sso_session_info());
+	let rewritten = encode_persisted_session(&unnamed_sso_session_info());
+	let storage = Arc::new(MemoryCoreStorage::default());
+	seed_session(&storage, &rewritten, Some(usernames_record(&run, &rewritten)));
+
+	let usernames = [(); 2].map(|()| {
+		let pairing_host = pairing_host_on_unserved_asset_hub(storage.clone());
+		futures::executor::block_on(pairing_host.session().activate_external_session(&kept_copy))
+			.expect("the external session activates");
+		installed_username(&pairing_host)
+	});
+
+	let vouched = Arc::new(MemoryCoreStorage::default());
+	seed_session(&vouched, &kept_copy, Some(usernames_record(&run, &kept_copy)));
+	let pairing_host = pairing_host_on_unserved_asset_hub(vouched);
+	futures::executor::block_on(pairing_host.session().activate_external_session(&kept_copy))
+		.expect("the external session activates");
+
+	assert_eq!(
+		(usernames, installed_username(&pairing_host)),
+		([Some(None), Some(None)], Some(Some("alice".to_string())))
+	);
+}
+
+/// A session is installed without waiting for its usernames, which can take
+/// the whole lookup budget on a slow chain. A host that activates a session
+/// only to sign it out, or restores one after an update, must not wait on
+/// dotNS, and neither must a session whose account has no username. Here no
+/// spawned task ever runs, so the lookup each activation starts is never
+/// answered, and a session that needs none starts fewer tasks.
+#[test]
+fn activating_a_session_does_not_wait_for_its_usernames() {
+	let activate = |session: SessionInfo| {
+		let blob = encode_persisted_session(&session);
+		let storage = Arc::new(MemoryCoreStorage::default());
+		seed_session(&storage, &blob, Some(usernames_record(&paseo_test_stack().run(), &blob)));
+		let platform = Arc::new(StubPlatform {
+			core_storage_override: Some(storage),
+			..StubPlatform::default()
+		});
+		let never_run = Arc::new(Mutex::new(Vec::new()));
+		let spawner = Spawner::with_test_scheduler({
+			let never_run = never_run.clone();
+			move |task| never_run.lock().expect("task list mutex poisoned").push(task)
+		});
+		let (_host, pairing_host) = ProductRuntimeHost::new_compat_with_pairing(platform, spawner);
+		let (done, finished) = std::sync::mpsc::channel();
+		std::thread::spawn({
+			let pairing_host = pairing_host.clone();
+			move || {
+				let session = pairing_host.session();
+				let stored = futures::executor::block_on(session.activate_stored_session());
+				let external =
+					futures::executor::block_on(session.activate_external_session(&blob));
+				let _ = done.send((stored, external));
+			}
+		});
+		let activated = finished.recv_timeout(std::time::Duration::from_secs(5));
+		let started = never_run.lock().expect("task list mutex poisoned").len();
+		(activated, installed_username(&pairing_host), started)
+	};
+
+	let (activated, installed, started_with_lookups) = activate(unnamed_sso_session_info());
+	let (_, _, started_without_lookups) = activate(sso_session_info());
+
+	assert_eq!(
+		(activated, installed, started_with_lookups > started_without_lookups),
+		(Ok((Ok(()), Ok(()))), Some(None), true)
 	);
 }

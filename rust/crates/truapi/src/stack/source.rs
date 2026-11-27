@@ -140,9 +140,10 @@ pub struct StackStatus {
 	/// and services from it.
 	pub descriptor: String,
 	/// The descriptor's `generation`, which changes when the stack restarts
-	/// its chains. Key cached chain data by it, such as a light client's
-	/// database: data kept under another generation is for chains that are
-	/// gone.
+	/// its chains. A wipe that left it as it was shows in a new genesis hash,
+	/// so key data cached for a chain, such as a light client's database, by
+	/// the generation and that chain's genesis hash: data kept under another
+	/// pair is for a chain that is gone.
 	pub generation: String,
 	/// The newest copy was past `validUntil` when the core last looked, at
 	/// start and after each fetch: show the stack as stale and keep running

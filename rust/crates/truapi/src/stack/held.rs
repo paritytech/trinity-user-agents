@@ -20,7 +20,7 @@ impl HeldCopy {
 	/// its services from differs, including the generation, so the chains did
 	/// not restart.
 	pub fn runs_as(&self, newer: &Self) -> bool {
-		self.stack == newer.stack
+		self.stack.runs_as(&newer.stack)
 	}
 }
 

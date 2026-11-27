@@ -80,6 +80,9 @@ fn namespace_of(id: &str) -> &str {
 pub struct NetworkSource {
 	chain_access: ChainAccess,
 	network: NetworkChoice,
+	/// Where a host keeps the published descriptor it takes for a built-in
+	/// network.
+	stack_copies: Option<std::path::PathBuf>,
 }
 
 /// The network a command runs on, before anything is fetched.
@@ -105,6 +108,9 @@ pub struct StackArg {
 #[derive(Debug)]
 pub struct Stack {
 	stack_id: String,
+	/// Whether `stack_id` is the stack's key, under which every copy is
+	/// signed, so its descriptors' `sequence` only grows.
+	keyed: bool,
 	descriptor: Descriptor,
 	/// Set exactly when the stack runs on the light client.
 	light_client: Option<Arc<StackLightClient>>,
@@ -200,11 +206,16 @@ impl Stack {
 			people: genesis.people,
 			bulletin: genesis.bulletin,
 		};
+		// The core orders a stack's runs by `sequence`, which only grows for a
+		// stack signed under its key. Another stack passes 0, so none of its
+		// runs counts as later than another.
+		let sequence = if self.keyed { self.descriptor.sequence } else { 0 };
 		truapi::platform::Stack::new(
 			self.identity(),
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
+			sequence,
 			&ReservedValuesPolicy::ALLOWED,
 		)
 	}

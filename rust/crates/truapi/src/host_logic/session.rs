@@ -17,6 +17,8 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use std::sync::{Arc, Mutex};
 
+use crate::platform::StackRun;
+
 use truapi::{
 	v01::HostAccountConnectionStatusSubscribeItem,
 	versioned::account::HostAccountConnectionStatusSubscribeItem as VersionedItem,
@@ -53,6 +55,12 @@ pub struct SessionInfo {
 impl crate::session_usernames::SessionUsernames for SessionInfo {
 	fn has_username(&self) -> bool {
 		non_empty_username(&self.full_username) || non_empty_username(&self.lite_username)
+	}
+
+	fn is_same_session(&self, other: &Self) -> bool {
+		let without_usernames =
+			|session: &Self| Self { lite_username: None, full_username: None, ..session.clone() };
+		without_usernames(self) == without_usernames(other)
 	}
 }
 
@@ -222,6 +230,19 @@ pub fn encode_persisted_session(info: &SessionInfo) -> Vec<u8> {
 	blob.push(PERSISTED_SESSION_V1);
 	info.encode_to(&mut blob);
 	blob
+}
+
+/// The `SessionUsernamesRun` record for the session `blob` in `run`: the run
+/// and a hash of the blob, so the record vouches for that blob only.
+pub fn usernames_record(run: &StackRun, blob: &[u8]) -> Vec<u8> {
+	run.stamp(&sp_crypto_hashing::blake2_256(blob))
+}
+
+/// Whether `record`, as [`usernames_record`] writes it, says the usernames in
+/// `blob` were read in `run`, whichever descriptor `sequence` the run that
+/// wrote it started from.
+pub fn usernames_record_vouches_for(run: &StackRun, record: &[u8], blob: &[u8]) -> bool {
+	run.read_stamped(record) == Some(&sp_crypto_hashing::blake2_256(blob)[..])
 }
 
 /// Decode a core-owned persisted session blob.

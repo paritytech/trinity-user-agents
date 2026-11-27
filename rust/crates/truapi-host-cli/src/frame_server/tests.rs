@@ -506,11 +506,16 @@ mod cross_product_storage {
 		}
 	}
 
-	fn host() -> Result<(Arc<crate::platform::CliPlatform>, HostRuntime<SigningHost>)> {
-		// Every chain routes to a closed port, so nothing connects to live Paseo.
-		let network = crate::network::Network::default()
+	/// The stack the test host runs. Every chain routes to a closed port, so
+	/// nothing connects to live Paseo.
+	fn closed_port_network() -> crate::network::Stack {
+		crate::network::Network::default()
 			.bundled_stack(ChainBackend::Rpc)
-			.with_rpc("ws://127.0.0.1:1");
+			.with_rpc("ws://127.0.0.1:1")
+	}
+
+	fn host() -> Result<(Arc<crate::platform::CliPlatform>, HostRuntime<SigningHost>)> {
+		let network = closed_port_network();
 		let asset_hub_genesis = network.genesis().asset_hub;
 		let platform = crate::platform::CliPlatform::new(
 			&network,
@@ -551,7 +556,8 @@ mod cross_product_storage {
 			.duration_since(std::time::UNIX_EPOCH)
 			.expect("clock is after the epoch")
 			.as_secs();
-		let applied = product_config::apply(platform, std::slice::from_ref(&config), now)
+		let run = closed_port_network().core_stack().expect("the bundled stack is valid").run();
+		let applied = product_config::apply(platform, &run, std::slice::from_ref(&config), now)
 			.await
 			.expect("the config applies");
 		applied.lines.join("\n")

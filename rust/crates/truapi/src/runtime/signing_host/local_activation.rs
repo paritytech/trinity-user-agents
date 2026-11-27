@@ -2,8 +2,10 @@ use super::SigningHost;
 use crate::{
 	host_logic::{root_entropy::RootEntropy, session::SessionInfo},
 	runtime::{
-		AccountHolder, authority::AuthorityError, connected_session_ui_info, device_enc_public_key,
-		identity::lookup_session_identity,
+		AccountHolder,
+		authority::AuthorityError,
+		connected_session_ui_info, device_enc_public_key,
+		identity::{LookupOutcome, lookup_session_identity},
 	},
 };
 
@@ -45,7 +47,7 @@ impl LocalActivation for SigningHost {
 		let session_state = self.wallet.session_state();
 		let auth_state = self.auth_state.clone();
 		self.services.spawner.spawn(async move {
-			let Some(identity) = lookup_session_identity(
+			let LookupOutcome::Found(identity) = lookup_session_identity(
 				&services.dotns_reads,
 				&services.chain,
 				services.asset_hub_chain_genesis_hash(),

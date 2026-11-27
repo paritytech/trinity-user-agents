@@ -1127,15 +1127,19 @@ A command reaches its chains in one of two ways:
   All three are built-in Trinity stacks. Each command that
   resolves one fetches the descriptor its operator publishes, verifies it against
   the stack's key, and uses it when it is newer than the signed copy this release
-  ships in `stacks/`; an unreachable descriptor falls back to the shipped copy
-  silently, and a non-2xx answer is logged as a warning. When the published
+  ships in `stacks/`. An unreachable descriptor falls back, without a message,
+  to the shipped copy, or for the host commands (`pairing-host`, `signing-host`,
+  `dev`) to the published copy they kept in `<base-path>/<version>/stacks/`. A
+  kept copy that is too large, or that does not verify when it would stand in,
+  is passed over with a warning, and one that cannot be read stops the command
+  (SPEC.md §14.1). A non-2xx answer is logged as a warning. When the published
   descriptor changes a field the CLI reads, the CLI prints one line saying that it is
   in use and that a later release ships it; when the stack restarted from genesis the
   line reports that too. A newer copy that changes nothing the CLI reads is used
   without a line. A published descriptor that changes the stack's `tld` or `id`, or
-  that the CLI cannot run on, is not used: the bundled copy stays in use with a
-  warning, since every account derives under the TLD and is stored under the id. A
-  stack past its `expiresAt` is an error.
+  that the CLI cannot run on, is not used: the kept copy, or else the bundled copy,
+  stays in use with a warning, since every account derives under the TLD and is
+  stored under the id. A stack past its `expiresAt` is an error.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
   replaces `--network`, and the two cannot be combined; details below.

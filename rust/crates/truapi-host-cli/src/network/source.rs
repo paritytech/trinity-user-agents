@@ -1,6 +1,6 @@
 //! How a command's [`NetworkSource`] becomes the network it runs against.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Result, anyhow, bail};
 
@@ -17,10 +17,16 @@ use crate::{
 impl NetworkSource {
 	/// `--chain-backend` with `--network` or the stack. Fails for `--network`
 	/// with a stack, in a message that names where the stack came from.
+	///
+	/// `stack_copies` is a directory to keep the published descriptor a host
+	/// takes for a built-in network, which it then starts from while the
+	/// published one is unreachable. Without one it starts from the bundled
+	/// copy.
 	pub fn new(
 		chain_access: ChainAccess,
 		network: Option<Network>,
 		stack: Option<StackArg>,
+		stack_copies: Option<PathBuf>,
 	) -> Result<Self> {
 		let network = match (network, stack) {
 			(Some(_), Some(StackArg { source, .. })) => {
@@ -29,15 +35,15 @@ impl NetworkSource {
 			(None, Some(stack)) => NetworkChoice::Stack(stack),
 			(network, None) => NetworkChoice::BuiltIn(network.unwrap_or_default()),
 		};
-		Ok(Self { chain_access, network })
+		Ok(Self { chain_access, network, stack_copies })
 	}
 
 	/// The network a command runs against, the built-in network or the stack,
 	/// once its chains pass the checks. Fails as [`Stack::new`] and
 	/// [`verify_chains`] do, for an unreachable or expired `--stack`, and when
 	/// the light client is asked for a chain the stack names no light spec
-	/// for. A built-in network whose
-	/// published descriptor is unreachable runs on its bundled copy; when that
+	/// for. A built-in network whose published descriptor is unreachable runs
+	/// on the copy a host kept, or else its bundled copy; when that
 	/// copy fails a check, the descriptor is fetched once more and the checks
 	/// repeat only when the published copy is then in use.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
@@ -62,15 +68,22 @@ impl NetworkSource {
 				let key = built_in_key(&stack_arg.value);
 				let stack = load_descriptor(&stack_arg.value, key.as_deref())
 					.await
-					.and_then(|(stack_id, descriptor)| {
-						Stack::new(stack_id, descriptor, &self.chain_access)
+					.and_then(|loaded| {
+						let stack =
+							Stack::new(loaded.stack_id, loaded.descriptor, &self.chain_access)?;
+						Ok(if loaded.keyed { stack } else { stack.without_key() })
 					})
 					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)
 			},
 			NetworkChoice::BuiltIn(network) => {
-				let (stack, origin) =
-					network.resolve_built_in(fetch_timeout, &self.chain_access).await?;
+				let (stack, origin) = network
+					.resolve_built_in(
+						fetch_timeout,
+						&self.chain_access,
+						self.stack_copies.as_deref(),
+					)
+					.await?;
 				(stack, Some(origin))
 			},
 		};

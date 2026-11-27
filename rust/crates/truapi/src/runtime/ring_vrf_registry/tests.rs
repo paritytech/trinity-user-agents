@@ -1,5 +1,8 @@
 use super::*;
-use crate::test_support::StubPlatform;
+use crate::{
+	platform::{CoreStorage, StackChains, StackIdentity},
+	test_support::{StubPlatform, paseo_test_stack},
+};
 
 fn handle(owner: &str, index: u32) -> ProductAccountId {
 	ProductAccountId {
@@ -18,7 +21,7 @@ fn ring(byte: u8) -> RingLocation {
 #[test]
 fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	let platform = Arc::new(StubPlatform::default());
-	let store = RingVrfRegistryStore::new(platform.clone());
+	let store = RingVrfRegistryStore::new(platform.clone(), &paseo_test_stack());
 	let first_root = [1; 32];
 	let second_root = [2; 32];
 	let key = handle("owner.dot", 7);
@@ -30,13 +33,115 @@ fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	assert_eq!(entry.rings, vec![ring(1), ring(2)]);
 	assert!(futures::executor::block_on(store.entry(second_root, &key)).unwrap().is_none());
 
-	let reloaded = RingVrfRegistryStore::new(platform);
+	let reloaded = RingVrfRegistryStore::new(platform, &paseo_test_stack());
 	assert_eq!(futures::executor::block_on(reloaded.entry(first_root, &key)).unwrap(), Some(entry));
+}
+
+/// One key of `owner.dot` registered in a ring on each of `chains`, each ring
+/// selected, with the owner's listing complete.
+fn registered_on(chains: &[[u8; 32]]) -> RegistrySnapshot {
+	let registrations = chains.iter().zip(1..).map(|(&chain_id, index)| {
+		(handle("owner.dot", index), RingLocation { chain_id, ..ring(1) })
+	});
+	RegistrySnapshot {
+		entries: registrations
+			.clone()
+			.map(|(handle, ring)| RegisteredRingVrfKey {
+				handle,
+				rings: vec![ring],
+				public_key: Some([9; 32]),
+			})
+			.collect(),
+		complete_owners: vec![ProductId::for_test("owner.dot")],
+		selected_providers: registrations
+			.map(|(handle, ring)| SelectedProvider { ring, handle })
+			.collect(),
+	}
+}
+
+/// What a registry on `stack` lists once it read `stored`: for each
+/// registration of `registry`, whether its entry and the selection of its ring
+/// are still there, and whether the owner's listing still counts as complete.
+fn listed(
+	stored: Vec<u8>,
+	stack: &Stack,
+	registry: &RegistrySnapshot,
+) -> (Vec<(bool, bool)>, bool) {
+	let platform = Arc::new(StubPlatform::default());
+	let (root, owner) = ([1; 32], ProductId::for_test("owner.dot"));
+	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
+	futures::executor::block_on(platform.write_core_storage(key, stored))
+		.expect("stub core storage writes");
+	let store = RingVrfRegistryStore::new(platform, stack);
+	futures::executor::block_on(async {
+		let mut registrations = Vec::new();
+		for selection in &registry.selected_providers {
+			registrations.push((
+				store.entry(root, &selection.handle).await.unwrap().is_some(),
+				store.selected_provider(root, &selection.ring).await.unwrap().is_some(),
+			));
+		}
+		(registrations, store.complete_owner_entries(root, &owner).await.unwrap().is_some())
+	})
+}
+
+/// A stack with this `generation` over People `people` and the Bulletin and
+/// Asset Hub of the [`paseo_test_stack`], read from a descriptor with
+/// `sequence`.
+fn stack_in(generation: &str, people: [u8; 32], sequence: u32) -> Stack {
+	let paseo = paseo_test_stack();
+	let identity = StackIdentity { id: paseo.id().to_string(), generation: generation.to_string() };
+	let chains = StackChains { people, ..paseo.chains().clone() };
+	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, &allowed)
+		.expect("test stack is valid")
+}
+
+/// The registry is the wallet's own record of its registrations, so a start
+/// in the same run loses none of it. A wipe replaces chains and the rings on
+/// them, and those registrations go, with their selections, and the owner's
+/// listing is read again. A wipe that replaced only People leaves the ring on
+/// Bulletin. One that the operator marked with a new `generation` restarted
+/// every chain of the stack, also where a genesis hash stayed. A ring on a
+/// chain the stack never listed is no wipe's to remove.
+#[test]
+fn a_registry_loses_only_the_rings_on_chains_a_wipe_replaced() {
+	let paseo = paseo_test_stack();
+	let (people, bulletin, elsewhere) =
+		(paseo.chains().people, paseo.chains().bulletin, [0xee; 32]);
+	let registry = registered_on(&[people, bulletin, elsewhere]);
+	let stored = paseo.run().stamp(&registry.encode());
+	let listed_on = |stack: &Stack| listed(stored.clone(), stack, &registry);
+	let (kept, gone) = ((true, true), (false, false));
+
+	assert_eq!(
+		[
+			listed_on(&paseo),
+			listed_on(&stack_in(paseo.generation(), [0x77; 32], 1)),
+			listed_on(&stack_in("next", people, 1)),
+		],
+		[
+			(vec![kept, kept, kept], true),
+			(vec![gone, kept, kept], false),
+			(vec![gone, gone, kept], false),
+		]
+	);
+}
+
+/// A registry stored without a run does not say which chains its rings were
+/// on, so it is not read, like the other values the core stores about the
+/// chains.
+#[test]
+fn a_registry_stored_without_a_run_is_not_read() {
+	let paseo = paseo_test_stack();
+	let registry = registered_on(&[paseo.chains().people]);
+
+	assert_eq!(listed(registry.encode(), &paseo, &registry), (vec![(false, false)], false));
 }
 
 #[test]
 fn first_registrar_remains_selected_until_explicitly_changed() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), &paseo_test_stack());
 	let root = [1; 32];
 	let location = ring(1);
 	let first = handle("first.dot", 0);
@@ -63,7 +168,7 @@ fn first_registrar_remains_selected_until_explicitly_changed() {
 
 #[test]
 fn registration_rejects_a_conflicting_public_key_for_the_same_handle() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), &paseo_test_stack());
 	let root = [1; 32];
 	let key = handle("owner.dot", 7);
 	futures::executor::block_on(store.register(root, key.clone(), ring(1), [1; 32])).unwrap();
@@ -84,7 +189,7 @@ fn registration_rejects_a_conflicting_public_key_for_the_same_handle() {
 
 #[test]
 fn stale_owner_snapshot_preserves_a_local_registration() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), &paseo_test_stack());
 	let root = [1; 32];
 	let local = handle("owner.dot", 7);
 	let remote = RegisteredRingVrfKey {
@@ -119,7 +224,7 @@ fn stale_owner_snapshot_preserves_a_local_registration() {
 
 #[test]
 fn owner_snapshot_rejects_a_conflicting_local_registration() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()));
+	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), &paseo_test_stack());
 	let root = [1; 32];
 	let key = handle("owner.dot", 7);
 	futures::executor::block_on(store.register(root, key.clone(), ring(1), [1; 32])).unwrap();
@@ -185,4 +290,122 @@ fn owner_listing_rejects_foreign_and_duplicate_entries() {
 		validate_owner_listing(&owner, &[entry.clone(), entry]),
 		Err(RingVrfError::Unknown { reason }) if reason.contains("duplicate key handle")
 	));
+}
+
+/// The registry stored under `root` in `platform`.
+fn stored_registry(platform: &StubPlatform, root: [u8; 32]) -> Option<Vec<u8>> {
+	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
+	futures::executor::block_on(platform.read_core_storage(key)).unwrap()
+}
+
+/// Stores `stored` as the registry under `root` in `platform`, as another
+/// runtime sharing its storage would.
+fn store_registry(platform: &StubPlatform, root: [u8; 32], stored: Vec<u8>) {
+	let key = CoreStorageKey::RingVrfRegistry { root_public_key: root };
+	futures::executor::block_on(platform.write_core_storage(key, stored))
+		.expect("stub core storage writes");
+}
+
+/// A runtime started from an older copy of the descriptor, as when the stored
+/// copy could not be read, finds the registry a later run stored. It lists
+/// nothing from it. What it registers is its own to use, kept in memory, and
+/// the later run keeps its registrations and the provider each ring has
+/// selected in storage.
+#[test]
+fn a_registry_a_later_run_stored_is_left_as_it_is() {
+	let earlier = paseo_test_stack();
+	let later = stack_in("next", [0x77; 32], 1);
+	let registry = registered_on(&[later.chains().people]);
+	let stored = later.run().stamp(&registry.encode());
+	let platform = Arc::new(StubPlatform::default());
+	let root = [1; 32];
+	store_registry(&platform, root, stored.clone());
+	let store = RingVrfRegistryStore::new(platform.clone(), &earlier);
+	let (registered, own) = (&registry.entries[0], handle("owner.dot", 9));
+
+	let (listed, own_listed) = futures::executor::block_on(async {
+		let listed = store.entry(root, &registered.handle).await.unwrap();
+		store
+			.register(root, own.clone(), ring(1), [9; 32])
+			.await
+			.expect("registers in memory");
+		(listed.is_some(), store.entry(root, &own).await.unwrap().is_some())
+	});
+
+	assert_eq!((listed, own_listed, stored_registry(&platform, root)), (false, true, Some(stored)));
+}
+
+/// Another runtime sharing the storage can store a later run's registry after
+/// this store read its own. The write that follows checks the stored registry
+/// again and leaves the later run's in place, keeping its own update in
+/// memory.
+#[test]
+fn a_registry_a_later_run_stores_after_a_load_is_not_written_over() {
+	let earlier = paseo_test_stack();
+	let later = stack_in("next", [0x77; 32], 1);
+	let stored = later.run().stamp(&registered_on(&[later.chains().people]).encode());
+	let root = [1; 32];
+	let (first, second) = (handle("owner.dot", 1), handle("owner.dot", 2));
+	let after = |update: &dyn Fn(&RingVrfRegistryStore)| {
+		let platform = Arc::new(StubPlatform::default());
+		let store = RingVrfRegistryStore::new(platform.clone(), &earlier);
+		futures::executor::block_on(async {
+			store.register(root, first.clone(), ring(1), [1; 32]).await.expect("stored");
+			store.register(root, second.clone(), ring(1), [2; 32]).await.expect("stored");
+		});
+		store_registry(&platform, root, stored.clone());
+
+		update(&store);
+
+		let selected = futures::executor::block_on(store.selected_provider(root, &ring(1)));
+		(selected.unwrap(), stored_registry(&platform, root) == Some(stored.clone()))
+	};
+
+	assert_eq!(
+		[
+			after(&|store| {
+				futures::executor::block_on(store.register(
+					root,
+					handle("owner.dot", 3),
+					ring(2),
+					[3; 32],
+				))
+				.expect("registers in memory")
+			}),
+			after(&|store| {
+				futures::executor::block_on(store.select_provider(root, ring(1), second.clone()))
+					.expect("selects in memory")
+			}),
+		],
+		[(Some(first.clone()), true), (Some(second.clone()), true)]
+	);
+}
+
+/// A descriptor republished with only a higher `sequence`, such as one with
+/// new endpoints, keeps the run. A runtime started from the earlier copy reads
+/// the registry the later copy's runtime stored as its own, and writes it.
+#[test]
+fn a_registry_stored_in_the_same_run_from_a_later_descriptor_is_read() {
+	let paseo = paseo_test_stack();
+	let republished = stack_in(paseo.generation(), paseo.chains().people, 4);
+	let registry = registered_on(&[paseo.chains().people]);
+	let platform = Arc::new(StubPlatform::default());
+	let root = [1; 32];
+	store_registry(&platform, root, republished.run().stamp(&registry.encode()));
+	let store = RingVrfRegistryStore::new(platform.clone(), &paseo);
+
+	let listed = futures::executor::block_on(store.entry(root, &registry.entries[0].handle))
+		.unwrap()
+		.is_some();
+	futures::executor::block_on(store.register(root, handle("owner.dot", 9), ring(1), [9; 32]))
+		.expect("registers");
+
+	let stored = stored_registry(&platform, root).expect("the registry is stored");
+	let stored = paseo.run().read_stamped(&stored).map(decode_snapshot);
+	let has_own = stored.is_some_and(|snapshot| {
+		snapshot.is_ok_and(|snapshot| {
+			snapshot.entries.iter().any(|entry| entry.handle == handle("owner.dot", 9))
+		})
+	});
+	assert_eq!((listed, has_own), (true, true));
 }

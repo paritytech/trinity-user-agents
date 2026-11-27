@@ -313,8 +313,85 @@ A newer descriptor that changes a genesis hash, the network or the
 again. Any other change needs no restart. `StackStatus` carries it once the
 core has stored the descriptor or its store has failed, at most 30 seconds
 after the fetch, and shows the copy from before the fetch until then. It
-documents the rest, including the `generation` a host keys cached chain data
-by.
+documents the rest, including what a host keys the chain data it caches by.
+
+#### After a wipe
+
+A wipe keeps a stack's id and replaces its chains. The core tells one run of
+the chains from the next by `StackRun`: the descriptor's `generation` and the
+Asset Hub, People and Bulletin genesis hashes. A runtime is built on one run,
+so the core notices a wipe at its next start.
+
+These values the core stores about the chains carry the run they were written
+in:
+
+- Cached manifests and allowance keys from an earlier run, or stored without
+  a run, are ignored until they are written again.
+- The ring-VRF registry is the wallet's own record, so a wipe does not drop
+  it whole. Each ring names its chain, and the registry loses the rings on the
+  chains of its run that restarted: all of them when the `generation` changed,
+  otherwise those whose genesis hash the stack no longer has. One stored
+  without a run is not read: the registry starts empty and the next update
+  replaces it, so every registration and provider choice in it is lost. A
+  product that holds an auto-signing key then gets `KeyNotRegistered` from
+  `ring_vrf_sign` and the ring-VRF alias calls, on either host. A pairing host
+  fails instead of asking the phone until the product lists its keys, which
+  copies the phone's listing back in, or registers them again. A signing
+  host, whose registry is the only record, fails until the product registers
+  them again.
+- The `SessionUsernamesRun` slot records the run in which the usernames of the
+  `AuthSession` blob were read, with a hash of that blob.
+
+The session and the stored permissions are kept.
+
+The runs of a stack are ordered by its descriptor's `sequence`: a runtime
+stores the stack's id and the `sequence` of the descriptor it started from
+next to its run. A runtime can be in an earlier run than the values in
+storage, as when the stored descriptor could not be read and it started from
+the bundled copy, or when two tabs that share storage start on either side of
+a refresh. What a later run of the same stack stored then reads as nothing and
+is neither cleared nor written over: an allowance key is kept in memory but
+not stored, revoking a product leaves the later run's keys, a manifest read is
+not cached, an update of the ring-VRF registry is kept in memory and the
+stored registry is checked again before each write, and the usernames a lookup
+finds stay out of the `AuthSession` slot. Ending the session still clears its
+allowance keys whichever run stored them, so a revoked session keeps no secret
+at rest.
+
+What another stack stored, such as a fork that shares its source's storage
+or the stack a host build ships after an update, is from another run whatever
+its `sequence`, since one stack's `sequence` says nothing about another's. It
+is stale: cached manifests, allowance keys and the usernames record are
+replaced, and the ring-VRF registry reads it like an earlier run's, keeping
+the rings on chains the two runs share under one `generation` and losing the
+rest. So are values of another run of the same stack with the same
+`sequence`, which a signed stack never publishes, and values stored without a
+stamp this core reads. A host that reads a stack without a key passes
+`sequence` 0, as the CLI does, so its runs are not ordered.
+
+A runtime on an earlier run reads a later run's ring-VRF registry as empty, so
+a product with an auto-signing key gets `KeyNotRegistered` there, as after an
+update, until the host builds the runtime again on the later run.
+
+Finding a later run's values does not set `restart_required`. The fetch that
+brings the later descriptor sets it, as for any newer copy, and when the
+stored copy could not be read, building the runtime again could fail the same
+way.
+
+The public-profile cache of a native host does not carry the run. It is keyed
+by username and serves a stored record first, so after a wipe a profile read
+from the old chains still shows. A record counts as fresh for an hour and is
+read again only after that, or when the caller sets `force_fresh`.
+
+A session is installed without waiting on dotNS, whether it is restored from
+the slot or passed to `activate_external_session`. The core looks its
+usernames up afterwards, unless the record vouches for the blob and the blob
+has a username. Until the lookup answers, usernames with no record are kept,
+and usernames whose record names another run or blob, or cannot be read, are
+dropped. Installing the session that is already selected is the exception: it
+keeps the usernames it has, unless the record vouches for the new blob, whose
+usernames it then takes. A lookup that fails changes nothing. One that finds
+no username clears the stored ones.
 
 ### Core database
 

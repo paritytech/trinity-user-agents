@@ -18,15 +18,19 @@ use crate::{
 	Spawner,
 	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
-	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
+	host_logic::worker::WorkerLedger,
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
 		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
-		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
-		statement_allowance, statement_store_rpc::StatementStoreRpc,
+		bulletin_rpc::BulletinRpc,
+		identity::{LookupOutcome, SessionAccounts},
+		product_manifest::ManifestSource,
+		single_flight::SingleFlight,
+		sso_responder_service::DevicePairingObserver,
+		statement_allowance,
+		statement_store_rpc::StatementStoreRpc,
 	},
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,7 +62,7 @@ pub struct DotnsReads {
 	pub worker_manifests: SingleFlight<String, Result<Option<String>, String>>,
 	/// Username lookups, by the accounts they read. The keys are never
 	/// written to storage or to a log.
-	pub identities: SingleFlight<SessionAccounts, Option<DotnsIdentity>>,
+	pub identities: SingleFlight<SessionAccounts, LookupOutcome>,
 }
 
 impl DotnsReads {

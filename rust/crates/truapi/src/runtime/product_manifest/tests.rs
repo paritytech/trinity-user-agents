@@ -163,9 +163,10 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			(
 				None,
 				ManifestSource::LookupFailed {
-					reason: "Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
+					reason:
+						"Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
 					         reason: \"fixture serves no chain\" }"
-						.to_string(),
+							.to_string(),
 				},
 			),
 			(None, ManifestSource::TimedOut),
@@ -209,8 +210,9 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 	use crate::platform::CoreStorage;
 	let platform = crate::test_support::StubPlatform::default();
 	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let run = crate::test_support::paseo_test_stack().run();
 	let read = |policy: CachePolicy| {
-		cached_dotns_json(&platform, key.clone(), policy, || async {
+		cached_dotns_json(&platform, &run, key.clone(), policy, || async {
 			Ok::<_, String>(Some("republished".to_string()))
 		})
 	};
@@ -219,7 +221,7 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 		platform
 			.write_core_storage(
 				key.clone(),
-				encode_cached_root_manifest(Some("published"), current_unix_secs()),
+				encode_cached_root_manifest(&run, Some("published"), current_unix_secs()),
 			)
 			.await
 			.expect("seeded");
@@ -240,5 +242,84 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 			(Some("republished".to_string()), true),
 			(Some("republished".to_string()), true),
 		]
+	);
+}
+
+/// A runtime started from an older copy of the descriptor reads past an entry
+/// a later run cached, and leaves it, so the later run keeps what it read from
+/// its chains. An entry an earlier run cached is replaced, as after a wipe.
+#[test]
+fn a_manifest_a_later_run_cached_is_left_as_it_is() {
+	use crate::platform::CoreStorage;
+	let earlier = crate::test_support::paseo_test_stack().run();
+	let later = crate::test_support::test_run_from([0x77; 32], 1);
+	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let after_reading = |cached_in: &StackRun, read_in: &StackRun| {
+		let platform = crate::test_support::StubPlatform::default();
+		futures::executor::block_on(async {
+			let entry = encode_cached_root_manifest(cached_in, Some("cached"), current_unix_secs());
+			platform.write_core_storage(key.clone(), entry).await.expect("seeded");
+			let read = cached_dotns_json(
+				&platform,
+				read_in,
+				key.clone(),
+				CachePolicy::UseCache,
+				|| async { Ok::<_, String>(Some("read".to_string())) },
+			)
+			.await
+			.expect("read");
+			let stored = platform.read_core_storage(key.clone()).await.unwrap().unwrap();
+			let cached = |run: &StackRun| {
+				run.read_stamped(&stored)
+					.and_then(|entry| CachedManifest::decode(&mut &*entry).ok())
+			};
+			(
+				read.0,
+				cached(cached_in).and_then(|entry| entry.json),
+				cached(read_in).and_then(|entry| entry.json),
+			)
+		})
+	};
+
+	assert_eq!(
+		[after_reading(&later, &earlier), after_reading(&earlier, &later)],
+		[
+			(Some("read".to_string()), Some("cached".to_string()), None),
+			(Some("read".to_string()), None, Some("read".to_string())),
+		]
+	);
+}
+
+/// A manifest cache entry stored without a stamp leads with its
+/// `fetched_at_secs`. One whose first byte is the stamp's tag can decode as a
+/// stamp of a run with a high `sequence`, but it names no stack this core runs,
+/// so it is stale and replaced, not kept as a later run's.
+#[test]
+fn an_unstamped_entry_that_starts_like_a_stamp_is_replaced() {
+	use crate::platform::CoreStorage;
+	let platform = crate::test_support::StubPlatform::default();
+	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let run = crate::test_support::paseo_test_stack().run();
+	let unstamped = CachedManifest { fetched_at_secs: 2, json: Some("a".repeat(200)) }.encode();
+
+	let cached_after = futures::executor::block_on(async {
+		platform
+			.write_core_storage(key.clone(), unstamped.clone())
+			.await
+			.expect("seeded");
+		cached_dotns_json(&platform, &run, key.clone(), CachePolicy::UseCache, || async {
+			Ok::<_, String>(Some("read".to_string()))
+		})
+		.await
+		.expect("read");
+		let stored = platform.read_core_storage(key.clone()).await.unwrap().unwrap();
+		run.read_stamped(&stored)
+			.and_then(|entry| CachedManifest::decode(&mut &*entry).ok())
+			.and_then(|entry| entry.json)
+	});
+
+	assert_eq!(
+		(StackRun::split_stamped(&unstamped).is_some(), cached_after),
+		(true, Some("read".to_string()))
 	);
 }

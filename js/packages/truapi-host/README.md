@@ -130,6 +130,48 @@ built from it does not refresh: it calls neither stack callback, and
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
+After a wipe a stack has the same id and new chains. At its next start the core
+notices by the `generation` and the Asset Hub, People and Bulletin genesis
+hashes, and stops using what it read from the old chains:
+
+- Cached manifests are read again.
+- Allowance keys are asked for again.
+- The ring-VRF registry loses the rings on chains that are gone.
+- The session's usernames are looked up again.
+
+The session and stored permissions stay.
+
+A runtime that starts on an earlier run than the values in storage, as when
+the stored descriptor could not be read and it started from the bundled copy,
+or when two tabs that share storage start on either side of a refresh, leaves
+what the later run stored as it is. The descriptor's `sequence` tells which
+run of the stack came later. Such a runtime reads none of those values: it
+keeps allowance keys and ring-VRF registry updates in memory but does not
+store them, and it does not cache manifests, until the host builds it again on
+the later run. Signing out still clears the session's allowance keys in every
+run.
+
+A session restored from storage or passed to `activateExternalSession` comes up
+at once, and the core looks its usernames up afterwards. If the lookup fails,
+as on an offline device, nothing changes. If it finds no username, the stored
+ones are cleared.
+
+The core records in the `SessionUsernamesRun` slot which run it read the
+usernames in, with a hash of the `AuthSession` blob. A session whose record
+names another run or another blob, or cannot be read, comes up without
+usernames until a lookup answers, so a start after a wipe on an offline device
+shows no username. With no record at all, as for a blob stored before this
+version or a host that does not keep `SessionUsernamesRun`, the session keeps
+the usernames in its blob until then, also after a wipe. If you keep `AuthSession` under a key of your
+own, such as one shared between origins, keep `SessionUsernamesRun` next to
+it. For a blob passed to `activateExternalSession` that the slot does not
+cover, the core looks the usernames up on every activation.
+
+Activating the session that is already selected keeps it: its permissions and
+the requests waiting on it stay. It keeps the usernames it has and looks them
+up again, unless `SessionUsernamesRun` covers the new blob, whose usernames it
+then takes.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler
@@ -497,7 +539,9 @@ const runtime = await createWebWorkerPairingHostRuntime(
 );
 
 // Resolves once product frames may use the restored session; rejects when
-// there was nothing to restore.
+// there was nothing to restore, or the slot changed while it was read. After
+// such a change the session stays selected if the slot still holds it, and
+// another origin's sign-in comes up with its change notification.
 await runtime.activateStoredSession().catch(() => {});
 
 const provider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });

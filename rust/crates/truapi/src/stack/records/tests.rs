@@ -1,43 +1,11 @@
-use std::{collections::HashMap, sync::Mutex};
-
-use parity_scale_codec::Encode;
-
 use super::*;
 use crate::{
 	stack::{ReservedValuesPolicy, signed_pointer},
 	test_support::{
-		on_testnet, published_test_descriptor_at, sign_test_descriptor, stored_test_record,
-		without_bulletin,
+		MemoryCoreStorage, on_testnet, published_test_descriptor_at, sign_test_descriptor,
+		stored_test_record, without_bulletin,
 	},
 };
-
-/// Core storage held in memory, as a browser host's might be.
-#[derive(Default)]
-struct MemoryCoreStorage(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
-
-#[async_trait::async_trait]
-impl CoreStorage for MemoryCoreStorage {
-	async fn read_core_storage(
-		&self,
-		key: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
-	}
-
-	async fn write_core_storage(
-		&self,
-		key: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), GenericError> {
-		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
-		Ok(())
-	}
-
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
-		Ok(())
-	}
-}
 
 /// The record a reader stores for the test stack's descriptor at `sequence`.
 fn record_at(sequence: u32) -> Vec<u8> {

@@ -19,9 +19,12 @@ fn stack_arg(source: &'static str) -> Option<StackArg> {
 #[test]
 fn test_network_with_stack_error() {
 	for source in ["--stack", STACK_ENV] {
-		let Err(error) =
-			NetworkSource::new(ChainAccess::Rpc, Some(Network::Previewnet), stack_arg(source))
-		else {
+		let Err(error) = NetworkSource::new(
+			ChainAccess::Rpc,
+			Some(Network::Previewnet),
+			stack_arg(source),
+			None,
+		) else {
 			panic!("--network accepted with {source}");
 		};
 		assert!(error.to_string().contains(source));
@@ -36,7 +39,8 @@ async fn test_local_stack_on_the_light_client() {
 	std::fs::write(file.path(), edit_descriptor(|_| {})).expect("write the descriptor");
 	let stack = StackArg { value: file.path().display().to_string(), source: "--stack" };
 	let source =
-		NetworkSource::new(test_access(ChainBackend::LightClient), None, Some(stack)).unwrap();
+		NetworkSource::new(test_access(ChainBackend::LightClient), None, Some(stack), None)
+			.unwrap();
 
 	let stack = source.resolve().await.expect("the descriptor names its light specs");
 

@@ -11,7 +11,9 @@
 
 use core::{future::Future, time::Duration};
 
-use crate::platform::{CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId};
+use crate::platform::{
+	CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId, StackRun,
+};
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
 use truapi::v01;
@@ -176,7 +178,10 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 /// A cached root manifest lookup and when it was made.
 ///
 /// The document is stored verbatim rather than reduced to the grants this core
-/// reads today, so a later consumer needs no cache migration.
+/// reads today, so a later consumer needs no cache migration. It is stored
+/// stamped with the run of the stack's chains the lookup was made in, as
+/// [`encode_cached_root_manifest`] does. The core skips an entry from another
+/// run, because the chain it was read from no longer exists.
 #[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
 	/// Seconds since the Unix epoch at which the lookup was made.
@@ -195,8 +200,10 @@ pub struct CachedManifest {
 /// grant instead of resolving one.
 ///
 /// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
-/// manifest belongs to. The core reads that entry before it consults the Asset
-/// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
+/// manifest belongs to. `run` is the [`Stack::run`](crate::platform::Stack::run)
+/// of the stack the host runs; the core ignores an entry stamped with any
+/// other. The core reads that entry before it consults the Asset Hub, so a
+/// seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
 /// either product is deployed.
 ///
@@ -211,8 +218,12 @@ pub struct CachedManifest {
 ///
 /// A Worker manifest is cached the same way, under
 /// [`worker_manifest_cache_key`].
-pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> Vec<u8> {
-	CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode()
+pub fn encode_cached_root_manifest(
+	run: &StackRun,
+	json: Option<&str>,
+	fetched_at_secs: u64,
+) -> Vec<u8> {
+	run.stamp(&CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode())
 }
 
 /// Why a grant lookup did not admit the caller.
@@ -666,29 +677,26 @@ async fn root_manifest(
 	if services.stack().require_served(target).is_err() {
 		return (None, ManifestSource::Unserved);
 	}
-	let read = cached_dotns_json(
-		platform,
-		CoreStorageKey::product_manifest(target),
-		CachePolicy::UseCache,
-		|| async {
-			let genesis_hash = services.asset_hub_chain_genesis_hash();
-			let (chain, target) = (services.chain.clone(), target.clone());
-			services
-				.dotns_reads
-				.root_manifests
-				.run(target.bare_label().to_string(), move || async move {
-					fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
-						let reason = error.reason();
-						warn!(%target, %reason, "root manifest lookup failed");
-						ManifestSource::LookupFailed { reason }
-					})
+	let key = CoreStorageKey::product_manifest(target);
+	let run = services.stack().run();
+	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
+		let genesis_hash = services.asset_hub_chain_genesis_hash();
+		let (chain, target) = (services.chain.clone(), target.clone());
+		services
+			.dotns_reads
+			.root_manifests
+			.run(target.bare_label().to_string(), move || async move {
+				fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
+					let reason = error.reason();
+					warn!(%target, %reason, "root manifest lookup failed");
+					ManifestSource::LookupFailed { reason }
 				})
-				.await
-				.unwrap_or_else(|| {
-					Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
-				})
-		},
-	)
+			})
+			.await
+			.unwrap_or_else(|| {
+				Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
+			})
+	})
 	.await;
 	match read {
 		Ok((json, DotnsRead::Cached { age_secs })) => (json, ManifestSource::Cached { age_secs }),
@@ -717,23 +725,24 @@ pub async fn read_worker_manifest(
 		// id the stack does not serve.
 		return Ok((None, DotnsRead::Fetched));
 	}
-	let (json, read) =
-		cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
-			let genesis_hash = services.asset_hub_chain_genesis_hash();
-			let (chain, product) = (services.chain.clone(), product_id.clone());
-			services
-				.dotns_reads
-				.worker_manifests
-				.run(product_id.bare_label().to_string(), move || async move {
-					fetch_worker_manifest(&chain, genesis_hash, &product)
-						.await
-						.map_err(|error| error.reason())
-				})
-				.await
-				.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
-		})
-		.await
-		.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
+	let key = worker_manifest_cache_key(product_id);
+	let run = services.stack().run();
+	let (json, read) = cached_dotns_json(platform, &run, key, policy, || async {
+		let genesis_hash = services.asset_hub_chain_genesis_hash();
+		let (chain, product) = (services.chain.clone(), product_id.clone());
+		services
+			.dotns_reads
+			.worker_manifests
+			.run(product_id.bare_label().to_string(), move || async move {
+				fetch_worker_manifest(&chain, genesis_hash, &product)
+					.await
+					.map_err(|error| error.reason())
+			})
+			.await
+			.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
+	})
+	.await
+	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
 	let Some(json) = json else {
 		return Ok((None, read));
 	};
@@ -786,16 +795,13 @@ pub async fn publishes_app(
 	if services.stack().require_served(product_id).is_err() {
 		return Some(false);
 	}
-	let read = cached_dotns_json(
-		platform,
-		app_manifest_cache_key(product_id),
-		CachePolicy::UseCache,
-		|| async {
-			fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
-				.await
-				.map_err(|error| error.reason())
-		},
-	);
+	let key = app_manifest_cache_key(product_id);
+	let run = services.stack().run();
+	let read = cached_dotns_json(platform, &run, key, CachePolicy::UseCache, || async {
+		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
+			.await
+			.map_err(|error| error.reason())
+	});
 	let (json, _) = with_ceiling(ceiling, read)
 		.await?
 		.inspect_err(|reason| warn!(%product_id, %reason, "app manifest lookup failed"))
@@ -828,15 +834,17 @@ pub enum CachePolicy {
 }
 
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
-/// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
-/// answers, including that there is nothing published, is cached for that
-/// lifetime.
+/// younger than [`MANIFEST_TTL_SECS`] and was read in the run the stack's
+/// chains are in, and where it was read. Whatever `fetch` answers, including
+/// that there is nothing published, is cached for that lifetime, unless a
+/// later run of the stack cached the entry, which is left as it is.
 ///
 /// A failed lookup is not cached. It says nothing about what is published,
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
 async fn cached_dotns_json<F, E>(
 	platform: &dyn Platform,
+	run: &StackRun,
 	key: CoreStorageKey,
 	policy: CachePolicy,
 	fetch: impl FnOnce() -> F,
@@ -851,9 +859,11 @@ where
 	// honoured forever. The TTL is documented as the revocation bound, so such
 	// an entry is one a publisher could never withdraw. Treating it as stale
 	// costs one lookup and cannot be worse than that.
+	let stored = platform.read_core_storage(key.clone()).await.ok().flatten();
 	if policy == CachePolicy::UseCache &&
-		let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
-		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
+		let Some(bytes) = &stored &&
+		let Some(entry) = run.read_stamped(bytes) &&
+		let Ok(cached) = CachedManifest::decode(&mut &*entry) &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
 	{
@@ -861,11 +871,9 @@ where
 	}
 
 	let json = fetch().await?;
-	let _ = platform
-		.write_core_storage(
-			key,
-			CachedManifest { fetched_at_secs: now, json: json.clone() }.encode(),
-		)
-		.await;
+	if !stored.as_deref().is_some_and(|bytes| run.later_run_stamped(bytes)) {
+		let entry = encode_cached_root_manifest(run, json.as_deref(), now);
+		let _ = platform.write_core_storage(key, entry).await;
+	}
 	Ok((json, DotnsRead::Fetched))
 }

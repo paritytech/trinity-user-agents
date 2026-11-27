@@ -236,9 +236,10 @@ export type CoreStorageKey =
   /**
    * Cached root manifest of one product, as published to dotNS.
    *
-   * The value carries the manifest JSON alongside the time it was read. The
-   * core honours it for a bounded lifetime, which is what makes a revoked
-   * trust grant eventually take effect.
+   * The value carries the manifest JSON alongside the time it was read and
+   * the `StackRun` it was read in. The core honours it in that run for a
+   * bounded lifetime, which is what makes a revoked trust grant eventually
+   * take effect.
    */
   | { tag: "ProductManifest"; value: { productLabel: string } }
   /**
@@ -261,7 +262,16 @@ export type CoreStorageKey =
    * start does not go back to the bundled copy. A native core keeps this
    * record in its own database instead.
    */
-  | { tag: "StackRecord"; value: { stackId: string } };
+  | { tag: "StackRecord"; value: { stackId: string } }
+  /**
+   * The `StackRun` the usernames in the `AuthSession` blob were read in.
+   *
+   * It carries a hash of that blob, so it vouches for that blob only. A
+   * host that keeps the `AuthSession` value under a key of its own keeps
+   * this one next to it. When it vouches for another run or another blob,
+   * the core installs the session and looks its usernames up again.
+   */
+  | { tag: "SessionUsernamesRun"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1150,6 +1160,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         17,
         S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
       ] as const,
+      SessionUsernamesRun: [18, S._void] as const,
     }),
 );
 

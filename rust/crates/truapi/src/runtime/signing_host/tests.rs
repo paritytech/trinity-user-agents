@@ -43,7 +43,7 @@ use crate::{
 			signing_runtime_on_asset_hub,
 		},
 	},
-	test_support::StubPlatform,
+	test_support::{StubPlatform, paseo_test_stack},
 };
 use truapi::{
 	CallContext, CallError,
@@ -242,15 +242,16 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted_products: &str) {
 		r#"{{"$v":1,"displayName":"D","description":"d",
              "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted_products}}}"#
 	);
-	let entry = crate::runtime::product_manifest::CachedManifest {
-		fetched_at_secs: crate::unix_time::current_unix_secs(),
-		json: Some(json),
-	};
+	let entry = crate::runtime::product_manifest::encode_cached_root_manifest(
+		&paseo_test_stack().run(),
+		Some(&json),
+		crate::unix_time::current_unix_secs(),
+	);
 	futures::executor::block_on(
 		<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 			platform,
 			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
-			parity_scale_codec::Encode::encode(&entry),
+			entry,
 		),
 	)
 	.expect("stub core storage accepts the entry");
@@ -540,6 +541,7 @@ fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<S
 					platform,
 					CoreStorageKey::product_manifest(&ProductId::for_test("peopl.dot")),
 					crate::runtime::product_manifest::encode_cached_root_manifest(
+						&paseo_test_stack().run(),
 						json.as_deref(),
 						fetched_at_secs,
 					),
@@ -790,6 +792,7 @@ fn third_product_context(
 				&platform,
 				CoreStorageKey::product_manifest(&ProductId::for_test("dim2.dot")),
 				crate::runtime::product_manifest::encode_cached_root_manifest(
+					&paseo_test_stack().run(),
 					None,
 					crate::unix_time::current_unix_secs(),
 				),

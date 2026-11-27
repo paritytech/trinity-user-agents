@@ -165,6 +165,7 @@ fn a_tld_that_is_not_a_dns_label_is_refused() {
 			"paseo".into(),
 			tld.into(),
 			chains.clone(),
+			0,
 			&ReservedValuesPolicy::ALLOWED
 		)),
 		tlds.map(|tld| Err(StackError::InvalidTld { tld: tld.into() })),
@@ -189,6 +190,7 @@ fn a_tld_whose_names_mean_something_else_is_refused() {
 			"paseo".into(),
 			tld.into(),
 			chains.clone(),
+			0,
 			&ReservedValuesPolicy::ALLOWED,
 		);
 		let bundled = bundled(
@@ -224,6 +226,7 @@ fn a_stack_serves_its_own_tld_and_reads_the_reserved_one_as_it() {
 		"fork".into(),
 		"fork".into(),
 		chains,
+		0,
 		&ReservedValuesPolicy::default(),
 	)
 	.expect("fork starts");
@@ -398,6 +401,7 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 				"polkadot".into(),
 				"paseo".into(),
 				chains.clone(),
+				0,
 				&ReservedValuesPolicy::default()
 			)
 			.err(),
@@ -406,6 +410,7 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 				"polkadot".into(),
 				"paseo".into(),
 				chains,
+				0,
 				&ReservedValuesPolicy::ALLOWED
 			)
 			.is_ok(),
@@ -478,7 +483,7 @@ fn allowed_reserved_values_with_extra_ones_are_refused() {
 		policies.map(|policy| {
 			(
 				bundled(&descriptor, &policy).err(),
-				Stack::new(identity(), "paseo".into(), "paseo".into(), chains.clone(), &policy)
+				Stack::new(identity(), "paseo".into(), "paseo".into(), chains.clone(), 0, &policy)
 					.err(),
 			)
 		}),
@@ -522,7 +527,7 @@ fn a_policy_fault_is_reported_before_the_stacks() {
 		[
 			bundled(&on_li, &policy),
 			Stack::bundled(&test_stack_link(None), &bytes, &policy),
-			Stack::new(identity(), "paseo".into(), "li".into(), zero_asset_hub, &policy),
+			Stack::new(identity(), "paseo".into(), "li".into(), zero_asset_hub, 0, &policy),
 		],
 		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "li".to_string() })),
 	);
@@ -539,6 +544,7 @@ fn an_all_zero_relay_or_asset_hub_is_refused() {
 			"paseo".into(),
 			"paseo".into(),
 			chains,
+			0,
 			&ReservedValuesPolicy::ALLOWED,
 		)
 	};
@@ -587,6 +593,7 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 			"paseo".into(),
 			"paseo".into(),
 			chains.clone(),
+			0,
 			&ReservedValuesPolicy::default(),
 		)
 		.err()
@@ -598,6 +605,164 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 			Some(StackError::EmptyIdentity { field: "id" }),
 			Some(StackError::EmptyIdentity { field: "generation" }),
 		)
+	);
+}
+
+/// A stack in `generation` over `chains`, read from a descriptor with
+/// `sequence`.
+fn stack_in_run(generation: &str, chains: StackChains, sequence: u32) -> Stack {
+	stack_with_id("stack", generation, chains, sequence)
+}
+
+/// [`stack_in_run`] for the stack with this `id`, such as a fork's.
+fn stack_with_id(id: &str, generation: &str, chains: StackChains, sequence: u32) -> Stack {
+	let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
+	let policy = ReservedValuesPolicy::default();
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, sequence, &policy)
+		.expect("stack is valid")
+}
+
+/// The chains of the stamp tests.
+fn stamp_test_chains() -> StackChains {
+	StackChains { relay: None, asset_hub: [0xc3; 32], people: [0xa1; 32], bulletin: [0xb2; 32] }
+}
+
+/// A value stamped in one run is read back in that run only, whichever
+/// descriptor `sequence` a runtime in it started from. A new `generation`, or
+/// a new Asset Hub, People or Bulletin chain, is another run. The relay chain,
+/// which the core never reads, is not part of the run, so a host that starts
+/// or stops serving it keeps what the core stored. A value led by another
+/// byte than the stamp's is not read, like a value stored without a stamp.
+#[test]
+fn a_stamped_value_is_read_back_in_its_own_run_only() {
+	let chains = stamp_test_chains();
+	let run = stack_in_run("g1", chains.clone(), 10).run();
+	let stamped = run.stamp(b"value");
+	let read_in = |generation: &str, chains: StackChains, sequence: u32| {
+		stack_in_run(generation, chains, sequence)
+			.run()
+			.read_stamped(&stamped)
+			.map(<[u8]>::to_vec)
+	};
+	let mut other_tag = stamped.clone();
+	other_tag[0] = 1;
+
+	assert_eq!(
+		[
+			read_in("g1", chains.clone(), 10),
+			read_in("g1", chains.clone(), 11),
+			read_in("g1", StackChains { relay: Some([0x01; 32]), ..chains.clone() }, 10),
+			read_in("g2", chains.clone(), 10),
+			read_in("g1", StackChains { asset_hub: [0xc4; 32], ..chains.clone() }, 10),
+			read_in("g1", StackChains { people: [0xa2; 32], ..chains.clone() }, 10),
+			read_in("g1", StackChains { bulletin: [0xb3; 32], ..chains }, 10),
+			run.read_stamped(&other_tag).map(<[u8]>::to_vec),
+		],
+		[
+			Some(b"value".to_vec()),
+			Some(b"value".to_vec()),
+			Some(b"value".to_vec()),
+			None,
+			None,
+			None,
+			None,
+			None,
+		]
+	);
+}
+
+/// How `run` reads what `stamped` holds.
+fn read_as(run: &StackRun, stamped: &[u8]) -> String {
+	match run.read(stamped) {
+		Stamped::ThisRun(value) => format!("this run: {}", String::from_utf8_lossy(value)),
+		Stamped::LaterRun => "later run".to_string(),
+		Stamped::Stale => "stale".to_string(),
+	}
+}
+
+/// What one run stamped is stale in another run that came later by the
+/// descriptor's `sequence`, and is replaced. A runtime started from an older
+/// copy of the descriptor, as when the stored copy could not be read, finds
+/// what the later run stamped and leaves it as it is. Another run with the
+/// same `sequence`, which a signed stack never publishes, and a value with no
+/// stamp are stale.
+#[test]
+fn a_value_another_run_stamped_is_left_only_when_that_run_came_later() {
+	let chains = stamp_test_chains();
+	let reading = stack_in_run("g2", chains.clone(), 11).run();
+	let stamped_in = |generation: &str, sequence: u32| {
+		stack_in_run(generation, chains.clone(), sequence).run().stamp(b"value")
+	};
+
+	assert_eq!(
+		[
+			read_as(&reading, &stamped_in("g2", 9)),
+			read_as(&reading, &stamped_in("g3", 12)),
+			read_as(&reading, &stamped_in("g1", 10)),
+			read_as(&reading, &stamped_in("g0", 11)),
+			read_as(&reading, b"value"),
+		],
+		["this run: value", "later run", "stale", "stale", "stale"]
+	);
+}
+
+/// Stacks that share core storage, such as a fork the CLI runs in its
+/// source's namespace, or the stack a host build ships before and after an
+/// update, number their descriptors apart. One stack's `sequence` says nothing
+/// about another's, so what either stamped is stale to the other and
+/// replaced, in both directions, and neither can keep the other from storing.
+/// That holds for a fork that keeps its source's generation and genesis
+/// hashes too: its chains are not the source's.
+#[test]
+fn another_stacks_value_is_stale_whatever_its_sequence() {
+	let chains = stamp_test_chains();
+	let source = stack_with_id("source", "g1", chains.clone(), 10).run();
+	let fork = stack_with_id("source-fork", "f1", chains.clone(), 3).run();
+	let fork_on_source_chains = stack_with_id("source-fork", "g1", chains.clone(), 3).run();
+
+	assert_eq!(
+		[
+			read_as(&fork, &source.stamp(b"value")),
+			read_as(&source, &fork.stamp(b"value")),
+			read_as(&fork_on_source_chains, &source.stamp(b"value")),
+		],
+		["stale", "stale", "stale"]
+	);
+}
+
+/// A descriptor refresh the core takes while it runs, such as new RPC
+/// endpoints, keeps the stack and so the run its stored values carry. One that
+/// restarts the chains, by a new generation or a new genesis hash, waits for
+/// the next start and is another run, so that start ignores what the old run
+/// stored.
+#[test]
+fn a_refresh_keeps_the_run_unless_it_restarts_the_chains() {
+	let base = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let edited = |edit: fn(&mut serde_json::Value)| {
+		let mut descriptor = base.clone();
+		edit(&mut descriptor);
+		bundled(&descriptor, &ReservedValuesPolicy::default()).expect("stack is valid")
+	};
+	let running = bundled(&base, &ReservedValuesPolicy::default()).expect("stack is valid");
+	let republished = |descriptor: &mut serde_json::Value| {
+		let sequence = descriptor["sequence"].as_u64().expect("the descriptor has a sequence");
+		descriptor["sequence"] = (sequence + 1).into();
+	};
+	let refreshed = [
+		edited(|descriptor| {
+			descriptor["chains"][1]["rpc"] = serde_json::json!(["wss://other.test.invalid"]);
+		}),
+		edited(republished),
+		edited(|descriptor| descriptor["generation"] = "next".into()),
+		edited(|descriptor| {
+			descriptor["chains"][2]["genesisHash"] =
+				format!("0x{}", hex::encode([0xa9; 32])).into();
+		}),
+	];
+
+	assert_eq!(
+		refreshed.map(|stack| (running.runs_as(&stack), stack.run() == running.run())),
+		[(true, true), (true, true), (false, false), (false, false)]
 	);
 }
 

@@ -615,7 +615,12 @@ async fn main() -> Result<()> {
 			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
 		},
 	};
-	let source = NetworkSource::new(chain_access, cli.network, stack)?;
+	// Only a host keeps state between runs, so only a host keeps the
+	// descriptor it takes.
+	let is_host =
+		matches!(cli.command, Command::PairingHost(_) | Command::Dev(_) | Command::SigningHost(_));
+	let stack_copies = is_host.then(|| command_base_path(&cli.command).join("stacks"));
+	let source = NetworkSource::new(chain_access, cli.network, stack, stack_copies)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
@@ -1747,7 +1752,12 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+	apply_local_product_grants(
+		platform.as_ref(),
+		&network.core_stack().context("invalid stack")?.run(),
+		&args.product_config,
+	)
+	.await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2160,7 +2170,11 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
+async fn apply_local_product_grants(
+	platform: &CliPlatform,
+	run: &truapi::platform::StackRun,
+	paths: &[PathBuf],
+) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
@@ -2169,7 +2183,7 @@ async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -
 		.duration_since(std::time::UNIX_EPOCH)
 		.context("system clock is before the Unix epoch")?
 		.as_secs();
-	let applied = product_config::apply(platform, &configs, now).await?;
+	let applied = product_config::apply(platform, run, &configs, now).await?;
 	if applied.is_empty() {
 		return Ok(());
 	}

@@ -50,11 +50,17 @@ use truapi::{
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod dotns_usernames;
 mod legacy_asset_hub;
+mod memory_core_storage;
 mod scripted_chain;
 mod tests;
 
+pub use dotns_usernames::{
+	DOTNS_NAMED_ACCOUNT, DOTNS_SQUATTER, dotns_usernames_frames, dotns_usernames_responder,
+};
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
+pub use memory_core_storage::MemoryCoreStorage;
 
 pub use scripted_chain::{
 	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
@@ -294,6 +300,18 @@ pub type StorageChangeSender = futures::channel::mpsc::UnboundedSender<
 >;
 
 impl StubPlatform {
+	/// Records that the usernames in [`Self::session_blob`] were read in the
+	/// run of the [`paseo_test_stack`], as the core does once it stores a
+	/// session, so the session is restored as stored.
+	pub fn with_usernames_read_in_this_run(self) -> Self {
+		let blob = self.session_blob.as_deref().expect("the platform stores a session");
+		self.local_storage.lock().expect("local storage mutex poisoned").insert(
+			core_storage_test_key(CoreStorageKey::SessionUsernamesRun),
+			crate::host_logic::session::usernames_record(&paseo_test_stack().run(), blob),
+		);
+		self
+	}
+
 	/// Fail every open subscription on `key`, as a host whose store broke
 	/// mid-stream would.
 	pub fn fail_storage_subscriptions(&self, key: &str, reason: &str) {
@@ -371,13 +389,25 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 /// Identity of every [`test_stack`].
 pub const TEST_STACK_ID: &str = "test-stack";
 
-/// A stack on `tld` over these chains, without a relay. Reserved values are
-/// allowed, so a test may run on `dot`.
+/// A stack on `tld` over these chains, without a relay, read from a
+/// descriptor with `sequence` 0. Reserved values are allowed, so a test may
+/// run on `dot`.
 pub fn test_stack(
 	tld: &str,
 	people: [u8; 32],
 	bulletin: [u8; 32],
 	asset_hub: [u8; 32],
+) -> crate::platform::Stack {
+	test_stack_from(tld, people, bulletin, asset_hub, 0)
+}
+
+/// A [`test_stack`] read from a descriptor with `sequence`.
+pub fn test_stack_from(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: [u8; 32],
+	sequence: u32,
 ) -> crate::platform::Stack {
 	let identity = crate::platform::StackIdentity {
 		id: TEST_STACK_ID.to_string(),
@@ -385,8 +415,28 @@ pub fn test_stack(
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	let allowed = crate::platform::ReservedValuesPolicy::ALLOWED;
-	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, &allowed)
-		.expect("test stack is valid")
+	crate::platform::Stack::new(
+		identity,
+		"paseo".to_string(),
+		tld.to_string(),
+		chains,
+		sequence,
+		&allowed,
+	)
+	.expect("test stack is valid")
+}
+
+/// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
+/// and `asset_hub`: what a cached manifest must name to be read on it.
+pub fn test_run(asset_hub: [u8; 32]) -> crate::platform::StackRun {
+	test_stack("paseo", [0; 32], [0xbb; 32], asset_hub).run()
+}
+
+/// A [`test_run`] started from a descriptor with `sequence`. Over another
+/// `asset_hub` and with `sequence` above 0, it is a later run than a
+/// [`test_run`], as after a wipe the operator published a new descriptor for.
+pub fn test_run_from(asset_hub: [u8; 32], sequence: u32) -> crate::platform::StackRun {
+	test_stack_from("paseo", [0; 32], [0xbb; 32], asset_hub, sequence).run()
 }
 
 /// A genesis hash no [`StubPlatform`] serves: `connect` to it always fails.
@@ -579,21 +629,23 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
-	(
-		PairingHostConfig::new(
-			HostInfo {
-				name: "Polkadot Web".to_string(),
-				icon: Some("https://example.invalid/dotli.png".to_string()),
-				version: None,
-				platform: truapi::latest::HostPlatform::Web,
-			},
-			PlatformInfo::default(),
-			dot_test_stack(),
-			"polkadotapp".to_string(),
-		)
-		.expect("test host runtime config is valid"),
-		ProductContext::new(ProductId::for_test(product_id)),
+	(pairing_config_on(dot_test_stack()), ProductContext::new(ProductId::for_test(product_id)))
+}
+
+/// The pairing host of [`runtime_config`] on `stack`.
+pub fn pairing_config_on(stack: crate::platform::Stack) -> PairingHostConfig {
+	PairingHostConfig::new(
+		HostInfo {
+			name: "Polkadot Web".to_string(),
+			icon: Some("https://example.invalid/dotli.png".to_string()),
+			version: None,
+			platform: truapi::latest::HostPlatform::Web,
+		},
+		PlatformInfo::default(),
+		stack,
+		"polkadotapp".to_string(),
 	)
+	.expect("test host runtime config is valid")
 }
 
 /// Basic connected session fixture without SSO channel material.
@@ -673,6 +725,15 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	)
 	.unwrap();
 	(host_session, responder_session)
+}
+
+/// [`sso_session_info`] without usernames, as for an account that has none.
+pub fn unnamed_sso_session_info() -> crate::host_logic::session::SessionInfo {
+	crate::host_logic::session::SessionInfo {
+		lite_username: None,
+		full_username: None,
+		..sso_session_info()
+	}
 }
 
 /// Connected session fixture with deterministic SSO channel material.

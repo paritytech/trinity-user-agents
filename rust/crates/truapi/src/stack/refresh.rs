@@ -182,8 +182,10 @@ impl StackRefresh {
 
 	/// The stack the core runs, with the checks of its chains.
 	///
-	/// It stays the same for the life of the runtime: a newer copy that
-	/// changes it applies at the next start.
+	/// A newer copy that changes it in anything but the descriptor's
+	/// `sequence` applies at the next start. One that changes only the
+	/// `sequence` applies at once, so this stack's `sequence` can grow while
+	/// the runtime runs, which keeps its run.
 	pub fn stack(&self) -> Stack {
 		let stack = self.shared.source().stack().clone();
 		Stack { checks: Some(StackChecks { shared: self.shared.clone() }), ..stack }
