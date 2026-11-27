@@ -1352,14 +1352,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
     /// modality omit it. Pass `game` to hold game reminders, and omit it
     /// where the host cannot. A Worker opens through its `NativeWorkerAttempt`.
+    /// Throws if the stack does not serve `productId`.
     public func openAppExecution(
         bridge: HostBridge,
         productId: ProductId,
         chat: ChatHostBridge? = nil,
         game: GameHostBridge? = nil
-    ) -> TrUAPIProductExecution {
-        TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
-            inner.openAppExecution(productId: productId, callbacks: callbacks)
+    ) throws -> TrUAPIProductExecution {
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            try inner.openAppExecution(productId: productId, callbacks: callbacks)
         }
     }
 
@@ -1370,9 +1371,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         productId: ProductId,
         chat: ChatHostBridge? = nil,
         game: GameHostBridge? = nil
-    ) -> TrUAPIProductExecution {
-        TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
-            inner.openWidgetExecution(productId: productId, callbacks: callbacks)
+    ) throws -> TrUAPIProductExecution {
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            try inner.openWidgetExecution(productId: productId, callbacks: callbacks)
         }
     }
 

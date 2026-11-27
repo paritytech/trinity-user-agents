@@ -113,14 +113,14 @@ struct ProductExecutionServices {
             case let .worker(_, attempt):
                 try attempt.openExecution(bridge: bridges.host, chat: bridges.chat, game: game)
             case let .app(runtime):
-                runtime.openAppExecution(
+                try runtime.openAppExecution(
                     bridge: bridges.host,
                     productId: productId,
                     chat: bridges.chat,
                     game: game
                 )
             case let .expandedCard(runtime, _):
-                runtime.openWidgetExecution(
+                try runtime.openWidgetExecution(
                     bridge: bridges.host,
                     productId: productId,
                     chat: bridges.chat,
