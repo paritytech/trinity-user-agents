@@ -6,10 +6,9 @@ import TrUAPIHost
 /// when those features migrate to the product scheme. Coinage keeps its own
 /// derivation layout for now.
 public enum BuiltInProduct {
-    /// Game (DIM2). `@Sendable` so the value of this function can be stored in a
-    /// `Sendable` type, which is how `HostPlacedProducts` names its backing product.
-    @Sendable public static func dim2(for tld: String) throws -> ProductId {
-        try productIdFromName(name: "dim2", networkSuffix: tld)
+    /// Game (DIM2).
+    public static func dim2(for tld: String) throws -> ProductId {
+        try privilegedProductId(product: .game, networkSuffix: tld)
     }
 
     /// PoI (DIM1).
@@ -30,6 +29,6 @@ public enum BuiltInProduct {
     /// Personhood — ring-VRF key domain for full/light person keys; account 0 is the main
     /// account (RFC-0028).
     public static func personhood(for tld: String) throws -> ProductId {
-        try productIdFromName(name: "peopl", networkSuffix: tld)
+        try privilegedProductId(product: .personhood, networkSuffix: tld)
     }
 }

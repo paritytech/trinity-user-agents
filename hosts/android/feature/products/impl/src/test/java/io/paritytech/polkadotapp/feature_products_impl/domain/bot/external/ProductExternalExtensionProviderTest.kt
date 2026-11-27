@@ -57,7 +57,7 @@ class ProductExternalExtensionProviderTest {
         val provider = ProductExternalExtensionProvider(
             integrationRepository,
             ProductBotFactory(context, mockk(), mockk(), mockk(), mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() }),
-            HostPlacedProducts(context, tldProvider),
+            HostPlacedProducts(tldProvider),
         )
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(emptyList())
 

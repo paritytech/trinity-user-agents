@@ -10,6 +10,8 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
+                         its `privileged_product` module names the products every host trusts
+                         (Humanity, Jollity, Collectibles),
                          its `stack` module resolves the Trinity stack the host runs, the
                          core's only chain configuration, from the descriptor its build
                          bundles, its `chain` module builds the core's own extrinsics through
@@ -27,7 +29,11 @@ rust/crates/
                          same database, transfer items as deferred durable transactions,
                          and receive cheques over the statement store; recovery reads the
                          seed's installations through `installation_registry` and scans
-                         keys with the generic `gap_scan`, which coinage can reuse; its `public_profile` domain resolves and caches
+                         keys with the generic `gap_scan`, which coinage can reuse; its
+                         `pgas_claims` module claims PGAS as deferred durable transactions
+                         for NFT transfers to depend on, at most one active claim per
+                         destination, each built from the signed-in session;
+                         its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them; its `materials` module keeps
                          the materials renderer trees name in the same database, read from

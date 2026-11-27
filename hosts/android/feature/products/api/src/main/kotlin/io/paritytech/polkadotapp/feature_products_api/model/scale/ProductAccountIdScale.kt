@@ -16,7 +16,6 @@ data class ProductAccountIdScale(
     val derivationIndex: ProductDerivationIndexScale,
 )
 
-
 fun ProductAccountId.toScale(): ProductAccountIdScale {
     return ProductAccountIdScale(productId, index.toScale())
 }

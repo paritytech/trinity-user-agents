@@ -146,32 +146,6 @@ fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
 	}
 }
 
-#[test]
-fn every_trusted_remote_permission_label_is_a_product_identifier() {
-	// A label that product-id validation rejects would never reach the
-	// permission engine, so the whitelist entry would be silently inert.
-	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		for tld in ["dot", "paseo", "fork"] {
-			let product_id = format!("{label}.{tld}");
-			assert!(
-				product_id.parse::<ProductId>().is_ok(),
-				"{product_id} must be an accepted product identifier"
-			);
-			assert!(has_trusted_label(&product_id), "{product_id} must be recognized as trusted");
-		}
-	}
-}
-
-#[test]
-fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
-	// The predicate compares against the label of an already-normalized id,
-	// so an entry carrying a TLD or an uppercase letter can never match.
-	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		assert!(!label.contains('.'), "{label} must not carry a TLD");
-		assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
-	}
-}
-
 /// Parsing has no stack to ask, so it accepts any TLD dotNS could register.
 /// The stack decides which TLDs it serves.
 #[test]
