@@ -131,22 +131,21 @@ impl Stack {
 		namespace_of(&self.descriptor.id)
 	}
 
-	/// The name the CLI keeps this stack's state under.
+	/// The directory under `<base-path>/v2` that holds this stack's state.
 	///
-	/// It is the stack's directory under the versioned base path, and its
-	/// network in the account store. A built-in network uses its own name.
-	/// Any other stack uses `stack-` and the first 32 hex digits of the
-	/// SHA-256 of its id. The descriptor's `id` plays no part, so a fork does
-	/// not read its source's state.
+	/// A built-in network's is its name, such as `previewnet`. Any other
+	/// stack's is `stack-` plus a hash of its key, URL or file path, so a fork
+	/// never shares its source's directory. The account store files the
+	/// stack's accounts under the same name.
 	pub fn state_directory(&self) -> &str {
 		&self.state_directory
 	}
 
-	/// How a message about this stack's stored state names it.
+	/// The name messages about this stack's stored state use.
 	///
-	/// It is the [`Self::namespace`], with the [`Self::state_directory`] after
-	/// it when the two differ. A fork has its source's namespace, and the
-	/// directory tells which of the two a command clears.
+	/// The [`Self::namespace`], followed by the directory in parentheses when
+	/// the two differ, such as `previewnet (stack-1a2b…)`. A fork has its
+	/// source's namespace, so the directory shows which one a command clears.
 	pub fn state_label(&self) -> String {
 		let (name, directory) = (self.namespace(), self.state_directory());
 		if name == directory { name.to_owned() } else { format!("{name} ({directory})") }
