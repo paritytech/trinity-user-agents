@@ -3,7 +3,7 @@ import TrUAPIHost
 
 /// Test double for one product execution. Records ws-bridge lifecycle and
 /// chain notify-backs; unused notify surfaces are inert.
-final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sendable {
+final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionProtocol, @unchecked Sendable {
     private(set) var startWsBridgeCallCount = 0
     private(set) var stopWsBridgeCallCount = 0
     private(set) var closeCallCount = 0
@@ -19,16 +19,19 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     var devicePermissionGranted = false
     private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
+    let roomChanges = AsyncStream<[ChatRoom]>.makeStream()
+    let chatActions = AsyncStream<HostChatActionSubscribeItem>.makeStream()
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
+    /// Errors thrown by successive `publishChatAction` calls, consumed in order;
+    /// once empty the call succeeds.
+    var chatActionErrors: [Error] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
     private(set) var renderRequests: [ProductRendererRenderRequest] = []
-    /// The continuation behind each stream `render` returned, in order, so a
-    /// test can push a face into a stream that is already being drained.
-    private(set) var renderContinuations: [AsyncThrowingStream<RendererNode, Error>.Continuation] = []
+    private(set) var renders: [(observer: NativeRendererObserver, cancellation: AsyncStream<Void>)] = []
     /// Errors thrown by successive `render` calls, consumed in order; once
-    /// empty the call succeeds. Lets tests drive the startup retry loop.
+    /// empty the call succeeds.
     var renderErrors: [Error] = []
     /// Nodes the render stream yields before finishing.
     var renderNodes: [RendererNode] = []
@@ -54,7 +57,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         closeSignals = closes.makeAsyncIterator()
         themeSignal = themeContinuation
         themeSignals = themes.makeAsyncIterator()
+        super.init(noHandle: .init())
     }
+
+    required init(unsafeFromHandle _: UInt64) { fatalError("Test execution") }
 
     /// Returns once a `render` call has happened that no earlier call to this method consumed.
     func awaitRenderRequest() async {
@@ -85,29 +91,39 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         closeSignal.yield()
     }
 
-    func publishChatAction(_ item: HostChatActionSubscribeItem) throws {
-        publishedChatActions.append(item)
+    func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
+        try publishChatAction(action: action)
     }
 
-    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
+    override func publishChatAction(action: HostChatActionSubscribeItem) throws {
+        if !chatActionErrors.isEmpty { throw chatActionErrors.removeFirst() }
+        publishedChatActions.append(action)
+        chatActions.continuation.yield(action)
+    }
+
+    override func render(
+        request: ProductRendererRenderRequest,
+        observer: NativeRendererObserver
+    ) throws -> NativeSubscription {
         renderRequests.append(request)
         if !renderErrors.isEmpty {
             renderSignal.yield()
             throw renderErrors.removeFirst()
         }
 
-        let nodes = renderNodes
-        let staysOpen = keepsRenderStreamOpen
-        let stream = AsyncThrowingStream<RendererNode, Error> { continuation in
-            nodes.forEach { continuation.yield($0) }
-            if !staysOpen { continuation.finish() }
-            self.renderContinuations.append(continuation)
-        }
+        let subscription = RenderSubscription(noHandle: .init())
+        renders.append((observer, subscription.cancellation.stream))
+        renderNodes.forEach { observer.onUpdate(node: $0) }
+        if !keepsRenderStreamOpen { observer.onComplete() }
         renderSignal.yield()
-        return stream
+        return subscription
     }
 
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
+        try publishRendererAction(item: item)
+    }
+
+    override func publishRendererAction(item: HostRendererActionSubscribeItem) throws {
         publishedRendererActions.append(item)
     }
 
@@ -145,9 +161,15 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         chainClosed.append(connectionId)
     }
 
-    func notifyChatRoomsChanged(rooms _: [ChatRoom]) {}
+    override func notifyChatRoomsChanged(rooms: [ChatRoom]) { roomChanges.continuation.yield(rooms) }
 
     func sessionChatIdentityKey() throws -> Data? {
         nil
     }
+}
+
+private final class RenderSubscription: NativeSubscription, @unchecked Sendable {
+    let cancellation = AsyncStream<Void>.makeStream()
+
+    override func cancel() { cancellation.continuation.yield() }
 }

@@ -92,21 +92,23 @@ flowchart TD
   A --> W{Worker content id?}
   U --> W
   D --> W
-  W -- yes --> T[TrUAPIWorkerManager.reload]
+  W -- yes --> T[TrUAPIHostRuntime.reloadWorker]
   W --> G[removeSupersededContent]
 ```
 
-- **Worker releases** (`worker.<base>`, or `<base>` for legacy) restart the TrUAPI worker through
-  its transition queue. The chat handler and Pocket cards read the current execution on every call,
-  so they follow the restart without being rebuilt. Native workers are not reloaded: they pick up
-  the new archive on their next boot.
+- **Worker releases** (`worker.<base>`, or `<base>` for legacy) ask the core to restart the worker
+  if a consumer still holds a claim. The chat handler and Pocket cards follow the worker's
+  execution state, so they pick up the restarted worker without being rebuilt. Native workers are
+  not reloaded: they pick up the new archive on their next boot.
 - **Cleanup** runs at start and after every apply. It deletes stored archives that no pointer
   names, no open SPA serves and no pending release holds, once they are older than 10 minutes.
 
 ## Known limits
 
-- A worker restart loses the product's in-memory state, and chat or Pocket input sent while it
-  restarts is dropped.
+- A worker restart loses the product's in-memory state. A chat message sent while it restarts is
+  held in memory and delivered once the worker runs again. It is lost if the app is killed first,
+  because Chat has already recorded it as processed. A press on a chat card or a Pocket card sent
+  meanwhile is dropped.
 - Chat cards redraw after a restart only through the render retry. A cell gives up after three
   renders that draw nothing.
 - A host-placed product is refreshed only once something has cached its manifest; the chat bot

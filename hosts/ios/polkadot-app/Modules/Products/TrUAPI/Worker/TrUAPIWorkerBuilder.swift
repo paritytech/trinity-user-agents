@@ -1,4 +1,5 @@
 import Foundation
+import BulletinChain
 @preconcurrency import Products
 import TrUAPIHost
 
@@ -14,48 +15,34 @@ enum TrUAPIWorkerError: Error, CustomStringConvertible {
 
 /// Assembles one product's worker: its archive, its Worker execution, and the
 /// headless engine its entry module runs in.
-struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
-    private let environment: @Sendable () throws -> RustRuntimeEnvironment
-    private let contentLoader: any ProductContentLoading
-    private let dotNsResolver: any DotNsResolverProtocol
-    private let productFileProvider: any ChatProductFileProviding
-    private let logger: LoggerProtocol
-
-    init(
-        environment: @escaping @Sendable () throws -> RustRuntimeEnvironment,
-        contentLoader: any ProductContentLoading,
-        dotNsResolver: any DotNsResolverProtocol,
-        productFileProvider: any ChatProductFileProviding,
-        logger: LoggerProtocol = Logger.shared
-    ) {
-        self.environment = environment
-        self.contentLoader = contentLoader
-        self.dotNsResolver = dotNsResolver
-        self.productFileProvider = productFileProvider
-        self.logger = logger
-    }
+struct TrUAPIWorkerBuilder {
+    let contentLoader: any ProductContentLoading
+    let dotNsResolver: any DotNsResolverProtocol
+    let productFileProvider: any ChatProductFileProviding
 
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext
+        context: ProductWorkerContext,
+        attempt: NativeWorkerAttempt,
+        services: ProductExecutionServices
     ) async throws -> TrUAPIWorkerRuntime {
         let (source, files) = try await workerSource(for: productId)
 
         let engine = try ChatProductEngineFactory.makeContext(
             source: source,
             productFileProvider: files,
-            logger: logger
+            logger: services.logger
         )
 
         return try TrUAPIWorkerRuntime(
             productUrl: engine.productUrl,
-            executionModel: environment().makeWorkerExecution(
+            executionModel: services.makeExecution(
                 productId: productId,
                 routers: context.routers,
-                chatMessaging: context.chat
+                purpose: .worker(chatMessaging: context.chat, attempt: attempt)
             ),
             engineFactory: engine.engineFactory,
-            logger: logger
+            logger: services.logger
         )
     }
 
@@ -64,7 +51,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     func workerSource(
         for productId: ProductId
     ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
-        // Its 1 s and 2 s backoffs fit inside the manager's startup window.
+        // Its 1 s and 2 s backoffs fit inside the core's startup deadline.
         let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
         return try await (workerSource(for: resolved, productId: productId), productFileProvider)
     }

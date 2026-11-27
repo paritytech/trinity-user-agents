@@ -1,4 +1,5 @@
 import Foundation
+import class TrUAPIHost.TrUAPIHostRuntime
 import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
@@ -18,7 +19,6 @@ import Individuality
 import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
-import DesignSystem
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
@@ -231,33 +231,6 @@ extension ServiceCoordinator {
             logger: logger
         )
 
-        // Single process-wide TrUAPI runtime provider. Registered in the root
-        // locator so the static SPA factory reaches the same instance the
-        // chat bot factory does — one shared runtime across all products.
-        // Host-level core confirmations route through an SSO-style facade whose
-        // presentation view is attached with the main tab bar; until then,
-        // host-level prompts deny.
-        let fundingService = FundingService(logger: logger)
-        let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            entropyManager: RootEntropyManager.shared,
-            settingsManager: SettingsManager.shared,
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
-            confirmationRouterFacade: ProductRoutersFacade.sso(),
-            fundingHandler: fundingService,
-            remoteConfig: FirebaseFacade.shared,
-            logger: logger
-        )
-        RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
-        RootDependencyLocator.setDependency(
-            PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
-                as PublicProfileAvatarViewModelMaking
-        )
-        CoreDurableRecoveryTask.shared.attach(
-            truapiRuntimeProvider,
-            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
-        )
-
         let gameReminders = ProductGameReminderCenter.makeDefault()
         RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
         RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
@@ -268,20 +241,61 @@ extension ServiceCoordinator {
             contentHashCache: ContentHashCache.shared
         )
 
-        // Built here rather than alongside chat: every modality is served from
-        // one worker per product, and hanging the Pocket off chat's assembly
-        // would let any chat service failing take every live card face with it,
-        // silently.
+        let confirmationRouter = ProductRoutersFacade.sso()
+        let contexts = ProductWorkerContexts { [router = confirmationRouter.productsRouter] in router.presentationView }
+        let workerServices = ProductExecutionServices(
+            hostProvider: spaFlowState.hostProvider,
+            gameReminders: gameReminders,
+            logger: logger
+        )
+        let workerBuilder = TrUAPIWorkerBuilder(
+            contentLoader: spaFlowState.contentLoader,
+            dotNsResolver: spaFlowState.dotNsResolver,
+            productFileProvider: productFileProvider
+        )
+        let webViewHost = WebViewWorkerHost { productId, attempt in
+            try await workerBuilder.makeRuntime(
+                productId: productId,
+                context: contexts.context(for: productId),
+                attempt: attempt,
+                services: workerServices
+            )
+        }
+        let fundingService = FundingService(logger: logger)
+        // The root locator lets the SPA factory and product updates reach
+        // the same dashboard session as Chat.
+        // Host-level core confirmations route through an SSO-style facade whose
+        // presentation view is attached with the main tab bar; until then,
+        // host-level prompts deny.
+        let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
+            chainRegistry: ChainRegistryFacade.sharedRegistry,
+            entropyManager: RootEntropyManager.shared,
+            settingsManager: SettingsManager.shared,
+            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
+            confirmationRouterFacade: confirmationRouter,
+            workerEngine: webViewHost,
+            fundingHandler: fundingService,
+            remoteConfig: FirebaseFacade.shared,
+            logger: logger
+        )
+        let runtime: @Sendable () throws -> TrUAPIHostRuntime = { [weak truapiRuntimeProvider] in
+            guard let truapiRuntimeProvider else { throw CancellationError() }
+            return try truapiRuntimeProvider.sharedRuntime()
+        }
+
+        RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        RootDependencyLocator.setDependency(
+            PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
+                as PublicProfileAvatarViewModelMaking
+        )
+        CoreDurableRecoveryTask.shared.attach(
+            truapiRuntimeProvider,
+            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
+        )
+
         let pocket = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider)
         RootDependencyLocator.setDependency(pocket)
-        pocket.start(
-            runtimeProvider: truapiRuntimeProvider,
-            flowState: spaFlowState,
-            productFileProvider: productFileProvider,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            gameReminders: gameReminders,
-            themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-        )
+        pocket.start(runtime: runtime, flowState: spaFlowState)
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -351,17 +365,16 @@ extension ServiceCoordinator {
 
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
-            truapiRuntimeProvider: truapiRuntimeProvider,
             spaFlowState: spaFlowState,
             productFileProvider: productFileProvider,
-            pocket: pocket
+            runtime: runtime,
+            contexts: contexts
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket.workers }),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )

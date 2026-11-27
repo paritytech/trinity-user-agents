@@ -7,6 +7,7 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     private(set) var destroyCallCount = 0
     private(set) var deviceCapabilityHandler: JSDeviceCapabilityHandler?
     private(set) var mediaHandlerWasInstalledAtInitialization = false
+    var moduleLoadFails = false
     var onInitialize: (@Sendable () async -> Void)?
     var onDestroy: (@Sendable () async -> Void)?
     private var handlers: [String: JSNativeHandler] = [:]
@@ -22,11 +23,10 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     func evaluate(_ script: String) async throws -> Any? {
         evaluatedScripts.append(script)
 
-        // JSESModuleBridge awaits __module_complete__ for the injected module
-        // tag; resolve it inline so executeScript does not hang.
-        if let range = script.range(of: "__module_complete__.postMessage('") {
+        let event = moduleLoadFails ? "__module_error__" : "__module_complete__"
+        if let range = script.range(of: "\(event).postMessage('") {
             let rest = script[range.upperBound...]
-            if let end = rest.firstIndex(of: "'"), let handler = handlers["__module_complete__"] {
+            if let end = rest.firstIndex(of: "'"), let handler = handlers[event] {
                 try await handler(String(rest[..<end]))
             }
         }

@@ -1,43 +1,15 @@
 import Foundation
-import os
 import Testing
 @testable import TrUAPIHost
 import UIKit
 
 struct TrUAPIWsBridgeTests {
-    @Test(.timeLimit(.minutes(1)))
-    func anOpenRenderDoesNotHoldAWorkerAfterTheLastConsumerLeaves() async throws {
-        let bridge = StubHostBridge()
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: Self.makeHostRuntimeConfig())
-        let product = try ProductId("shared.testnet")
-        let chat = runtime.claimWorker(productId: product)
-        let pocket = runtime.claimWorker(productId: product)
-        let execution = try runtime.openProductExecution(
-            bridge: bridge, configuration: ProductExecutionConfig(productId: product, executionKind: .worker)
-        )
-        defer { execution.close() }
-        let endpoint = try execution.startWsBridge(bindPort: 0)
-        let url = try #require(URL(string: "ws://127.0.0.1:\(endpoint.port)/?t=\(endpoint.token)"))
-        let socket = URLSession.shared.webSocketTask(with: url)
-        socket.resume()
-        defer { socket.cancel(with: .normalClosure, reason: nil) }
-        try await socket.send(.data(Self.featureSupportedRequestFrame()))
-        _ = try await socket.receive()
-
-        let stream = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "front"), payload: Data()))
-        withExtendedLifetime(stream) {
-            pocket.release()
-            #expect(bridge.workerTransitions.withLock { $0 } == [.start])
-            chat.release()
-            #expect(bridge.workerTransitions.withLock { $0 } == [.start, .stop])
-        }
-    }
-
     @Test(.timeLimit(.minutes(5)))
     func anInvalidUsernameTerminatesTheProfileStreamWithTheCoreDomainError() async throws {
         let runtime = try TrUAPIHostRuntime(
             bridge: StubHostBridge(),
-            runtimeConfig: Self.makeHostRuntimeConfig()
+            runtimeConfig: Self.makeHostRuntimeConfig(),
+            workerEngine: NoWorkers()
         )
         defer { withExtendedLifetime(runtime) {} }
         do {
@@ -69,7 +41,8 @@ struct TrUAPIWsBridgeTests {
             let bridge = StubHostBridge()
             let runtime = try TrUAPIHostRuntime(
                 bridge: bridge,
-                runtimeConfig: Self.makeHostRuntimeConfig()
+                runtimeConfig: Self.makeHostRuntimeConfig(),
+                workerEngine: NoWorkers()
             )
             let seen = withExtendedLifetime(runtime) { bridge.coreLogs }
             if seen.contains(where: { $0.hasPrefix("truapi.core.started") }) {
@@ -85,14 +58,12 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
-            runtimeConfig: Self.makeHostRuntimeConfig()
+            runtimeConfig: Self.makeHostRuntimeConfig(),
+            workerEngine: NoWorkers()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.testnet"),
-                executionKind: .app
-            )
+            productId: ProductId("test.testnet")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -122,14 +93,12 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
-            runtimeConfig: Self.makeHostRuntimeConfig()
+            runtimeConfig: Self.makeHostRuntimeConfig(),
+            workerEngine: NoWorkers()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.testnet"),
-                executionKind: .app
-            )
+            productId: ProductId("test.testnet")
         )
 
         let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -160,14 +129,12 @@ struct TrUAPIWsBridgeTests {
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
             runtimeConfig: Self.makeHostRuntimeConfig(),
-            notificationCenter: notifications
+            notificationCenter: notifications,
+            workerEngine: NoWorkers()
         )
-        let execution = try runtime.openProductExecution(
+        let execution = try runtime.openAppExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: ProductId("test.testnet"),
-                executionKind: .app
-            )
+            productId: ProductId("test.testnet")
         )
         let endpoint = try execution.startWsBridge(bindPort: 0)
         defer { execution.stopWsBridge() }
@@ -304,13 +271,13 @@ func temporaryDatabaseDirectory() throws -> String {
     return directory.path
 }
 
+/// A worker engine for a runtime whose test starts no worker.
+final class NoWorkers: NativeWorkerEngine, Sendable {
+    func start(productId _: ProductId, attempt _: NativeWorkerAttempt) {}
+    func stop(productId _: ProductId, attemptId _: UInt64) {}
+}
+
 final class StubHostBridge: HostBridge, @unchecked Sendable {
-    let workerTransitions = OSAllocatedUnfairLock(initialState: [WorkerTransition]())
-
-    func requestWorkerTransition(productId _: ProductId, transition: WorkerTransition) {
-        workerTransitions.withLock { $0.append(transition) }
-    }
-
     let storage: HostStorageBackend = StubStorage()
     let coreStorage: HostCoreStorageBackend = StubCoreStorage()
     private let logLock = NSLock()

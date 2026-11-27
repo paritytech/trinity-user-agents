@@ -11,10 +11,8 @@ import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
 
-/// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
-/// the single shared runtime, so its authentication and core services are
-/// shared across every SPA and chat product.
-protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
+/// Shares one ``TrUAPIHostRuntime`` across the dashboard session's products.
+protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable, ProductWorkerReloading {
     /// Return the shared runtime, building and activating its local session on
     /// first use. Subsequent calls return the cached instance.
     func sharedRuntime() throws -> TrUAPIHostRuntime
@@ -23,12 +21,8 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
 
-    /// The view the host's own prompts present from, once attached.
-    @MainActor var presentationView: ControllerBackedProtocol? { get }
-
-    /// Attach what runs product workers when the core's reference ledger asks
-    /// for them. Called once at startup, before the runtime is first built.
-    func attach(workerManager: any TrUAPIWorkerManaging)
+    /// Stop this session's workers even when a consumer outlives sign-out.
+    func shutdownProductWorkers()
 }
 
 /// Builds one ``TrUAPIHostRuntime`` from host identity + the stack the build
@@ -41,6 +35,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let workerEngine: any NativeWorkerEngine
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let fundingHandler: FundingCoreEventHandling
     private let remoteConfig: RemoteConfigObserving?
@@ -50,12 +45,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
+    private var sessionEnded = false
     private var contactsChangeNotifier: ContactsChangeNotifier?
     private var fundingProvidersObservation: Task<Void, Never>?
-
-    /// Set once at startup, before any product opens. The runtime is built on
-    /// first use, which is long after, so the manager is in place by then.
-    private var workerManager: (any TrUAPIWorkerManaging)?
 
     /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
     /// it is built, or right away if it already is.
@@ -67,6 +59,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
+        workerEngine: any NativeWorkerEngine,
         fundingHandler: FundingCoreEventHandling,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
@@ -78,6 +71,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
+        self.workerEngine = workerEngine
         self.fundingHandler = fundingHandler
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
@@ -94,16 +88,17 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.setPresentationView(view)
     }
 
-    @MainActor
-    var presentationView: ControllerBackedProtocol? {
-        confirmationRouterFacade.productsRouter.presentationView
+    func reloadWorker(of productId: ProductId) {
+        let runtime = lock.withLock { sessionEnded ? nil : cachedRuntime }
+        runtime?.reloadWorker(productId: productId)
     }
 
-    func attach(workerManager: any TrUAPIWorkerManaging) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        self.workerManager = workerManager
+    func shutdownProductWorkers() {
+        let runtime = lock.withLock {
+            sessionEnded = true
+            return cachedRuntime
+        }
+        runtime?.shutdownProductWorkers()
     }
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
@@ -133,8 +128,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Builds the runtime now, off the caller's thread, rather than on first
     /// use: the core resumes the funding sessions a provider was still working
-    /// on when it starts. Called once, after the worker manager and payments
-    /// are attached.
+    /// on when it starts. Called once, after payments are attached.
     func setup() async throws -> TrUAPIHostRuntime {
         try await Task.detached { [self] in try sharedRuntime() }.value
     }
@@ -143,6 +137,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         lock.lock()
         defer { lock.unlock() }
 
+        guard !sessionEnded else { throw CancellationError() }
         if let cachedRuntime {
             return cachedRuntime
         }
@@ -168,13 +163,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
-            workerManager: workerManager,
             backedUpInstallation: backedUpInstallation,
             encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerEngine: workerEngine)
         if handedOverKey != nil {
             deviceEncryptionKeys.forgetHandedOverKey()
         }

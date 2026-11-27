@@ -20,7 +20,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
-    private let workerManager: (any TrUAPIWorkerManaging)?
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: CoreEventLoggerProtocol
@@ -32,7 +31,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         coreStorage: TrUAPILocalStoring,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
-        workerManager: (any TrUAPIWorkerManaging)? = nil,
         backedUpInstallation: TrUAPIBackedUpInstallation,
         encryptedStorage: TrUAPIEncryptedStorage,
         logger: CoreEventLoggerProtocol
@@ -40,7 +38,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
-        self.workerManager = workerManager
         self.backedUpInstallation = backedUpInstallation
         self.encryptedStorage = encryptedStorage
         self.logger = logger
@@ -61,13 +58,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
         logger.logCoreEvent(marker: marker, attributes: attributes)
-    }
-
-    /// Demand is runtime-wide, so it arrives here rather than on a product's
-    /// own bridge, and can arrive re-entrantly while a worker claim is acquired,
-    /// the manager hands the transition off rather than acting on it here.
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
-        workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
     /// Where a worker that keeps crashing is reported to the user. Set once

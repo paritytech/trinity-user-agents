@@ -1,9 +1,6 @@
 import Foundation
 import os
 import AsyncExtensions
-import BulletinChain
-import ChainRegistry
-import DesignSystem
 import Products
 import TrUAPIHost
 
@@ -29,7 +26,6 @@ final class ProductPocketService: @unchecked Sendable {
     /// whatever executor they resumed on, and hopping to answer would mean
     /// asserting an isolation they do not have.
     private struct Running {
-        var workers: (any TrUAPIWorkerManaging)?
         var drawing: Drawing?
         var handlers: PocketHandlers?
         var following: Task<Void, Never>?
@@ -57,10 +53,6 @@ final class ProductPocketService: @unchecked Sendable {
             logger: logger
         )
     }
-
-    /// What runs every product's worker. Nil until the session has started the
-    /// Pocket, which is when a chat bot falls back to the native runtime.
-    var workers: (any TrUAPIWorkerManaging)? { running.withLock { $0.workers } }
 
     /// How many times this process has started a Pocket. A sign-out and back in
     /// starts another, and everything read from the one before it is finished:
@@ -108,53 +100,10 @@ final class ProductPocketService: @unchecked Sendable {
         return drawing.productImages.resolver(contentId: { await name.resolve() })
     }
 
-    /// Starts the worker manager the core runs on, then follows the collection:
-    /// a product the user holds cards for gets a handler, and loses it when the
-    /// last of its cards goes.
-    func start(
-        runtimeProvider: any TrUAPIHostRuntimeProviding,
-        flowState: SPAFlowState,
-        productFileProvider: any ChatProductFileProviding,
-        chainRegistry: ChainRegistryProtocol,
-        gameReminders: any ProductGameReminderScheduling,
-        themeManager: any ThemeManagerProtocol
-    ) {
-        let manager = TrUAPIWorkerManager(
-            builder: TrUAPIWorkerBuilder(
-                environment: { [weak runtimeProvider, logger] in
-                    guard let runtimeProvider else { throw PocketServiceError.gone }
-
-                    return try RustRuntimeEnvironment(
-                        runtime: runtimeProvider.sharedRuntime(),
-                        chainRegistry: chainRegistry,
-                        notificationScheduler: ProductNotificationScheduler.shared,
-                        gameReminders: gameReminders,
-                        ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-                        hostProvider: flowState.hostProvider,
-                        themeManager: themeManager,
-                        logger: logger
-                    )
-                },
-                contentLoader: flowState.contentLoader,
-                dotNsResolver: flowState.dotNsResolver,
-                productFileProvider: productFileProvider,
-                logger: logger
-            ),
-            references: { [weak runtimeProvider] in
-                guard let runtimeProvider else { throw PocketServiceError.gone }
-
-                return try runtimeProvider.sharedRuntime()
-            },
-            // A worker the core starts on demand, such as a funding provider,
-            // has no screen, and its permission prompts present from the app's.
-            presentationFallback: { [weak runtimeProvider] in runtimeProvider?.presentationView },
-            logger: logger
-        )
-
-        runtimeProvider.attach(workerManager: manager)
-
+    /// Follow the session's collection and draw its cards through the shared workers.
+    func start(runtime: @escaping ProductWorkerRuntimeProvider, flowState: SPAFlowState) {
         let handlers = PocketHandlers(
-            workers: manager,
+            runtime: runtime,
             published: PublishedPocketCards.makeDefault(products: flowState.productResolver),
             logger: logger
         )
@@ -169,49 +118,30 @@ final class ProductPocketService: @unchecked Sendable {
             productImages: flowState.productImages
         )
 
-        install(manager: manager, drawing: drawing, handlers: handlers)
+        install(drawing: drawing, handlers: handlers)
         follow()
     }
 
-    /// Stops the handlers and the workers behind them. All of it belongs to the
-    /// session's runtime provider, so none of it may outlive it.
+    /// Release the claims held by the cards from this session.
     func stop() {
-        install(manager: nil, drawing: nil, handlers: nil)
+        install(drawing: nil, handlers: nil)
     }
 }
 
 private extension ProductPocketService {
     var handlers: PocketHandlers? { running.withLock { $0.handlers } }
 
-    /// Nothing else holds a way back to the handlers and workers a replaced
-    /// manager is still running, so they are torn down here.
-    private func install(
-        manager: (any TrUAPIWorkerManaging)?,
-        drawing: Drawing?,
-        handlers: PocketHandlers?
-    ) {
-        let previous = running.withLock { running -> (any TrUAPIWorkerManaging, PocketHandlers?)? in
-            let previousWorkers = running.workers
-            let previousHandlers = running.handlers
-
-            running.workers = manager
+    private func install(drawing: Drawing?, handlers: PocketHandlers?) {
+        let previous = running.withLock { running in
+            let previous = running.handlers
             running.drawing = drawing
             running.handlers = handlers
             running.following?.cancel()
             running.following = nil
-            if manager != nil { running.installations += 1 }
-
-            guard let previousWorkers else {
-                previousHandlers?.stop()
-                return nil
-            }
-            return (previousWorkers, previousHandlers)
+            if drawing != nil { running.installations += 1 }
+            return previous
         }
-
-        guard let previous else { return }
-
-        previous.1?.stop()
-        Task { await previous.0.shutdown() }
+        previous?.stop()
     }
 
     func follow() {
@@ -238,10 +168,6 @@ private extension ProductPocketService {
         }
         if stopped { task.cancel() }
     }
-}
-
-enum PocketServiceError: Error {
-    case gone
 }
 
 extension ProductPocketService {

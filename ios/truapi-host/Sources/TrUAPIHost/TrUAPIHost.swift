@@ -168,22 +168,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// core builds its own extrinsics the same way. Defaults to none.
     func transactionExtensionVersions() async throws -> ExtensionVersionMap
 
-    /// Request a product worker transition. `.start` means run the worker now;
-    /// `.stop` means it is no longer needed and may stop. Every
-    /// transition arrives here in ledger order, the ones the app asks for by
-    /// taking a reference of its own included.
-    ///
-    /// Demand is runtime-wide, so the core invokes this only on the bridge
-    /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
-    /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``.
-    /// Can arrive on any thread, including synchronously on the calling
-    /// thread when a worker claim is acquired or released, often the main thread
-    /// and re-entrantly: hand the transition off rather than blocking on
-    /// another thread from inside it. Defaults to a no-op for a host that
-    /// runs no workers.
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition)
-
     /// The product's worker crashed `crashes` times in a row while it was
     /// needed: tell the user that product is not working. The core keeps
     /// starting it again, waiting longer each time, so this needs no answer.
@@ -207,8 +191,8 @@ public protocol HostBridge: AnyObject, Sendable {
     /// While `pending` is true, keep a background task running that awaits
     /// ``TrUAPIHostRuntime/runDurableRecovery()``; false means nothing needs
     /// it. Reported on change, starting with the state the runtime finds at
-    /// launch. Runtime-wide, like `requestWorkerTransition`, and arrives on a
-    /// core thread: hand it off rather than blocking. Defaults to a no-op
+    /// launch. The runtime delivers it on a core thread. Hand it off without
+    /// blocking that thread. Defaults to a no-op
     /// for a host that runs no durable work.
     func durableWorkChanged(pending: Bool)
 
@@ -258,7 +242,7 @@ public protocol HostBridge: AnyObject, Sendable {
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
+/// ``NativeWorkerAttempt/openExecution(bridge:chat:game:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
@@ -308,7 +292,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Native game-reminder surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
+/// ``TrUAPIHostRuntime/openAppExecution(bridge:productId:chat:game:)``
 /// when the host can hold reminders; hosts without one pass nothing. Both
 /// calls are async, so an implementation may hop to the main actor to answer;
 /// implementations must be safe to enter concurrently.
@@ -538,7 +522,6 @@ public extension HostBridge {
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
     func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
@@ -829,10 +812,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreEvent(marker: marker, attributes: attributes)
     }
 
-    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
-        bridge.requestWorkerTransition(productId: productId, transition: transition)
-    }
-
     func workerCrashing(productId: ProductId, crashes: UInt32) {
         bridge.workerCrashing(productId: productId, crashes: crashes)
     }
@@ -1082,20 +1061,26 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private var balanceRetainer: NativeBalanceCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
 
-    public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
-        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
+    public convenience init(
+        bridge: HostBridge,
+        runtimeConfig: HostRuntimeConfig,
+        workerEngine: NativeWorkerEngine
+    ) throws {
+        try self.init(
+            bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default, workerEngine: workerEngine
+        )
     }
 
     init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
-        notificationCenter: NotificationCenter
+        notificationCenter: NotificationCenter,
+        workerEngine: NativeWorkerEngine
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
         let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
-            callbacks: adapter,
-            runtimeConfig: runtimeConfig
+            callbacks: adapter, runtimeConfig: runtimeConfig, workerEngine: workerEngine
         )
         self.inner = inner
         self.notificationCenter = notificationCenter
@@ -1363,49 +1348,62 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.notifyBalance(available: available)
     }
 
-    /// Open one executable connection with a host-assigned immutable context.
+    /// Open one App connection for a product.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
     /// modality omit it. Pass `game` to hold game reminders, and omit it
-    /// where the host cannot.
-    public func openProductExecution(
+    /// where the host cannot. A Worker opens through its `NativeWorkerAttempt`.
+    /// Throws if the stack does not serve `productId`.
+    public func openAppExecution(
         bridge: HostBridge,
-        configuration: ProductExecutionConfig,
+        productId: ProductId,
         chat: ChatHostBridge? = nil,
         game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
-        let adapter = HostCallbackAdapter(bridge: bridge)
-        let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
-        let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
-        let execution = try inner.openProductExecution(
-            callbacks: adapter,
-            chatCallbacks: chatAdapter,
-            gameCallbacks: gameAdapter,
-            executionConfig: configuration
-        )
-        return TrUAPIProductExecution(
-            inner: execution,
-            callbackRetainer: adapter,
-            chatRetainer: chatAdapter,
-            gameRetainer: gameAdapter
-        )
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            try inner.openAppExecution(productId: productId, callbacks: callbacks)
+        }
+    }
+
+    /// Open one Widget connection for a product, with the same adapters as
+    /// ``openAppExecution(bridge:productId:chat:game:)``.
+    public func openWidgetExecution(
+        bridge: HostBridge,
+        productId: ProductId,
+        chat: ChatHostBridge? = nil,
+        game: GameHostBridge? = nil
+    ) throws -> TrUAPIProductExecution {
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            try inner.openWidgetExecution(productId: productId, callbacks: callbacks)
+        }
     }
 
     public func disconnect() {
         inner.disconnect()
     }
 
-    /// Take one reference on the worker until this consumer releases its claim.
+    /// Keep the worker running until this consumer releases its claim.
     /// A claim under an id the stack does not serve holds nothing.
     public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
         inner.claimWorker(productId: productId)
     }
 
-    /// Report that the product's worker stopped without the host asking, as
-    /// on a crash or a system kill. While references remain, `.start` is
-    /// reported again through
-    /// ``HostBridge/requestWorkerTransition(productId:transition:)``.
-    public func workerExited(productId: ProductId) {
-        inner.workerExited(productId: productId)
+    /// Observe the current startup and its replacements without holding the worker open.
+    public func workerExecutionState(productId: ProductId) -> AsyncStream<NativeWorkerExecutionState> {
+        let (stream, continuation) = AsyncStream<NativeWorkerExecutionState>.makeStream()
+        let observer = WorkerStateObserver(continuation)
+        let subscription = inner.observeWorkerExecution(productId: productId, observer: observer)
+        continuation.onTermination = { @Sendable _ in subscription.cancel() }
+        return stream
+    }
+
+    /// Restart a worker in use after its entry changes.
+    public func reloadWorker(productId: ProductId) {
+        inner.reloadWorker(productId: productId)
+    }
+
+    /// Revoke this session's workers and finish their observations.
+    public func shutdownProductWorkers() {
+        inner.shutdownProductWorkers()
     }
 
     /// Forget one product: revoke its grants and Allow once answers, then
@@ -1712,15 +1710,15 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
-        inner: NativeProductExecution,
-        callbackRetainer: HostCallbacks,
-        chatRetainer: NativeChatCallbacks?,
-        gameRetainer: NativeGameCallbacks?
-    ) {
-        self.inner = inner
-        self.callbackRetainer = callbackRetainer
-        self.chatRetainer = chatRetainer
-        self.gameRetainer = gameRetainer
+        bridge: HostBridge,
+        chat: ChatHostBridge?,
+        game: GameHostBridge?,
+        open: (ExecutionCallbacks) throws -> NativeProductExecution
+    ) rethrows {
+        callbackRetainer = HostCallbackAdapter(bridge: bridge)
+        chatRetainer = chat.map { ChatCallbackAdapter(bridge: $0) }
+        gameRetainer = game.map { GameCallbackAdapter(bridge: $0) }
+        inner = try open(ExecutionCallbacks(host: callbackRetainer, chat: chatRetainer, game: gameRetainer))
     }
 
     deinit {
@@ -1820,6 +1818,41 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyChatRoomsChanged(rooms: [ChatRoom]) {
         inner.notifyChatRoomsChanged(rooms: rooms)
+    }
+}
+
+extension NativeWorkerAttempt {
+    /// Open the execution belonging to this startup, with the product and kind fixed by Rust.
+    public func openExecution(
+        bridge: HostBridge,
+        chat: ChatHostBridge? = nil,
+        game: GameHostBridge? = nil
+    ) throws -> TrUAPIProductExecution {
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks in
+            try openExecution(callbacks: callbacks)
+        }
+    }
+}
+
+extension NativeWorkerExecution {
+    public func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
+        try observedStream(RendererStreamObserver.init(continuation:)) { observer in
+            try render(request: request, observer: observer)
+        }
+    }
+}
+
+private final class WorkerStateObserver: NativeWorkerExecutionObserver {
+    private let continuation: AsyncStream<NativeWorkerExecutionState>.Continuation
+
+    init(_ continuation: AsyncStream<NativeWorkerExecutionState>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func finished() { continuation.finish() }
+
+    func changed(state: NativeWorkerExecutionState) {
+        continuation.yield(state)
     }
 }
 

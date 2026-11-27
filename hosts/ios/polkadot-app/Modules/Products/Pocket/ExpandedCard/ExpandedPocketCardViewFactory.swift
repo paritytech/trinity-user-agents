@@ -107,7 +107,7 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
                 resolver: flowState.productResolver
             ),
             schemeHandlerProxy: schemeHandlerProxy,
-            logger: rust.logger,
+            logger: rust.services.logger,
             hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
         )
     }

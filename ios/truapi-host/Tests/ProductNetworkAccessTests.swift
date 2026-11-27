@@ -284,10 +284,10 @@ private struct NetworkTestProduct {
             let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
                 hostName: "network-tests", stack: previewnetStack(),
                 databaseDirectory: temporaryDatabaseDirectory()
-            ))
-            let execution = try runtime.openProductExecution(
+            ), workerEngine: NoWorkers())
+            let execution = try runtime.openAppExecution(
                 bridge: bridge,
-                configuration: ProductExecutionConfig(productId: ProductId("network.testnet"), executionKind: .app)
+                productId: ProductId("network.testnet")
             )
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()

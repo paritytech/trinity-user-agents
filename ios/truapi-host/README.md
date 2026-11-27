@@ -108,7 +108,7 @@ as a `BundledStack`:
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
 one the wallet's reserved identities derive under. An invalid stack makes
-`TrUAPIHostRuntime(bridge:runtimeConfig:)` throw
+`TrUAPIHostRuntime(bridge:runtimeConfig:workerEngine:)` throw
 `NativeRuntimeConfigError.Invalid(reason:)`. Include this configuration update
 in the embedding app's package upgrade.
 
@@ -119,11 +119,16 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ./ios/truapi-host/scripts/test.sh
 ```
 
+## Shared product workers
+
+Pass the worker engine when constructing the runtime. A host that runs its workers in WebViews passes its WebView host: for each start, Swift opens the execution through the supplied attempt, loads the module in its WKWebView and calls `attempt.moduleStarted()`. Rust discards late acknowledgements if demand ended or a replacement has started.
+
+Chat and Pocket each hold the result of `claimWorker(productId:)` and observe the ready execution to send Chat actions or render. Each consumer calls `release()` on its own claim. Rust requests disposal of the WKWebView after the final reference ends.
+
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ExecutableKind.worker`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving Chat passes a `ChatHostBridge` when its WebView host opens
+the worker attempt. Chat requires an active session.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -162,21 +167,8 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     func listRooms() throws -> [ChatRoom] { store.rooms() }
 }
 
-let runtime = try TrUAPIHostRuntime(
-    bridge: bridge,
-    runtimeConfig: HostRuntimeConfig(
-        hostName: "My Chat Host",
-        stack: bundledStack
-    )
-)
-// Chat needs an active session; without one every Chat call answers denied.
-try runtime.activateLocalSession(secret: secret)
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("chat.paseo"), executionKind: .chat),
-    chat: MyChatBridge(store: store)
-)
+// In the WebView host's start(productId:attempt:) callback.
+let execution = try attempt.openExecution(bridge: bridge, chat: MyChatBridge(store: store))
 let endpoint = try execution.startWsBridge()
 ```
 
@@ -245,9 +237,8 @@ for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. A feature calls
 `runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
-on that claim when its work ends. Starting, replacing or ending a render stream
-leaves the reference count unchanged. The first claim and final release reach
-the runtime bridge through `requestWorkerTransition`. Two rules the core
+on that claim when its work ends. The first claim starts the worker on the
+runtime's worker engine and the last release stops it. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
@@ -323,8 +314,8 @@ that runs no durable work.
 
 ## Game
 
-A host that can hold reminders implements `GameHostBridge`, passed as `game:`
-to `openProductExecution`. Hosts without the bridge pass nothing and Game
+A host that can hold reminders implements `GameHostBridge` and passes it
+as `game:` when opening the execution. Hosts without the bridge pass nothing and Game
 calls answer unsupported, as they do for every product but the game product,
 `dim2`.
 
@@ -343,11 +334,8 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
     }
 }
 
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: try ProductId("dim2.paseo"), executionKind: .worker),
-    game: MyGameBridge(reminders: reminderStore)
-)
+// In the WebView host's start(productId:attempt:) callback for dim2.
+let execution = try attempt.openExecution(bridge: bridge, game: MyGameBridge(reminders: reminderStore))
 ```
 
 The host holds one reminder per product: a `scheduleReminder` replaces the
@@ -688,6 +676,13 @@ final class MyBridge: HostBridge, @unchecked Sendable {
 
 }
 
+// This host runs no workers. One that does boots each worker in `start`, as
+// "Shared product workers" describes.
+final class NoWorkers: NativeWorkerEngine, Sendable {
+    func start(productId: ProductId, attempt: NativeWorkerAttempt) {}
+    func stop(productId: ProductId, attemptId: UInt64) {}
+}
+
 let bridge = MyBridge()
 let descriptorURL = Bundle.main.url(forResource: "trinity-stack", withExtension: "json")!
 let runtimeConfig = HostRuntimeConfig(
@@ -700,15 +695,12 @@ let runtimeConfig = HostRuntimeConfig(
         reservedValues: ReservedValuesPolicy(allowed: false)
     )
 )
-let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerEngine: NoWorkers())
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
-let execution = try runtime.openProductExecution(
+let execution = try runtime.openAppExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(
-        // An id the bundled stack serves: a name under the stack's TLD.
-        productId: try ProductId("my-product.paseo"),
-        executionKind: .app
-    )
+    // An id the bundled stack serves: a name under the stack's TLD.
+    productId: ProductId("my-product.paseo")
 )
 // The endpoint stays valid across backgrounding: iOS reclaims a suspended
 // app's listening socket, and the runtime rebinds it on the same port when

@@ -13,8 +13,8 @@ import TrUAPIHost
 ///
 /// An actor so `start` and `dispose` never race. Actors are reentrant, so
 /// `dispose` flips `disposed` before its first await and `start` re-checks it
-/// after every one: a half-booted worker left behind would swallow every later
-/// start while the core keeps counting the reference its holder took.
+/// after every one: `dispose` runs once, so an engine booted by a start it
+/// overtook would never be destroyed.
 actor TrUAPIWorkerRuntime {
     private let productUrl: URL
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
@@ -38,8 +38,6 @@ actor TrUAPIWorkerRuntime {
         self.logger = logger
     }
 
-    nonisolated var execution: TrUAPIProductExecutionProtocol { executionModel.execution }
-
     /// `onEngineLost` runs if the engine dies once it is up. For example,
     /// iOS might kill engine once the app goes background.
     func start(onEngineLost: @escaping @Sendable () -> Void) async throws {
@@ -56,6 +54,7 @@ actor TrUAPIWorkerRuntime {
         moduleBridge = bridge
 
         try await bridge.executeScript(url: productUrl)
+        try checkNotDisposed()
 
         logger.debug("[truapi] worker running: \(productUrl)")
     }
