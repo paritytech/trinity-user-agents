@@ -4,8 +4,8 @@
 //!
 //! The native side builds a `CallbackPlatform` that adapts every
 //! [`crate::platform::Platform`] trait to a corresponding callback. The
-//! resulting platform is fed into [`SigningHostRuntime`] so the rest of the
-//! dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
+//! resulting platform is fed into [`HostRuntime<SigningHost>`](crate::HostRuntime)
+//! so the dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
 //! A native host therefore owns the signer, so it never pairs itself with a
 //! wallet and the pairing-host entry points are inert. It does answer other
 //! devices pairing with it: the signing host's responder side is exposed here,
@@ -18,18 +18,27 @@
 
 mod callbacks;
 mod config;
+mod engine_follow;
 mod errors;
 mod events;
 mod executor;
+mod funding;
+mod funding_feed;
+mod funding_page;
+mod host_placed_chat;
+mod materials;
 mod platform;
 mod pocket;
+mod product_archive;
+mod product_source;
+mod public_profile;
 mod renderer;
 mod runtime;
+mod sso;
 mod subscribers;
 mod ws_bridge;
 
 pub use crate::{
-	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
 		dev_server::{DevServerError, DevServerProduct},
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
@@ -40,34 +49,93 @@ pub use crate::{
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeTopUpCallbacks,
+	NativeStackCallbacks, NativeTopUpCallbacks,
 };
-pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
+pub use config::{
+	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
+};
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
+pub use funding::funding_status_in_flight;
+pub use funding_feed::{FundingChangeKind, funding_resume_pending};
+pub use funding_page::{
+	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,
+	funding_page_origin,
+};
+pub use host_placed_chat::{HostPlacedChat, host_placed_chats};
+pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
+pub use product_archive::{ArchiveFile, archive_files};
+pub use product_source::{ProductSource, product_source};
+pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	NativeWorkerClaim,
 };
+pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
+use std::sync::Arc;
+
+use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-#[cfg(doc)]
-use crate::SigningHostRuntime;
-use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
+use crate::{
+	PairingProposal, PrivilegedProduct, ProductId, ProductIdError, host_logic::dotns, stack::Stack,
+};
 
-/// Classify a navigation input exactly like the core's internal navigate host
-/// call: the Pocket deeplink first, then the notification settings link, then
-/// dotNS, then `localhost`, then normalized external, with everything else
-/// rejected. Pure and stateless. Hosts call it on every webview-internal
-/// navigation.
+/// The stack a host build bundles, opened before the runtime starts.
+///
+/// A host opens it from the same [`BundledStack`] it passes in
+/// [`HostRuntimeConfig`], so its link and trust checks judge product ids by
+/// the build's stack even before the runtime is built. The runtime starts
+/// from that copy or from a newer one it stored, which
+/// [`StackStatus`](crate::platform::StackStatus) reports.
 #[uniffi::export]
-pub fn parse_navigate(input: String) -> NavigateDecision {
-	dotns::parse_navigate(&input)
+impl Stack {
+	/// Open the bundled copy alone, under the same checks the runtime applies
+	/// to it. Fails `Invalid` when the descriptor does not verify under the
+	/// pointer's key or breaks the build's reserved-value rule.
+	#[uniffi::constructor]
+	pub fn open_bundled(stack: BundledStack) -> Result<Arc<Self>, NativeRuntimeConfigError> {
+		let BundledStack { pointer, descriptor, reserved_values } = stack;
+		Ok(Arc::new(Self::bundled(&pointer, &descriptor, &reserved_values)?))
+	}
+
+	/// Classify a navigation input exactly like the core's internal navigate
+	/// host call: the Pocket deeplink first, then dotNS, then `localhost`, then
+	/// normalized external, with everything else rejected. A name is dotNS only
+	/// under a TLD this stack accepts, and the decision names its product by
+	/// the id the stack serves it under. Hosts call it on every
+	/// webview-internal navigation.
+	pub fn parse_navigate(&self, input: String) -> NavigateDecision {
+		dotns::parse_navigate(&input, self)
+	}
+
+	/// The id this stack serves the product a share host names under, when it
+	/// serves it: `game.paseo` on a `paseo` stack for `game.dot.li`.
+	pub fn parse_product_share_host(&self, input: String) -> Option<ProductId> {
+		ProductId::from_share_host(&input).and_then(|product_id| self.served_id(&product_id).ok())
+	}
+
+	/// Share domains of the TLDs this stack accepts product names under.
+	pub fn product_share_hosts(&self) -> Vec<String> {
+		dotns::product_share_hosts(self)
+	}
+
+	/// Whether `product_id` is a first-party product the host grants every
+	/// [`truapi::latest::RemotePermission`] without prompting: a trusted label
+	/// under an id this stack serves.
+	///
+	/// Trusted products bypass recorded permissions and permission prompts.
+	/// Device permissions still need the OS grant. Hosts mediating product
+	/// network access can use this check before storage.
+	pub fn has_trusted_remote_permissions(&self, product_id: ProductId) -> bool {
+		self.trusts(&product_id)
+	}
 }
 
 /// The canonical app scheme used for deeplinks and native handoffs.
@@ -104,6 +172,33 @@ pub fn product_id_from_name(
 	ProductId::from_name(&name, &network_suffix)
 }
 
+/// The id of `product` on the network with `network_suffix`.
+///
+/// Fails when `network_suffix` is not a dotNS TLD.
+#[uniffi::export]
+pub fn privileged_product_id(
+	product: PrivilegedProduct,
+	network_suffix: String,
+) -> Result<ProductId, ProductIdError> {
+	product.product_id(&network_suffix)
+}
+
+/// The dotNS label reserved for `product` on every network, without a TLD.
+#[uniffi::export]
+pub fn privileged_product_label(product: PrivilegedProduct) -> String {
+	product.label().to_owned()
+}
+
+/// The cards every host pins in the Pocket on the network with
+/// `network_suffix`. The runtime pins them itself; a host reads them to draw
+/// a pinned card before the runtime lists it.
+///
+/// Fails when `network_suffix` is not a dotNS TLD.
+#[uniffi::export]
+pub fn pinned_pocket_cards(network_suffix: String) -> Result<Vec<PinnedPocketCard>, ProductIdError> {
+	PinnedPocketCard::privileged(&network_suffix)
+}
+
 /// The complete dotNS name above the network suffix, including nested labels.
 #[uniffi::export]
 pub fn product_id_name(product_id: ProductId) -> Option<String> {
@@ -128,7 +223,7 @@ pub fn product_id_executable(
 /// The manifest discriminator and dotNS prefix for an executable kind.
 #[uniffi::export]
 pub fn executable_kind_label(kind: crate::platform::ExecutableKind) -> String {
-	kind.dotns_label().to_owned()
+	<&str>::from(kind).to_owned()
 }
 
 /// Resolve an executable identity to its owning product without losing nested labels.
@@ -143,22 +238,10 @@ pub fn parse_product_link(input: String, network_suffix: String) -> Option<Produ
 	ProductLink::parse(&input, &network_suffix)
 }
 
-/// Recognize a supported share host without consulting host configuration.
-#[uniffi::export]
-pub fn parse_product_share_host(input: String) -> Option<ProductId> {
-	ProductId::from_share_host(&input)
-}
-
 /// The public share host for this identity, excluding local development.
 #[uniffi::export]
 pub fn product_id_share_host(product_id: ProductId) -> Option<String> {
 	product_id.to_share_host()
-}
-
-/// Share domains recognized by the canonical Rust parser.
-#[uniffi::export]
-pub fn product_share_hosts() -> Vec<String> {
-	dotns::product_share_hosts()
 }
 
 /// The development product a debug build opens for an address the developer
@@ -212,12 +295,13 @@ fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError>
 		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
-/// Largest nesting a face may carry, matching what the core accepts on the
+/// Largest nesting a face may carry, counted as the core's decoder counts it:
+/// each list of children, layers or arguments is one level. It matches the
 /// renderer subscription. A host with a shallower bound would draw a live face
 /// it could not read back.
 pub(crate) const MAX_FACE_DEPTH: u32 = 64;
 
-/// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
+/// Bracket nesting a face of [`MAX_FACE_DEPTH`] levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
 /// this is generous on purpose: it bounds how far the reader recurses, while
 /// `MAX_FACE_DEPTH` is what actually decides whether a face is drawable.
@@ -264,16 +348,21 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 	}
 
 	// With the text bounded above, the reader's own limit would only impose a
-	// second, stricter bound in JSON levels rather than in renderer levels.
+	// second, stricter bound in JSON levels rather than in decoder levels.
 	let mut reader = serde_json::Deserializer::from_str(json);
 	reader.disable_recursion_limit();
 	let node = latest::RendererNode::deserialize(&mut reader)
 		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })?;
 
-	match node_depth(&node, MAX_FACE_DEPTH) {
-		Some(_) => Ok(node),
-		None => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
-	}
+	// Read back the way a kept face is, so the reader accepts exactly what the
+	// store and the renderer subscription accept.
+	let mut node = latest::RendererNode::decode_all_with_depth_limit(
+		MAX_FACE_DEPTH,
+		&mut node.encode().as_slice(),
+	)
+	.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })?;
+	node.clear_refused_inline_images();
+	Ok(node)
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the
@@ -308,31 +397,6 @@ fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
 	false
 }
 
-/// Depth of `node`, or `None` once it passes `remaining`. Bounded rather than
-/// measured, so a tree built to exhaust the stack is refused before it does.
-fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
-	if remaining == 0 {
-		return None;
-	}
-
-	let children: &[latest::RendererNode] = match node {
-		latest::RendererNode::Box { children, .. } |
-		latest::RendererNode::Column { children, .. } |
-		latest::RendererNode::Row { children, .. } |
-		latest::RendererNode::Text { children, .. } |
-		latest::RendererNode::Button { children, .. } |
-		latest::RendererNode::Effect { children, .. } => children,
-		_ => &[],
-	};
-
-	let deepest = children
-		.iter()
-		.map(|child| node_depth(child, remaining - 1))
-		.try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
-
-	Some(deepest + 1)
-}
-
 /// Screen a product-supplied Pocket card id with the rules every Pocket call
 /// already applies, so a card declared in a manifest is refused where it is
 /// declared rather than at its first wire call.
@@ -365,17 +429,6 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 #[uniffi::export]
 pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
-}
-
-/// Whether `product_id` is a first-party product the host grants every
-/// [`truapi::latest::RemotePermission`] without prompting.
-///
-/// Trusted products bypass recorded permissions and permission prompts. Device
-/// permissions still need the OS grant. Hosts mediating product network access
-/// can use this check before storage.
-#[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
-	product_id.has_trusted_remote_permissions()
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for

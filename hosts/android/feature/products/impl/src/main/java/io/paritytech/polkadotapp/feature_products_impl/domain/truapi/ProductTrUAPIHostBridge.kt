@@ -1,12 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import android.content.Context
 import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
@@ -21,7 +19,6 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
-import io.paritytech.polkadotapp.common.utils.openAppNotificationSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
@@ -35,7 +32,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardCover
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -44,9 +41,10 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
-import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.CoreAttribute
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ExpandedCardCoverOutcome
 import uniffi.truapi.ExtensionVersionMap
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostNavigateToException
@@ -54,17 +52,14 @@ import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
-import uniffi.truapi.NavigateDecision
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.coreMarkers
-import uniffi.truapi.parseNavigate
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -93,7 +88,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
-    @param:ApplicationContext private val context: Context,
+    private val coreEventLogger: CoreEventLogger,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -137,7 +132,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
-        card: ExpandedCardFace?,
+        card: ExpandedCardCover?,
     ) = object : HostBridge {
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId)
@@ -148,23 +143,17 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             logCoreLine(marker, detail)
         }
 
+        override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+            coreEventLogger.log(marker, attributes)
+        }
+
         /**
-         * dotNS and external links are classified and dispatched by the same
-         * rule as the native `navigateTo` handler, so they cannot resolve
-         * differently depending on the runtime toggle. The notification
-         * settings link is served here only. Opening every URL externally would
-         * push in-app dotNS navigation into the system browser, where those
-         * names do not resolve.
+         * Classified and dispatched by the same rule as the native `navigateTo`
+         * handler, so a link cannot resolve differently depending on the
+         * runtime toggle. Opening every URL externally would push in-app dotNS
+         * navigation into the system browser, where those names do not resolve.
          */
         override suspend fun navigateTo(url: String) {
-            if (parseNavigate(url) is NavigateDecision.NotificationSettings) {
-                runCatching { context.openAppNotificationSettings() }
-                    .getOrElse {
-                        Timber.w(it, "truapi.navigate: notification settings did not open")
-                        throw HostNavigateToException.Unknown(it.message.orEmpty())
-                    }
-                return
-            }
             val destination = url.toUri()
             val tld = dotNsTldProvider.getTld().getOrElse {
                 throw HostNavigateToException.Unknown(it.message.orEmpty())
@@ -182,6 +171,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             hostApiInteractor
                 .publishNotificationAuthorized(
                     callingProductId = callingProductId,
+                    title = request.title,
                     text = request.text,
                     deeplink = request.deeplink,
                     // Wire carries Unix millis UTC; null fires immediately.
@@ -252,11 +242,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
+                is HostFeatureSupportedRequest.Materials -> false
             }
 
         override fun currentTheme(): HostThemeSubscribeItem = cachedTheme.get()
-
-        override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
@@ -268,8 +257,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
 
-        override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
-            card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+        override suspend fun setExpandedCardCovered(covered: Boolean): ExpandedCardCoverOutcome =
+            card?.setCovered(covered) ?: ExpandedCardCoverOutcome.UNSUPPORTED
     }
 
     internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
@@ -296,7 +285,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigationPolicy: NavigationPolicy,
         kind: ExecutableKind,
         chat: ChatHostBridge? = null,
-        card: ExpandedCardFace? = null,
+        card: ExpandedCardCover? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -452,14 +441,13 @@ internal fun logCoreLine(marker: String, detail: String) {
 
 // The priority each core marker is logged at, read once from the core's own table. A marker the
 // table keeps on the device, or does not list at all, has no priority here and is logged below the
-// level `SentryLogTree` forwards. Read lazily rather than in the file's initializer, so a core that
+// level `HostLogSinkTree` forwards. Read lazily rather than in the file's initializer, so a core that
 // cannot answer costs the log line instead of every top-level helper in this file.
-private val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
+internal val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
     coreMarkers().mapNotNull { (marker, markerClass) ->
         when (markerClass) {
             is MarkerClass.Export ->
                 marker to when (markerClass.severity) {
-                    Severity.INFO -> Log.INFO
                     Severity.WARN -> Log.WARN
                     Severity.ERROR -> Log.ERROR
                 }
