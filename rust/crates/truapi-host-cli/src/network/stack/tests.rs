@@ -1,7 +1,7 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_chain, edit_descriptor, edit_stack, test_access},
+		testing::{edit_chain, edit_descriptor, edit_stack, stack_on, test_access},
 	},
 	*,
 };
@@ -9,7 +9,7 @@ use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	Stack::new("test-stack".to_string(), descriptor, &ChainAccess::Rpc)
+	stack_on("test-stack", descriptor, &ChainAccess::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
@@ -46,10 +46,7 @@ fn test_stack_from_descriptor() {
 #[test]
 fn test_stack_runs_on_its_own_tld() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-	let stack = read_stack(staging)
-		.expect("any label is a TLD")
-		.core_stack()
-		.expect("core stack");
+	let stack = read_stack(staging).expect("any label is a TLD").core_stack();
 	let served = |product_id: &str| {
 		stack
 			.served_id(&truapi::platform::ProductId::for_test(product_id))
@@ -120,7 +117,7 @@ fn test_stack_namespace() {
 fn test_stack_state_directory() {
 	let read_from = |stack_id: &str, id: &str| {
 		let descriptor = edit_stack(|descriptor| descriptor["id"] = id.into());
-		Stack::new(stack_id.to_string(), descriptor, &ChainAccess::Rpc).expect("stack is valid")
+		stack_on(stack_id, descriptor, &ChainAccess::Rpc).expect("stack is valid")
 	};
 	let fork = "https://fork.test.invalid/trinity-stack.json";
 	let namesake = "https://namesake.test.invalid/trinity-stack.json";
@@ -148,7 +145,7 @@ fn test_stack_state_directory() {
 fn test_state_label_tells_a_fork_from_its_source() {
 	let fork = edit_stack(|descriptor| descriptor["id"] = "paseo-next-v2-fork".into());
 	let fork_id = "https://fork.test.invalid/trinity-stack.json".to_string();
-	let fork = Stack::new(fork_id, fork, &ChainAccess::Rpc).expect("stack is valid");
+	let fork = stack_on(&fork_id, fork, &ChainAccess::Rpc).expect("stack is valid");
 
 	assert_eq!(
 		[Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).state_label(), fork.state_label()],
@@ -220,13 +217,9 @@ fn test_light_client_without_a_light_spec_error() {
 		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
 	});
 
-	let error = Stack::new(
-		"test-stack".to_string(),
-		descriptor.clone(),
-		&test_access(ChainBackend::LightClient),
-	)
-	.unwrap_err()
-	.to_string();
+	let error = stack_on("test-stack", descriptor.clone(), &test_access(ChainBackend::LightClient))
+		.unwrap_err()
+		.to_string();
 
 	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
 	read_stack(descriptor).expect("RPC needs no light spec");

@@ -280,7 +280,8 @@ async fn a_missing_named_account_names_the_directory_it_was_looked_up_under() ->
 		.descriptor()
 		.clone();
 	let fork_id = "https://fork.test.invalid/trinity-stack.json".to_string();
-	let fork = Stack::new(fork_id, fork_descriptor, &crate::chain::ChainAccess::Rpc)?;
+	let fork =
+		crate::network::stack_on(&fork_id, fork_descriptor, &crate::chain::ChainAccess::Rpc)?;
 
 	let refusal = resolve_signer(ResolveSignerConfig {
 		base_path: dir.path(),

@@ -579,7 +579,7 @@ async fn main() -> Result<()> {
 		reload: Arc::new(move |level| {
 			reload.reload(tracing_subscriber::EnvFilter::new(level.scoped_filter()))
 		}),
-		base_path,
+		base_path: base_path.clone(),
 	};
 	let log_layer = tracing_subscriber::fmt::layer()
 		.with_ansi(false)
@@ -614,7 +614,7 @@ async fn main() -> Result<()> {
 			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
 		},
 	};
-	let source = NetworkSource::new(chain_access, cli.network, stack)?;
+	let source = NetworkSource::new(chain_access, cli.network, stack, base_path)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
@@ -1257,7 +1257,7 @@ async fn run_pairing_host(
 	}
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path);
-	let stack = network.core_stack().context("invalid stack")?;
+	let stack = network.core_stack();
 	let product = frame_server::ProductSelection::new(
 		args.product_id,
 		args.execution_kind.context(),
@@ -1378,7 +1378,7 @@ async fn run_signing_host(
 		.as_deref()
 		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
 	let network = source.resolve_checked().await?;
-	let stack = network.core_stack().context("invalid stack")?;
+	let stack = network.core_stack();
 	let product = frame_server::ProductSelection::new(
 		args.product_id.clone(),
 		args.execution_kind.context(),

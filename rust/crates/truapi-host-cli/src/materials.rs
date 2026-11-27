@@ -79,7 +79,7 @@ async fn runtime(network: &Stack, state: &Path) -> Result<HostRuntime<SigningHos
 	let mut config = SigningHostConfig::new(
 		crate::host_info("Materials Planner"),
 		crate::platform_info(),
-		network.core_stack().context("invalid stack")?,
+		network.core_stack(),
 	)
 	.context("invalid signing host config")?;
 	config.materials_enabled = true;

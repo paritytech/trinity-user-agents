@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 
 use super::{
-	super::testing::{edit_descriptor, test_access},
+	super::testing::{stack_on, test_access},
 	*,
 };
 use crate::chain::ChainBackend;
@@ -94,7 +94,7 @@ fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
 			let refused = ensure_built_in_runnable(&built_in.pointer(), &without_spec).is_err();
 			refused_by_check.push((*network, chain.role.clone(), refused));
 			let refused =
-				Stack::new(built_in.pointer().stack_id(), without_spec, &light_client).is_err();
+				stack_on(&built_in.pointer().stack_id(), without_spec, &light_client).is_err();
 			refused_by_light_client.push((*network, chain.role.clone(), refused));
 		}
 	}
@@ -122,7 +122,7 @@ fn test_built_in_runnable_check_accepts_a_chain_the_light_client_does_not_run() 
 	let by_check =
 		ensure_built_in_runnable(&paseo, &with_unrouted_chain).map_err(|error| error.to_string());
 	let by_light_client =
-		Stack::new(paseo.stack_id(), with_unrouted_chain, &test_access(ChainBackend::LightClient))
+		stack_on(&paseo.stack_id(), with_unrouted_chain, &test_access(ChainBackend::LightClient))
 			.map(drop)
 			.map_err(|error| error.to_string());
 
@@ -145,259 +145,6 @@ fn test_bundled_light_specs_match_the_bundled_copies() {
 				.check_light_spec(spec.as_bytes())
 				.unwrap_or_else(|error| panic!("{network:?} {}: {error}", chain.role));
 		}
-	}
-}
-
-/// The hint tells the user which copy is in use and why, so a restart on
-/// the bundled copy points at the published descriptor that could not be
-/// fetched or was rejected.
-#[test]
-fn test_restart_hint_by_copy() {
-	let url = "https://stack.example/s.json".to_owned();
-	let published =
-		BuiltInOrigin { id: "previewnet".to_owned(), url, copy: BuiltInCopy::Published };
-	assert_eq!(
-		published.restart_hint(),
-		"the previewnet stack restarted from genesis after the published descriptor in use \
-		 (https://stack.example/s.json) was published"
-	);
-	let unreachable = BuiltInOrigin { copy: BuiltInCopy::Unreachable, ..published };
-	assert_eq!(
-		unreachable.restart_hint(),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json could not be fetched"
-	);
-	let rejected = BuiltInOrigin { copy: BuiltInCopy::Rejected, ..unreachable };
-	assert_eq!(
-		rejected.restart_hint(),
-		"the previewnet stack restarted from genesis after the bundled descriptor in use was \
-		 built, and the published copy at https://stack.example/s.json was rejected, as the \
-		 warning above reports"
-	);
-}
-
-const TEST_SECRET: [u8; 32] = [7; 32];
-
-fn test_pointer() -> Pointer {
-	let key = format!("0x{}", hex::encode(trinity_stack::public_key(&TEST_SECRET)));
-	Pointer::new("https://stack.example/trinity-stack.json", Some(&key)).unwrap()
-}
-
-fn sign_copy(sequence: u32, generation: &str) -> Vec<u8> {
-	sign_edited(|descriptor| {
-		descriptor["sequence"] = sequence.into();
-		descriptor["generation"] = generation.into();
-	})
-}
-
-fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
-	trinity_stack::sign(&edit_descriptor(edit), &TEST_SECRET).unwrap()
-}
-
-fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_on(&ChainAccess::Rpc, bundled, fetched)
-}
-
-fn refresh_on(
-	chain_access: &ChainAccess,
-	bundled: &[u8],
-	fetched: Fetched,
-) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, chain_access)
-}
-
-const NOW: i64 = 1_800_000_000;
-
-/// A newer published copy that changes a field the CLI reads is what the
-/// network runs on, and the user learns that it is in use ahead of the
-/// release that ships it.
-#[test]
-fn test_refresh_newer_notice() {
-	let remote_copy = sign_edited(|descriptor| {
-		descriptor["sequence"] = 11.into();
-		descriptor["generation"] = "g1".into();
-		let people = descriptor["chains"]
-			.as_array_mut()
-			.unwrap()
-			.iter_mut()
-			.find(|chain| chain["role"] == "People")
-			.unwrap();
-		people["rpc"] = serde_json::json!(["wss://people.example"]);
-	});
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&remote_copy)).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 11);
-	assert_eq!(refresh.copy, BuiltInCopy::Published);
-	let notice = refresh.notice.expect("newer copy not reported");
-	assert_eq!((notice.bundle_sequence, notice.remote_sequence), (10, 11));
-	assert!(!notice.new_generation);
-	let text = notice.to_string();
-	assert!(text.contains("10") && text.contains("11") && text.contains("in use"));
-}
-
-/// A republish that changes only fields the CLI does not read, such as a
-/// higher sequence, is used without a notice.
-#[test]
-fn test_refresh_sequence_only_silent() {
-	let remote_copy = sign_copy(11, "g1");
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&remote_copy)).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 11);
-	assert_eq!(refresh.copy, BuiltInCopy::Published);
-	assert!(refresh.notice.is_none());
-}
-
-/// The chains behind the bundled copy are gone after a restart, which the
-/// notice reports beyond a routine update.
-#[test]
-fn test_refresh_new_generation_notice() {
-	let published = sign_copy(11, "g2");
-	let notice = refresh(&sign_copy(10, "g1"), Fetched::Document(&published))
-		.unwrap()
-		.notice
-		.expect("new generation not reported");
-	assert!(notice.new_generation);
-	assert!(notice.to_string().contains("restarted from genesis"));
-}
-
-/// Accounts derive under the TLD, so a refresh that changes it would swap
-/// every account under the user.
-#[test]
-fn test_refresh_tld_change_bundle() {
-	let other_tld_copy = sign_edited(|descriptor| {
-		descriptor["sequence"] = 11.into();
-		descriptor["generation"] = "g1".into();
-		descriptor["tld"] = "testnet".into();
-	});
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&other_tld_copy)).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 10);
-	assert_eq!(refresh.stack.tld(), "paseo");
-	assert!(refresh.notice.is_none());
-	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
-}
-
-/// The CLI names a built-in network by the id, so a refresh that changes it
-/// is not taken.
-#[test]
-fn test_refresh_id_change_bundle() {
-	let renamed_copy = sign_edited(|descriptor| {
-		descriptor["sequence"] = 11.into();
-		descriptor["generation"] = "g1".into();
-		descriptor["id"] = "paseo-next".into();
-	});
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&renamed_copy)).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 10);
-	assert_eq!(refresh.stack.namespace(), "paseo-next-v2");
-	assert!(refresh.notice.is_none());
-	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
-}
-
-/// A published copy the CLI cannot run on, such as one without a `dub`
-/// service, leaves the network on the bundled copy instead of stopping every
-/// command until a release ships a fix.
-#[test]
-fn test_refresh_unrunnable_copy_bundle() {
-	let without_dub = sign_edited(|descriptor| {
-		descriptor["sequence"] = 11.into();
-		descriptor["generation"] = "g1".into();
-		descriptor["services"]
-			.as_array_mut()
-			.unwrap()
-			.retain(|service| service["kind"] != "dub");
-	});
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&without_dub)).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 10);
-	assert!(refresh.notice.is_none());
-	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
-}
-
-/// The light client runs a newer published copy from the light specs it
-/// names. One that names none for a chain it runs is an error rather than a
-/// fall back to the bundled copy, whose chains may have restarted since; over
-/// RPC the same copy runs.
-#[test]
-fn test_refresh_on_the_light_client() {
-	let light_client = test_access(ChainBackend::LightClient);
-	let bundled = sign_copy(10, "g1");
-	let restarted = sign_copy(11, "g2");
-	let published = refresh_on(&light_client, &bundled, Fetched::Document(&restarted)).unwrap();
-	assert_eq!(published.stack.descriptor().sequence, 11);
-	assert!(published.stack.light_client().is_some());
-
-	let without_people_spec = sign_edited(|descriptor| {
-		descriptor["sequence"] = 11.into();
-		descriptor["generation"] = "g2".into();
-		let chains = descriptor["chains"].as_array_mut().unwrap();
-		let people = chains.iter_mut().find(|chain| chain["role"] == "People").unwrap();
-		people.as_object_mut().unwrap().remove("lightSpec");
-	});
-	let error = refresh_on(&light_client, &bundled, Fetched::Document(&without_people_spec))
-		.err()
-		.expect("a published copy without People's light spec ran on the light client");
-	assert!(format!("{error:#}").contains("no lightSpec for People"), "{error:#}");
-
-	let over_rpc = refresh(&bundled, Fetched::Document(&without_people_spec)).unwrap();
-	assert_eq!(over_rpc.stack.descriptor().sequence, 11);
-}
-
-/// A signed copy with a lower sequence is a replay of an older descriptor.
-#[test]
-fn test_refresh_rollback_bundle() {
-	let older = sign_copy(9, "g0");
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Document(&older)).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 10);
-	assert!(refresh.notice.is_none());
-	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
-}
-
-#[test]
-fn test_refresh_unreachable_bundle() {
-	let refresh = refresh(&sign_copy(10, "g1"), Fetched::Unreachable).unwrap();
-	assert_eq!(refresh.stack.descriptor().sequence, 10);
-	assert!(refresh.notice.is_none());
-	assert_eq!(refresh.copy, BuiltInCopy::Unreachable);
-}
-
-/// An expired stack has shut down, from either copy.
-#[test]
-fn test_refresh_expired_error() {
-	let expired = |sequence: u32| {
-		sign_edited(|descriptor| {
-			descriptor["sequence"] = sequence.into();
-			descriptor["expiresAt"] = (NOW as u32 - 1).into();
-		})
-	};
-	let error = refresh(&expired(10), Fetched::Unreachable)
-		.err()
-		.expect("expired stack accepted");
-	assert!(error.to_string().contains("expiresAt"));
-
-	let published = expired(11);
-	assert!(refresh(&sign_copy(10, "g1"), Fetched::Document(&published)).is_err());
-}
-
-/// A product sees the same network, TLD and chains from the CLI as from an
-/// app bundling the same signed copy: the descriptor's `network`, not the
-/// CLI's product namespace. The CLI serves no Relay, so it names none.
-#[test]
-fn the_core_stack_reports_what_an_app_bundling_it_reports() {
-	for network in Network::value_variants() {
-		let built_in = network.built_in_stack();
-		let link = built_in.pointer().to_link(trinity_stack::DEFAULT_LINK_BASE);
-		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
-		let bundled = truapi::platform::Stack::bundled(&link, built_in.bundle, &allowed)
-			.expect("the bundled copy starts an app");
-		let identity = truapi::platform::StackIdentity {
-			id: bundled.id().to_string(),
-			generation: bundled.generation().to_string(),
-		};
-		let expected = truapi::platform::Stack::new(
-			identity,
-			bundled.network().to_string(),
-			bundled.tld().to_string(),
-			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
-			&allowed,
-		);
-
-		assert_eq!(network.bundled_stack(ChainBackend::Rpc).core_stack(), expected, "{network:?}");
 	}
 }
 

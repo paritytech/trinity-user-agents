@@ -230,17 +230,44 @@ pub enum FetchError {
 /// refused: the URL rules hold for the URL the pointer names, and a redirect could lead to plain
 /// http.
 pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> {
+	match fetch_if_changed(url, timeout, None).await? {
+		Served::Document { body, .. } => Ok(body),
+		Served::NotModified => unreachable!("a fetch without If-None-Match is never answered 304"),
+	}
+}
+
+/// What [`fetch_if_changed`] got.
+pub enum Served {
+	/// `200 OK`, with the response's `ETag`.
+	Document { body: Vec<u8>, etag: Option<String> },
+	/// `304 Not Modified`: the copy whose `ETag` was sent is current.
+	NotModified,
+}
+
+/// [`fetch`], sending `if_none_match` as `If-None-Match` when it is given.
+pub async fn fetch_if_changed(
+	url: &str,
+	timeout: Duration,
+	if_none_match: Option<&str>,
+) -> Result<Served, FetchError> {
 	let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
 	let client = reqwest::Client::builder()
 		.timeout(timeout)
 		.redirect(reqwest::redirect::Policy::none())
 		.build()
 		.map_err(transport)?;
-	let response = client.get(url).send().await.map_err(|error| match error.is_timeout() {
+	let mut request = client.get(url);
+	if let Some(etag) = if_none_match {
+		request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+	}
+	let response = request.send().await.map_err(|error| match error.is_timeout() {
 		true => FetchError::Transport(format!("no answer within {}s", timeout.as_secs())),
 		false => transport(error),
 	})?;
 	let status = response.status();
+	if status == reqwest::StatusCode::NOT_MODIFIED && if_none_match.is_some() {
+		return Ok(Served::NotModified);
+	}
 	if status.is_redirection() {
 		let location = response.headers().get(reqwest::header::LOCATION);
 		let location = location.and_then(|value| value.to_str().ok()).unwrap_or("nowhere");
@@ -254,6 +281,8 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> 
 	if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES as u64) {
 		return Err(FetchError::TooLarge);
 	}
+	let etag = response.headers().get(reqwest::header::ETAG);
+	let etag = etag.and_then(|value| value.to_str().ok()).map(str::to_owned);
 	let mut response = response;
 	let mut body = Vec::new();
 	while let Some(chunk) = response.chunk().await.map_err(transport)? {
@@ -262,7 +291,7 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> 
 			return Err(FetchError::TooLarge);
 		}
 	}
-	Ok(body)
+	Ok(Served::Document { body, etag })
 }
 
 /// Seconds since the Unix epoch, or 0 when the clock is before it.

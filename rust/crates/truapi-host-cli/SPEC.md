@@ -1530,6 +1530,7 @@ The layout may contain compatibility paths as well as identity-owned paths:
   log-level
 
   <network>/
+    stack-record.json                 # newest verified descriptor copy
     signing-host/
       current-session
       accounts.json                   # default/bootstrap accounts
@@ -1583,7 +1584,9 @@ Every account store and its lock belong to one stack: the default session's is
 `<network>/signing-host/accounts.json` (§13.7). An `accounts.json` directly
 under `v2`, where earlier releases kept every stack's default session accounts,
 is left in place and not read. `network-check` prints the name as
-`state_directory`.
+`state_directory`. `stack-record.json` is the core's record of the newest copy
+of the stack's descriptor it verified, which the next command starts from
+(§14.1); a local file has none.
 
 An explicit mnemonic has no account profile, but its signing runtime uses the
 default/bootstrap signing storage path for core and product state. It does not
@@ -1823,53 +1826,42 @@ A stack with the id `polkadot` cannot run, since the CLI would present it as
 Polkadot.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
-ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
-its pointer from the trinity-stack crate's known stack of the same name. A command that resolves a built-in fetches
-the published descriptor (3-second timeout) and runs the RFC's `accept` with the
-shipped copy as the stored one, then uses what it returns. A published descriptor
-that answers with a non-2xx HTTP status is logged as a warning with the status
-and URL; a timeout or a failed connection is not. A published descriptor that
-changes a field the CLI reads is used and reported in one line on
-stderr with both sequences, saying it is in use and that a later release ships
-it; the line says the stack restarted from genesis when its `generation`
-changed. A newer copy that changes none of them is used without a line. A
-published copy that changes the `tld` or the `id`, or that the CLI cannot run on
-(for instance one without a `dub` service), is not used: the shipped copy stays
-in use with a warning that names the published URL, since every account derives
-under the TLD and the CLI names the network by the `id`. A refused, rolled-back or
-conflicting published copy leaves the shipped copy in use with a warning; an
-unreachable one does so without a message. A result past `expiresAt` is an
-error, and one past `validUntil` is used with a warning. `--chain-backend
-light-client` fails at start when the descriptor in use names no `lightSpec` for
-the relay, People, Asset Hub or Bulletin; a newer published copy that runs over
-RPC but names no such `lightSpec` is that error too, rather than a fall back to
-the shipped copy, whose chains may have restarted since.
-`scripts/update-stacks.sh` refreshes the
-shipped copies, and the daily chain-spec workflow carries the refresh in one PR
-with its changeset. `truapi-host stack bundle` refuses a copy that changes the
-`tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
-on over either chain backend.
+ships a signed copy of each from the repository's `stacks/<name>.json`, with the
+link that carries its pointer from the trinity-stack crate's known stack of the
+same name. A command starts the core with `StackRefresh::load` on that link and
+copy. The core runs the newer of the shipped copy and the copy kept in the
+stack's state directory (`stack-record.json`, §13.1), and never waits on the
+published descriptor. Each command then refreshes the descriptor in the
+background while it runs, as the core does for every host, without waiting for
+the fetch. A newer copy is kept for the next start, and one that changes a
+chain, the network or the `generation` is logged as needing a restart. A copy that changes the `tld`, or
+that the CLI cannot run on, is refused with a warning and the copy in use
+stays: for instance one without a `dub` service, or on the light client one that
+names no `lightSpec` for the relay, People, Asset Hub or Bulletin. A copy past
+`expiresAt` is an error, and one past `validUntil` is used with a warning.
+`scripts/update-stacks.sh` refreshes the shipped copies, and the daily
+chain-spec workflow carries the refresh in one PR with its changeset.
+`truapi-host stack bundle` refuses a copy that changes the `tld` of the copy at
+`--out`, and a built-in network's copy the CLI cannot run on over either chain
+backend.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
 the same connection once its genesis matches, for its `NetworkSuffix`. An
-endpoint that reports another genesis is an error; for a built-in it reports that
-the stack restarted from genesis and which descriptor is in use: the published
-one and its URL, or the bundled one because the published copy at its URL could
-not be fetched or was rejected (refused, a rollback, a conflict, a TLD or id
-change, or a copy the CLI cannot run on).
-When the bundled copy is in use because the published one could not be fetched,
-a failed check first fetches the published descriptor again (10-second timeout);
-the checks repeat only when that fetch puts the published copy in use, and
-otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
-that prints both. An endpoint that does not answer within 3 seconds, or a People
-chain without the storage item, is logged and left to fail on first use.
+endpoint that reports another genesis fails the checks, since its chain may have
+restarted from genesis after the descriptor in use was published. The CLI then
+fetches the descriptor once (10-second timeout), and when that brings a newer
+copy it starts the core on it and repeats the checks once; otherwise the first
+error stands. A local file is not fetched again. A `NetworkSuffix` other than
+the `tld` is an error that prints both. An endpoint that does not answer within
+3 seconds, or a People chain without the storage item, is logged and left to
+fail on first use.
 
 With `--chain-backend light-client` the endpoints are not used, and the light
 specs are checked instead (§14.3). A spec whose bytes differ from the
 descriptor's `sha256`, that implies another genesis hash than its chain's, or
 that is larger than 1 MiB is an error handled like an endpoint's wrong genesis:
-the descriptor is fetched once more when the shipped copy is in use. So is a
+the descriptor is fetched once more. So is a
 relay spec that cannot be fetched, since every chain syncs through the relay.
 Another spec that cannot be fetched is logged, and fetched again when a command
 connects to its chain. People's `NetworkSuffix` is not compared with the `tld`
@@ -1879,9 +1871,13 @@ command may wait before it starts.
 `--stack` (§4.4) replaces the network with another stack. A link on any scheme or
 domain is read for its `url` and `key`; a URL is read as a pointer without a
 key; any other value is read as a local descriptor file, signed or not, with no
-key checked. A fetched stack is read with no stored copy. An unreachable stack, a
-descriptor that breaks a rule and one past `expiresAt` are errors that name the
-stack; one past `validUntil` is used with a warning. Its endpoints and People's
+key checked. A link or URL that is not a built-in's is imported through
+`StackRefresh::import`: the first command fetches it and keeps it in the stack's
+state directory, and later commands start from that copy without waiting on its
+server, refreshing it in the background as they do a built-in's. A local
+file is read on every run and never refreshed. A stack that cannot be fetched
+while none is kept, a descriptor that breaks a rule and one past `expiresAt` are
+errors that name the stack; one past `validUntil` is used with a warning. Its endpoints and People's
 `NetworkSuffix` are checked as above, or its light specs with `--chain-backend
 light-client`. `get_chain_info` reports the descriptor's `network`. The product
 namespace, the name the CLI prints for the network, is the descriptor's `id`
@@ -1907,8 +1903,8 @@ runs as a `--stack`, for instance a local descriptor file whose `rpc` and `dub`
 URLs are `ws://` and `http://` on loopback. An error about a stack names where
 it came from, `--stack` or `HOST_CLI_STACK`.
 
-`network-check` resolves the network as any command does, fetching only the
-descriptor, and prints as JSON `schema_version`, `network` (the product
+`network-check` resolves the network as any command does, fetching only a
+descriptor it does not keep yet, and prints as JSON `schema_version`, `network` (the product
 namespace), `state_directory` (the name the stack's state is kept under,
 §13.1), `namespace` (the network's TLD), `identity_backend_base`, and `ws` and
 `genesis` for `people`, `asset_hub` and `bulletin`.

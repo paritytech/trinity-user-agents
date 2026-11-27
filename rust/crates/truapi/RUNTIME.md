@@ -183,10 +183,15 @@ pointer, the signed descriptor its build bundles, and the build's
 and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
-A Rust host that resolves its chains itself, such as the CLI, uses
-`Stack::new`, and a test-host browser bundle passes `runtimeConfig.testStack`.
-The core does not refresh a stack built either of those ways. Each constructor
-documents what it refuses.
+A stack its build ships no copy of, such as one a developer passes to the
+CLI, starts through `StackRefresh::import` from its link, signed or not. The
+core starts from the copy it stored for that stack, or fetches the descriptor
+first and stores it. `StackRefresh::fetch_now` makes one fetch a host can wait
+on; the CLI calls it when a chain gives a genesis hash the descriptor does not
+name, before it refuses the stack. A local descriptor file runs through
+`Stack::local` under the tool's own id, and a test-host browser bundle passes
+`runtimeConfig.testStack`. The core does not refresh a stack built either of
+those two ways. Each constructor documents what it refuses.
 
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
@@ -250,8 +255,8 @@ The check has three limits:
 - A light client answers from its chain spec, so a chain that restarted is out
   of its reach and never listed. Only the hourly fetch brings it the new
   descriptor.
-- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
-  is not checked.
+- A `Stack` built any other way, such as with `Stack::local` or from
+  `testStack`, is not checked.
 
 The core also checks People's `NetworkSuffix.NetworkSuffix` against the
 descriptor's `tld`. It makes no request for this. A signing host already reads

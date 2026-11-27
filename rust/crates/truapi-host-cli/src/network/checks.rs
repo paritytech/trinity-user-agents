@@ -10,24 +10,23 @@ use truapi::statement_allowance::{fetch_genesis_hash, rpc::RpcClient, slot};
 
 use super::{
 	ChainEndpoint, Stack,
-	built_in::BuiltInOrigin,
 	polkadot_fork::{PolkadotChain, polkadot_chains},
 	within_check_timeout,
 };
 use crate::chain::{MissingSpec, StackLightClient};
 
-/// The checks of `stack`, a built-in from `built_in` or a `--stack` when
-/// `None`: over RPC every endpoint and People's `NetworkSuffix` are checked,
-/// on the light client every light spec is, and on either backend every endpoint with one of
-/// Polkadot's genesis hashes is compared with real Polkadot. Fails when such an endpoint does not
-/// show it serves a fork; otherwise the outcome of the endpoint checks, which a
-/// fetch of the published descriptor may resolve.
-pub async fn verify_chains(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<Result<()>> {
+/// The checks of `stack`: over RPC every endpoint and People's
+/// `NetworkSuffix` are checked, on the light client every light spec is, and
+/// on either backend every endpoint with one of Polkadot's genesis hashes is
+/// compared with real Polkadot. Fails when such an endpoint does not show it
+/// serves a fork; otherwise the outcome of the endpoint checks, which a newer
+/// copy of the descriptor may resolve.
+pub async fn verify_chains(stack: &Stack) -> Result<Result<()>> {
 	let polkadot_chains = polkadot_chains(stack);
 	let reachable = async {
 		match stack.light_client() {
 			Some(light) => verify_light_specs(light, stack).await,
-			None => verify_endpoints(stack, built_in).await,
+			None => verify_endpoints(stack).await,
 		}
 	};
 	let (endpoints, polkadot_forks) = futures::join!(
@@ -90,11 +89,11 @@ async fn probe_endpoint(stack: &Stack, endpoint: &ChainEndpoint) -> Result<Endpo
 }
 
 /// Fails when an endpoint of `stack` reports a genesis other than the one it
-/// is routed as, adding the restart hint of `built_in` to the error, or when
+/// is routed as, or when
 /// People reports a `NetworkSuffix` other than the stack's TLD. An endpoint
 /// that does not answer within [`super::CHAIN_CHECK_TIMEOUT`], or a People
 /// chain without a readable suffix, is logged.
-async fn verify_endpoints(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<()> {
+async fn verify_endpoints(stack: &Stack) -> Result<()> {
 	let checks = stack.chains().iter().map(|endpoint| async move {
 		let report = match within_check_timeout(probe_endpoint(stack, endpoint)).await {
 			Ok(report) => report,
@@ -105,14 +104,12 @@ async fn verify_endpoints(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Re
 		};
 		ensure!(
 			report.genesis == endpoint.genesis,
-			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}{}",
+			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}; the chain \
+			 may have restarted from genesis after the descriptor in use was published",
 			endpoint.ws,
 			hex::encode(report.genesis),
 			stack.namespace(),
 			hex::encode(endpoint.genesis),
-			built_in
-				.map(|origin| format!("; {}", origin.restart_hint()))
-				.unwrap_or_default()
 		);
 		let Some(suffix) = report.network_suffix else {
 			return Ok(());

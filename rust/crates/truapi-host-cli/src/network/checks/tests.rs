@@ -5,7 +5,6 @@ use crate::chain::ChainBackend;
 use super::{
 	super::{
 		CHAIN_CHECK_TIMEOUT, Network,
-		built_in::BuiltInCopy,
 		testing::{serve_rpc, serve_silent},
 	},
 	*,
@@ -53,7 +52,7 @@ async fn stack_with_people_suffix(network_suffix: Option<&'static str>) -> Stack
 #[tokio::test]
 async fn test_stack_endpoint_unreachable() {
 	let stack = stack_on_closed_ports();
-	verify_endpoints(&stack, None).await.expect("unreachable endpoint rejected");
+	verify_endpoints(&stack).await.expect("unreachable endpoint rejected");
 }
 
 /// An endpoint that accepts the connection and then stays silent delays a
@@ -62,7 +61,7 @@ async fn test_stack_endpoint_unreachable() {
 async fn test_silent_endpoint_deadline() {
 	let stack = stack_with_people_at(&serve_silent().await);
 	let start = std::time::Instant::now();
-	verify_endpoints(&stack, None).await.expect("silent endpoint rejected");
+	verify_endpoints(&stack).await.expect("silent endpoint rejected");
 	assert!(start.elapsed() < CHAIN_CHECK_TIMEOUT + Duration::from_secs(2));
 }
 
@@ -74,26 +73,10 @@ async fn test_silent_endpoint_deadline() {
 async fn test_stack_endpoint_genesis_mismatch() {
 	let url = serve_chain([0x5a; 32], Some("testnet")).await;
 	let stack = stack_with_people_at(&url);
-	let error = verify_endpoints(&stack, None).await.expect_err("wrong genesis accepted");
+	let error = verify_endpoints(&stack).await.expect_err("wrong genesis accepted");
 	assert!(error.to_string().contains(&url));
 	assert!(error.to_string().contains("reports genesis"));
 	assert!(!error.to_string().contains("NetworkSuffix"));
-}
-
-/// A built-in stack whose chains restarted fails with an error that
-/// reports the restart and points at the descriptor in use.
-#[tokio::test]
-async fn test_built_in_genesis_mismatch_hint() {
-	let stack = stack_with_people_at(&serve_chain([0x5a; 32], None).await);
-	let origin = BuiltInOrigin {
-		id: "paseo-next-v2".to_owned(),
-		url: "https://stack.example/s.json".to_owned(),
-		copy: BuiltInCopy::Published,
-	};
-	let error = verify_endpoints(&stack, Some(&origin))
-		.await
-		.expect_err("wrong genesis accepted");
-	assert!(error.to_string().ends_with(&origin.restart_hint()));
 }
 
 /// Every identity derives under the TLD, so a People chain that scopes its
@@ -101,12 +84,12 @@ async fn test_built_in_genesis_mismatch_hint() {
 #[tokio::test]
 async fn test_network_suffix_mismatch_error() {
 	let stack = stack_with_people_suffix(Some("testnet")).await;
-	let error = verify_endpoints(&stack, None).await.expect_err("other suffix accepted");
+	let error = verify_endpoints(&stack).await.expect_err("other suffix accepted");
 	let message = error.to_string();
 	assert!(message.contains("NetworkSuffix testnet") && message.contains("tld is paseo"));
 
 	let matching = stack_with_people_suffix(Some("paseo")).await;
-	verify_endpoints(&matching, None).await.expect("matching suffix rejected");
+	verify_endpoints(&matching).await.expect("matching suffix rejected");
 }
 
 /// A People chain without the storage item, or one that does not answer,
@@ -114,11 +97,9 @@ async fn test_network_suffix_mismatch_error() {
 #[tokio::test]
 async fn test_network_suffix_absent_or_unreachable() {
 	let absent = stack_with_people_suffix(None).await;
-	verify_endpoints(&absent, None).await.expect("absent suffix rejected");
+	verify_endpoints(&absent).await.expect("absent suffix rejected");
 	let closed_port_stack = stack_on_closed_ports();
-	verify_endpoints(&closed_port_stack, None)
-		.await
-		.expect("unreachable People rejected");
+	verify_endpoints(&closed_port_stack).await.expect("unreachable People rejected");
 }
 
 /// The checks run the Polkadot fork comparison on an endpoint with
@@ -131,7 +112,7 @@ async fn test_polkadot_fork_check_wiring() {
 		chain["genesisHash"] =
 			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
-	let error = verify_chains(&polkadot_people, None).await.expect_err("fork unproven");
+	let error = verify_chains(&polkadot_people).await.expect_err("fork unproven");
 	assert!(error.to_string().contains("cannot tell ws://127.0.0.1:"));
 }
 
@@ -146,7 +127,7 @@ async fn test_light_spec_wrong_or_unreachable() {
 	let directory = tempfile::tempdir().expect("temporary directory");
 
 	let swapped = bundled.with_light_specs_at(&people, &relay, directory.path());
-	let error = verify_chains(&swapped, None)
+	let error = verify_chains(&swapped)
 		.await
 		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect_err("each chain is served the other's spec");
@@ -157,7 +138,7 @@ async fn test_light_spec_wrong_or_unreachable() {
 	let large = format!("{server}/large.json");
 	let oversized_directory = tempfile::tempdir().expect("temporary directory");
 	let oversized = bundled.with_light_specs_at(&large, &people, oversized_directory.path());
-	let error = verify_chains(&oversized, None)
+	let error = verify_chains(&oversized)
 		.await
 		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect_err("the relay's spec is larger than the CLI reads");
@@ -165,7 +146,7 @@ async fn test_light_spec_wrong_or_unreachable() {
 
 	let moved = format!("{server}/moved.json");
 	let missing = bundled.with_light_specs_at(&relay, &moved, directory.path());
-	verify_chains(&missing, None)
+	verify_chains(&missing)
 		.await
 		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect("a spec the server does not have is unreachable, not wrong");
@@ -199,7 +180,7 @@ async fn test_light_relay_spec_unreachable() {
 		directory.path(),
 	);
 
-	let error = verify_chains(&stack, None)
+	let error = verify_chains(&stack)
 		.await
 		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect_err("the relay's spec cannot be fetched");

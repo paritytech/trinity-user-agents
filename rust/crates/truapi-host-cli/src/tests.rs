@@ -16,7 +16,7 @@ async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostS
 	let network = Network::default().bundled_stack(ChainBackend::Rpc);
 	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.state_directory())?;
 	catalog.set_current(name)?;
-	let core_stack = network.core_stack()?;
+	let core_stack = network.core_stack();
 	start_signing_host(
 		&SigningHostArgs::default(),
 		catalog,
@@ -109,7 +109,7 @@ async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
 	let args =
 		SigningHostArgs { account: Some("auto-1".to_string()), ..SigningHostArgs::default() };
 
-	let core_stack = network.core_stack()?;
+	let core_stack = network.core_stack();
 	let session = start_signing_host(
 		&args,
 		catalog,
@@ -346,8 +346,7 @@ async fn a_responder_without_a_local_session_stops_instead_of_restarting() {
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 		crate::network::Network::PaseoNextV2
 			.bundled_stack(ChainBackend::Rpc)
-			.core_stack()
-			.unwrap(),
+			.core_stack(),
 		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -374,8 +373,7 @@ async fn the_signing_runtime_keeps_its_core_database_in_the_profile_directory() 
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 		crate::network::Network::PaseoNextV2
 			.bundled_stack(ChainBackend::Rpc)
-			.core_stack()
-			.unwrap(),
+			.core_stack(),
 		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -411,8 +409,7 @@ async fn a_core_database_this_build_cannot_open_asks_for_cleanup() {
 			&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 			crate::network::Network::PaseoNextV2
 				.bundled_stack(ChainBackend::Rpc)
-				.core_stack()
-				.unwrap(),
+				.core_stack(),
 			&session_profile_at(&profile),
 			ApprovalPolicy::AutoAccept,
 			None,
@@ -753,7 +750,7 @@ async fn script_completion_removes_the_private_frame_socket_before_returning() -
 		let product = frame_server::ProductSelection::new(
 			ProductId::for_test("script-cleanup.dot"),
 			ExecutableKind::App,
-			&network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack()?,
+			&network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack(),
 		)?;
 		let result =
 			with_frame_server(Arc::new(UnusedRuntimeFactory), product, frame_server, async move {

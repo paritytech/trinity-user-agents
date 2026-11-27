@@ -1,9 +1,12 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
+
+use clap::ValueEnum as _;
+use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
 
 use super::{
 	super::{
 		Network, STACK_ENV, StackArg,
-		testing::{edit_descriptor, serve_light_specs, test_access},
+		testing::{edit_descriptor, serve_light_specs, serve_stack_and_light_specs, test_access},
 	},
 	*,
 };
@@ -14,14 +17,28 @@ fn stack_arg(source: &'static str) -> Option<StackArg> {
 	Some(StackArg { value: "https://stack.example/s.json".to_string(), source })
 }
 
+/// The source of `--stack value` over `chain_backend`, keeping its state in
+/// `state`.
+fn stack_source(
+	value: &str,
+	chain_backend: ChainBackend,
+	state: &std::path::Path,
+) -> NetworkSource {
+	let stack = StackArg { value: value.to_string(), source: "--stack" };
+	NetworkSource::new(test_access(chain_backend), None, Some(stack), state.to_path_buf())
+		.expect("a stack alone is a source")
+}
+
 /// `--network` picks a built-in network and a stack any other one, and the
 /// error prints where the stack came from.
 #[test]
 fn test_network_with_stack_error() {
+	let state = tempfile::tempdir().expect("temporary directory");
 	for source in ["--stack", STACK_ENV] {
-		let Err(error) =
-			NetworkSource::new(ChainAccess::Rpc, Some(Network::Previewnet), stack_arg(source))
-		else {
+		let network = Some(Network::Previewnet);
+		let given =
+			NetworkSource::new(ChainAccess::Rpc, network, stack_arg(source), state.path().into());
+		let Err(error) = given else {
 			panic!("--network accepted with {source}");
 		};
 		assert!(error.to_string().contains(source));
@@ -34,9 +51,9 @@ fn test_network_with_stack_error() {
 async fn test_local_stack_on_the_light_client() {
 	let file = tempfile::NamedTempFile::new().expect("temporary file");
 	std::fs::write(file.path(), edit_descriptor(|_| {})).expect("write the descriptor");
-	let stack = StackArg { value: file.path().display().to_string(), source: "--stack" };
+	let state = tempfile::tempdir().expect("temporary directory");
 	let source =
-		NetworkSource::new(test_access(ChainBackend::LightClient), None, Some(stack)).unwrap();
+		stack_source(&file.path().display().to_string(), ChainBackend::LightClient, state.path());
 
 	let stack = source.resolve().await.expect("the descriptor names its light specs");
 
@@ -45,9 +62,8 @@ async fn test_local_stack_on_the_light_client() {
 
 /// The error for a `--stack` value that cannot be used, from `--stack` itself.
 async fn stack_error(value: &str) -> String {
-	let stack = StackArg { value: value.to_string(), source: "--stack" };
-	let source = NetworkSource::new(ChainAccess::Rpc, None, Some(stack)).unwrap();
-	let Err(error) = source.resolve().await else {
+	let state = tempfile::tempdir().expect("temporary directory");
+	let Err(error) = stack_source(value, ChainBackend::Rpc, state.path()).resolve().await else {
 		panic!("{value} resolved");
 	};
 	error.to_string()
@@ -86,51 +102,33 @@ async fn a_piped_local_stack_says_why() {
 	);
 }
 
-/// A bundled copy whose light spec no longer matches what its server returns
-/// is what an operator's republish fixes, so the published descriptor is
-/// fetched once more and the command runs on it.
+/// A built-in network starts from the copy this build ships, without
+/// waiting on its descriptor's server, and a product sees the network, TLD,
+/// chains and contracts an app bundling the same copy shows, without the
+/// relay, which the CLI does not serve.
 #[tokio::test]
-async fn test_wrong_bundled_light_spec_published_fix() {
-	let (server, _) = serve_light_specs().await;
-	let (relay, people) = (format!("{server}/relay.json"), format!("{server}/people.json"));
-	let directory = tempfile::tempdir().expect("temporary directory");
-	let bundled = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
-	let origin = |copy| BuiltInOrigin {
-		id: "paseo-next-v2".to_owned(),
-		url: "https://stack.example/s.json".to_owned(),
-		copy,
-	};
-	let resolves = AtomicUsize::new(0);
+async fn a_built_in_network_runs_the_stack_an_app_bundling_it_runs() {
+	for network in Network::value_variants() {
+		let state = tempfile::tempdir().expect("temporary directory");
+		let source =
+			NetworkSource::new(ChainAccess::Rpc, Some(*network), None, state.path().into())
+				.expect("a built-in network is a source");
+		let (link, bundled) = network.link_and_bundle();
+		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
+		let app = truapi::platform::Stack::bundled(&link, bundled, &allowed)
+			.expect("the bundled copy starts an app");
 
-	let stack = checked(|_| {
-		let (stack, copy) = match resolves.fetch_add(1, Ordering::Relaxed) {
-			0 => (
-				bundled.with_light_specs_at(&people, &relay, directory.path()),
-				BuiltInCopy::Unreachable,
-			),
-			_ => (
-				bundled.with_light_specs_at(&relay, &people, directory.path()),
-				BuiltInCopy::Published,
-			),
-		};
-		async move { Ok((stack, Some(origin(copy)))) }
-	})
-	.await
-	.expect("the published copy names the specs its server returns");
+		let stack = source.resolve().await.expect("the bundled copy runs");
 
-	assert_eq!(resolves.load(Ordering::Relaxed), 2);
-	let light = stack.light_client().expect("the stack runs on the light client");
-	assert!(light.provider().has_light_spec(stack.genesis().people));
+		assert_eq!(stack.core_stack(), app.without_relay(), "{network:?}");
+	}
 }
 
 /// `--stack` with a built-in network's link, its bare URL or its link without
 /// the key is that network, so it keeps its state in the directory
 /// `--network` uses rather than starting empty in one of its own.
-#[test]
-fn a_built_in_stack_given_by_link_or_url_keeps_its_state_directory() {
-	use clap::ValueEnum as _;
-	use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
-
+#[tokio::test]
+async fn a_built_in_stack_given_by_link_or_url_keeps_its_state_directory() {
 	for network in Network::value_variants() {
 		let name = network.to_possible_value().expect("every network has a value");
 		let pointer = trinity_stack::known_stack(name.get_name()).expect("a known stack");
@@ -138,16 +136,72 @@ fn a_built_in_stack_given_by_link_or_url_keeps_its_state_directory() {
 		let keyless_link = Pointer::new(&url, None)
 			.expect("the URL is a pointer")
 			.to_link(DEFAULT_LINK_BASE);
-		let given = [pointer.to_link(DEFAULT_LINK_BASE), url, keyless_link];
-		let bundled = network.bundled_stack(ChainBackend::Rpc);
+		let state = tempfile::tempdir().expect("temporary directory");
 
-		let state_directories = given.map(|value| {
-			let (_, id) = stack_key_and_id(&value).expect("the value names a stack");
-			Stack::new(id, bundled.descriptor().clone(), &ChainAccess::Rpc)
-				.expect("the bundled copy runs")
-				.state_directory()
-				.to_owned()
-		});
+		let mut state_directories = Vec::new();
+		for value in [pointer.to_link(DEFAULT_LINK_BASE), url, keyless_link] {
+			let stack = stack_source(&value, ChainBackend::Rpc, state.path()).resolve().await;
+			state_directories
+				.push(stack.expect("the bundled copy runs").state_directory().to_owned());
+		}
 		assert_eq!(state_directories, [name.get_name(); 3], "{network:?}");
 	}
+}
+
+/// The descriptor of a stack this build ships no copy of, unsigned and served
+/// from `server`, at `sequence`, with its relay and People light specs named
+/// at `relay` and `people` of that server.
+fn served_copy(server: &str, sequence: u32, relay: &str, people: &str) -> Vec<u8> {
+	let spec_directory = tempfile::tempdir().expect("temporary directory");
+	let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).with_light_specs_at(
+		&format!("{server}/{relay}"),
+		&format!("{server}/{people}"),
+		spec_directory.path(),
+	);
+	let mut descriptor = serde_json::to_value(stack.descriptor()).expect("a descriptor is JSON");
+	descriptor["id"] = "imported".into();
+	descriptor["sequence"] = sequence.into();
+	serde_json::to_vec(&descriptor).expect("JSON serialises")
+}
+
+/// A stack this build ships no copy of is fetched once and kept in its state
+/// directory, so the next command starts from that copy instead of waiting
+/// on the descriptor's server.
+#[tokio::test]
+async fn an_imported_stack_is_fetched_once_and_kept() {
+	let (server, _) = serve_light_specs().await;
+	let copy = served_copy(&server, 1, "relay.json", "people.json");
+	let (server, requests) = serve_stack_and_light_specs(vec![copy]).await;
+	let state = tempfile::tempdir().expect("temporary directory");
+	let source = stack_source(&format!("{server}/stack.json"), ChainBackend::Rpc, state.path());
+
+	let first = source.resolve().await.expect("the served copy runs");
+	let second = source.resolve().await.expect("the kept copy runs");
+
+	assert_eq!((first.core_stack(), requests.load(Ordering::Relaxed)), (second.core_stack(), 1));
+}
+
+/// A light spec its server no longer serves is what the operator's
+/// republish fixes, so the descriptor is fetched again and the command runs
+/// on the newer copy.
+#[tokio::test]
+async fn a_light_spec_that_no_longer_matches_is_fixed_by_a_newer_copy() {
+	let (server, _) = serve_light_specs().await;
+	let swapped = served_copy(&server, 1, "people.json", "relay.json");
+	let fixed = served_copy(&server, 2, "relay.json", "people.json");
+	let (server, _) = serve_stack_and_light_specs(vec![swapped, fixed]).await;
+	let (state, specs) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+	// Specs of its own: a spec another test kept would be found by its hash,
+	// and the one the wrong URL serves never fetched.
+	let light_client = ChainAccess::LightClient { spec_directory: specs.path().to_path_buf() };
+	let stack = StackArg { value: format!("{server}/stack.json"), source: "--stack" };
+	let source = NetworkSource::new(light_client, None, Some(stack), state.path().into()).unwrap();
+
+	let stack = source.resolve_checked().await.expect("the newer copy names the right specs");
+
+	let light = stack.light_client().expect("the stack runs on the light client");
+	assert_eq!(
+		(stack.descriptor().sequence, light.provider().has_light_spec(stack.genesis().people)),
+		(2, true)
+	);
 }

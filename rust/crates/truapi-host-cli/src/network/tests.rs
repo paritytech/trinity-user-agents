@@ -159,8 +159,5 @@ fn a_polkadot_fork_starts_the_core() {
 			chain["genesisHash"] = format!("0x{polkadot_people}").into()
 		});
 
-	assert_eq!(
-		fork.core_stack().map(|stack| hex::encode(stack.chains().people)),
-		Ok(polkadot_people.to_string())
-	);
+	assert_eq!(hex::encode(fork.core_stack().chains().people), polkadot_people);
 }

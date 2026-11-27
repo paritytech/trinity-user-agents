@@ -1141,28 +1141,27 @@ each network gets its own signer identity on the same machine.
 A command reaches its chains in one of two ways:
 
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
-  All three are built-in Trinity stacks. Each command that
-  resolves one fetches the descriptor its operator publishes, verifies it against
-  the stack's key, and uses it when it is newer than the signed copy this release
-  ships in `stacks/`; an unreachable descriptor falls back to the shipped copy
-  silently, and a non-2xx answer is logged as a warning. When the published
-  descriptor changes a field the CLI reads, the CLI prints one line saying that it is
-  in use and that a later release ships it; when the stack restarted from genesis the
-  line reports that too. A newer copy that changes nothing the CLI reads is used
-  without a line. A published descriptor that changes the stack's `tld` or `id`, or
-  that the CLI cannot run on, is not used: the bundled copy stays in use with a
-  warning, since every account derives under the TLD and is stored under the id. A
-  stack past its `expiresAt` is an error.
+  All three are built-in Trinity stacks. The core starts each from the signed copy
+  this release ships in `stacks/`, or from a newer copy it verified on an earlier run
+  and kept in the network's state directory, so a command never waits on the
+  descriptor's server. Each command refreshes the descriptor in the background while
+  it runs and keeps a newer copy for the next start; one that changes the chains
+  takes effect from the next command, and a running host logs that it needs a
+  restart. A published descriptor that changes
+  the stack's `tld`, or that the CLI cannot run on, is not kept, since every account
+  derives under the TLD. A stack past its `expiresAt` is an error.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
-  replaces `--network`, and the two cannot be combined; details below.
+  replaces `--network`, and the two cannot be combined. A link or URL is fetched by
+  the first command and kept like a built-in's copy; a local file is read on every
+  run. Details below.
 
 Before anything runs, every endpoint of a stack reached over RPC is asked for its
 genesis, and People, once its genesis matches, for its `NetworkSuffix`. An endpoint
-that reports a genesis other than the one it is routed as is an error; for a built-in
-it reports that the stack restarted from genesis and which descriptor is in use, after
-fetching the published descriptor once more when it could not be fetched before. A
-`NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
+that reports a genesis other than the one it is routed as may belong to a chain that
+restarted from genesis, so the CLI fetches the descriptor once more and repeats the
+checks on a newer copy; without one it is an error. A `NetworkSuffix` other than the
+`tld` is an error. An endpoint that does not answer
 within 3 seconds is logged and left to fail on first use. On the light client the
 light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
@@ -1192,8 +1191,8 @@ role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
 `tld` that is not a lowercase DNS label, has no `dub` service or no
-`dotns.popController`, is unreachable or is past `expiresAt` is an error for
-every command. The CLI's own username reads go through that `popController` without
+`dotns.popController`, cannot be fetched while none is kept, or is past `expiresAt`
+is an error for every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
 chain. `get_chain_info` reports the descriptor's `network`. The product
 namespace, the name the CLI prints for the network, is the descriptor's `id`

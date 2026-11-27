@@ -440,6 +440,14 @@ impl Stack {
 		Ok(Self { identity, network, tld, chains, account_data_store: None, checks: None })
 	}
 
+	/// This stack without its relay chain, for a host that serves none, such
+	/// as the CLI. The core then offers products no relay and connects to
+	/// none.
+	#[must_use]
+	pub fn without_relay(self) -> Self {
+		Self { chains: StackChains { relay: None, ..self.chains }, ..self }
+	}
+
 	/// The stack's identity. See [`StackIdentity::id`].
 	pub fn id(&self) -> &str {
 		&self.identity.id
