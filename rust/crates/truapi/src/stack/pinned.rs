@@ -1,6 +1,7 @@
 //! The fields no other copy of a stack's descriptor may change.
 //!
-//! [`Pinned`] is read from the copy the build bundles, and
+//! [`Pinned`] is read from the copy the build bundles, or for a stack the
+//! build ships no copy of from the first copy the core held, and
 //! [`Pinned::refuse_change`] checks stored and fetched copies against it.
 
 use trinity_stack::Descriptor;
@@ -18,9 +19,10 @@ pub struct Pinned {
 }
 
 impl Pinned {
-	/// What `bundled`, the copy the build ships, pins.
-	pub fn new(bundled: &Descriptor) -> Self {
-		Self { tld: bundled.tld.clone() }
+	/// What `first` pins: the copy the build ships, or the first copy the core
+	/// held of a stack the build ships no copy of.
+	pub fn new(first: &Descriptor) -> Self {
+		Self { tld: first.tld.clone() }
 	}
 
 	/// Checks that `copy` keeps every pinned field.
