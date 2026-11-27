@@ -153,22 +153,16 @@ impl StackRefresh {
 		Ok(Self::running(source, records, timer, clock))
 	}
 
-	/// Resolves a stack its build ships no copy of, such as one a person
-	/// imported or a developer passes to a tool. `pointer` is the stack's link,
-	/// signed or not: a link without a key trusts whoever serves the
-	/// descriptor and has no rollback protection: a copy with a lower
-	/// `sequence` is taken, as RFC 1 says. One with the same `sequence` and
-	/// other content is refused, as for a signed stack.
+	/// Resolves a stack its build ships no copy of, from its link.
 	///
-	/// Starts from the copy `records` holds. Without one, it first fetches the
-	/// descriptor through `host`, stores it, and starts from that. The first
-	/// copy the core holds pins what later copies must keep, as a bundled copy
-	/// does. Otherwise like [`Self::load`].
+	/// The link may be unsigned, and then trusts whoever serves the
+	/// descriptor. Starts from the copy `records` holds, or else fetches the
+	/// descriptor through `host` and stores it. That first copy pins the
+	/// fields later copies must keep, as a bundled copy does.
 	///
 	/// Fails with [`StackError::Unreachable`] when there is no stored copy and
 	/// the fetch fails, and with the rule a copy breaks when the core cannot
-	/// run it. A fetched copy that could not be stored is logged, and the next
-	/// start fetches again.
+	/// run it.
 	pub async fn import(
 		pointer: &str,
 		reserved_values: ReservedValuesPolicy,
@@ -220,34 +214,30 @@ impl StackRefresh {
 		}
 	}
 
-	/// The descriptor of the copy the core runs, for a host's own features
-	/// such as its chain endpoints and services. A newer copy of the same
-	/// stack, such as one with other RPC URLs, replaces it while the core
-	/// runs; one that changes the stack waits for the next start, as
-	/// [`Self::stack`] does.
+	/// The descriptor of the copy the core runs, for a host's own features.
+	///
+	/// A newer copy of the same stack replaces it while the core runs. One
+	/// that changes the stack waits for the next start, as [`Self::stack`]
+	/// does.
 	pub fn descriptor(&self) -> Descriptor {
 		self.shared.source().descriptor().clone()
 	}
 
-	/// Whether the copy is old enough that the refresh would fetch the
-	/// descriptor now: an hour old, or never fetched, as a bundled copy is.
+	/// Whether the copy is due for a fetch: an hour old, or never fetched, as
+	/// a bundled copy is.
 	///
-	/// A tool that runs one command at a time may fetch before it starts
-	/// rather than in the background, since it may exit before a background
-	/// fetch is stored. It asks this, and when it is due awaits
-	/// [`Self::fetch_now`] through a host that gives up soon.
+	/// A tool that may exit before a background fetch is stored asks this and
+	/// awaits [`Self::fetch_now`] before it starts.
 	pub fn fetch_is_due(&self) -> bool {
 		self.shared.source().next_fetch_in(self.shared.now()) == Some(Duration::ZERO)
 	}
 
 	/// Fetches the descriptor through `host` now, whatever the copy's age, and
-	/// returns the status once the answer is taken and any newer copy stored.
+	/// returns the status once any newer copy is stored.
 	///
-	/// A host whose chain gave a different genesis hash from the descriptor's
-	/// asks before it refuses the stack, since the operator may have published
-	/// the chain's new one. A newer copy that changes the stack sets
-	/// [`StackStatus::restart_required`]: load the stack again to run it. Does
-	/// nothing while another fetch is out.
+	/// A newer copy that changes the stack sets
+	/// [`StackStatus::restart_required`]. Does nothing while another fetch is
+	/// out.
 	pub async fn fetch_now(&self, host: &dyn StackHost) -> StackStatus {
 		let request = self.shared.source().forced_fetch(self.shared.now());
 		if let Some(request) = request {

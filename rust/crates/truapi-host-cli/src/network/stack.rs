@@ -27,11 +27,11 @@ pub struct Routes {
 	pub pop_controller: [u8; 20],
 }
 
-/// The chains and services the CLI reads from `descriptor`. Fails when
-/// People, Asset Hub or Bulletin is missing, when the namespace is not a
-/// lowercase label or is the `polkadot` one, and when the stack has no `dub`
-/// service or no `dotns.popController`. No two of its chains share a genesis
-/// hash, which the descriptor's own rules refuse.
+/// The chains and services the CLI reads from `descriptor`.
+///
+/// Fails when People, Asset Hub or Bulletin is missing, when the namespace is
+/// not a lowercase label or is the `polkadot` one, and when the stack has no
+/// `dub` service or no `dotns.popController`.
 pub fn routes(descriptor: &Descriptor) -> Result<Routes> {
 	let id = &descriptor.id;
 	ensure!(

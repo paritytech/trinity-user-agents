@@ -1609,11 +1609,11 @@ mod tests;
 
 /// Host-private persistence for core-owned state.
 ///
-/// Apart from [`CoreStorageKey::StackRecord`], the keys do not name the stack.
-/// A host that can run more than one stack keeps a separate store for each,
-/// picked from the stack's pointer before it starts the core, so nothing kept
-/// for one stack is visible to another. The same holds for [`ProductStorage`],
-/// the encrypted store and the core database directory of a native host.
+/// Apart from [`CoreStorageKey::StackRecord`], the keys do not name the
+/// stack, so a host that can run more than one stack keeps a separate store
+/// for each, chosen by the stack's pointer before it starts the core. The same
+/// holds for [`ProductStorage`], the encrypted store and a native host's core
+/// database directory.
 ///
 /// Clearing product-indexed slots is the host's job. The core drops the ones
 /// it is holding when a session ends, but a product it never opened this run

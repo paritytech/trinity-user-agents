@@ -1,9 +1,7 @@
 //! How a command's [`NetworkSource`] becomes the network it runs against.
 //!
-//! The core resolves every stack: a built-in network from the copy this build
-//! ships, any other link or URL from the copy kept for it or else by fetching
-//! it, and a local descriptor file as it reads. The CLI keeps the record of
-//! each stack's newest copy in the stack's state directory.
+//! The core runs every stack, and the CLI keeps each stack's newest copy in
+//! its state directory.
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -56,9 +54,9 @@ impl NetworkSource {
 	}
 
 	/// The network a command runs against once its chains pass the checks.
+	///
 	/// When an endpoint or light spec fails them, the descriptor is fetched
-	/// again, since its operator may have published the chains' new genesis
-	/// hashes, and the checks repeat once on a newer copy. Fails as
+	/// again and the checks repeat once on a newer copy. Fails as
 	/// [`Self::resolve`] and [`verify_chains`] do.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
 		let stack = self.open().await?;
@@ -80,11 +78,10 @@ impl NetworkSource {
 		Ok(stack.kept_current())
 	}
 
-	/// [`Self::resolve_checked`] without contacting any chain. The descriptor
-	/// is fetched first when the core holds no copy yet, or when the copy it
-	/// holds is due for a fetch, as [`Self::open_published`] says. Fails when
-	/// the stack is past `expiresAt`, when it is not one the CLI can run, and
-	/// for a `--stack` that cannot be read.
+	/// [`Self::resolve_checked`] without contacting any chain.
+	///
+	/// Fails when the stack is past `expiresAt`, when the CLI cannot run it,
+	/// and for a `--stack` that cannot be read.
 	pub async fn resolve(&self) -> Result<Stack> {
 		Ok(self.open().await?.kept_current())
 	}
@@ -120,14 +117,10 @@ impl NetworkSource {
 
 	/// The stack `published` names, run by the core from the copy it holds.
 	///
-	/// A command can exit before a background fetch is stored, so the copy is
-	/// fetched first when it is due: last fetched over an hour ago, or never,
-	/// as a shipped copy is. A copy the CLI cannot run, such as one past
-	/// `expiresAt` or one without the light specs this run needs, is fetched
-	/// once more unless this run fetched already, since its operator may have
-	/// published a fix. Each of these fetches waits at most
-	/// [`PRE_START_FETCH_TIMEOUT`] for the server, and a newer copy is run at
-	/// once; without one the command runs on, or fails on, the copy it holds.
+	/// The copy is fetched first when it is due, since a command can exit
+	/// before a background fetch is stored, and once more when the CLI cannot
+	/// run it, unless this run fetched already. Those fetches wait at most
+	/// [`PRE_START_FETCH_TIMEOUT`], and a newer copy runs at once.
 	async fn open_published(&self, published: &Published) -> Result<Stack> {
 		let mut refresh = self.load(published).await?;
 		// An imported stack's first copy was fetched as it loaded.

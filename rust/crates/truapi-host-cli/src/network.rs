@@ -240,8 +240,7 @@ impl Stack {
 		self.light_client.clone()
 	}
 
-	/// The stack the core runs on, without the relay, which the CLI does not
-	/// serve.
+	/// The stack the core runs on, without the relay the CLI does not serve.
 	///
 	/// It allows Polkadot's reserved values, which the CLI checks itself, so
 	/// use it only on a stack from [`NetworkSource::resolve_checked`].

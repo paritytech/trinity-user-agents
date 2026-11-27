@@ -1,18 +1,13 @@
 //! The Trinity stack a host runs, read from its descriptor.
 //!
 //! The core takes all of its chain configuration from the stack.
-//! [`StackRefresh::load`] checks the descriptor a host build bundles against
-//! the key in the stack's link and against the build's
-//! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
-//! stored, and fetches newer copies while the core runs.
-//! [`StackRefresh::import`] does the same for a stack the build ships no copy
-//! of, signed or not, starting from a stored copy or a first fetch. Every copy
-//! is held to the same policy, and a copy on another TLD than the first one is
-//! refused.
-//! It resolves the [`Stack`] the core runs on. A runtime built on that
-//! [`Stack`] also checks the genesis hash of each chain it connects to and, on
-//! a signing host, People's `NetworkSuffix`. The refresh reports what differs
-//! from the descriptor.
+//! [`StackRefresh::load`] starts a stack its build bundles, checked against the
+//! key in its link and the build's [`ReservedValuesPolicy`].
+//! [`StackRefresh::import`] starts one the build ships no copy of. Either keeps
+//! the descriptor current while the core runs. A runtime built on the
+//! resulting [`Stack`] checks the genesis hash of each chain it connects to
+//! and, on a signing host, People's `NetworkSuffix`, and the refresh reports
+//! what differs from the descriptor.
 
 mod held;
 mod pinned;
@@ -205,11 +200,10 @@ pub struct StackIdentity {
 	/// An opaque, non-empty string that tells this stack apart from others,
 	/// including a fork with its source's genesis hashes.
 	///
-	/// [`Stack::bundled`], [`StackRefresh::load`] and [`StackRefresh::import`]
-	/// take `trinity_stack::Pointer::stack_id` of the pointer: the key in hex,
-	/// or the normalised URL of a stack without a key. [`Stack::local`] takes
-	/// the tool's own id for a local file, which the CLI makes `file:` and the
-	/// file's canonical path. A test host passes any string.
+	/// A stack read from its link takes `trinity_stack::Pointer::stack_id`:
+	/// the key in hex, or the URL of a stack without a key. [`Stack::local`]
+	/// takes the tool's own id for a local file, and a test host passes any
+	/// string.
 	pub id: String,
 	/// The descriptor's `generation`, which changes whenever the stack
 	/// restarts its chains, as after a wipe. Must not be empty.
@@ -350,11 +344,11 @@ impl Stack {
 		Self::from_descriptor(pointer.stack_id(), &verified.descriptor, reserved_values)
 	}
 
-	/// The stack a descriptor read from a local file names, for a tool that
-	/// takes one. A local file has no pointer and nothing refreshes it, so
-	/// `stack_id` is the tool's own id for the file. Otherwise like
-	/// [`Self::bundled`]: the descriptor is one the caller already read and
-	/// checked, and `validUntil` and `expiresAt` are not checked.
+	/// The stack a local descriptor file names, under `stack_id`, the tool's
+	/// own id for the file, since a file has no pointer.
+	///
+	/// Fails with the rule the descriptor or `reserved_values` breaks. Nothing
+	/// refreshes the stack, and `validUntil` and `expiresAt` are not checked.
 	pub fn local(
 		stack_id: String,
 		descriptor: &Descriptor,

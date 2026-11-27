@@ -452,11 +452,11 @@ impl SessionCatalog {
 		}
 	}
 
-	/// `target` with a name resolved as session selection resolves it, so a
-	/// name promoted away clears the session it created. The typed name is
-	/// checked before it is resolved. Fails when the typed name is not
-	/// selectable, and as [`Self::validate_clear_target`] does for the name it
-	/// resolves to.
+	/// `target` with its name resolved as session selection resolves it, so a
+	/// name promoted away clears the session it created.
+	///
+	/// Fails when the typed name is not selectable, and as
+	/// [`Self::validate_clear_target`] does for the name it resolves to.
 	pub fn resolve_clear_target(&self, target: &SessionClearTarget) -> Result<SessionClearTarget> {
 		let target = match target {
 			SessionClearTarget::Named(name) => {
@@ -472,14 +472,11 @@ impl SessionCatalog {
 	/// Check that `target` is still listed and take the account store locks
 	/// its clear needs, before anything is removed or a host is stopped.
 	///
-	/// `target` is used as [`Self::resolve_clear_target`] returned it, not
-	/// resolved again, so the clear removes the session the user confirmed.
-	/// The locks cover the default session's store and each cleared session's,
-	/// so a host that is picking an account for one of them at that moment
-	/// can't write the account back afterwards. A host already running on a
-	/// cleared session can still write to its directory.
-	/// Fails as [`Self::validate_clear_target`] does, or when another process
-	/// holds a lock.
+	/// `target` is not resolved again, so the clear removes the session the
+	/// user confirmed. The locks stop a host that is picking an account for a
+	/// cleared session from writing it back. A host already running on one can
+	/// still write to its directory. Fails as [`Self::validate_clear_target`]
+	/// does, or when another process holds a lock.
 	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
 		self.validate_clear_target(target)?;
 		let target = target.clone();
@@ -501,11 +498,10 @@ impl SessionCatalog {
 	/// return their names.
 	///
 	/// Stop a running host on one of these sessions first. Nothing outside
-	/// this stack's directory is removed. A session's accounts in the default
-	/// session's store go before its directory, so a clear that stops halfway
-	/// still lists the session and can be run again. Clearing every session
-	/// removes that store whole and first, for the same reason, so it works
-	/// on a store that no longer decodes.
+	/// this stack's directory is removed. The default session's store loses a
+	/// session's accounts before its directory goes, or goes whole and first
+	/// when clearing every session, so a clear that stops halfway can be run
+	/// again.
 	pub fn clear(&self, clear: PreparedClear) -> Result<Vec<String>> {
 		let PreparedClear { target, names, default_store, _session_stores } = clear;
 		match &target {

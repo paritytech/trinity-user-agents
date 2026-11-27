@@ -72,11 +72,12 @@ pub async fn read_local_descriptor(path: &str) -> Result<Descriptor> {
 	Ok(accepted.stack.descriptor)
 }
 
-/// The id of the stack in the local file at `path`. A local file has no pointer of its own, so its
-/// id is `file:` followed by its canonical path: two files are two stacks, and a file that moves
-/// becomes another stack. A path that is not a regular file, such as a pipe or a fifo, is refused,
-/// since one path can carry any descriptor. So is a file whose canonical path is under `/dev/fd`,
-/// which other files can share, or is not UTF-8.
+/// The id of the stack in the local file at `path`: `file:` and its canonical path, so a file that
+/// moves becomes another stack.
+///
+/// Refuses a path that is not a regular file, such as a pipe, since one path can carry any
+/// descriptor, and one whose canonical path is under `/dev/fd`, which other files share, or is not
+/// UTF-8.
 pub fn local_file_id(path: &str) -> Result<String> {
 	let metadata = fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
 	if !metadata.is_file() {

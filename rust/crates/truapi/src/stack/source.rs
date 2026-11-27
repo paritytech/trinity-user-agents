@@ -203,9 +203,8 @@ impl FirstFetch {
 		(Self { pointer, reserved_values, reader }, request)
 	}
 
-	/// Takes the answer to the request [`Self::new`] gave, or why the fetch failed, and
-	/// returns the stack with the record to store, which goes back to
-	/// [`StackSource::import`] as `stored`.
+	/// Takes the answer to the request [`Self::new`] gave, or why the fetch
+	/// failed, and returns the stack and the record to store.
 	///
 	/// Fails with [`StackError::Unreachable`] when the fetch failed, and with
 	/// the rule the copy breaks when the core cannot run it.
@@ -296,13 +295,11 @@ impl StackSource {
 		Ok(Self::running(rules, reader, running, read.fetch, current.stale, current.expired))
 	}
 
-	/// Starts a stack its build ships no copy of, signed or not, from
-	/// `stored`, the record the last [`Self::fetched`] or
-	/// [`FirstFetch::fetched`] returned. The first copy the core holds pins the
-	/// fields later copies must keep, as a bundled copy does.
+	/// Starts a stack its build ships no copy of from `stored`, the record a
+	/// fetch returned.
 	///
-	/// `None` when no stored copy is one the core can run under
-	/// `reserved_values`: fetch the descriptor first with a [`FirstFetch`].
+	/// `None` when no stored copy can run under `reserved_values`. Fetch the
+	/// descriptor first with a [`FirstFetch`] then.
 	pub fn import(
 		pointer: &Pointer,
 		stored: Option<&[u8]>,
