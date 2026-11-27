@@ -39,7 +39,7 @@ struct FundingAmountView: View {
 
             FundingKeypad(text: Binding(get: { viewModel.amountText }, set: presenter.amountTextChanged))
 
-            DSButton(.Funding.continueAction, expands: true) {
+            DSButton(.Common.continue, expands: true) {
                 presenter.continueFromAmount()
             }
             .disabled(!viewModel.canContinue)
@@ -67,7 +67,7 @@ private extension FundingAmountView {
                     .offset(x: -3, y: -3)
             }
         }
-        .accessibilityLabel(Text(.Funding.historyOpen))
+        .accessibilityLabel(Text(.Funding.historyTitle))
     }
 
     var amountFigure: some View {
