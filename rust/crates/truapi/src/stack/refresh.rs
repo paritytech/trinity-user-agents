@@ -20,7 +20,7 @@ use truapi::latest::GenericError;
 use super::{
 	ReservedValuesPolicy, Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords,
 	StackStatus, signed_pointer,
-	source::{FirstFetch, Listing, StackSource},
+	source::{Listing, StackSource},
 };
 use crate::{
 	BackgroundTask, Spawner,
@@ -179,10 +179,11 @@ impl StackRefresh {
 		let source = match StackSource::import(&pointer, stored.as_deref(), &reserved_values, now) {
 			Some(source) => source,
 			None => {
-				let (first, request) = FirstFetch::new(pointer, reserved_values, now);
+				let request = FetchRequest { url: pointer.url().to_string(), if_none_match: None };
 				let response = ask(host, request, timer.as_ref()).await;
+				let now = unix_now(clock.as_ref());
 				let (mut source, record) =
-					first.fetched(served(&response), unix_now(clock.as_ref()))?;
+					StackSource::first_fetched(pointer, reserved_values, served(&response), now)?;
 				let check = source.replace_check(&record);
 				let write = records.write_stack_record(&stack_id, record, check);
 				if let Err(reason) = within_store_timeout(write, timer.as_ref()).await {
