@@ -1541,10 +1541,10 @@ impl NativeProductExecution {
 		self: &Arc<Self>,
 		bind_port: u16,
 	) -> Result<WsBridgeEndpoint, WsBridgeStartError> {
+		let mut guard = self.bridge_token.lock().expect("native product bridge mutex poisoned");
 		if self.closed.load(Ordering::Acquire) {
 			return Err(WsBridgeStartError::Io("product execution is closed".to_string()));
 		}
-		let mut guard = self.bridge_token.lock().expect("native product bridge mutex poisoned");
 		if guard.is_some() {
 			return Err(WsBridgeStartError::AlreadyRunning);
 		}
