@@ -236,8 +236,16 @@ pub async fn serve_light_specs() -> (String, Arc<AtomicUsize>) {
 	serve_stack_and_light_specs(Vec::new()).await
 }
 
+/// The `ETag` [`serve_stack_and_light_specs`] serves its `index`th copy
+/// with, counted from 0.
+pub fn served_etag(index: usize) -> String {
+	format!("\"copy-{index}\"")
+}
+
 /// [`serve_light_specs`], also answering `/stack.json` with `copies` in turn,
-/// the last one again once it is reached.
+/// the last one again once it is reached, each with its [`served_etag`]. A
+/// request that sends the `ETag` of the copy it would get gets
+/// `304 Not Modified`.
 pub async fn serve_stack_and_light_specs(copies: Vec<Vec<u8>>) -> (String, Arc<AtomicUsize>) {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -248,30 +256,41 @@ pub async fn serve_stack_and_light_specs(copies: Vec<Vec<u8>>) -> (String, Arc<A
 	let requests = Arc::new(AtomicUsize::new(0));
 	let answered = Arc::clone(&requests);
 	tokio::spawn(async move {
-		let mut copies = copies.into_iter().peekable();
+		let mut next_copy = 0;
 		while let Ok((mut socket, _)) = listener.accept().await {
 			let mut request = [0; 1024];
 			let read = socket.read(&mut request).await.unwrap_or(0);
 			let request = String::from_utf8_lossy(&request[..read]);
-			let body = match request.split_whitespace().nth(1) {
-				Some("/relay.json") => RELAY_LIGHT_SPEC.as_bytes().to_vec(),
-				Some("/people.json") => PEOPLE_LIGHT_SPEC.as_bytes().to_vec(),
-				Some("/large.json") => vec![b' '; 2 * 1024 * 1024],
-				Some("/stack.json") => match copies.next() {
-					Some(copy) if copies.peek().is_none() => {
-						copies = vec![copy.clone()].into_iter().peekable();
-						copy
-					},
-					copy => copy.unwrap_or_default(),
+			let current = next_copy.min(copies.len().saturating_sub(1));
+			let (body, etag) = match request.split_whitespace().nth(1) {
+				Some("/relay.json") => (RELAY_LIGHT_SPEC.as_bytes().to_vec(), None),
+				Some("/people.json") => (PEOPLE_LIGHT_SPEC.as_bytes().to_vec(), None),
+				Some("/large.json") => (vec![b' '; 2 * 1024 * 1024], None),
+				Some("/stack.json") if !copies.is_empty() => {
+					(copies[current].clone(), Some(served_etag(current)))
 				},
-				_ => Vec::new(),
+				_ => (Vec::new(), None),
 			};
+			let sent_back = etag.as_ref().is_some_and(|etag| {
+				let header = format!("if-none-match: {etag}");
+				request.lines().any(|line| line.eq_ignore_ascii_case(&header))
+			});
+			answered.fetch_add(1, Ordering::Relaxed);
+			if sent_back {
+				let head =
+					"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+				let _ = socket.write_all(head.as_bytes()).await;
+				continue;
+			}
+			if etag.is_some() {
+				next_copy += 1;
+			}
 			let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
+			let etag = etag.map(|etag| format!("ETag: {etag}\r\n")).unwrap_or_default();
 			let head = format!(
-				"HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+				"HTTP/1.1 {status}\r\nContent-Length: {}\r\n{etag}Connection: close\r\n\r\n",
 				body.len()
 			);
-			answered.fetch_add(1, Ordering::Relaxed);
 			let _ = socket.write_all(head.as_bytes()).await;
 			let _ = socket.write_all(&body).await;
 		}

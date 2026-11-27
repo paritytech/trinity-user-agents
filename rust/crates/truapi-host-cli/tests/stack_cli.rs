@@ -596,9 +596,9 @@ fn test_blank_stack_variable() {
 }
 
 /// Runs `truapi-host <args>` with `env` set and no `HOST_CLI_STACK` inherited.
-/// Runs `truapi-host` with `args` and `env`. Its state goes to a directory of
-/// its own, since commands without `--base-path` keep a stack's descriptor
-/// under the user's state directory.
+///
+/// Its state goes to a directory of its own, since commands without
+/// `--base-path` keep a stack's descriptor under the user's state directory.
 fn host_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
 	let state = tempfile::tempdir().expect("temporary directory");
 	let mut command = Command::new(env!("CARGO_BIN_EXE_truapi-host"));

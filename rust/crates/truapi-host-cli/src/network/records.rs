@@ -38,6 +38,7 @@ impl StackRecordFile {
 		fs::create_dir_all(directory)?;
 		let mut file = tempfile::NamedTempFile::new_in(directory)?;
 		file.write_all(record)?;
+		file.as_file().sync_all()?;
 		file.persist(&self.path)?;
 		Ok(())
 	}

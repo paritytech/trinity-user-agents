@@ -11,7 +11,7 @@ use truapi::{
 	},
 };
 
-use super::{Network, stack::routes};
+use super::stack::routes;
 use crate::stack_descriptor::{FETCH_TIMEOUT, Served, fetch_if_changed, light_client_chains};
 
 /// The CLI's [`StackHost`] for one stack.
@@ -19,8 +19,7 @@ use crate::stack_descriptor::{FETCH_TIMEOUT, Served, fetch_if_changed, light_cli
 pub struct CliStackHost {
 	pointer: Pointer,
 	/// Whether a copy must name a light spec for each chain the light client
-	/// runs: on the light client, and for a built-in network on either
-	/// backend, since its kept copy serves both.
+	/// runs, as it must when this run is on the light client.
 	needs_light_specs: bool,
 	/// How long a fetch waits for the server.
 	timeout: Duration,
@@ -30,18 +29,12 @@ impl CliStackHost {
 	/// The host of `pointer`'s stack, run on the light client when
 	/// `on_light_client` is set.
 	pub fn new(pointer: Pointer, on_light_client: bool) -> Self {
-		let built_in = Network::of_stack(&pointer.stack_id()).is_some();
-		Self { pointer, needs_light_specs: on_light_client || built_in, timeout: FETCH_TIMEOUT }
+		Self { pointer, needs_light_specs: on_light_client, timeout: FETCH_TIMEOUT }
 	}
 
 	/// This host, with each fetch waiting at most `timeout` for the server.
 	pub fn within(self, timeout: Duration) -> Self {
 		Self { timeout, ..self }
-	}
-
-	/// The URL the stack's descriptor is fetched from.
-	pub fn url(&self) -> &str {
-		self.pointer.url().as_str()
 	}
 
 	/// Why the CLI cannot run on `descriptor`, or `None` when it can. The core
@@ -98,7 +91,17 @@ impl StackHost for CliStackHost {
 		if status.expired {
 			tracing::warn!("the stack at {url} is past expiresAt; it has shut down");
 		}
-		if let Some(StackRefreshOutcome::Refused { reason }) = status.last_refresh {
+		self.warn_if_refused(&status);
+	}
+}
+
+impl CliStackHost {
+	/// Warns when the last fetch brought a copy the core refused, such as one
+	/// on another TLD. A fetch the CLI waits on is reported here, since only
+	/// the background refresh tells [`StackHost::stack_changed`].
+	pub fn warn_if_refused(&self, status: &StackStatus) {
+		if let Some(StackRefreshOutcome::Refused { reason }) = &status.last_refresh {
+			let url = self.pointer.url();
 			tracing::warn!(
 				"the descriptor at {url} is refused, so the CLI keeps its copy: {reason}"
 			);

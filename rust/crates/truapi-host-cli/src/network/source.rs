@@ -15,14 +15,21 @@ use truapi::{
 };
 
 use super::{
-	DescriptorRefresh, Network, NetworkChoice, NetworkSource, Stack, StackArg,
-	built_in::built_in_key, checks::verify_chains, host::CliStackHost, records::StackRecordFile,
-	stack::state_directory_of,
+	DescriptorRefresh, Network, NetworkChoice, NetworkSource, PRE_START_FETCH_TIMEOUT, Stack,
+	StackArg, built_in::built_in_key, checks::verify_chains, host::CliStackHost,
+	records::StackRecordFile, stack::state_directory_of,
 };
 use crate::{
 	chain::ChainAccess,
 	stack_descriptor::{load_descriptor, pointer_of, stack_id},
 };
+
+/// A stack published at a URL: its pointer, and for a built-in network the
+/// copy of its descriptor this build ships.
+struct Published {
+	pointer: Pointer,
+	shipped: Option<&'static [u8]>,
+}
 
 /// The CLI allows Polkadot's reserved values on every stack, since it runs
 /// Polkadot forks for testing and checks itself that none is Polkadot.
@@ -73,85 +80,119 @@ impl NetworkSource {
 	}
 
 	/// [`Self::resolve_checked`] without contacting any chain. The descriptor
-	/// is fetched only when the copy kept for the stack is over an hour old,
-	/// or there is none yet. Fails when the stack is past `expiresAt`, when it
-	/// is not one the CLI can run, and for a `--stack` that cannot be read.
+	/// is fetched first when the core holds no copy yet, or when the copy it
+	/// holds is due for a fetch, as [`Self::open_published`] says. Fails when
+	/// the stack is past `expiresAt`, when it is not one the CLI can run, and
+	/// for a `--stack` that cannot be read.
 	pub async fn resolve(&self) -> Result<Stack> {
 		Ok(self.open().await?.kept_current())
 	}
 
 	/// The stack, with nothing refreshing it yet: a refresh started now could
-	/// have its fetch out when [`Self::resolve_checked`] asks for one. A copy
-	/// due for a fetch is fetched first, as RFC 1 lets a tool do, and a newer
-	/// copy is run; one that cannot be fetched in time is not.
+	/// have its fetch out when [`Self::resolve_checked`] asks for one.
 	async fn open(&self) -> Result<Stack> {
-		let stack = self.open_held().await?;
-		let Some(refresh) = &stack.refresh else {
-			return Ok(stack);
-		};
-		let held = refresh.descriptor();
-		let Some(status) = refresh.fetch_if_due().await else {
-			return Ok(stack);
-		};
-		if !status.restart_required && refresh.descriptor() == held {
-			return Ok(stack);
-		}
-		self.open_held().await
-	}
-
-	/// The stack from the copy the core holds, without fetching unless it is
-	/// a stack the CLI keeps no copy of yet.
-	async fn open_held(&self) -> Result<Stack> {
 		match &self.network {
-			NetworkChoice::BuiltIn(network) => self.built_in(*network).await,
+			NetworkChoice::BuiltIn(network) => {
+				let (link, shipped) = network.link_and_bundle();
+				let pointer =
+					Pointer::from_link(&link).expect("a built-in network's link is valid");
+				self.open_published(&Published { pointer, shipped: Some(shipped) }).await
+			},
 			NetworkChoice::Stack(stack_arg) => self
-				.stack(&stack_arg.value)
+				.open_stack(&stack_arg.value)
 				.await
 				.map_err(|error| anyhow!("{}: {error:#}", stack_arg.source)),
 		}
 	}
 
 	/// A `--stack` value: a built-in network's link, bare URL or keyless
-	/// link is that network, state included; any other link or URL is
-	/// imported, and anything else is a local descriptor file.
-	async fn stack(&self, value: &str) -> Result<Stack> {
+	/// link is that network, state included, fetched from the URL given; any
+	/// other link or URL is imported, and anything else is a local
+	/// descriptor file.
+	async fn open_stack(&self, value: &str) -> Result<Stack> {
 		let key = built_in_key(value);
 		let Some(pointer) = pointer_of(value, key.as_deref())? else {
 			return self.local(value).await;
 		};
-		match Network::of_stack(&pointer.stack_id()) {
-			Some(network) => self.built_in(network).await,
-			None => self.import(pointer).await,
+		let shipped =
+			Network::of_stack(&pointer.stack_id()).map(|network| network.link_and_bundle().1);
+		self.open_published(&Published { pointer, shipped }).await
+	}
+
+	/// The stack `published` names, run by the core from the copy it holds.
+	///
+	/// A command can exit before a background fetch is stored, so the copy is
+	/// fetched first when it is due: last fetched over an hour ago, or never,
+	/// as a shipped copy is. A copy the CLI cannot run, such as one past
+	/// `expiresAt` or one without the light specs this run needs, is fetched
+	/// again once, since its operator may have published a fix. Each of these
+	/// fetches waits at most [`PRE_START_FETCH_TIMEOUT`] for the server, and a
+	/// newer copy is run at once; without one the command runs on, or fails
+	/// on, the copy it holds.
+	async fn open_published(&self, published: &Published) -> Result<Stack> {
+		let mut refresh = self.load(published).await?;
+		// An imported stack's first copy was just fetched.
+		let mut fetched = refresh.status().last_refresh.is_some();
+		if !fetched && refresh.fetch_is_due() {
+			refresh = self.fetched(refresh, published).await?;
+			fetched = true;
+		}
+		match self.running(refresh, published.pointer.clone()) {
+			Err(error) if !fetched => {
+				tracing::info!("{error:#}; fetching the stack's descriptor again");
+				let refresh = self.fetched(self.load(published).await?, published).await?;
+				self.running(refresh, published.pointer.clone())
+			},
+			opened => opened,
 		}
 	}
 
-	async fn built_in(&self, network: Network) -> Result<Stack> {
-		let (link, bundled) = network.link_and_bundle();
-		let pointer = Pointer::from_link(&link).expect("a built-in network's link is valid");
-		let refresh = StackRefresh::load(
-			&link,
-			bundled,
-			RESERVED_VALUES,
-			Box::new(self.records(&pointer)),
-			Arc::new(RealTimer),
-			Box::new(SystemClock),
-		)
-		.await?;
-		self.running(refresh, pointer)
+	/// The core's refresh of `published`, from the copy it holds. An imported
+	/// stack the CLI keeps no copy of is fetched first.
+	async fn load(&self, published: &Published) -> Result<StackRefresh> {
+		let Published { pointer, shipped } = published;
+		let (link, records) = (pointer.to_link(DEFAULT_LINK_BASE), self.records(pointer));
+		let refresh = match shipped {
+			Some(shipped) => {
+				StackRefresh::load(
+					&link,
+					shipped,
+					RESERVED_VALUES,
+					Box::new(records),
+					Arc::new(RealTimer),
+					Box::new(SystemClock),
+				)
+				.await?
+			},
+			None => {
+				StackRefresh::import(
+					&link,
+					RESERVED_VALUES,
+					Box::new(records),
+					&self.host(pointer.clone()),
+					Arc::new(RealTimer),
+					Box::new(SystemClock),
+				)
+				.await?
+			},
+		};
+		Ok(refresh)
 	}
 
-	async fn import(&self, pointer: Pointer) -> Result<Stack> {
-		let host = self.host(pointer.clone());
-		let refresh = StackRefresh::import(
-			&pointer.to_link(DEFAULT_LINK_BASE),
-			RESERVED_VALUES,
-			Box::new(self.records(&pointer)),
-			&host,
-			Arc::new(RealTimer),
-			Box::new(SystemClock),
-		)
-		.await?;
-		self.running(refresh, pointer)
+	/// `refresh` after one fetch of its descriptor that waits at most
+	/// [`PRE_START_FETCH_TIMEOUT`] for the server, loaded again when the fetch
+	/// stored a copy that changes the stack.
+	async fn fetched(&self, refresh: StackRefresh, published: &Published) -> Result<StackRefresh> {
+		let url = published.pointer.url();
+		tracing::info!("fetching the stack descriptor at {url} before the command runs");
+		let host = self.host(published.pointer.clone()).within(PRE_START_FETCH_TIMEOUT);
+		let status = refresh.fetch_now(&host).await;
+		host.warn_if_refused(&status);
+		if !status.restart_required {
+			return Ok(refresh);
+		}
+		drop(refresh);
+		self.load(published).await
 	}
 
 	/// A local descriptor file, read as it is and never refreshed.

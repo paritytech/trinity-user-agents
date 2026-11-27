@@ -1143,15 +1143,18 @@ A command reaches its chains in one of two ways:
 
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
   All three are built-in Trinity stacks. The core starts each from the signed copy
-  this release ships in `stacks/`, or from a newer copy it verified on an earlier run
-  and kept in the network's state directory. When that copy is over an hour old, or
-  was never fetched, as the shipped copy is, a command first fetches the published
-  descriptor, saying so, and waits up to 3 seconds for it; it then runs on the newest
-  copy it holds. A signing or pairing host
-  also refreshes the descriptor while it runs, and logs when a newer copy needs a
-  restart. A published descriptor that changes
-  the stack's `tld`, or that the CLI cannot run on, is not kept, since every account
-  derives under the TLD. A stack past its `expiresAt` is an error.
+  this release ships in `stacks/`, or from a newer copy it verified and kept in the
+  network's state directory. Before a command runs, the CLI fetches the published
+  descriptor when the copy it holds was last fetched over an hour ago or never, as the
+  shipped copy is, saying so and waiting up to 3 seconds. Until a fetch brings the
+  current copy or a newer one, for instance while the server is down, every command
+  fetches again. A newer copy the fetch stores is run at once. A copy the CLI cannot
+  run, such as one past `expiresAt`, is fetched again once before the command fails.
+  The descriptor is also refreshed in the background while a command runs, and a
+  running host logs when a newer copy needs a restart. A published descriptor that
+  changes the stack's `tld`, or that the CLI cannot run on, is not kept, with a
+  warning, since every account derives under the TLD; on the light client that
+  includes one without a light spec for a chain it runs.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
   replaces `--network`, and the two cannot be combined. A link or URL is fetched by

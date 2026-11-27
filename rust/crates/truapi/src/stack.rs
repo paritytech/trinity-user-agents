@@ -1,11 +1,14 @@
-//! The Trinity stack a host runs, read from a signed descriptor.
+//! The Trinity stack a host runs, read from its descriptor.
 //!
 //! The core takes all of its chain configuration from the stack.
 //! [`StackRefresh::load`] checks the descriptor a host build bundles against
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
-//! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy, and a copy on another TLD than the bundled one is refused.
+//! stored, and fetches newer copies while the core runs.
+//! [`StackRefresh::import`] does the same for a stack the build ships no copy
+//! of, signed or not, starting from a stored copy or a first fetch. Every copy
+//! is held to the same policy, and a copy on another TLD than the first one is
+//! refused.
 //! It resolves the [`Stack`] the core runs on. A runtime built on that
 //! [`Stack`] also checks the genesis hash of each chain it connects to and, on
 //! a signing host, People's `NetworkSuffix`. The refresh reports what differs
@@ -611,8 +614,8 @@ fn account_data_store_in(descriptor: &Descriptor) -> Option<[u8; 20]> {
 		.filter(|address| *address != [0; 20])
 }
 
-/// The pointer a stack link carries. A host runs only a signed stack, so a
-/// link without a key is refused.
+/// The pointer a stack link carries. A stack a build bundles must be signed,
+/// so a link without a key is refused.
 fn signed_pointer(link: &str) -> Result<Pointer, StackError> {
 	let pointer = Pointer::from_link(link).map_err(StackError::Pointer)?;
 	match pointer.key() {

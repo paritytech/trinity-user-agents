@@ -604,10 +604,31 @@ impl StackSource {
 
 	/// Why the core refuses a served document that verifies under the
 	/// pointer. `None` when the core takes it or the reader refuses it.
+	///
+	/// The reader refuses a signed copy with a lower `sequence` as a
+	/// rollback but takes an unsigned one. The record store keeps the higher
+	/// one either way, so the core refuses the unsigned copy here rather than
+	/// run a copy the next start would not read.
 	fn refusal(&self, served: Served) -> Option<String> {
 		let Served::Document { bytes, .. } = served else { return None };
 		let verified = open(bytes, self.rules.pointer()).ok()?;
+		let held = self.held_sequence();
+		if self.rules.pointer().key().is_none() && verified.descriptor.sequence < held {
+			let sequence = verified.descriptor.sequence;
+			return Some(format!("sequence {sequence} is lower than {held} of the copy held"));
+		}
 		self.rules.hold(verified).err().map(|error| error.to_string())
+	}
+
+	/// The highest `sequence` of a copy the core holds: the running one, or a
+	/// newer one waiting for the next start.
+	fn held_sequence(&self) -> u32 {
+		[Some(&self.running), self.unstored.as_ref(), self.next_start.as_ref()]
+			.into_iter()
+			.flatten()
+			.map(|copy| copy.descriptor.sequence)
+			.max()
+			.expect("the core always runs a copy")
 	}
 }
 

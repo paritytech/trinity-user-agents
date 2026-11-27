@@ -264,3 +264,69 @@ async fn a_copy_over_an_hour_old_runs_when_its_server_gives_none() {
 
 	assert_eq!(stack.descriptor().sequence, 1);
 }
+
+/// A kept copy the CLI cannot run, such as one past `expiresAt`, is fetched
+/// again before the command fails, since its operator may have published a
+/// fix after the last fetch.
+#[tokio::test]
+async fn a_kept_copy_that_cannot_run_is_fetched_again() {
+	let (server, _) = serve_light_specs().await;
+	let mut expired: serde_json::Value =
+		serde_json::from_slice(&served_copy(&server, 1, "relay.json", "people.json")).unwrap();
+	expired["expiresAt"] = 1.into();
+	let fixed = served_copy(&server, 2, "relay.json", "people.json");
+	let (server, requests) = serve_stack_and_light_specs(vec![fixed]).await;
+	let url = format!("{server}/stack.json");
+	let state = tempfile::tempdir().expect("temporary directory");
+	let expired = serde_json::to_vec(&expired).expect("JSON serialises");
+	keep_copy(state.path(), &Pointer::new(&url, None).unwrap(), &expired, 0);
+
+	let stack = stack_source(&url, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
+
+	assert_eq!((stack.descriptor().sequence, requests.load(Ordering::Relaxed)), (2, 1));
+}
+
+/// A server that accepts the connection and never answers delays a command
+/// by the pre-start limit at most, and the command runs on the copy it holds.
+#[tokio::test]
+async fn a_silent_server_delays_a_command_by_the_pre_start_limit_at_most() {
+	let (server, _) = serve_light_specs().await;
+	let older = served_copy(&server, 1, "relay.json", "people.json");
+	let url = format!(
+		"{}/stack.json",
+		super::super::testing::serve_silent().await.replacen("ws", "http", 1)
+	);
+	let state = tempfile::tempdir().expect("temporary directory");
+	keep_copy(state.path(), &Pointer::new(&url, None).unwrap(), &older, 2 * 60 * 60);
+	let started = std::time::Instant::now();
+
+	let stack = stack_source(&url, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
+
+	assert_eq!(stack.descriptor().sequence, 1);
+	assert!(
+		started.elapsed() <
+			super::super::PRE_START_FETCH_TIMEOUT + std::time::Duration::from_secs(2)
+	);
+}
+
+/// A built-in network's key with another URL, such as a mirror, is that
+/// network, state included, and its descriptor is fetched from the URL
+/// given.
+#[tokio::test]
+async fn a_built_in_key_with_another_url_is_fetched_from_that_url() {
+	let (link, shipped) = Network::Previewnet.link_and_bundle();
+	let key = Pointer::from_link(&link)
+		.unwrap()
+		.key()
+		.map(hex::encode)
+		.expect("a built-in is signed");
+	let (mirror, requests) = serve_stack_and_light_specs(Vec::new()).await;
+	let mirror = Pointer::new(&format!("{mirror}/stack.json"), Some(&format!("0x{key}"))).unwrap();
+	let state = tempfile::tempdir().expect("temporary directory");
+	keep_copy(state.path(), &mirror, shipped, 2 * 60 * 60);
+	let given = mirror.to_link(DEFAULT_LINK_BASE);
+
+	let stack = stack_source(&given, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
+
+	assert_eq!((stack.state_directory(), requests.load(Ordering::Relaxed)), ("previewnet", 1));
+}

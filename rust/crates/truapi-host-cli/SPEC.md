@@ -1830,23 +1830,28 @@ ships a signed copy of each from the repository's `stacks/<name>.json`, with the
 link that carries its pointer from the trinity-stack crate's known stack of the
 same name. A command starts the core with `StackRefresh::load` on that link and
 copy. The core runs the newer of the shipped copy and the copy kept in the
-stack's state directory (`stack-record.json`, §13.1). When that copy is over an
-hour old, or was never fetched, as a shipped copy is, the command first fetches
-the published descriptor, logging that it does, and waits up to 3 seconds. It
-then runs on the newest copy it holds, so a server that does not answer stops
-nothing; RFC 1 lets a tool fetch before it runs. Each command also refreshes the
-descriptor in the background while it runs. A newer copy is kept for the next
-start, and one that changes a chain, the network or the `generation` while a
-host runs is logged as needing a restart. A copy that changes the `tld`, or
-that the CLI cannot run on, is refused with a warning and the copy in use
-stays: for instance one without a `dub` service, or on the light client one that
-names no `lightSpec` for the relay, People, Asset Hub or Bulletin. A copy past
-`expiresAt` is an error, and one past `validUntil` is used with a warning.
+stack's state directory (`stack-record.json`, §13.1). Before a command runs, the
+CLI fetches the published descriptor when that copy was last fetched over an
+hour ago or never, as a shipped copy is, logging that it does and waiting up to
+3 seconds; RFC 1 lets a tool fetch before it runs. A failed or refused fetch
+leaves the copy's age as it was, so until a fetch brings the current copy or a
+newer one, every command fetches again. A newer copy the fetch stores is run at
+once; without one the command runs on the copy it holds, so a server that does
+not answer stops nothing. When the copy it holds cannot run, for instance past
+`expiresAt`, or on the light client without a `lightSpec` for the relay, People,
+Asset Hub or Bulletin, the CLI fetches once more before the command fails,
+unless it fetched in this run already. Each command also refreshes the
+descriptor in the background while it runs, and a host that runs logs when a
+newer copy changes a chain, the network or the `generation` and needs a
+restart. A copy that changes the `tld`, or that the CLI cannot run on (for
+instance one without a `dub` service, or on the light client one without those
+light specs), is refused with a warning and the copy in use stays. A copy past
+`validUntil` is used with a warning.
 `scripts/update-stacks.sh` refreshes the shipped copies, and the daily
 chain-spec workflow carries the refresh in one PR with its changeset.
 `truapi-host stack bundle` refuses a copy that changes the `tld` of the copy at
 `--out`, and a built-in network's copy the CLI cannot run on over either chain
-backend.
+backend, so a shipped copy runs on both.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
@@ -1876,8 +1881,10 @@ domain is read for its `url` and `key`; a URL is read as a pointer without a
 key; any other value is read as a local descriptor file, signed or not, with no
 key checked. A link or URL that is not a built-in's is imported through
 `StackRefresh::import`: the first command fetches it and keeps it in the stack's
-state directory, and later commands start from that copy and fetch it again
-before they run once it is over an hour old, as for a built-in. A local
+state directory, and later commands start from that copy and fetch it before
+they run as for a built-in. A link with a built-in network's key and another
+URL is that network, fetched from the URL given. A stack without a key is
+followed only to a copy with a higher `sequence`. A local
 file is read on every run and never refreshed. A stack that cannot be fetched
 while none is kept, a descriptor that breaks a rule and one past `expiresAt` are
 errors that name the stack; one past `validUntil` is used with a warning. Its endpoints and People's
@@ -1906,8 +1913,8 @@ runs as a `--stack`, for instance a local descriptor file whose `rpc` and `dub`
 URLs are `ws://` and `http://` on loopback. An error about a stack names where
 it came from, `--stack` or `HOST_CLI_STACK`.
 
-`network-check` resolves the network as any command does, fetching only a
-descriptor it does not keep yet, and prints as JSON `schema_version`, `network` (the product
+`network-check` resolves the network as any command does, fetching the
+descriptor before it runs as above, and prints as JSON `schema_version`, `network` (the product
 namespace), `state_directory` (the name the stack's state is kept under,
 §13.1), `namespace` (the network's TLD), `identity_backend_base`, and `ws` and
 `genesis` for `people`, `asset_hub` and `bulletin`.

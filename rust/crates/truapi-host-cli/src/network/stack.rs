@@ -18,8 +18,12 @@ use crate::{
 /// What the CLI reads from a descriptor to reach the stack's chains and
 /// services.
 pub struct Routes {
+	/// People, Asset Hub and Bulletin: each one's genesis hash and first RPC
+	/// URL.
 	pub chains: Roles<ChainEndpoint>,
+	/// The identity backend: the `dub` service's URL with `/api/v1`.
 	pub identity_backend: String,
+	/// The `dotns.popController` address.
 	pub pop_controller: [u8; 20],
 }
 

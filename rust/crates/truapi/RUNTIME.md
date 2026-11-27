@@ -187,8 +187,8 @@ A stack its build ships no copy of, such as one a developer passes to the
 CLI, starts through `StackRefresh::import` from its link, signed or not. The
 core starts from the copy it stored for that stack, or fetches the descriptor
 first and stores it. `StackRefresh::fetch_now` makes one fetch a host can wait
-on; the CLI calls it when a chain gives a genesis hash the descriptor does not
-name, before it refuses the stack. A tool that runs one command at a time may
+on; the CLI calls it when one of its chain checks fails, before it refuses
+the stack, since the operator may have published new genesis hashes. A tool that runs one command at a time may
 exit before a background fetch is stored, so it can ask
 `StackRefresh::fetch_is_due` and wait for `fetch_now` before it starts, as
 the CLI does. A local descriptor file runs through
@@ -323,9 +323,12 @@ the request.
 
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
-one. The core also refuses a descriptor it could not start from, such as one
-without a People chain, and one on another TLD than the bundled copy, since
-accounts derive under the TLD. A stored descriptor it would refuse is ignored
+one. The reader takes a lower `sequence` for a stack without a key, and the
+core refuses it itself, since its record store keeps the higher one. The core
+also refuses a descriptor it could not start from, such as one without a
+People chain, and one on another TLD than its first copy (the bundled one, or
+for an imported stack the first it held), since accounts derive under the
+TLD. A stored descriptor it would refuse is ignored
 until the next one the core takes replaces it, whatever its `sequence`. After
 a refused or failed fetch, `last_refresh` reports that fetch even if writing
 the record fails.

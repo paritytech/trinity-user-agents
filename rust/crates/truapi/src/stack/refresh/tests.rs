@@ -1425,3 +1425,61 @@ fn fetch_now_keeps_the_copy_when_the_fetch_fails() {
 
 	assert_eq!(status, stack_status(&bundled(), unreachable_because("connection refused")));
 }
+
+/// A stack without a key has no signature to refuse a replayed copy, and the
+/// record store keeps the higher `sequence`. The core refuses a lower one
+/// too, so it never reports a restart onto a copy the next start would not
+/// read.
+#[test]
+fn an_unsigned_copy_with_a_lower_sequence_is_refused() {
+	let unsigned = |sequence: u32| {
+		let bytes = serde_json::to_vec(&published_test_descriptor_at(sequence)).unwrap();
+		Ok(StackFetchResponse::Document { bytes, etag: None })
+	};
+	let (first, _) = fetching_host(vec![unsigned(5)]);
+	let link = crate::test_support::test_stack_link(None);
+	let refresh = import(&link, Arc::default(), &first).expect("an unsigned copy is imported");
+	let (older, _) = fetching_host(vec![unsigned(4)]);
+
+	let status = futures::executor::block_on(refresh.fetch_now(&older));
+
+	assert_eq!(
+		(status.restart_required, status.last_refresh),
+		(
+			false,
+			Some(StackRefreshOutcome::Refused {
+				reason: "sequence 4 is lower than 5 of the copy held".to_string()
+			})
+		)
+	);
+}
+
+/// A first copy that could not be stored is reported, so the host knows the
+/// next start fetches again.
+#[test]
+fn an_imported_copy_that_could_not_be_stored_is_reported() {
+	let records = Arc::<MemoryRecords>::default();
+	records.disk_full.store(true, Ordering::SeqCst);
+	let (host, _) = fetching_host(vec![published(&bundled())]);
+	let (link, _) = sign_test_descriptor(&bundled());
+
+	let refresh = import(&link, records, &host).expect("the fetched copy runs");
+
+	assert_eq!(
+		refresh.status().last_refresh,
+		Some(StackRefreshOutcome::NotStored { reason: "disk full".to_string() })
+	);
+}
+
+/// A bundled copy was never fetched, so the first refresh is due at once,
+/// and a fetch makes the next one due an hour later.
+#[test]
+fn a_fetch_is_due_for_a_copy_never_fetched_and_not_right_after_one() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let due_at_start = refresh.fetch_is_due();
+	let (host, _) = fetching_host(vec![published(&bundled())]);
+
+	let _ = futures::executor::block_on(refresh.fetch_now(&host));
+
+	assert_eq!((due_at_start, refresh.fetch_is_due()), (true, false));
+}

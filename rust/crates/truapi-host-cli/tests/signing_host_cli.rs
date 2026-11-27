@@ -30,7 +30,7 @@ fn accounts_json(template: &str) -> String {
 
 /// Writes the account store an earlier release shared between stacks, directly under `v2`, with
 /// an attested account named `lite_username` for the stack [`command`] runs on, and returns what
-/// it wrote. Nothing reads or changes that file any more.
+/// it wrote. Nothing reads or changes that file.
 fn seed_earlier_shared_store(base_path: &Path, lite_username: &str) -> String {
 	let store = accounts_json(&format!(
 		r#"{{"version":1,"accounts":[{{"name":"auto-1","network":"@stack","mnemonic":"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about","lite_username":"{lite_username}","public_key_hex":"0x00","address":"5GrwvaEF5zXb26Fz9rcQpDWSKfwVwqNxyvE9uZunJMtBEw2s","created_at_unix":1,"attested":true}}]}}"#
