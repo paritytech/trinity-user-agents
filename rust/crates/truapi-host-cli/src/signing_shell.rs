@@ -913,7 +913,7 @@ pub const HELP_TEXT: &str = "\
 /profile                show the active identity's public ProfileRecord
 /profile <username>     show a username's public ProfileRecord
 /profile upload <image> upload an image and publish it as your avatar
-/search <prefix>        list usernames starting with a prefix, with status and account
+/search <prefix>        list usernames under a prefix with their backend and Asset Hub records
 /session                show the current session and path
 /session <name>         restore or provision a session; retry unfinished setup
 /session --mnemonic \"<phrase>\" import an existing signer as its username session

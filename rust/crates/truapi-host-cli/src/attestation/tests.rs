@@ -50,36 +50,6 @@ fn backend_search_uses_only_assigned_rows_for_the_candidate() -> Result<()> {
 	Ok(())
 }
 
-/// A failed registration leaves the name free, so the listing shows each row's
-/// status, and a one-letter prefix must not flood the transcript.
-#[test]
-fn search_listing_shows_status_and_caps_long_results() -> Result<()> {
-	let page: UsernameSearchPage = serde_json::from_value(json!({
-		"usernames": [
-			{ "accountId": "5Alice", "username": "alice.1", "status": "ASSIGNED" },
-			{ "accountId": "5Alicia", "username": "alicia.12", "status": "FAILED" }
-		],
-		"nextCursor": null
-	}))?;
-	assert_eq!(
-		format_username_matches("ali", &page.usernames),
-		"alice.01   ASSIGNED  5Alice\nalicia.12  FAILED    5Alicia"
-	);
-	assert_eq!(format_username_matches("zz", &[]), "No username starts with \"zz\".");
-
-	let many: Vec<UsernameSearchItem> = serde_json::from_value(json!(
-		(0..SEARCH_DISPLAY_LIMIT + 2)
-			.map(
-				|index| json!({ "accountId": "5", "username": format!("a{index}.01"), "status": "ASSIGNED" })
-			)
-			.collect::<Vec<_>>()
-	))?;
-	let listing = format_username_matches("a", &many);
-	assert_eq!(listing.lines().count(), SEARCH_DISPLAY_LIMIT + 1);
-	assert_eq!(listing.lines().last(), Some("… and 2 more; narrow the prefix"));
-	Ok(())
-}
-
 #[tokio::test]
 async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 	let listener = TcpListener::bind("127.0.0.1:0").await?;

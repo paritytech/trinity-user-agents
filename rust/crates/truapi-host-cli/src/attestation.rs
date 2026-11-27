@@ -424,13 +424,14 @@ struct UsernameSearchPage {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsernameSearchItem {
-	account_id: String,
-	username: String,
-	status: String,
+	/// SS58 address of the account the name was requested for.
+	pub account_id: String,
+	/// The username, with a lite name's two-digit discriminator restored.
+	#[serde(deserialize_with = "deserialize_searched_username")]
+	pub username: String,
+	/// The backend's registration status, such as `ASSIGNED`.
+	pub status: String,
 }
-
-/// Most rows a search listing prints before asking for a narrower prefix.
-const SEARCH_DISPLAY_LIMIT: usize = 50;
 
 /// Lists every username the identity backend holds that starts with `prefix`.
 ///
@@ -439,34 +440,6 @@ const SEARCH_DISPLAY_LIMIT: usize = 50;
 pub async fn search_usernames(network: &Stack, prefix: &str) -> Result<Vec<UsernameSearchItem>> {
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	search_backend_prefix(&client, network, None, prefix.to_string()).await
-}
-
-/// Renders search rows as aligned `username  status  account` lines, at most
-/// [`SEARCH_DISPLAY_LIMIT`] of them.
-pub fn format_username_matches(prefix: &str, matches: &[UsernameSearchItem]) -> String {
-	if matches.is_empty() {
-		return format!("No username starts with {prefix:?}.");
-	}
-	let shown = &matches[..matches.len().min(SEARCH_DISPLAY_LIMIT)];
-	let usernames: Vec<String> =
-		shown.iter().map(|row| normalize_searched_username(&row.username)).collect();
-	let username_width = usernames.iter().map(String::len).max().unwrap_or_default();
-	let status_width = shown.iter().map(|row| row.status.len()).max().unwrap_or_default();
-	let mut lines: Vec<String> = usernames
-		.iter()
-		.zip(shown)
-		.map(|(username, row)| {
-			format!(
-				"{username:<username_width$}  {:<status_width$}  {}",
-				row.status, row.account_id
-			)
-		})
-		.collect();
-	let hidden = matches.len() - shown.len();
-	if hidden > 0 {
-		lines.push(format!("… and {hidden} more; narrow the prefix"));
-	}
-	lines.join("\n")
 }
 
 /// Reverse-resolve an assigned username from the identity backend.
@@ -569,7 +542,13 @@ fn matching_assigned_usernames(
 	items
 		.into_iter()
 		.filter(move |item| item.status == "ASSIGNED" && item.account_id == candidate_account_id)
-		.map(|item| normalize_searched_username(&item.username))
+		.map(|item| item.username)
+}
+
+fn deserialize_searched_username<'de, D: serde::Deserializer<'de>>(
+	deserializer: D,
+) -> core::result::Result<String, D::Error> {
+	String::deserialize(deserializer).map(|username| normalize_searched_username(&username))
 }
 
 /// `/usernames/search` decodes the discriminator as a number and therefore

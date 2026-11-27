@@ -43,6 +43,7 @@ mod stack_descriptor;
 mod terminal_ui;
 mod transcript;
 mod update;
+mod username_search;
 
 use std::{
 	collections::HashMap,
@@ -4005,8 +4006,7 @@ async fn run_profile_command(session: &SigningHostSession, command: ProfileComma
 }
 
 async fn run_search(session: &SigningHostSession, prefix: &str) -> Result<()> {
-	let matches = attestation::search_usernames(&session.network, prefix).await?;
-	terminal_ui::output_info(attestation::format_username_matches(prefix, &matches));
+	terminal_ui::output_info(username_search::search(&session.network, prefix).await?);
 	Ok(())
 }
 

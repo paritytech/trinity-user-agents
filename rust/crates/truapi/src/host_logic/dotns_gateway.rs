@@ -814,6 +814,15 @@ pub fn account_alias_key(account: &[u8; 32]) -> Vec<u8> {
 	key
 }
 
+/// `DotnsGateway.AccountNames[account]` storage key.
+/// The value is the account's gateway names, each with its chat key.
+pub fn account_names_key(account: &[u8; 32]) -> Vec<u8> {
+	let mut key = plain_key(b"DotnsGateway", b"AccountNames");
+	key.extend_from_slice(&blake2_128(account));
+	key.extend_from_slice(account);
+	key
+}
+
 /// `DotnsGateway.LiteLabelOwner[lite_label]` storage key, the dotted lite
 /// username (`alice.01`) as a `BaseLabel`. The value is the owning account.
 pub fn lite_label_owner_key(lite_label: &[u8]) -> Vec<u8> {
