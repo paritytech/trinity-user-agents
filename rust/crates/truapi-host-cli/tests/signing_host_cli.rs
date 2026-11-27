@@ -5,6 +5,8 @@
 mod bundled;
 #[path = "common/offline.rs"]
 mod offline;
+#[path = "common/state.rs"]
+mod state;
 
 use std::{
 	path::{Path, PathBuf},
@@ -15,8 +17,31 @@ fn command() -> Command {
 	offline::offline_host_command()
 }
 
+/// The state directory of the stack [`command`] runs on, from the base path.
+fn state_directory() -> PathBuf {
+	Path::new("v2").join(state::offline_state_directory())
+}
+
+/// The account store `template`, with `@stack` as each record's network, for the stack
+/// [`command`] runs on.
+fn accounts_json(template: &str) -> String {
+	template.replace("@stack", state::offline_state_directory())
+}
+
+/// Writes the account store an earlier release shared between stacks, directly under `v2`, with
+/// an attested account named `lite_username` for the stack [`command`] runs on, and returns what
+/// it wrote. Nothing reads or changes that file.
+fn seed_earlier_shared_store(base_path: &Path, lite_username: &str) -> String {
+	let store = accounts_json(&format!(
+		r#"{{"version":1,"accounts":[{{"name":"auto-1","network":"@stack","mnemonic":"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about","lite_username":"{lite_username}","public_key_hex":"0x00","address":"5GrwvaEF5zXb26Fz9rcQpDWSKfwVwqNxyvE9uZunJMtBEw2s","created_at_unix":1,"attested":true}}]}}"#
+	));
+	std::fs::create_dir_all(base_path.join("v2")).expect("create the versioned state root");
+	std::fs::write(base_path.join("v2/accounts.json"), &store).expect("seed the earlier store");
+	store
+}
+
 fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
-	let profile = base_path.join("v2/paseo-next-v2/alice_signing_host");
+	let profile = base_path.join(state_directory()).join("alice_signing_host");
 	std::fs::create_dir_all(&profile).expect("create signing-host profile");
 	std::fs::write(
 		profile.join("paired-hosts.json"),
@@ -43,23 +68,30 @@ fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
 	profile
 }
 
+/// State from before `v2` is neither read nor moved, both under the descriptor's namespace,
+/// `paseo-next-v2`, where releases before `v2` kept it, and under the directory name this run
+/// uses.
 #[test]
 fn versioned_state_starts_fresh_and_preserves_previous_state() {
 	for source in ["argument", "environment", "default"] {
 		let temporary = tempfile::tempdir().expect("create temporary state root");
 		let base_path = temporary.path().join("truapi-host");
-		let previous_profile = base_path.join("paseo-next-v2/previous_signing_host");
-		let previous_role = base_path.join("paseo-next-v2/signing-host");
-		std::fs::create_dir_all(&previous_profile).expect("create previous profile");
-		std::fs::create_dir_all(&previous_role).expect("create previous role");
-		let previous_files = [
+		let mut previous_files = vec![
 			(base_path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#),
 			(base_path.join("log-level"), "trace\n"),
-			(previous_role.join("current-session"), "previous\n"),
-			(previous_profile.join("session.json"), r#"{"version":1,"user_id":"previous.01"}"#),
-			(previous_profile.join("core-storage.json"), "previous core state"),
-			(previous_profile.join("paired-hosts.json"), "previous pairings"),
 		];
+		for network in ["paseo-next-v2", state::offline_state_directory()] {
+			let previous_profile = base_path.join(network).join("previous_signing_host");
+			let previous_role = base_path.join(network).join("signing-host");
+			std::fs::create_dir_all(&previous_profile).expect("create previous profile");
+			std::fs::create_dir_all(&previous_role).expect("create previous role");
+			previous_files.extend([
+				(previous_role.join("current-session"), "previous\n"),
+				(previous_profile.join("session.json"), r#"{"version":1,"user_id":"previous.01"}"#),
+				(previous_profile.join("core-storage.json"), "previous core state"),
+				(previous_profile.join("paired-hosts.json"), "previous pairings"),
+			]);
+		}
 		for (path, contents) in &previous_files {
 			std::fs::write(path, contents).expect("seed previous state");
 		}
@@ -95,7 +127,7 @@ fn versioned_state_starts_fresh_and_preserves_previous_state() {
 				std::fs::read_to_string(base_path.join("v2/log-level"))
 					.expect("read log preference"),
 				std::fs::read_to_string(
-					base_path.join("v2/paseo-next-v2/signing-host/current-session")
+					base_path.join(state_directory()).join("signing-host/current-session")
 				)
 				.expect("read fresh session selection"),
 			),
@@ -227,7 +259,7 @@ fn bare_script_in_non_tty_exec_mode_fails_without_opening_an_editor() {
 		String::from_utf8_lossy(&output.stderr)
 			.contains("/script without a path requires an interactive terminal")
 	);
-	assert!(!temporary.path().join("v2/paseo-next-v2/signing-host/scripts").exists());
+	assert!(!temporary.path().join(state_directory()).join("signing-host/scripts").exists());
 }
 
 #[test]
@@ -268,7 +300,7 @@ fn startup_session_is_reported_and_restored() {
 #[test]
 fn exec_clear_removes_the_named_session_without_extra_confirmation() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let session_path = temporary.path().join("v2/paseo-next-v2/alice_signing_host");
+	let session_path = temporary.path().join(state_directory()).join("alice_signing_host");
 	std::fs::create_dir_all(&session_path).expect("seed session");
 	std::fs::write(session_path.join("state"), "local state").expect("seed session state");
 
@@ -289,10 +321,12 @@ fn exec_clear_removes_the_named_session_without_extra_confirmation() {
 	assert!(!output.stdout.contains(&0x1b));
 }
 
+/// Clearing every session leaves pairing-host state, and the account store an earlier release
+/// shared between stacks, as they are.
 #[test]
 fn exec_clear_all_removes_every_session_for_the_network() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let network_path = temporary.path().join("v2/paseo-next-v2");
+	let network_path = temporary.path().join(state_directory());
 	let role_path = network_path.join("signing-host");
 	let alice = network_path.join("alice_signing_host");
 	let bob = network_path.join("bob_signing_host");
@@ -302,6 +336,7 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	}
 	let unrelated = network_path.join("pairing-host");
 	std::fs::create_dir_all(&unrelated).expect("seed unrelated host state");
+	let earlier_store = seed_earlier_shared_store(temporary.path(), "alice");
 
 	let output = command()
 		.args(["signing-host", "--frame-listen", "127.0.0.1:0"])
@@ -317,8 +352,14 @@ fn exec_clear_all_removes_every_session_for_the_network() {
 	assert!(!alice.exists());
 	assert!(!bob.exists());
 	assert!(unrelated.exists());
+	assert_eq!(
+		std::fs::read_to_string(temporary.path().join("v2/accounts.json")).ok(),
+		Some(earlier_store)
+	);
 	let stdout = String::from_utf8_lossy(&output.stdout);
-	assert!(stdout.contains("All sessions cleared for paseo-next-v2"));
+	let cleared =
+		format!("All sessions cleared for paseo-next-v2 ({})", state::offline_state_directory());
+	assert!(stdout.contains(&cleared), "{stdout}");
 	assert!(!output.stdout.contains(&0x1b));
 }
 
@@ -420,19 +461,23 @@ fn default_session_is_not_user_selectable() {
 	);
 }
 
+/// The default session keeps its accounts in the stack's own `signing-host` directory, and a
+/// signer saved there is activated at startup. The store an earlier release shared between
+/// stacks is neither read nor changed.
 #[test]
 fn existing_local_signer_is_activated_and_cached_at_startup() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
 	let base_path = temporary.path();
-	let state_path = base_path.join("v2");
-	std::fs::create_dir_all(&state_path).expect("create active state root");
+	let earlier_store = seed_earlier_shared_store(base_path, "earlieralice.01");
+	let state_path = base_path.join(state_directory()).join("signing-host");
+	std::fs::create_dir_all(&state_path).expect("create the default session's state");
 	std::fs::write(
         state_path.join("accounts.json"),
-        r#"{
+        accounts_json(r#"{
   "version": 1,
   "accounts": [{
     "name": "auto-1",
-    "network": "paseo-next-v2",
+    "network": "@stack",
     "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "lite_username": "cachedalice.01",
     "public_key_hex": "0x00",
@@ -440,7 +485,7 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
     "created_at_unix": 1,
     "attested": true
   }]
-}"#,
+}"#),
     )
     .expect("seed local account store");
 
@@ -456,9 +501,16 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
 	assert!(output.status.success());
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	assert!(stdout.contains("Signing host ready"));
-	assert!(stdout.contains("User cachedalice.01"));
+	assert!(stdout.contains("User cachedalice.01"), "{stdout}");
+	assert!(!stdout.contains("earlieralice"), "{stdout}");
+	assert_eq!(
+		std::fs::read_to_string(base_path.join("v2/accounts.json")).ok(),
+		Some(earlier_store)
+	);
 	let metadata = std::fs::read_to_string(
-		base_path.join("v2/paseo-next-v2/cachedalice.01_signing_host/session.json"),
+		base_path
+			.join(state_directory())
+			.join("cachedalice.01_signing_host/session.json"),
 	)
 	.expect("read persisted session identity");
 	assert!(metadata.contains("cachedalice.01"));
@@ -467,18 +519,18 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
 #[test]
 fn imported_session_restores_the_exact_bound_account() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let network_path = temporary.path().join("v2/paseo-next-v2");
+	let network_path = temporary.path().join(state_directory());
 	let profile = network_path.join("importedalice.01_signing_host");
 	let role_path = network_path.join("signing-host");
 	std::fs::create_dir_all(&profile).expect("create imported profile");
 	std::fs::create_dir_all(&role_path).expect("create signing-host state");
 	std::fs::write(
         profile.join("accounts.json"),
-        r#"{
+        accounts_json(r#"{
   "version": 1,
   "accounts": [{
     "name": "imported",
-    "network": "paseo-next-v2",
+    "network": "@stack",
     "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "lite_username": "importedalice.01",
     "public_key_hex": "0x00",
@@ -487,7 +539,7 @@ fn imported_session_restores_the_exact_bound_account() {
     "attested": true,
     "origin": "imported"
   }]
-}"#,
+}"#),
     )
     .expect("seed imported account store");
 	std::fs::write(
@@ -521,7 +573,7 @@ fn imported_session_restores_the_exact_bound_account() {
 #[test]
 fn imported_session_without_dotns_username_restores_by_account_binding() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let network_path = temporary.path().join("v2/paseo-next-v2");
+	let network_path = temporary.path().join(state_directory());
 	let session_name = "imported-0123456789abcdef";
 	let profile = network_path.join(format!("{session_name}_signing_host"));
 	let role_path = network_path.join("signing-host");
@@ -529,11 +581,11 @@ fn imported_session_without_dotns_username_restores_by_account_binding() {
 	std::fs::create_dir_all(&role_path).expect("create signing-host state");
 	std::fs::write(
         profile.join("accounts.json"),
-        r#"{
+        accounts_json(r#"{
   "version": 1,
   "accounts": [{
     "name": "imported",
-    "network": "paseo-next-v2",
+    "network": "@stack",
     "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "lite_username": "",
     "public_key_hex": "0x00",
@@ -542,7 +594,7 @@ fn imported_session_without_dotns_username_restores_by_account_binding() {
     "attested": true,
     "origin": "imported"
   }]
-}"#,
+}"#),
     )
     .expect("seed username-less imported account store");
 	std::fs::write(

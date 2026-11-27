@@ -19,7 +19,7 @@ use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 use crate::{
 	network::{ChainEndpoint, bundled_light_spec},
 	platform::{StorageError, atomic_write},
-	stack_descriptor::{FETCH_TIMEOUT, FetchError, Roles, fetch},
+	stack_descriptor::{FETCH_TIMEOUT, FetchError, MAX_FETCH_BYTES, Roles, fetch},
 };
 
 /// How long a kept spec outlives its last use. A relay's spec is replaced
@@ -78,7 +78,7 @@ pub enum MissingSpec {
 	},
 	/// The spec is larger than the CLI reads, so fetching it again gets
 	/// nowhere. A connect reports it as a refusal, not a transport failure.
-	#[display("the light spec of {role} at {url} is {}", FetchError::TooLarge)]
+	#[display("the light spec of {role} at {url} is {}", FetchError::TooLarge(MAX_FETCH_BYTES))]
 	TooLarge {
 		/// The chain's role in the descriptor.
 		role: String,
@@ -209,7 +209,7 @@ impl StackLightClient {
 
 		let bytes = match fetch(url, FETCH_TIMEOUT).await {
 			Ok(bytes) => bytes,
-			Err(FetchError::TooLarge) => {
+			Err(FetchError::TooLarge(_)) => {
 				*last_failure = Some(FailedFetch::TooLarge);
 				return Err(MissingSpec::TooLarge { role: role.clone(), url: url.clone() });
 			},

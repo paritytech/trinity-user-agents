@@ -5,6 +5,13 @@ use std::{
 };
 use tempfile::tempdir;
 
+/// Clears `target` as a host does: the name resolved, its locks taken, then the
+/// data removed.
+fn clear(catalog: &SessionCatalog, target: SessionClearTarget) -> Result<Vec<String>> {
+	let target = catalog.resolve_clear_target(&target)?;
+	catalog.clear(catalog.prepare_clear(&target)?)
+}
+
 #[test]
 fn rejects_names_that_could_escape_the_session_root() {
 	for invalid in ["", ".", "..", "Alice", "two words", "../escape", "a/b"] {
@@ -266,7 +273,7 @@ fn clears_one_named_session_and_resets_its_current_pointer() -> Result<()> {
 	fs::write(bob.path.join("state"), "bob")?;
 	catalog.set_current("alice")?;
 
-	assert_eq!(catalog.clear(&SessionClearTarget::Named("alice".to_string()))?, vec!["alice"]);
+	assert_eq!(clear(&catalog, SessionClearTarget::Named("alice".to_string()))?, vec!["alice"]);
 
 	assert!(!alice.path.exists());
 	assert!(bob.path.exists());
@@ -292,7 +299,7 @@ fn clearing_all_sessions_removes_default_and_identity_state_only() -> Result<()>
 	fs::create_dir_all(&unrelated)?;
 	fs::write(unrelated.join("state"), "keep")?;
 
-	let cleared = catalog.clear(&SessionClearTarget::All)?;
+	let cleared = clear(&catalog, SessionClearTarget::All)?;
 
 	assert_eq!(cleared, vec!["alice"]);
 	assert!(!catalog.role_path.exists());
@@ -308,9 +315,199 @@ fn clearing_a_missing_session_has_an_actionable_error() -> Result<()> {
 	let temporary = tempdir()?;
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 
-	let error = catalog.clear(&SessionClearTarget::Named("alice".to_string())).unwrap_err();
+	let error = clear(&catalog, SessionClearTarget::Named("alice".to_string())).unwrap_err();
 
 	assert_eq!(error.to_string(), "session `alice` does not exist; use /session --list");
+	Ok(())
+}
+
+/// A clear that a held account store lock refuses removes nothing and names the
+/// store that is held. That covers the default session's store, so no session
+/// goes while its account, mnemonic included, stays there, and the session's
+/// own store, which a host provisioning that session holds and would write
+/// back after a clear that went ahead.
+#[test]
+fn a_clear_an_account_store_lock_refuses_leaves_everything_in_place() -> Result<()> {
+	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"testnet","mnemonic":"m","lite_username":"alice","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
+	for held_store in ["default", "session"] {
+		let temporary = tempdir()?;
+		let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+		let default = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
+		let alice = catalog.ensure_profile("alice")?;
+		fs::write(default.path.join("core-storage.json"), "{}")?;
+		fs::write(alice.path.join("accounts.json"), stored)?;
+		fs::write(default.account_base_path.join("accounts.json"), stored)?;
+		let held = match held_store {
+			"default" => default.account_base_path.clone(),
+			_ => alice.account_base_path.clone(),
+		};
+		let _held = accounts::AccountStoreLock::acquire(&held)?;
+
+		let refusals = [SessionClearTarget::Named("alice".to_string()), SessionClearTarget::All]
+			.map(|target| {
+				clear(&catalog, target).map_err(|error| {
+					error.to_string().split(" (").next().unwrap_or_default().to_owned()
+				})
+			});
+
+		let refusal =
+			format!("another truapi-host is using the account store at {}", held.display());
+		assert_eq!(
+			(
+				refusals,
+				default.path.join("core-storage.json").is_file(),
+				fs::read_to_string(alice.path.join("accounts.json")).ok(),
+				fs::read_to_string(default.account_base_path.join("accounts.json")).ok(),
+			),
+			(
+				[Err(refusal.clone()), Err(refusal)],
+				true,
+				Some(stored.to_string()),
+				Some(stored.to_string()),
+			),
+			"{held_store}"
+		);
+	}
+	Ok(())
+}
+
+/// A clear that cannot remove the default session's records keeps the session,
+/// so it is still listed and the clear can run again. Had the directory gone
+/// first, the record whose lite username is the session's name would stay with
+/// no session to clear, and the default session would be promoted into that
+/// name again.
+#[test]
+fn a_clear_that_cannot_remove_the_records_keeps_the_session() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let default_store = catalog.profile(DEFAULT_SESSION_NAME)?.account_base_path;
+	let alice = catalog.ensure_profile("alice")?;
+	fs::write(alice.path.join("state"), "alice")?;
+	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"testnet","mnemonic":"m","lite_username":"alice","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
+	fs::write(default_store.join("accounts.json"), stored)?;
+	// The store is saved through this temporary file, so a directory in its
+	// place makes the save fail, for root as well.
+	fs::create_dir(default_store.join(format!(".accounts.json.{}.tmp", std::process::id())))?;
+
+	let cleared = clear(&catalog, SessionClearTarget::Named("alice".to_string()));
+
+	assert_eq!(
+		(
+			cleared.is_err(),
+			catalog.list()?,
+			fs::read_to_string(default_store.join("accounts.json"))?
+		),
+		(true, vec!["alice".to_string()], stored.to_string())
+	);
+	Ok(())
+}
+
+/// Clearing every session is the way out of a default account store that no
+/// longer decodes, so it must not need to read that store first.
+#[test]
+fn clearing_all_sessions_removes_an_account_store_that_does_not_decode() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let default_store = catalog.profile(DEFAULT_SESSION_NAME)?.account_base_path;
+	let alice = catalog.ensure_profile("alice")?;
+	fs::write(default_store.join("accounts.json"), "{ half written")?;
+
+	let cleared = clear(&catalog, SessionClearTarget::All)?;
+
+	assert_eq!(
+		(cleared, catalog.role_path.exists(), alice.path.exists()),
+		(vec!["alice".to_string()], false, false)
+	);
+	Ok(())
+}
+
+/// Two stacks under one base path keep their default sessions' accounts, and
+/// the lock over them, apart, so neither reads the other's mnemonics.
+#[test]
+fn each_stack_keeps_its_default_session_accounts_and_lock() -> Result<()> {
+	let temporary = tempdir()?;
+	let source = SessionCatalog::new(temporary.path().to_path_buf(), "previewnet")?;
+	let fork = SessionCatalog::new(temporary.path().to_path_buf(), "stack-0123")?;
+	let source_store = source.profile(DEFAULT_SESSION_NAME)?.account_base_path;
+	let fork_store = fork.profile(DEFAULT_SESSION_NAME)?.account_base_path;
+
+	let _source_lock = accounts::AccountStoreLock::acquire(&source_store)?;
+	let fork_lock = accounts::AccountStoreLock::acquire(&fork_store);
+
+	assert_eq!(
+		(source_store == fork_store, fork_lock.is_ok()),
+		(false, true),
+		"{} and {}",
+		source_store.display(),
+		fork_store.display()
+	);
+	Ok(())
+}
+
+/// A host provisioning the default session on one stack holds that session's
+/// store lock, which a clear on another stack under the same base path never
+/// takes.
+#[test]
+fn a_clear_is_not_refused_by_provisioning_on_another_stack() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let other = SessionCatalog::new(temporary.path().to_path_buf(), "othernet")?;
+	let alice = catalog.ensure_profile("alice")?;
+	fs::write(alice.path.join("state"), "alice")?;
+	let other_store = other.profile(DEFAULT_SESSION_NAME)?.account_base_path;
+	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"othernet","mnemonic":"m","lite_username":"bob","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
+	fs::write(other_store.join("accounts.json"), stored)?;
+	let _provisioning = accounts::AccountStoreLock::acquire(&other_store)?;
+
+	let cleared = [SessionClearTarget::Named("alice".to_string()), SessionClearTarget::All]
+		.map(|target| clear(&catalog, target).map_err(|error| error.to_string()));
+
+	assert_eq!(
+		(cleared, alice.path.exists(), fs::read_to_string(other_store.join("accounts.json"))?),
+		([Ok(vec!["alice".to_string()]), Ok(Vec::new())], false, stored.to_string())
+	);
+	Ok(())
+}
+
+/// Promoting the default session copies its account store into the new
+/// session, so the store must hold this stack's accounts only, or the session
+/// would carry another stack's mnemonics.
+#[test]
+fn promoting_the_default_session_copies_only_this_stacks_accounts() -> Result<()> {
+	let temporary = tempdir()?;
+	let record = |network: &str| {
+		serde_json::json!({
+			"name": "auto-1", "network": network, "mnemonic": format!("{network} mnemonic"),
+			"lite_username": format!("{network}.01"), "public_key_hex": "0x00", "address": "a",
+			"created_at_unix": 1,
+		})
+	};
+	let mut catalogs = Vec::new();
+	for network in ["testnet", "othernet"] {
+		let catalog = SessionCatalog::new(temporary.path().to_path_buf(), network)?;
+		let store = catalog
+			.ensure_profile(DEFAULT_SESSION_NAME)?
+			.account_base_path
+			.join("accounts.json");
+		let mut accounts = match fs::read(&store) {
+			Ok(bytes) => serde_json::from_slice(&bytes)?,
+			Err(_) => serde_json::json!({ "version": 1, "accounts": [] }),
+		};
+		accounts["accounts"]
+			.as_array_mut()
+			.expect("an account list")
+			.push(record(network));
+		fs::write(&store, serde_json::to_vec(&accounts)?)?;
+		catalogs.push(catalog);
+	}
+	let catalog = &catalogs[0];
+
+	let default = catalog.profile(DEFAULT_SESSION_NAME)?;
+	let promoted = catalog.promote_to_user(&default, "testnet.01")?;
+
+	let copied: serde_json::Value =
+		serde_json::from_slice(&fs::read(promoted.account_base_path.join("accounts.json"))?)?;
+	assert_eq!(copied["accounts"], serde_json::json!([record("testnet")]));
 	Ok(())
 }
 
@@ -339,7 +536,7 @@ fn default_profile_uses_the_bootstrap_storage_locations() -> Result<()> {
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let profile = catalog.profile(DEFAULT_SESSION_NAME)?;
 
-	assert_eq!(profile.account_base_path, temporary.path());
+	assert_eq!(profile.account_base_path, profile.path);
 	assert!(profile.path.ends_with("testnet/signing-host"));
 	assert!(profile.product_storage_dir.ends_with("testnet/signing-host/storage/default"));
 	Ok(())
@@ -590,7 +787,7 @@ fn clearing_by_the_name_that_created_a_session_clears_the_promoted_one() -> Resu
 	let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
 	fs::write(promoted.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
 
-	let cleared = catalog.clear(&SessionClearTarget::Named("worker-0".to_string()))?;
+	let cleared = clear(&catalog, SessionClearTarget::Named("worker-0".to_string()))?;
 
 	assert_eq!(cleared, vec!["alice.01"]);
 	assert!(!promoted.path.exists());
@@ -606,13 +803,55 @@ fn an_unpromoted_name_resolves_to_itself() -> Result<()> {
 	Ok(())
 }
 
+/// A clear removes the session its name resolved to when the user confirmed
+/// it. A session that appears before the locks are taken and would now win
+/// the name, such as a provisioned `bob.01` for `bob`, is left alone.
+#[test]
+fn a_prepared_clear_removes_the_session_its_name_resolved_to() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	catalog.ensure_profile("bob")?;
+	let confirmed = catalog.resolve_clear_target(&SessionClearTarget::Named("bob".to_string()))?;
+	let newer = catalog.ensure_profile("bob.01")?;
+	fs::write(newer.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
+
+	let cleared = catalog.clear(catalog.prepare_clear(&confirmed)?)?;
+
+	assert_eq!(
+		(confirmed, cleared, catalog.list()?),
+		(
+			SessionClearTarget::Named("bob".to_string()),
+			vec!["bob".to_string()],
+			vec!["bob.01".to_string()],
+		)
+	);
+	Ok(())
+}
+
+/// A name that cannot be selected is refused as it is typed, before
+/// resolution could turn it into another session's name.
+#[test]
+fn a_clear_checks_the_typed_name_before_resolving_it() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let alicee = catalog.ensure_profile("alicee.01")?;
+	fs::write(alicee.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
+
+	let resolved = catalog
+		.resolve_clear_target(&SessionClearTarget::Named("../alicee".to_string()))
+		.map_err(|error| error.to_string());
+
+	assert_eq!(resolved, Err(validate_selectable_name("../alicee").unwrap_err().to_string()));
+	Ok(())
+}
+
 #[test]
 fn an_alias_whose_target_was_cleared_resolves_to_itself_again() -> Result<()> {
 	let temporary = tempdir()?;
 	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 	let provisional = catalog.ensure_profile("worker-0")?;
 	catalog.promote_to_user(&provisional, "alice.01")?;
-	catalog.clear(&SessionClearTarget::Named("alice.01".to_string()))?;
+	clear(&catalog, SessionClearTarget::Named("alice.01".to_string()))?;
 
 	assert_eq!(catalog.resolve_session_name("worker-0")?, "worker-0");
 	Ok(())

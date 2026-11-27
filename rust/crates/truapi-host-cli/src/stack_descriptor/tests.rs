@@ -37,8 +37,9 @@ fn a_link_or_url_breaking_a_rule_says_which_instead_of_reading_a_file() {
 	);
 }
 
-/// A server that answers with an error status is told apart from one that
-/// does not answer, so a moved descriptor can be reported louder.
+/// A server that answers with an error status gives no descriptor, and the
+/// reason names the status, so a moved descriptor reads apart from a server
+/// that does not answer.
 #[tokio::test]
 async fn test_fetch_http_status_error() {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -53,12 +54,13 @@ async fn test_fetch_http_status_error() {
 		socket.write_all(response.as_bytes()).await.unwrap();
 	});
 	let error = fetch(&url, FETCH_TIMEOUT).await.expect_err("404 accepted");
-	assert!(matches!(&error, FetchError::Http(status) if status.contains("404")));
-
 	let closed_port_error = fetch("http://127.0.0.1:9/stack.json", FETCH_TIMEOUT)
 		.await
 		.expect_err("closed port accepted");
-	assert!(matches!(closed_port_error, FetchError::Transport(_)));
+	assert_eq!(
+		(error.to_string(), closed_port_error.to_string().contains("404")),
+		("HTTP 404 Not Found".to_string(), false)
+	);
 }
 
 /// A descriptor with every role, a `dub` service and a `popController`, edited.
@@ -193,10 +195,10 @@ fn test_reads_same_by_field() {
 }
 
 /// A source and its fork can both be local files with one descriptor `id`. If
-/// every local file were one stack, the core would give them one set of keys
-/// and the fork would read the source's session.
-#[tokio::test]
-async fn two_local_files_are_two_stacks_and_one_file_is_one() {
+/// every local file were one stack, the CLI would keep their state in one
+/// directory and the fork would read the source's session.
+#[test]
+fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	let directory = tempfile::tempdir().expect("tempdir");
 	let write = |name: &str| {
 		let path = directory.path().join(name);
@@ -206,12 +208,79 @@ async fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	};
 	let (source, fork) = (write("source.json"), write("fork.json"));
 	let respelled = directory.path().join(".").join("source.json");
-	let id = |path: std::path::PathBuf| async move {
+	let id = |path: std::path::PathBuf| {
 		let path = path.to_str().expect("temporary path is UTF-8").to_owned();
-		load_descriptor(&path, None).await.expect("local descriptor loads").0
+		local_file_id(&path).expect("a local file has an id")
 	};
 
-	let (source_id, fork_id, respelled_id) =
-		(id(source).await, id(fork).await, id(respelled).await);
+	let (source_id, fork_id, respelled_id) = (id(source), id(fork), id(respelled));
 	assert_eq!((source_id == fork_id, source_id == respelled_id), (false, true));
+}
+
+/// A lossy conversion turns every byte that is not UTF-8 into one replacement
+/// character, so two files whose paths differ only there would be one stack
+/// and share their state. Such a path is refused instead, with what to do
+/// about it.
+#[cfg(unix)]
+#[test]
+fn a_local_file_path_that_is_not_utf8_is_refused() {
+	use std::{ffi::OsString, os::unix::ffi::OsStringExt as _};
+
+	let path_with = |byte: u8| PathBuf::from(OsString::from_vec(vec![b'/', byte, b'.', b'j']));
+	let ids = [path_with(0xfe), path_with(0xff), PathBuf::from("/s.json")]
+		.map(|path| canonical_file_id(path).map_err(|error| error.to_string()));
+	let refusal = "/\u{fffd}.j is not a UTF-8 path, so it cannot name a stack; copy the file to \
+	               a path that is UTF-8";
+	assert_eq!(
+		ids,
+		[Err(refusal.to_string()), Err(refusal.to_string()), Ok("file:/s.json".to_string())]
+	);
+}
+
+/// A fifo's path can carry any descriptor, so naming the stack by it would put
+/// every descriptor sent through it in one state directory. It is refused,
+/// with what to do instead. Its id is asked for without reading it, so the
+/// test does not wait for a writer.
+#[cfg(unix)]
+#[test]
+fn a_local_stack_that_is_not_a_regular_file_is_refused() {
+	let directory = tempfile::tempdir().expect("tempdir");
+	let fifo = directory.path().join("stack.fifo");
+	let created = std::process::Command::new("mkfifo").arg(&fifo).status().expect("run mkfifo");
+	assert!(created.success(), "mkfifo {}", fifo.display());
+	let path = fifo.to_str().expect("temporary path is UTF-8");
+
+	assert_eq!(
+		local_file_id(path).map_err(|error| error.to_string()),
+		Err(format!(
+			"{path} is not a regular file, so it cannot name a stack; save the descriptor to a \
+			 file and give its path"
+		))
+	);
+}
+
+/// A regular file opened as `/dev/fd/<n>`, as `--stack /dev/stdin < s.json`
+/// gives, resolves on macOS to `/dev/fd/<file name>`, which every file of that
+/// name shares, so it is refused there. Linux resolves it to the file itself,
+/// which names the stack as the file's own path does.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_local_stack_opened_as_a_file_descriptor_is_named_by_its_file_or_refused() {
+	use std::os::fd::AsRawFd as _;
+
+	let file = tempfile::NamedTempFile::new().expect("temporary file");
+	let path = format!("/dev/fd/{}", file.as_file().as_raw_fd());
+	let name = file.path().file_name().expect("a file name").to_str().expect("UTF-8");
+	let canonical = std::fs::canonicalize(file.path()).expect("the file resolves");
+
+	let expected = if cfg!(target_os = "macos") {
+		Err(format!(
+			"{path} resolves to /dev/fd/{name}, a file descriptor's path that another file can \
+			 resolve to as well, so it cannot name a stack; save the descriptor to a file and give \
+			 its path"
+		))
+	} else {
+		Ok(format!("file:{}", canonical.display()))
+	};
+	assert_eq!(local_file_id(&path).map_err(|error| error.to_string()), expected);
 }

@@ -1,15 +1,13 @@
-//! The Trinity stack a host runs, read from a signed descriptor.
+//! The Trinity stack a host runs, read from its descriptor.
 //!
 //! The core takes all of its chain configuration from the stack.
-//! [`StackRefresh::load`] checks the descriptor a host build bundles against
-//! the key in the stack's link and against the build's
-//! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
-//! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy, and a copy on another TLD than the bundled one is refused.
-//! It resolves the [`Stack`] the core runs on. A runtime built on that
-//! [`Stack`] also checks the genesis hash of each chain it connects to and, on
-//! a signing host, People's `NetworkSuffix`. The refresh reports what differs
-//! from the descriptor.
+//! [`StackRefresh::load`] starts a stack its build bundles, checked against the
+//! key in its link and the build's [`ReservedValuesPolicy`].
+//! [`StackRefresh::import`] starts one the build ships no copy of. Either keeps
+//! the descriptor current while the core runs. A runtime built on the
+//! resulting [`Stack`] checks the genesis hash of each chain it connects to
+//! and, on a signing host, People's `NetworkSuffix`, and the refresh reports
+//! what differs from the descriptor.
 
 mod held;
 mod pinned;
@@ -202,10 +200,10 @@ pub struct StackIdentity {
 	/// An opaque, non-empty string that tells this stack apart from others,
 	/// including a fork with its source's genesis hashes.
 	///
-	/// [`Stack::bundled`] and [`StackRefresh::load`] take
-	/// `trinity_stack::Pointer::stack_id` of the pointer, the key in hex. The CLI takes the same
-	/// for a link or a URL, and `file:` and the canonical path for a local descriptor file. A
-	/// test host passes any string.
+	/// A stack read from its link takes `trinity_stack::Pointer::stack_id`:
+	/// the key in hex, or the URL of a stack without a key. [`Stack::local`]
+	/// takes the tool's own id for a local file, and a test host passes any
+	/// string.
 	pub id: String,
 	/// The descriptor's `generation`, which changes whenever the stack
 	/// restarts its chains, as after a wipe. Must not be empty.
@@ -235,10 +233,19 @@ pub enum StackError {
 	/// The pointer is not a stack link.
 	#[display("stack pointer is not a stack link: {_0}")]
 	Pointer(#[error(not(source))] trinity_stack::Error),
-	/// The pointer carries no key. A host runs only a signed stack, so that a
-	/// copy it fetches later verifies against the same key as the bundled one.
-	#[display("stack pointer has no key; a host's stack must be signed")]
+	/// The pointer carries no key. A stack its build bundles must be signed,
+	/// so that a copy it fetches later verifies against the same key as the
+	/// bundled one.
+	#[display("stack pointer has no key; a bundled stack must be signed")]
 	Unsigned,
+	/// A stack its build ships no copy of, with no stored copy either, could
+	/// not be fetched.
+	#[display("stack descriptor could not be fetched: {reason}")]
+	Unreachable {
+		/// Why the fetch failed: the host's error, or the limit of the core's
+		/// that the answer broke.
+		reason: String,
+	},
 	/// The descriptor breaks a rule or does not verify under the pointer's
 	/// key.
 	#[display("stack descriptor refused ({}): {_0}", _0.code())]
@@ -306,8 +313,9 @@ pub enum StackError {
 		/// The reserved genesis hash.
 		genesis_hash: [u8; 32],
 	},
-	/// A stored or fetched copy changes a field the bundled copy pins.
-	#[display("stack descriptor changes {field}, which the bundled copy pins")]
+	/// A stored or fetched copy changes a field the bundled copy pins, or
+	/// for a stack its build ships no copy of, the first copy the core held.
+	#[display("stack descriptor changes {field}, which its first copy pins")]
 	PinnedFieldChanged {
 		/// The field, as the descriptor spells it.
 		field: &'static str,
@@ -333,17 +341,30 @@ impl Stack {
 		reserved_values.refuse_extras_that_reserve_nothing()?;
 		let pointer = signed_pointer(pointer)?;
 		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
-		Self::from_descriptor(&pointer, &verified.descriptor, reserved_values)
+		Self::from_descriptor(pointer.stack_id(), &verified.descriptor, reserved_values)
 	}
 
-	/// The stack a verified descriptor read from `pointer` names, when the
-	/// core can run it under `reserved_values`, a policy already checked. Its
-	/// id is the pointer's and its generation the descriptor's. A reserved
-	/// genesis hash is refused under any role, including one the core does
-	/// not read.
+	/// The stack a local descriptor file names, under `stack_id`, the tool's
+	/// own id for the file, since a file has no pointer.
+	///
+	/// Fails with the rule the descriptor or `reserved_values` breaks. Nothing
+	/// refreshes the stack, and `validUntil` and `expiresAt` are not checked.
+	pub fn local(
+		stack_id: String,
+		descriptor: &Descriptor,
+		reserved_values: &ReservedValuesPolicy,
+	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
+		Self::from_descriptor(stack_id, descriptor, reserved_values)
+	}
+
+	/// The stack a verified descriptor names, when the core can run it under
+	/// `reserved_values`, a policy already checked. Its id is `stack_id` and
+	/// its generation the descriptor's. A reserved genesis hash is refused
+	/// under any role, including one the core does not read.
 	/// `validUntil` and `expiresAt` are not checked.
 	fn from_descriptor(
-		pointer: &Pointer,
+		stack_id: String,
 		descriptor: &Descriptor,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
@@ -357,8 +378,7 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		let identity =
-			StackIdentity { id: pointer.stack_id(), generation: descriptor.generation.clone() };
+		let identity = StackIdentity { id: stack_id, generation: descriptor.generation.clone() };
 		let stack = Self::from_chains(
 			identity,
 			descriptor.network.clone(),
@@ -370,7 +390,7 @@ impl Stack {
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
-	/// bundled descriptor, such as the CLI's. It names no contracts.
+	/// descriptor, such as a test host's. It names no contracts.
 	///
 	/// Applies the same policy, TLD and reserved-value rules as
 	/// [`Self::bundled`], and refuses an empty id or generation and an
@@ -415,6 +435,14 @@ impl Stack {
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		Ok(Self { identity, network, tld, chains, account_data_store: None, checks: None })
+	}
+
+	/// This stack without its relay chain, for a host that serves none, such
+	/// as the CLI. The core then offers products no relay and connects to
+	/// none.
+	#[must_use]
+	pub fn without_relay(self) -> Self {
+		Self { chains: StackChains { relay: None, ..self.chains }, ..self }
 	}
 
 	/// The stack's identity. See [`StackIdentity::id`].
@@ -580,8 +608,8 @@ fn account_data_store_in(descriptor: &Descriptor) -> Option<[u8; 20]> {
 		.filter(|address| *address != [0; 20])
 }
 
-/// The pointer a stack link carries. A host runs only a signed stack, so a
-/// link without a key is refused.
+/// The pointer a stack link carries. A stack a build bundles must be signed,
+/// so a link without a key is refused.
 fn signed_pointer(link: &str) -> Result<Pointer, StackError> {
 	let pointer = Pointer::from_link(link).map_err(StackError::Pointer)?;
 	match pointer.key() {

@@ -1,26 +1,47 @@
 //! How a command's [`NetworkSource`] becomes the network it runs against.
+//!
+//! The core runs every stack, and the CLI keeps each stack's newest copy in
+//! its state directory.
 
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail, ensure};
+use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
+use truapi::{
+	platform::{ReservedValuesPolicy, StackRefresh, StackRefreshOutcome},
+	time::{RealTimer, SystemClock},
+};
 
 use super::{
-	Network, NetworkChoice, NetworkSource, Stack, StackArg,
-	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin, built_in_key},
-	checks::verify_chains,
+	DescriptorRefresh, Network, NetworkChoice, NetworkSource, PRE_START_FETCH_TIMEOUT, Stack,
+	StackArg, built_in::built_in_key, checks::verify_chains, host::CliStackHost,
+	records::StackRecordFile, stack::state_directory_of,
 };
 use crate::{
 	chain::ChainAccess,
-	stack_descriptor::{FETCH_TIMEOUT, load_descriptor},
+	stack_descriptor::{FETCH_TIMEOUT, local_file_id, pointer_of, read_local_descriptor},
 };
 
+/// A stack published at a URL: its pointer, and for a built-in network the
+/// copy of its descriptor this build ships.
+struct Published {
+	pointer: Pointer,
+	shipped: Option<&'static [u8]>,
+}
+
+/// The CLI allows Polkadot's reserved values on every stack, since it runs
+/// Polkadot forks for testing and checks itself that none is Polkadot.
+const RESERVED_VALUES: ReservedValuesPolicy = ReservedValuesPolicy::ALLOWED;
+
 impl NetworkSource {
-	/// `--chain-backend` with `--network` or the stack. Fails for `--network`
-	/// with a stack, in a message that names where the stack came from.
+	/// `--chain-backend` with `--network` or the stack, keeping each stack's
+	/// state under `state_base`, `<base-path>/v2`. Fails for `--network` with
+	/// a stack, in a message that names where the stack came from.
 	pub fn new(
 		chain_access: ChainAccess,
 		network: Option<Network>,
 		stack: Option<StackArg>,
+		state_base: PathBuf,
 	) -> Result<Self> {
 		let network = match (network, stack) {
 			(Some(_), Some(StackArg { source, .. })) => {
@@ -29,76 +50,181 @@ impl NetworkSource {
 			(None, Some(stack)) => NetworkChoice::Stack(stack),
 			(network, None) => NetworkChoice::BuiltIn(network.unwrap_or_default()),
 		};
-		Ok(Self { chain_access, network })
+		Ok(Self { chain_access, network, state_base })
 	}
 
-	/// The network a command runs against, the built-in network or the stack,
-	/// once its chains pass the checks. Fails as [`Stack::new`] and
-	/// [`verify_chains`] do, for an unreachable or expired `--stack`, and when
-	/// the light client is asked for a chain the stack names no light spec
-	/// for. A built-in network whose
-	/// published descriptor is unreachable runs on its bundled copy; when that
-	/// copy fails a check, the descriptor is fetched once more and the checks
-	/// repeat only when the published copy is then in use.
+	/// The network a command runs against once its chains pass the checks.
+	///
+	/// When an endpoint or light spec fails them, the descriptor is fetched
+	/// again and the checks repeat once on the copy it brings. Fails as
+	/// [`Self::resolve`] and [`verify_chains`] do.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
-		checked(|fetch_timeout| self.resolve_routes(fetch_timeout)).await
+		let stack = self.open().await?;
+		let Err(error) = verify_chains(&stack).await? else {
+			return Ok(stack.kept_current());
+		};
+		let Some(DescriptorRefresh { refresh, host }) = &stack.refresh else {
+			return Err(error);
+		};
+		tracing::info!("{error}; fetching the stack's descriptor again");
+		let held = refresh.descriptor().sequence;
+		let status = refresh.fetch_now(host).await;
+		host.warn_if_refused(&status);
+		if !status.restart_required && refresh.descriptor().sequence == held {
+			return Err(error);
+		}
+		let stack = self.open().await?;
+		verify_chains(&stack).await??;
+		Ok(stack.kept_current())
 	}
 
-	/// [`Self::resolve_checked`] without contacting any chain; only a
-	/// descriptor is fetched. An unreachable descriptor fails only for
-	/// `--stack`.
+	/// [`Self::resolve_checked`] without contacting any chain.
+	///
+	/// Fails when the stack is past `expiresAt`, when the CLI cannot run it,
+	/// and for a `--stack` that cannot be read.
 	pub async fn resolve(&self) -> Result<Stack> {
-		Ok(self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?.0)
+		Ok(self.open().await?.kept_current())
 	}
 
-	/// The network, and for a built-in, which copy of its descriptor is in
-	/// use. A built-in stack's published descriptor gets `fetch_timeout`.
-	async fn resolve_routes(
-		&self,
-		fetch_timeout: Duration,
-	) -> Result<(Stack, Option<BuiltInOrigin>)> {
-		let (stack, built_in) = match &self.network {
-			NetworkChoice::Stack(stack_arg) => {
-				let key = built_in_key(&stack_arg.value);
-				let stack = load_descriptor(&stack_arg.value, key.as_deref())
-					.await
-					.and_then(|(stack_id, descriptor)| {
-						Stack::new(stack_id, descriptor, &self.chain_access)
-					})
-					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
-				(stack, None)
-			},
+	/// The stack, with nothing refreshing it yet: a refresh started now could
+	/// have its fetch out when [`Self::resolve_checked`] asks for one.
+	async fn open(&self) -> Result<Stack> {
+		match &self.network {
 			NetworkChoice::BuiltIn(network) => {
-				let (stack, origin) =
-					network.resolve_built_in(fetch_timeout, &self.chain_access).await?;
-				(stack, Some(origin))
+				let published =
+					Published { pointer: network.pointer(), shipped: Some(network.bundle()) };
+				self.open_published(&published).await
+			},
+			NetworkChoice::Stack(stack_arg) => self
+				.open_stack(&stack_arg.value)
+				.await
+				.map_err(|error| anyhow!("{}: {error:#}", stack_arg.source)),
+		}
+	}
+
+	/// A `--stack` value: a built-in network's link, bare URL or keyless
+	/// link is that network, state included, fetched from the URL given; any
+	/// other link or URL is imported, and anything else is a local
+	/// descriptor file.
+	async fn open_stack(&self, value: &str) -> Result<Stack> {
+		let key = built_in_key(value);
+		let Some(pointer) = pointer_of(value, key.as_deref())? else {
+			return self.local(value).await;
+		};
+		let shipped = Network::of_stack(&pointer.stack_id()).map(Network::bundle);
+		self.open_published(&Published { pointer, shipped }).await
+	}
+
+	/// The stack `published` names, run by the core from the copy it holds.
+	///
+	/// The copy is fetched first when it is due, since a command can exit
+	/// before a background fetch is stored, and once more when the CLI cannot
+	/// run it, unless this run fetched already. Those fetches wait at most
+	/// [`PRE_START_FETCH_TIMEOUT`], and a newer copy runs at once.
+	async fn open_published(&self, published: &Published) -> Result<Stack> {
+		let mut refresh = self.load(published).await?;
+		// An imported stack's first copy was fetched as it loaded.
+		let mut fetched = refresh.status().last_refresh.is_some();
+		if !fetched && refresh.fetch_is_due() {
+			refresh = self.fetched(refresh, published).await?;
+			fetched = true;
+		}
+		match self.running(refresh, published.pointer.clone()) {
+			Err(error) if !fetched => {
+				tracing::info!("{error:#}; fetching the stack's descriptor again");
+				let refresh = self.fetched(self.load(published).await?, published).await?;
+				self.running(refresh, published.pointer.clone())
+			},
+			opened => opened,
+		}
+	}
+
+	/// The core's refresh of `published`, from the copy it holds. An imported
+	/// stack the CLI keeps no copy of is fetched first.
+	async fn load(&self, published: &Published) -> Result<StackRefresh> {
+		let Published { pointer, shipped } = published;
+		let (link, records) = (pointer.to_link(DEFAULT_LINK_BASE), self.records(pointer));
+		let refresh = match shipped {
+			Some(shipped) => {
+				StackRefresh::load(
+					&link,
+					shipped,
+					RESERVED_VALUES,
+					Box::new(records),
+					Arc::new(RealTimer),
+					Box::new(SystemClock),
+				)
+				.await?
+			},
+			None => {
+				StackRefresh::import(
+					&link,
+					RESERVED_VALUES,
+					Box::new(records),
+					&self.host(pointer.clone(), FETCH_TIMEOUT),
+					Arc::new(RealTimer),
+					Box::new(SystemClock),
+				)
+				.await?
 			},
 		};
-		Ok((stack, built_in))
+		Ok(refresh)
 	}
-}
 
-/// The stack `resolve` gives once its chains pass the checks, as
-/// [`NetworkSource::resolve_checked`] describes. `resolve` is given the
-/// timeout for a built-in's published descriptor.
-async fn checked<Resolved>(resolve: impl Fn(Duration) -> Resolved) -> Result<Stack>
-where
-	Resolved: Future<Output = Result<(Stack, Option<BuiltInOrigin>)>>,
-{
-	let (stack, built_in) = resolve(BUILT_IN_REFRESH_TIMEOUT).await?;
-	let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {
-		return Ok(stack);
-	};
-	if built_in.map(|origin| origin.copy) != Some(BuiltInCopy::Unreachable) {
-		return Err(error);
+	/// `refresh` after one fetch of its descriptor that waits at most
+	/// [`PRE_START_FETCH_TIMEOUT`] for the server, loaded again when the fetch
+	/// stored a copy that changes the stack.
+	async fn fetched(&self, refresh: StackRefresh, published: &Published) -> Result<StackRefresh> {
+		let url = published.pointer.url();
+		tracing::info!("fetching the stack descriptor at {url} before the command runs");
+		let host = self.host(published.pointer.clone(), PRE_START_FETCH_TIMEOUT);
+		let status = refresh.fetch_now(&host).await;
+		host.warn_if_refused(&status);
+		if let Some(StackRefreshOutcome::Unreachable { reason }) = &status.last_refresh {
+			tracing::info!(
+				"the stack descriptor could not be fetched ({reason}); using the copy held"
+			);
+		}
+		if !status.restart_required {
+			return Ok(refresh);
+		}
+		drop(refresh);
+		self.load(published).await
 	}
-	tracing::info!("{error}; fetching the published descriptor again");
-	let (stack, built_in) = resolve(FETCH_TIMEOUT).await?;
-	if built_in.as_ref().map(|origin| origin.copy) != Some(BuiltInCopy::Published) {
-		return Err(error);
+
+	/// A local descriptor file, read as it is and never refreshed.
+	async fn local(&self, path: &str) -> Result<Stack> {
+		let id = local_file_id(path)?;
+		let descriptor = read_local_descriptor(path).await?;
+		let core = truapi::platform::Stack::local(id, &descriptor, &RESERVED_VALUES)?;
+		Stack::new(core, None, descriptor, &self.chain_access)
 	}
-	verify_chains(&stack, built_in.as_ref()).await??;
-	Ok(stack)
+
+	fn running(&self, refresh: StackRefresh, pointer: Pointer) -> Result<Stack> {
+		let status = refresh.status();
+		let url = pointer.url();
+		ensure!(!status.expired, "the stack at {url} is past expiresAt; it has shut down");
+		if status.stale {
+			tracing::warn!(
+				"the stack descriptor at {url} in use is past validUntil; its operator should \
+				 republish"
+			);
+		}
+		let (core, descriptor) = (refresh.stack(), refresh.descriptor());
+		let refresh = DescriptorRefresh { refresh, host: self.host(pointer, FETCH_TIMEOUT) };
+		Stack::new(core, Some(refresh), descriptor, &self.chain_access)
+	}
+
+	fn records(&self, pointer: &Pointer) -> StackRecordFile {
+		StackRecordFile::new(self.state_base.join(state_directory_of(&pointer.stack_id())))
+	}
+
+	/// The host of `pointer`'s stack for this run, whose fetches wait at most
+	/// `timeout` for the server.
+	fn host(&self, pointer: Pointer, timeout: Duration) -> CliStackHost {
+		let on_light_client = matches!(self.chain_access, ChainAccess::LightClient { .. });
+		CliStackHost::new(pointer, on_light_client, timeout)
+	}
 }
 
 #[cfg(test)]

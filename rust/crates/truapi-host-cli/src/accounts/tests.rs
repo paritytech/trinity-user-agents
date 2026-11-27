@@ -25,7 +25,7 @@ fn record(name: &str, network: &str, attested: bool) -> AccountRecord {
 async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<()> {
 	let directory = tempdir()?;
 	let network = crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
-	let network_id = network.namespace();
+	let network_id = network.state_directory();
 	let mut store = AccountStore::load(directory.path())?;
 	let mut pending = record("auto-1", network_id, false);
 	pending.lite_username = "pending".to_string();
@@ -203,16 +203,12 @@ fn removing_managed_accounts_preserves_other_sessions_and_networks() -> Result<(
 	store.upsert(record("bob", "paseo-next-v2", true));
 	store.upsert(record("alice", "other", true));
 	store.save()?;
+	let lock = AccountStoreLock::acquire(dir.path())?;
 
-	assert_eq!(remove_managed_accounts(dir.path(), "paseo-next-v2", Some("alicelite.01"))?, 1);
+	assert_eq!(lock.remove_managed_accounts("paseo-next-v2", "alicelite.01")?, 1);
 	let loaded = AccountStore::load(dir.path())?;
 	assert!(loaded.get("paseo-next-v2", "alice").is_none());
 	assert!(loaded.get("paseo-next-v2", "bob").is_some());
-	assert!(loaded.get("other", "alice").is_some());
-
-	assert_eq!(remove_managed_accounts(dir.path(), "paseo-next-v2", None)?, 1);
-	let loaded = AccountStore::load(dir.path())?;
-	assert!(loaded.get("paseo-next-v2", "bob").is_none());
 	assert!(loaded.get("other", "alice").is_some());
 	Ok(())
 }
@@ -239,6 +235,64 @@ fn a_second_store_lock_is_refused_rather_than_waited_on() -> Result<()> {
 	// Releasing the first guard makes the store available again.
 	drop(held);
 	let _reacquired = AccountStoreLock::acquire(dir.path())?;
+	Ok(())
+}
+
+/// The store is also locked inside a running host, by `/session --clear`,
+/// `/session --mnemonic` and a pairing that moves to a fresh account, where a
+/// flag for another process does not help. The refusal asks only to wait and
+/// try again, which is right wherever it is hit.
+#[test]
+fn a_refused_store_lock_asks_to_wait_and_try_again() -> Result<()> {
+	let dir = tempdir()?;
+	let _held = AccountStoreLock::acquire(dir.path())?;
+	let Err(refusal) = AccountStoreLock::acquire(dir.path()) else {
+		panic!("a second exclusive lock must be refused");
+	};
+	let refusal = refusal.to_string();
+
+	assert_eq!(
+		refusal.rsplit_once("; ").map(|(_, advice)| advice),
+		Some("wait for it to finish, then try again"),
+		"{refusal}"
+	);
+	Ok(())
+}
+
+/// A fork has its source's namespace, and the source may well have an account
+/// with the name the fork asks for. The refusal names the state directory the
+/// account was looked up under too, so it does not read as a refusal for the
+/// source.
+#[tokio::test]
+async fn a_missing_named_account_names_the_directory_it_was_looked_up_under() -> Result<()> {
+	let dir = tempdir()?;
+	let source = crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
+	let mut store = AccountStore::load(dir.path())?;
+	store.upsert(record("auto-1", source.state_directory(), true));
+	store.save()?;
+	let fork_descriptor = source
+		.with_edit(|descriptor| descriptor["id"] = "paseo-next-v2-fork".into())
+		.descriptor()
+		.clone();
+	let fork_id = "https://fork.test.invalid/trinity-stack.json".to_string();
+	let fork =
+		crate::network::stack_on(&fork_id, fork_descriptor, &crate::chain::ChainAccess::Rpc)?;
+
+	let refusal = resolve_signer(ResolveSignerConfig {
+		base_path: dir.path(),
+		network: &fork,
+		mnemonic: None,
+		account: Some("auto-1".to_string()),
+		lite_username_prefix: None,
+		reserved_username: None,
+	})
+	.await
+	.expect_err("the fork has no account of its own");
+
+	assert_eq!(
+		refusal.to_string(),
+		"account \"auto-1\" not found for paseo-next-v2 (stack-c1ff7d592da6515589a30362b8ab952c)"
+	);
 	Ok(())
 }
 

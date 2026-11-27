@@ -14,7 +14,7 @@ use futures::{
 	channel::mpsc,
 	future::{Either, pending, select},
 };
-use trinity_stack::{FetchRequest, Served};
+use trinity_stack::{Descriptor, FetchRequest, Pointer, Served};
 use truapi::latest::GenericError;
 
 use super::{
@@ -42,7 +42,8 @@ const STORE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long building a runtime waits for the stored record. A host whose
 /// storage never answers would otherwise keep the runtime from starting, so
-/// past this the core starts from the bundled copy.
+/// past this the core starts from the bundled copy, or for an imported stack
+/// fetches the descriptor.
 const RECORD_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What a host does for the stack the core runs: fetch its descriptor, and
@@ -141,25 +142,7 @@ impl StackRefresh {
 	) -> Result<Self, StackError> {
 		reserved_values.refuse_extras_that_reserve_nothing()?;
 		let pointer = signed_pointer(pointer)?;
-		let stack_id = pointer.stack_id();
-		let read = records.read_stack_record(&stack_id);
-		// Started only if the read is still out, so a read that answers at once
-		// leaves no wait behind.
-		let read_timeout = Box::pin(async { timer.sleep(RECORD_READ_TIMEOUT).await });
-		let stored = match select(read, read_timeout).await {
-			Either::Left((Ok(stored), _)) => stored,
-			Either::Left((Err(error), _)) => {
-				tracing::warn!("stored stack descriptor could not be read: {error}");
-				None
-			},
-			Either::Right(_) => {
-				tracing::warn!(
-					"stored stack descriptor not read within {}s, starting from the bundled copy",
-					RECORD_READ_TIMEOUT.as_secs()
-				);
-				None
-			},
-		};
+		let stored = read_record(records.as_ref(), &pointer.stack_id(), timer.as_ref()).await;
 		let source = StackSource::load(
 			pointer,
 			bundled,
@@ -167,7 +150,59 @@ impl StackRefresh {
 			reserved_values,
 			unix_now(clock.as_ref()),
 		)?;
-		Ok(Self {
+		Ok(Self::running(source, records, timer, clock))
+	}
+
+	/// Resolves a stack its build ships no copy of, from its link.
+	///
+	/// The link may be unsigned, and then trusts whoever serves the
+	/// descriptor. Starts from the copy `records` holds, or else fetches the
+	/// descriptor through `host` and stores it. That first copy pins the
+	/// fields later copies must keep, as a bundled copy does.
+	///
+	/// Fails with [`StackError::Unreachable`] when there is no stored copy and
+	/// the fetch fails, and with the rule a copy breaks when the core cannot
+	/// run it.
+	pub async fn import(
+		pointer: &str,
+		reserved_values: ReservedValuesPolicy,
+		records: Box<dyn StackRecords>,
+		host: &dyn StackHost,
+		timer: Arc<dyn Timer>,
+		clock: Box<dyn Clock>,
+	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
+		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
+		let stack_id = pointer.stack_id();
+		let stored = read_record(records.as_ref(), &stack_id, timer.as_ref()).await;
+		let now = unix_now(clock.as_ref());
+		let source = match StackSource::import(&pointer, stored.as_deref(), &reserved_values, now) {
+			Some(source) => source,
+			None => {
+				let request = FetchRequest { url: pointer.url().to_string(), if_none_match: None };
+				let response = ask(host, request, timer.as_ref()).await;
+				let now = unix_now(clock.as_ref());
+				let (mut source, record) =
+					StackSource::first_fetched(pointer, reserved_values, served(&response), now)?;
+				let check = source.replace_check(&record);
+				let write = records.write_stack_record(&stack_id, record, check);
+				if let Err(reason) = within_store_timeout(write, timer.as_ref()).await {
+					tracing::warn!("stack descriptor could not be stored: {reason}");
+					source.record_not_stored(reason);
+				}
+				source
+			},
+		};
+		Ok(Self::running(source, records, timer, clock))
+	}
+
+	fn running(
+		source: StackSource,
+		records: Box<dyn StackRecords>,
+		timer: Arc<dyn Timer>,
+		clock: Box<dyn Clock>,
+	) -> Self {
+		Self {
 			shared: Arc::new(Shared {
 				source: Mutex::new(source),
 				records,
@@ -177,7 +212,39 @@ impl StackRefresh {
 			}),
 			task: OnceLock::new(),
 			refresh_requests: WakeSignal::default(),
-		})
+		}
+	}
+
+	/// The descriptor of the copy the core runs, for a host's own features.
+	///
+	/// A newer copy of the same stack replaces it while the core runs. One
+	/// that changes the stack waits for the next start, as [`Self::stack`]
+	/// does.
+	pub fn descriptor(&self) -> Descriptor {
+		self.shared.source().descriptor().clone()
+	}
+
+	/// Whether the copy is due for a fetch: an hour old, or never fetched, as
+	/// a bundled copy is.
+	///
+	/// A tool that may exit before a background fetch is stored asks this and
+	/// awaits [`Self::fetch_now`] before it starts.
+	pub fn fetch_is_due(&self) -> bool {
+		self.shared.source().next_fetch_in(self.shared.now()) == Some(Duration::ZERO)
+	}
+
+	/// Fetches the descriptor through `host` now, whatever the copy's age, and
+	/// returns the status once any newer copy is stored.
+	///
+	/// A newer copy that changes the stack sets
+	/// [`StackStatus::restart_required`]. Does nothing while another fetch is
+	/// out.
+	pub async fn fetch_now(&self, host: &dyn StackHost) -> StackStatus {
+		let request = self.shared.source().forced_fetch(self.shared.now());
+		if let Some(request) = request {
+			self.shared.fetch(host, request).await;
+		}
+		self.status()
 	}
 
 	/// The stack the core runs, with the checks of its chains.
@@ -333,29 +400,10 @@ impl Shared {
 
 	/// Makes one fetch through the host and stores the record it changed.
 	async fn fetch(&self, host: &dyn StackHost, request: FetchRequest) {
-		let FetchRequest { url, if_none_match } = request;
-		let request = StackFetchRequest { url, if_none_match, max_bytes: MAX_DESCRIPTOR_BYTES };
-		let answer = select(host.fetch_stack_descriptor(request), self.timer.sleep(FETCH_TIMEOUT));
-		let response = match answer.await {
-			Either::Left((response, _)) => response.map_err(|error| error.reason),
-			Either::Right(_) => Err(format!("no answer within {}s", FETCH_TIMEOUT.as_secs())),
-		};
-		let served = match &response {
-			Ok(StackFetchResponse::Document { bytes, etag }) => match u32::try_from(bytes.len()) {
-				Ok(length) if length <= MAX_DESCRIPTOR_BYTES => {
-					Ok(Served::Document { bytes, etag: etag.as_deref() })
-				},
-				_ => Err(format!("{} bytes is larger than {MAX_DESCRIPTOR_BYTES}", bytes.len())),
-			},
-			Ok(StackFetchResponse::NotModified) => Ok(Served::NotModified),
-			Err(reason) => Err(reason.clone()),
-		};
-		if let Err(reason) = &served {
-			tracing::debug!("stack descriptor fetch failed: {reason}");
-		}
+		let response = ask(host, request, self.timer.as_ref()).await;
 		let (stack_id, write) = {
 			let mut source = self.source();
-			let write = source.fetched(served, self.now()).map(|record| {
+			let write = source.fetched(served(&response), self.now()).map(|record| {
 				let check = source.replace_check(&record);
 				(record, check)
 			});
@@ -363,17 +411,90 @@ impl Shared {
 		};
 		let Some((record, check)) = write else { return };
 		let write = self.records.write_stack_record(&stack_id, record, check);
-		let stored = match select(write, self.timer.sleep(STORE_TIMEOUT)).await {
-			Either::Left((stored, _)) => stored.map_err(|error| error.reason),
-			Either::Right(_) => Err(format!("not stored within {}s", STORE_TIMEOUT.as_secs())),
-		};
-		match stored {
+		match within_store_timeout(write, self.timer.as_ref()).await {
 			Ok(()) => self.source().record_stored(),
 			Err(reason) => {
 				tracing::warn!("stack descriptor could not be stored: {reason}");
 				self.source().record_not_stored(reason);
 			},
 		}
+	}
+}
+
+/// The record `records` holds for `stack_id`, or `None` when there is none,
+/// it cannot be read, or it is not read within [`RECORD_READ_TIMEOUT`].
+async fn read_record(
+	records: &dyn StackRecords,
+	stack_id: &str,
+	timer: &dyn Timer,
+) -> Option<Vec<u8>> {
+	let read = records.read_stack_record(stack_id);
+	// Started only if the read is still out, so a read that answers at once
+	// leaves no wait behind.
+	let read_timeout = Box::pin(async { timer.sleep(RECORD_READ_TIMEOUT).await });
+	match select(read, read_timeout).await {
+		Either::Left((Ok(stored), _)) => stored,
+		Either::Left((Err(error), _)) => {
+			tracing::warn!("stored stack descriptor could not be read: {error}");
+			None
+		},
+		Either::Right(_) => {
+			tracing::warn!(
+				"stored stack descriptor not read within {}s, starting without it",
+				RECORD_READ_TIMEOUT.as_secs()
+			);
+			None
+		},
+	}
+}
+
+/// Asks `host` for the descriptor `request` names, within [`FETCH_TIMEOUT`].
+/// Fails with the host's reason, or the limit of the core's the answer broke.
+async fn ask(
+	host: &dyn StackHost,
+	request: FetchRequest,
+	timer: &dyn Timer,
+) -> Result<StackFetchResponse, String> {
+	let FetchRequest { url, if_none_match } = request;
+	let request = StackFetchRequest { url, if_none_match, max_bytes: MAX_DESCRIPTOR_BYTES };
+	let answer = select(host.fetch_stack_descriptor(request), timer.sleep(FETCH_TIMEOUT));
+	let response = match answer.await {
+		Either::Left((response, _)) => response.map_err(|error| error.reason),
+		Either::Right(_) => Err(format!("no answer within {}s", FETCH_TIMEOUT.as_secs())),
+	};
+	let response = response.and_then(|response| match &response {
+		StackFetchResponse::Document { bytes, .. }
+			if u32::try_from(bytes.len()).map_or(true, |length| length > MAX_DESCRIPTOR_BYTES) =>
+		{
+			Err(format!("{} bytes is larger than {MAX_DESCRIPTOR_BYTES}", bytes.len()))
+		},
+		_ => Ok(response),
+	});
+	if let Err(reason) = &response {
+		tracing::debug!("stack descriptor fetch failed: {reason}");
+	}
+	response
+}
+
+/// What `response` served, for the reader.
+fn served(response: &Result<StackFetchResponse, String>) -> Result<Served<'_>, String> {
+	match response {
+		Ok(StackFetchResponse::Document { bytes, etag }) => {
+			Ok(Served::Document { bytes, etag: etag.as_deref() })
+		},
+		Ok(StackFetchResponse::NotModified) => Ok(Served::NotModified),
+		Err(reason) => Err(reason.clone()),
+	}
+}
+
+/// `write`'s outcome, or a failure once [`STORE_TIMEOUT`] passes without one.
+async fn within_store_timeout(
+	write: impl Future<Output = Result<(), GenericError>>,
+	timer: &dyn Timer,
+) -> Result<(), String> {
+	match select(core::pin::pin!(write), timer.sleep(STORE_TIMEOUT)).await {
+		Either::Left((stored, _)) => stored.map_err(|error| error.reason),
+		Either::Right(_) => Err(format!("not stored within {}s", STORE_TIMEOUT.as_secs())),
 	}
 }
 

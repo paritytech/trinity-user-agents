@@ -57,6 +57,18 @@ pub fn light_spec_genesis(spec: &str) -> [u8; 32] {
 	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("the fixture is a light spec")
 }
 
+/// The stack `descriptor` names under `stack_id`, as the core reads a local
+/// file, connected to over `access`. Fails as [`Stack::new`] does.
+pub fn stack_on(
+	stack_id: &str,
+	descriptor: Descriptor,
+	access: &ChainAccess,
+) -> anyhow::Result<Stack> {
+	let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
+	let core = truapi::platform::Stack::local(stack_id.to_owned(), &descriptor, &allowed)?;
+	Stack::new(core, None, descriptor, access)
+}
+
 /// `chain_backend` for a test stack. A light client would keep its specs in a
 /// directory of the system's temporary one, never in the user's state.
 pub fn test_access(chain_backend: ChainBackend) -> ChainAccess {
@@ -100,7 +112,7 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(self.stack_id.clone(), descriptor, &test_access(self.chain_backend()))
+		stack_on(self.core.id(), descriptor, &test_access(self.chain_backend()))
 			.expect("edited stack refused")
 	}
 
@@ -221,6 +233,20 @@ pub async fn serve_silent() -> String {
 /// reads at `/large.json`. Returns its base URL and the number of requests it
 /// has answered.
 pub async fn serve_light_specs() -> (String, Arc<AtomicUsize>) {
+	serve_stack_and_light_specs(Vec::new()).await
+}
+
+/// The `ETag` [`serve_stack_and_light_specs`] serves its `index`th copy
+/// with, counted from 0.
+pub fn served_etag(index: usize) -> String {
+	format!("\"copy-{index}\"")
+}
+
+/// [`serve_light_specs`], also answering `/stack.json` with `copies` in turn,
+/// the last one again once it is reached, each with its [`served_etag`]. A
+/// request that sends the `ETag` of the copy it would get gets
+/// `304 Not Modified`.
+pub async fn serve_stack_and_light_specs(copies: Vec<Vec<u8>>) -> (String, Arc<AtomicUsize>) {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -230,24 +256,43 @@ pub async fn serve_light_specs() -> (String, Arc<AtomicUsize>) {
 	let requests = Arc::new(AtomicUsize::new(0));
 	let answered = Arc::clone(&requests);
 	tokio::spawn(async move {
+		let mut next_copy = 0;
 		while let Ok((mut socket, _)) = listener.accept().await {
 			let mut request = [0; 1024];
 			let read = socket.read(&mut request).await.unwrap_or(0);
 			let request = String::from_utf8_lossy(&request[..read]);
-			let body = match request.split_whitespace().nth(1) {
-				Some("/relay.json") => RELAY_LIGHT_SPEC.to_owned(),
-				Some("/people.json") => PEOPLE_LIGHT_SPEC.to_owned(),
-				Some("/large.json") => " ".repeat(2 * 1024 * 1024),
-				_ => String::new(),
+			let current = next_copy.min(copies.len().saturating_sub(1));
+			let (body, etag) = match request.split_whitespace().nth(1) {
+				Some("/relay.json") => (RELAY_LIGHT_SPEC.as_bytes().to_vec(), None),
+				Some("/people.json") => (PEOPLE_LIGHT_SPEC.as_bytes().to_vec(), None),
+				Some("/large.json") => (vec![b' '; 2 * 1024 * 1024], None),
+				Some("/stack.json") if !copies.is_empty() => {
+					(copies[current].clone(), Some(served_etag(current)))
+				},
+				_ => (Vec::new(), None),
 			};
+			let sent_back = etag.as_ref().is_some_and(|etag| {
+				let header = format!("if-none-match: {etag}");
+				request.lines().any(|line| line.eq_ignore_ascii_case(&header))
+			});
+			answered.fetch_add(1, Ordering::Relaxed);
+			if sent_back {
+				let head =
+					"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+				let _ = socket.write_all(head.as_bytes()).await;
+				continue;
+			}
+			if etag.is_some() {
+				next_copy += 1;
+			}
 			let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
+			let etag = etag.map(|etag| format!("ETag: {etag}\r\n")).unwrap_or_default();
 			let head = format!(
-				"HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+				"HTTP/1.1 {status}\r\nContent-Length: {}\r\n{etag}Connection: close\r\n\r\n",
 				body.len()
 			);
-			answered.fetch_add(1, Ordering::Relaxed);
 			let _ = socket.write_all(head.as_bytes()).await;
-			let _ = socket.write_all(body.as_bytes()).await;
+			let _ = socket.write_all(&body).await;
 		}
 	});
 	(url, requests)

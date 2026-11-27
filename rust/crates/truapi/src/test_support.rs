@@ -556,7 +556,7 @@ pub fn stack_status(
 /// The outcome of fetching a copy on another TLD.
 pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
 	Some(crate::platform::StackRefreshOutcome::Refused {
-		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+		reason: "stack descriptor changes tld, which its first copy pins".to_string(),
 	})
 }
 

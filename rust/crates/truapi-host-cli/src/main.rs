@@ -91,8 +91,8 @@ use crate::{
 	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
-		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
-		SessionClearTarget, SessionProfile,
+		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, PreparedClear,
+		SessionCatalog, SessionClearTarget, SessionProfile,
 	},
 	signing_shell::{
 		ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
@@ -144,9 +144,9 @@ struct Cli {
 	network: Option<Network>,
 	/// Run against this Trinity stack instead of a built-in network: a
 	/// descriptor URL, a stack link (`polkadotapp://stack?...`) or a local
-	/// descriptor file. Its chains, identity backend and TLD are used, under
-	/// the product namespace of the descriptor's `id` without a trailing
-	/// `-fork`. Defaults to `HOST_CLI_STACK` when that is not blank.
+	/// descriptor file. Its chains, identity backend and TLD are used, and its
+	/// state is kept apart from every other stack's. Defaults to
+	/// `HOST_CLI_STACK` when that is not blank.
 	#[arg(long, global = true, value_name = "STACK")]
 	stack: Option<String>,
 	#[command(subcommand)]
@@ -580,7 +580,7 @@ async fn main() -> Result<()> {
 		reload: Arc::new(move |level| {
 			reload.reload(tracing_subscriber::EnvFilter::new(level.scoped_filter()))
 		}),
-		base_path,
+		base_path: base_path.clone(),
 	};
 	let log_layer = tracing_subscriber::fmt::layer()
 		.with_ansi(false)
@@ -615,7 +615,7 @@ async fn main() -> Result<()> {
 			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
 		},
 	};
-	let source = NetworkSource::new(chain_access, cli.network, stack)?;
+	let source = NetworkSource::new(chain_access, cli.network, stack, base_path)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
@@ -724,6 +724,7 @@ fn print_network(stack: &Stack) {
 		serde_json::json!({
 			"schema_version": 1,
 			"network": stack.namespace(),
+			"state_directory": stack.state_directory(),
 			"namespace": stack.tld(),
 			"identity_backend_base": stack.identity_backend(),
 			"people": chain(&chains.people),
@@ -1257,14 +1258,14 @@ async fn run_pairing_host(
 	}
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path);
-	let stack = network.core_stack().context("invalid stack")?;
+	let stack = network.core_stack();
 	let product = frame_server::ProductSelection::new(
 		args.product_id,
 		args.execution_kind.context(),
 		&stack,
 	)?;
 	let product_id = product.current();
-	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
+	let storage_paths = CliStoragePaths::pairing(base_path.join(network.state_directory()));
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new_pairing(
 			network.namespace(),
@@ -1378,7 +1379,7 @@ async fn run_signing_host(
 		.as_deref()
 		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
 	let network = source.resolve_checked().await?;
-	let stack = network.core_stack().context("invalid stack")?;
+	let stack = network.core_stack();
 	let product = frame_server::ProductSelection::new(
 		args.product_id.clone(),
 		args.execution_kind.context(),
@@ -1386,7 +1387,7 @@ async fn run_signing_host(
 	)?;
 	let product_id = product.current();
 	let base_path = state_base_path(args.base_path.clone());
-	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
+	let session_catalog = SessionCatalog::new(base_path.clone(), network.state_directory())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
 	let initial_session_names = session_catalog.list()?;
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1407,7 +1408,6 @@ async fn run_signing_host(
 		session_catalog,
 		initial_session_name,
 		network,
-		stack,
 		ui_handle.clone(),
 	)
 	.await?;
@@ -1487,7 +1487,8 @@ async fn run_signing_host(
 	let initial_deeplink = args.deeplink.clone();
 	if let Some(command) = exec_command {
 		let cleanup_catalog = session.catalog.clone();
-		let clear_target =
+		let network_name = session.network.state_label();
+		let pending_clear =
 			with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 				if let Some(deeplink) = initial_deeplink {
 					start_deeplink_responder(&mut session, deeplink).await?;
@@ -1504,8 +1505,8 @@ async fn run_signing_host(
 				result
 			})
 			.await?;
-		if let Some(target) = clear_target {
-			clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
+		if let Some(clear) = pending_clear {
+			clear_sessions_after_shutdown(&cleanup_catalog, &network_name, clear)?;
 		}
 		return Ok(());
 	}
@@ -1520,7 +1521,8 @@ async fn run_signing_host(
 	};
 	restore_paired_responders(&mut session).await;
 	let cleanup_catalog = session.catalog.clone();
-	let clear_target =
+	let network_name = session.network.state_label();
+	let pending_clear =
 		with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
 			signing_interactive_loop(
 				&mut session,
@@ -1533,8 +1535,8 @@ async fn run_signing_host(
 			.await
 		})
 		.await?;
-	if let Some(target) = clear_target {
-		clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
+	if let Some(clear) = pending_clear {
+		clear_sessions_after_shutdown(&cleanup_catalog, &network_name, clear)?;
 	}
 	Ok(())
 }
@@ -1675,7 +1677,6 @@ async fn start_signing_host(
 	catalog: SessionCatalog,
 	session_name: String,
 	network: Stack,
-	core_stack: truapi::platform::Stack,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
 	let approval = approval_policy(args.auto_accept);
@@ -1740,7 +1741,6 @@ async fn start_signing_host(
 	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
 		&network,
-		core_stack,
 		&storage_profile,
 		approval,
 		ui.clone(),
@@ -1781,7 +1781,12 @@ async fn start_signing_host(
 		{
 			ui.session(profile.name.clone(), catalog.list()?);
 		}
-		if signer.is_some() || normalized(args.session.clone()).is_none() || args.action.is_some() {
+		// An `--account` that did not resolve leaves the remembered session in
+		// place, so a later run without it does not start on the default one.
+		if signer.is_some() ||
+			(default_account.is_none() &&
+				(normalized(args.session.clone()).is_none() || args.action.is_some()))
+		{
 			catalog.set_current(&profile.name)?;
 		}
 	}
@@ -1815,7 +1820,6 @@ async fn start_signing_host(
 
 fn build_signing_runtime(
 	network: &Stack,
-	core_stack: truapi::platform::Stack,
 	profile: &SessionProfile,
 	approval: ApprovalPolicy,
 	ui: Option<UiHandle>,
@@ -1840,9 +1844,12 @@ fn build_signing_runtime(
 		approval,
 		ui,
 	);
-	let mut config =
-		SigningHostConfig::new(host_info("Headless Signing Host"), platform_info(), core_stack)
-			.context("invalid signing host config")?;
+	let mut config = SigningHostConfig::new(
+		host_info("Headless Signing Host"),
+		platform_info(),
+		network.core_stack(),
+	)
+	.context("invalid signing host config")?;
 	// It draws nothing, but with a Pocket host it resolves the materials of every face its Worker
 	// renders, as a phone does.
 	config.materials_enabled = pocket.is_some();
@@ -2530,7 +2537,7 @@ async fn prepare_pairing_response(
 					let account_base_path = current_account_base_path(session)?;
 					accounts::mark_account_exhausted(
 						&account_base_path,
-						session.network.namespace(),
+						&session.network,
 						name,
 						period,
 					)?;
@@ -2804,12 +2811,7 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 	};
 	let period = accounts::current_statement_period()?;
 	let account_base_path = current_account_base_path(session)?;
-	accounts::mark_account_exhausted(
-		&account_base_path,
-		session.network.namespace(),
-		&name,
-		period,
-	)?;
+	accounts::mark_account_exhausted(&account_base_path, &session.network, &name, period)?;
 	terminal_ui::output_event(SystemEvent::SigningHostAccountExhausted { name, period });
 	Ok(())
 }
@@ -2917,20 +2919,24 @@ async fn remove_paired_host_locally(
 	Ok(())
 }
 
+/// What a clear of `target` removes, with a name resolved as session selection
+/// resolves it, and whether that includes the running session, which the host
+/// has to stop before its data goes.
 fn validate_session_clear(
 	session: &SigningHostSession,
 	target: &SessionClearTarget,
-) -> Result<bool> {
+) -> Result<(SessionClearTarget, bool)> {
 	if session.mnemonic.is_some() {
 		bail!("session clearing is unavailable when launched with --mnemonic");
 	}
-	session.catalog.validate_clear_target(target)?;
-	Ok(match target {
+	let target = session.catalog.resolve_clear_target(target)?;
+	let active = match &target {
 		SessionClearTarget::All => true,
 		SessionClearTarget::Named(name) => {
 			session.profile.as_ref().is_some_and(|profile| profile.name == *name)
 		},
-	})
+	};
+	Ok((target, active))
 }
 
 fn session_clear_confirmation(
@@ -2941,20 +2947,22 @@ fn session_clear_confirmation(
 	let action = match target {
 		SessionClearTarget::Named(name) => format!("Clear session {name}"),
 		SessionClearTarget::All => {
-			format!("Clear all sessions for {}", session.catalog.network_id())
+			format!("Clear all sessions for {}", session.network.state_label())
 		},
 	};
 	let scope = match target {
 		SessionClearTarget::Named(_) => {
-			"This permanently deletes its local signer keys, scripts, storage, and permissions"
+			"This permanently deletes its signer keys, scripts, storage, and permissions"
 		},
 		SessionClearTarget::All => {
-			"This permanently deletes every local session's signer keys, scripts, storage, and permissions"
+			"This permanently deletes every session's signer keys, scripts, storage, and permissions"
 		},
 	};
 	let mut detail = format!(
-		"{scope} for {}. On-chain usernames are not removed.",
-		session.catalog.network_id()
+		"{scope} for {}. On-chain usernames are not removed. Copies of the mnemonics may remain \
+		 in other sessions' accounts.json, and in accounts.json directly under v2 from an \
+		 earlier release.",
+		session.network.state_label()
 	);
 	if active {
 		detail.push_str(" The active session is included, so the signing host will stop.");
@@ -2963,30 +2971,30 @@ fn session_clear_confirmation(
 }
 
 fn session_clear_success(
-	network_id: &str,
+	network: &str,
 	target: &SessionClearTarget,
 	stopped: bool,
 ) -> (String, String) {
 	let title = match target {
 		SessionClearTarget::Named(name) => format!("Session {name} cleared"),
-		SessionClearTarget::All => format!("All sessions cleared for {network_id}"),
+		SessionClearTarget::All => format!("All sessions cleared for {network}"),
 	};
 	let detail = if stopped {
 		"Signing host stopped. Restart it to create or select another session.".to_string()
 	} else {
-		format!(
-			"Local signer keys, scripts, storage, and permissions were deleted for {network_id}."
-		)
+		format!("Local signer keys, scripts, storage, and permissions were deleted for {network}.")
 	};
 	(title, detail)
 }
 
 fn clear_sessions_after_shutdown(
 	catalog: &SessionCatalog,
-	target: &SessionClearTarget,
+	network: &str,
+	clear: PreparedClear,
 ) -> Result<()> {
-	catalog.clear(target)?;
-	let (title, detail) = session_clear_success(catalog.network_id(), target, true);
+	let target = clear.target().clone();
+	catalog.clear(clear)?;
+	let (title, detail) = session_clear_success(network, &target, true);
 	terminal_ui::output_success(title, Some(detail));
 	Ok(())
 }
@@ -3123,7 +3131,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	)?;
 	if is_lite_label(&name) &&
 		accounts::AccountStore::load(&provisional_profile.account_base_path)?
-			.created_at(session.network.namespace(), account.as_deref())?
+			.created_at(session.network.state_directory(), account.as_deref())?
 			.is_none()
 	{
 		bail!("session {name:?} has no saved account; choose a username base to create one");
@@ -3177,7 +3185,6 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		&session.network,
-		session.runtime.stack().clone(),
 		&profile,
 		session.platform.approval_policy(),
 		session.ui.clone(),
@@ -3262,7 +3269,6 @@ async fn import_mnemonic_session(
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		&session.network,
-		session.runtime.stack().clone(),
 		&profile,
 		session.platform.approval_policy(),
 		session.ui.clone(),
@@ -3514,7 +3520,7 @@ async fn signing_interactive_loop(
 	initial_command: Option<(String, ShellCommand)>,
 	mut ui: ActiveTerminalUi,
 	log_controller: LogController,
-) -> Result<Option<SessionClearTarget>> {
+) -> Result<Option<PreparedClear>> {
 	if let Some((input, command)) = initial_command {
 		ui.command(input.clone());
 		let product_id = product.current();
@@ -3649,8 +3655,8 @@ async fn signing_interactive_loop(
 				}
 			},
 			ShellCommand::Session(SessionCommand::Clear(target)) => {
-				let active = match validate_session_clear(session, &target) {
-					Ok(active) => active,
+				let (target, active) = match validate_session_clear(session, &target) {
+					Ok(resolved) => resolved,
 					Err(error) => {
 						ui.error(error.to_string());
 						continue;
@@ -3667,16 +3673,23 @@ async fn signing_interactive_loop(
 					ui.system("Session clear cancelled");
 					continue;
 				}
+				let clear = match session.catalog.prepare_clear(&target) {
+					Ok(clear) => clear,
+					Err(error) => {
+						ui.error(error.to_string());
+						continue;
+					},
+				};
 				if active || target == SessionClearTarget::All {
 					session.responders.stop_all();
 					session.runtime_factory.reset_connections();
 					tokio::task::yield_now().await;
-					return Ok(Some(target));
+					return Ok(Some(clear));
 				}
-				match session.catalog.clear(&target) {
+				match session.catalog.clear(clear) {
 					Ok(_) => {
 						let (title, detail) =
-							session_clear_success(session.catalog.network_id(), &target, false);
+							session_clear_success(&session.network.state_label(), &target, false);
 						ui.success(title, Some(detail));
 						let current = session
 							.profile
@@ -3869,7 +3882,7 @@ async fn execute_non_interactive_command(
 	product: &frame_server::ProductSelection,
 	command: ShellCommand,
 	log_controller: &LogController,
-) -> Result<Option<SessionClearTarget>> {
+) -> Result<Option<PreparedClear>> {
 	match command {
 		ShellCommand::Pair(PairCommand::Deeplink(deeplink)) => {
 			respond_to_deeplink(session, deeplink).await?
@@ -3977,11 +3990,12 @@ async fn execute_non_interactive_command(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Session(SessionCommand::Clear(target)) => {
-			validate_session_clear(session, &target)?;
+			let (target, _) = validate_session_clear(session, &target)?;
+			let clear = session.catalog.prepare_clear(&target)?;
 			session.responders.stop_all();
 			session.runtime_factory.reset_connections();
 			tokio::task::yield_now().await;
-			return Ok(Some(target));
+			return Ok(Some(clear));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,

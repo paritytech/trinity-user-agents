@@ -1288,3 +1288,194 @@ fn the_refreshed_stack_equals_the_bundled_one() {
 			.expect("bundled copy is valid")
 	);
 }
+
+/// A host for [`StackRefresh::import`] and [`StackRefresh::fetch_now`] that
+/// answers fetches with `responses`, and the count of fetches it was asked for.
+fn fetching_host(
+	responses: Vec<Result<StackFetchResponse, GenericError>>,
+) -> (QueuedHost, Arc<AtomicUsize>) {
+	let (told, _statuses) = channel();
+	let fetches = Arc::<AtomicUsize>::default();
+	let host = QueuedHost {
+		fetches: fetches.clone(),
+		responses: Mutex::new(responses.into()),
+		statuses: Mutex::new(told),
+	};
+	(host, fetches)
+}
+
+fn import(
+	link: &str,
+	records: Arc<MemoryRecords>,
+	host: &QueuedHost,
+) -> Result<StackRefresh, StackError> {
+	futures::executor::block_on(StackRefresh::import(
+		link,
+		ReservedValuesPolicy::default(),
+		Box::new(records),
+		host,
+		Arc::new(ManualTimer::default()),
+		Box::new(manual_clock()),
+	))
+}
+
+/// A stack the build ships no copy of has to be fetched before its first use,
+/// and is stored so the next start does not wait on its server.
+#[test]
+fn an_imported_stack_with_no_stored_copy_is_fetched_first_and_stored() {
+	let records = Arc::<MemoryRecords>::default();
+	let (host, fetches) = fetching_host(vec![published(&bundled())]);
+	let (link, _) = sign_test_descriptor(&bundled());
+
+	let refresh = import(&link, records.clone(), &host).expect("the fetched copy is valid");
+
+	assert_eq!(
+		(refresh.status(), fetches.load(Ordering::SeqCst), stored(&records).is_some()),
+		(stack_status(&bundled(), Some(StackRefreshOutcome::Current)), 1, true)
+	);
+}
+
+/// An imported stack starts from its stored copy, as a bundled one does, so a
+/// server that is down stops nothing.
+#[test]
+fn an_imported_stack_starts_from_its_stored_copy_without_fetching() {
+	let records = holding(stored_test_record(&published_test_descriptor_at(2), START as i64));
+	let (host, fetches) = fetching_host(Vec::new());
+	let (link, _) = sign_test_descriptor(&bundled());
+
+	let refresh = import(&link, records, &host).expect("the stored copy is valid");
+
+	assert_eq!(
+		(refresh.status(), fetches.load(Ordering::SeqCst)),
+		(stack_status(&published_test_descriptor_at(2), None), 0)
+	);
+}
+
+/// With neither a stored copy nor an answer there is nothing to run, and the
+/// host is told why the fetch failed.
+#[test]
+fn an_imported_stack_that_cannot_be_fetched_is_refused_with_the_reason() {
+	let (host, _) = fetching_host(vec![unreachable()]);
+	let (link, _) = sign_test_descriptor(&bundled());
+
+	let refused = import(&link, Arc::default(), &host).err();
+
+	assert_eq!(refused, Some(StackError::Unreachable { reason: "connection refused".to_string() }));
+}
+
+/// A stack without a key trusts whoever serves it. It runs under the id of
+/// its URL, which its record is stored under too.
+#[test]
+fn an_unsigned_stack_is_imported_under_the_id_of_its_url() {
+	let records = Arc::<MemoryRecords>::default();
+	let unsigned = Ok(StackFetchResponse::Document {
+		bytes: serde_json::to_vec(&bundled()).unwrap(),
+		etag: None,
+	});
+	let (host, _) = fetching_host(vec![unsigned]);
+	let link = crate::test_support::test_stack_link(None);
+	let url_id = Pointer::from_link(&link).expect("test link is a stack link").stack_id();
+
+	let refresh = import(&link, records.clone(), &host).expect("an unsigned copy is imported");
+
+	let stored_under_url = records.records.lock().unwrap().contains_key(&url_id);
+	assert_eq!((refresh.stack().id().to_string(), stored_under_url), (url_id, true));
+}
+
+/// Accounts derive under the TLD, so the first copy pins it for an imported
+/// stack as the bundled copy does for a built-in one.
+#[test]
+fn the_first_imported_copy_pins_the_tld() {
+	let (host, _) = fetching_host(vec![published(&bundled())]);
+	let (link, _) = sign_test_descriptor(&bundled());
+	let refresh = import(&link, Arc::default(), &host).expect("the fetched copy is valid");
+	let (moved, _) = fetching_host(vec![published(&on_testnet(published_test_descriptor_at(2)))]);
+
+	let status = futures::executor::block_on(refresh.fetch_now(&moved));
+
+	assert_eq!(status.last_refresh, refused_for_its_tld());
+}
+
+/// A chain that answers with another genesis hash may have restarted, so the
+/// host fetches the descriptor before it refuses the stack, and a newer copy
+/// that changes the stack is run from the next start.
+#[test]
+fn fetch_now_stores_a_newer_copy_and_asks_for_a_restart() {
+	let records = Arc::<MemoryRecords>::default();
+	let refresh = load(records.clone(), Arc::default(), manual_clock());
+	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
+	let (host, _) = fetching_host(vec![published(&wiped)]);
+
+	let status = futures::executor::block_on(refresh.fetch_now(&host));
+	let restarted = load(records, Arc::default(), manual_clock());
+
+	assert_eq!(
+		(status.restart_required, restarted.stack().generation().to_string()),
+		(true, "second".to_string())
+	);
+}
+
+/// A failed fetch leaves the core on the copy it holds.
+#[test]
+fn fetch_now_keeps_the_copy_when_the_fetch_fails() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (host, _) = fetching_host(vec![unreachable()]);
+
+	let status = futures::executor::block_on(refresh.fetch_now(&host));
+
+	assert_eq!(status, stack_status(&bundled(), unreachable_because("connection refused")));
+}
+
+/// RFC 1 gives a stack without a key no rollback protection, so a copy with
+/// a lower `sequence` is taken and stored, and the next start runs it.
+#[test]
+fn an_unsigned_copy_with_a_lower_sequence_is_taken_and_kept() {
+	let unsigned = |sequence: u32| {
+		let bytes = serde_json::to_vec(&published_test_descriptor_at(sequence)).unwrap();
+		Ok(StackFetchResponse::Document { bytes, etag: None })
+	};
+	let records = Arc::<MemoryRecords>::default();
+	let link = crate::test_support::test_stack_link(None);
+	let (first, _) = fetching_host(vec![unsigned(5)]);
+	let refresh = import(&link, records.clone(), &first).expect("an unsigned copy is imported");
+	let (older, _) = fetching_host(vec![unsigned(4)]);
+
+	let status = futures::executor::block_on(refresh.fetch_now(&older));
+	let (no_fetch, _) = fetching_host(Vec::new());
+	let restarted = import(&link, records, &no_fetch).expect("the stored copy runs");
+
+	assert_eq!(
+		(status.last_refresh, restarted.descriptor().sequence),
+		(Some(StackRefreshOutcome::Current), 4)
+	);
+}
+
+/// A first copy that could not be stored is reported, so the host knows the
+/// next start fetches again.
+#[test]
+fn an_imported_copy_that_could_not_be_stored_is_reported() {
+	let records = Arc::<MemoryRecords>::default();
+	records.disk_full.store(true, Ordering::SeqCst);
+	let (host, _) = fetching_host(vec![published(&bundled())]);
+	let (link, _) = sign_test_descriptor(&bundled());
+
+	let refresh = import(&link, records, &host).expect("the fetched copy runs");
+
+	assert_eq!(
+		refresh.status().last_refresh,
+		Some(StackRefreshOutcome::NotStored { reason: "disk full".to_string() })
+	);
+}
+
+/// A bundled copy was never fetched, so the first refresh is due at once,
+/// and a fetch makes the next one due an hour later.
+#[test]
+fn a_fetch_is_due_for_a_copy_never_fetched_and_not_right_after_one() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let due_at_start = refresh.fetch_is_due();
+	let (host, _) = fetching_host(vec![published(&bundled())]);
+
+	let _ = futures::executor::block_on(refresh.fetch_now(&host));
+
+	assert_eq!((due_at_start, refresh.fetch_is_due()), (true, false));
+}

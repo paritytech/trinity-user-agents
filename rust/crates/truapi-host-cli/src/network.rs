@@ -1,11 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
-use truapi::platform::{
-	ChainExtensionVersion, ExtensionVersionMap, ReservedValuesPolicy, StackChains, StackError,
-	StackIdentity,
-};
+use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackRefresh};
 
 use crate::{
 	chain::{ChainAccess, ChainBackend, StackLightClient},
@@ -14,14 +11,18 @@ use crate::{
 
 mod built_in;
 mod checks;
+mod host;
 mod polkadot_fork;
+mod records;
 mod source;
 mod stack;
 #[cfg(test)]
 mod testing;
 
 #[cfg(test)]
-pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, light_spec_genesis, serve_light_specs};
+pub use testing::{
+	PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, light_spec_genesis, serve_light_specs, stack_on,
+};
 
 pub use built_in::{bundled_light_spec, ensure_built_in_runnable};
 
@@ -47,6 +48,10 @@ pub enum Network {
 /// Env var supplying `--stack` when the flag is absent; a blank value is unset.
 pub const STACK_ENV: &str = "HOST_CLI_STACK";
 
+/// How long a command waits for its stack's descriptor before it runs, when
+/// the copy it holds is due for a fetch. It then runs on that copy.
+const PRE_START_FETCH_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// How long a chain check before a command runs waits for a node: an
 /// endpoint's genesis probe, and each side of the Polkadot fork comparison.
 pub const CHAIN_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
@@ -61,13 +66,13 @@ pub async fn within_check_timeout<T>(
 	})
 }
 
-/// The namespace no stack runs under, since it may contain sessions of real
-/// Polkadot identities.
+/// The namespace no stack runs under, so that the CLI presents none as
+/// Polkadot.
 const POLKADOT_NAMESPACE: &str = "polkadot";
 
-/// The product namespace of the stack `id`: `id` without a trailing `-fork`,
-/// except that the `polkadot-fork` namespace is its full `id` rather than the
-/// `polkadot` one.
+/// The product namespace of the stack whose descriptor names itself `id`: `id`
+/// without a trailing `-fork`, except that the `polkadot-fork` namespace is its
+/// full `id` rather than the `polkadot` one.
 fn namespace_of(id: &str) -> &str {
 	id.strip_suffix("-fork")
 		.filter(|source| *source != POLKADOT_NAMESPACE)
@@ -75,11 +80,14 @@ fn namespace_of(id: &str) -> &str {
 }
 
 /// Where a command's network comes from: `--chain-backend`, and `--network`
-/// or `--stack`. Built only by [`NetworkSource::new`], which refuses the
-/// flag combinations no command can run.
+/// or `--stack`, and where each stack's state is kept. Built only by
+/// [`NetworkSource::new`], which refuses the flag combinations no command can
+/// run.
 pub struct NetworkSource {
 	chain_access: ChainAccess,
 	network: NetworkChoice,
+	/// `<base-path>/v2`, which holds each stack's state directory.
+	state_base: PathBuf,
 }
 
 /// The network a command runs on, before anything is fetched.
@@ -102,9 +110,13 @@ pub struct StackArg {
 /// The stack a command runs against, connected to over `--chain-backend`.
 /// Built only by [`Stack::new`], which decodes every field the accessors
 /// read, so none of them fails.
-#[derive(Debug)]
 pub struct Stack {
-	stack_id: String,
+	/// The stack the core runs, with the checks of its chains when the core
+	/// refreshes it.
+	core: truapi::platform::Stack,
+	/// `None` for a local descriptor file, which nothing refreshes.
+	refresh: Option<DescriptorRefresh>,
+	state_directory: String,
 	descriptor: Descriptor,
 	/// Set exactly when the stack runs on the light client.
 	light_client: Option<Arc<StackLightClient>>,
@@ -120,13 +132,60 @@ pub struct ChainEndpoint {
 	pub ws: String,
 }
 
+impl std::fmt::Debug for Stack {
+	fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		formatter
+			.debug_struct("Stack")
+			.field("state_directory", &self.state_directory)
+			.field("descriptor", &self.descriptor)
+			.finish_non_exhaustive()
+	}
+}
+
+/// The core's refresh of a stack's descriptor, and the host it fetches
+/// through.
+pub struct DescriptorRefresh {
+	refresh: StackRefresh,
+	host: host::CliStackHost,
+}
+
+impl DescriptorRefresh {
+	fn start(&self) {
+		let spawner = truapi::Spawner::new(tokio::runtime::Handle::current());
+		if !self.refresh.start(Box::new(self.host.clone()), &spawner) {
+			tracing::debug!("the stack's descriptor is refreshed already");
+		}
+	}
+}
+
 impl Stack {
-	/// The product namespace, where the CLI stores this network's state: the
-	/// descriptor's `id` without a trailing `-fork`, so a fork shares its
-	/// source's state, except that the `polkadot-fork` namespace is its full
-	/// `id`.
+	/// The product namespace: the name the CLI prints for this network.
+	///
+	/// It is the descriptor's `id` without a trailing `-fork`, except that
+	/// `polkadot-fork` stays whole. Nothing is stored under it; see
+	/// [`Self::state_directory`].
 	pub fn namespace(&self) -> &str {
 		namespace_of(&self.descriptor.id)
+	}
+
+	/// The directory under `<base-path>/v2` that holds this stack's state.
+	///
+	/// A built-in network's is its name, such as `previewnet`. Any other
+	/// stack's is `stack-` plus a hash of its key, URL or file path, so a fork
+	/// never shares its source's directory. The account store files the
+	/// stack's accounts under the same name.
+	pub fn state_directory(&self) -> &str {
+		&self.state_directory
+	}
+
+	/// The name messages about this stack's stored state use.
+	///
+	/// The [`Self::namespace`], followed by the directory in parentheses when
+	/// the two differ, such as `previewnet (stack-1a2b…)`. A fork has its
+	/// source's namespace, so the directory shows which one a command clears.
+	pub fn state_label(&self) -> String {
+		let (name, directory) = (self.namespace(), self.state_directory());
+		if name == directory { name.to_owned() } else { format!("{name} ({directory})") }
 	}
 
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
@@ -135,7 +194,7 @@ impl Stack {
 	/// creates here is the same person a phone derives from that seed on this
 	/// network.
 	pub fn tld(&self) -> &str {
-		&self.descriptor.tld
+		self.core.tld()
 	}
 
 	/// Each role's genesis hash: the chain `feature_supported` and the core's
@@ -181,32 +240,23 @@ impl Stack {
 		self.light_client.clone()
 	}
 
-	/// The identity of the pointer the descriptor was read from, and the
-	/// descriptor's `generation`.
-	pub fn identity(&self) -> StackIdentity {
-		StackIdentity { id: self.stack_id.clone(), generation: self.descriptor.generation.clone() }
+	/// The stack the core runs on, without the relay the CLI does not serve.
+	///
+	/// It allows Polkadot's reserved values, which the CLI checks itself, so
+	/// use it only on a stack from [`NetworkSource::resolve_checked`].
+	pub fn core_stack(&self) -> truapi::platform::Stack {
+		self.core.clone()
 	}
 
-	/// The stack the core runs on: the descriptor's `network` and TLD, and the
-	/// People, Bulletin and Asset Hub chains the CLI serves. It serves no Relay.
-	///
-	/// Allows Polkadot's reserved values, which the CLI checks itself, so call
-	/// it only on a stack from [`NetworkSource::resolve_checked`].
-	pub fn core_stack(&self) -> Result<truapi::platform::Stack, StackError> {
-		let genesis = self.genesis();
-		let chains = StackChains {
-			relay: None,
-			asset_hub: genesis.asset_hub,
-			people: genesis.people,
-			bulletin: genesis.bulletin,
-		};
-		truapi::platform::Stack::new(
-			self.identity(),
-			self.descriptor.network.clone(),
-			self.descriptor.tld.clone(),
-			chains,
-			&ReservedValuesPolicy::ALLOWED,
-		)
+	/// This stack, with its descriptor refreshed in the background for as
+	/// long as it lives. A command does not wait for the fetch, but one that
+	/// runs long enough keeps a newer copy for the next. A local descriptor
+	/// file is never refreshed.
+	fn kept_current(self) -> Self {
+		if let Some(refresh) = &self.refresh {
+			refresh.start();
+		}
+		self
 	}
 
 	/// The chains this network builds as V5 general transactions: People and

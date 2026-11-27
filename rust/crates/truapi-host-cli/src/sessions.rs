@@ -150,6 +150,23 @@ pub enum SessionClearTarget {
 	All,
 }
 
+/// A clear whose account store locks are held, made by
+/// [`SessionCatalog::prepare_clear`] and carried out by
+/// [`SessionCatalog::clear`].
+pub struct PreparedClear {
+	target: SessionClearTarget,
+	names: Vec<String>,
+	default_store: accounts::AccountStoreLock,
+	_session_stores: Vec<accounts::AccountStoreLock>,
+}
+
+impl PreparedClear {
+	/// The target, with a name resolved as session selection resolves it.
+	pub fn target(&self) -> &SessionClearTarget {
+		&self.target
+	}
+}
+
 #[derive(Serialize, Deserialize)]
 struct SessionInfo {
 	version: u32,
@@ -259,7 +276,6 @@ impl Drop for SessionPromotion {
 /// Persistent session catalog for one network.
 #[derive(Clone)]
 pub struct SessionCatalog {
-	base_path: PathBuf,
 	network_id: String,
 	network_path: PathBuf,
 	role_path: PathBuf,
@@ -267,12 +283,11 @@ pub struct SessionCatalog {
 
 impl SessionCatalog {
 	pub fn new(base_path: PathBuf, network_id: &str) -> Result<Self> {
-		let base_path = absolute_path(base_path)?;
-		let network_path = base_path.join(network_id);
+		let network_path = absolute_path(base_path)?.join(network_id);
 		let role_path = network_path.join("signing-host");
 		fs::create_dir_all(&role_path)
 			.with_context(|| format!("create session root {}", role_path.display()))?;
-		Ok(Self { base_path, network_id: network_id.to_string(), network_path, role_path })
+		Ok(Self { network_id: network_id.to_string(), network_path, role_path })
 	}
 
 	pub fn profile(&self, name: &str) -> Result<SessionProfile> {
@@ -282,8 +297,7 @@ impl SessionCatalog {
 				name: name.to_string(),
 				path: self.role_path.clone(),
 				product_storage_dir: self.role_path.join("storage").join(name),
-				// Preserve the pre-session account store for compatibility.
-				account_base_path: self.base_path.clone(),
+				account_base_path: self.role_path.clone(),
 			});
 		}
 		let path = self.identity_path(name);
@@ -424,18 +438,13 @@ impl SessionCatalog {
 		Ok(names)
 	}
 
-	/// Return the network whose signing-host sessions this catalog owns.
-	pub fn network_id(&self) -> &str {
-		&self.network_id
-	}
-
-	/// Check that a clear target currently resolves to managed session data.
-	pub fn validate_clear_target(&self, target: &SessionClearTarget) -> Result<()> {
+	/// Check that a clear target names a listed session as it is given,
+	/// without resolving it.
+	fn validate_clear_target(&self, target: &SessionClearTarget) -> Result<()> {
 		let SessionClearTarget::Named(name) = target else {
 			return Ok(());
 		};
 		validate_selectable_name(name)?;
-		let name = &self.resolve_session_name(name)?;
 		if self.list()?.iter().any(|existing| existing == name) {
 			Ok(())
 		} else {
@@ -443,24 +452,61 @@ impl SessionCatalog {
 		}
 	}
 
-	/// Permanently remove the selected local signing-host session data.
+	/// `target` with its name resolved as session selection resolves it, so a
+	/// name promoted away clears the session it created.
 	///
-	/// Callers must stop an active runtime before clearing its profile. The
-	/// catalog only removes paths it derives from validated, listed names.
-	pub fn clear(&self, target: &SessionClearTarget) -> Result<Vec<String>> {
-		// Resolve once here, so a name promoted away clears the session it
-		// created just as it selects it everywhere else.
-		let resolved;
+	/// Fails when the typed name is not selectable, and as
+	/// [`Self::validate_clear_target`] does for the name it resolves to.
+	pub fn resolve_clear_target(&self, target: &SessionClearTarget) -> Result<SessionClearTarget> {
 		let target = match target {
 			SessionClearTarget::Named(name) => {
-				resolved = SessionClearTarget::Named(self.resolve_session_name(name)?);
-				&resolved
+				validate_selectable_name(name)?;
+				SessionClearTarget::Named(self.resolve_session_name(name)?)
 			},
-			SessionClearTarget::All => target,
+			SessionClearTarget::All => SessionClearTarget::All,
 		};
+		self.validate_clear_target(&target)?;
+		Ok(target)
+	}
+
+	/// Check that `target` is still listed and take the account store locks
+	/// its clear needs, before anything is removed or a host is stopped.
+	///
+	/// `target` is not resolved again, so the clear removes the session the
+	/// user confirmed. The locks stop a host that is picking an account for a
+	/// cleared session from writing it back. A host already running on one can
+	/// still write to its directory. Fails as [`Self::validate_clear_target`]
+	/// does, or when another process holds a lock.
+	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {
 		self.validate_clear_target(target)?;
-		match target {
+		let target = target.clone();
+		let names = match &target {
+			SessionClearTarget::Named(name) => vec![name.clone()],
+			SessionClearTarget::All => self.list()?,
+		};
+		let default_store = accounts::AccountStoreLock::acquire(
+			&self.profile(DEFAULT_SESSION_NAME)?.account_base_path,
+		)?;
+		let session_stores = names
+			.iter()
+			.map(|name| accounts::AccountStoreLock::acquire(&self.profile(name)?.account_base_path))
+			.collect::<Result<Vec<_>>>()?;
+		Ok(PreparedClear { target, names, default_store, _session_stores: session_stores })
+	}
+
+	/// Permanently remove the sessions `clear` names, under its locks, and
+	/// return their names.
+	///
+	/// Stop a running host on one of these sessions first. Nothing outside
+	/// this stack's directory is removed. The default session's store loses a
+	/// session's accounts before its directory goes, or goes whole and first
+	/// when clearing every session, so a clear that stops halfway can be run
+	/// again.
+	pub fn clear(&self, clear: PreparedClear) -> Result<Vec<String>> {
+		let PreparedClear { target, names, default_store, _session_stores } = clear;
+		match &target {
 			SessionClearTarget::Named(name) => {
+				default_store.remove_managed_accounts(&self.network_id, name)?;
 				let was_current = matches!(
 					self.current_session()?,
 					CurrentSession::Pointed(current) if current == *name
@@ -469,19 +515,15 @@ impl SessionCatalog {
 				if was_current {
 					remove_file_if_exists(&self.role_path.join(CURRENT_SESSION_FILE))?;
 				}
-				accounts::remove_managed_accounts(&self.base_path, &self.network_id, Some(name))?;
-				Ok(vec![name.clone()])
 			},
 			SessionClearTarget::All => {
-				let names = self.list()?;
+				remove_dir_if_exists(&self.role_path)?;
 				for name in &names {
 					self.remove_named_data(name)?;
 				}
-				remove_dir_if_exists(&self.role_path)?;
-				accounts::remove_managed_accounts(&self.base_path, &self.network_id, None)?;
-				Ok(names)
 			},
 		}
+		Ok(names)
 	}
 
 	fn remove_named_data(&self, name: &str) -> Result<()> {

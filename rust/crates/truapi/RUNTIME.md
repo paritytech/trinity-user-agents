@@ -183,9 +183,17 @@ pointer, the signed descriptor its build bundles, and the build's
 and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
-A Rust host that resolves its chains itself, such as the CLI, uses
-`Stack::new`, and a test-host browser bundle passes `runtimeConfig.testStack`.
-The core does not refresh a stack built either of those ways. Each constructor
+A stack its build ships no copy of, such as one a developer passes to the CLI,
+starts through `StackRefresh::import` from its link, signed or not. The core
+starts from the copy it stored for that stack, or fetches the descriptor first
+and stores it. `StackRefresh::fetch_now` makes one fetch a host can wait on; the
+CLI calls it when one of its chain checks fails, before it refuses the stack,
+since the operator may have published new genesis hashes. A tool that runs one
+command at a time may exit before a background fetch is stored, so it can ask
+`StackRefresh::fetch_is_due` and wait for `fetch_now` before it starts, as the
+CLI does. A local descriptor file runs through `Stack::local` under the tool's
+own id, and a test-host browser bundle passes `runtimeConfig.testStack`. The
+core does not refresh a stack built either of those two ways. Each constructor
 documents what it refuses.
 
 Reserved identities derive under `peopl.<tld>`, and the People
@@ -250,8 +258,8 @@ The check has three limits:
 - A light client answers from its chain spec, so a chain that restarted is out
   of its reach and never listed. Only the hourly fetch brings it the new
   descriptor.
-- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
-  is not checked.
+- A `Stack` built any other way, such as with `Stack::local` or from
+  `testStack`, is not checked.
 
 The core also checks People's `NetworkSuffix.NetworkSuffix` against the
 descriptor's `tld`. It makes no request for this. A signing host already reads
@@ -274,6 +282,20 @@ A failed read changes nothing, and neither does a suffix that is not one to
 sixteen bytes long: a suffix listed before stays listed, and the allowance work
 fails with that error. A pairing host does no allowance work, so it never lists
 a suffix.
+
+#### Storage per stack
+
+Apart from `StackRecord`, the core's storage keys do not say which stack they
+belong to, so the host has to keep stacks apart. A host that can run more than
+one stack gives each one its own `CoreStorage`, `ProductStorage`, encrypted
+store and core database directory, and chooses them before it starts the core.
+
+It chooses them by the stack's pointer, not by anything in the descriptor. A
+fork has the same genesis hashes and TLD as its source, and its descriptor can
+declare any `id`, its source's included.
+
+The CLI keeps each stack's state in a directory of its own, as its
+[README](../truapi-host-cli/README.md#state-directory) describes.
 
 #### Descriptor refresh
 
@@ -298,14 +320,16 @@ under an hour ago, then once an hour and whenever the host calls
 when its app returns to the foreground. `StackFetchRequest` says how to make
 the request.
 
-`trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
-a failed fetch, a refused descriptor or a lower `sequence` keeps the current
-one. The core also refuses a descriptor it could not start from, such as one
-without a People chain, and one on another TLD than the bundled copy, since
-accounts derive under the TLD. A stored descriptor it would refuse is ignored
-until the next one the core takes replaces it, whatever its `sequence`. After
-a refused or failed fetch, `last_refresh` reports that fetch even if writing
-the record fails.
+`trinity-stack`'s `StackReader` decides whether to take a fetched descriptor: a
+failed fetch, a refused descriptor or a lower `sequence` keeps the current one.
+A stack without a key has no rollback protection, so for it the reader takes a
+lower `sequence` and the record store keeps it. The core also refuses a
+descriptor it could not start from, such as one without a People chain, and one
+on another TLD than its first copy (the bundled one, or for an imported stack
+the first it held), since accounts derive under the TLD. A stored descriptor it
+would refuse is ignored until the next one the core takes replaces it, whatever
+its `sequence`. After a refused or failed fetch, `last_refresh` reports that
+fetch even if writing the record fails.
 
 A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,

@@ -3,12 +3,14 @@
 
 use std::{
 	fs,
+	path::PathBuf,
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
 use trinity_stack::{Chain, Descriptor, Fetched, Pointer, accept};
+use truapi::platform::StackFetchResponse;
 
 /// A local file has no URL of its own; the pointer only carries the key to check. Every local
 /// file is read under it, so its `stack_id` does not tell one file's stack from another's.
@@ -16,7 +18,7 @@ const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest body `fetch` reads. A descriptor is a few kilobytes, and the
 /// largest light spec, a relay's with its checkpoint, is under 300 KiB.
-const MAX_FETCH_BYTES: usize = 1024 * 1024;
+pub const MAX_FETCH_BYTES: usize = 1024 * 1024;
 
 pub fn refused(error: trinity_stack::Error) -> anyhow::Error {
 	anyhow!("refused ({}): {error}", error.code())
@@ -38,60 +40,79 @@ pub fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
 	Ok(Some(keyed))
 }
 
-/// Where a stack value's bytes were read from.
-pub enum StackSource {
-	/// A link or a URL, fetched.
-	Fetched,
-	/// A local descriptor file.
-	LocalFile,
-}
-
-/// The pointer a stack value carries, the bytes it serves and where they were read from: a link
-/// or a URL, fetched, or a local file, read under a pointer with no URL of its own and `key`.
-/// Fails when it is unreachable.
-pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>, StackSource)> {
+/// The pointer a stack value carries and the bytes it serves: a link or a URL, fetched, or a local
+/// file, read under a pointer with no URL of its own and `key`. Fails when it is unreachable.
+pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>)> {
 	match pointer_of(stack, key)? {
 		Some(pointer) => {
 			let bytes = fetch(pointer.url().as_str(), FETCH_TIMEOUT)
 				.await
 				.map_err(|cause| anyhow!("{stack} is unreachable: {cause}"))?;
-			Ok((pointer, bytes, StackSource::Fetched))
+			Ok((pointer, bytes))
 		},
 		None => Ok((
 			Pointer::new(LOCAL_FILE_URL, key).map_err(refused)?,
 			fs::read(stack).with_context(|| format!("cannot read {stack}"))?,
-			StackSource::LocalFile,
 		)),
 	}
 }
 
-/// The descriptor a `--stack` value points to, with the stack's id: a link or a URL, fetched and
-/// checked against the key a link carries or `key`, or a local descriptor file, signed or not.
-/// Fails when it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past
-/// `validUntil`.
-///
-/// The id is the pointer's. A local file has no pointer of its own, so its id is `file:` followed
-/// by its canonical path: two files are two stacks, and a file that moves becomes another stack.
-pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
-	let (pointer, bytes, source) = read_stack(stack, key).await?;
+/// The descriptor in the local file at `path`, signed or not, with no key checked. Fails when it
+/// cannot be read, breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
+pub async fn read_local_descriptor(path: &str) -> Result<Descriptor> {
+	let (pointer, bytes) = read_stack(path, None).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
-		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
+		.map_err(|error| anyhow!("stack {path} is {}", refused(error)))?;
 	if accepted.expired {
-		bail!("stack {stack} is past expiresAt");
+		bail!("stack {path} is past expiresAt");
 	}
 	if accepted.stale {
-		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
+		tracing::warn!("stack {path} is past validUntil; its operator should republish");
 	}
-	let stack_id = match source {
-		StackSource::Fetched => pointer.stack_id(),
-		StackSource::LocalFile => local_file_id(stack)?,
-	};
-	Ok((stack_id, accepted.stack.descriptor))
+	Ok(accepted.stack.descriptor)
 }
 
-fn local_file_id(path: &str) -> Result<String> {
-	let canonical = fs::canonicalize(path).with_context(|| format!("cannot resolve {path}"))?;
-	Ok(format!("file:{}", canonical.display()))
+/// The id of the stack in the local file at `path`: `file:` and its canonical path, so a file that
+/// moves becomes another stack.
+///
+/// Refuses a path that is not a regular file, such as a pipe, since one path can carry any
+/// descriptor, and one whose canonical path is under `/dev/fd`, which other files share, or is not
+/// UTF-8.
+pub fn local_file_id(path: &str) -> Result<String> {
+	let metadata = fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
+	if !metadata.is_file() {
+		bail!(
+			"{path} is not a regular file, so it cannot name a stack; save the descriptor to a \
+			 file and give its path"
+		);
+	}
+	let canonical = fs::canonicalize(path).map_err(|error| {
+		anyhow!(
+			"cannot resolve the canonical path of {path}, which names the stack ({error}); save \
+			 the descriptor to a file and give its path"
+		)
+	})?;
+	if canonical.starts_with("/dev/fd") {
+		bail!(
+			"{path} resolves to {}, a file descriptor's path that another file can resolve to as \
+			 well, so it cannot name a stack; save the descriptor to a file and give its path",
+			canonical.display()
+		);
+	}
+	canonical_file_id(canonical)
+}
+
+/// `file:` followed by `canonical`. Fails when `canonical` is not UTF-8, since
+/// a lossy conversion would give two such paths one id.
+fn canonical_file_id(canonical: PathBuf) -> Result<String> {
+	let canonical = canonical.into_os_string().into_string().map_err(|canonical| {
+		anyhow!(
+			"{} is not a UTF-8 path, so it cannot name a stack; copy the file to a path that is \
+			 UTF-8",
+			canonical.display()
+		)
+	})?;
+	Ok(format!("file:{canonical}"))
 }
 
 /// One value for each chain role a host routes.
@@ -167,8 +188,7 @@ pub fn bundles_same(stack: &Descriptor, other: &Descriptor) -> bool {
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
 /// a change to the TLD, which every account derives under, or to the `id`,
-/// the namespace every session and account is stored under. `None` when both
-/// stay.
+/// which the CLI names the network by. `None` when both stay.
 pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<String> {
 	if fetched.tld != stored.tld {
 		Some(format!(
@@ -177,8 +197,7 @@ pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<
 		))
 	} else if fetched.id != stored.id {
 		Some(format!(
-			"changes the id from {} to {}, which moves every session and account to another \
-			 namespace",
+			"changes the id from {} to {}, which the CLI names the network by",
 			stored.id, fetched.id
 		))
 	} else {
@@ -189,54 +208,76 @@ pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<
 /// Why a descriptor URL served no descriptor.
 #[derive(derive_more::Display)]
 pub enum FetchError {
-	/// The server returned a status other than 2xx.
+	/// No answer, an error status or a redirect.
 	#[display("{_0}")]
-	Http(String),
-	/// No answer, or a body that cannot be a descriptor.
-	#[display("{_0}")]
-	Transport(String),
-	/// The body is larger than `fetch` reads.
-	#[display("larger than {MAX_FETCH_BYTES} bytes")]
-	TooLarge,
+	Failed(String),
+	/// The body is larger than the fetch reads.
+	#[display("larger than {_0} bytes")]
+	TooLarge(usize),
 }
 
 /// The bytes a descriptor or light spec URL serves, or why it is unreachable. Redirects are
 /// refused: the URL rules hold for the URL the pointer names, and a redirect could lead to plain
 /// http.
 pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> {
-	let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
+	match fetch_if_changed(url, timeout, None, MAX_FETCH_BYTES).await? {
+		StackFetchResponse::Document { bytes, .. } => Ok(bytes),
+		StackFetchResponse::NotModified => {
+			unreachable!("a fetch without If-None-Match is never answered 304")
+		},
+	}
+}
+
+/// [`fetch`], sending `if_none_match` as `If-None-Match` when it is given and reading at most
+/// `max_bytes`.
+pub async fn fetch_if_changed(
+	url: &str,
+	timeout: Duration,
+	if_none_match: Option<&str>,
+	max_bytes: usize,
+) -> Result<StackFetchResponse, FetchError> {
+	let failed = |error: reqwest::Error| FetchError::Failed(error.to_string());
 	let client = reqwest::Client::builder()
 		.timeout(timeout)
 		.redirect(reqwest::redirect::Policy::none())
 		.build()
-		.map_err(transport)?;
-	let response = client.get(url).send().await.map_err(|error| match error.is_timeout() {
-		true => FetchError::Transport(format!("no answer within {}s", timeout.as_secs())),
-		false => transport(error),
+		.map_err(failed)?;
+	let mut request = client.get(url);
+	if let Some(etag) = if_none_match {
+		request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+	}
+	let response = request.send().await.map_err(|error| match error.is_timeout() {
+		true => FetchError::Failed(format!("no answer within {}s", timeout.as_secs())),
+		false => failed(error),
 	})?;
 	let status = response.status();
+	if status == reqwest::StatusCode::NOT_MODIFIED && if_none_match.is_some() {
+		return Ok(StackFetchResponse::NotModified);
+	}
 	if status.is_redirection() {
 		let location = response.headers().get(reqwest::header::LOCATION);
 		let location = location.and_then(|value| value.to_str().ok()).unwrap_or("nowhere");
-		return Err(FetchError::Http(format!(
+		return Err(FetchError::Failed(format!(
 			"HTTP {status} to {location}; redirects are not followed"
 		)));
 	}
 	if !status.is_success() {
-		return Err(FetchError::Http(format!("HTTP {status}")));
+		return Err(FetchError::Failed(format!("HTTP {status}")));
 	}
-	if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES as u64) {
-		return Err(FetchError::TooLarge);
+	if response.content_length().is_some_and(|length| length > max_bytes as u64) {
+		return Err(FetchError::TooLarge(max_bytes));
 	}
+	let etag = response.headers().get(reqwest::header::ETAG);
+	let etag = etag.and_then(|value| value.to_str().ok()).map(str::to_owned);
 	let mut response = response;
-	let mut body = Vec::new();
-	while let Some(chunk) = response.chunk().await.map_err(transport)? {
-		body.extend_from_slice(&chunk);
-		if body.len() > MAX_FETCH_BYTES {
-			return Err(FetchError::TooLarge);
+	let mut bytes = Vec::new();
+	while let Some(chunk) = response.chunk().await.map_err(failed)? {
+		bytes.extend_from_slice(&chunk);
+		if bytes.len() > max_bytes {
+			return Err(FetchError::TooLarge(max_bytes));
 		}
 	}
-	Ok(body)
+	Ok(StackFetchResponse::Document { bytes, etag })
 }
 
 /// Seconds since the Unix epoch, or 0 when the clock is before it.

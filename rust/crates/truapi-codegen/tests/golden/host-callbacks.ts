@@ -202,7 +202,9 @@ export type CoreStorageKey =
    *
    * Hosts must back this slot with storage scoped to the install, outliving
    * logout and any per-user namespacing: once it changes, peers addressing
-   * the previous key can no longer reach this device.
+   * the previous key can no longer reach this device. A host that runs more
+   * than one stack gives each stack its own `CoreStorage`, so each has its own
+   * key.
    */
   | { tag: "DeviceEncryptionKey"; value?: undefined }
   /**
@@ -1985,6 +1987,12 @@ export interface CoreAdmin {
 
 /**
  * Host-private persistence for core-owned state.
+ *
+ * Apart from `CoreStorageKey::StackRecord`, the keys do not name the
+ * stack, so a host that can run more than one stack keeps a separate store
+ * for each, chosen by the stack's pointer before it starts the core. The same
+ * holds for `ProductStorage`, the encrypted store and a native host's core
+ * database directory.
  *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run

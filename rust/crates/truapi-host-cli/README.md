@@ -135,6 +135,19 @@ through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
+Each stack has its own directory under `v2`. A built-in network uses its name,
+such as `v2/paseo-next-v2`, also when `--stack` gives its link or URL. Any other
+stack gets `stack-` plus a hash of its key, or of its URL or file path when it
+has no key. So a fork starts with none of its source's sessions, accounts,
+pairings or stored data.
+
+A local file is identified by its full path. Moving or renaming it, or using a
+copy in another checkout or a temporary file, starts from scratch, and the CLI
+does not say why. The default session's accounts are in
+`v2/<state_directory>/signing-host/accounts.json`. An `accounts.json` directly
+under `v2`, from earlier releases, is not read. `truapi-host network-check`
+prints the directory name as `state_directory`, and SPEC.md §13.1 has the rest.
+
 The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices
 again; sign out first on any paired host that still uses an old identity.
@@ -528,7 +541,11 @@ keys, session-local scripts, core/product storage, and permissions. Persistent
 script projects under `<base-path>/scripts` are preserved. `/session --clear-all`
 does the same for every signing-host session on the current network, including
 the network's signing-host bootstrap state, while preserving other networks and
-pairing-host state. Neither command deregisters an on-chain username. The interactive UI
+pairing-host state. Neither command deregisters an on-chain username. Neither
+removes copies of the mnemonics either: a session gets a copy of the default
+session's accounts when it is promoted, and an earlier release kept them in
+`accounts.json` directly under `<base-path>/v2`. Delete that file by hand once
+none is needed. The interactive UI
 asks for `[y/N]` confirmation. `exec` treats the explicit one-shot command as
 confirmation and runs it immediately. Clearing an inactive named session keeps
 the host running; clearing the active session or all sessions stops the signing
@@ -1036,8 +1053,8 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
-copy was signed with another key (every derived account, or the namespace every
-session is stored under, would change; remove the copy to bundle it on purpose),
+copy was signed with another key (every derived account, or the name the CLI
+knows the network by, would change; remove the copy to bundle it on purpose),
 and a built-in network's copy the CLI cannot run on over either chain backend.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields neither truapi-host nor
@@ -1081,9 +1098,10 @@ replaceable slot across all collections. Allocation on behalf of a connecting
 product may not: it reports the period as exhausted, because every entry in the
 table is one of this wallet's own products and reclaiming space belongs to the
 renewal pass. `alloc-check` prints both collections' member keys, ring indices and
-slot tables. Auto-managed accounts are stored in
-`accounts.json` under `<base-path>/v2`; mnemonics are plaintext local test secrets
-and the file is written with `0600` permissions on Unix. `alloc-check` verifies
+slot tables. Auto-managed accounts are stored in each session's `accounts.json`
+under its stack's directory in `<base-path>/v2`, the default session's in
+`<network>/signing-host`; mnemonics are plaintext local test secrets and the
+file is written with `0600` permissions on Unix. `alloc-check` verifies
 membership and can submit a test registration.
 
 When a managed session has saved pairings, Statement Store exhaustion does not
@@ -1118,34 +1136,40 @@ Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
 descriptors target previewnet, so its statements, its host chain routes and its
 own chain reads all land on one network. The CLI mints the identity backend's
-bearer token itself (SPEC.md §12.3). Sessions are per network, so each network
-gets its own signer identity on the same machine.
+bearer token itself (SPEC.md §12.3). Sessions and accounts are per stack, so
+each network gets its own signer identity on the same machine.
 
 A command reaches its chains in one of two ways:
 
 - **A built-in network** (`--network`, `paseo-next-v2` by default).
-  All three are built-in Trinity stacks. Each command that
-  resolves one fetches the descriptor its operator publishes, verifies it against
-  the stack's key, and uses it when it is newer than the signed copy this release
-  ships in `stacks/`; an unreachable descriptor falls back to the shipped copy
-  silently, and a non-2xx answer is logged as a warning. When the published
-  descriptor changes a field the CLI reads, the CLI prints one line saying that it is
-  in use and that a later release ships it; when the stack restarted from genesis the
-  line reports that too. A newer copy that changes nothing the CLI reads is used
-  without a line. A published descriptor that changes the stack's `tld` or `id`, or
-  that the CLI cannot run on, is not used: the bundled copy stays in use with a
-  warning, since every account derives under the TLD and is stored under the id. A
-  stack past its `expiresAt` is an error.
+  All three are built-in Trinity stacks. The core starts each from the signed copy
+  this release ships in `stacks/`, or from a newer copy it verified and kept in the
+  network's state directory. Before a command runs, the CLI fetches the published
+  descriptor when the copy it holds was last fetched over an hour ago or never, as
+  the shipped copy is, saying so and waiting up to 3 seconds. Until a fetch brings
+  the current copy or a newer one, for instance while the server is down, every
+  command fetches again. A newer copy the fetch stores is run at once. When the copy
+  held cannot run, for instance past `expiresAt`, the CLI fetches once more before
+  the command fails. The descriptor is also refreshed in the background while a
+  command runs, and a running host logs when a newer copy needs a restart. A
+  published descriptor that changes the stack's `tld` is not kept, since every
+  account derives under the TLD, and neither is one the CLI cannot run on, for
+  instance one without a `dub` service, `dotns.popController` or one of the chains
+  it serves, or on the light client one without a light spec for a chain it runs.
+  Each is reported with a warning. A copy past `expiresAt` is kept: the stack has
+  shut down, and commands fail until its operator publishes a newer one.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
-  replaces `--network`, and the two cannot be combined; details below.
+  replaces `--network`, and the two cannot be combined. A link or URL is fetched by
+  the first command and kept like a built-in's copy; a local file is read on every
+  run. Details below.
 
 Before anything runs, every endpoint of a stack reached over RPC is asked for its
 genesis, and People, once its genesis matches, for its `NetworkSuffix`. An endpoint
-that reports a genesis other than the one it is routed as is an error; for a built-in
-it reports that the stack restarted from genesis and which descriptor is in use, after
-fetching the published descriptor once more when it could not be fetched before. A
-`NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
+that reports a genesis other than the one it is routed as, or a `NetworkSuffix` other
+than the `tld`, fails the checks. The chain may have restarted after the descriptor
+was published, so the CLI fetches the descriptor once more and repeats the checks on
+the copy that brings; without one it is an error. An endpoint that does not answer
 within 3 seconds is logged and left to fail on first use. On the light client the
 light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
@@ -1155,8 +1179,8 @@ reference lists for that chain contacted at once. At the lower of the endpoint's
 Polkadot's finalized block, an equal block hash stops the command: the endpoint is
 Polkadot itself, or a fork that has not finalized past its fork point. It also stops when
 the endpoint, or every Polkadot node, does not answer within 3 seconds at a step, and the
-error names that side. A stack with the id `polkadot` cannot run, since that namespace
-may contain sessions of real Polkadot identities.
+error names that side. A stack with the id `polkadot` cannot run, since the CLI would
+present it as Polkadot.
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \
@@ -1175,12 +1199,14 @@ role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
 `tld` that is not a lowercase DNS label, has no `dub` service or no
-`dotns.popController`, is unreachable or is past `expiresAt` is an error for
-every command. The CLI's own username reads go through that `popController` without
+`dotns.popController`, cannot be fetched while none is kept, or is past `expiresAt`
+is an error for every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
 chain. `get_chain_info` reports the descriptor's `network`. The product
-namespace (the state directory) is the descriptor's `id` without a trailing
-`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
+namespace, the name the CLI prints for the network, is the descriptor's `id`
+without a trailing `-fork`, except that the `polkadot-fork` namespace is its
+full `id`. Nothing is stored under it: the stack's state is in its own
+[state directory](#state-directory). Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that
@@ -1188,9 +1214,10 @@ RPC.
 
 `truapi-host network-check` prints the resolved routing of either as JSON
 without contacting a chain, so a harness can check it before starting a session:
-`schema_version`; `network`, the product namespace; `namespace`, the network's
-`tld`; `identity_backend_base`; and `ws` and `genesis` for `people`,
-`asset_hub` and `bulletin`.
+`schema_version`; `network`, the product namespace; `state_directory`, the name
+the stack's state is kept under; `namespace`, the network's `tld`;
+`identity_backend_base`; and `ws` and `genesis` for `people`, `asset_hub` and
+`bulletin`.
 
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies the identity backend's bearer token
 instead of the CLI minting one. For username registration, an injected token's

@@ -7,7 +7,10 @@
 
 use core::time::Duration;
 
-use trinity_stack::{FetchRequest, Pointer, Refresh, Served, StackReader, Status, open};
+use trinity_stack::{
+	Accepted, CurrentStack, Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader,
+	Status, open,
+};
 
 use super::{
 	ReplaceCheck, ReservedValuesPolicy, Stack, StackError,
@@ -197,6 +200,9 @@ pub struct StackSource {
 	/// record it returned is stored or fails to store, so that the host is
 	/// never told `Current` for a copy whose store may still fail.
 	before_store: Option<StackStatus>,
+	/// Whether the record the last fetch returned holds a copy it took,
+	/// rather than the copy held with a new age or `ETag`.
+	took_copy: bool,
 }
 
 impl StackSource {
@@ -229,20 +235,102 @@ impl StackSource {
 			.map_err(StackError::Descriptor)?;
 		let read = reader.get(rules.pointer(), now_unix_seconds);
 		let current = read.current.expect("a reader loaded with a build copy has a copy");
-		Ok(Self {
-			running: rules.hold(current.stack)?,
+		let running = rules.hold(current.stack)?;
+		Ok(Self::running(rules, reader, running, read.fetch, current.stale, current.expired))
+	}
+
+	/// Starts a stack its build ships no copy of from `stored`, the record a
+	/// fetch returned.
+	///
+	/// `None` when no stored copy can run under `reserved_values`. Fetch the
+	/// descriptor first then, and start from [`Self::first_fetched`].
+	pub fn import(
+		pointer: &Pointer,
+		stored: Option<&[u8]>,
+		reserved_values: &ReservedValuesPolicy,
+		now_unix_seconds: i64,
+	) -> Option<Self> {
+		let mut reader = StackReader::new(Refresh::MaxAge(REFRESH_MAX_AGE_SECS));
+		reader
+			.load(pointer, None, stored)
+			.expect("a reader loads any record without a build copy");
+		let read = reader.get(pointer, now_unix_seconds);
+		let current = read.current?;
+		Self::imported(pointer.clone(), reserved_values.clone(), reader, current, read.fetch)
+			.inspect_err(|error| tracing::warn!("fetching the stack descriptor again: {error}"))
+			.ok()
+	}
+
+	/// Starts a stack its build ships no copy of from `answer`, the answer to
+	/// its first fetch, or why that fetch failed, and returns the record to
+	/// store, which goes back to [`Self::import`] as `stored`.
+	///
+	/// Fails with [`StackError::Unreachable`] when the fetch failed, and with
+	/// the rule the copy breaks when the core cannot run it.
+	pub fn first_fetched(
+		pointer: Pointer,
+		reserved_values: ReservedValuesPolicy,
+		answer: Result<Served, String>,
+		now_unix_seconds: i64,
+	) -> Result<(Self, Vec<u8>), StackError> {
+		let served = answer.map_err(|reason| StackError::Unreachable { reason })?;
+		let mut reader = StackReader::new(Refresh::MaxAge(REFRESH_MAX_AGE_SECS));
+		let refreshed = reader
+			.fetched(&pointer, served, now_unix_seconds)
+			.map_err(StackError::Descriptor)?;
+		let record = refreshed.stored.expect("a reader stores the first copy it accepts");
+		let Accepted { stack, stale, expired, .. } = refreshed.accepted;
+		let current = CurrentStack { stack, stale, expired };
+		let mut source = Self::imported(pointer, reserved_values, reader, current, None)?;
+		source.last_refresh = Some(StackRefreshOutcome::Current);
+		source.took_copy = true;
+		Ok((source, record))
+	}
+
+	/// A stack its build ships no copy of, running `current`, the first copy
+	/// the core holds, which pins the fields later copies must keep.
+	/// `first_fetch` is the fetch `reader` handed out, if any.
+	fn imported(
+		pointer: Pointer,
+		reserved_values: ReservedValuesPolicy,
+		reader: StackReader,
+		current: CurrentStack,
+		first_fetch: Option<FetchRequest>,
+	) -> Result<Self, StackError> {
+		let CurrentStack { stack, stale, expired } = current;
+		let rules = CopyRules::pinned_to(pointer, &stack.descriptor, reserved_values)?;
+		let running = rules.hold(stack)?;
+		Ok(Self::running(rules, reader, running, first_fetch, stale, expired))
+	}
+
+	fn running(
+		rules: CopyRules,
+		reader: StackReader,
+		running: HeldCopy,
+		first_fetch: Option<FetchRequest>,
+		stale: bool,
+		expired: bool,
+	) -> Self {
+		Self {
 			rules,
 			reader,
-			first_fetch: read.fetch,
+			first_fetch,
+			running,
 			unstored: None,
 			next_start: None,
-			stale: current.stale,
-			expired: current.expired,
+			stale,
+			expired,
 			last_refresh: None,
 			wrong_genesis: Vec::new(),
 			people_suffix: None,
 			before_store: None,
-		})
+			took_copy: false,
+		}
+	}
+
+	/// The descriptor of the copy the core runs.
+	pub fn descriptor(&self) -> &Descriptor {
+		&self.running.descriptor
 	}
 
 	/// What identifies the stack. The caller stores its record under it.
@@ -443,6 +531,7 @@ impl StackSource {
 		if refreshed.stored.is_some() {
 			self.before_store = Some(self.status());
 		}
+		self.took_copy = matches!(accepted.status, Status::Updated);
 		self.last_refresh = Some(outcome);
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
@@ -481,7 +570,7 @@ impl StackSource {
 
 	/// The check for storing `record`, which [`Self::fetched`] returned.
 	pub fn replace_check(&self, record: &[u8]) -> ReplaceCheck {
-		ReplaceCheck::new(self.rules.clone(), record)
+		ReplaceCheck::new(self.rules.clone(), record, self.took_copy)
 	}
 
 	/// Why the core refuses a served document that verifies under the

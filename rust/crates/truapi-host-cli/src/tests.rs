@@ -14,18 +14,9 @@ fn root_public_key(entropy: &RootEntropy) -> [u8; 32] {
 
 async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
 	let network = Network::default().bundled_stack(ChainBackend::Rpc);
-	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.namespace())?;
+	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.state_directory())?;
 	catalog.set_current(name)?;
-	let core_stack = network.core_stack()?;
-	start_signing_host(
-		&SigningHostArgs::default(),
-		catalog,
-		name.to_string(),
-		network,
-		core_stack,
-		None,
-	)
-	.await
+	start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None).await
 }
 
 fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
@@ -34,7 +25,7 @@ fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
 		"version": 1,
 		"accounts": [{
 			"name": "auto-1",
-			"network": session.network.namespace(),
+			"network": session.network.state_directory(),
 			"mnemonic": SESSION_MNEMONIC,
 			"lite_username": "pending.01",
 			"public_key_hex": "0x00",
@@ -71,6 +62,71 @@ async fn session_selection_retries_the_active_unfinished_profile() -> Result<()>
 			CurrentSession::Pointed("pending".to_string()),
 			false,
 		)
+	);
+	Ok(())
+}
+
+/// A clear may name the running session by the name it was created under
+/// before its promotion. Whether the clear includes the running session is
+/// decided from the name it resolves to, so the host warns and stops before
+/// that session's data goes, and its messages name the session it clears.
+#[tokio::test]
+async fn a_clear_by_the_name_the_running_session_was_created_under_includes_it() -> Result<()> {
+	let temporary = tempfile::tempdir()?;
+	let network = Network::default().bundled_stack(ChainBackend::Rpc);
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), network.state_directory())?;
+	let provisional = catalog.ensure_profile("worker-0")?;
+	let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
+	std::fs::write(promoted.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
+	let session = unfinished_session(temporary.path(), "alice.01").await?;
+
+	assert_eq!(
+		validate_session_clear(&session, &SessionClearTarget::Named("worker-0".to_string()))?,
+		(SessionClearTarget::Named("alice.01".to_string()), true)
+	);
+	Ok(())
+}
+
+/// An `--account` name from the store an earlier release shared between stacks
+/// no longer resolves. Such a run leaves the remembered session in place, so
+/// the next run without `--account` restores that session and its pairings
+/// rather than provisioning the default one.
+#[tokio::test]
+async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
+	let temporary = tempfile::tempdir()?;
+	let network = Network::default().bundled_stack(ChainBackend::Rpc);
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), network.state_directory())?;
+	catalog.set_current("headless.01")?;
+	let args =
+		SigningHostArgs { account: Some("auto-1".to_string()), ..SigningHostArgs::default() };
+
+	let session =
+		start_signing_host(&args, catalog, DEFAULT_SESSION_NAME.to_string(), network, None).await?;
+
+	assert_eq!(
+		(session.signer.is_none(), session.catalog.current_session()?),
+		(true, CurrentSession::Pointed("headless.01".to_string()))
+	);
+	Ok(())
+}
+
+/// A clear deletes the session's own files. Sessions promoted later got a copy
+/// of its mnemonic, and an earlier release kept one in `accounts.json` directly
+/// under `v2`. No clear touches those, so the prompt says they may stay.
+#[tokio::test]
+async fn the_clear_prompt_says_what_it_leaves() -> Result<()> {
+	let temporary = tempfile::tempdir()?;
+	let session = unfinished_session(temporary.path(), "alice").await?;
+
+	let (_, detail) =
+		session_clear_confirmation(&session, &SessionClearTarget::Named("alice".to_string()), true);
+
+	assert_eq!(
+		detail,
+		"This permanently deletes its signer keys, scripts, storage, and permissions for \
+		 paseo-next-v2. On-chain usernames are not removed. Copies of the mnemonics may remain in \
+		 other sessions' accounts.json, and in accounts.json directly under v2 from an earlier \
+		 release. The active session is included, so the signing host will stop."
 	);
 	Ok(())
 }
@@ -271,10 +327,6 @@ async fn a_responder_without_a_local_session_stops_instead_of_restarting() {
 	let profile = tempfile::tempdir().unwrap();
 	let (runtime, _platform) = build_signing_runtime(
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-		crate::network::Network::PaseoNextV2
-			.bundled_stack(ChainBackend::Rpc)
-			.core_stack()
-			.unwrap(),
 		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -299,10 +351,6 @@ async fn the_signing_runtime_keeps_its_core_database_in_the_profile_directory() 
 	let profile = tempfile::tempdir().unwrap();
 	let (runtime, _platform) = build_signing_runtime(
 		&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-		crate::network::Network::PaseoNextV2
-			.bundled_stack(ChainBackend::Rpc)
-			.core_stack()
-			.unwrap(),
 		&session_profile_at(profile.path()),
 		ApprovalPolicy::AutoAccept,
 		None,
@@ -336,10 +384,6 @@ async fn a_core_database_this_build_cannot_open_asks_for_cleanup() {
 	let build = || {
 		build_signing_runtime(
 			&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
-			crate::network::Network::PaseoNextV2
-				.bundled_stack(ChainBackend::Rpc)
-				.core_stack()
-				.unwrap(),
 			&session_profile_at(&profile),
 			ApprovalPolicy::AutoAccept,
 			None,
@@ -680,7 +724,7 @@ async fn script_completion_removes_the_private_frame_socket_before_returning() -
 		let product = frame_server::ProductSelection::new(
 			ProductId::for_test("script-cleanup.dot"),
 			ExecutableKind::App,
-			&network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack()?,
+			&network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack(),
 		)?;
 		let result =
 			with_frame_server(Arc::new(UnusedRuntimeFactory), product, frame_server, async move {
@@ -896,7 +940,7 @@ fn clearing_sessions_keeps_managed_script_projects() -> Result<()> {
 	let script = select_script_to_edit(&projects, &mut None)?;
 	sessions::store_session_last_script(&profile.path, &script)?;
 
-	catalog.clear(&SessionClearTarget::All)?;
+	catalog.clear(catalog.prepare_clear(&SessionClearTarget::All)?)?;
 
 	assert_eq!(
 		(projects, script.is_file(), profile.path.exists()),

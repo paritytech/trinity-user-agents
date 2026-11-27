@@ -623,3 +623,44 @@ fn the_account_data_store_comes_from_the_descriptor() {
 	assert_eq!(account_data_store(Some(other_contract)), None);
 	assert_eq!(account_data_store(None), None);
 }
+
+/// A local descriptor file has no pointer, so the tool that reads it names
+/// the stack.
+#[test]
+fn a_local_descriptor_runs_under_the_id_its_tool_gives_it() {
+	let descriptor: Descriptor =
+		serde_json::from_value(test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]))
+			.expect("test descriptor is valid");
+
+	let stack = Stack::local(
+		"file:/stacks/fork.json".to_string(),
+		&descriptor,
+		&ReservedValuesPolicy::default(),
+	)
+	.expect("the descriptor is a stack the core runs");
+
+	assert_eq!(
+		(stack.id(), stack.generation()),
+		("file:/stacks/fork.json", descriptor.generation.as_str())
+	);
+}
+
+/// A host that serves no relay offers products none, as a stack whose
+/// descriptor names no relay would.
+#[test]
+fn a_stack_without_its_relay_names_none() {
+	let descriptor: Descriptor =
+		serde_json::from_value(test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]))
+			.expect("test descriptor is valid");
+	let stack = Stack::local(
+		"file:/stacks/fork.json".to_string(),
+		&descriptor,
+		&ReservedValuesPolicy::default(),
+	)
+	.expect("the descriptor is a stack the core runs");
+
+	assert_eq!(
+		(stack.chains().relay.is_some(), stack.without_relay().chains().relay),
+		(true, None)
+	);
+}

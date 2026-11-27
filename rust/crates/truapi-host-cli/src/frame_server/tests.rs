@@ -70,10 +70,7 @@ async fn start_tcp_server(
 
 /// The default network's stack.
 fn stack() -> Stack {
-	crate::network::Network::default()
-		.bundled_stack(ChainBackend::Rpc)
-		.core_stack()
-		.expect("the bundled stack is valid")
+	crate::network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack()
 }
 
 /// An App selection on [`stack`].
@@ -98,7 +95,7 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.core_stack()?,
+		network.core_stack(),
 	)?;
 	let executor = tokio::runtime::Builder::new_current_thread().build()?;
 	let spawner = Spawner::new(executor.handle().clone());
@@ -526,7 +523,7 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.core_stack()?,
+			network.core_stack(),
 		)?;
 		assert_eq!(
 			platform.routed_url(&asset_hub_genesis),

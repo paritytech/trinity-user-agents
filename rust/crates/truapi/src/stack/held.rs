@@ -48,8 +48,21 @@ impl CopyRules {
 		reserved_values: ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let bundled = open(bundled, &pointer).map_err(StackError::Descriptor)?;
-		Stack::from_descriptor(&pointer, &bundled.descriptor, &reserved_values)?;
-		let pinned = Pinned::new(&bundled.descriptor);
+		Self::pinned_to(pointer, &bundled.descriptor, reserved_values)
+	}
+
+	/// The rules for `pointer`'s stack, pinned to `first`, the copy the core
+	/// first held of a stack its build ships no copy of.
+	///
+	/// Fails when `first` is not a stack the core can run under
+	/// `reserved_values`, a policy already checked.
+	pub fn pinned_to(
+		pointer: Pointer,
+		first: &Descriptor,
+		reserved_values: ReservedValuesPolicy,
+	) -> Result<Self, StackError> {
+		Stack::from_descriptor(pointer.stack_id(), first, &reserved_values)?;
+		let pinned = Pinned::new(first);
 		Ok(Self { pointer, reserved_values, pinned })
 	}
 
@@ -62,8 +75,11 @@ impl CopyRules {
 	///
 	/// Fails with the rule it breaks.
 	pub fn hold(&self, verified: Verified) -> Result<HeldCopy, StackError> {
-		let stack =
-			Stack::from_descriptor(&self.pointer, &verified.descriptor, &self.reserved_values)?;
+		let stack = Stack::from_descriptor(
+			self.pointer.stack_id(),
+			&verified.descriptor,
+			&self.reserved_values,
+		)?;
 		self.pinned.refuse_change(&verified.descriptor)?;
 		Ok(HeldCopy { descriptor: verified.descriptor, stack })
 	}
