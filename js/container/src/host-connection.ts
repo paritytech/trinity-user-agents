@@ -33,6 +33,11 @@ export interface HostConnection {
 
 interface Connection {
   provider: WebSocketWireProvider;
+  opening?: {
+    timer: ReturnType<typeof setTimeout>;
+    wait?: Promise<void>;
+    finish?: (error?: unknown) => void;
+  };
   verified: boolean;
   checkedAt: number;
   checking?: Promise<void>;
@@ -41,6 +46,8 @@ interface Connection {
 // A host can refuse a reconnect for a moment while it rebinds its listener. A
 // visible page redials after these pauses, then waits for its next call.
 const VISIBLE_RETRY_DELAYS_MS = [250, 1_000, 4_000];
+const OPEN_WAIT_MS = 10_000;
+const SOCKET_OPEN_TIMEOUT_MS = 120_000;
 
 /**
  * Creates a connection that fails the operations a lost connection carried and
@@ -81,6 +88,8 @@ export function createHostConnection(
   function retire(connection: Connection, cause?: unknown): void {
     if (current !== connection) return;
     current = undefined;
+    clearTimeout(connection.opening?.timer);
+    connection.opening?.finish?.(cause ?? new ConnectionResetError());
     legacy?.lost();
     for (const notify of [reset, productReset]) {
       try {
@@ -121,7 +130,17 @@ export function createHostConnection(
       setStatus("disconnected");
       throw error;
     }
-    const connection = { provider, verified: false, checkedAt: 0 };
+    const connection: Connection = {
+      provider,
+      opening: {
+        timer: setTimeout(
+          () => retire(connection, new Error("WebSocket upgrade timed out")),
+          SOCKET_OPEN_TIMEOUT_MS,
+        ),
+      },
+      verified: false,
+      checkedAt: 0,
+    };
     current = connection;
     provider.subscribe((frame) => {
       if (current !== connection) return;
@@ -133,27 +152,69 @@ export function createHostConnection(
       legacy?.receive(frame, decoded.value);
     });
     provider.subscribeClose?.((error) => retire(connection, error));
+    // A suspended host can accept the upgrade after its callers have timed out.
+    provider.opened.then(
+      () => {
+        if (current !== connection) return;
+        clearTimeout(connection.opening?.timer);
+        const finish = connection.opening?.finish;
+        connection.opening = undefined;
+        finish?.();
+        activate();
+      },
+      (error) => retire(connection, error),
+    );
     setStatus("connecting");
     return connection;
+  }
+
+  function waitForOpen(connection: Connection): Promise<void> {
+    const opening = connection.opening;
+    if (!opening) return Promise.resolve();
+    if (opening.wait) return opening.wait;
+    // A pending upgrade gets the time a visible page would spend on its remaining retries.
+    let budget = OPEN_WAIT_MS;
+    if (page?.visibilityState === "visible") {
+      for (const delay of VISIBLE_RETRY_DELAYS_MS.slice(retries))
+        budget += delay + OPEN_WAIT_MS;
+    }
+    return (opening.wait = new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        if (current === connection) legacy?.lost();
+        opening.finish?.(new Error("WebSocket opening timed out"));
+      }, budget);
+      opening.finish = (error) => {
+        opening.wait = undefined;
+        opening.finish = undefined;
+        clearTimeout(deadline);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+    }));
+  }
+
+  async function verify(connection: Connection): Promise<void> {
+    if (current !== connection) throw new ConnectionResetError();
+    try {
+      const result = await handshake();
+      if (result.isErr()) throw result.error;
+      if (current !== connection) throw new ConnectionResetError();
+      connection.verified = true;
+      connection.checkedAt = now();
+      retries = 0;
+      setStatus("connected");
+      legacy?.connected();
+    } catch (error) {
+      retire(connection, error);
+      throw error;
+    }
   }
 
   function ready(connection: Connection): Promise<void> {
     if (connection.verified && now() - connection.checkedAt < 10_000)
       return Promise.resolve();
-    return (connection.checking ??= Promise.resolve(handshake())
-      .then((result) => {
-        if (result.isErr()) throw result.error;
-        if (current !== connection) throw new ConnectionResetError();
-        connection.verified = true;
-        connection.checkedAt = now();
-        retries = 0;
-        setStatus("connected");
-        legacy?.connected();
-      })
-      .catch((error) => {
-        retire(connection, error);
-        throw error;
-      })
+    return (connection.checking ??= waitForOpen(connection)
+      .then(() => verify(connection))
       .finally(() => {
         connection.checking = undefined;
       }));
@@ -189,9 +250,10 @@ export function createHostConnection(
       ids.trait === SYSTEM_HANDSHAKE.trait &&
       ids.method === SYSTEM_HANDSHAKE.method
     )
-      return connection.provider.opened;
+      return waitForOpen(connection);
     return ready(connection).catch((error) => {
-      if (nextDial) return nextDial.then(() => prepare(ids));
+      if (current !== connection && nextDial)
+        return nextDial.then(() => prepare(ids));
       throw error instanceof ConnectionResetError
         ? error
         : new ConnectionResetError({ cause: error });
