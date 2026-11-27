@@ -8,6 +8,8 @@
 //! These times only keep an honest pairing host off a session its signing
 //! host has already dropped. They do not stop whoever copied the session, who
 //! can drop or rewrite the slot; the signing host enforces the same limits.
+//!
+//! [`CoreStorageKey::SessionTimes`]: crate::platform::CoreStorageKey::SessionTimes
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 
@@ -61,6 +63,16 @@ impl SessionTimes {
 	/// this core kept them.
 	pub fn first_seen(session: &SsoSessionInfo, now: u64) -> Self {
 		Self { session_key: session.ss_public_key, paired_at: now, last_rotated_at: None }
+	}
+
+	/// Times of `session`, which these times' session became when its keys
+	/// changed at `now`. Its lifetime still runs from the original pairing.
+	pub fn rotated(&self, session: &SsoSessionInfo, now: u64) -> Self {
+		Self {
+			session_key: session.ss_public_key,
+			paired_at: self.paired_at,
+			last_rotated_at: Some(now),
+		}
 	}
 
 	/// What `stored`, the slot's value, holds for `session`.
