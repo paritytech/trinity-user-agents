@@ -486,7 +486,9 @@ impl SessionCatalog {
 	/// `target` is used as [`Self::resolve_clear_target`] returned it, not
 	/// resolved again, so the clear removes the session the user confirmed.
 	/// The locks cover the default session's store and each cleared session's,
-	/// so a host provisioning one of them can't write it back afterwards.
+	/// so a host that is picking an account for one of them at that moment
+	/// can't write the account back afterwards. A host already running on a
+	/// cleared session can still write to its directory.
 	/// Fails as [`Self::validate_clear_target`] does, or when another process
 	/// holds a lock.
 	pub fn prepare_clear(&self, target: &SessionClearTarget) -> Result<PreparedClear> {

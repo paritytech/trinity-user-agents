@@ -122,11 +122,11 @@ Without `fetchStackDescriptor` the core stays on the copy it started from. The
 not pass these callbacks yet and exposes no `stackStatus()` to the host, so a
 host on them sees a refused chain only as failing calls.
 
-The keys the storage callbacks receive do not name the stack. A host that can
-run more than one stack keeps `coreStorage` and `productStorage` apart per
-stack, for example under a prefix made from `stackId(decodeLink(pointer))` of
-`@parity/trinity-stack`, so a session, a permission or a product's data stored
-on one stack is not read on another.
+Apart from `StackRecord`, the keys the storage callbacks receive do not name the
+stack. A host that can run more than one stack keeps `coreStorage` and
+`productStorage` apart per stack, for example under a prefix made from
+`stackId(decodeLink(pointer))` of `@parity/trinity-stack`, so a session, a
+permission or a product's data stored on one stack is not read on another.
 
 The test host has no descriptor, so it passes `testStack` instead: an `id` and
 a `generation`, the network, the TLD and each chain's genesis hash. Only the

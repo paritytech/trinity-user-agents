@@ -127,9 +127,9 @@ async fn an_unresolved_account_keeps_the_remembered_session() -> Result<()> {
 	Ok(())
 }
 
-/// A clear deletes the session's own files. An earlier release also kept its
-/// mnemonic in `accounts.json` directly under `v2`, which no clear touches, so
-/// the prompt says that copy stays.
+/// A clear deletes the session's own files. Sessions promoted later got a copy
+/// of its mnemonic, and an earlier release kept one in `accounts.json` directly
+/// under `v2`. No clear touches those, so the prompt says they may stay.
 #[tokio::test]
 async fn the_clear_prompt_says_what_it_leaves() -> Result<()> {
 	let temporary = tempfile::tempdir()?;
@@ -141,9 +141,9 @@ async fn the_clear_prompt_says_what_it_leaves() -> Result<()> {
 	assert_eq!(
 		detail,
 		"This permanently deletes its signer keys, scripts, storage, and permissions for \
-		 paseo-next-v2. On-chain usernames are not removed, nor are mnemonics an earlier release \
-		 kept in accounts.json directly under v2. The active session is included, so the signing \
-		 host will stop."
+		 paseo-next-v2. On-chain usernames are not removed. Copies of the mnemonics may remain in \
+		 other sessions' accounts.json, and in accounts.json directly under v2 from an earlier \
+		 release. The active session is included, so the signing host will stop."
 	);
 	Ok(())
 }

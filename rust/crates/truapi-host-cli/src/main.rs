@@ -2959,8 +2959,9 @@ fn session_clear_confirmation(
 		},
 	};
 	let mut detail = format!(
-		"{scope} for {}. On-chain usernames are not removed, nor are mnemonics an earlier \
-		 release kept in accounts.json directly under v2.",
+		"{scope} for {}. On-chain usernames are not removed. Copies of the mnemonics may remain \
+		 in other sessions' accounts.json, and in accounts.json directly under v2 from an \
+		 earlier release.",
 		session.network.state_label()
 	);
 	if active {

@@ -278,10 +278,10 @@ a suffix.
 
 #### Storage per stack
 
-The core's storage keys do not say which stack they belong to, so the host has
-to keep stacks apart. A host that can run more than one stack gives each one its
-own `CoreStorage`, `ProductStorage`, encrypted store and core database
-directory, and chooses them before it starts the core.
+Apart from `StackRecord`, the core's storage keys do not say which stack they
+belong to, so the host has to keep stacks apart. A host that can run more than
+one stack gives each one its own `CoreStorage`, `ProductStorage`, encrypted
+store and core database directory, and chooses them before it starts the core.
 
 It chooses them by the stack's pointer, not by anything in the descriptor. A
 fork has the same genesis hashes and TLD as its source, and its descriptor can
