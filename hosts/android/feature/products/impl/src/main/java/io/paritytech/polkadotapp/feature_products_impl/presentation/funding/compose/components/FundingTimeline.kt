@@ -41,7 +41,6 @@ private val DOT_SIZE = 8.dp
 private val CURRENT_DOT_SIZE = 10.dp
 private val LINE_HEIGHT = 2.dp
 
-/** The milestones card: the dots and their labels, then the band line under them on a darker strip. */
 @Composable
 fun FundingTimelineCard(
     modifier: Modifier = Modifier,
@@ -162,10 +161,6 @@ private fun FundingDotState.color(): Color = when (this) {
     FundingDotState.PENDING -> PolkadotTheme.colors.fg.tertiary
 }
 
-/**
- * The line under the band: the provider's latest [detail] for the current step, or "Checked with the
- * provider 12s ago" from [lastHeardAt], as of [now]. One line, cut short with "…".
- */
 @Composable
 fun FundingLiveLine(modifier: Modifier = Modifier, detail: FundingDetail?, lastHeardAt: Instant?, now: Instant) {
     val parts = fundingLiveParts(detail, lastHeardAt, now)

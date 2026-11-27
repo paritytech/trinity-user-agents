@@ -13,6 +13,7 @@ use super::{
 		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
+	served::Served,
 	sso_remote::{SsoRemoteResponseError, SsoSessionKey},
 	sso_request_service::SsoRequestService,
 };
@@ -51,7 +52,8 @@ pub struct RemoteAccountHolder {
 	registry: Arc<RingVrfRegistryStore>,
 	spawner: Spawner,
 	/// `ProductSubtreeRequest`s in flight, which concurrent callers join.
-	product_subtree_requests: Mutex<HashMap<(SsoSessionKey, ProductId), Arc<InFlightProductSubtree>>>,
+	product_subtree_requests:
+		Mutex<HashMap<(SsoSessionKey, ProductId), Arc<InFlightProductSubtree>>>,
 }
 
 impl RemoteAccountHolder {
@@ -91,7 +93,10 @@ impl RemoteAccountHolder {
 		let request_cx = CallContext::with_parts(cx.request_id().to_string(), cancel.clone());
 		let request = ProductSubtreeRequest { product_id: product_id.clone() };
 		let fetch = async move {
-			service.call(&request_cx, &session, request).await?.map_err(remote_authority_error)
+			service
+				.call(&request_cx, &session, request)
+				.await?
+				.map_err(remote_authority_error)
 		}
 		.boxed();
 		let (in_flight, caller) = InFlightProductSubtree::start(fetch, cancel);
@@ -261,10 +266,10 @@ impl AccountHolder for RemoteAccountHolder {
 		request: SignPayloadAuthorityRequest,
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
-			SignPayloadAuthorityRequest::Product(request) => request,
+			SignPayloadAuthorityRequest::Product(request) => request.into_inner(),
 			SignPayloadAuthorityRequest::LegacyAccount { product_account, request } => {
 				latest::HostSignPayloadRequest {
-					account: product_account,
+					account: product_account.into_inner(),
 					payload: request.payload,
 				}
 			},
@@ -281,9 +286,12 @@ impl AccountHolder for RemoteAccountHolder {
 		watermarked: bool,
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
-			SignRawAuthorityRequest::Product(request) => request,
+			SignRawAuthorityRequest::Product(request) => request.into_inner(),
 			SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
-				latest::HostSignRawRequest { account: product_account, payload: request.payload }
+				latest::HostSignRawRequest {
+					account: product_account.into_inner(),
+					payload: request.payload,
+				}
 			},
 			SignRawAuthorityRequest::IdentityAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
@@ -324,7 +332,7 @@ impl AccountHolder for RemoteAccountHolder {
 					&invocation,
 					CreateTransactionRequest {
 						payload: CreateTransactionPayload::V1(SsoProductTxPayload::from_resolved(
-							payload,
+							payload.into_inner(),
 						)),
 					},
 				)
@@ -335,7 +343,7 @@ impl AccountHolder for RemoteAccountHolder {
 					&invocation,
 					CreateTransactionRequest {
 						payload: CreateTransactionPayload::V1(SsoProductTxPayload {
-							signer: product_account,
+							signer: product_account.into_inner(),
 							genesis_hash: request.genesis_hash,
 							call_data: request.call_data,
 							extensions: request.extensions,
@@ -363,17 +371,17 @@ impl AccountHolder for RemoteAccountHolder {
 	async fn account_alias(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: latest::HostAccountGetAliasRequest,
+		request: Served<latest::HostAccountGetAliasRequest>,
 	) -> Result<latest::HostAccountGetAliasResponse, RingVrfError> {
-		self.call_product(&invocation, request).await
+		self.call_product(&invocation, request.into_inner()).await
 	}
 
 	async fn create_proof(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: latest::HostAccountCreateProofRequest,
+		request: Served<latest::HostAccountCreateProofRequest>,
 	) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
-		self.call_product(&invocation, request).await
+		self.call_product(&invocation, request.into_inner()).await
 	}
 
 	async fn register_ring_vrf_key(
@@ -399,8 +407,9 @@ impl AccountHolder for RemoteAccountHolder {
 	async fn list_ring_vrf_keys(
 		&self,
 		invocation: AccountInvocation<'_>,
-		mut request: latest::HostAccountListRingVrfKeysRequest,
+		request: Served<latest::HostAccountListRingVrfKeysRequest>,
 	) -> Result<latest::HostAccountListRingVrfKeysResponse, RingVrfError> {
+		let mut request = request.into_inner();
 		let owner = request.owner.clone();
 		let disclosure = request.disclosure;
 		if invocation.caller.product_id() == Some(&owner) {
@@ -423,9 +432,9 @@ impl AccountHolder for RemoteAccountHolder {
 	async fn ring_vrf_sign(
 		&self,
 		invocation: AccountInvocation<'_>,
-		request: latest::HostAccountRingVrfSignRequest,
+		request: Served<latest::HostAccountRingVrfSignRequest>,
 	) -> Result<latest::HostAccountRingVrfSignResponse, RingVrfError> {
-		self.call_product(&invocation, request).await
+		self.call_product(&invocation, request.into_inner()).await
 	}
 
 	async fn sign_statement_store_product_payload(
@@ -464,7 +473,9 @@ impl AccountHolder for RemoteAccountHolder {
 		let source = session.root_entropy_source.ok_or_else(|| AuthorityError::Unavailable {
 			reason: "Session secret missing".to_string(),
 		})?;
-		Ok(crate::runtime::contacts::ContactHandleKey::from_root_entropy_source(&source, product_id))
+		Ok(crate::runtime::contacts::ContactHandleKey::from_root_entropy_source(
+			&source, product_id,
+		))
 	}
 
 	async fn allocate_grants<'a>(

@@ -79,7 +79,7 @@ final class ServiceCoordinator {
     let tldProvider: DotNsTldProviding
     /// Held rather than looked up, so the session that started the Pocket is
     /// the one that stops it. Nil in a build without the products feature.
-    let pocket: ProductPocketService?
+    let pocket: ProductPocketService
     let logger: LoggerProtocol
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
@@ -125,7 +125,7 @@ final class ServiceCoordinator {
         chainStatusProvider: ChainStatusProviding,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         tldProvider: DotNsTldProviding,
-        pocket: ProductPocketService?,
+        pocket: ProductPocketService,
         logger: LoggerProtocol
     ) {
         self.chatCoordinator = chatCoordinator
@@ -272,19 +272,16 @@ extension ServiceCoordinator {
         // one worker per product, and hanging the Pocket off chat's assembly
         // would let any chat service failing take every live card face with it,
         // silently.
-        var pocket: ProductPocketService?
-        if let service = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider) {
-            RootDependencyLocator.setDependency(service)
-            service.start(
-                runtimeProvider: truapiRuntimeProvider,
-                flowState: spaFlowState,
-                productFileProvider: productFileProvider,
-                chainRegistry: ChainRegistryFacade.sharedRegistry,
-                gameReminders: gameReminders,
-                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-            )
-            pocket = service
-        }
+        let pocket = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider)
+        RootDependencyLocator.setDependency(pocket)
+        pocket.start(
+            runtimeProvider: truapiRuntimeProvider,
+            flowState: spaFlowState,
+            productFileProvider: productFileProvider,
+            chainRegistry: ChainRegistryFacade.sharedRegistry,
+            gameReminders: gameReminders,
+            themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+        )
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -364,7 +361,7 @@ extension ServiceCoordinator {
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
+            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket.workers }),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )

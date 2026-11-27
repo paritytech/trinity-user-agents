@@ -88,10 +88,7 @@ interface TimeFormatter {
      */
     fun formatGameDateTime(timestamp: Timestamp): String
 
-    /**
-     * A moment relative to [relativeTo]: "Today at 4:00 PM", "Yesterday at 4:00 PM", "Jan 14 at 4:00 PM" earlier this
-     * year, and "Jan 14, 2023" in another. The time follows the device's 12/24-hour setting.
-     */
+    // "Today at 4:00 PM", "Yesterday at 4:00 PM", "Jan 14 at 4:00 PM" this year, "Jan 14, 2023" in another.
     fun formatDayAndTime(timestamp: Timestamp, relativeTo: Timestamp): String
 
     /** Absolute date with weekday, e.g. "Thu, 14 Jan" (adds the year when [includeYear]). */

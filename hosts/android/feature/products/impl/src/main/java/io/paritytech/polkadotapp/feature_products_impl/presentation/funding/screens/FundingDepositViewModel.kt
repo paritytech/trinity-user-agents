@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.stateIn
 import uniffi.truapi.FundingCancel
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** Where to send a bank or crypto top-up, then how the session goes. */
 @HiltViewModel(assistedFactory = FundingDepositViewModel.Factory::class)
 class FundingDepositViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
@@ -36,7 +35,6 @@ class FundingDepositViewModel @AssistedInject constructor(
 
     fun onCancel() = sheet.push(FundingScreen.CANCEL_CONFIRM)
 
-    /** Shows the provider's cancel offer again, after the user went back from it. */
     fun onReviewOffer() {
         if (sheet.entry.value?.session?.cancel is FundingCancel.Offered) sheet.push(FundingScreen.CANCEL_OFFER)
     }

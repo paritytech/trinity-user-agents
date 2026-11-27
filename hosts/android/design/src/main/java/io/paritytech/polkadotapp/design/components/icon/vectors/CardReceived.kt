@@ -9,7 +9,6 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 
-/** Value arriving in a card: an arrow pointing into its lower-left corner. */
 val NovaIcons.CardReceived: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ImageVector.Builder(
         name = "CardReceived",

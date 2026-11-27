@@ -40,7 +40,6 @@ private const val DIMMED_ALPHA = 0.5f
 private const val WARNING_SECONDS = 20L
 private const val ERROR_SECONDS = 10L
 
-/** Every provider's live quote, the cheapest marked, with how long the prices hold before they are asked again. */
 @Composable
 fun FundingProvidersScreen(
     modifier: Modifier = Modifier,

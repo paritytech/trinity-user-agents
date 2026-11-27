@@ -51,7 +51,7 @@ fn a_fact_carries_closed_values_only() {
 	held.owner_product_id = Some(ProductId::for_test("someones-shop.dot"));
 	held.provider_id = Some(ProductId::for_test("ramp.dot"));
 	held.choice = Some(test_choice());
-	let common = Common::of(Some(&held), None, |_| false, NOW);
+	let common = Common::of(Some(&held), None, |_| false, None, NOW);
 	let events: Vec<CoreEvent> = facts().into_iter().map(|fact| common.attach(fact, "ref")).collect();
 	for event in &events {
 		let line = line(event);
@@ -167,7 +167,7 @@ fn endings_say_whether_they_were_expected() {
 		let mut ended = top_up();
 		ended.fail(reason, NOW);
 		let fact = Telemetry::default().changed(Some(&top_up()), &ended, NOW).pop().expect("ended");
-		let event = Common::of(None, None, |_| false, NOW).attach(fact, "ref");
+		let event = Common::of(None, None, |_| false, None, NOW).attach(fact, "ref");
 		let [outcome, reason] = ["outcome", "reason"].map(|key| value(&event, key));
 		(outcome, reason, event.marker() == markers::FUNDING_ENDED)
 	};

@@ -50,7 +50,6 @@ private val LIVE_ICON_SIZE = 48.dp
 private val LIVE_GLYPH_SIZE = 24.dp
 private val COPY_ROW_ICON_SIZE = 20.dp
 
-/** Where to send the funds, once the provider reports it, and how the session goes. */
 @Composable
 fun FundingDepositScreen(
     modifier: Modifier = Modifier,
@@ -316,7 +315,6 @@ private fun WaitingPill(modifier: Modifier = Modifier) {
     }
 }
 
-/** Where the user's cancel stands, once money has moved and the provider decides it. */
 @Composable
 private fun CancelStatus(cancel: FundingCancelUiState, withdraw: Boolean, onReviewOffer: () -> Unit) {
     Column(

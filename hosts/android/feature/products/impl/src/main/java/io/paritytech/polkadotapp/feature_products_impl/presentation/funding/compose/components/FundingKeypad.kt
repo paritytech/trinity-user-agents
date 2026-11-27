@@ -27,7 +27,6 @@ private val KEY_ROWS = listOf(
 private val KEY_HEIGHT = 48.dp
 private val DELETE_ICON_SIZE = 20.dp
 
-/** Digits, a decimal point and delete. The text it edits is the view model's. */
 @Composable
 fun FundingKeypad(
     modifier: Modifier = Modifier,

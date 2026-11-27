@@ -27,7 +27,6 @@ import uniffi.truapi.ProductId
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
-// The core says how a session ended, what it moved and where it stopped; these check the screen reads those facts.
 class FundingEndedMapperTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val mapper = FundingEndedMapper(cashPrecision = 6, format = testCashFormat())

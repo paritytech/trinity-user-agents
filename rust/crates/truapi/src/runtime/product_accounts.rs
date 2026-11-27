@@ -33,14 +33,15 @@ use super::{
 	},
 	contacts::ContactHandleKey,
 	product_consent::ProductConsent,
+	served::Served,
 };
 
 /// The host's accounts as one product connection sees them.
 ///
 /// Its account calls act for that connection's product, except
 /// [`Self::product_subtree_public_key_within`], which serves host
-/// administration for any product. [`Self::consent`] is the runtime's consent,
-/// shared by every product.
+/// administration for any product. [`Self::consent`] is the runtime's
+/// consent, shared by every product.
 pub struct ProductAccounts<H: AccountHolder> {
 	accounts: Arc<HostAccounts<H>>,
 	connection: Arc<ProductConnection>,
@@ -98,7 +99,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 	pub async fn get_account(
 		&self,
 		cx: &CallContext,
-		account: ProductAccountId,
+		account: Served<ProductAccountId>,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.accounts.get_account(cx, &self.connection, account).await
 	}
@@ -108,7 +109,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		account: &ProductAccountId,
+		account: &Served<ProductAccountId>,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.accounts
 			.product_account_public_key(cx, session, &self.connection.product, account)
@@ -130,7 +131,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountSignVrfRequest,
+		request: Served<HostAccountSignVrfRequest>,
 	) -> Result<VrfSignature, AuthorityError> {
 		self.accounts.sign_vrf(session, cx, &self.connection, request).await
 	}
@@ -173,7 +174,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountGetAliasRequest,
+		request: Served<HostAccountGetAliasRequest>,
 	) -> Result<HostAccountGetAliasResponse, RingVrfError> {
 		self.accounts
 			.account_alias(session, cx, &self.connection.product, request)
@@ -185,7 +186,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountCreateProofRequest,
+		request: Served<HostAccountCreateProofRequest>,
 	) -> Result<HostAccountCreateProofResponse, RingVrfError> {
 		self.accounts.create_proof(session, cx, &self.connection.product, request).await
 	}
@@ -207,7 +208,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountListRingVrfKeysRequest,
+		request: Served<HostAccountListRingVrfKeysRequest>,
 	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError> {
 		self.accounts
 			.list_ring_vrf_keys(session, cx, &self.connection.product, request)
@@ -219,7 +220,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountRingVrfSignRequest,
+		request: Served<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError> {
 		self.accounts
 			.ring_vrf_sign(session, cx, &self.connection.product, request)
@@ -286,7 +287,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		account: ProductAccountId,
+		account: Served<ProductAccountId>,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
 		self.accounts

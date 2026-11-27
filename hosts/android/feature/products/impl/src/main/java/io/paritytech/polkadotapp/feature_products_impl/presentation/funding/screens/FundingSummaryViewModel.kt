@@ -21,7 +21,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 
-/** The quote the session starts on, and the start itself. Where the sheet goes once it started follows the session. */
 @HiltViewModel(assistedFactory = FundingSummaryViewModel.Factory::class)
 class FundingSummaryViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
@@ -42,7 +41,7 @@ class FundingSummaryViewModel @AssistedInject constructor(
 
     fun onProviders() = sheet.push(FundingScreen.PROVIDERS)
 
-    /** Hands the session to the provider whose quote is on screen. A provider is only chosen on its quote. */
+    // A provider is only chosen on its quote.
     fun onStart() {
         val providerId = sheet.flow.value?.selectedProviderId ?: return
         if (start.value == FundingStartState.Starting || start.value == FundingStartState.Started) return

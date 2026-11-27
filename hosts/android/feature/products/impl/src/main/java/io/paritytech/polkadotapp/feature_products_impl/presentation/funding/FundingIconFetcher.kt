@@ -20,18 +20,10 @@ import javax.inject.Inject
 
 private const val FUNDING_ICON_SCHEME = "funding-icon"
 
-/**
- * The image model for [id]'s icon as [provider] ships it, resolved only once it is drawn; `null` when the id names
- * no icon.
- */
 fun fundingIconModel(provider: ProductId, kind: FundingIconKind, id: String): String? =
     FundingIconPath.iconName(id)?.let { "$FUNDING_ICON_SCHEME:${provider.value}/${kind.directory}/$it" }
 
-/**
- * Loads a [fundingIconModel] from the provider's worker archive on disk. The provider is read from the image model,
- * which anything can build, so it is validated against the TLD. A miss fails the load and the screen keeps the
- * monogram.
- */
+// The provider comes from the image model, which anything can build, so it is validated against the TLD.
 internal class FundingIconFetcher(
     private val model: String,
     private val dotNsTldProvider: DotNsTldProvider,
@@ -42,7 +34,7 @@ internal class FundingIconFetcher(
     override suspend fun fetch(): FetchResult? {
         val file = dotNsTldProvider.getTld()
             .flatMap { tld -> fileOf(tld) }
-            // Coil reads a failed load from a throw; the screen keeps the monogram.
+            // Coil reads a failed load from a throw: the Fetcher seam in results-and-errors.md.
             .getOrThrow()
         val components = imageLoader.components
 

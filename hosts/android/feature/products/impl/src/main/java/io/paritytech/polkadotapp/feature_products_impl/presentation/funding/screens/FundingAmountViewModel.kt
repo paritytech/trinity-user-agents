@@ -34,7 +34,6 @@ import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import kotlin.time.Duration.Companion.milliseconds
 
-/** The amount and rail, checked with the core as the user types and quoted once they pause. */
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel(assistedFactory = FundingAmountViewModel.Factory::class)
 class FundingAmountViewModel @AssistedInject constructor(
@@ -53,7 +52,6 @@ class FundingAmountViewModel @AssistedInject constructor(
                 ?: Result.success(null)
         }
 
-    /** The sheet's picks with why the amount cannot go ahead, as the core last answered for it. */
     private val checked: StateFlow<FundingFlowState?> = combine(sheet.flow.filterNotNull(), issue) { flow, issue ->
         flow.withAmountCheck(issue)
     }.stateIn(this, WhileOnScreen, null)
@@ -100,7 +98,7 @@ class FundingAmountViewModel @AssistedInject constructor(
     /** The history over the sheet, which stays up underneath: leaving the history comes back here. */
     fun onHistory() = launchUnit { router.openFundingHistory() }
 
-    /** Quotes the new amount once the user pauses, so a provider's limit shows before Continue. */
+    // So a provider's limit shows before Continue.
     private fun scheduleQuote() {
         quoteJob?.cancel()
         quoteJob = launch {

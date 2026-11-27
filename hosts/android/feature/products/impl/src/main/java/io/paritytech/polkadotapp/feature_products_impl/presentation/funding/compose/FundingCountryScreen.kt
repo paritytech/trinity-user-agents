@@ -21,10 +21,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/**
- * Where the user pays from. Countries whose minimum is above the amount are listed apart with it, and countries
- * every provider on this rail refuses are listed apart and cannot be picked.
- */
 @Composable
 fun FundingCountryScreen(
     modifier: Modifier = Modifier,

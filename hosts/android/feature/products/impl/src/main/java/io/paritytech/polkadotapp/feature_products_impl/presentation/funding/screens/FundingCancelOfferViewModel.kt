@@ -32,7 +32,6 @@ data class FundingCancelOfferUiState(
     val now: Instant,
 )
 
-/** The provider's terms for cancelling, which the user accepts as shown or declines. */
 @HiltViewModel(assistedFactory = FundingCancelOfferViewModel.Factory::class)
 class FundingCancelOfferViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,

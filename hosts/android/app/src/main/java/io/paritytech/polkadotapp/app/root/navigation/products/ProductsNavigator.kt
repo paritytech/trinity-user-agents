@@ -154,15 +154,11 @@ class ProductsNavigator @Inject constructor(
         popIfOnTop(R.id.fundingProviderFrameBottomSheet, FundingProviderFrameBottomSheet.SESSION_ID, intentId.value)
     }
 
-    /**
-     * Closes the session's sheet even when its provider frame sits on top of it: the frame belongs to the same
-     * session, so it goes too. Anything else on top is left alone, and so is the sheet under it.
-     */
+    // The session's provider frame on top goes too; anything else on top, and the sheet under it, stays.
     private fun popSession(destinationId: Int, argument: String, intentId: FundingIntentId) {
         if (sessionOnTop(destinationId, argument, intentId)) navigationHolder.navController?.popBackStack(destinationId, inclusive = true)
     }
 
-    /** Whether the screen for [intentId] is on the stack with nothing but the session's own provider screens over it. */
     private fun sessionOnTop(destinationId: Int, argument: String, intentId: FundingIntentId): Boolean {
         val stack = navigationHolder.navController?.currentBackStack?.value.orEmpty()
         val index = stack.indexOfLast { it.destination.id == destinationId && it.arguments?.getString(argument) == intentId.value }

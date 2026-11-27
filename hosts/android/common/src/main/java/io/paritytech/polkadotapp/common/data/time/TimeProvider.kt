@@ -13,7 +13,6 @@ import kotlin.time.Instant
 interface TimeProvider {
     fun now(): Instant
 
-    /** The time now, then again every [period] while collected. */
     fun ticking(period: Duration): Flow<Instant> = flow {
         while (true) {
             emit(now())

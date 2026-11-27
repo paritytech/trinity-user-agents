@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 import uniffi.truapi.FundingRail
 import uniffi.truapi.ProductId
 
-/** What the user picked on the funding sheet; `null` where they have not, so the core's facts stand. */
+// `null` where the user has not picked, so the core's facts stand.
 data class FundingPicks(
     val rail: FundingRail?,
     val amountText: String?,
@@ -25,7 +25,6 @@ data class FundingPicks(
 
     fun withChosenProvider(id: ProductId): FundingPicks = copy(providerId = id)
 
-    /** [base], the session as the core holds it, with these picks over it. */
     fun applyTo(base: FundingFlowState): FundingFlowState {
         val withRail = rail?.let(base::withRail) ?: base
         val withAmount = amountText?.let(withRail::withAmountText) ?: withRail
