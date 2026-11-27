@@ -478,6 +478,9 @@ cfg_select! {
 		mod nft_purse;
 
 		#[cfg(not(target_arch = "wasm32"))]
+		mod pgas_claims;
+
+		#[cfg(not(target_arch = "wasm32"))]
 		mod pocket_cards;
 
 		#[cfg(not(target_arch = "wasm32"))]

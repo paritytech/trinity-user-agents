@@ -381,6 +381,22 @@ Transactions of a domain or policy the core did not register on this start
 are left as they are and do not count as live, so they resume once it is
 registered again.
 
+### PGAS claims
+
+Native signing hosts register a PGAS claim domain with the durable engine,
+for NFT transfers to depend on. `PgasClaims::claim` registers a deferred claim
+of one slot into a destination account. A destination has at most one claim
+waiting to be built or to reach a block, and a second claim into it is refused
+with the id of the active one. A claim is built from the signed-in session,
+which a signing host keeps for one account, and waits while nobody is signed
+in. A refused or expired attempt is built again in a fresh slot, up to five
+attempts, and no attempt is built later than ten minutes after registration.
+The engine decides a claim by finding its extrinsic in a block, because
+`Pgas.ClaimedGasAliases` records only the person's alias for a day and slot,
+whichever claim of that slot landed. Nothing registers claims yet: a
+`SmartContractAllowance` request claims PGAS directly, without the durable
+ledger.
+
 ### NFT purses
 
 Native signing hosts serve the `NftPurse` API from the
