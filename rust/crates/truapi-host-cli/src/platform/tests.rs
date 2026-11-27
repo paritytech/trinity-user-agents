@@ -736,3 +736,46 @@ fn product_storage_is_isolated_by_session_then_product() {
 		fs::read_to_string(second_path).expect("read second session file")
 	);
 }
+
+// A provider's worker waits on what its screen writes, so a subscription
+// carries every later write and clear of its key, and nothing of another.
+#[test]
+fn a_storage_subscription_hears_later_writes_of_its_key() {
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
+	let watched = ProductStorageKey::new(ProductId::for_test("ramp.dot"), "action").encode();
+	let other = ProductStorageKey::new(ProductId::for_test("ramp.dot"), "view").encode();
+
+	futures::executor::block_on(async {
+		let mut changes = platform.subscribe_storage(watched.clone());
+		let value = |item: Option<Result<api::HostLocalStorageChangeItem, _>>| {
+			item.expect("an item").expect("a change").value
+		};
+		assert_eq!(value(changes.next().await), None);
+		platform.write(other, b"ignored".to_vec()).await.expect("write other");
+		platform.write(watched.clone(), b"sent".to_vec()).await.expect("write watched");
+		assert_eq!(value(changes.next().await), Some(b"sent".to_vec()));
+		platform.clear(watched).await.expect("clear watched");
+		assert_eq!(value(changes.next().await), None);
+	});
+}
+
+// Clearing a product's state empties every key a subscription watches.
+#[test]
+fn a_storage_subscription_hears_its_product_cleared() {
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
+	let watched = ProductStorageKey::new(ProductId::for_test("ramp.dot"), "action");
+
+	futures::executor::block_on(async {
+		platform.write(watched.encode(), b"sent".to_vec()).await.expect("write watched");
+		let mut changes = platform.subscribe_storage(watched.encode());
+		let value = |item: Option<Result<api::HostLocalStorageChangeItem, _>>| {
+			item.expect("an item").expect("a change").value
+		};
+		assert_eq!(value(changes.next().await), Some(b"sent".to_vec()));
+		platform
+			.clear_product(watched.product_id().clone())
+			.await
+			.expect("clear product");
+		assert_eq!(value(changes.next().await), None);
+	});
+}

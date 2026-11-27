@@ -31,12 +31,22 @@ impl AssetHubReader {
 	/// Connects to the network's Asset Hub.
 	pub async fn connect(network: &Stack) -> Result<Self> {
 		let chains = CliChainProvider::new(network);
-		let location = chains.location(network.genesis().asset_hub);
+		Self::over(&chains, network.genesis().asset_hub, network.pop_controller()).await
+	}
+
+	/// Connects to the Asset Hub `chains` routes `asset_hub` to, reading
+	/// usernames through `pop_controller`.
+	pub async fn over(
+		chains: &CliChainProvider,
+		asset_hub: [u8; 32],
+		pop_controller: [u8; 20],
+	) -> Result<Self> {
+		let location = chains.location(asset_hub);
 		let rpc = chains
-			.rpc_client(network.genesis().asset_hub)
+			.rpc_client(asset_hub)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({location})"))?;
-		Ok(Self { rpc, pop_controller: network.pop_controller() })
+		Ok(Self { rpc, pop_controller })
 	}
 
 	/// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is

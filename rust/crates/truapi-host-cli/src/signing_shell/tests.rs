@@ -104,6 +104,40 @@ fn parses_all_operational_commands() {
 	);
 	assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 	assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
+	assert_eq!(
+		parse_command("/funding cancel fs_abc"),
+		Ok(ShellCommand::Funding(FundingCommand::Cancel("fs_abc".to_string())))
+	);
+	assert_eq!(
+		parse_command("/funding sessions"),
+		Ok(ShellCommand::Funding(FundingCommand::Sessions))
+	);
+	assert_eq!(
+		parse_command("/funding close fs_abc"),
+		Ok(ShellCommand::Funding(FundingCommand::Close("fs_abc".to_string())))
+	);
+	assert_eq!(
+		parse_command("/funding returned fs_abc https://ramp.example/done?id=7"),
+		Ok(ShellCommand::Funding(FundingCommand::Returned(
+			"fs_abc".to_string(),
+			"https://ramp.example/done?id=7".to_string()
+		)))
+	);
+	assert_eq!(
+		parse_command("/funding history"),
+		Ok(ShellCommand::Funding(FundingCommand::History))
+	);
+	assert_eq!(
+		parse_command(r#"/funding write fs_abc fundtest:action:fs_abc {"kind": "wallet-sent"}"#),
+		Ok(ShellCommand::Funding(FundingCommand::Write(
+			"fs_abc".to_string(),
+			"fundtest:action:fs_abc".to_string(),
+			r#"{"kind": "wallet-sent"}"#.to_string()
+		)))
+	);
+	assert!(parse_command("/funding write fs_abc key").is_err());
+	assert!(parse_command("/funding cancel").is_err());
+	assert!(parse_command("/funding").is_err());
 	assert_eq!(parse_command("/devices"), Ok(ShellCommand::Devices(DeviceCommand::List)));
 	assert_eq!(
 		parse_command(&format!("/devices --remove 0x{DEVICE_ID}")),

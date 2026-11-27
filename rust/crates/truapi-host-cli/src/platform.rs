@@ -18,7 +18,7 @@ use std::{
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use futures::stream::{self, BoxStream};
+use futures::stream::{self, BoxStream, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
@@ -175,7 +175,10 @@ pub struct CliPlatform {
 	/// `Features::feature_supported` answers from.
 	served_chains: Roles<[u8; 32]>,
 	extension_versions: truapi::platform::ExtensionVersionMap,
-	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
+	product_storage: Arc<Mutex<ProductValues>>,
+	/// Every product storage write or clear, by its scoped key, so a
+	/// `localStorage.subscribe` in one execution hears another's write.
+	product_storage_changes: tokio::sync::broadcast::Sender<String>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
 	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
@@ -263,7 +266,8 @@ impl CliPlatform {
 			chain,
 			served_chains: network.genesis(),
 			extension_versions: network.extension_versions(),
-			product_storage: Mutex::new(product_storage),
+			product_storage: Arc::new(Mutex::new(product_storage)),
+			product_storage_changes: tokio::sync::broadcast::Sender::new(64),
 			core_storage: Mutex::new(core_storage),
 			device_storage: Mutex::new(device_storage),
 			product_storage_dir: Mutex::new(product_storage_dir),
@@ -280,6 +284,11 @@ impl CliPlatform {
 			ui,
 			prompt_lock: AsyncMutex::new(()),
 		})
+	}
+
+	/// The chain connections this platform serves the core over.
+	pub fn chains(&self) -> Arc<CliChainProvider> {
+		Arc::clone(&self.chain)
 	}
 
 	/// Return the policy used by future confirmation requests.
@@ -519,13 +528,7 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
 impl ProductStorage for CliPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		let scoped = ProductStorageKey::decode(&key)?;
-		Ok(self
-			.product_storage
-			.lock()
-			.expect("product storage mutex poisoned")
-			.get(scoped.product_id())
-			.and_then(|values| values.get(scoped.key()))
-			.cloned())
+		Ok(stored_product_value(&self.product_storage, Some(&scoped)))
 	}
 
 	async fn write(
@@ -538,6 +541,9 @@ impl ProductStorage for CliPlatform {
 		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.insert(scoped.key().to_string(), value);
 		self.persist_product_storage(scoped.product_id(), values)?;
+		drop(storage);
+		// No subscriber is not a failure.
+		let _ = self.product_storage_changes.send(key);
 		Ok(())
 	}
 
@@ -547,6 +553,8 @@ impl ProductStorage for CliPlatform {
 		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
 		self.persist_product_storage(scoped.product_id(), values)?;
+		drop(storage);
+		let _ = self.product_storage_changes.send(key);
 		Ok(())
 	}
 
@@ -555,27 +563,66 @@ impl ProductStorage for CliPlatform {
 		product_id: ProductId,
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		storage.remove(&product_id);
+		let removed = storage.remove(&product_id).unwrap_or_default();
 		self.remove_product_storage(&product_id)?;
+		drop(storage);
+		// Every subscription to a removed key now reads it empty.
+		for key in removed.into_keys() {
+			let key = ProductStorageKey::new(product_id.clone(), key).encode();
+			let _ = self.product_storage_changes.send(key);
+		}
 		Ok(())
 	}
 
+	/// The value now, then the value after every write or clear of `key`. A
+	/// subscriber that falls behind reads the value again rather than missing
+	/// the latest one.
 	fn subscribe_storage(
 		&self,
 		key: String,
 	) -> BoxStream<'static, Result<api::HostLocalStorageChangeItem, api::GenericError>> {
-		// TODO: current value only; the CLI never pushes later changes. Needs a
-		// per-key broadcast off write/clear for cross-context storage sync.
-		let value = ProductStorageKey::decode(&key).ok().and_then(|scoped| {
-			self.product_storage
-				.lock()
-				.expect("product storage mutex poisoned")
-				.get(scoped.product_id())
-				.and_then(|values| values.get(scoped.key()))
-				.cloned()
+		let changes = self.product_storage_changes.subscribe();
+		let scoped = ProductStorageKey::decode(&key).ok();
+		let storage = Arc::clone(&self.product_storage);
+		let current = stored_product_value(&storage, scoped.as_ref());
+		let later = stream::unfold(changes, move |mut changes| {
+			let key = key.clone();
+			let scoped = scoped.clone();
+			let storage = Arc::clone(&storage);
+			async move {
+				loop {
+					match changes.recv().await {
+						Ok(changed) if changed != key => continue,
+						Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+						Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+					}
+					let value = stored_product_value(&storage, scoped.as_ref());
+					return Some((Ok(api::HostLocalStorageChangeItem { value }), changes));
+				}
+			}
 		});
-		Box::pin(stream::once(async move { Ok(api::HostLocalStorageChangeItem { value }) }))
+		Box::pin(
+			stream::once(async move { Ok(api::HostLocalStorageChangeItem { value: current }) })
+				.chain(later),
+		)
 	}
+}
+
+/// Each product's storage, by its unscoped keys.
+type ProductValues = HashMap<ProductId, HashMap<String, Vec<u8>>>;
+
+/// The value `scoped` holds in `storage`, if any.
+fn stored_product_value(
+	storage: &Mutex<ProductValues>,
+	scoped: Option<&ProductStorageKey>,
+) -> Option<Vec<u8>> {
+	let scoped = scoped?;
+	storage
+		.lock()
+		.expect("product storage mutex poisoned")
+		.get(scoped.product_id())
+		.and_then(|values| values.get(scoped.key()))
+		.cloned()
 }
 
 #[async_trait::async_trait]
