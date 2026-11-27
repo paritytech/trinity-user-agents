@@ -24,8 +24,8 @@ async fn a_copy_the_cli_cannot_run_is_a_failed_fetch() {
 }
 
 /// The light client needs a light spec for each chain it runs, so a copy
-/// without one is refused there. Over RPC it runs, as on main: a light-client
-/// command then fails on it and fetches again once.
+/// without one is refused there. Over RPC it runs, and a light-client
+/// command then fails on it.
 #[test]
 fn a_copy_without_a_light_spec_is_refused_only_on_the_light_client() {
 	let without_spec = edit_chain("Bulletin", |chain| {

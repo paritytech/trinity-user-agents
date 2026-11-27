@@ -156,9 +156,9 @@ impl StackRefresh {
 	/// Resolves a stack its build ships no copy of, such as one a person
 	/// imported or a developer passes to a tool. `pointer` is the stack's link,
 	/// signed or not: a link without a key trusts whoever serves the
-	/// descriptor. Its copies are not checked against a key, but as for a
-	/// signed stack the core never takes one with a lower `sequence` than the
-	/// copy it holds, or the same `sequence` with other content.
+	/// descriptor and has no rollback protection: a copy with a lower
+	/// `sequence` is taken, as RFC 1 says. One with the same `sequence` and
+	/// other content is refused, as for a signed stack.
 	///
 	/// Starts from the copy `records` holds. Without one, it first fetches the
 	/// descriptor through `host`, stores it, and starts from that. The first

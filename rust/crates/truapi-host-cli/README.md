@@ -1148,13 +1148,16 @@ A command reaches its chains in one of two ways:
   descriptor when the copy it holds was last fetched over an hour ago or never, as the
   shipped copy is, saying so and waiting up to 3 seconds. Until a fetch brings the
   current copy or a newer one, for instance while the server is down, every command
-  fetches again. A newer copy the fetch stores is run at once. A copy the CLI cannot
-  run, such as one past `expiresAt`, is fetched again once before the command fails.
-  The descriptor is also refreshed in the background while a command runs, and a
-  running host logs when a newer copy needs a restart. A published descriptor that
-  changes the stack's `tld`, or that the CLI cannot run on, is not kept, with a
-  warning, since every account derives under the TLD; on the light client that
-  includes one without a light spec for a chain it runs.
+  fetches again. A newer copy the fetch stores is run at once. When the copy held
+  cannot run, for instance past `expiresAt`, the CLI fetches once more before the
+  command fails, unless it fetched in this run already. The descriptor is also
+  refreshed in the background while a command runs, and a running host logs when a
+  newer copy needs a restart. A published descriptor that changes the stack's `tld`
+  is not kept, since every account derives under the TLD, and neither is one the CLI
+  cannot run on, for instance one without a `dub` service, `dotns.popController` or
+  one of the chains it serves, or on the light client one without a light spec for a
+  chain it runs. Each is reported with a warning. A copy past `expiresAt` is kept: the stack
+  has shut down, and commands fail until its operator publishes a newer one.
 - **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
   `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
   replaces `--network`, and the two cannot be combined. A link or URL is fetched by

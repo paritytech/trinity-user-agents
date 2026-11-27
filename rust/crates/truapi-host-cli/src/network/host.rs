@@ -97,8 +97,9 @@ impl StackHost for CliStackHost {
 
 impl CliStackHost {
 	/// Warns when the last fetch brought a copy the core refused, such as one
-	/// on another TLD. A fetch the CLI waits on is reported here, since only
-	/// the background refresh tells [`StackHost::stack_changed`].
+	/// on another TLD. A command that fails after a fetch it waited on calls
+	/// this; one that runs is told the same by [`StackHost::stack_changed`]
+	/// once its background refresh starts.
 	pub fn warn_if_refused(&self, status: &StackStatus) {
 		if let Some(StackRefreshOutcome::Refused { reason }) = &status.last_refresh {
 			let url = self.pointer.url();

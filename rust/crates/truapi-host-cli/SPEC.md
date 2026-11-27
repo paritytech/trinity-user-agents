@@ -1844,9 +1844,11 @@ unless it fetched in this run already. Each command also refreshes the
 descriptor in the background while it runs, and a host that runs logs when a
 newer copy changes a chain, the network or the `generation` and needs a
 restart. A copy that changes the `tld`, or that the CLI cannot run on (for
-instance one without a `dub` service, or on the light client one without those
-light specs), is refused with a warning and the copy in use stays. A copy past
-`validUntil` is used with a warning.
+instance one without a `dub` service, `dotns.popController` or People, Asset
+Hub or Bulletin, or on the light client one without those light specs), is refused
+with a warning and the copy in use stays. A copy past `expiresAt` is kept, and
+commands fail on it until a newer one is published. A copy past `validUntil` is
+used with a warning.
 `scripts/update-stacks.sh` refreshes the shipped copies, and the daily
 chain-spec workflow carries the refresh in one PR with its changeset.
 `truapi-host stack bundle` refuses a copy that changes the `tld` of the copy at
@@ -1883,8 +1885,9 @@ key checked. A link or URL that is not a built-in's is imported through
 `StackRefresh::import`: the first command fetches it and keeps it in the stack's
 state directory, and later commands start from that copy and fetch it before
 they run as for a built-in. A link with a built-in network's key and another
-URL is that network, fetched from the URL given. A stack without a key is
-followed only to a copy with a higher `sequence`. A local
+URL is that network, fetched from the URL given. A stack without a key has no
+rollback protection, as RFC 1 says: a copy with a lower `sequence` is taken
+too. A local
 file is read on every run and never refreshed. A stack that cannot be fetched
 while none is kept, a descriptor that breaks a rule and one past `expiresAt` are
 errors that name the stack; one past `validUntil` is used with a warning. Its endpoints and People's

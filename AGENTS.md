@@ -14,7 +14,8 @@ rust/crates/
                          (Humanity, Jollity, Collectibles),
                          its `stack` module resolves the Trinity stack the host runs, the
                          core's only chain configuration, from the descriptor its build
-                         bundles or from one it imports by link, its `chain` module builds the core's own extrinsics through
+                         bundles or from one it imports by link, its `chain` module
+                         builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned

@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Result, anyhow, bail, ensure};
 use trinity_stack::{DEFAULT_LINK_BASE, Pointer};
 use truapi::{
-	platform::{ReservedValuesPolicy, StackRefresh},
+	platform::{ReservedValuesPolicy, StackRefresh, StackRefreshOutcome, StackStatus},
 	time::{RealTimer, SystemClock},
 };
 
@@ -72,6 +72,7 @@ impl NetworkSource {
 		let held = refresh.descriptor();
 		let status = refresh.fetch_now().await;
 		if !status.restart_required && refresh.descriptor() == held {
+			refresh.host.warn_if_refused(&status);
 			return Err(error);
 		}
 		let stack = self.open().await?;
@@ -125,26 +126,36 @@ impl NetworkSource {
 	/// fetched first when it is due: last fetched over an hour ago, or never,
 	/// as a shipped copy is. A copy the CLI cannot run, such as one past
 	/// `expiresAt` or one without the light specs this run needs, is fetched
-	/// again once, since its operator may have published a fix. Each of these
-	/// fetches waits at most [`PRE_START_FETCH_TIMEOUT`] for the server, and a
-	/// newer copy is run at once; without one the command runs on, or fails
-	/// on, the copy it holds.
+	/// once more unless this run fetched already, since its operator may have
+	/// published a fix. Each of these fetches waits at most
+	/// [`PRE_START_FETCH_TIMEOUT`] for the server, and a newer copy is run at
+	/// once; without one the command runs on, or fails on, the copy it holds.
 	async fn open_published(&self, published: &Published) -> Result<Stack> {
 		let mut refresh = self.load(published).await?;
 		// An imported stack's first copy was just fetched.
 		let mut fetched = refresh.status().last_refresh.is_some();
+		let mut last_fetch = None;
 		if !fetched && refresh.fetch_is_due() {
-			refresh = self.fetched(refresh, published).await?;
-			fetched = true;
+			let (reloaded, status) = self.fetched(refresh, published).await?;
+			(refresh, last_fetch, fetched) = (reloaded, Some(status), true);
 		}
-		match self.running(refresh, published.pointer.clone()) {
+		let opened = match self.running(refresh, published.pointer.clone()) {
 			Err(error) if !fetched => {
 				tracing::info!("{error:#}; fetching the stack's descriptor again");
-				let refresh = self.fetched(self.load(published).await?, published).await?;
+				let (refresh, status) =
+					self.fetched(self.load(published).await?, published).await?;
+				last_fetch = Some(status);
 				self.running(refresh, published.pointer.clone())
 			},
 			opened => opened,
+		};
+		// A stack that runs reports its status once its refresh starts.
+		if opened.is_err() &&
+			let Some(status) = &last_fetch
+		{
+			self.host(published.pointer.clone()).warn_if_refused(status);
 		}
+		opened
 	}
 
 	/// The core's refresh of `published`, from the copy it holds. An imported
@@ -181,18 +192,26 @@ impl NetworkSource {
 
 	/// `refresh` after one fetch of its descriptor that waits at most
 	/// [`PRE_START_FETCH_TIMEOUT`] for the server, loaded again when the fetch
-	/// stored a copy that changes the stack.
-	async fn fetched(&self, refresh: StackRefresh, published: &Published) -> Result<StackRefresh> {
+	/// stored a copy that changes the stack, with the status the fetch left.
+	async fn fetched(
+		&self,
+		refresh: StackRefresh,
+		published: &Published,
+	) -> Result<(StackRefresh, StackStatus)> {
 		let url = published.pointer.url();
 		tracing::info!("fetching the stack descriptor at {url} before the command runs");
 		let host = self.host(published.pointer.clone()).within(PRE_START_FETCH_TIMEOUT);
 		let status = refresh.fetch_now(&host).await;
-		host.warn_if_refused(&status);
+		if let Some(StackRefreshOutcome::Unreachable { reason }) = &status.last_refresh {
+			tracing::info!(
+				"the stack descriptor could not be fetched ({reason}); using the copy held"
+			);
+		}
 		if !status.restart_required {
-			return Ok(refresh);
+			return Ok((refresh, status));
 		}
 		drop(refresh);
-		self.load(published).await
+		Ok((self.load(published).await?, status))
 	}
 
 	/// A local descriptor file, read as it is and never refreshed.

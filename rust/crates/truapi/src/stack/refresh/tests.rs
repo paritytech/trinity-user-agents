@@ -1426,31 +1426,27 @@ fn fetch_now_keeps_the_copy_when_the_fetch_fails() {
 	assert_eq!(status, stack_status(&bundled(), unreachable_because("connection refused")));
 }
 
-/// A stack without a key has no signature to refuse a replayed copy, and the
-/// record store keeps the higher `sequence`. The core refuses a lower one
-/// too, so it never reports a restart onto a copy the next start would not
-/// read.
+/// RFC 1 gives a stack without a key no rollback protection, so a copy with
+/// a lower `sequence` is taken and stored, and the next start runs it.
 #[test]
-fn an_unsigned_copy_with_a_lower_sequence_is_refused() {
+fn an_unsigned_copy_with_a_lower_sequence_is_taken_and_kept() {
 	let unsigned = |sequence: u32| {
 		let bytes = serde_json::to_vec(&published_test_descriptor_at(sequence)).unwrap();
 		Ok(StackFetchResponse::Document { bytes, etag: None })
 	};
-	let (first, _) = fetching_host(vec![unsigned(5)]);
+	let records = Arc::<MemoryRecords>::default();
 	let link = crate::test_support::test_stack_link(None);
-	let refresh = import(&link, Arc::default(), &first).expect("an unsigned copy is imported");
+	let (first, _) = fetching_host(vec![unsigned(5)]);
+	let refresh = import(&link, records.clone(), &first).expect("an unsigned copy is imported");
 	let (older, _) = fetching_host(vec![unsigned(4)]);
 
 	let status = futures::executor::block_on(refresh.fetch_now(&older));
+	let (no_fetch, _) = fetching_host(Vec::new());
+	let restarted = import(&link, records, &no_fetch).expect("the stored copy runs");
 
 	assert_eq!(
-		(status.restart_required, status.last_refresh),
-		(
-			false,
-			Some(StackRefreshOutcome::Refused {
-				reason: "sequence 4 is lower than 5 of the copy held".to_string()
-			})
-		)
+		(status.last_refresh, restarted.descriptor().sequence),
+		(Some(StackRefreshOutcome::Current), 4)
 	);
 }
 

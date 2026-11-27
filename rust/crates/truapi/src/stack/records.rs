@@ -29,11 +29,13 @@ pub trait StackRecords: Send + Sync {
 }
 
 /// Whether a record may replace the one stored for its stack: not when the
-/// stored one holds a copy that passes the core's rules at a higher
-/// `sequence`.
+/// stack is signed and the stored one holds a copy that passes the core's
+/// rules at a higher `sequence`.
 ///
 /// Any other stored record is replaced. The core never starts from one it
-/// ignores, so keeping it would block every lower `sequence`.
+/// ignores, so keeping it would block every lower `sequence`. A stack without
+/// a key has no rollback protection (RFC 1), so the reader takes a lower
+/// `sequence` for it and the store keeps what the reader took.
 pub struct ReplaceCheck {
 	rules: CopyRules,
 	sequence: Option<u32>,
@@ -49,7 +51,8 @@ impl ReplaceCheck {
 	/// Whether the record may replace `existing`.
 	#[must_use]
 	pub fn replaces(&self, existing: &[u8]) -> bool {
-		passing_sequence(&self.rules, existing) <= self.sequence
+		self.rules.pointer().key().is_none() ||
+			passing_sequence(&self.rules, existing) <= self.sequence
 	}
 }
 

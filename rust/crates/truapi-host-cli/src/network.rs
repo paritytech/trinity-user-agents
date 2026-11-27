@@ -153,9 +153,7 @@ impl DescriptorRefresh {
 	/// Fetches the descriptor now and returns the status once any newer copy
 	/// is stored.
 	async fn fetch_now(&self) -> StackStatus {
-		let status = self.refresh.fetch_now(&self.host).await;
-		self.host.warn_if_refused(&status);
-		status
+		self.refresh.fetch_now(&self.host).await
 	}
 
 	/// The descriptor of the copy the core runs.

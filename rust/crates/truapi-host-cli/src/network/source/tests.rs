@@ -302,11 +302,11 @@ async fn a_silent_server_delays_a_command_by_the_pre_start_limit_at_most() {
 
 	let stack = stack_source(&url, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
 
+	let waited = started.elapsed();
+	let limit = super::super::PRE_START_FETCH_TIMEOUT;
+	let second = std::time::Duration::from_secs(1);
 	assert_eq!(stack.descriptor().sequence, 1);
-	assert!(
-		started.elapsed() <
-			super::super::PRE_START_FETCH_TIMEOUT + std::time::Duration::from_secs(2)
-	);
+	assert!(waited > limit - second && waited < limit + 2 * second, "waited {waited:?}");
 }
 
 /// A built-in network's key with another URL, such as a mirror, is that
@@ -329,4 +329,24 @@ async fn a_built_in_key_with_another_url_is_fetched_from_that_url() {
 	let stack = stack_source(&given, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
 
 	assert_eq!((stack.state_directory(), requests.load(Ordering::Relaxed)), ("previewnet", 1));
+}
+
+/// A newer copy that changes the stack, as a wipe does, cannot replace the
+/// one the core started from while it runs, so the CLI loads the stack again
+/// and the command runs on the new chains.
+#[tokio::test]
+async fn a_newer_copy_that_changes_the_stack_is_run_at_once() {
+	let (server, _) = serve_light_specs().await;
+	let older = served_copy(&server, 1, "relay.json", "people.json");
+	let mut wiped: serde_json::Value =
+		serde_json::from_slice(&served_copy(&server, 2, "relay.json", "people.json")).unwrap();
+	wiped["generation"] = "after-the-wipe".into();
+	let (server, _) = serve_stack_and_light_specs(vec![serde_json::to_vec(&wiped).unwrap()]).await;
+	let url = format!("{server}/stack.json");
+	let state = tempfile::tempdir().expect("temporary directory");
+	keep_copy(state.path(), &Pointer::new(&url, None).unwrap(), &older, 2 * 60 * 60);
+
+	let stack = stack_source(&url, ChainBackend::Rpc, state.path()).resolve().await.unwrap();
+
+	assert_eq!(stack.core_stack().generation(), "after-the-wipe");
 }
