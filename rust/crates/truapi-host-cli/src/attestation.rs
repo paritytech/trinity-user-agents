@@ -45,6 +45,9 @@ use crate::{
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
 
+/// Budget for each identity backend request.
+const BACKEND_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
 #[display("backend auth identity derivation failed")]
 struct BackendIdentityDerivationError(ProductAccountError);
@@ -268,7 +271,7 @@ pub async fn lite_username_available(
 	username_base: &str,
 ) -> Result<bool> {
 	let backend_base = network.identity_backend();
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
 	let response =
@@ -299,7 +302,7 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
 	let backend_base = config.network.identity_backend();
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 
 	let mut reader = AssetHubReader::connect(config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
@@ -438,7 +441,7 @@ pub struct UsernameSearchItem {
 /// The search route is public, so no identity signs in. Rows of every status are
 /// returned, in the backend's order. Request and decoding failures return errors.
 pub async fn search_usernames(network: &Stack, prefix: &str) -> Result<Vec<UsernameSearchItem>> {
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 	search_backend_prefix(&client, network, None, prefix.to_string()).await
 }
 
@@ -456,7 +459,7 @@ pub async fn lookup_backend_username(
 ) -> Result<Option<String>> {
 	const SEARCH_CONCURRENCY: usize = 4;
 
-	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+	let client = reqwest::Client::builder().timeout(BACKEND_TIMEOUT).build()?;
 	let pages = stream::iter(b'a'..=b'z')
 		.map(|initial| {
 			search_backend_prefix(
@@ -504,14 +507,15 @@ async fn search_backend_prefix(
 		if let Some(cursor) = cursor.as_deref() {
 			query.push(("cursor", cursor));
 		}
+		let request = || client.get(&url).query(&query);
 		let response = match auth_entropy {
 			Some(entropy) => {
 				send_with_backend_auth(client, backend_base, entropy, network.tld(), |token| {
-					client.get(&url).bearer_auth(token).query(&query)
+					request().bearer_auth(token)
 				})
 				.await
 			},
-			None => client.get(&url).query(&query).send().await.map_err(anyhow::Error::from),
+			None => request().send().await.map_err(anyhow::Error::from),
 		}
 		.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
 		let status = response.status();

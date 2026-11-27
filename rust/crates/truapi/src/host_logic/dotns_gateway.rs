@@ -808,34 +808,30 @@ pub fn dispatcher_address_key() -> Vec<u8> {
 /// `DotnsGateway.AccountAlias[account]` storage key.
 /// The value is the 32-byte alias the account registered with.
 pub fn account_alias_key(account: &[u8; 32]) -> Vec<u8> {
-	let mut key = plain_key(b"DotnsGateway", b"AccountAlias");
-	key.extend_from_slice(&blake2_128(account));
-	key.extend_from_slice(account);
-	key
+	gateway_map_key(b"AccountAlias", account)
 }
 
 /// `DotnsGateway.AccountNames[account]` storage key.
 /// The value is the account's gateway names, each with its chat key.
 pub fn account_names_key(account: &[u8; 32]) -> Vec<u8> {
-	let mut key = plain_key(b"DotnsGateway", b"AccountNames");
-	key.extend_from_slice(&blake2_128(account));
-	key.extend_from_slice(account);
-	key
+	gateway_map_key(b"AccountNames", account)
 }
 
 /// `DotnsGateway.LiteLabelOwner[lite_label]` storage key, the dotted lite
 /// username (`alice.01`) as a `BaseLabel`. The value is the owning account.
 pub fn lite_label_owner_key(lite_label: &[u8]) -> Vec<u8> {
-	let encoded = lite_label.encode();
-	let mut key = plain_key(b"DotnsGateway", b"LiteLabelOwner");
-	key.extend_from_slice(&blake2_128(&encoded));
-	key.extend_from_slice(&encoded);
-	key
+	gateway_map_key(b"LiteLabelOwner", &lite_label.encode())
 }
 
 /// `Timestamp.Now` storage key. The value is a u64 of Unix milliseconds.
 pub fn timestamp_now_key() -> Vec<u8> {
 	plain_key(b"Timestamp", b"Now")
+}
+
+/// Key of a `DotnsGateway` map entry hashed with `Blake2_128Concat`:
+/// `plain_key ‖ blake2_128(key) ‖ key`.
+fn gateway_map_key(entry: &[u8], key: &[u8]) -> Vec<u8> {
+	[plain_key(b"DotnsGateway", entry).as_slice(), blake2_128(key).as_slice(), key].concat()
 }
 
 /// `twox128(pallet) ‖ twox128(entry)`.
