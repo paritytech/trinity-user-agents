@@ -225,7 +225,8 @@ export interface StackStatus {
    * suffix is listed only once this runtime has read it, so a suffix that is
    * not listed may not have been read yet. While a chain is listed, a host
    * with `fetchStackDescriptor` is asked for the descriptor every five minutes
-   * instead of every hour, until a newer copy sets `restartRequired`. A light
+   * instead of every hour, until a newer copy sets `restartRequired` or the
+   * published copy changes a pinned field, which only a new build takes. A light
    * client answers from its own chain spec, so it never lists a chain that
    * restarted.
    */

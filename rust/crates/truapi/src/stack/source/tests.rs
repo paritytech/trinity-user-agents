@@ -739,6 +739,33 @@ fn a_chain_that_stays_wrong_is_asked_about_every_five_minutes() {
 	);
 }
 
+/// A stack allowed reserved values has its genesis hashes pinned, so the copy
+/// its operator publishes after a wipe is refused on every fetch and only a
+/// new build takes it. Asking for it every five minutes would go on for as
+/// long as the runtime lives.
+#[test]
+fn a_wiped_pinned_stack_is_asked_about_hourly_once_its_new_copy_is_refused() {
+	let bundled = reserved_test_descriptor(1);
+	let mut wiped = reserved_test_descriptor(2);
+	test_chain(&mut wiped, "People")["genesisHash"] =
+		format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE)).into();
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+	source.due_fetch(START).expect("a build copy is due at once");
+	serve_stored(&mut source, &bundled, START);
+	source.chain_answered(PEOPLE_WIPED);
+	let before_the_refusal = source.next_fetch_in(START + 60);
+
+	source.due_fetch(START + 300).expect("the copy is five minutes old");
+	serve(&mut source, &wiped, START + 300);
+	let after_the_refusal = source.next_fetch_in(START + 300);
+	serve_stored(&mut source, &bundled, START + 3900);
+
+	assert_eq!(
+		[before_the_refusal, after_the_refusal, source.next_fetch_in(START + 3900)],
+		[240, 3600, 300].map(|seconds| Some(Duration::from_secs(seconds)))
+	);
+}
+
 /// Every connection to a wiped chain gets a wrong answer, the core's services
 /// retry their connections, and a broken endpoint may give a new hash each
 /// time. None of that reaches the descriptor's server more than once in

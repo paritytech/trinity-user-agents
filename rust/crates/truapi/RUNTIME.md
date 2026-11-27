@@ -223,7 +223,10 @@ subscriptions on People.
 While a chain is listed, the core fetches the descriptor every five minutes
 instead of every hour, since the operator publishes the new genesis hashes with
 the restart. Once the core holds a descriptor that changes a chain, it sets
-`restart_required` and fetches hourly again.
+`restart_required` and fetches hourly again. It also fetches hourly again when
+the published descriptor changes a pinned field, because only a new build takes
+that descriptor. On a stack that is allowed reserved values the genesis hashes
+are pinned, so this is what happens after its chains restart.
 
 A host learns of a mismatch through its stack callbacks, and can read it from
 `stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
