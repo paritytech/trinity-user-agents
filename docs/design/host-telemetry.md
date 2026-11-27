@@ -126,7 +126,7 @@ pub enum MarkerClass {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum Severity { Info, Warn, Error }
+pub enum Severity { Warn, Error }
 
 /// Every marker the core may address to a host, keyed by its dotted target.
 /// A host reads this once and looks up each marker it is handed. A target the
@@ -203,9 +203,9 @@ The benefit is that the number of places the rule is written stays at one as hos
 
 ## Funding events
 
-Funding's flow facts leave the core as core events under exported markers. The core emits them; each app's `onCoreEvent` sink hands them to Sentry Logs as the marker with its attributes, so they arrive from builds that are not released, through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
+Funding's flow facts leave the core as core events under markers the table keeps on the device, so each app's `onCoreEvent` sink writes them to its own log at debug and they go no further. The exception is the fault, which is exported and reaches Sentry through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
 
-**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. The table gates the event path as it does the log path, so an entry missing or local would reach no host. Each entry's doc comment lists the attributes it carries and the closed set each takes.
+**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Local`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on. The table gates the event path as it does the log path, so a local entry reaches a host's own log and nothing beyond it, and an entry missing from the table reaches no host at all. Each entry's doc comment lists the attributes it carries and the closed set each takes.
 
 | Marker | Logged when |
 |---|---|
