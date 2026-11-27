@@ -1,5 +1,5 @@
 ---
-"@parity/truapi-host": minor
+"@parity/truapi-host": major
 ---
 
 Native host SDK breaking change: open a product worker through the startup attempt supplied to the worker engine, which a host running its workers in WebViews implements with its WebView host. Report module start and failure on that attempt. Hosts that previously handled `requestWorkerTransition`, called `openProductExecution` with `Worker`, or reported `workerExited(productId)` must adopt this API. Every native runtime is constructed with a worker engine.

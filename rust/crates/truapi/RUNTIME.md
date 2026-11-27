@@ -448,12 +448,14 @@ reports module startup and a crash through it. Rust publishes the execution when
 has started and its bridge has authenticated. On the web, `@parity/truapi-host`
 delivers `requestWorkerTransition` to the host and reports no worker exits.
 
-While claims remain, the ledger retries a crashed worker. The first restart is
-immediate. For repeated exits less than a minute apart, the delay starts at 1 s
-and doubles up to 5 min. On the third consecutive crash, the core notifies the
-host through `worker_crashing`. Releasing the last claim cancels a pending
-retry. When the replacement connects, it receives its active funding sessions.
-Observers see the worker as pending while the ledger retries it.
+While claims remain, the ledger retries a crashed worker. The first crash in a
+run restarts the worker immediately. Later crashes in the same run wait 1 s,
+doubling up to 5 min. An exit starts a fresh run if that attempt reached
+`Running` and more than a minute has passed since the previous exit. On the
+third consecutive crash, the core notifies the host through `worker_crashing`.
+Releasing the last claim cancels a pending retry. When the replacement
+connects, it receives its active funding sessions. Observers see the worker
+as pending while the ledger retries it.
 
 ### Inter-host SSO
 
