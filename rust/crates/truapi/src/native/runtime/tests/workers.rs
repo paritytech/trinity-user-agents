@@ -43,15 +43,13 @@ fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<RecordingEngine>, ProductId) {
 	(runtime, views, ProductId::for_test("shared.dot"))
 }
 
-fn open(attempt: &Arc<NativeWorkerAttempt>) -> Arc<NativeProductExecution> {
+fn open(attempt: &Arc<NativeWorkerAttempt>) -> Result<Arc<NativeProductExecution>, HostRejection> {
 	let callbacks = Arc::new(EventCallbacks::new());
-	attempt
-		.open_execution(ExecutionCallbacks {
-			host: callbacks.clone(),
-			chat: Some(callbacks),
-			game: None,
-		})
-		.unwrap()
+	attempt.open_execution(ExecutionCallbacks {
+		host: callbacks.clone(),
+		chat: Some(callbacks),
+		game: None,
+	})
 }
 
 struct RenderObserver;
@@ -111,7 +109,8 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	let chat = runtime.claim_worker(product.clone());
 	let pocket = runtime.claim_worker(product.clone());
 	let boot = views.latest();
-	let owner = open(&boot);
+	let owner = open(&boot).unwrap();
+	assert!(open(&boot).is_err(), "the engine must keep the execution it already opened");
 	assert!(running(&runtime, &product).is_none());
 	assert!(boot.module_started());
 	assert!(running(&runtime, &product).is_none(), "acknowledgement alone cannot serve a render");
@@ -178,7 +177,7 @@ async fn an_observer_waits_in_pending_while_a_failed_worker_is_retried() {
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 	assert_eq!(views.starts.lock().unwrap().len(), 2);
 	let retry = views.latest();
-	let owner = open(&retry);
+	let owner = open(&retry).unwrap();
 	let _socket = connect(&owner).await;
 	assert!(retry.module_started());
 	let NativeWorkerExecutionState::Running { execution } = next() else {
@@ -197,19 +196,12 @@ async fn a_stale_attempt_cannot_open_publish_or_stop_a_replacement() {
 	let (runtime, views, product) = setup();
 	let old_claim = runtime.claim_worker(product.clone());
 	let old = views.latest();
-	let _old_owner = open(&old);
+	let _old_owner = open(&old).unwrap();
 	old_claim.release();
 	let _new_claim = runtime.claim_worker(product.clone());
 	let current = views.latest();
-	assert!(
-		old.open_execution(ExecutionCallbacks {
-			host: Arc::new(EventCallbacks::new()),
-			chat: None,
-			game: None,
-		})
-		.is_err()
-	);
-	let current_owner = open(&current);
+	assert!(open(&old).is_err());
+	let current_owner = open(&current).unwrap();
 	let _socket = connect(&current_owner).await;
 	assert!(!old.module_started());
 	assert!(running(&runtime, &product).is_none());
@@ -225,13 +217,7 @@ async fn a_stale_attempt_cannot_open_publish_or_stop_a_replacement() {
 #[tokio::test]
 async fn a_start_that_takes_too_long_is_stopped_and_retried() {
 	let (runtime, views, product) = setup();
-	let callbacks: Arc<dyn HostCallbacks> = Arc::new(EventCallbacks::new());
-	*runtime.workers.lock() =
-		Some(crate::native::runtime::workers::Session::new_with_startup_deadline(
-			&callbacks,
-			views.clone(),
-			Duration::from_millis(50),
-		));
+	runtime.workers.lock().as_mut().unwrap().startup_deadline = Duration::from_millis(50);
 	let _claim = runtime.claim_worker(product);
 	let first = views.latest();
 	crate::test_support::wait_until(
@@ -242,30 +228,12 @@ async fn a_start_that_takes_too_long_is_stopped_and_retried() {
 }
 
 #[tokio::test]
-async fn an_attempt_opens_its_execution_once() {
-	let (runtime, views, product) = setup();
-	let _claim = runtime.claim_worker(product);
-	let attempt = views.latest();
-	let _owner = open(&attempt);
-	assert!(
-		attempt
-			.open_execution(ExecutionCallbacks {
-				host: Arc::new(EventCallbacks::new()),
-				chat: None,
-				game: None,
-			})
-			.is_err(),
-		"a second execution would replace the first, which nothing would then shut down"
-	);
-}
-
-#[tokio::test]
 async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 	let (runtime, views, first) = setup();
 	let second = ProductId::for_test("second.dot");
 	let _first = runtime.claim_worker(first.clone());
 	let boot = views.latest();
-	let owner = open(&boot);
+	let owner = open(&boot).unwrap();
 	let _socket = connect(&owner).await;
 	assert!(boot.module_started());
 	let consumer = running(&runtime, &first).unwrap();
@@ -292,15 +260,7 @@ async fn signing_out_revokes_open_workers_and_cancels_pending_starts() {
 		consumer.publish_chat_action(text_chat_action("closed")),
 		Err(crate::ProductRuntimeError::Closed)
 	));
-	assert!(
-		pending
-			.open_execution(ExecutionCallbacks {
-				host: Arc::new(EventCallbacks::new()),
-				chat: None,
-				game: None,
-			})
-			.is_err()
-	);
+	assert!(open(&pending).is_err());
 }
 
 /// Ends the session from inside its second `start` call.
@@ -373,7 +333,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 	assert!(views.starts.lock().unwrap().is_empty());
 	let claim = runtime.claim_worker(product.clone());
 	let old = views.latest();
-	let owner = open(&old);
+	let owner = open(&old).unwrap();
 	let _socket = connect(&owner).await;
 	assert!(old.module_started());
 	runtime.reload_worker(product.clone());
@@ -383,7 +343,7 @@ async fn reloading_replaces_only_a_referenced_product_and_a_final_release_cancel
 		owner.publish_chat_action(text_chat_action("old")),
 		Err(crate::ProductRuntimeError::Closed)
 	));
-	let _new_owner = open(&update);
+	let _new_owner = open(&update).unwrap();
 	claim.release();
 	assert!(!update.module_started());
 	old.failed("stale during reload".into());

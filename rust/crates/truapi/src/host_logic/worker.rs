@@ -69,6 +69,7 @@ struct CrashRun {
 
 /// The holds on one product's worker, the attempt started for them and its
 /// current run of crashes.
+#[derive(Default)]
 struct Demand {
 	/// Live [`crate::WorkerHold`]s. Core operations and host modalities each
 	/// take their own, so the first one starts the worker and dropping the
@@ -143,12 +144,7 @@ impl WorkerLedger {
 			if state.closed {
 				return;
 			}
-			let demand = state.references.entry(product_id.clone()).or_insert(Demand {
-				count: 0,
-				attempt_id: 0,
-				ran: false,
-				crash_run: None,
-			});
+			let demand = state.references.entry(product_id.clone()).or_default();
 			demand.count += 1;
 			if demand.count != 1 {
 				return;

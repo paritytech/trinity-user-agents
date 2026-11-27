@@ -40,20 +40,11 @@ impl Session {
 		callbacks: &Arc<dyn HostCallbacks>,
 		worker_engine: Arc<dyn NativeWorkerEngine>,
 	) -> Self {
-		Self::new_with_startup_deadline(callbacks, worker_engine, STARTUP_DEADLINE)
-	}
-
-	/// [`Self::new`], with `startup_deadline` in place of [`STARTUP_DEADLINE`].
-	pub fn new_with_startup_deadline(
-		callbacks: &Arc<dyn HostCallbacks>,
-		worker_engine: Arc<dyn NativeWorkerEngine>,
-		startup_deadline: Duration,
-	) -> Self {
 		Self {
 			registry: Registry::default(),
 			worker_engine,
 			callbacks: callbacks.clone(),
-			startup_deadline,
+			startup_deadline: STARTUP_DEADLINE,
 		}
 	}
 
