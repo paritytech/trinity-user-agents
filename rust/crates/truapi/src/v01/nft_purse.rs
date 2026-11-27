@@ -395,6 +395,9 @@ pub enum NftPurseCreateChequeError {
 	OperationExists,
 	/// Any other failure.
 	Other(GenericError),
+	/// These items have no fee-less move left for the recipient's deposit.
+	/// Rebalance them first, which moves them paid into fresh keys.
+	ItemsMovesExhausted(Vec<NftPurseItemKey>),
 }
 
 /// Request to release the items of an undelivered cheque.

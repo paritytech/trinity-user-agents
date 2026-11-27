@@ -18,6 +18,7 @@ use super::{
 };
 use crate::{
 	host_logic::x25519_seal::X25519PrivateKey,
+	nft::{ItemKey, TEST_MAXIMUM_MOVES, holding_after_moves},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview},
 	store::DbError,
 };
@@ -206,6 +207,31 @@ fn a_cheque_from_roots_purse_asks_the_user_and_a_refusal_is_denied() {
 		destination: NftPurseDrainDestination::Cheque,
 	};
 	assert_eq!(drain_reviews(&platform), vec![review]);
+}
+
+/// The recipient deposits a cheque with one fee-less move per item, so a
+/// cheque over exhausted items is refused, naming every one, before the user
+/// is asked to confirm a drain that could not happen.
+#[test]
+fn a_cheque_over_exhausted_items_names_them_all_without_asking() {
+	let platform = Arc::new(StubPlatform::default());
+	let purses = product_purses(platform.clone());
+	let root = purses.root_purse();
+	let items = purses.held_items(root, 3);
+	let mut exhausted = vec![items[0], items[2]];
+	exhausted.sort_by_key(|key| key.0);
+	let holdings = exhausted
+		.iter()
+		.map(|key| (ItemKey(key.0), Some(holding_after_moves(7, TEST_MAXIMUM_MOVES))))
+		.collect();
+	block_on(purses.ledger.record_holdings(holdings)).unwrap();
+	let receive_key = v01::NftPurseReceiveKey(public_key_of([3; 32]));
+
+	let refused = create_cheque(&purses.host, root.0, to_receive_key(receive_key), items);
+
+	let expected = v01::NftPurseCreateChequeError::ItemsMovesExhausted(exhausted);
+	assert_eq!(refused, Err(cheque_refusal(expected)));
+	assert_eq!(drain_reviews(&platform), vec![]);
 }
 
 /// A second cheque under the same id would hand the same transfer out twice,

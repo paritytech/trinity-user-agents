@@ -14,6 +14,8 @@ use subxt::utils::{AccountId32, H256};
 
 pub use builder::{ClaimBuildError, PgasClaimBuilder};
 pub use claim_extrinsic::{BuiltClaim, ClaimSlot, build_claim_in_free_slot};
+#[cfg(test)]
+pub use tests::LivePerson;
 
 use self::{params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{

@@ -7,7 +7,7 @@ use truapi::latest::{NftPurseReceiveKey, X25519PublicKey};
 use super::*;
 use crate::{
 	host_logic::x25519_seal::X25519Keypair,
-	nft::{HeldItem, ItemRefusal, PageRequest},
+	nft::{ItemRefusal, PageRequest, unmoved_holding},
 	nft_purse::test_purses,
 	store::open_temporary_core_db,
 };
@@ -24,9 +24,8 @@ fn purses_holding(count: u32) -> (TempDir, NftPurses, Vec<ItemKey>) {
 	block_on(purses.create_purse(&creator("tickets.dot"), "Tickets".to_owned())).unwrap();
 	let count = NonZeroU32::new(count).unwrap();
 	let keys = block_on(purses.ledger.allocate_items(FROM, count)).unwrap();
-	let holding = |(index, key): (usize, &ItemKey)| {
-		(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
-	};
+	let holding =
+		|(index, key): (usize, &ItemKey)| (*key, Some(unmoved_holding(100 + index as u64)));
 	block_on(purses.ledger.record_holdings(keys.iter().enumerate().map(holding).collect()))
 		.unwrap();
 	(dir, purses, keys)

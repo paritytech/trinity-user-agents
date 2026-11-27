@@ -18,6 +18,8 @@ pub struct IdleItem {
 	pub key: ItemKey,
 	/// Where the key sits in the derivation tree.
 	pub slot: ItemSlot,
+	/// Fee-less moves its NFT used, or `None` before the tracker recorded them.
+	pub moves: Option<u16>,
 }
 
 /// Why an item cannot be spent from a purse.
@@ -42,7 +44,9 @@ pub fn idle_items<E: From<ItemRefusal> + From<DbError>>(
 	let keys: Vec<ItemKey> = items.iter().copied().collect();
 	let standings = dao::key_standings(conn, purse, &keys)?;
 	let idle_item = |key: &ItemKey| match standings.get(key) {
-		Some(KeyStanding::Idle { slot, .. }) => Ok(IdleItem { key: *key, slot: *slot }),
+		Some(KeyStanding::Idle { slot, moves, .. }) => {
+			Ok(IdleItem { key: *key, slot: *slot, moves: *moves })
+		},
 		Some(KeyStanding::Spent) => Err(ItemRefusal::Unavailable(*key).into()),
 		None => Err(ItemRefusal::NotFound(*key).into()),
 	};

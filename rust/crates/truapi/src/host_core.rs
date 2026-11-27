@@ -1178,6 +1178,8 @@ impl HostRuntime<SigningHost> {
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let budget = scarcity_move_budget(&self.services);
+		let claims = crate::pgas_claims::PgasClaims::new(durable.clone());
 		let deps = crate::nft::NftLedgerDeps {
 			db,
 			installation,
@@ -1186,6 +1188,8 @@ impl HostRuntime<SigningHost> {
 			secrets,
 			imported,
 			recovery,
+			budget,
+			claims,
 		};
 		Some(crate::nft::NftLedger::new(deps))
 	}
@@ -1525,12 +1529,21 @@ fn durable_registry(
 	let deps = ScarcityTransfersDeps {
 		storage: chain.clone(),
 		heads: chain,
-		genesis: services.asset_hub_chain_genesis_hash().into(),
+		genesis,
 		signer,
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
+		budget: scarcity_move_budget(services),
 	};
 	with_scarcity_transfers(registry, deps)
+}
+
+/// Reads the fee-less move budget of the Scarcity pallet on Asset Hub.
+#[cfg(not(target_arch = "wasm32"))]
+fn scarcity_move_budget(services: &RuntimeServices) -> Arc<crate::nft::ScarcityMoveBudget> {
+	let chain = Arc::new(services.chain.clone());
+	let genesis = services.asset_hub_chain_genesis_hash().into();
+	Arc::new(crate::nft::ScarcityMoveBudget::new(chain.clone(), chain, genesis))
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the

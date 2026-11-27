@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, ty
 
 use super::{
 	handoff::HandoffTag,
-	holding::HeldItem,
+	holding::TrackedHolding,
 	keys::{ItemIndex, ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
 };
@@ -28,6 +28,9 @@ pub enum KeyStanding {
 		instance: u64,
 		/// Where it sits in the derivation tree.
 		slot: ItemSlot,
+		/// Fee-less moves the NFT used, or `None` before the tracker
+		/// recorded them.
+		moves: Option<u16>,
 	},
 }
 
@@ -227,7 +230,7 @@ pub fn available_items(
 
 const KEY_STANDINGS: &str = concat!(
 	"SELECT item.key AS key, item.purse AS purse, item.installation AS installation,
-	item.idx AS idx, holding.instance AS instance, ",
+	item.idx AS idx, holding.instance AS instance, holding.moves AS moves, ",
 	spent!(),
 	" AS spent FROM nft_item AS item
 	JOIN nft_holding AS holding ON holding.key = item.key
@@ -321,22 +324,33 @@ pub fn handoff_keys(
 }
 
 const UNCONSUMED_KEYS: &str = "SELECT item.key AS key, item.purse AS purse,
-	item.installation AS installation, item.idx AS idx FROM nft_item AS item
+	item.installation AS installation, item.idx AS idx, holding.moves AS moves
+	FROM nft_item AS item LEFT JOIN nft_holding AS holding ON holding.key = item.key
 	WHERE item.key IN rarray(:keys) AND NOT EXISTS (SELECT 1 FROM nft_consumption AS spent
 	LEFT JOIN durable_tx AS tx ON tx.id = spent.tx
 	WHERE spent.key = item.key AND (spent.kind = 'HANDOFF' OR tx.status != 'FAILURE'))
 	ORDER BY item.key";
 
-/// Each of `keys` that is ours and that nothing consumed, with its slot,
-/// ordered by key. A key is consumed once it is handed off or spent by a
-/// transaction that did not fail, landed or not. No holding is needed.
+/// An item key that nothing consumed.
+pub struct UnconsumedItem {
+	/// Where the key sits in the derivation tree.
+	pub slot: ItemSlot,
+	/// Fee-less moves its NFT used, when the tracker recorded a holding.
+	pub moves: Option<u16>,
+}
+
+/// Each of `keys` that is ours and that nothing consumed, ordered by key. A
+/// key is consumed once it is handed off or spent by a transaction that did
+/// not fail, landed or not. No holding is needed.
 pub fn unconsumed_keys(
 	conn: &Connection,
 	keys: &[ItemKey],
-) -> Result<Vec<(ItemKey, ItemSlot)>, DbError> {
+) -> Result<Vec<(ItemKey, UnconsumedItem)>, DbError> {
 	let mut statement = conn.prepare_cached(UNCONSUMED_KEYS)?;
-	let rows =
-		statement.query_map(named_params! { ":keys": key_array(keys) }, keyed_slot_from_row)?;
+	let rows = statement.query_map(named_params! { ":keys": key_array(keys) }, |row| {
+		let (key, slot) = keyed_slot_from_row(row)?;
+		Ok((key, UnconsumedItem { slot, moves: row.get("moves")? }))
+	})?;
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -359,18 +373,24 @@ pub fn observe_item_keys(db: &Db) -> BoxStream<'static, Result<Vec<ItemKey>, DbE
 }
 
 const UPSERT_HOLDING: &str = "INSERT INTO nft_holding
-	(key, collection, item, instance) VALUES (:key, :collection, :item, :instance)
+	(key, collection, item, instance, moves) VALUES (:key, :collection, :item, :instance, :moves)
 	ON CONFLICT (key) DO UPDATE SET collection = excluded.collection, item = excluded.item,
-		instance = excluded.instance";
+		instance = excluded.instance, moves = excluded.moves";
 
-/// Records that `key` holds `held`. The instance is stored as the
+/// Records that `key` holds `holding`. The instance is stored as the
 /// bit pattern of an `i64`, since SQLite integers are signed.
-pub fn upsert_holding(tx: &Transaction<'_>, key: &ItemKey, held: &HeldItem) -> Result<(), DbError> {
+pub fn upsert_holding(
+	tx: &Transaction<'_>,
+	key: &ItemKey,
+	holding: &TrackedHolding,
+) -> Result<(), DbError> {
+	let held = &holding.item;
 	tx.prepare_cached(UPSERT_HOLDING)?.execute(named_params! {
 		":key": key.0,
 		":collection": held.collection,
 		":item": held.item,
 		":instance": i64::try_from(held.instance).expect("instance ids fit in i64"),
+		":moves": holding.moves,
 	})?;
 	Ok(())
 }
@@ -395,6 +415,7 @@ fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, KeyStandin
 		KeyStanding::Idle {
 			instance: u64::try_from(instance).expect("stored instance ids are non-negative"),
 			slot,
+			moves: row.get("moves")?,
 		},
 	))
 }

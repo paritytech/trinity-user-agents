@@ -13,7 +13,7 @@ use super::{
 		validate_not_moving, validate_operation_unused,
 	},
 	purse::PurseId,
-	scarcity::{TransferParams, TransferSigner},
+	scarcity::{TransferMode, TransferParams, TransferSigner},
 };
 use crate::{
 	durable::{PolicyParams, RegistrationError},
@@ -104,6 +104,7 @@ fn import_params(source: ItemKey, destination: ItemKey, give_up_after: u64) -> P
 		destination,
 		submitted_attempt: None,
 		give_up_after,
+		mode: TransferMode::FeeLess,
 	}
 	.into()
 }

@@ -5,12 +5,14 @@ use super::*;
 use crate::{
 	durable::{DurableTxId, RegistrationError},
 	nft::{
-		HandoffRequest, HandoffTag, HeldItem, ImportRequest, NftLedger, PurseId, PurseTag,
-		TransferRequest, TransferType,
+		HandoffRequest, HandoffTag, ImportRequest, NftLedger, PurseId, PurseTag, TransferRequest,
+		TransferType,
 		keys::ItemIndex,
+		scarcity::TransferMode,
 		testing::{
-			TEST_INSTALLATION, fail_transfer, finalize_transfer, imported_test_key,
-			stored_transfer_params, test_ledger,
+			TEST_INSTALLATION, TEST_MAXIMUM_MOVES, fail_transfer, finalize_transfer,
+			holding_after_moves, imported_test_key, stored_transfer_params, test_ledger,
+			unmoved_holding,
 		},
 	},
 	store::{Db, open_temporary_core_db},
@@ -40,11 +42,15 @@ fn imported() -> Imported {
 	Imported { _dir: dir, db, ledger, cheque_keys, minted }
 }
 
-/// [`imported`] with both moves finalized.
+/// [`imported`] with both moves finalized, and the tracker having seen the
+/// keys they minted hold their NFTs.
 fn deposited() -> Imported {
 	let imported = imported();
 	finalize_transfer(&imported.db, DurableTxId(1));
 	finalize_transfer(&imported.db, DurableTxId(2));
+	for minted in imported.minted.clone() {
+		hold(&imported, minted);
+	}
 	imported
 }
 
@@ -65,7 +71,7 @@ fn start_return(
 }
 
 fn hold(imported: &Imported, key: ItemKey) {
-	let held = HeldItem { collection: 1, item: 1, instance: 100 };
+	let held = unmoved_holding(100);
 	block_on(imported.ledger.record_holdings(vec![(key, Some(held))])).unwrap();
 }
 
@@ -117,6 +123,7 @@ fn a_return_moves_each_landed_item_back_to_its_cheque_key() {
 			destination: deposited.cheque_keys[index],
 			submitted_attempt: None,
 			give_up_after: returns[index].give_up_after,
+			mode: TransferMode::FeeLess,
 		})
 		.collect();
 	assert_eq!(returns, expected);
@@ -164,6 +171,22 @@ fn an_item_with_a_live_transfer_out_is_reported_unavailable() {
 	assert_eq!(started, expected);
 }
 
+/// The sender reclaims a returned NFT from its cheque key fee-less, so a
+/// return that would leave it with no fee-less move is paid instead.
+#[test]
+fn a_return_that_would_arrive_exhausted_is_paid() {
+	let imported = deposited();
+	let one_short = holding_after_moves(100, TEST_MAXIMUM_MOVES - 1);
+	block_on(imported.ledger.record_holdings(vec![(imported.minted[0], Some(one_short))])).unwrap();
+
+	start_return(&imported, refund(2)).unwrap();
+
+	let returns = &stored_transfer_params(&imported.db)[2..];
+	let mode_of = |key: ItemKey| returns.iter().find(|params| params.source == key).unwrap().mode;
+	assert_eq!(mode_of(imported.minted[0]), TransferMode::Paid);
+	assert_eq!(mode_of(imported.minted[1]), TransferMode::FeeLess);
+}
+
 /// An item whose deposit move failed never arrived, so there is nothing
 /// to return for it.
 #[test]
@@ -171,6 +194,7 @@ fn an_item_whose_import_failed_is_neither_returned_nor_reported() {
 	let imported = imported();
 	finalize_transfer(&imported.db, DurableTxId(1));
 	fail_transfer(&imported.db, DurableTxId(2));
+	hold(&imported, imported.minted[0]);
 
 	let started = start_return(&imported, refund(2)).unwrap();
 

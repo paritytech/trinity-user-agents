@@ -4,6 +4,7 @@ use crate::durable::DurableTxFailureKind;
 mod live;
 mod testing;
 
+pub use live::LivePerson;
 pub use testing::{BuildCall, FakeClaimBuilder, TEST_DAY, destination};
 use testing::{ClaimsHarness, transient};
 

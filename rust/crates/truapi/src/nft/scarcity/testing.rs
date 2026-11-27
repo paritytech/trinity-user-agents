@@ -3,6 +3,9 @@
 use parity_scale_codec::Decode;
 use subxt::ArcMetadata;
 
+use super::move_budget::{MoveBudget, MoveBudgetSource};
+use crate::chain::StorageWatchError;
+
 /// Metadata of Paseo Asset Hub Next at spec 3004000, which runs the pallet.
 pub const ASSET_HUB_METADATA_BYTES: &[u8] =
 	include_bytes!("../../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
@@ -18,4 +21,14 @@ pub fn asset_hub_metadata() -> ArcMetadata {
 			.expect("the Asset Hub fixture decodes");
 	let metadata = subxt::Metadata::try_from(prefixed).expect("the fixture is subxt metadata");
 	ArcMetadata::from(metadata)
+}
+
+/// A move budget that never reads the chain.
+pub struct FixedMoveBudget(pub MoveBudget);
+
+#[async_trait::async_trait]
+impl MoveBudgetSource for FixedMoveBudget {
+	async fn current_budget(&self) -> Result<MoveBudget, StorageWatchError> {
+		Ok(self.0)
+	}
 }

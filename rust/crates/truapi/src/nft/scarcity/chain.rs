@@ -12,7 +12,7 @@ use subxt::{
 use crate::{
 	chain::{ChainHeads, HashAndNumber, StorageWatchError, WatchedStorage},
 	chain_runtime::RuntimeFailure,
-	nft::{HeldItem, ItemKey},
+	nft::{HeldItem, ItemKey, TrackedHolding},
 };
 
 /// The `Scarcity::NftsByOwner` entry, naming what each account holds.
@@ -55,6 +55,12 @@ pub struct ScarcityNft {
 impl From<ScarcityNft> for HeldItem {
 	fn from(nft: ScarcityNft) -> Self {
 		HeldItem { collection: nft.collection, item: nft.item, instance: nft.instance }
+	}
+}
+
+impl From<ScarcityNft> for TrackedHolding {
+	fn from(nft: ScarcityNft) -> Self {
+		TrackedHolding { item: nft.into(), moves: nft.moves }
 	}
 }
 
@@ -133,12 +139,12 @@ impl ScarcityChain for ScarcityStorage {
 		at: H256,
 		keys: &[ItemKey],
 	) -> Result<Vec<Option<ScarcityNft>>, StorageWatchError> {
-		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners: Vec<_> = keys.iter().map(|key| (AccountId32::from(*key),)).collect();
 		self.storage.read_entries_at(self.genesis, at, &nfts_by_owner(), &owners).await
 	}
 
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
-		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners: Vec<_> = keys.iter().map(|key| (AccountId32::from(*key),)).collect();
 		let (locks_entry, time_entry) = (locked_entry(), timestamp_now_entry());
 		let read_locks = self.storage.read_entries_at(self.genesis, at, &locks_entry, &owners);
 		let read_now = self.storage.read_entries_at(self.genesis, at, &time_entry, &[()]);

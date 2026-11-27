@@ -34,7 +34,7 @@ use crate::{
 };
 
 /// The person behind a mnemonic, with the chains its claims are built from.
-struct LivePerson {
+pub struct LivePerson {
 	entropy: RootEntropy,
 	network_suffix: Vec<u8>,
 	asset_hub: alloc::rpc::RpcClient,
@@ -42,14 +42,16 @@ struct LivePerson {
 	people: alloc::rpc::RpcClient,
 	people_metadata: alloc::extension::Metadata,
 	extrinsics: ExtrinsicService,
-	chain: ChainRuntime,
-	genesis: H256,
+	/// The one runtime over the stack's Asset Hub and People chain.
+	pub chain: ChainRuntime,
+	/// The Asset Hub's genesis.
+	pub genesis: H256,
 }
 
 impl LivePerson {
 	/// The person behind `entropy` on the Asset Hub and People chain of
 	/// `stack`, both reached through one chain runtime.
-	async fn connect(stack: &Descriptor, entropy: RootEntropy) -> Self {
+	pub async fn connect(stack: &Descriptor, entropy: RootEntropy) -> Self {
 		let asset_hub_chain = stack.chain("AssetHub").expect("the stack has an Asset Hub");
 		let people_chain = stack.chain("People").expect("the stack has a People chain");
 		let chain = live_chains([asset_hub_chain, people_chain]);

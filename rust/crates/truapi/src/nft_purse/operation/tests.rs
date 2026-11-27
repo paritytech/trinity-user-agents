@@ -3,7 +3,7 @@ use subxt::utils::H256;
 
 use super::*;
 use crate::{
-	nft::{HeldItem, NftLedger, PurseTag, test_ledger},
+	nft::{NftLedger, PurseTag, test_ledger, unmoved_holding},
 	store::{Db, open_temporary_core_db},
 };
 
@@ -136,7 +136,7 @@ fn held_item_in_new_purses(ledger: &NftLedger) -> ItemKey {
 	}
 	let one = core::num::NonZeroU32::new(1).unwrap();
 	let key = block_on(ledger.allocate_items(PurseId(0), one)).unwrap()[0];
-	let held = HeldItem { collection: 1, item: 1, instance: 7 };
+	let held = unmoved_holding(7);
 	block_on(ledger.record_holdings(vec![(key, Some(held))])).unwrap();
 	key
 }

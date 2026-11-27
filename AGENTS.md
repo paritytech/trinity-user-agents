@@ -27,6 +27,7 @@ rust/crates/
                          Asset Hub, and backup recovery after a reinstall) and `nft_purse`
                          (the NFT purses RFC over them) modules keep NFT purses in the
                          same database, transfer items as deferred durable transactions,
+                         paid from a PGAS claim once an NFT has no fee-less move left,
                          and receive cheques over the statement store; recovery reads the
                          seed's installations through `installation_registry` and scans
                          keys with the generic `gap_scan`, which coinage can reuse; its

@@ -6,8 +6,8 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
 	nft::{
-		HeldItem, ItemSecret, ItemSecrets, NftLedger, NftLedgerDeps, PageRequest, PurseTag,
-		testing::test_ledger_deps,
+		ItemSecret, ItemSecrets, NftLedger, NftLedgerDeps, PageRequest, PurseTag,
+		testing::{test_ledger_deps, unmoved_holding},
 	},
 	store::{CORE_DB_FILE, Db, open_temporary_core_db},
 };
@@ -27,9 +27,8 @@ fn held_items_with(count: u32, deps: impl FnOnce(Db) -> NftLedgerDeps) -> HeldIt
 	let ledger = NftLedger::new(deps(db.clone()));
 	block_on(ledger.create_purse("from".to_owned(), PurseTag::default())).unwrap();
 	let keys = block_on(ledger.allocate_items(FROM, NonZeroU32::new(count).unwrap())).unwrap();
-	let holding = |(index, key): (usize, &ItemKey)| {
-		(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
-	};
+	let holding =
+		|(index, key): (usize, &ItemKey)| (*key, Some(unmoved_holding(100 + index as u64)));
 	block_on(ledger.record_holdings(keys.iter().enumerate().map(holding).collect())).unwrap();
 	HeldItems { dir, db, ledger, keys }
 }
@@ -152,6 +151,31 @@ fn a_key_not_held_in_the_purse_is_refused_before_sealing() {
 
 	assert!(
 		matches!(refused, Err(HandoffError::Item(ItemRefusal::NotFound(key))) if key == not_held)
+	);
+	assert_eq!(handoff_rows(&items), 0);
+}
+
+/// Until the tracker recorded an NFT's moves, the core cannot tell whether
+/// the recipient could import it fee-less, so the key is not handed off yet.
+#[test]
+fn a_key_whose_moves_are_not_recorded_yet_is_refused_as_unavailable() {
+	let items = held_items(1);
+	let forget = |tx: &rusqlite::Transaction<'_>| {
+		tx.execute("UPDATE nft_holding SET moves = NULL", [])?;
+		Ok(())
+	};
+	block_on(items.db.write(forget)).unwrap();
+	let never_called = |_: &[ItemSecret]| -> Result<(), ()> { panic!("sealed a refused handoff") };
+
+	let refused = block_on(items.ledger.hand_off(
+		handoff_request(&items.keys, b"cheque"),
+		never_called,
+		|_, _| Ok(()),
+	));
+
+	let untracked = items.keys[0];
+	assert!(
+		matches!(refused, Err(HandoffError::Item(ItemRefusal::Unavailable(key))) if key == untracked)
 	);
 	assert_eq!(handoff_rows(&items), 0);
 }

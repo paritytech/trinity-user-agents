@@ -19,11 +19,22 @@ pub struct HeldItem {
 	pub instance: u64,
 }
 
+/// What a key holds as the tracker records it: the NFT, and the fee-less
+/// moves it used since its last paid move. The count only changes when the
+/// NFT moves, so it stays current while the NFT sits at the key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrackedHolding {
+	/// The NFT the key holds.
+	pub item: HeldItem,
+	/// Fee-less moves the NFT used.
+	pub moves: u16,
+}
+
 /// Stores what each key holds in `tx`: a row for a key that holds
 /// something, none for a key that holds nothing.
 pub fn record_holdings(
 	tx: &Transaction<'_>,
-	holdings: &[(ItemKey, Option<HeldItem>)],
+	holdings: &[(ItemKey, Option<TrackedHolding>)],
 ) -> Result<(), DbError> {
 	for (key, held) in holdings {
 		match held {

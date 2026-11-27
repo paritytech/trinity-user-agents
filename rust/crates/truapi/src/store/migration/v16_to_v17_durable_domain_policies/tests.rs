@@ -17,7 +17,7 @@ fn rows_keep_their_plan_without_naming_a_policy() {
 		)
 		.unwrap();
 
-	core_migrations().to_latest(&mut connection).unwrap();
+	core_migrations().to_version(&mut connection, 17).unwrap();
 	let mut statement = connection
 		.prepare("SELECT domain, status, policy_params FROM durable_tx ORDER BY id")
 		.unwrap();

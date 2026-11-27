@@ -165,14 +165,17 @@ fn refund_failure(
 }
 
 /// A deposit this product never made is not found, one still moving is in
-/// progress, a repeated refund exists, and a refund that would move nothing
-/// is unavailable. Anything else is the host's failure.
+/// progress, a repeated refund exists, and a refund that would move nothing,
+/// or whose items another spend took meanwhile, is unavailable. Anything else
+/// is the host's failure.
 fn refund_refusal(refusal: StartOperationError) -> CallError<latest::HostNftPurseRefundError> {
 	let domain = match refusal {
 		StartOperationError::ImportNotFound => latest::HostNftPurseRefundError::ChequeNotFound,
 		StartOperationError::ImportUnsettled => latest::HostNftPurseRefundError::DepositInProgress,
 		StartOperationError::OperationExists => latest::HostNftPurseRefundError::OperationExists,
-		StartOperationError::NothingIdle => latest::HostNftPurseRefundError::ItemUnavailable,
+		StartOperationError::NothingIdle | StartOperationError::ItemUnavailable(_) => {
+			latest::HostNftPurseRefundError::ItemUnavailable
+		},
 		other => return host_failure(other),
 	};
 	CallError::Domain(domain)
@@ -255,6 +258,10 @@ fn create_cheque_failure(
 		HandoffError::Seal(SealError::LowOrderKey(_)) => {
 			let reason = latest::GenericError { reason: error.to_string() };
 			latest::HostNftPurseCreateChequeError::Other(reason)
+		},
+		HandoffError::ItemsMovesExhausted(items) => {
+			let items = items.into_iter().map(|key| latest::NftPurseItemKey(key.0)).collect();
+			latest::HostNftPurseCreateChequeError::ItemsMovesExhausted(items)
 		},
 		other => return host_failure(other),
 	};

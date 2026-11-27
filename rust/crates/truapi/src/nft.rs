@@ -15,6 +15,7 @@ mod ledger;
 #[cfg(test)]
 mod live;
 mod operation;
+mod paid_moves;
 mod purse;
 mod reclaim;
 mod recovery;
@@ -25,7 +26,7 @@ mod standing;
 mod testing;
 
 pub use handoff::{HandoffError, HandoffRequest, HandoffTag};
-pub use holding::HeldItem;
+pub use holding::{HeldItem, TrackedHolding};
 pub use import::{ImportRequest, StartImportError};
 pub use imported_secrets::ImportedSecretStore;
 pub use item::{AllocateItemsError, PageRequest};
@@ -44,8 +45,12 @@ pub use returns::ReturnRequest;
 #[cfg(test)]
 pub use scarcity::ASSET_HUB_PIPELINE;
 pub use scarcity::{
-	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
+	HoldingTracker, HoldingTrackerDeps, ScarcityMoveBudget, ScarcityTransfersDeps,
+	with_scarcity_transfers,
 };
 pub use standing::ItemRefusal;
 #[cfg(test)]
-pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};
+pub use testing::{
+	TEST_INSTALLATION, TEST_MAXIMUM_MOVES, holding_after_moves, insert_item_row, test_ledger,
+	unmoved_holding,
+};

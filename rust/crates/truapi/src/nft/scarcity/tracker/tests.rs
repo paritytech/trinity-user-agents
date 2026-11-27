@@ -17,7 +17,7 @@ use crate::{
 	chain::{DecodableAtBlock, HashAndNumber, Node, RawStorageChanges, StorageSnapshot, serve},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	nft::{
-		PurseId, PurseTag, insert_item_row,
+		HeldItem, PurseId, PurseTag, insert_item_row,
 		scarcity::testing::{ASSET_HUB_METADATA_BYTES, asset_hub_metadata},
 		test_ledger,
 	},
@@ -51,7 +51,8 @@ fn holder() -> [u8; 32] {
 const HOLDER_NFT: &[u8] =
 	include_bytes!("../../../../tests/fixtures/paseo-next-asset-hub-nfts-by-owner.scale");
 
-const HOLDER_ITEM: HeldItem = HeldItem { collection: 27, item: 13, instance: 330 };
+const HOLDER_ITEM: TrackedHolding =
+	TrackedHolding { item: HeldItem { collection: 27, item: 13, instance: 330 }, moves: 0 };
 
 /// How long a test waits for the tracker to write what it was told.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -182,10 +183,11 @@ impl TrackerFixture {
 	}
 
 	/// Every holding row, by key.
-	fn holdings(&self) -> Vec<([u8; 32], HeldItem)> {
+	fn holdings(&self) -> Vec<([u8; 32], TrackedHolding)> {
 		let read = self.db.read(|conn| {
-			let mut statement = conn
-				.prepare("SELECT key, collection, item, instance FROM nft_holding ORDER BY key")?;
+			let mut statement = conn.prepare(
+				"SELECT key, collection, item, instance, moves FROM nft_holding ORDER BY key",
+			)?;
 			let rows = statement.query_map([], holding_row)?;
 			Ok(rows.collect::<Result<Vec<_>, _>>()?)
 		});
@@ -193,20 +195,20 @@ impl TrackerFixture {
 	}
 
 	/// Waits until the holding rows are `expected`, or fails the test.
-	fn await_holdings(&self, expected: Vec<([u8; 32], HeldItem)>) {
+	fn await_holdings(&self, expected: Vec<([u8; 32], TrackedHolding)>) {
 		let what = format!("held {expected:?}");
 		wait_until(&what, || self.holdings() == expected);
 	}
 }
 
-fn holding_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<([u8; 32], HeldItem)> {
-	let held = HeldItem {
+fn holding_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<([u8; 32], TrackedHolding)> {
+	let item = HeldItem {
 		collection: row.get("collection")?,
 		item: row.get("item")?,
 		instance: u64::try_from(row.get::<_, i64>("instance")?)
 			.expect("stored instance ids are non-negative"),
 	};
-	Ok((row.get("key")?, held))
+	Ok((row.get("key")?, TrackedHolding { item, moves: row.get("moves")? }))
 }
 
 impl OpenedWatch {
@@ -229,6 +231,21 @@ fn a_captured_holding_is_watched_under_its_storage_key_and_cached() {
 	fixture.await_holdings(vec![(holder(), HOLDER_ITEM)]);
 	let storage_key = hex::decode(HOLDER_STORAGE_KEY_HEX).expect("the key is hex");
 	assert_eq!(watch.keys, vec![storage_key]);
+}
+
+/// Registration decides whether a move is fee-less or paid from the moves
+/// the tracker recorded, so it must store the count the chain reports.
+#[test]
+fn a_holding_records_the_fee_less_moves_its_nft_used() {
+	let mut fixture = tracker_after(|db| insert_item_key(db, holder(), 0));
+	let watch = fixture.next_watch();
+	let mut moved = HOLDER_NFT.to_vec();
+	let moves_at = moved.len() - 2;
+	moved[moves_at..].copy_from_slice(&15u16.to_le_bytes());
+	watch.report(5, vec![(0, Some(moved))]);
+
+	let moved_item = TrackedHolding { moves: 15, ..HOLDER_ITEM };
+	fixture.await_holdings(vec![(holder(), moved_item)]);
 }
 
 /// A key whose NFT was sent on is no longer spendable, so `query_purse`
@@ -289,7 +306,7 @@ fn the_first_report_replaces_holdings_left_from_an_earlier_run() {
 		insert_item_key(db, holder(), 0);
 		block_on(db.write(|tx| {
 			tx.execute(
-				"INSERT INTO nft_holding VALUES (?1, 1, 1, 1)",
+				"INSERT INTO nft_holding VALUES (?1, 1, 1, 1, 1)",
 				rusqlite::params![holder()],
 			)?;
 			Ok(())

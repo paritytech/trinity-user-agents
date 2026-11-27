@@ -11,7 +11,7 @@ use super::chain::{ScarcityNft, nfts_by_owner};
 use crate::{
 	BackgroundTask, Spawner,
 	chain::{DecodedEntryChanges, WatchedHead, WatchedStorage},
-	nft::{HeldItem, ItemKey, NftLedger},
+	nft::{ItemKey, NftLedger, TrackedHolding},
 };
 
 /// What one watch reports for the keys it covers.
@@ -80,7 +80,7 @@ impl Tracking {
 	/// keys that changed. A failure is logged and skipped, because the watch
 	/// starts again or reports the same keys again.
 	fn watch_batch(&self, batch: Vec<ItemKey>) -> BoxStream<'static, HoldingChanges> {
-		let owners = batch.iter().map(|key| (AccountId32(key.0),)).collect();
+		let owners = batch.iter().map(|key| (AccountId32::from(*key),)).collect();
 		let storage = self.storage.clone();
 		storage
 			.watch_entry_changes(self.genesis, WatchedHead::Best, nfts_by_owner(), owners)
@@ -110,8 +110,8 @@ fn find_new_keys(watched: &HashSet<ItemKey>, keys: Vec<ItemKey>) -> Vec<ItemKey>
 	keys.into_iter().filter(|key| !watched.contains(key)).collect()
 }
 
-fn holding_of(owner: AccountId32, nft: Option<ScarcityNft>) -> (ItemKey, Option<HeldItem>) {
-	(ItemKey(owner.0), nft.map(HeldItem::from))
+fn holding_of(owner: AccountId32, nft: Option<ScarcityNft>) -> (ItemKey, Option<TrackedHolding>) {
+	(ItemKey(owner.0), nft.map(TrackedHolding::from))
 }
 
 #[cfg(test)]

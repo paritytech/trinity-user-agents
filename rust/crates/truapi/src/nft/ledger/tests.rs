@@ -13,6 +13,7 @@ use crate::{
 		keys::ItemIndex,
 		testing::{
 			FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, insert_item_row, test_ledger_deps,
+			unmoved_holding,
 		},
 	},
 	runtime::AuthorityError,
@@ -171,7 +172,7 @@ fn allocating_past_the_last_index_is_refused() {
 fn hold(ledger: &NftLedger, keys: &[ItemKey]) {
 	let held = |(instance, key): (usize, &ItemKey)| {
 		let instance = u64::try_from(instance).expect("a test position fits u64");
-		(*key, Some(HeldItem { collection: 1, item: 1, instance }))
+		(*key, Some(unmoved_holding(instance)))
 	};
 	let holdings = keys.iter().enumerate().map(held).collect();
 	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");

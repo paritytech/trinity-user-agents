@@ -3,6 +3,7 @@
 
 mod chain;
 mod holdings;
+mod move_budget;
 mod oracle;
 mod policy;
 #[cfg(test)]
@@ -15,9 +16,10 @@ use std::sync::Arc;
 use subxt::utils::H256;
 
 pub use holdings::ScarcityHoldings;
-pub use policy::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner};
+pub use move_budget::{DestinationKind, MoveBudget, MoveBudgetSource, ScarcityMoveBudget};
+pub use policy::{TRANSFER_WAIT_LIMIT_SECS, TransferMode, TransferParams, TransferSigner};
 #[cfg(test)]
-pub use testing::ASSET_HUB_PIPELINE;
+pub use testing::{ASSET_HUB_PIPELINE, FixedMoveBudget};
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
 
 use self::{
@@ -45,6 +47,8 @@ pub struct ScarcityTransfersDeps {
 	pub imported: ImportedSecretStore,
 	/// Builds the transfers.
 	pub extrinsics: Arc<ExtrinsicService>,
+	/// The fee-less move budget a fee-less transfer is checked against.
+	pub budget: Arc<dyn MoveBudgetSource>,
 }
 
 /// `registry` with the NFT domain on Asset Hub, whose transfers the Scarcity
@@ -53,10 +57,12 @@ pub fn with_scarcity_transfers(
 	registry: DurableRegistry,
 	deps: ScarcityTransfersDeps,
 ) -> DurableRegistry {
-	let ScarcityTransfersDeps { storage, heads, genesis, signer, imported, extrinsics } = deps;
+	let ScarcityTransfersDeps { storage, heads, genesis, signer, imported, extrinsics, budget } =
+		deps;
 	let chain = Arc::new(ScarcityStorage::new(storage, heads, genesis));
 	let oracle = Arc::new(ScarcityTransferOracle::new(chain.clone()));
-	let policy_deps = ScarcityTransferPolicyDeps { chain, signer, imported, extrinsics, genesis };
+	let policy_deps =
+		ScarcityTransferPolicyDeps { chain, signer, imported, extrinsics, genesis, budget };
 	let policy = ScarcityTransferPolicy::new(policy_deps);
 	registry.with_domain(nft_domain(), genesis, oracle, Arc::new(policy))
 }

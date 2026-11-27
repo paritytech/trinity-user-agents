@@ -13,13 +13,15 @@ use super::{
 	dao,
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
+	paid_moves::{MovePayments, PaidMoveError, UnplannedSource},
 	purse::PurseId,
 	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
 	durable::{
-		DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId, PolicyParams, group_exists,
+		DeferredSubmission, DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId,
+		group_exists,
 	},
 	installation::InstallationId,
 	store::DbError,
@@ -79,9 +81,18 @@ pub enum StartOperationError {
 	/// The destination keys could not be allocated.
 	#[error(transparent)]
 	Allocate(#[from] AllocateItemsError),
+	/// The move budget could not be read, or a claim not registered.
+	#[error(transparent)]
+	PaidMoves(#[from] PaidMoveError),
 	/// The database failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
+}
+
+impl From<UnplannedSource> for StartOperationError {
+	fn from(UnplannedSource(source): UnplannedSource) -> Self {
+		Self::ItemUnavailable(source)
+	}
 }
 
 impl From<ItemRefusal> for StartOperationError {
@@ -142,45 +153,48 @@ pub struct DestinationKeys<'a> {
 	pub deriver: &'a dyn ItemKeyDeriver,
 }
 
-/// Works out, inside the registration write, the params of each transfer of
-/// `request`, or refuses: the operation exists, an item is not idle in
-/// `from`, or destination keys cannot be allocated.
+/// Works out, inside the registration write, each transfer of `request`,
+/// paid as `payments` says, or refuses: the operation exists, an item is not
+/// idle in `from`, or destination keys cannot be allocated.
 pub fn plan_transfers(
 	tx: &Transaction<'_>,
 	request: &TransferRequest,
 	keys: DestinationKeys<'_>,
-) -> Result<Vec<PolicyParams>, StartOperationError> {
-	validate_operation_unused(tx, &request.operation)?;
-	let sources = idle_items::<StartOperationError>(tx, request.from, &request.transfer.inputs())?;
+	payments: &MovePayments,
+) -> Result<Vec<DeferredSubmission>, StartOperationError> {
+	let sources = validated_transfer_sources(tx, request)?;
 	let destinations = match request.transfer {
 		TransferType::Local { into, .. } => allocate_destinations(tx, into, sources.len(), keys)?,
 		TransferType::Foreign { into, .. } => vec![into],
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	Ok(sources
+	sources
 		.into_iter()
 		.zip(destinations)
-		.map(|(IdleItem { key: source, slot }, destination)| {
-			TransferParams {
+		.map(|(IdleItem { key: source, slot, .. }, destination)| {
+			let payment = payments.payment_of(&source)?;
+			let params = TransferParams {
 				source,
 				signer: TransferSigner::Derived(slot),
 				destination,
 				submitted_attempt: None,
 				give_up_after,
-			}
-			.into()
+				mode: payment.transfer_mode(),
+			};
+			let depends_on = payment.transaction_dependencies();
+			Ok(DeferredSubmission { params: params.into(), depends_on })
 		})
-		.collect())
+		.collect()
 }
 
-/// Refuses `request` when its operation is already registered or one of its
-/// items is not idle in its purse.
-pub fn validate_can_start(
+/// The items `request` moves, idle in its purse, or a refusal: its operation
+/// is already registered or one of its items is not idle in its purse.
+pub fn validated_transfer_sources(
 	conn: &Connection,
 	request: &TransferRequest,
-) -> Result<(), StartOperationError> {
+) -> Result<Vec<IdleItem>, StartOperationError> {
 	validate_operation_unused(conn, &request.operation)?;
-	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs()).map(|_| ())
+	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs())
 }
 
 /// Refuses `operation` when it is already registered.
