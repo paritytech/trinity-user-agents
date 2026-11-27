@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -38,11 +39,11 @@ class FundingFlowStateTest {
     @Test
     fun `the core's default rail holds until the user picks one`() {
         val flow = state(options(defaultRail = FundingRail.CRYPTO))
-        val picked = flow.withRail(FundingRail.CARD)
+        val picked = FundingPicks.NONE.withRail(FundingRail.CARD)
 
         assertEquals(FundingRail.CRYPTO, flow.rail)
-        assertEquals(FundingRail.CRYPTO, state(null).withOptions(options(defaultRail = FundingRail.CRYPTO)).rail)
-        assertEquals(FundingRail.CARD, picked.withOptions(options(defaultRail = FundingRail.CRYPTO)).rail)
+        assertEquals(FundingRail.CRYPTO, FundingPicks.NONE.applyTo(flow).rail)
+        assertEquals(FundingRail.CARD, picked.applyTo(flow).rail)
     }
 
     @Test
@@ -84,21 +85,43 @@ class FundingFlowStateTest {
     }
 
     @Test
+    fun `an unread balance holds back a withdrawal, not a top-up`() {
+        val unread = { direction: FundingDirection -> state(options(), direction = direction, amount = "50").copy(spendableUnread = true) }
+
+        assertFalse(unread(FundingDirection.OUT).canContinue)
+        assertTrue(unread(FundingDirection.IN).canContinue)
+    }
+
+    @Test
     fun `quoting lasts until every provider on the list answered`() {
         val asked = state(options(asset = "EUR"), amount = "50").asked()
-        val pending = asked.receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), complete = false))
+        val pending = asked.received(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), complete = false))
 
         assertTrue(asked.isQuoting)
         assertTrue(pending.isQuoting)
-        assertFalse(asked.receiving(list(quoted(providerA, send = "500"), best = providerA)).isQuoting)
+        assertFalse(asked.received(list(quoted(providerA, send = "500"), best = providerA)).isQuoting)
+    }
+
+    // A provider asked again keeps its last price greyed until it answers.
+    @Test
+    fun `asking the same amount again keeps the quotes on screen until their providers answer`() {
+        val quoted = state(options(asset = "EUR"), amount = "50").asked()
+            .received(list(quoted(providerA, send = "500"), best = providerA))
+
+        val again = quoted.asked()
+        val pending = again.received(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), complete = false))
+
+        assertEquals(listOf(providerA), again.staleQuotes.keys.toList())
+        assertEquals(listOf(providerA), pending.staleQuotes.keys.toList())
+        assertTrue(quoted.withAmountText("60").asked().staleQuotes.isEmpty())
     }
 
     @Test
     fun `a list the core withdrew drops the quotes`() {
         val quoted = state(options(asset = "EUR"), amount = "50").asked()
-            .receiving(list(quoted(providerA, send = "500"), best = providerA))
+            .received(list(quoted(providerA, send = "500"), best = providerA))
 
-        val withdrawn = quoted.receiving(null)
+        val withdrawn = quoted.received(null)
 
         assertNull(withdrawn.list)
         assertNull(withdrawn.selectedProviderId)
@@ -109,7 +132,7 @@ class FundingFlowStateTest {
     fun `the refusals' amount issue explains a list no provider quoted`() {
         val issue = FundingAmountIssue.AboveMaximum("1000")
         val refused = state(options(asset = "EUR"), amount = "50").asked()
-            .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Unavailable(FundingQuoteUnavailable.Timeout)), issue = issue))
+            .received(list(FundingQuoteRow(providerA, FundingQuoteState.Unavailable(FundingQuoteUnavailable.Timeout)), issue = issue))
 
         assertTrue(refused.noProviderQuoted)
         assertEquals(issue, refused.unavailableIssue)
@@ -119,25 +142,12 @@ class FundingFlowStateTest {
     fun `the core's best quote is selected until the user picks another`() {
         val quoted = state(options(asset = "EUR"), amount = "50").let { start ->
             start.asked()
-                .receiving(list(quoted(providerA, send = "5200"), quoted(providerB, send = "5100"), best = providerB))
+                .received(list(quoted(providerA, send = "5200"), quoted(providerB, send = "5100"), best = providerB))
         }
 
         assertEquals(listOf(providerB, providerA), listOf(quoted.selectedProviderId, quoted.withChosenProvider(providerA).selectedProviderId))
         assertEquals(Instant.fromEpochMilliseconds(REFRESH_AT_MS.toLong()), quoted.refreshAt)
         assertEquals(listOf(providerA, providerB), quoted.servingCandidates.map { it.providerId })
-    }
-
-    // Asking the same amount again starts every row pending; the old price stays on screen, greyed, until the new one.
-    @Test
-    fun `a row pending after the same amount again keeps its last quote greyed`() {
-        val quote = quoted(providerA, send = "5200")
-        val refreshed = state(options(asset = "EUR"), amount = "50").asked()
-            .receiving(list(quote, best = providerA))
-            .asked()
-            .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), requestId = 2u, complete = false))
-
-        assertEquals(mapOf(providerA to (quote.state as FundingQuoteState.Quoted).quote), refreshed.staleQuotes)
-        assertNull(refreshed.selectedProviderId)
     }
 
     @Test
@@ -173,16 +183,18 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `changing the rail drops the network, token and quotes`() {
+    fun `changing the rail drops the network and token`() {
         val start = state(options(asset = "EUR"), amount = "50")
-        val flow = start.asked().withRail(FundingRail.CRYPTO).withNetwork("ethereum")
+        val flow = start.withRail(FundingRail.CRYPTO).withNetwork("ethereum")
 
-        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum"), flow)
+        assertEquals(start.copy(rail = FundingRail.CRYPTO, network = "ethereum"), flow)
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 
-    /** Asks for quotes of the amount on screen. */
-    private fun FundingFlowState.asked(): FundingFlowState = asking(requireNotNull(askAmount))
+    private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount, failed = false)
+
+    // No list is the core withdrawing it, which drops the ask.
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() }, failed = false)
 
     private fun state(
         options: FundingOptions?,
@@ -191,7 +203,9 @@ class FundingFlowStateTest {
     ) = FundingFlowState.initial(
         direction = direction,
         cashPrecision = 6,
-        spendable = BigDecimal("226.78"),
+        format = testCashFormat(),
+        spendable = 226_780_000.intoBalance(),
+        spendableUnread = false,
         options = options,
         amount = null,
         country = germany,

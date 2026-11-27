@@ -1,0 +1,107 @@
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens
+
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingQuotes
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessions
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFlowState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingKey
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSheet
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.WhileOnScreen
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.applying
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.toAmountUiState
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import uniffi.truapi.FundingRail
+import java.math.BigDecimal
+import kotlin.time.Duration.Companion.milliseconds
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@HiltViewModel(assistedFactory = FundingAmountViewModel.Factory::class)
+class FundingAmountViewModel @AssistedInject constructor(
+    @Assisted private val sheet: FundingSheet,
+    private val sessions: FundingSessions,
+    private val quotes: FundingQuotes,
+) : BaseViewModel() {
+    private var quoteJob: Job? = null
+
+    private val issue = sheet.flow.filterNotNull()
+        .map { Triple(it.units, it.options, it.list) to it }
+        .distinctUntilChanged { old, new -> old.first == new.first }
+        .mapLatest { (key, flow) ->
+            key.first?.let { units -> sessions.amountIssue(units, flow.spendable, sheet.intentId) }
+                ?: Result.success(null)
+        }
+
+    private val checked: StateFlow<FundingFlowState?> = combine(sheet.flow.filterNotNull(), issue) { flow, issue ->
+        flow.withAmountCheck(issue)
+    }.stateIn(this, WhileOnScreen, null)
+
+    val state: StateFlow<FundingAmountUiState?> = checked.map { it?.toAmountUiState() }.stateIn(this, WhileOnScreen, null)
+
+    fun onRailSelected(rail: FundingRail) {
+        if (sheet.flow.value?.rail != rail) quotes.quote(null, sheet.intentId)
+        sheet.update { it.withRail(rail) }
+        scheduleQuote()
+    }
+
+    fun onKey(key: FundingKey) {
+        val onScreen = sheet.flow.value?.amountText ?: return
+        sheet.update { it.withAmountText((it.amountText ?: onScreen).applying(key)) }
+        scheduleQuote()
+    }
+
+    fun onPreset(value: BigDecimal) {
+        sheet.update { it.withAmountText(FundingFlowState.textFor(value)) }
+        scheduleQuote()
+    }
+
+    fun onContinue() {
+        val current = checked.value?.takeIf { it.canContinue } ?: return
+
+        when (current.rail) {
+            FundingRail.CRYPTO -> sheet.push(FundingScreen.NETWORK)
+            FundingRail.CARD, FundingRail.BANK -> {
+                val pending = quoteJob?.isActive == true
+                quoteJob?.cancel()
+                if (pending || current.quotesFailed || (!current.quoting && current.askedAmount != current.askAmount)) sheet.requote()
+                sheet.push(FundingScreen.SUMMARY)
+            }
+        }
+    }
+
+    fun onClose() = sheet.close()
+
+    // So a provider's limit shows before Continue.
+    private fun scheduleQuote() {
+        quoteJob?.cancel()
+        quoteJob = launch {
+            delay(REQUOTE_DELAY)
+            val current = sheet.flow.value
+            if (current != null && current.rail != FundingRail.CRYPTO && current.amount.signum() > 0) sheet.requote()
+        }
+    }
+
+    @AssistedFactory
+    interface Factory {
+        fun create(sheet: FundingSheet): FundingAmountViewModel
+    }
+
+    private companion object {
+        val REQUOTE_DELAY = 600.milliseconds
+    }
+}

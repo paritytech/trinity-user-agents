@@ -46,9 +46,4 @@ class FundingUnitsTest {
         assertTrue("Germany" in names)
         assertEquals(names.sortedWith(Collator.getInstance(Locale.US)), names)
     }
-
-    @Test
-    fun `tokens show their first letter as a monogram`() {
-        assertEquals("U", FundingToken("usdt").monogram)
-    }
 }
