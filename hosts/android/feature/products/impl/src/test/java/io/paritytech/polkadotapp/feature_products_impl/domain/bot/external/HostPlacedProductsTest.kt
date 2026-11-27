@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot.external
 
-import android.content.Context
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -15,12 +14,9 @@ import org.junit.Test
 
 class HostPlacedProductsTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
-    private val context: Context = mockk {
-        every { getString(any()) } returns "Jollity"
-    }
     private val tldProvider: DotNsTldProvider = mockk()
 
-    private val hostPlacedProducts = HostPlacedProducts(context, tldProvider)
+    private val hostPlacedProducts = HostPlacedProducts(tldProvider)
 
     private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
 

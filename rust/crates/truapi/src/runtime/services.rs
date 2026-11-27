@@ -40,6 +40,7 @@ use crate::{
 	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
+	pgas_claims::PgasClaims,
 };
 use truapi::latest;
 
@@ -134,6 +135,9 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// PGAS claims through the durable engine, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pgas_claims: OnceLock<PgasClaims>,
 	/// The NFT ledger (purse records and item keys) over the core database,
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -277,6 +281,8 @@ impl RuntimeServices {
 			core_db: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			pgas_claims: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -514,6 +520,19 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the PGAS claims of the durable engine. Set-once, like the
+	/// engine they register with. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_pgas_claims(&self, claims: PgasClaims) -> bool {
+		self.pgas_claims.set(claims).is_ok()
+	}
+
+	/// The PGAS claims of the durable engine, once it is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn pgas_claims(&self) -> Option<PgasClaims> {
+		self.pgas_claims.get().cloned()
 	}
 
 	/// Install the materials on the device. Set-once, like the database they

@@ -55,11 +55,10 @@ installation in the same Room table under an `isCurrent` flag; iOS keeps a separ
 counters in the Keychain.
 
 Backup: the seed's `//datastore` sr25519 account (public key, 64-byte secret and encryption key pinned
-against polkadot-js and Android in `DataStoreKeyParityTests`; the encryption key is keyed by the secret in
-schnorrkel's ed25519 form via `DataStoreAccountKeys.ed25519Form(of:)` over NovaCrypto's `SNPrivateKey.toEd25519Data()`,
-since the iOS SDK holds the canonical scalar) registers each installation in the `AccountDataStore`
-contract on Asset Hub (record = ChaCha20-Poly1305 of the id under `"encryption".blake2b32WithKey(secret64)`,
-deterministic nonce). Contract reads and the `Revive.call` extrinsic go through the `Revive` package
+against Android's `DataStoreKeyParityTest` in `DataStoreKeyParityTests`) registers each installation in the
+`AccountDataStore` contract on Asset Hub (record = ChaCha20-Poly1305 of the id under
+`"encryption".blake2b32WithKey(secret64)`, deterministic nonce). `secret64` is the SDK's canonical secret —
+scalar (mod l) followed by the nonce, `SNPrivateKey.rawData()`. Contract reads and the `Revive.call` extrinsic go through the `Revive` package
 (`ReviveContractApiProtocol`, `RevivePallet.Call`; see architecture/revive.md); the contract ABI table is
 `AccountDataStoreAbi` over `EvmAbi`, and the address is an `EvmAddress`. Registration is a durable-transaction domain (`coinage-installation`, see
 architecture/durable-transactions.md); `CoinageInstallationRegistrar` runs it once per process and

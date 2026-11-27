@@ -1,0 +1,187 @@
+use futures::executor::block_on;
+use subxt::utils::{AccountId32, H256};
+
+use super::*;
+use crate::{
+	durable::{DomainId, DurableTxStatus, SubmissionPlan, Window, extrinsic},
+	pgas_claims::tests::{BuildCall, FakeClaimBuilder, TEST_DAY, destination},
+};
+
+/// A claim registered just now, waiting for a session for ten minutes.
+fn waiting_claim(id: i64, dest: AccountId32) -> DeferredDurableTx {
+	let give_up_after = current_unix_secs() + 600;
+	deferred(id, 0, ClaimParams { target: dest, give_up_after })
+}
+
+fn deferred(id: i64, attempts: u32, params: ClaimParams) -> DeferredDurableTx {
+	DeferredDurableTx {
+		id: DurableTxId(id),
+		domain: DomainId::new("pgas"),
+		group: None,
+		plan: SubmissionPlan { params: params.into() },
+		attempts,
+		dependencies: Vec::new(),
+	}
+}
+
+fn slot(slot_index: u32) -> ClaimSlot {
+	ClaimSlot { day: TEST_DAY, slot_index }
+}
+
+fn prepare_with(
+	policy: &PgasClaimPolicy,
+	batch: &[DeferredDurableTx],
+) -> HashMap<DurableTxId, Preparation> {
+	block_on(policy.prepare(batch)).unwrap()
+}
+
+/// The answer for one claim of a policy over a builder failing with `failure`.
+fn answer_when_build_fails(
+	claim: DeferredDurableTx,
+	failure: fn() -> ClaimBuildError,
+) -> Option<Preparation> {
+	let policy = PgasClaimPolicy::new(FakeClaimBuilder::failing_with(failure));
+	prepare_with(&policy, &[claim]).remove(&DurableTxId(1))
+}
+
+/// The attempt the fake builder builds in slot `slot_index` of the test
+/// day, submitted with the params the claim was registered with.
+fn ready_in_slot(slot_index: u8) -> Preparation {
+	Preparation::Ready { extrinsic: extrinsic(slot_index, 130, 64), params: None }
+}
+
+/// Two claims of this process never take one slot, so neither attempt is
+/// refused for the other.
+#[test]
+fn claims_of_one_batch_are_built_in_different_slots() {
+	let policy = PgasClaimPolicy::new(FakeClaimBuilder::building());
+	let batch = [waiting_claim(1, destination(7)), waiting_claim(2, destination(8))];
+
+	let answers = prepare_with(&policy, &batch);
+
+	assert_eq!(answers.get(&DurableTxId(1)), Some(&ready_in_slot(0)));
+	assert_eq!(answers.get(&DurableTxId(2)), Some(&ready_in_slot(1)));
+}
+
+/// A slot whose attempt may still land is not handed to the next batch.
+#[test]
+fn a_slot_built_a_moment_ago_is_not_handed_out_again() {
+	let builder = FakeClaimBuilder::building();
+	let policy = PgasClaimPolicy::new(builder.clone());
+	prepare_with(&policy, &[waiting_claim(1, destination(7))]);
+
+	prepare_with(&policy, &[waiting_claim(2, destination(8))]);
+
+	let second = BuildCall { target: destination(8), excluded: BTreeSet::from([slot(0)]) };
+	assert_eq!(builder.calls().last(), Some(&second));
+}
+
+#[test]
+fn a_claim_without_personhood_gives_up() {
+	let answer =
+		answer_when_build_fails(waiting_claim(1, destination(7)), || ClaimBuildError::NoPersonhood);
+
+	assert_eq!(answer, Some(Preparation::GiveUp));
+}
+
+#[test]
+fn a_claim_with_no_free_slot_gives_up() {
+	let answer = answer_when_build_fails(waiting_claim(1, destination(7)), || {
+		ClaimBuildError::NoFreeSlot { day: TEST_DAY, max: 4 }
+	});
+
+	assert_eq!(answer, Some(Preparation::GiveUp));
+}
+
+/// A user signing in again within the deadline still gets the claim.
+#[test]
+fn a_claim_without_a_session_waits_until_its_deadline() {
+	let answer =
+		answer_when_build_fails(waiting_claim(1, destination(7)), || ClaimBuildError::NoSession);
+
+	assert_eq!(answer, None);
+}
+
+/// No wait and no rebuild outlives the deadline: a lost session, a
+/// failure that keeps repeating or a refused attempt all end there, and the
+/// next request for the destination registers a fresh claim.
+#[test]
+fn a_claim_past_its_deadline_gives_up_without_building() {
+	let builder = FakeClaimBuilder::building();
+	let policy = PgasClaimPolicy::new(builder.clone());
+	let past_deadline =
+		ClaimParams { target: destination(7), give_up_after: current_unix_secs() - 1 };
+
+	let answer = prepare_with(&policy, &[deferred(1, 1, past_deadline)]).remove(&DurableTxId(1));
+
+	assert_eq!(answer, Some(Preparation::GiveUp));
+	assert_eq!(builder.calls(), Vec::new());
+}
+
+/// A slow ring revision or a dropped connection is not a reason to fail the
+/// claim before its deadline: it is asked about again.
+#[test]
+fn a_transient_build_failure_keeps_the_claim_waiting() {
+	let answer = answer_when_build_fails(waiting_claim(1, destination(7)), || {
+		ClaimBuildError::Transient(anyhow::anyhow!("ring revision 9 has not arrived"))
+	});
+
+	assert_eq!(answer, None);
+}
+
+/// A refusal that repeats cannot loop forever.
+#[test]
+fn a_claim_built_five_times_gives_up_without_building() {
+	let builder = FakeClaimBuilder::building();
+	let policy = PgasClaimPolicy::new(builder.clone());
+	let params = ClaimParams::try_from(&waiting_claim(1, destination(7)).plan.params).unwrap();
+
+	let answer = prepare_with(&policy, &[deferred(1, 5, params)]).remove(&DurableTxId(1));
+
+	assert_eq!(answer, Some(Preparation::GiveUp));
+	assert_eq!(builder.calls(), Vec::new());
+}
+
+#[test]
+fn a_claim_built_four_times_is_built_again() {
+	let policy = PgasClaimPolicy::new(FakeClaimBuilder::building());
+	let params = ClaimParams::try_from(&waiting_claim(1, destination(7)).plan.params).unwrap();
+
+	let answers = prepare_with(&policy, &[deferred(1, 4, params)]);
+
+	assert_eq!(answers.get(&DurableTxId(1)), Some(&ready_in_slot(0)));
+}
+
+fn entry() -> DurableTxEntry {
+	DurableTxEntry {
+		id: DurableTxId(1),
+		domain: DomainId::new("pgas"),
+		group: None,
+		tx_hash: H256::zero(),
+		window: Window { birth: 130, period: 64 },
+		status: DurableTxStatus::Pending,
+		scanned_to: None,
+		plan: None,
+	}
+}
+
+/// A slot taken meanwhile or a day that ended costs one rebuild.
+#[test]
+fn a_refused_or_expired_attempt_is_built_again() {
+	let policy = PgasClaimPolicy::new(FakeClaimBuilder::building());
+	let params = PolicyParams::default();
+
+	assert!(policy.can_retry(&entry(), &params, VerdictFailureKind::Rejected));
+	assert!(policy.can_retry(&entry(), &params, VerdictFailureKind::Expired));
+}
+
+/// The pallet refused the claim itself, so another slot would fare no better.
+#[test]
+fn a_failed_dispatch_is_final() {
+	let policy = PgasClaimPolicy::new(FakeClaimBuilder::building());
+
+	let retried =
+		policy.can_retry(&entry(), &PolicyParams::default(), VerdictFailureKind::DispatchFailed);
+
+	assert!(!retried);
+}
