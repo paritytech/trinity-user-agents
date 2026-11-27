@@ -51,7 +51,7 @@ struct TrUAPIWorkerBuilder {
     func workerSource(
         for productId: ProductId
     ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
-        // Its 1 s and 2 s backoffs fit inside the manager's startup window.
+        // Its 1 s and 2 s backoffs fit inside the core's startup deadline.
         let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
         return try await (workerSource(for: resolved, productId: productId), productFileProvider)
     }

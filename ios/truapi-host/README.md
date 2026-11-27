@@ -108,7 +108,7 @@ as a `BundledStack`:
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
 one the wallet's reserved identities derive under. An invalid stack makes
-`TrUAPIHostRuntime(bridge:runtimeConfig:)` throw
+`TrUAPIHostRuntime(bridge:runtimeConfig:workerEngine:)` throw
 `NativeRuntimeConfigError.Invalid(reason:)`. Include this configuration update
 in the embedding app's package upgrade.
 
@@ -241,9 +241,9 @@ for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. A feature calls
 `runtime.claimWorker(productId:)` when it needs the worker and calls `release()`
-on that claim when its work ends. The runtime delivers the first start and last
-stop to the runtime's worker engine. Two rules the core cannot check are the
-host's to keep: send a render context only for a surface
+on that claim when its work ends. The first claim starts the worker on the
+runtime's worker engine and the last release stops it. Two rules the core
+cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
 
@@ -680,6 +680,13 @@ final class MyBridge: HostBridge, @unchecked Sendable {
 
 }
 
+// This host runs no workers. One that does boots each worker in `start`, as
+// "Shared product workers" describes.
+final class NoWorkers: NativeWorkerEngine, Sendable {
+    func start(productId: ProductId, attempt: NativeWorkerAttempt) {}
+    func stop(productId: ProductId, attemptId: UInt64) {}
+}
+
 let bridge = MyBridge()
 let descriptorURL = Bundle.main.url(forResource: "trinity-stack", withExtension: "json")!
 let runtimeConfig = HostRuntimeConfig(
@@ -692,7 +699,7 @@ let runtimeConfig = HostRuntimeConfig(
         reservedValues: ReservedValuesPolicy(allowed: false)
     )
 )
-let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerEngine: NoWorkers())
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openAppExecution(
     bridge: bridge,

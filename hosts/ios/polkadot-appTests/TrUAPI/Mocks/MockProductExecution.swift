@@ -31,7 +31,7 @@ final class MockProductExecution: NativeWorkerExecution, TrUAPIProductExecutionP
     private(set) var renderRequests: [ProductRendererRenderRequest] = []
     private(set) var renders: [(observer: NativeRendererObserver, cancellation: AsyncStream<Void>)] = []
     /// Errors thrown by successive `render` calls, consumed in order; once
-    /// empty the call succeeds. Lets tests drive the startup retry loop.
+    /// empty the call succeeds.
     var renderErrors: [Error] = []
     /// Nodes the render stream yields before finishing.
     var renderNodes: [RendererNode] = []

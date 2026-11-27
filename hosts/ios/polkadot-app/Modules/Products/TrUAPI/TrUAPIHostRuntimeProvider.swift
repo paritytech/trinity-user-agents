@@ -131,8 +131,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Builds the runtime now, off the caller's thread, rather than on first
     /// use: the core resumes the funding sessions a provider was still working
-    /// on when it starts. Called once, after the worker manager and payments
-    /// are attached.
+    /// on when it starts. Called once, after payments are attached.
     func setup() async throws -> TrUAPIHostRuntime {
         try await Task.detached { [self] in try sharedRuntime() }.value
     }

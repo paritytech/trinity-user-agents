@@ -80,7 +80,7 @@ private func disposing(_ runtime: TrUAPIChatHandler, _ body: () async throws -> 
     await runtime.dispose()
 }
 
-/// A manager whose worker is already up, which is what chat finds whenever
+/// A runtime whose worker already runs, which is what chat finds whenever
 /// something else, a card on screen, got there first.
 private func workersRunning(_ execution: MockProductExecution) -> StubWorkerRuntime {
     let workers = StubWorkerRuntime()
@@ -300,8 +300,8 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
-    /// Anything that is not a startup race is terminal: surface it on the first
-    /// attempt instead of holding the cell in a retry loop.
+    /// The handler opens a render once: reopening is the cell's to decide, so
+    /// an error from the worker has to reach it on the first attempt.
     @Test func rustRuntimeDoesNotRetryTerminalRenderErrors() async throws {
         let execution = MockProductExecution()
         execution.renderErrors = [ProductRuntimeError.Closed]
@@ -319,7 +319,8 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
-    /// A worker that never comes up must not leave the cell waiting forever.
+    /// A render waits for the worker without a limit, so dispose has to be
+    /// what ends the wait.
     @Test(.timeLimit(.minutes(1)))
     func rustRuntimeFailsPendingRendersOnDispose() async throws {
         let workers = StubWorkerRuntime()
@@ -526,8 +527,8 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
-    /// A worker still booting when the room opens ends the first footer stream
-    /// before it draws, and the card has to appear once the product can draw it.
+    /// A footer stream can end before the product has drawn, and the card has
+    /// to appear once the product can draw it.
     @Test func aDockedCardWhoseFirstStreamDrewNothingIsReopened() async throws {
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workersRunning(execution))

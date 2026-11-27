@@ -8,9 +8,10 @@ import UIKitExt
 ///
 /// A Chat session claims its product's worker until the session closes.
 ///
-/// Chat-environment context route through that execution: user messages and
-/// events publish chat actions, widget rendering streams typed renderer nodes,
-/// and the product's chat surface serves the core's chat callbacks.
+/// Chat traffic goes through that worker's execution: user messages publish
+/// chat actions, presses publish renderer actions, widget rendering streams
+/// typed renderer nodes, and the product's chat surface serves the core's
+/// chat callbacks.
 ///
 /// An actor so `start`, `dispose` and the calls between them never race on
 /// runtime state.
@@ -68,10 +69,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         started = true
 
         do {
-            try await startRuntime(messagingSupport: messagingSupport)
+            try startRuntime(messagingSupport: messagingSupport)
         } catch {
-            // Nothing upstream tears us down — `ProductBot` only logs — so a
-            // half-started session would hold its worker reference forever.
+            // Nothing upstream tears this down, `ProductBot` only logs, so a
+            // session that failed to start would keep the chat surface bound.
             await dispose()
             throw error
         }
@@ -215,7 +216,7 @@ private extension TrUAPIChatHandler {
     /// and gives up on a start that hangs, so there is nothing to wait for here.
     func startRuntime(
         messagingSupport: ProductsNativeApi.MessagingSupport
-    ) async throws {
+    ) throws {
         // Bound before the worker is asked for, so the core can never reach a
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
