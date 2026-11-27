@@ -19,6 +19,6 @@ class RealDockletAutoHideStorage @Inject constructor(
 
     private companion object {
         const val ENABLED_KEY = "docklet_auto_hide_enabled"
-        const val DEFAULT_ENABLED = true
+        const val DEFAULT_ENABLED = false
     }
 }
