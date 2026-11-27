@@ -52,14 +52,25 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
     func start() async throws {
         let host = try runtime()
         try state.withLock { state in
-            guard !state.disposed, state.claim == nil else { throw CancellationError() }
+            guard !state.disposed, state.following == nil else { throw CancellationError() }
 
-            state.claim = host.claimWorker(productId: productId)
             state.following = Task { [weak self, productId] in
                 for await worker in host.workerExecutionState(productId: productId) {
-                    self?.state.withLock { $0.execution = worker.execution }
+                    self?.state.withLock { if !$0.disposed { $0.execution = worker.execution } }
                 }
             }
+        }
+
+        // Claimed outside the lock: the core can run the worker engine on this
+        // thread before the claim returns.
+        let claim = host.claimWorker(productId: productId)
+        let disposed = state.withLock { state in
+            if !state.disposed { state.claim = claim }
+            return state.disposed
+        }
+        guard !disposed else {
+            claim.release()
+            throw CancellationError()
         }
     }
 

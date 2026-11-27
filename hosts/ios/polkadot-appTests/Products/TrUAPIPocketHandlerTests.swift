@@ -77,6 +77,20 @@ struct TrUAPIPocketHandlerTests {
         #expect(workers.references.acquired == [gameProductId])
         #expect(workers.references.releaseCounts == [0])
     }
+
+    /// A handler can be disposed while the core is still answering its claim,
+    /// and nothing holds a way back to a disposed handler. The start that asked
+    /// has to give the claim back, or the worker runs on for cards nobody holds.
+    @Test
+    func givesBackAClaimThatLandsAfterDispose() async throws {
+        let workers = ClaimInterruptingRuntime()
+        let streams = TrUAPIPocketHandler(productId: gameProductId, runtime: { workers })
+        workers.duringClaim = { [weak streams] in streams?.dispose() }
+
+        await #expect(throws: CancellationError.self) { try await streams.start() }
+
+        #expect(workers.stub.references.releaseCounts == [1])
+    }
 }
 
 // MARK: - Fixtures
@@ -85,4 +99,21 @@ private let loyalty = PocketCardKey(productId: gameProductId, cardId: PocketCard
 
 private func makeStreams(workers: StubWorkerRuntime) -> TrUAPIPocketHandler {
     TrUAPIPocketHandler(productId: gameProductId, runtime: { workers })
+}
+
+/// Runs `duringClaim` before a claim returns, the way the core runs the worker
+/// engine on the claiming thread.
+private final class ClaimInterruptingRuntime: ProductWorkerRuntime, @unchecked Sendable {
+    let stub = StubWorkerRuntime()
+    var duringClaim: () -> Void = {}
+
+    func claimWorker(productId: ProductId) -> NativeWorkerClaim {
+        let claim = stub.claimWorker(productId: productId)
+        duringClaim()
+        return claim
+    }
+
+    func workerExecutionState(productId: ProductId) -> AsyncStream<NativeWorkerExecutionState> {
+        stub.workerExecutionState(productId: productId)
+    }
 }
