@@ -24,6 +24,9 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         var quoteList: FundingQuoteList?
         var waitingFrames: Set<String> = []
         var openedFrames: [String] = []
+        var cancels: [String] = []
+        var cancelOutcome: CancelOutcome = .cancelled
+        var dropsPresentation: (@Sendable () -> Void)?
     }
 
     /// What the screens asked of the core's start when quoted.
@@ -60,6 +63,17 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     var selectedProviders: [ProductId] { state.withLock { $0.selectedProviders } }
     var acknowledged: [String] { state.withLock { $0.acknowledged } }
     var openedFrames: [String] { state.withLock { $0.openedFrames } }
+    var cancels: [String] { state.withLock { $0.cancels } }
+
+    /// Answers each cancel with `outcome`, after running `dropPresentation`,
+    /// as the core drops the host's `present_funding` for a session whose
+    /// overlay is up.
+    func answerCancels(with outcome: CancelOutcome, dropping dropPresentation: (@Sendable () -> Void)? = nil) {
+        state.withLock { state in
+            state.cancelOutcome = outcome
+            state.dropsPresentation = dropPresentation
+        }
+    }
 
     /// Holds a provider's screen for session `intent` until the app opens it,
     /// or drops it when `waiting` is false.
@@ -172,7 +186,15 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         return true
     }
 
-    func cancelFunding(intent _: String) async throws -> CancelOutcome { .cancelled }
+    func cancelFunding(intent: String) async throws -> CancelOutcome {
+        let (outcome, dropPresentation) = state.withLock { state in
+            state.cancels.append(intent)
+            return (state.cancelOutcome, state.dropsPresentation)
+        }
+        dropPresentation?()
+        return outcome
+    }
+
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func fundingHistory() -> [FundingSessionSummary] { state.withLock { $0.history } }
     func fundingSummary(intent: String) -> FundingSessionSummary? {

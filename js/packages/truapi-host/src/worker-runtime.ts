@@ -311,12 +311,12 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     case "parseProductId":
       try {
-        if (!wasm) throw new Error("runtime is not ready");
+        if (!host) throw new Error("runtime is not ready");
         postToMain({
           kind: "parseProductIdResponse",
           requestId: msg.requestId,
           ok: true,
-          value: wasm.parseProductId(msg.value),
+          value: host.runtime.parseProductId(msg.value),
         });
       } catch (error) {
         postToMain({

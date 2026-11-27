@@ -133,7 +133,7 @@ fn a_grant_does_not_cover_the_unwatermarked_raw_signing_api() {
 
 #[test]
 fn a_blessed_product_signs_its_own_account_without_a_grant() {
-	for (product_id, blessed) in [("dim2.paseo", true), ("app.dim2.paseo", false)] {
+	for (product_id, blessed) in [("dim2.dot", true), ("app.dim2.dot", false)] {
 		let platform = granting_platform();
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
 		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
@@ -161,8 +161,8 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally() {
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
-	let runtime = product_runtime_for(services, activation.clone(), "dim2.paseo");
-	let request = vrf_request("dim2.paseo");
+	let runtime = product_runtime_for(services, activation.clone(), "dim2.dot");
+	let request = vrf_request("dim2.dot");
 
 	let local_signed = futures::executor::block_on(
 		runtime.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(request.clone())),
@@ -172,7 +172,7 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally() {
 		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
 			ProductRequest {
-				calling_product_id: ProductId::for_test("dim2.paseo"),
+				calling_product_id: ProductId::for_test("dim2.dot"),
 				payload: request,
 			},
 		)))
@@ -303,7 +303,7 @@ fn a_kept_key_proves_with_its_own_alias() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(product_id.clone()),
-		request,
+		served(request),
 	))
 	.expect("the kept key proves");
 
@@ -367,10 +367,10 @@ fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
 			&session,
 			&cx,
 			&connection(&activation, "myapp.dot"),
-			v01::ProductAccountId {
+			served(v01::ProductAccountId {
 				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
-			},
+			}),
 			b"statement".to_vec(),
 		));
 
@@ -380,6 +380,45 @@ fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
 			"withdrawn-proof",
 			truapi::CancellationReason::Cancelled,
 		)))
+	);
+}
+
+/// A paired host on an older core can still relay a request for a product
+/// this stack does not serve. It is refused before the user sees it,
+/// because the wallet could not sign it anyway. Both the caller and the
+/// account are checked; a relayed raw signature has no caller.
+#[test]
+fn a_relayed_request_naming_an_unserved_product_never_prompts() {
+	let platform = granting_platform();
+	let (_services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.expect("activation succeeds");
+	let service = sso_service(&activation);
+	let relay = |message| {
+		futures::executor::block_on(service.answer(message)).expect("the request is answered");
+	};
+
+	for (caller, account) in [("myapp.paseo", "myapp.paseo"), ("myapp.dot", "other.paseo")] {
+		relay(RemoteMessage::request(
+			format!("vrf-{caller}"),
+			ProductRequest {
+				calling_product_id: ProductId::for_test(caller),
+				payload: vrf_request(account),
+			},
+		));
+	}
+	let HostSignRawRequest::V1(raw) = raw_request("other.paseo");
+	relay(RemoteMessage::request(
+		"raw".to_string(),
+		crate::host_internal::sso_messages::SignRequest::Raw(raw),
+	));
+
+	assert_eq!(
+		(
+			platform.sign_vrf_reviews.lock().unwrap().len(),
+			platform.sign_raw_reviews.lock().unwrap().len()
+		),
+		(0, 0),
 	);
 }
 
@@ -400,7 +439,7 @@ fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_pr
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
-	let runtime = product_runtime_for(services, activation, "dim2.paseo");
+	let runtime = product_runtime_for(services, activation, "dim2.dot");
 	let identity = RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 
 	let HostSignRawWithLegacyAccountResponse::V1(response) = futures::executor::block_on(
@@ -423,7 +462,7 @@ fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_pr
 /// that is not trusted never skips the prompt.
 #[test]
 fn other_raw_signatures_with_the_users_account_still_ask() {
-	for (product_id, watermarked) in [("dim2.paseo", false), ("myapp.dot", true)] {
+	for (product_id, watermarked) in [("dim2.dot", false), ("myapp.dot", true)] {
 		let platform = granting_platform();
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
 		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))

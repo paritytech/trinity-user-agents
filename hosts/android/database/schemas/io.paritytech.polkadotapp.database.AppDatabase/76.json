@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 76,
-    "identityHash": "bbea1b2e36b781d84c85c33af3ad246c",
+    "identityHash": "7da64ee2024101a0358fe518b74918d7",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -2209,7 +2209,7 @@
       },
       {
         "tableName": "statement_store_slot_allocations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chainId` TEXT NOT NULL, `collection` TEXT NOT NULL, `accountId` BLOB NOT NULL, `seq` INTEGER NOT NULL, `latestRenewedPeriod` INTEGER NOT NULL, `sinceMillis` INTEGER NOT NULL, `priorityLevel` INTEGER NOT NULL, `tag` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chainId` TEXT NOT NULL, `collection` TEXT NOT NULL, `accountId` BLOB NOT NULL, `seq` INTEGER NOT NULL, `latestRenewedPeriod` INTEGER NOT NULL, `sinceMillis` INTEGER NOT NULL, `priorityLevel` INTEGER NOT NULL, `tag` TEXT, `signerDerivationPath` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -2263,6 +2263,11 @@
             "fieldPath": "tag",
             "columnName": "tag",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "signerDerivationPath",
+            "columnName": "signerDerivationPath",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -2297,7 +2302,7 @@
       },
       {
         "tableName": "scheduled_product_notifications",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `notificationId` INTEGER NOT NULL, `title` TEXT, `text` TEXT NOT NULL, `deeplink` TEXT, `scheduledAtMs` INTEGER NOT NULL, PRIMARY KEY(`productId`, `notificationId`), FOREIGN KEY(`productId`) REFERENCES `products`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `notificationId` INTEGER NOT NULL, `text` TEXT NOT NULL, `deeplink` TEXT, `scheduledAtMs` INTEGER NOT NULL, PRIMARY KEY(`productId`, `notificationId`), FOREIGN KEY(`productId`) REFERENCES `products`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "productId",
@@ -2310,11 +2315,6 @@
             "columnName": "notificationId",
             "affinity": "INTEGER",
             "notNull": true
-          },
-          {
-            "fieldPath": "title",
-            "columnName": "title",
-            "affinity": "TEXT"
           },
           {
             "fieldPath": "text",
@@ -3179,7 +3179,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bbea1b2e36b781d84c85c33af3ad246c')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7da64ee2024101a0358fe518b74918d7')"
     ]
   }
 }

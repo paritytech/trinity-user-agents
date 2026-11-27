@@ -32,7 +32,7 @@ extension CancelConfirmation {
         case .declined: nil
         case .lapsed: String(localized: .Funding.offerLapsed)
         case .noOffer: String(localized: .Funding.offerNone)
-        case .tooLate: String(localized: .Funding.offerTooLate)
+        case .tooLate: String(localized: .Funding.cancelTooLate)
         }
     }
 }
@@ -79,7 +79,7 @@ extension FundingCancelAvailability {
     var title: String? {
         switch self {
         case .unavailable: nil
-        case .available: String(localized: .Funding.depositCancel)
+        case .available: String(localized: .Common.cancel)
         case .availableAgain: String(localized: .Funding.cancelAnyway)
         }
     }

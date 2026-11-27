@@ -81,8 +81,8 @@ export interface ReservedValuesPolicy {
   extraGenesisHashes?: (string | Uint8Array)[];
   /**
    * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
-   * is, without the leading dot. The core's refusal of any other entry names
-   * the TLDs a stack can have.
+   * is, without the leading dot. The core refuses an entry no stack can have:
+   * one that is not a DNS label, or is `li` or `localhost`.
    */
   extraTlds?: string[];
 }
@@ -126,6 +126,47 @@ export type StackFetchResponse =
   /** `304 Not Modified`. */
   | { status: "notModified" };
 
+/**
+ * A difference between the stack's descriptor and what one of its chains
+ * answered.
+ */
+export type StackMismatch =
+  | {
+      /**
+       * The chain's last connection reached one with a different genesis
+       * hash from the descriptor's, as happens after a chain restarts from
+       * genesis. The core refused that connection.
+       */
+      kind: "genesisHash";
+      /** The chain's role in the descriptor. */
+      role: string;
+      /** The genesis hash the descriptor names, as `0x` hex. */
+      named: string;
+      /** The genesis hash the chain gave, as `0x` hex. */
+      answered: string;
+    }
+  | {
+      /**
+       * People's `NetworkSuffix` is not the descriptor's `tld`. The core
+       * derives its identities under `peopl.<tld>` and builds proof contexts
+       * with People's suffix, so an identity derived under one does not match
+       * the other. The core keeps using People.
+       *
+       * A signing host reads the suffix during its allowance work and keeps it
+       * in memory only. A runtime built again, after a relaunch or for
+       * `restartRequired`, lists none until it reads the suffix itself.
+       */
+      kind: "networkSuffix";
+      /** The descriptor's `tld`. */
+      named: string;
+      /**
+       * The suffix People gave. Printable ASCII stays as it is, apart from a
+       * backslash, single quote or double quote, which gets a backslash before
+       * it. Any other byte is written as `\t`, `\r`, `\n` or `\xNN`.
+       */
+      answered: string;
+    };
+
 /** The stack the core runs, and what the host shows and does about it. */
 export interface StackStatus {
   /**
@@ -155,7 +196,11 @@ export interface StackStatus {
    * again to follow it. A copy on another TLD is refused and never sets it.
    */
   restartRequired: boolean;
-  /** The last finished fetch. Not set before the first one. */
+  /**
+   * The last finished fetch. Not set before the first one. A fetch that
+   * changed the stored record finishes once that record is stored or its
+   * store fails; the whole status shows it only from then on.
+   */
   lastRefresh?: {
     /**
      * `current`: the published descriptor is the copy the core holds.
@@ -171,6 +216,17 @@ export interface StackStatus {
      */
     reason?: string;
   };
+  /**
+   * Where a chain's last answer differed from the descriptor the core runs:
+   * its chains in the descriptor's order, then People's `NetworkSuffix`. The
+   * suffix is listed only once this runtime has read it, so a suffix that is
+   * not listed may not have been read yet. While a chain is listed, a host
+   * with `fetchStackDescriptor` is asked for the descriptor every five minutes
+   * instead of every hour, until a newer copy sets `restartRequired`. A light
+   * client answers from its own chain spec, so it never lists a chain that
+   * restarted.
+   */
+  mismatches: StackMismatch[];
 }
 
 /**
@@ -190,16 +246,21 @@ export interface StackCallbacks {
     request: StackFetchRequest,
   ): StackFetchResponse | Promise<StackFetchResponse>;
   /**
-   * The stack's status when the runtime starts, and on each change. A host
-   * without `fetchStackDescriptor` gets the one at start. A runtime built
-   * from a test stack has no status and calls neither callback.
+   * The stack's status when the runtime starts, and on each change. For a
+   * host without `fetchStackDescriptor` only `mismatches` can change. A
+   * runtime built from a test stack has no status and calls neither callback.
    */
   stackChanged?(status: StackStatus): void;
 }
 
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
-  /** Stable identifier used to scope product accounts, permissions, and storage. */
+  /**
+   * Stable identifier used to scope product accounts, permissions, and storage.
+   * It is an id the host's stack serves. A pairing or signing host runtime's
+   * `parseProductId` gives it for a name, such as one written under `dot` on
+   * a stack with another TLD.
+   */
   productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
   executionKind?: ExecutableKind;

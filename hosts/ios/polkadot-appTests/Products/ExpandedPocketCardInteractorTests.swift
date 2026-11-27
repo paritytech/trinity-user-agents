@@ -68,7 +68,7 @@ private final class RecordingRuntimeFactory: ExpandedPocketCardRuntimeMaking {
         self.loader = loader
     }
 
-    func makeRuntime(face _: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
+    func makeRuntime(card _: any ExpandedCardCovering) throws -> SPARuntimeProtocol {
         SPARustRuntime(
             executionModel: makeExecutionModel(),
             configuration: configuration,
@@ -117,7 +117,7 @@ private final class RecordingOutput: ExpandedPocketCardInteractorOutputProtocol 
 
     func didFail(error _: Error) {}
 
-    func didRequestFaceShown(_: Bool) -> ExpandedCardFaceOutcome {
+    func didRequestCardCovered(_: Bool) -> ExpandedCardCoverOutcome {
         .applied
     }
 

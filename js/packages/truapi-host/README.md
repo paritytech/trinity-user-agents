@@ -49,8 +49,29 @@ the host build runs:
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key, a
-descriptor without an Asset Hub, People or Bulletin chain, and a field `stack`
-does not have.
+descriptor without an Asset Hub, People or Bulletin chain, a field `stack` does
+not have, and the TLDs `li`, which share hosts end in, and `localhost`, whose
+names all resolve to the local machine.
+
+The core runs products under the stack's TLD. A product can also be named
+under `dot`: on a stack with another TLD that name is the stack's own product,
+so on `paseo` `chat-bot.dot` is `chat-bot.paseo`. `runtime.parseProductId(name)`
+answers the id for a name and rejects a name the stack does not serve. Pass its
+answer wherever the runtime takes a product id, so the host and the core hold
+one id for a product. With `chat-bot.dot` on a `paseo` stack:
+
+- `createProvider` rejects, and the error names `chat-bot.paseo`;
+- `claimWorker` holds nothing, which the core logs at `warn`, so no demand is
+  reported for it;
+- `getPermissionAuthorizationStatus`, `getPermissionAuthorizationStatuses` and
+  `setPermissionAuthorizationStatus` reject, since a status stored under that
+  name is one no product reads, and they reject a request that names it too;
+- `clearProductState` clears the grants and the product storage kept under
+  exactly that id, which is how a host drops them for an id an earlier release
+  ran. It does not touch `chat-bot.paseo`.
+
+Ids the core hands to a host are ids the stack serves, also when a product
+wrote a `dot` name in a call.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
@@ -64,13 +85,32 @@ refresh it.
   copy it stored was fetched less than an hour ago, and on `refreshStack()`.
   A sleeping device can stretch that hour, so call `refreshStack()` when the
   page becomes visible again.
-- `stackChanged(status)`: the `StackStatus` at start and on each change, also
-  for a host without `fetchStackDescriptor`. The same value comes from
-  `stackStatus()`. `restartRequired` means a newer copy changes a chain, the
+- `stackChanged(status)`: the `StackStatus` at start, and on each change. For a
+  host without `fetchStackDescriptor` only `mismatches` changes, when a chain's
+  answer changes it. `restartRequired` means a newer copy changes a chain, the
   network or the generation, and applies once the runtime is built again. A
   copy on another TLD than the bundled descriptor is refused, and `lastRefresh`
   says so. `generation` changes when the stack restarts its chains: key cached
-  chain data by it.
+  chain data by it. `mismatches` lists each chain whose last connection reached
+  one with a different genesis hash from the descriptor's. On a signing host it
+  also lists People's `NetworkSuffix` once the runtime's allowance work has read
+  one that is not the descriptor's `tld`. The suffix is kept in memory only, so
+  a runtime built again lists none until it reads the suffix itself.
+
+After a stack's chains restart from genesis, the same endpoints serve new
+chains with new genesis hashes. To catch that, the core asks every chain
+connection for its genesis hash before anything else uses it. If the hash is
+not the descriptor's, calls to that chain fail and `stackStatus()` lists the
+chain in `mismatches`. The core also asks the connections it opened earlier for
+that chain again, apart from statement subscriptions, and closes those that now
+give a different hash or say the chain is halted.
+While a chain is listed, the core asks `fetchStackDescriptor` every five
+minutes instead of every hour, until `restartRequired` is set.
+
+A chain that cannot be reached is unavailable and is not listed. A light client
+never lists a restarted chain either, because it answers from its own chain
+spec. A `WasmProductRuntime` built on its own also refuses a chain with a
+different hash, but has no status to report it in.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key, and starts from it when it is newer than the bundled one.
@@ -78,7 +118,9 @@ The core keeps the last copy it verified in core storage, under the
 bundled copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
-`/web` worker runtime does not pass these callbacks yet.
+`/web` and `/node` hosts run the core in a worker, `worker-runtime`, that does
+not pass these callbacks yet and exposes no `stackStatus()` to the host, so a
+host on them sees a refused chain only as failing calls.
 
 The test host has no descriptor, so it passes `testStack` instead: an `id` and
 a `generation`, the network, the TLD and each chain's genesis hash. Only the
@@ -190,9 +232,9 @@ needs, and a rejected schedule reaches the product as a host failure. A host
 keeps one reminder per product. The core serves
 `game` to the game product, `dim2`, alone. The mock test host
 (`@parity/truapi-host/testing`) accepts every reminder and cancel without
-holding them once it runs as that product; its default `mock.dot` gets
+holding them once it runs as that product; its default `mock.paseo` gets
 `Unsupported`, so a suite that exercises `game` passes
-`productId: "dim2.dot"`.
+`productId: "dim2.dot"`, which the test host runs as `dim2.paseo`.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
@@ -301,6 +343,11 @@ const address = await productAccountAddress({
 });
 ```
 
+The address is the one the host gives the product, so the product id is read as
+the host's stack reads it. The mock test stack's TLD is `paseo`, which makes
+`tx-demo.dot` the product `tx-demo.paseo`. A suite whose host runs another test
+stack passes it as `testStack`.
+
 Which one to reach for:
 
 - `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
@@ -309,9 +356,9 @@ Which one to reach for:
 - `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
   is asynchronous and runs the whole derivation from a dev account's session
   root. It needs the built testing bundle, so it is for suites only. Because
-  the address depends on nothing but the root, the product id and the index, a
-  suite can work it out in a `globalSetup` and fund it once rather than per
-  test.
+  the address depends on nothing but the root, the id the stack serves the
+  product under and the index, a suite can work it out in a `globalSetup` and
+  fund it once rather than per test.
 
 A running fixture answers the same address through
 `testHost.getProductAccountAddress(productId?, index?)`, which reads the session
@@ -377,7 +424,7 @@ connects again: `onPort` is called with a fresh port once the new document
 sends a frame, and the function `onPort` returned for the previous port runs
 then. Each port is a new product session, so give it a core connection of its
 own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
-and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker and answers the id the host's stack serves the name under. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 ## Example — Node (worker thread)
 
@@ -402,7 +449,8 @@ const runtime = await createNodePairingHostRuntime(
   }),
   { hostConfig },
 );
-const client = createClient(createTransport(await runtime.createProvider({ productId: "my-cli.dot" })));
+const productId = await runtime.parseProductId("my-cli.dot");
+const client = createClient(createTransport(await runtime.createProvider({ productId })));
 await client.account.requestLogin({});
 ```
 

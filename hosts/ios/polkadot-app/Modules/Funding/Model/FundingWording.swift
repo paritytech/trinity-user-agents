@@ -44,7 +44,7 @@ enum FundingWording {
                 ? (String(localized: .Funding.bandSentAsset(asset: asset)), false)
                 : (String(localized: .Funding.bandSentRail(rail: railWord(rail))), false)
         case .retrying:
-            if direction == .out { return (String(localized: .Funding.bandRetryingPayout), true) }
+            if direction == .out { return (String(localized: .Funding.activityRetryingPayout), true) }
             return rail == .bank
                 ? (String(localized: .Funding.bandRetryingBank), true)
                 : (String(localized: .Funding.bandRetrying), true)
@@ -96,9 +96,9 @@ enum FundingWording {
     private static func awaitingText(rail: FundingRail?) -> String {
         switch rail {
         case .bank: String(localized: .Funding.progressBankNote)
-        case .crypto: String(localized: .Funding.bandWaitingDeposit)
+        case .crypto: String(localized: .Funding.activityWaitingDeposit)
         case .card,
-             nil: String(localized: .Funding.bandWaitingPayment)
+             nil: String(localized: .Funding.activityWaitingPayment)
         }
     }
 }

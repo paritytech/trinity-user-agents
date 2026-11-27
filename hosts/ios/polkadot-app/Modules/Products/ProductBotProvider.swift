@@ -147,9 +147,7 @@ private extension ProductBotProvider {
 
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
-        return HostPlacedProducts.all.compactMap {
-            try? Product(id: $0.productId(tld), name: $0.fallbackName)
-        }
+        return (try? HostPlacedProducts.all(tld: tld))?.map { Product(id: $0.productId, name: $0.name) } ?? []
     }
 
     /// The last async seam before a bot is built: the file provider that serves the worker runs

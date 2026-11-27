@@ -1220,19 +1220,19 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Widget);
         let host = host.clone();
-        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_CARD_COVERED, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetCardCoveredRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError> = truapi::CallError::Denied;
-                    let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> = Err(error);
+                    let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetCardCoveredError> = truapi::CallError::Denied;
+                    let result: Result<versioned::expanded_card::HostExpandedCardSetCardCoveredResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetCardCoveredError>> = Err(error);
                     return result.encode();
                 }
-                let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> =
-                    match host.set_face_shown(&cx, request).await {
-                        Ok(_) => Ok(<versioned::expanded_card::HostExpandedCardSetFaceShownResponse as truapi::versioned::FromLatest>::from_latest(
+                let result: Result<versioned::expanded_card::HostExpandedCardSetCardCoveredResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetCardCoveredError>> =
+                    match host.set_card_covered(&cx, request).await {
+                        Ok(_) => Ok(<versioned::expanded_card::HostExpandedCardSetCardCoveredResponse as truapi::versioned::FromLatest>::from_latest(
                             (),
                             target_version,
                         )),
@@ -1245,19 +1245,19 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Widget);
         let host = host;
-        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_BACK_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetBackShownRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::EXPANDED_CARD_TURN_CARD, move |request_id: String, request: versioned::expanded_card::HostExpandedCardTurnCardRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetBackShownError> = truapi::CallError::Denied;
-                    let result: Result<versioned::expanded_card::HostExpandedCardSetBackShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetBackShownError>> = Err(error);
+                    let error: truapi::CallError<versioned::expanded_card::HostExpandedCardTurnCardError> = truapi::CallError::Denied;
+                    let result: Result<versioned::expanded_card::HostExpandedCardTurnCardResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardTurnCardError>> = Err(error);
                     return result.encode();
                 }
-                let result: Result<versioned::expanded_card::HostExpandedCardSetBackShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetBackShownError>> =
-                    match host.set_back_shown(&cx, request).await {
-                        Ok(_) => Ok(<versioned::expanded_card::HostExpandedCardSetBackShownResponse as truapi::versioned::FromLatest>::from_latest(
+                let result: Result<versioned::expanded_card::HostExpandedCardTurnCardResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardTurnCardError>> =
+                    match host.turn_card(&cx, request).await {
+                        Ok(_) => Ok(<versioned::expanded_card::HostExpandedCardTurnCardResponse as truapi::versioned::FromLatest>::from_latest(
                             (),
                             target_version,
                         )),

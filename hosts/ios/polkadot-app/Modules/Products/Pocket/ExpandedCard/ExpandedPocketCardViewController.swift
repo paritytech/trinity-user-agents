@@ -1,7 +1,7 @@
 import FoundationExt
 import Products
 import SwiftUI
-import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardCoverOutcome
 import struct TrUAPIHost.ProductId
 import UIKit
 import UIKitExt
@@ -22,7 +22,7 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     private let pageController = UIViewController()
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private var faceSetByPage = false
+    private var coverSetByPage = false
     private var isClosing = false
     private var isInFlight = false
 
@@ -61,11 +61,9 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = card.title
         setupFace()
         setupPage()
         pullDown.install()
-        setContentScrollView(widgetView.webView.scrollView, for: .top)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -80,18 +78,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         super.viewSafeAreaInsetsDidChange()
 
         widgetView.scrollIndicatorInsets = view.safeAreaInsets
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(false)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        navigationController?.setSystemBackSwipesEnabled(true)
     }
 
     override func willMove(toParent parent: UIViewController?) {
@@ -151,20 +137,20 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
         widgetView.updateLoadPhase(phase)
     }
 
-    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+    func setCardCovered(_ covered: Bool) -> ExpandedCardCoverOutcome {
         guard isOnDisplay, !isClosing else { return .notPresented }
         guard !pullDown.isPulling else { return .userMoving }
 
-        faceSetByPage = true
-        setFaceCovered(!shown)
+        coverSetByPage = true
+        setFaceCovered(covered)
         return .applied
     }
 
-    /// The card's published starting face, unless the page has already set it.
-    func applyOpeningFace(shown: Bool) {
-        guard isOnDisplay, !faceSetByPage else { return }
+    /// The card's published starting cover, unless the page has already set it.
+    func applyOpeningCover(covered: Bool) {
+        guard isOnDisplay, !coverSetByPage else { return }
 
-        setFaceCovered(!shown)
+        setFaceCovered(covered)
     }
 }
 
@@ -173,6 +159,10 @@ extension ExpandedPocketCardViewController: ProductPageShowing {}
 extension ExpandedPocketCardViewController: PocketFlightScreen {
     var pocketItem: PocketItem {
         .card(card.key)
+    }
+
+    var statusStripTitle: String {
+        card.title
     }
 
     /// Without the margins the screen draws around the card.
@@ -213,14 +203,28 @@ extension ExpandedPocketCardViewController: PocketFlightScreen {
     }
 }
 
+extension ExpandedPocketCardViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
+}
+
 extension ExpandedPocketCardViewController: NavigationTransitionAnimating {
     func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning? {
         isInFlight = true
         return PocketFlight(screen: self, origin: origin, opening: operation == .push)
     }
+
+    var allowsBackSwipe: Bool {
+        canSwipeBack
+    }
 }
 
 private extension ExpandedPocketCardViewController {
+    var canSwipeBack: Bool {
+        !isInFlight && !isClosing && !pullDown.isPulling
+    }
+
     func setupFace() {
         addChild(face)
         rootView.embedFace(face.view)

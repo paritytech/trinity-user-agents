@@ -61,9 +61,8 @@ and tests live in `runtime/tests.rs` and `runtime/tests/`.
 Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
-Trusted products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions and permission prompts. Device permissions still need the OS
-grant.
+Privileged products, `truapi::platform::PrivilegedProduct`, bypass recorded
+permissions and permission prompts. Device permissions still need the OS grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user,
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
@@ -192,8 +191,89 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain and
-does not check genesis hashes against the live chains.
+derivation working offline. The core reads the chain's suffix later and
+reports a difference, as the next section describes.
+
+#### Checks against the chains
+
+When an operator restarts a stack's chains from genesis, the same endpoints
+serve new chains with new genesis hashes. A build that still runs the old
+descriptor would read them as the old chains. So the core asks every chain
+connection for its genesis hash before anything else uses the connection. This
+covers the core's own connections, each product's, and the statement
+subscriptions on People.
+
+- If the hash is the one the connection was opened for, the core hands the
+  connection out.
+- If the hash is different, the call fails with a host failure. For a chain of
+  the stack, `StackStatus::mismatches` lists it until a connection reaches the
+  chain the descriptor names. Without delaying that failure, the core also
+  asks the connections it handed out earlier for that chain again, apart from
+  the statement subscriptions, because a host may have redialled underneath
+  them. It closes those that give a different hash or say the chain is halted,
+  as dotli does while it redials. Those that give the right hash, fail another
+  way, or say nothing for 30 seconds stay open, since one endpoint can front
+  several nodes.
+- If the chain cannot be reached, or says nothing for 30 seconds, the call fails
+  as unavailable and the next connection asks again. A chain that dotli reports
+  as halted is asked again for up to 47 seconds, as a halted follow is, and is
+  unavailable after that. Any other error fails the call with a host failure.
+  None of these is a mismatch.
+
+While a chain is listed, the core fetches the descriptor every five minutes
+instead of every hour, since the operator publishes the new genesis hashes with
+the restart. Once the core holds a descriptor that changes a chain, it sets
+`restart_required` and fetches hourly again.
+
+A host learns of a mismatch through its stack callbacks, and can read it from
+`stack_status`. truapi-host's `/web` and `/node` hosts run the core in a worker
+(`worker-runtime.ts`), which builds the pairing runtime without the stack
+callbacks and exposes no `stackStatus()` to the host, so a host on them sees a
+refused chain only as failing calls. A `WasmProductRuntime` built on its own
+has no status either. A browser host that passes `stackChanged` without
+`fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
+Without the callbacks the chain is still refused, and nothing is fetched. A host
+shows a listed chain as out of service and keeps its own features off it. A
+`StackMismatch::NetworkSuffix` entry, described below, names no chain to keep
+off: the core keeps using People, so a host keeps People in service as well and
+shows the entry as a fault in the stack. The operator corrects it by setting
+People's suffix to the `tld`. A corrected descriptor on another TLD does not
+help a running build, and the entry stays listed. A host that fetches the
+descriptor sees that copy refused in `last_refresh`. Only a new host build that
+bundles that descriptor runs on its TLD.
+
+The check has three limits:
+
+- It runs only when the core opens a connection. If a host redials underneath
+  one, as dotli does, the core notices when it opens the next connection for
+  that chain, in any scope.
+- A light client answers from its chain spec, so a chain that restarted is out
+  of its reach and never listed. Only the hourly fetch brings it the new
+  descriptor.
+- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
+  is not checked.
+
+The core also checks People's `NetworkSuffix.NetworkSuffix` against the
+descriptor's `tld`. It makes no request for this. A signing host already reads
+People's suffix when it builds statement store and Bulletin allowance proofs,
+and when it renews a statement store allowance, and the core compares that
+value. Only People's suffix is compared: a PGAS claim reads Asset Hub's
+`NetworkSuffix`, which the core does not check. If People's suffix differs,
+`StackStatus::mismatches` lists it until a later read gives the `tld` or the
+runtime ends. The core keeps the suffix in memory only, so a runtime built
+again, after a relaunch or after `restart_required`, lists no suffix until its
+own allowance work reads one. A suffix that is not listed may not have been
+read yet.
+
+This is only a report. The core keeps using People and does not fetch the
+descriptor any sooner. It matters because the core derives its identities under
+the `tld` but builds proof contexts with People's suffix. If the two differ, an
+identity derived under one does not match the other.
+
+A failed read changes nothing, and neither does a suffix that is not one to
+sixteen bytes long: a suffix listed before stays listed, and the allowance work
+fails with that error. A pairing host does no allowance work, so it never lists
+a suffix.
 
 #### Descriptor refresh
 
@@ -230,8 +310,11 @@ the record fails.
 A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
-again. Any other change applies at once. `StackStatus` documents the rest,
-including the `generation` a host keys cached chain data by.
+again. Any other change needs no restart. `StackStatus` carries it once the
+core has stored the descriptor or its store has failed, at most 30 seconds
+after the fetch, and shows the copy from before the fetch until then. It
+documents the rest, including the `generation` a host keys cached chain data
+by.
 
 ### Core database
 
@@ -250,12 +333,12 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each side. The host lists the cards it
-pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
-approves with `add_pocket_card`, and follows the collection with
-`observe_pocket_cards`. A card no longer pinned stays only if the user added
-it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+cards in the Pocket and the newest face of each side. The runtime pins the
+privileged products' cards on the stack's network (`pinned_pocket_cards` lists
+them for a host), the host adds the cards the user approves with
+`add_pocket_card`, and follows the collection with `observe_pocket_cards`. A
+card no longer pinned stays only if the user added it. The core keeps the
+newest face of a card from every `RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
 render, at most every two seconds and once more when the render stops, so a
 card has both sides offline and at cold start. `pocket_card_face` reads a side.
 A product connection's renderer actions leave out a press on a back that
@@ -468,20 +551,66 @@ parsing, so a context off the wire carries a normalized product id.
 ### Product Identity
 
 Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
-that turns a host- or wire-supplied product id into the canonical form
-derivation, product storage and permission scopes are keyed by. Nothing else
-builds a `ProductId`, so holding one means the id is normalized. Code that reads
+that normalizes a host- or wire-supplied product id. Nothing else builds a
+`ProductId`, so holding one means the id is normalized. Derivation, product
+storage and permission scopes are keyed by a normalized id the stack serves. Code that reads
 an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
 and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
-register product names under, one entry per network a host can be pointed at. A
-name ending in one of them is also what navigation resolves back into the host's
-own product surface, so it bypasses the outbound domain grant.
+Parsing checks syntax only, so any DNS label is a TLD: a wire frame or a stored
+record is decoded without a stack. The stack decides which ids it serves:
+localhost ids, and names under its own TLD (`Stack::serves`).
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
-all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-permission prompts. Device permissions still need the OS grant. The runtime grants
+A name can also be written under `dot` on any stack. On a stack with another
+TLD it names the stack's own product: the stack's dotNS registry resolves it,
+so `game.dot` on a `paseo` host is the product `game.paseo`, with that
+product's keys, entropy, storage and permissions (`Stack::served_id`). A name
+under any other TLD names no product of the stack. A stack whose own TLD is
+`dot` serves `dot` ids as they are, and only a build that allows Polkadot's
+reserved values can run one.
+
+The core reads a name this way where a product or a person writes it: a call
+that names a product (answered `MalformedFrame` when the stack does not serve
+it), every product a paired host's request names, and a link, share host or
+Pocket deeplink read through a `Stack` (`parse_navigate`,
+`parse_product_share_host`). `runtime::served` describes how a served value
+reaches the account calls. `parse_product_link` and `parse_dev_server` do not
+take a stack and answer the id as written.
+
+A host and the core hold one id for a product. `ProductContext::served_by`
+opens a product only under an id the stack serves and refuses a `dot` name on
+another stack, naming the id to open instead. A host that is given a name asks
+for the id first: a wasm pairing or signing host runtime's `parseProductId`, or
+`Stack::served_id` in Rust, which the CLI applies to `--product-id`. A native
+host gets served ids from `parse_navigate` and `parse_product_share_host` and
+builds any other id under the stack's TLD. Every other id a host passes is
+taken as written, and a worker claim under an id the stack does not serve
+holds nothing. The subtree lookup, `HostAccounts::derive_entropy`, every key the
+signing wallet derives for a product other than its contact handle key, which
+only a connection's own product reaches, the manifest readers and worker
+references refuse an id the stack does not serve.
+
+`HostRuntime` and the wasm runtimes administer stored state by the id as
+written. `clear_product_state` clears the grants and the product storage kept
+under exactly that id, served or not, so a host can drop them for an id it no
+longer runs, such as a `dot` id an earlier release ran on a `paseo` stack.
+Permission statuses, ring-VRF registrations, Pocket cards and chat rooms kept
+under such an id stay in the store, where no product reads them.
+`permission_authorization_status` and its setter read and change the statuses
+of an id the stack serves and of an id it serves nothing under. They refuse a
+`dot` name on a stack with another TLD, as the product a status belongs to or
+as a product the request names: the stack keeps that product's statuses under
+its own id, and a status stored under the name would be one no product reads. A native host can clear with `clear_product_state`, but it
+reads and sets stored statuses only through a `NativeProductExecution`, which
+opens only for a served product.
+
+`PrivilegedProduct` names the privileged products (Humanity `peopl`, Jollity
+`dim2`, Collectibles `stash`) by the label reserved for each on every network,
+and `ProductId::privileged_product` reads one off an id. One counts only under
+an id the stack serves (`Stack::trusts`). The native exports give hosts each
+product's id and label, the cards every host pins in the Pocket and the chats
+every host places. These products bypass recorded permissions and permission
+prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
 for raw bytes signed inside the `<Bytes>` watermark.
@@ -589,7 +718,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it
   is up before the first quote; a provider handed the session keeps its
-  worker after that. A quote already asked keeps its provider's worker
+  worker after that. A provider under a TLD the stack does not serve has no
+  worker to hold, so none is started for it and a quote asked of it times
+  out. A quote already asked keeps its provider's worker
   until it is answered or times out, overlay closed or not, unless the
   session is handed to another provider: then every quote still waiting
   ends at once and lets its worker go. The manifest names no backend: a provider signs in to its own API
@@ -739,7 +870,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the
-  provider's worker while a session is assigned and open, and stores an
+  provider's worker while a session is assigned and open, unless the stack does
+  not serve the provider, and stores an
   assigned session from then on, even while its overlay is up. It records each
   top-up (inbound) or payment request (outbound) the worker starts while
   serving a session, and a `Crediting` or `Collecting` report must name one of
@@ -853,7 +985,7 @@ Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
 `ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
 connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
-`Unsupported`, and `set_back_shown` answers `Unsupported` to every Widget, since
+`Unsupported`, and `turn_card` answers `Unsupported` to every Widget, since
 no host seam turns a card.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.

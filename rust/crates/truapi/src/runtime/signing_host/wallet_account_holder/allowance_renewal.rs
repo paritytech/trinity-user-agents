@@ -352,7 +352,7 @@ impl WalletAccountHolder {
 			.await?;
 		let rpc = client.rpc();
 		let metadata = fetch_metadata(rpc).await?;
-		let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+		let network_suffix = self.services.people_network_suffix(&client).await?;
 		// Every ring back to index 0, because a membership that stopped being
 		// re-included still proves against the ring that holds it.
 		let memberships =
@@ -428,6 +428,10 @@ impl WalletAccountHolder {
 }
 
 /// Skip unusable entries so they cannot prevent renewal of other targets.
+///
+/// An entry for a product this stack does not serve belongs to another network
+/// the host may switch back to, so it is skipped without a warning and stays in
+/// the ledger.
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_targets(
 	keys: &WalletKeys,
@@ -435,6 +439,12 @@ fn resolve_targets(
 ) -> Vec<ResolvedRenewalTarget> {
 	targets
 		.iter()
+		.filter(|target| match target {
+			StatementRenewalTarget::ProductStatementAllowance { product_id } => {
+				keys.stack.serves(product_id)
+			},
+			StatementRenewalTarget::WalletSso | StatementRenewalTarget::Account { .. } => true,
+		})
 		.filter_map(|target| match resolve_target(keys, target) {
 			Ok(resolved) => Some(resolved),
 			Err(reason) => {

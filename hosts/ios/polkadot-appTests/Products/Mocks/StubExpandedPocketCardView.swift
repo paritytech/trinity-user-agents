@@ -1,6 +1,6 @@
 import Foundation
 import Products
-import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardCoverOutcome
 import UIKit
 import UIKitExt
 @testable import polkadot_app
@@ -20,6 +20,6 @@ final class StubExpandedPocketCardView: ExpandedPocketCardViewProtocol {
     func hideLoading() {}
     func showLoadFailure(_: ErrorContent) {}
     func updateLoadPhase(_: ProductLoadPhase) {}
-    func setFaceShown(_: Bool) -> ExpandedCardFaceOutcome { .applied }
-    func applyOpeningFace(shown _: Bool) {}
+    func setCardCovered(_: Bool) -> ExpandedCardCoverOutcome { .applied }
+    func applyOpeningCover(covered _: Bool) {}
 }

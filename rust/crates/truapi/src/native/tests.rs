@@ -102,8 +102,8 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
-	pub face_requests: Mutex<Vec<bool>>,
-	pub back_requests: Mutex<Vec<bool>>,
+	pub cover_requests: Mutex<Vec<bool>>,
+	pub turn_requests: Mutex<Vec<truapi::latest::PocketCardSide>>,
 	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
@@ -192,19 +192,19 @@ impl EventCallbacks {
 			remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
-			face_requests: Mutex::new(Vec::new()),
-			back_requests: Mutex::new(Vec::new()),
+			cover_requests: Mutex::new(Vec::new()),
+			turn_requests: Mutex::new(Vec::new()),
 		}
 	}
 
-	/// The face visibilities this execution's card was asked for, in order.
-	pub fn face_requests(&self) -> Vec<bool> {
-		self.face_requests.lock().expect("face requests mutex poisoned").clone()
+	/// Whether this execution's card was asked to be covered, in order.
+	pub fn cover_requests(&self) -> Vec<bool> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").clone()
 	}
 
 	/// The sides this execution's card was asked to turn to, in order.
-	pub fn back_requests(&self) -> Vec<bool> {
-		self.back_requests.lock().expect("back requests mutex poisoned").clone()
+	pub fn turn_requests(&self) -> Vec<truapi::latest::PocketCardSide> {
+		self.turn_requests.lock().expect("turn requests mutex poisoned").clone()
 	}
 }
 
@@ -283,18 +283,18 @@ impl HostCallbacks for EventCallbacks {
 			DevicePermissionStatus::NotApplicable
 		})
 	}
-	async fn set_expanded_card_face_shown(
+	async fn set_expanded_card_covered(
 		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+		covered: bool,
+	) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+		self.cover_requests.lock().expect("cover requests mutex poisoned").push(covered);
+		Ok(crate::platform::ExpandedCardCoverOutcome::Applied)
 	}
-	async fn set_expanded_card_back_shown(
+	async fn turn_expanded_card(
 		&self,
-		shown: bool,
+		side: truapi::latest::PocketCardSide,
 	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
-		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
+		self.turn_requests.lock().expect("turn requests mutex poisoned").push(side);
 		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
@@ -556,8 +556,7 @@ fn clearing_a_product_reaches_its_storage_subscriptions_only() {
 	let other = ProductId::for_test("myapp.dotapp.dot");
 	let mut own =
 		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
-	let mut others =
-		platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	let mut others = platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
 	for subscription in [&mut own, &mut others] {
 		futures::executor::block_on(futures::StreamExt::next(subscription));
 	}
@@ -579,13 +578,17 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		host_version: None,
 		platform_type: None,
 		platform_version: None,
-		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
-		)),
+		// On `dot`, the TLD the tests' products are under, in a build that
+		// allows it.
+		stack: crate::native::BundledStack {
+			reserved_values: crate::platform::ReservedValuesPolicy::ALLOWED,
+			..native_bundled_stack(&crate::test_support::test_descriptor(
+				"dot", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+			))
+		},
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
-		pinned_pocket_cards: Vec::new(),
 		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
@@ -593,8 +596,16 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 	}
 }
 
+/// The bundled copy [`crate::test_support::published_test_descriptor`] is a
+/// later publication of: the same chains on `paseo`.
+fn native_bundled_paseo_stack() -> crate::native::BundledStack {
+	native_bundled_stack(&crate::test_support::test_descriptor(
+		"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	))
+}
+
 /// `descriptor` signed, as a native host bundles it.
-fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
+pub fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
 	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
 	crate::native::BundledStack {
 		pointer,
@@ -889,18 +900,56 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
 		.expect("host runtime config should be valid");
 
-	let first_connected_key =
-		callbacks.auth_states.lock().expect("auth state mutex poisoned").iter().find_map(
-			|state| match state {
-				AuthState::Connected(info) => Some(info.device_enc_public_key),
-				_ => None,
-			},
-		);
+	let first_connected_key = callbacks
+		.auth_states
+		.lock()
+		.expect("auth state mutex poisoned")
+		.iter()
+		.find_map(|state| match state {
+			AuthState::Connected(info) => Some(info.device_enc_public_key),
+			_ => None,
+		});
 	let handed_over_public_key =
 		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
 	assert_eq!(
 		(host.device_encryption_key().expect("device key should read"), first_connected_key),
 		([9; 32], Some(Some(handed_over_public_key)))
+	);
+}
+
+#[test]
+fn the_runtime_pins_humanity_on_the_network_of_the_stack_it_runs() {
+	struct Recorder(Mutex<Vec<(String, String, bool)>>);
+	impl super::NativePocketObserver for Recorder {
+		fn on_cards(&self, cards: Vec<crate::pocket_cards::PocketEntry>) {
+			*self.0.lock().unwrap() = cards
+				.into_iter()
+				.map(|card| (card.product_id.to_string(), card.card_id, card.privileged))
+				.collect();
+		}
+
+		fn on_error(&self, reason: String) {
+			panic!("the Pocket must read: {reason}");
+		}
+	}
+	let mut config = native_host_runtime_config();
+	config.stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"testnet", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	));
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+	let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+
+	let _subscription = host.observe_pocket_cards(recorder.clone());
+
+	crate::test_support::wait_until(
+		|| !recorder.0.lock().unwrap().is_empty(),
+		"the Pocket must list its pinned cards",
+	);
+	assert_eq!(
+		*recorder.0.lock().unwrap(),
+		vec![("peopl.testnet".to_string(), "humanity".to_string(), true)]
 	);
 }
 
@@ -1533,7 +1582,7 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 	))
 	.expect("an action set must reach the host");
 
-	let mut actions = connection.subscribe::<truapi::latest::GenericError>();
+	let mut actions = connection.subscribe::<truapi::latest::GenericError>(1);
 	connection
 		.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(
 			v01::HostChatActionSubscribeItem {
@@ -1897,7 +1946,8 @@ fn native_chain_provider_forwards_send_response_and_close() {
 fn native_chain_provider_closes_when_the_host_refuses_a_send() {
 	let (callbacks, _events, platform) = event_platform();
 	*callbacks.chain_id.lock().unwrap() = Some(42);
-	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let connection =
+		futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
 	let mut responses = connection.responses();
 	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
 
@@ -1942,6 +1992,7 @@ impl NativeStackCallbacks for PublishedStack {
 #[test]
 fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let config = HostRuntimeConfig {
+		stack: native_bundled_paseo_stack(),
 		local_session_secret: None,
 		local_session_lite_username: None,
 		..native_host_runtime_config()
@@ -2001,7 +2052,8 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 /// status says why the copy waits instead.
 #[test]
 fn a_record_the_database_refuses_asks_for_no_restart() {
-	let config = native_host_runtime_config();
+	let config =
+		HostRuntimeConfig { stack: native_bundled_paseo_stack(), ..native_host_runtime_config() };
 	let wiped = crate::test_support::published_test_descriptor(
 		2,
 		"second",
@@ -2211,12 +2263,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
-		fn on_core_event(
-			&self,
-			_marker: String,
-			_attributes: Vec<crate::logging::CoreAttribute>,
-		) {
-		}
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2268,15 +2315,15 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
+		async fn turn_expanded_card(
 			&self,
-			_shown: bool,
+			_side: truapi::latest::PocketCardSide,
 		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
@@ -2405,12 +2452,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
 
-		fn on_core_event(
-			&self,
-			_marker: String,
-			_attributes: Vec<crate::logging::CoreAttribute>,
-		) {
-		}
+		fn on_core_event(&self, _marker: String, _attributes: Vec<crate::logging::CoreAttribute>) {}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2464,15 +2506,15 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		) -> Result<DevicePermissionStatus, HostRejection> {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
-		async fn set_expanded_card_face_shown(
+		async fn set_expanded_card_covered(
 			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+			_covered: bool,
+		) -> Result<crate::platform::ExpandedCardCoverOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardCoverOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
+		async fn turn_expanded_card(
 			&self,
-			_shown: bool,
+			_side: truapi::latest::PocketCardSide,
 		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
@@ -2998,7 +3040,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 
 	let entropy = [7; 32];
 	let root_entropy = RootEntropy::new(entropy);
-	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let statement = root_entropy.derive_identity_keypair("dot").unwrap().public.to_bytes();
 	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
@@ -3400,7 +3442,10 @@ fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
 		parse_renderer_node_json(json).expect("the face reads"),
 		latest::RendererNode::Image {
 			modifiers: Vec::new(),
-			props: latest::ImageProps { source: latest::ImageSource::Inline(Vec::new()), fit: None },
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(Vec::new()),
+				fit: None
+			},
 		}
 	);
 }
@@ -3412,8 +3457,12 @@ fn expanded_card_calls_log_registered_markers() {
 	let (callbacks, _events, platform) = event_platform();
 
 	futures::executor::block_on(async {
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_covered(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::turn_expanded_card(
+			&platform,
+			truapi::latest::PocketCardSide::Back,
+		)
+		.await;
 	});
 
 	let classes: Vec<_> = callbacks
@@ -3532,7 +3581,7 @@ fn the_deepest_face_with_materials_reads_back_once_kept() {
 		futures::executor::block_on(cards.face(
 			product,
 			"stamps".into(),
-			crate::pocket_cards::PocketCardSide::Front,
+			truapi::latest::PocketCardSide::Front,
 		))
 		.unwrap(),
 		Some(deepest)
@@ -3817,4 +3866,335 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 		Some(&MarkerClass::Export { severity: Severity::Warn })
 	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
+}
+
+/// A worker execution with its bridge started, the callbacks that receive its
+/// bridge lines, and the URL a product dials.
+fn worker_bridge() -> (Arc<EventCallbacks>, Arc<NativeProductExecution>, String) {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let execution = native_host_runtime_no_session()
+		.open_product_execution(
+			callbacks.clone(),
+			None,
+			None,
+			native_execution_config("draw.dot", ExecutableKind::Worker),
+		)
+		.expect("open execution");
+	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
+	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+	(callbacks, execution, url)
+}
+
+struct IgnoredRender;
+
+impl super::NativeRendererObserver for IgnoredRender {
+	fn on_update(&self, _node: truapi::latest::ProductRendererRenderItem) {}
+
+	fn on_complete(&self) {}
+
+	fn on_error(&self, _reason: String) {}
+}
+
+fn render_outcome(execution: &NativeProductExecution) -> Result<(), crate::ProductRuntimeError> {
+	let request = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		payload: Vec::new(),
+	};
+	execution.render(request, Arc::new(IgnoredRender)).map(drop)
+}
+
+fn bridge_closed_leaving(callbacks: &EventCallbacks, open: usize) -> bool {
+	let left = format!("this execution now holds {open} of");
+	callbacks.logs.lock().expect("logs mutex poisoned").iter().any(|(marker, detail)| {
+		marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target && detail.contains(&left)
+	})
+}
+
+fn dial_until_rendering(
+	client: &tokio::runtime::Runtime,
+	url: &str,
+	execution: &NativeProductExecution,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+	let (ws, _) = client.block_on(tokio_tungstenite::connect_async(url)).expect("dial");
+	crate::test_support::wait_until(
+		|| render_outcome(execution).is_ok(),
+		"the dialled connection never served a render",
+	);
+	ws
+}
+
+/// Cards draw on an early connection after a later one hangs up.
+///
+/// A worker that reconnects can open several connections and keep an early one.
+#[test]
+fn render_uses_an_open_connection_when_the_newest_hung_up() {
+	let (callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	client.block_on(async {
+		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		second.close(None).await.expect("close second");
+	});
+	crate::test_support::wait_until(
+		|| bridge_closed_leaving(&callbacks, 1),
+		"the second connection never closed",
+	);
+
+	let outcome = render_outcome(&execution);
+	assert!(outcome.is_ok(), "a connection is still open, got {outcome:?}");
+}
+
+/// A product that hung up reads as not connected until it dials back in.
+///
+/// Hosts wait out `NotConnected` and give up on `Closed`.
+#[test]
+fn a_product_that_hung_up_reads_as_not_connected_until_one_dials_in() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let mut first = dial_until_rendering(&client, &url, &execution);
+
+	client.block_on(first.close(None)).expect("close first");
+	drop(first);
+	crate::test_support::wait_until(
+		|| matches!(render_outcome(&execution), Err(crate::ProductRuntimeError::NotConnected)),
+		"a hung up product did not read as not connected",
+	);
+
+	let _again = dial_until_rendering(&client, &url, &execution);
+}
+
+/// A stopped bridge and a closed execution give different answers.
+///
+/// A stopped bridge waits for a new one, while a closed execution never renders
+/// again, so the hosts must keep telling them apart.
+#[test]
+fn a_stopped_bridge_and_a_closed_execution_keep_their_answers() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	execution.stop_ws_bridge();
+	let stopped = render_outcome(&execution);
+	assert!(
+		matches!(stopped, Err(crate::ProductRuntimeError::NotConnected)),
+		"a stopped bridge answered {stopped:?}"
+	);
+
+	execution.shutdown();
+	let closed = render_outcome(&execution);
+	assert!(
+		matches!(closed, Err(crate::ProductRuntimeError::Closed)),
+		"a closed execution answered {closed:?}"
+	);
+}
+
+/// Whether the next frame the product reads on `ws` within `wait` starts a render.
+async fn next_frame_starts_a_render<S>(ws: &mut S, wait: std::time::Duration) -> bool
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+	use crate::frame::{MESSAGE_TYPE_START, ProtocolMessage, subscription_ids};
+
+	let render = subscription_ids("renderer_render").expect("known subscription");
+	match tokio::time::timeout(wait, ws.next()).await {
+		Ok(Some(Ok(WsMessage::Binary(bytes)))) => {
+			let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+			frame.payload.trait_id == render.trait_id &&
+				frame.payload.method_id == render.method_id &&
+				frame.payload.message_type == MESSAGE_TYPE_START
+		},
+		Ok(Some(Ok(_))) | Err(_) => false,
+		Ok(Some(Err(error))) => panic!("bridge error: {error}"),
+		Ok(None) => panic!("bridge closed"),
+	}
+}
+
+/// Cards draw on the newest connection that is still open.
+///
+/// A reconnecting worker dials a new connection while an older one may linger,
+/// and only the newest belongs to the worker that is running now.
+#[test]
+fn render_uses_the_newest_open_connection() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	let (mut second, _) =
+		client.block_on(tokio_tungstenite::connect_async(&url)).expect("dial second");
+	let reached_second = (0..40).any(|_| {
+		let outcome = render_outcome(&execution);
+		assert!(outcome.is_ok(), "both connections are open, got {outcome:?}");
+		client.block_on(next_frame_starts_a_render(
+			&mut second,
+			std::time::Duration::from_millis(50),
+		))
+	});
+	assert!(reached_second, "no render reached the newest connection");
+}
+
+/// A `renderer_action_subscribe` Start a product sends as `request_id`.
+fn start_renderer_actions(request_id: &str) -> tokio_tungstenite::tungstenite::Message {
+	use crate::frame::{MESSAGE_TYPE_START, Payload, ProtocolMessage, subscription_ids};
+
+	let ids = subscription_ids("renderer_action_subscribe").expect("known subscription");
+	let frame = ProtocolMessage {
+		request_id: request_id.into(),
+		payload: Payload {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			message_type: MESSAGE_TYPE_START,
+			value: truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+		},
+	};
+	tokio_tungstenite::tungstenite::Message::Binary(frame.encode())
+}
+
+fn card_press(action_id: &str) -> truapi::latest::HostRendererActionSubscribeItem {
+	truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		action_id: action_id.into(),
+		payload: Vec::new(),
+	}
+}
+
+/// The action id of the next press subscription `request_id` hears on `ws`,
+/// or `None` if none arrives within `wait`.
+///
+/// Panics when the subscription ends instead.
+async fn next_press<S>(ws: &mut S, request_id: &str, wait: std::time::Duration) -> Option<String>
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+	use truapi::versioned::{IntoLatest, renderer::HostRendererActionSubscribeItem};
+
+	use crate::frame::{MESSAGE_TYPE_RECEIVE, ProtocolMessage};
+
+	let press = async {
+		loop {
+			match ws.next().await {
+				Some(Ok(WsMessage::Binary(bytes))) => {
+					let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+					if frame.request_id != request_id {
+						continue;
+					}
+					assert_eq!(
+						frame.payload.message_type, MESSAGE_TYPE_RECEIVE,
+						"the press subscription ended"
+					);
+					let item = HostRendererActionSubscribeItem::decode(&mut &frame.payload.value[..])
+						.expect("decode press");
+					return item.into_latest().action_id;
+				},
+				Some(Ok(_)) => {},
+				Some(Err(error)) => panic!("bridge error: {error}"),
+				None => panic!("bridge closed"),
+			}
+		}
+	};
+	tokio::time::timeout(wait, press).await.ok()
+}
+
+/// Presses reach a connection that stays open after another one closes.
+///
+/// The connections of one execution share its action streams, and a worker
+/// opens its press stream once, so a stream another connection's end cut off
+/// would leave its cards drawn but deaf to taps.
+#[test]
+fn presses_reach_an_open_connection_after_another_one_closes() {
+	use futures::SinkExt;
+
+	let (callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let wait = std::time::Duration::from_secs(5);
+	let mut first = dial_until_rendering(&client, &url, &execution);
+	client.block_on(first.send(start_renderer_actions("presses"))).expect("subscribe");
+	execution.publish_renderer_action(card_press("subscribed")).expect("publish");
+	assert_eq!(
+		client.block_on(next_press(&mut first, "presses", wait)),
+		Some("subscribed".to_string())
+	);
+
+	client.block_on(async {
+		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		second.close(None).await.expect("close second");
+	});
+	crate::test_support::wait_until(
+		|| bridge_closed_leaving(&callbacks, 1),
+		"the second connection never closed",
+	);
+
+	execution.publish_renderer_action(card_press("after")).expect("publish");
+	assert_eq!(client.block_on(next_press(&mut first, "presses", wait)), Some("after".to_string()));
+}
+
+/// A share host names a product by the id the stack serves it under, so a
+/// `dot.li` link opens the stack's own product.
+#[test]
+fn share_hosts_require_a_tld_the_stack_accepts() {
+	let stack = crate::test_support::test_stack("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	for (input, expected) in [
+		("BROWSE.TESTNET.LI", Some("browse.testnet")),
+		("browse.dot.li", Some("browse.testnet")),
+		("browse.paseo.li", None),
+		("browse.test.li", None),
+		("browse.dot", None),
+		("https://browse.dot.li", None),
+		("localhost.li", None),
+	] {
+		assert_eq!(
+			stack.parse_product_share_host(input.to_string()),
+			expected.map(ProductId::for_test),
+			"{input}"
+		);
+	}
+}
+
+/// A host opens the stack its build bundles before the runtime starts and
+/// takes its share hosts and trusted products from it, so it never supplies a
+/// TLD of its own. A copy the build does not allow is refused the same way the
+/// runtime refuses it.
+#[test]
+fn a_host_reads_links_and_trust_from_the_bundled_stack() {
+	let open = |tld: &str| {
+		let descriptor =
+			crate::test_support::test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+		let (pointer, descriptor) = crate::test_support::sign_test_descriptor(&descriptor);
+		let reserved_values = crate::platform::ReservedValuesPolicy::default();
+		Stack::open_bundled(BundledStack { pointer, descriptor, reserved_values })
+	};
+
+	let fork = open("fork").expect("a fork's stack opens");
+	assert_eq!(
+		(
+			fork.product_share_hosts(),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.fork")),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.paseo")),
+		),
+		(vec!["dot.li".to_owned(), "fork.li".to_owned()], true, false)
+	);
+	assert!(matches!(open("dot"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }

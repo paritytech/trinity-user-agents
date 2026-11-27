@@ -182,7 +182,7 @@ test(
       },
     );
     try {
-      const productId = "truapi-host-node-live.dot";
+      const productId = "truapi-host-node-live.paseo";
       const client = createClient(
         createTransport(await runtime.createProvider({ productId }), {
           requestTimeoutMs: 300_000,

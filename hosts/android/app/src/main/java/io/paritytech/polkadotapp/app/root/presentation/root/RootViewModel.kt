@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServi
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.presentation.workerCrash.WorkerCrashNotifier
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
 import io.paritytech.polkadotapp.feature_splash_api.presentation.SplashPassedObserver
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
@@ -64,6 +65,7 @@ class RootViewModel @Inject constructor(
     private val exploreProductsService: ExploreProductsService,
     private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    private val workerCrashNotifier: WorkerCrashNotifier,
     navigationHolder: NavigationHolder,
     appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
@@ -123,6 +125,7 @@ class RootViewModel @Inject constructor(
             launch { chatBotStateController.applyDefaultBotStates() }
             launch { rootInteractor.printAccountAddresses() }
             launch { checkDevReset() }
+            launch { workerCrashNotifier.showNotices() }
         }
         watchSsoEvents(servicesScope)
     }
