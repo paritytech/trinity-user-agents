@@ -33,7 +33,11 @@ export interface HostConnection {
 
 interface Connection {
   provider: WebSocketWireProvider;
-  opening?: { wait?: Promise<void>; finish?: (error?: unknown) => void };
+  opening?: {
+    timer: ReturnType<typeof setTimeout>;
+    wait?: Promise<void>;
+    finish?: (error?: unknown) => void;
+  };
   verified: boolean;
   checkedAt: number;
   checking?: Promise<void>;
@@ -43,6 +47,7 @@ interface Connection {
 // visible page redials after these pauses, then waits for its next call.
 const VISIBLE_RETRY_DELAYS_MS = [250, 1_000, 4_000];
 const OPEN_WAIT_MS = 10_000;
+const SOCKET_OPEN_TIMEOUT_MS = 120_000;
 
 /**
  * Creates a connection that fails the operations a lost connection carried and
@@ -83,6 +88,7 @@ export function createHostConnection(
   function retire(connection: Connection, cause?: unknown): void {
     if (current !== connection) return;
     current = undefined;
+    clearTimeout(connection.opening?.timer);
     connection.opening?.finish?.(cause ?? new ConnectionResetError());
     legacy?.lost();
     for (const notify of [reset, productReset]) {
@@ -126,7 +132,12 @@ export function createHostConnection(
     }
     const connection: Connection = {
       provider,
-      opening: {},
+      opening: {
+        timer: setTimeout(
+          () => retire(connection, new Error("WebSocket upgrade timed out")),
+          SOCKET_OPEN_TIMEOUT_MS,
+        ),
+      },
       verified: false,
       checkedAt: 0,
     };
@@ -145,6 +156,7 @@ export function createHostConnection(
     provider.opened.then(
       () => {
         if (current !== connection) return;
+        clearTimeout(connection.opening?.timer);
         const finish = connection.opening?.finish;
         connection.opening = undefined;
         finish?.();

@@ -572,6 +572,21 @@ describe("shared SDK connection failure timing", () => {
         expect((await fresh)._unsafeUnwrap()).toEqual({ granted: false });
     });
 
+    it("reconnects a visible client whose WebSocket upgrade stalls", async () => {
+        visibleDocument();
+        const fixture = controlledHost();
+        void productClient(fixture.connection);
+
+        fixture.advance(120_000);
+        expect(fixture.sockets[0]!.readyState).toBe(WebSocket.CLOSED);
+        fixture.advance(250);
+        fixture.sockets[1]!.open();
+        await untilPrepared(() => last(fixture.statuses) === "connected");
+
+        fixture.advance(120_000);
+        expect(last(fixture.statuses)).toBe("connected");
+    });
+
     it("stops automatic replacement after one failed reconnect instead of retrying indefinitely", async () => {
         const fixture = controlledHost();
         void productClient(fixture.connection);
