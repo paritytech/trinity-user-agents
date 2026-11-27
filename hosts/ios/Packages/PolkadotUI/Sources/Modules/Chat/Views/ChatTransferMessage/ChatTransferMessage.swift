@@ -397,10 +397,18 @@ extension ChatTransferMessageView: AccessibilityBound {
 
 private extension ChatTransferMessageView {
     func statusText(_ configuration: ChatTransferMessageConfiguration) -> String {
-        if case .outgoing(.claimed) = configuration.state, let peerName = configuration.peerName {
-            return String(localized: .transferStatusReceivedBy(username: peerName))
+        guard let peerName = configuration.peerName else {
+            return configuration.state.title
         }
-        return configuration.state.title
+
+        switch configuration.state {
+        case .outgoing(.claimed):
+            return String(localized: .transferStatusReceivedBy(username: peerName))
+        case .outgoing(.unclaimed):
+            return String(localized: .transferStatusUnclaimedBy(username: peerName))
+        default:
+            return configuration.state.title
+        }
     }
 
     func partialClaimText(_ configuration: ChatTransferMessageConfiguration, originalAmount: String) -> String {

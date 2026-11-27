@@ -48,25 +48,12 @@ final class ProductPocketService: @unchecked Sendable {
         self.logger = logger
     }
 
-    /// The reserved product a host-placed card sits on is named per network, so
-    /// the collection needs the network's dotNS suffix. It is resolved before
-    /// anything the Pocket is reachable from exists, which is why this is not
-    /// waited on here.
     static func make(
         runtimeProvider: any TrUAPIHostRuntimeProviding,
-        tld: any DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: CoreEventLoggerProtocol = Logger.shared
-    ) -> ProductPocketService? {
-        guard let suffix = try? tld.currentTldOrError() else {
-            logger.error("[pocket] no network suffix yet, so there is no Pocket to serve")
-            return nil
-        }
-
-        return ProductPocketService(
-            collection: CorePocketCardStore(
-                runtimeProvider: runtimeProvider,
-                pinned: AssetPinnedPocketCards(tld: suffix)
-            ),
+    ) -> ProductPocketService {
+        ProductPocketService(
+            collection: CorePocketCardStore(runtimeProvider: runtimeProvider, pinned: AssetPinnedPocketCards()),
             logger: logger
         )
     }

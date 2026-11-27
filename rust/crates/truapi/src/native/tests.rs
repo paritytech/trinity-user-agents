@@ -589,7 +589,6 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
-		pinned_pocket_cards: Vec::new(),
 		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
@@ -915,6 +914,42 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 	assert_eq!(
 		(host.device_encryption_key().expect("device key should read"), first_connected_key),
 		([9; 32], Some(Some(handed_over_public_key)))
+	);
+}
+
+#[test]
+fn the_runtime_pins_humanity_on_the_network_of_the_stack_it_runs() {
+	struct Recorder(Mutex<Vec<(String, String, bool)>>);
+	impl super::NativePocketObserver for Recorder {
+		fn on_cards(&self, cards: Vec<crate::pocket_cards::PocketEntry>) {
+			*self.0.lock().unwrap() = cards
+				.into_iter()
+				.map(|card| (card.product_id.to_string(), card.card_id, card.privileged))
+				.collect();
+		}
+
+		fn on_error(&self, reason: String) {
+			panic!("the Pocket must read: {reason}");
+		}
+	}
+	let mut config = native_host_runtime_config();
+	config.stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"testnet", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+	));
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+	let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+
+	let _subscription = host.observe_pocket_cards(recorder.clone());
+
+	crate::test_support::wait_until(
+		|| !recorder.0.lock().unwrap().is_empty(),
+		"the Pocket must list its pinned cards",
+	);
+	assert_eq!(
+		*recorder.0.lock().unwrap(),
+		vec![("peopl.testnet".to_string(), "humanity".to_string(), true)]
 	);
 }
 
@@ -1547,7 +1582,7 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 	))
 	.expect("an action set must reach the host");
 
-	let mut actions = connection.subscribe::<truapi::latest::GenericError>();
+	let mut actions = connection.subscribe::<truapi::latest::GenericError>(1);
 	connection
 		.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(
 			v01::HostChatActionSubscribeItem {
@@ -3831,6 +3866,289 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 		Some(&MarkerClass::Export { severity: Severity::Warn })
 	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
+}
+
+/// A worker execution with its bridge started, the callbacks that receive its
+/// bridge lines, and the URL a product dials.
+fn worker_bridge() -> (Arc<EventCallbacks>, Arc<NativeProductExecution>, String) {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let execution = native_host_runtime_no_session()
+		.open_product_execution(
+			callbacks.clone(),
+			None,
+			None,
+			native_execution_config("draw.dot", ExecutableKind::Worker),
+		)
+		.expect("open execution");
+	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
+	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+	(callbacks, execution, url)
+}
+
+struct IgnoredRender;
+
+impl super::NativeRendererObserver for IgnoredRender {
+	fn on_update(&self, _node: truapi::latest::ProductRendererRenderItem) {}
+
+	fn on_complete(&self) {}
+
+	fn on_error(&self, _reason: String) {}
+}
+
+fn render_outcome(execution: &NativeProductExecution) -> Result<(), crate::ProductRuntimeError> {
+	let request = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		payload: Vec::new(),
+	};
+	execution.render(request, Arc::new(IgnoredRender)).map(drop)
+}
+
+fn bridge_closed_leaving(callbacks: &EventCallbacks, open: usize) -> bool {
+	let left = format!("this execution now holds {open} of");
+	callbacks.logs.lock().expect("logs mutex poisoned").iter().any(|(marker, detail)| {
+		marker == crate::markers::WS_BRIDGE_CONNECTION_CLOSED.target && detail.contains(&left)
+	})
+}
+
+fn dial_until_rendering(
+	client: &tokio::runtime::Runtime,
+	url: &str,
+	execution: &NativeProductExecution,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+	let (ws, _) = client.block_on(tokio_tungstenite::connect_async(url)).expect("dial");
+	crate::test_support::wait_until(
+		|| render_outcome(execution).is_ok(),
+		"the dialled connection never served a render",
+	);
+	ws
+}
+
+/// Cards draw on an early connection after a later one hangs up.
+///
+/// A worker that reconnects can open several connections and keep an early one.
+#[test]
+fn render_uses_an_open_connection_when_the_newest_hung_up() {
+	let (callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	client.block_on(async {
+		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		second.close(None).await.expect("close second");
+	});
+	crate::test_support::wait_until(
+		|| bridge_closed_leaving(&callbacks, 1),
+		"the second connection never closed",
+	);
+
+	let outcome = render_outcome(&execution);
+	assert!(outcome.is_ok(), "a connection is still open, got {outcome:?}");
+}
+
+/// A product that hung up reads as not connected until it dials back in.
+///
+/// Hosts wait out `NotConnected` and give up on `Closed`.
+#[test]
+fn a_product_that_hung_up_reads_as_not_connected_until_one_dials_in() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let mut first = dial_until_rendering(&client, &url, &execution);
+
+	client.block_on(first.close(None)).expect("close first");
+	drop(first);
+	crate::test_support::wait_until(
+		|| matches!(render_outcome(&execution), Err(crate::ProductRuntimeError::NotConnected)),
+		"a hung up product did not read as not connected",
+	);
+
+	let _again = dial_until_rendering(&client, &url, &execution);
+}
+
+/// A stopped bridge and a closed execution give different answers.
+///
+/// A stopped bridge waits for a new one, while a closed execution never renders
+/// again, so the hosts must keep telling them apart.
+#[test]
+fn a_stopped_bridge_and_a_closed_execution_keep_their_answers() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	execution.stop_ws_bridge();
+	let stopped = render_outcome(&execution);
+	assert!(
+		matches!(stopped, Err(crate::ProductRuntimeError::NotConnected)),
+		"a stopped bridge answered {stopped:?}"
+	);
+
+	execution.shutdown();
+	let closed = render_outcome(&execution);
+	assert!(
+		matches!(closed, Err(crate::ProductRuntimeError::Closed)),
+		"a closed execution answered {closed:?}"
+	);
+}
+
+/// Whether the next frame the product reads on `ws` within `wait` starts a render.
+async fn next_frame_starts_a_render<S>(ws: &mut S, wait: std::time::Duration) -> bool
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+	use crate::frame::{MESSAGE_TYPE_START, ProtocolMessage, subscription_ids};
+
+	let render = subscription_ids("renderer_render").expect("known subscription");
+	match tokio::time::timeout(wait, ws.next()).await {
+		Ok(Some(Ok(WsMessage::Binary(bytes)))) => {
+			let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+			frame.payload.trait_id == render.trait_id &&
+				frame.payload.method_id == render.method_id &&
+				frame.payload.message_type == MESSAGE_TYPE_START
+		},
+		Ok(Some(Ok(_))) | Err(_) => false,
+		Ok(Some(Err(error))) => panic!("bridge error: {error}"),
+		Ok(None) => panic!("bridge closed"),
+	}
+}
+
+/// Cards draw on the newest connection that is still open.
+///
+/// A reconnecting worker dials a new connection while an older one may linger,
+/// and only the newest belongs to the worker that is running now.
+#[test]
+fn render_uses_the_newest_open_connection() {
+	let (_callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let _first = dial_until_rendering(&client, &url, &execution);
+
+	let (mut second, _) =
+		client.block_on(tokio_tungstenite::connect_async(&url)).expect("dial second");
+	let reached_second = (0..40).any(|_| {
+		let outcome = render_outcome(&execution);
+		assert!(outcome.is_ok(), "both connections are open, got {outcome:?}");
+		client.block_on(next_frame_starts_a_render(
+			&mut second,
+			std::time::Duration::from_millis(50),
+		))
+	});
+	assert!(reached_second, "no render reached the newest connection");
+}
+
+/// A `renderer_action_subscribe` Start a product sends as `request_id`.
+fn start_renderer_actions(request_id: &str) -> tokio_tungstenite::tungstenite::Message {
+	use crate::frame::{MESSAGE_TYPE_START, Payload, ProtocolMessage, subscription_ids};
+
+	let ids = subscription_ids("renderer_action_subscribe").expect("known subscription");
+	let frame = ProtocolMessage {
+		request_id: request_id.into(),
+		payload: Payload {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			message_type: MESSAGE_TYPE_START,
+			value: truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+		},
+	};
+	tokio_tungstenite::tungstenite::Message::Binary(frame.encode())
+}
+
+fn card_press(action_id: &str) -> truapi::latest::HostRendererActionSubscribeItem {
+	truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message".into(),
+			message_type: "card".into(),
+		},
+		action_id: action_id.into(),
+		payload: Vec::new(),
+	}
+}
+
+/// The action id of the next press subscription `request_id` hears on `ws`,
+/// or `None` if none arrives within `wait`.
+///
+/// Panics when the subscription ends instead.
+async fn next_press<S>(ws: &mut S, request_id: &str, wait: std::time::Duration) -> Option<String>
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+	use truapi::versioned::{IntoLatest, renderer::HostRendererActionSubscribeItem};
+
+	use crate::frame::{MESSAGE_TYPE_RECEIVE, ProtocolMessage};
+
+	let press = async {
+		loop {
+			match ws.next().await {
+				Some(Ok(WsMessage::Binary(bytes))) => {
+					let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+					if frame.request_id != request_id {
+						continue;
+					}
+					assert_eq!(
+						frame.payload.message_type, MESSAGE_TYPE_RECEIVE,
+						"the press subscription ended"
+					);
+					let item = HostRendererActionSubscribeItem::decode(&mut &frame.payload.value[..])
+						.expect("decode press");
+					return item.into_latest().action_id;
+				},
+				Some(Ok(_)) => {},
+				Some(Err(error)) => panic!("bridge error: {error}"),
+				None => panic!("bridge closed"),
+			}
+		}
+	};
+	tokio::time::timeout(wait, press).await.ok()
+}
+
+/// Presses reach a connection that stays open after another one closes.
+///
+/// The connections of one execution share its action streams, and a worker
+/// opens its press stream once, so a stream another connection's end cut off
+/// would leave its cards drawn but deaf to taps.
+#[test]
+fn presses_reach_an_open_connection_after_another_one_closes() {
+	use futures::SinkExt;
+
+	let (callbacks, execution, url) = worker_bridge();
+	let client = bridge_test_runtime();
+	let wait = std::time::Duration::from_secs(5);
+	let mut first = dial_until_rendering(&client, &url, &execution);
+	client.block_on(first.send(start_renderer_actions("presses"))).expect("subscribe");
+	execution.publish_renderer_action(card_press("subscribed")).expect("publish");
+	assert_eq!(
+		client.block_on(next_press(&mut first, "presses", wait)),
+		Some("subscribed".to_string())
+	);
+
+	client.block_on(async {
+		let (mut second, _) = tokio_tungstenite::connect_async(&url).await.expect("dial second");
+		second.close(None).await.expect("close second");
+	});
+	crate::test_support::wait_until(
+		|| bridge_closed_leaving(&callbacks, 1),
+		"the second connection never closed",
+	);
+
+	execution.publish_renderer_action(card_press("after")).expect("publish");
+	assert_eq!(client.block_on(next_press(&mut first, "presses", wait)), Some("after".to_string()));
 }
 
 /// A share host names a product by the id the stack serves it under, so a
