@@ -1,5 +1,5 @@
 use super::{
-	AliveUntilDropped, Arc, AtomicBool, Ordering, TUNNELS, ensure_tunnel, mutex, rewrite_host,
+	AliveUntilDropped, Arc, AtomicBool, Ordering, TUNNELS, ensure_tunnel, rewrite_host,
 	tunnel_address, tunnel_wss_bootnodes,
 };
 
@@ -61,7 +61,9 @@ fn a_dead_tunnel_is_not_reused() {
 
 fn mark_dead(host: &str, port: u16) {
 	let tunnels = TUNNELS.get().expect("tunnel map initialised");
-	let alive = mutex::lock(tunnels)
+	let alive = tunnels
+		.lock()
+		.expect("tunnel map mutex poisoned")
 		.get(&(host.to_owned(), port))
 		.map(|tunnel| Arc::clone(&tunnel.alive));
 	alive.expect("the tunnel just created").store(false, Ordering::Release);
@@ -70,7 +72,7 @@ fn mark_dead(host: &str, port: u16) {
 /// The cached port, or `None` when the entry is absent or marked dead.
 fn live_port(host: &str, port: u16) -> Option<u16> {
 	let tunnels = TUNNELS.get().expect("tunnel map initialised");
-	let guard = mutex::lock(tunnels);
+	let guard = tunnels.lock().expect("tunnel map mutex poisoned");
 	let tunnel = guard.get(&(host.to_owned(), port))?;
 	tunnel.alive.load(Ordering::Acquire).then_some(tunnel.local)
 }

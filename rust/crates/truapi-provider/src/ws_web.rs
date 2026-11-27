@@ -20,7 +20,7 @@ use futures::{
 use send_wrapper::SendWrapper;
 use url::Url;
 
-use crate::{error::ProviderError, mutex};
+use crate::error::ProviderError;
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
@@ -181,19 +181,21 @@ impl JsonRpcConnection for WebWsConnection {
 	}
 
 	fn responses(&self) -> BoxStream<'static, String> {
-		match mutex::lock(&self.responses).take() {
+		match self.responses.lock().expect("responses mutex poisoned").take() {
 			Some(responses) => responses,
 			None => futures::stream::empty().boxed(),
 		}
 	}
 
+	// Skips what a poisoned lock guards instead of panicking: `Drop` runs this, and a
+	// panic there while another panic unwinds aborts the process.
 	fn close(&self) {
 		if self.closed.swap(true, Ordering::SeqCst) {
 			return;
 		}
 		let _ = self.socket.close();
 		self.responses_close.close_channel();
-		if let Some(mut responses) = mutex::lock_unless_poisoned(&self.responses) {
+		if let Ok(mut responses) = self.responses.lock() {
 			responses.take();
 		}
 	}

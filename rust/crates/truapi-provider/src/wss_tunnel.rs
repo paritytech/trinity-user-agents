@@ -47,8 +47,6 @@ use tokio::{
 };
 use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 
-use crate::mutex;
-
 /// Upstream `(host, port)` to the loopback tunnel relaying to it. One tunnel per
 /// upstream, reused by every chain that names it, so the chains of a network
 /// that share a hostname share a single listener.
@@ -184,7 +182,7 @@ fn tunnel_address(address: &str) -> Option<String> {
 /// while this function holds the tunnel map.
 fn ensure_tunnel(host: &str, port: u16) -> Option<u16> {
 	let tunnels = TUNNELS.get_or_init(|| Mutex::new(HashMap::new()));
-	let mut guard = mutex::lock(tunnels);
+	let mut guard = tunnels.lock().expect("tunnel map mutex poisoned");
 	let key = (host.to_owned(), port);
 	if let Some(tunnel) = guard.get(&key) &&
 		tunnel.alive.load(Ordering::Acquire)

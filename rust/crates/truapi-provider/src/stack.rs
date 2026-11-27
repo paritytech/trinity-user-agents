@@ -13,7 +13,7 @@ use std::{
 
 use trinity_stack::{Chain, Descriptor, Error, Pointer};
 
-use crate::{ChainSource, ProviderError, mutex};
+use crate::{ChainSource, ProviderError};
 
 /// Where a chain's light spec is published.
 #[derive(Debug, PartialEq, Eq)]
@@ -160,7 +160,7 @@ impl LightStack {
 	}
 
 	fn specs(&self) -> MutexGuard<'_, HashMap<[u8; 32], String>> {
-		mutex::lock(&self.specs)
+		self.specs.lock().expect("light specs mutex poisoned")
 	}
 }
 

@@ -31,7 +31,7 @@ use tokio::{
 use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 use url::Url;
 
-use crate::{error::ProviderError, mutex};
+use crate::error::ProviderError;
 
 /// Bounded depth of the outbound request buffer. The sole producer is a trusted
 /// in-process consumer, so this rarely fills; when it does the socket is not
@@ -232,26 +232,26 @@ impl LastRead {
 	}
 
 	fn touch(&self, bytes: usize) {
-		let mut reads = mutex::lock(&self.0);
+		let mut reads = self.0.lock().expect("last-read mutex poisoned");
 		reads.at = Instant::now();
 		reads.unreturned_bytes = reads.unreturned_bytes.saturating_add(bytes);
 	}
 
 	/// The receiver returned a message or a pong, so what was read is spent.
 	fn message_returned(&self) {
-		mutex::lock(&self.0).unreturned_bytes = 0;
+		self.0.lock().expect("last-read mutex poisoned").unreturned_bytes = 0;
 	}
 
 	/// How long a message still on its way has gone without a byte.
 	fn mid_message_silence(&self) -> Option<Duration> {
-		let reads = mutex::lock(&self.0);
+		let reads = self.0.lock().expect("last-read mutex poisoned");
 		(reads.unreturned_bytes >= MESSAGE_ON_ITS_WAY_BYTES).then(|| reads.at.elapsed())
 	}
 
 	/// Resolves once nothing has arrived for [`READ_TIMEOUT`].
 	async fn silence(&self) {
 		loop {
-			let deadline = mutex::lock(&self.0).at + READ_TIMEOUT;
+			let deadline = self.0.lock().expect("last-read mutex poisoned").at + READ_TIMEOUT;
 			if Instant::now() >= deadline {
 				return;
 			}
@@ -365,13 +365,19 @@ impl JsonRpcConnection for WsConnection {
 		// channel means the writer is already gone. Either way, end the
 		// response stream so the id-correlating consumer reconnects rather than
 		// buffering without bound or waiting on a request that will not be sent.
-		if mutex::lock(&self.requests).try_send(request).is_err() {
+		if self
+			.requests
+			.lock()
+			.expect("requests mutex poisoned")
+			.try_send(request)
+			.is_err()
+		{
 			self.close();
 		}
 	}
 
 	fn responses(&self) -> BoxStream<'static, String> {
-		match mutex::lock(&self.responses).take() {
+		match self.responses.lock().expect("responses mutex poisoned").take() {
 			Some(responses) => responses,
 			None => stream::empty().boxed(),
 		}
@@ -381,15 +387,17 @@ impl JsonRpcConnection for WsConnection {
 		self.last_read.mid_message_silence()
 	}
 
+	// Skips what a poisoned lock guards instead of panicking: `Drop` runs this, and a
+	// panic there while another panic unwinds aborts the process.
 	fn close(&self) {
 		if self.closed.swap(true, Ordering::SeqCst) {
 			return;
 		}
-		if let Some(mut requests) = mutex::lock_unless_poisoned(&self.requests) {
+		if let Ok(mut requests) = self.requests.lock() {
 			requests.close_channel();
 		}
 		self.stream_abort.abort();
-		if let Some(mut responses) = mutex::lock_unless_poisoned(&self.responses) {
+		if let Ok(mut responses) = self.responses.lock() {
 			responses.take();
 		}
 	}
