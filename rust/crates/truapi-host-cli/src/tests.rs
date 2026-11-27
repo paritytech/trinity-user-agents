@@ -136,9 +136,10 @@ async fn session_selection_preserves_the_active_profile_when_promotion_cannot_co
 			std::fs::write(path, bytes)?;
 		}
 		let role = session.catalog.profile(DEFAULT_SESSION_NAME)?;
-		let blocked_pointer =
-			role.path.join(format!(".current-session.{}.tmp", std::process::id()));
+		let blocked_pointer = role.path.join("current-session");
+		std::fs::remove_file(&blocked_pointer)?;
 		std::fs::create_dir(&blocked_pointer)?;
+		let selection = session.catalog.current_session()?;
 		let runtime = session.runtime.clone();
 		let resets = session.runtime_factory.connection_reset().unwrap();
 
@@ -158,13 +159,7 @@ async fn session_selection_preserves_the_active_profile_when_promotion_cannot_co
 				resets.has_changed()?,
 				std::fs::read(profile.account_base_path.join("accounts.json"))?,
 			),
-			(
-				true,
-				Some(&profile),
-				CurrentSession::Pointed(name.to_string()),
-				false,
-				accounts.clone(),
-			)
+			(true, Some(&profile), selection, false, accounts.clone())
 		);
 		for (path, bytes) in &contents {
 			assert_eq!(
@@ -175,7 +170,8 @@ async fn session_selection_preserves_the_active_profile_when_promotion_cannot_co
 			);
 		}
 
-		std::fs::remove_dir(blocked_pointer)?;
+		std::fs::remove_dir(&blocked_pointer)?;
+		std::fs::write(&blocked_pointer, format!("{name}\n"))?;
 		if slash_command {
 			switch_session(&mut session, "pending".to_string()).await?;
 		} else {

@@ -617,3 +617,37 @@ fn an_alias_whose_target_was_cleared_resolves_to_itself_again() -> Result<()> {
 	assert_eq!(catalog.resolve_session_name("worker-0")?, "worker-0");
 	Ok(())
 }
+
+/// A session directory holds the account store with its mnemonic and the
+/// core storage, so every directory the catalog creates is owner-only, and
+/// the records it writes there are too.
+#[cfg(unix)]
+#[test]
+fn session_directories_and_records_are_readable_by_their_owner_only() -> Result<()> {
+	use std::os::unix::fs::PermissionsExt;
+
+	let temporary = tempdir()?;
+	let base = temporary.path().join("v2");
+	let catalog = SessionCatalog::new(base.clone(), "testnet")?;
+	let profile = catalog.ensure_profile("alice")?;
+	catalog.set_current("alice")?;
+	catalog.store_signer_binding(&profile, "alice.dot", "imported")?;
+	catalog.store_paired_host(&profile, paired_host(1, 11, "first"))?;
+
+	let role = base.join("testnet/signing-host");
+	let expected = [
+		(base.clone(), 0o700),
+		(base.join("testnet"), 0o700),
+		(role.clone(), 0o700),
+		(profile.path.clone(), 0o700),
+		(role.join(CURRENT_SESSION_FILE), 0o600),
+		(profile.path.join(SESSION_INFO_FILE), 0o600),
+		(profile.path.join(PAIRED_HOSTS_FILE), 0o600),
+	];
+	let actual = expected
+		.iter()
+		.map(|(path, _)| Ok((path.clone(), fs::metadata(path)?.permissions().mode() & 0o777)))
+		.collect::<Result<Vec<_>>>()?;
+	assert_eq!(actual, expected);
+	Ok(())
+}

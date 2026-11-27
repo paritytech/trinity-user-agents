@@ -18,8 +18,8 @@ use trinity_stack::{
 use zeroize::Zeroizing;
 
 use crate::{
+	file_access::{self, FileAccess},
 	network::ensure_built_in_runnable,
-	platform,
 	stack_descriptor::{
 		FETCH_TIMEOUT, bundles_same, describe_pin_change, fetch, light_client_chains, pointer_of,
 		read_stack, refused, unix_now,
@@ -211,8 +211,8 @@ fn publish(
 /// Replaces `path` in one step, so a web root or a build never sees half a file. The file gets the
 /// umask's permissions, so a web server running as another user can serve it.
 fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-	platform::atomic_write(path, contents)?;
-	Ok(())
+	file_access::write_atomically(path, contents, FileAccess::Shared)
+		.with_context(|| format!("write {}", path.display()))
 }
 
 async fn verify(stack: &str, key: Option<&str>) -> Result<()> {

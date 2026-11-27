@@ -11,7 +11,10 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use truapi::host_logic::dotns_gateway::is_lite_label;
 
-use crate::accounts;
+use crate::{
+	accounts,
+	file_access::{self, FileAccess},
+};
 
 pub const DEFAULT_SESSION_NAME: &str = "default";
 const CURRENT_SESSION_FILE: &str = "current-session";
@@ -119,7 +122,7 @@ struct PairedHostStoreLock {
 
 impl PairedHostStoreLock {
 	fn acquire(session_path: &Path) -> Result<Self> {
-		fs::create_dir_all(session_path)
+		file_access::create_dir_all(session_path, FileAccess::Private)
 			.with_context(|| format!("create session {}", session_path.display()))?;
 		let path = session_path.join(PAIRED_HOSTS_LOCK_FILE);
 		let file = OpenOptions::new()
@@ -229,7 +232,10 @@ impl Drop for SessionPromotion {
 		}
 		let metadata = self.profile.path.join(SESSION_INFO_FILE);
 		let restoration = match &self.original_metadata {
-			Some(contents) => fs::write(&metadata, contents).map_err(anyhow::Error::from),
+			Some(contents) => {
+				file_access::write_atomically(&metadata, contents, FileAccess::Private)
+					.map_err(anyhow::Error::from)
+			},
 			None => remove_file_if_exists(&metadata),
 		};
 		let mut restored = match restoration {
@@ -270,7 +276,7 @@ impl SessionCatalog {
 		let base_path = absolute_path(base_path)?;
 		let network_path = base_path.join(network_id);
 		let role_path = network_path.join("signing-host");
-		fs::create_dir_all(&role_path)
+		file_access::create_dir_all(&role_path, FileAccess::Private)
 			.with_context(|| format!("create session root {}", role_path.display()))?;
 		Ok(Self { base_path, network_id: network_id.to_string(), network_path, role_path })
 	}
@@ -297,7 +303,7 @@ impl SessionCatalog {
 
 	pub fn ensure_profile(&self, name: &str) -> Result<SessionProfile> {
 		let profile = self.profile(name)?;
-		fs::create_dir_all(&profile.path)
+		file_access::create_dir_all(&profile.path, FileAccess::Private)
 			.with_context(|| format!("create session {}", profile.path.display()))?;
 		Ok(profile)
 	}
@@ -391,14 +397,9 @@ impl SessionCatalog {
 	pub fn set_current(&self, name: &str) -> Result<()> {
 		let profile = self.ensure_profile(name)?;
 		let path = self.role_path.join(CURRENT_SESSION_FILE);
-		let temporary = self
-			.role_path
-			.join(format!(".{CURRENT_SESSION_FILE}.{}.tmp", std::process::id()));
-		fs::write(&temporary, format!("{}\n", profile.name))
-			.with_context(|| format!("write current session {}", temporary.display()))?;
-		fs::rename(&temporary, &path)
-			.with_context(|| format!("persist current session {}", path.display()))?;
-		Ok(())
+		let contents = format!("{}\n", profile.name);
+		file_access::write_atomically(&path, contents.as_bytes(), FileAccess::Private)
+			.with_context(|| format!("write current session {}", path.display()))
 	}
 
 	pub fn list(&self) -> Result<Vec<String>> {
@@ -539,7 +540,7 @@ impl SessionCatalog {
 				},
 			};
 			if profile.path == self.role_path {
-				fs::create_dir(&target_path)
+				file_access::create_dir(&target_path, FileAccess::Private)
 					.with_context(|| format!("create user host {}", target_path.display()))?;
 				promotion.created_target = true;
 				migrate_default_profile(profile, &target_path, &mut promotion)?;
@@ -548,7 +549,7 @@ impl SessionCatalog {
 			}
 		}
 		let promoted = &promotion.profile;
-		fs::create_dir_all(&promoted.path)
+		file_access::create_dir_all(&promoted.path, FileAccess::Private)
 			.with_context(|| format!("create user host {}", promoted.path.display()))?;
 		let mut info = read_session_info(&promoted.path)?;
 		info.user_id = Some(user_id.to_string());
@@ -772,16 +773,10 @@ fn read_session_info(session_path: &Path) -> Result<SessionInfo> {
 }
 
 fn write_session_info(session_path: &Path, info: &SessionInfo) -> Result<()> {
-	fs::create_dir_all(session_path)
-		.with_context(|| format!("create session {}", session_path.display()))?;
 	let path = session_path.join(SESSION_INFO_FILE);
-	let temporary = session_path.join(format!(".{SESSION_INFO_FILE}.{}.tmp", std::process::id()));
 	let text = serde_json::to_string_pretty(info)?;
-	fs::write(&temporary, format!("{text}\n"))
-		.with_context(|| format!("write session metadata {}", temporary.display()))?;
-	fs::rename(&temporary, &path)
-		.with_context(|| format!("persist session metadata {}", path.display()))?;
-	Ok(())
+	file_access::write_atomically(&path, format!("{text}\n").as_bytes(), FileAccess::Private)
+		.with_context(|| format!("write session metadata {}", path.display()))
 }
 
 fn read_paired_host_store(session_path: &Path) -> Result<PairedHostStore> {
@@ -828,16 +823,10 @@ fn read_paired_host_store(session_path: &Path) -> Result<PairedHostStore> {
 }
 
 fn write_paired_host_store(session_path: &Path, store: &PairedHostStore) -> Result<()> {
-	fs::create_dir_all(session_path)
-		.with_context(|| format!("create session {}", session_path.display()))?;
 	let path = session_path.join(PAIRED_HOSTS_FILE);
-	let temporary = session_path.join(format!(".{PAIRED_HOSTS_FILE}.{}.tmp", std::process::id()));
 	let text = serde_json::to_string_pretty(store)?;
-	fs::write(&temporary, format!("{text}\n"))
-		.with_context(|| format!("write paired hosts {}", temporary.display()))?;
-	fs::rename(&temporary, &path)
-		.with_context(|| format!("persist paired hosts {}", path.display()))?;
-	Ok(())
+	file_access::write_atomically(&path, format!("{text}\n").as_bytes(), FileAccess::Private)
+		.with_context(|| format!("write paired hosts {}", path.display()))
 }
 
 /// A session name cannot safely identify a user-owned profile.

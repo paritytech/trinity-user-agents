@@ -1,7 +1,6 @@
 use std::{
 	collections::BTreeSet,
 	fs::{self, OpenOptions},
-	io::Write,
 	path::{Path, PathBuf},
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -16,7 +15,11 @@ use truapi::host_logic::{
 	root_entropy::RootEntropy,
 };
 
-use crate::{attestation, network::Stack};
+use crate::{
+	attestation,
+	file_access::{self, FileAccess},
+	network::Stack,
+};
 use truapi::{statement_allowance as alloc, statement_allowance::collection::PersonhoodCollection};
 use zeroize::ZeroizeOnDrop;
 
@@ -183,7 +186,8 @@ struct AccountStoreLock {
 
 impl AccountStoreLock {
 	fn acquire(base_path: &Path) -> Result<Self> {
-		fs::create_dir_all(base_path).with_context(|| format!("create {}", base_path.display()))?;
+		file_access::create_dir_all(base_path, FileAccess::Private)
+			.with_context(|| format!("create {}", base_path.display()))?;
 		let path = base_path.join(ACCOUNT_STORE_LOCK_FILE);
 		let file = OpenOptions::new()
 			.create(true)
@@ -226,11 +230,8 @@ impl AccountStore {
 	}
 
 	pub fn save(&self) -> Result<()> {
-		if let Some(parent) = self.path.parent() {
-			fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-		}
 		let text = serde_json::to_string_pretty(&self.data)?;
-		write_secret_file(&self.path, text.as_bytes())
+		file_access::write_atomically(&self.path, text.as_bytes(), FileAccess::Private)
 			.with_context(|| format!("write {}", self.path.display()))
 	}
 
@@ -859,48 +860,6 @@ fn lite_username_base(prefix: &str) -> Result<String> {
 
 fn now_unix() -> u64 {
 	SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
-/// Replaces the file at `path` with `bytes` atomically, readable and
-/// writable by its owner only on Unix.
-pub fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-	let tmp_path = temp_path(path);
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-		let mut file = OpenOptions::new()
-			.create(true)
-			.truncate(true)
-			.write(true)
-			.mode(0o600)
-			.open(&tmp_path)?;
-		file.write_all(bytes)?;
-		fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))?;
-		file.sync_all()?;
-		drop(file);
-		fs::rename(&tmp_path, path)?;
-		fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-		sync_parent(path)
-	}
-	#[cfg(not(unix))]
-	{
-		fs::write(&tmp_path, bytes)?;
-		let _ = fs::remove_file(path);
-		fs::rename(&tmp_path, path)
-	}
-}
-
-fn temp_path(path: &Path) -> PathBuf {
-	let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or(ACCOUNT_STORE_FILE);
-	path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()))
-}
-
-#[cfg(unix)]
-fn sync_parent(path: &Path) -> std::io::Result<()> {
-	if let Some(parent) = path.parent() {
-		fs::File::open(parent)?.sync_all()?;
-	}
-	Ok(())
 }
 
 #[cfg(test)]

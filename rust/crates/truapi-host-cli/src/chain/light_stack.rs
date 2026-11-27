@@ -17,8 +17,8 @@ use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 
 use crate::{
+	file_access::{self, FileAccess},
 	network::{ChainEndpoint, bundled_light_spec},
-	platform::{StorageError, atomic_write},
 	stack_descriptor::{FETCH_TIMEOUT, FetchError, Roles, fetch},
 };
 
@@ -259,8 +259,8 @@ fn mark_used(path: &Path) -> std::io::Result<()> {
 /// Keeps `bytes` at `path`, replacing it in one step so a reader never sees a
 /// spec cut short, and removes the specs beside it that went unused for
 /// [`KEPT_SPEC_LIFETIME`].
-fn keep(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
-	atomic_write(path, bytes)?;
+fn keep(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+	file_access::write_atomically(path, bytes, FileAccess::Private)?;
 	if let Some(directory) = path.parent() {
 		remove_expired(directory);
 	}

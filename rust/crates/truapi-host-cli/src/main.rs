@@ -20,6 +20,7 @@ mod chat;
 mod cleartext_storage;
 mod contacts;
 mod dotns_read;
+mod file_access;
 mod frame_server;
 #[cfg(feature = "test-host")]
 mod funding_host;
@@ -87,6 +88,7 @@ use truapi::{
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner, SignerAccount},
 	chain::{ChainAccess, ChainBackend},
+	file_access::FileAccess,
 	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -221,7 +223,7 @@ fn load_log_level(base_path: &Path) -> Result<Option<LogLevel>> {
 
 fn store_log_level(base_path: &Path, level: LogLevel) -> Result<()> {
 	let path = base_path.join(LOG_LEVEL_FILE);
-	platform::atomic_write(&path, format!("{level}\n").as_bytes())
+	file_access::write_atomically(&path, format!("{level}\n").as_bytes(), FileAccess::Private)
 		.with_context(|| format!("persist saved log level {}", path.display()))
 }
 
@@ -1822,7 +1824,7 @@ fn build_signing_runtime(
 	pocket: Option<Arc<pocket::CliPocketHost>>,
 ) -> Result<(Arc<HostRuntime<SigningHost>>, Arc<CliPlatform>)> {
 	let storage_path = profile.path.clone();
-	std::fs::create_dir_all(&storage_path)
+	file_access::create_dir_all(&storage_path, FileAccess::Private)
 		.with_context(|| format!("creating state directory {}", storage_path.display()))?;
 	let core_db = futures::executor::block_on(truapi::store::Db::open(
 		truapi::store::core_db_config(&storage_path),

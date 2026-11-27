@@ -132,6 +132,9 @@ sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
 through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 `--base-path ./truapi-host-paseo` uses `./truapi-host-paseo/v2`.
+The state holds keys and mnemonics, so on Unix the CLI creates its state
+directories readable by their owner only (`0700`) and writes its state files
+`0600`. Directories that already exist keep their permissions.
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 

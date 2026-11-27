@@ -1,0 +1,71 @@
+use std::{fs, os::unix::fs::PermissionsExt};
+
+use super::*;
+
+fn mode(path: &Path) -> u32 {
+	fs::metadata(path).expect("stat").permissions().mode() & 0o777
+}
+
+/// A private file holds keys, so it must never be readable by another user,
+/// whatever the umask would have allowed, and the directories created for it
+/// must not let another user list or open what they hold.
+#[test]
+fn a_private_file_and_its_new_directories_are_readable_by_the_owner_only() {
+	let root = tempfile::tempdir().expect("temporary directory");
+	let directory = root.path().join("state").join("session");
+	let path = directory.join("core-storage.json");
+
+	write_atomically(&path, b"secret", FileAccess::Private).expect("write");
+
+	let modes = [mode(&path), mode(&directory), mode(&root.path().join("state"))];
+	assert_eq!(
+		(fs::read(&path).expect("read"), modes),
+		(b"secret".to_vec(), [0o600, 0o700, 0o700])
+	);
+}
+
+/// A file that is already readable by everyone must not pass that mode on to
+/// the secret that replaces it, nor to the ones written after it.
+#[test]
+fn replacing_a_readable_file_leaves_it_readable_by_the_owner_only() {
+	let root = tempfile::tempdir().expect("temporary directory");
+	let path = root.path().join("device-storage.json");
+	fs::write(&path, b"old").expect("write the old file");
+	fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
+
+	write_atomically(&path, b"new", FileAccess::Private).expect("first write");
+	write_atomically(&path, b"newer", FileAccess::Private).expect("second write");
+
+	assert_eq!((fs::read(&path).expect("read"), mode(&path)), (b"newer".to_vec(), 0o600));
+}
+
+/// A directory the user made is theirs: writing into it must not change who
+/// may read it.
+#[test]
+fn an_existing_directory_keeps_its_permissions() {
+	let root = tempfile::tempdir().expect("temporary directory");
+	fs::set_permissions(root.path(), fs::Permissions::from_mode(0o755)).expect("chmod");
+
+	write_atomically(&root.path().join("accounts.json"), b"{}", FileAccess::Private)
+		.expect("write");
+
+	assert_eq!(mode(root.path()), 0o755);
+}
+
+/// A failed replacement leaves the old file to read and no temporary file
+/// behind to accumulate in the state directory.
+#[test]
+fn a_failed_write_leaves_the_target_and_no_temporary_file() {
+	let root = tempfile::tempdir().expect("temporary directory");
+	let path = root.path().join("current-session");
+	fs::create_dir(&path).expect("block the target with a directory");
+	fs::write(path.join("kept"), b"kept").expect("fill the directory");
+
+	write_atomically(&path, b"name\n", FileAccess::Private).expect_err("rename over a directory");
+
+	let entries: Vec<String> = fs::read_dir(root.path())
+		.expect("list")
+		.map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+		.collect();
+	assert_eq!(entries, ["current-session"]);
+}

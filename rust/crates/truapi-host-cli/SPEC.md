@@ -1624,8 +1624,8 @@ Records are returned and written in stable statement-account order. `/pair`
 uses read-modify-write upsert semantics, so it updates the matching statement
 account without replacing unrelated peers. Removal deletes exactly one matching
 statement account. Both operations hold an exclusive
-`paired-hosts.json.lock`. Changes are written to a process-specific temporary
-file and renamed over the store.
+`paired-hosts.json.lock`. Changes are written to a temporary file and renamed
+over the store (§13.8).
 
 ### 13.5 Product storage
 
@@ -1691,23 +1691,27 @@ state, and other role-owned runtime data.
 - attested state; and
 - exhausted Statement Store periods.
 
-Account mutations hold an exclusive `accounts.json.lock`. Secret-file writes
-use a temporary file, flush, atomic rename, and `0600` permissions on Unix.
-The lock file can be created during a read-only cached-signer lookup.
+Account mutations hold an exclusive `accounts.json.lock`, and `accounts.json`
+is written as §13.8 describes. The lock file can be created during a read-only
+cached-signer lookup.
 
 ### 13.8 Write and corruption behavior
 
-Product and core storage writes:
+The account store, the signing host's cleartext storage, product, core and
+device storage, session metadata, paired-host records, the current-user and
+current-session pointers, the saved log level and kept light specs are all
+written the same way:
 
-- create parent directories;
-- write a process/id-specific temporary file;
+- create missing parent directories, `0700` on Unix;
+- write a new temporary file beside the target, created `0600` on Unix;
 - flush file data;
-- atomically rename;
+- atomically rename it over the target;
 - and sync the parent directory on Unix.
 
-Session metadata, paired-host records, and current-user/session pointers use
-temporary-file rename but do not apply the account file's explicit secret
-permissions. The saved log level also uses temporary-file rename.
+A replaced file does not keep its mode, so a state file readable by other
+users becomes owner-only on its next write. Directories that
+already exist keep their permissions. Files written for other programs, such as
+`stack publish` and `stack bundle` output, take the umask's permissions.
 
 Malformed account, session, or paired-host JSON is a startup or command error
 when that data is loaded. Malformed core JSON is warned about and loaded as

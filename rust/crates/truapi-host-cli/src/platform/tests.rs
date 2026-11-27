@@ -736,3 +736,94 @@ fn product_storage_is_isolated_by_session_then_product() {
 		fs::read_to_string(second_path).expect("read second session file")
 	);
 }
+
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+	use std::os::unix::fs::PermissionsExt;
+
+	fs::metadata(path).expect("stat storage path").permissions().mode() & 0o777
+}
+
+/// Core storage holds the auth session and the allowance and auto-signing
+/// keys, device storage the key peers encrypt to, and product storage what
+/// products chose to keep. Another user on the machine must not read any of
+/// it, so the directories the host creates are owner-only and so is every
+/// file, also once a user switch writes a new namespace.
+#[cfg(unix)]
+#[test]
+fn storage_the_host_creates_is_readable_by_its_owner_only() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let platform = CliPlatform::new(
+		&test_network(),
+		Some(CliStoragePaths::pairing(network_dir.clone())),
+		ApprovalPolicy::AutoAccept,
+		None,
+	);
+	let product_id = ProductId::for_test("product.dot");
+	let product_key = ProductStorageKey::new(product_id.clone(), "theme");
+
+	futures::executor::block_on(async {
+		platform
+			.write_core_storage(CoreStorageKey::AuthSession, vec![1])
+			.await
+			.expect("write core storage");
+		platform
+			.write_core_storage(CoreStorageKey::DeviceEncryptionKey, vec![7; 32])
+			.await
+			.expect("write device storage");
+		platform
+			.write(product_key.encode(), b"dark".to_vec())
+			.await
+			.expect("write product");
+	});
+	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
+
+	let bootstrap = network_dir.join("pairing-host");
+	let alice = network_dir.join("alice.dot_pairing_host");
+	let directories = [&network_dir, &bootstrap, &alice, &alice.join("storage")];
+	let files = [
+		bootstrap.join("device-storage.json"),
+		bootstrap.join("current-user"),
+		alice.join("core-storage.json"),
+		product_storage_path(&alice.join("storage"), &product_id),
+	];
+	let expected = directories
+		.iter()
+		.map(|directory| (directory.to_path_buf(), 0o700))
+		.chain(files.iter().map(|file| (file.clone(), 0o600)))
+		.collect::<Vec<_>>();
+	let actual = expected.iter().map(|(path, _)| (path.clone(), mode(path))).collect::<Vec<_>>();
+	assert_eq!(actual, expected);
+}
+
+/// A storage file that is readable by everyone holds the same secrets, so
+/// the next write replaces it with an owner-only file rather than keeping its
+/// mode, and so does every write after it. The directory is the user's own,
+/// so it keeps its mode.
+#[cfg(unix)]
+#[test]
+fn a_storage_file_left_readable_becomes_owner_only_on_the_next_write() {
+	use std::os::unix::fs::PermissionsExt;
+
+	let temporary = tempdir().expect("create storage root");
+	let core_storage = temporary.path().join("core-storage.json");
+	fs::write(&core_storage, br#"{"values":{}}"#).expect("write the old core storage");
+	fs::set_permissions(&core_storage, fs::Permissions::from_mode(0o644)).expect("chmod file");
+	fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o755)).expect("chmod dir");
+	let platform = CliPlatform::new(
+		&test_network(),
+		Some(test_storage_paths(temporary.path(), "test")),
+		ApprovalPolicy::AutoAccept,
+		None,
+	);
+
+	for value in [vec![1], vec![2]] {
+		futures::executor::block_on(
+			platform.write_core_storage(CoreStorageKey::AuthSession, value),
+		)
+		.expect("write core storage");
+	}
+
+	assert_eq!((mode(temporary.path()), mode(&core_storage)), (0o755, 0o600));
+}
