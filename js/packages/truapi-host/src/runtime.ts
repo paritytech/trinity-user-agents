@@ -58,35 +58,17 @@ export type LogLevel = string;
 
 /**
  * A host build's policy on reserved values for its stack. The core reserves
- * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
- * and cannot reserve fewer. A stack that names a reserved value, the core's or
- * the build's, under any chain role starts only when `allowed` is set. Extra
- * values only protect networks the build does not run: `allowed` cannot be set
- * alongside them, so the build's own stack cannot name them. An extra TLD adds
- * nothing for a stored or fetched copy, which the core already holds to the
- * bundled copy's TLD: it only refuses a `stack` or `testStack` on that TLD.
- *
- * The core refuses a policy that would reserve less than it says: a field this
- * type does not have, an entry it cannot read, such as a genesis hash that is
- * not 32 bytes or a TLD that is not a string, `allowed` together with extra
- * values, which the allowed stack may name anyway, and an extra TLD that no
- * stack can have. It checks the policy after it reads the other fields of
- * `stack` or `testStack`, so one of those that is missing, unknown or
- * malformed is reported first. It checks the policy before the stack itself:
- * before it reads the key from a `stack`'s pointer link and verifies its
- * descriptor, and before it checks a `testStack`'s identity, TLD and genesis
- * hashes against the core's rules.
- *
- * A `stack` that is allowed reserved values is pinned to its bundled
- * descriptor and runs its relay light spec. `ReservedValuesPolicy` in
- * `rust/crates/truapi/src/stack.rs` lists what is pinned and what the pins do
- * not protect. A `testStack` has no descriptor and pins nothing.
+ * Polkadot's genesis hashes and the `dot` TLD, and a build can reserve more.
+ * A stack that names a reserved value starts only when `allowed` is set, and
+ * with `allowed` a `stack`, not a `testStack`, is pinned to its bundled
+ * descriptor. The core refuses a policy it cannot read or that would reserve
+ * less than it says, before it checks the stack. `ReservedValuesPolicy` in `rust/crates/truapi/src/stack.rs` has the
+ * full rules.
  */
 export interface ReservedValuesPolicy {
   /**
    * Whether the stack may name reserved values. A build that sets it reserves
-   * no extra values, and its `stack` is pinned to its bundled descriptor.
-   * Defaults to `false`.
+   * no extra values. Defaults to `false`.
    */
   allowed?: boolean;
   /**
