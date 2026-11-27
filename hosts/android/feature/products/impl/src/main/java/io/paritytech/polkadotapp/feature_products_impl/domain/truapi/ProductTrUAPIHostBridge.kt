@@ -171,6 +171,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             hostApiInteractor
                 .publishNotificationAuthorized(
                     callingProductId = callingProductId,
+                    title = request.title,
                     text = request.text,
                     deeplink = request.deeplink,
                     // Wire carries Unix millis UTC; null fires immediately.
@@ -447,7 +448,6 @@ internal val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
         when (markerClass) {
             is MarkerClass.Export ->
                 marker to when (markerClass.severity) {
-                    Severity.INFO -> Log.INFO
                     Severity.WARN -> Log.WARN
                     Severity.ERROR -> Log.ERROR
                 }

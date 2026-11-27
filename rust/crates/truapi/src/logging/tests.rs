@@ -442,7 +442,7 @@ fn an_unregistered_marker_is_refused_on_the_event_path() {
 
 	CoreEvent::new(markers::Marker {
 		target: "truapi.not.registered",
-		class: markers::MarkerClass::Export { severity: markers::Severity::Info },
+		class: markers::MarkerClass::Export { severity: markers::Severity::Warn },
 	})
 	.text("outcome", "sent")
 	.emit();

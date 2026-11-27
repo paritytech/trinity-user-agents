@@ -30,12 +30,18 @@ uniform vec3 uLightTurn;        // studio turned with the phone: an axis scaled 
 uniform float uExposure, uLuster, uRimLuster, uLusterMinPx, uStudioRadius, uStudioScale;
 uniform float uRollGloss, uRollReliefHaze, uEnvSharpen, uHaze, uPolish, uTone, uGrime;
 uniform float uEngraveDark, uFrost, uWallRough, uAaVariance, uAaThreshold, uReliefBias;
+uniform float uGrain;           // the field's grain: 0 mint luster (radial flow lines), 1 polished or spun
+uniform float uSpinGrain, uSpinMinPx, uRimPolish, uWallSatin;
+uniform float uBrushCover, uBrushDepth, uBrushScale, uBrushStretch;  // handling brushes a worn face
+uniform float uWearDarken;      // reflectance a fully worn coin loses past its tone, so it dulls as well as mattes
+uniform float uWearMatte;       // how far a fully worn coin's reflection is pulled to the room's average
+uniform float uBrushMinPx;      // device px across the coin below which the brushing is skipped
 uniform float uReliefGain;      // how much harder than the atlas the struck relief slopes
 uniform float uRoomLift;        // light added to the whole studio: its grey walls painted lighter
-uniform vec4 uPanels[6];        // three softboxes of our own, two vec4 each: unit direction + cos(half
-                                // angle), gain + pad
+uniform vec4 uPanels[8];        // up to four softboxes of our own, two vec4 each: unit direction +
+                                // cos(half angle), gain + pad; a slot with no gain is skipped
 uniform int uDebug;
-uniform vec4 uMetals[14];       // seven metals, two vec4 each: f0 + roughness, tone + pad
+uniform vec4 uMetals[14];       // seven metals, two vec4 each: f0 + roughness, tone + brushing strength
 
 uniform sampler2D uAtlas;
 uniform samplerCube uEnv;
@@ -76,10 +82,6 @@ const int STREAK_MAX = 12;
 // darker still below the room's average; the surface goes from a light haze, which even a clean
 // coin carries so no face is a bare mirror, to fully matte; the mint luster dies; grime collects
 // in the cut figure.
-const float WEAR_TONE = 1.0;     // how far toward the dark cast a fully worn coin goes
-const float WEAR_DARKEN = 0.45;  // and how much of its reflectance it loses past that
-const float FRESH_HAZE = 0.12;   // roughness every coin carries; the metals start near 0.15
-const float WEAR_HAZE = 0.75;    // roughness a fully worn coin gains on top, to fully matte
 
 vec2 markHash(float seed) {
   return fract(sin(vec2(seed * 12.9898, seed * 78.233 + 1.7)) * vec2(43758.5453, 22578.1459));
@@ -87,8 +89,8 @@ vec2 markHash(float seed) {
 
 // Pits: circular dishes in the field. The slope runs outward from the centre, which under a key
 // light from the upper left gives a dark upper wall and a lit lower lip, the way a strike reads.
-void addPits(vec2 local, float count, float seed, inout vec2 slope, inout float shade) {
-  int total = min(int(count + 0.5), PIT_MAX);
+void addPits(vec2 local, float count, int cap, float seed, inout vec2 slope, inout float shade) {
+  int total = min(int(count + 0.5), cap);
 
   for (int i = 0; i < total; ++i) {
     vec2 h = markHash(seed + float(i) * 7.13);
@@ -107,8 +109,8 @@ void addPits(vec2 local, float count, float seed, inout vec2 slope, inout float 
 
 // Streaks: short grooves at random angles, as many as the coin is still traceable. They fade out
 // over the struck figure, so a heavily scuffed coin still reads its own value.
-void addStreaks(vec2 local, float amount, float seed, inout vec2 slope, inout float rough) {
-  int total = min(int(amount * float(STREAK_MAX) + 0.5), STREAK_MAX);
+void addStreaks(vec2 local, float amount, int cap, float seed, inout vec2 slope, inout float rough) {
+  int total = min(int(amount * float(STREAK_MAX) + 0.5), cap);
   float clear = smoothstep(MARK_INNER * 0.72, MARK_INNER, length(local));
 
   if (clear <= 0.0) { return; }
@@ -144,6 +146,62 @@ vec3 tiltDir(vec3 d, vec3 turn) {
   return d * c + cross(axis, d) * s + axis * dot(axis, d) * (1.0 - c);
 }
 
+// Brushing: the fine scratches handling leaves on a coin's face. Three stretched noise fields at their
+// own angles, scales and stretches, bent by a slow warp and broken into patches, so it reads as scuffed
+// satin rather than ruled lines. It comes up faster than wear itself.
+float brushHash(vec2 p) {
+  p = fract(p * vec2(123.34, 345.45));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
+}
+
+float brushNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(brushHash(i), brushHash(i + vec2(1.0, 0.0)), u.x),
+             mix(brushHash(i + vec2(0.0, 1.0)), brushHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float brushField(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 3; ++i) { v += a * brushNoise(p); p *= 2.03; a *= 0.5; }
+  return v;
+}
+
+vec2 brushLayer(vec2 local, float angle, float scale, float stretch) {
+  float c = cos(angle), s = sin(angle);
+  vec2 turned = vec2(c * local.x - s * local.y, s * local.x + c * local.y);
+  vec2 p = vec2(turned.x * scale * stretch, turned.y * scale);
+  const float stepSize = 0.28;
+  float b0 = brushField(p);
+  vec2 across = vec2(brushField(p + vec2(stepSize, 0.0)) - b0, brushField(p + vec2(0.0, stepSize)) - b0) / stepSize;
+  return vec2(c * across.x + s * across.y, -s * across.x + c * across.y);
+}
+
+// The design document's frame has a coin radius of about 0.067; `local` has 0.5.
+const float BRUSH_FRAME = 0.134;
+
+void addBrush(vec2 local, float wear, float strength, float seed, inout vec2 slope) {
+  float amount = uBrushCover * uBrushDepth * strength * pow(wear, 1.6) * 0.6;
+
+  if (amount <= 0.001) { return; }
+
+  vec2 h = markHash(seed + 4.4);
+  float base = h.x * PI_F;
+  vec2 q = local * BRUSH_FRAME;
+  vec2 warp = vec2(brushField(q * 9.0 + h.y * 7.0), brushField(q * 9.0 + 3.3 - h.y * 5.0)) - 0.5;
+  q += warp * 0.012;
+  float cover = smoothstep(0.35, 0.75, brushField(q * 14.0 + seed * 0.37));
+
+  float scale = 340.0 * max(uBrushScale, 0.05);
+  float stretch = max(uBrushStretch, 0.01);
+  vec2 across = brushLayer(q, base, scale, stretch) * 0.5
+      + brushLayer(q, base + 1.9, scale * 0.7, stretch * 2.2) * 0.35
+      + brushLayer(q, base + 0.9, scale * 1.4, stretch * 3.5) * 0.25;
+
+  slope -= across * amount * (0.35 + 0.65 * cover);
+}
+
 vec3 envBRDFApprox(vec3 f0, float rough, float ndv) {
   vec4 r = vec4(-1.0, -0.0275, -0.572, 0.022) * rough + vec4(1.0, 0.0425, 1.04, -0.04);
   float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
@@ -173,21 +231,27 @@ vec3 srgbEncode(vec3 c) {
 float panels(vec3 dir, float lod) {
   float softness = 0.04 + 0.25 * lod / max(uEnvMaxLod, 1.0);
   float total = 0.0;
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < 4; ++i) {
     vec4 at = uPanels[i * 2];
     float gain = uPanels[i * 2 + 1].x;
+    if (gain <= 0.0) { continue; }
     total += gain * smoothstep(at.w - softness, at.w + softness, dot(dir, at.xyz));
   }
   return total;
 }
 
-vec3 envAt(vec3 p, float pp, vec3 Rw, float r) {
+// A worn coin's reflection is pulled toward the room's average, the roughest level, so the light still
+// shades it through the normal and the panels but nothing is mirrored in it. A fresh coin skips the
+// second lookup.
+vec3 envAt(vec3 p, float pp, vec3 Rw, float r, float matte) {
   vec3 R = tiltDir(Rw, uLightTurn);
   float b = dot(p, R);
   float t = -b + sqrt(max(b * b - pp, 0.0));
   vec3 dir = normalize(p + R * t);
   float lod = clamp(r * uEnvSharpen, 0.0, 1.0) * uEnvMaxLod;
-  return textureLod(uEnv, dir, lod).rgb;
+  vec3 direct = textureLod(uEnv, dir, lod).rgb;
+  if (matte <= 0.0) return direct;
+  return mix(direct, textureLod(uEnv, dir, uEnvMaxLod).rgb, matte);
 }
 
 void main() {
@@ -217,8 +281,17 @@ void main() {
   float markRough = 0.0;
 
   if (front && vSurf.w > 0.5) {
-    addPits(local, vMarksI.x, vMarksI.z, markSlope, markShade);
-    addStreaks(local, vMarksI.y, vMarksI.z, markSlope, markRough);
+    // Only a coin large enough to count its marks loops over all of them.
+    bool large = px >= 64.0;
+    addPits(local, vMarksI.x, large ? PIT_MAX : 4, vMarksI.z, markSlope, markShade);
+    addStreaks(local, vMarksI.y, large ? STREAK_MAX : 6, vMarksI.z, markSlope, markRough);
+  }
+  // Brushing covers the face, figure included, and spares the walls. Some fifty noise taps a pixel, and
+  // under a pixel wide below its minimum size, so a strip or a large grid never pays for it.
+  float brushOn = smoothstep(uBrushMinPx, uBrushMinPx * 1.3, px);
+  if (vSurf.z < 0.5 && brushOn > 0.0) {
+    float brushStrength = uMetals[int(vLookI.y) * 2 + 1].w * brushOn;
+    addBrush(local, clamp(vMarksI.y, 0.0, 1.0), brushStrength, vMarksI.z, markSlope);
   }
 
   slope += markSlope;
@@ -248,19 +321,27 @@ void main() {
   vec4 m0 = uMetals[metalIndex * 2];
   vec4 m1 = uMetals[metalIndex * 2 + 1];
   float wear = clamp(vLookI.x, 0.0, 1.0);
-  float toning = wear * uTone * WEAR_TONE * mix(0.9, 1.0, cut);
-  vec3 baseColor = m0.xyz * mix(vec3(1.0), m1.xyz, toning) * (1.0 - WEAR_DARKEN * wear);
+  // A tone above one keeps darkening past the dark cast, so a fully worn coin ends up below the room's average.
+  float toning = wear * uTone * mix(0.55, 1.0, cut);
+  vec3 baseColor = m0.xyz * mix(vec3(1.0), m1.xyz, toning) * (1.0 - uWearDarken * wear);
   float inRoll = 1.0 - clamp(vFxI.y, 0.0, 1.0);
-  // The haze goes on walls and fields alike, and the high relief only rubs slightly shinier: a coin
-  // nobody can follow is as matte on its edge as on its face, which is what reads side-on.
-  float rough = clamp(m0.w + FRESH_HAZE - inRoll * uRollGloss + vSurf.z * uWallRough + cut * uFrost
-                      + wear * WEAR_HAZE * (1.0 - 0.3 * high) - wear * uPolish * high + markRough, 0.05, 1.0);
-  float hub = smoothstep(0.02, 0.1, length(lp.xy));
-  // Off below the minimum size and fading in above it, so a crowded grid takes the single lookup.
-  float lusterOn = clamp(vFxI.y, 0.0, 1.0) * smoothstep(uLusterMinPx, uLusterMinPx * 1.4, px);
-  float lusterSlope = (uLuster * vSurf.w * hub + uRimLuster * rimTop)
-      * (1.0 - wear) * (1.0 - high * wear) * (1.0 - cut) * lusterOn;
-  vec3 across = normalize(vec3(-lp.y, lp.x, 0.0) + vec3(1e-5, 0.0, 0.0));
+  // A polished rim and a satin wall for a plain coin; the haze goes on walls and fields alike, so wear
+  // reads side-on too.
+  float polishedRim = uGrain * uRimPolish * rimTop;
+  float rough = clamp(m0.w - inRoll * uRollGloss + vSurf.z * uWallRough + cut * uFrost
+                      + wear * uHaze * (1.0 - 0.3 * high) - wear * uPolish * high + markRough
+                      - polishedRim + uGrain * uWallSatin * vSurf.z, 0.05, 1.0);
+  // Grain: mint luster (radial, grain 0) or spun (concentric, 1). The six-tap path is off below its
+  // minimum size, so a crowded grid takes the single lookup.
+  float hub = smoothstep(mix(0.02, 0.004, uGrain), mix(0.1, 0.022, uGrain), length(lp.xy));
+  float lusterOn = max(clamp(vFxI.y, 0.0, 1.0) * smoothstep(uLusterMinPx, uLusterMinPx * 1.4, px),
+                       uGrain * smoothstep(uSpinMinPx * 0.7, uSpinMinPx, px));
+  float fieldGrain = mix(uLuster, uSpinGrain, uGrain);
+  float rimGrain = uRimLuster * (1.0 - uGrain);
+  float wearKeeps = 1.0 - wear * mix(1.0, 0.55, uGrain);
+  float lusterSlope = (fieldGrain * vSurf.w * hub + rimGrain * rimTop)
+      * wearKeeps * (1.0 - high * wear) * (1.0 - cut) * lusterOn;
+  vec3 across = normalize(mix(vec3(-lp.y, lp.x, 0.0), vec3(lp.x, lp.y, 0.0), uGrain) + vec3(1e-5, 0.0, 0.0));
   float occlusion = clamp(1.0 - uEngraveDark * cut, 0.1, 1.0) * reedAO * markShade;
   float grime = cut * wear * uGrime;
 
@@ -278,6 +359,7 @@ void main() {
   vec3 p = tiltDir(toWorld(lp * vec3(1.0, 1.0, thick)) * uStudioScale, uLightTurn);
   float pp = dot(p, p) - uStudioRadius * uStudioRadius;
 
+  float matte = wear * uWearMatte;
   vec3 prefiltered = vec3(0.0);
   if (lusterSlope > 0.004) {
     vec3 t = toWorld(across);
@@ -287,10 +369,10 @@ void main() {
     float tapRough = sqrt(sqrt(alpha * alpha + spacing * spacing * 0.25));
     for (int i = 0; i < 6; i++) {
       vec3 nk = normalize(nW + tw * (lusterSlope * LUSTER_TAPS[i]));
-      prefiltered += envAt(p, pp, reflect(-v, nk), tapRough) * (1.0 / 6.0);
+      prefiltered += envAt(p, pp, reflect(-v, nk), tapRough, matte) * (1.0 / 6.0);
     }
   } else {
-    prefiltered = envAt(p, pp, reflect(-v, nW), roughness);
+    prefiltered = envAt(p, pp, reflect(-v, nW), roughness, matte);
   }
   // Broad, so once per pixel about its own mirror direction rather than once per luster tap.
   {
