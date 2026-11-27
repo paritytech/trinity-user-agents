@@ -123,6 +123,7 @@ dependencies {
 
     implementation(project(":common"))
     implementation(libs.sentry)
+    implementation(libs.sentry.android)
     implementation(project(":design"))
     implementation(project(":chains"))
     implementation(project(":database"))
