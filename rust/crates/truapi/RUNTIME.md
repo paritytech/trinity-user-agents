@@ -317,9 +317,12 @@ Such a stack also runs the relay's `lightSpec` from the bundled copy, the file
 that carries the relay's sync checkpoint. A newer descriptor that names a
 fresher one is taken, and its other changes, such as moved endpoints, are
 followed, but the descriptor the core runs and reports in `StackStatus` keeps
-the bundled relay light spec. A light client therefore starts from the
-checkpoint the build ships, which a stolen descriptor key cannot replace. The
-checkpoint ages until a new build bundles a fresher one, which only makes the
+the bundled relay light spec. The core runs no light client itself, and
+`truapi-provider` opens a stack only from signed descriptor bytes, which
+`StackStatus.descriptor` is not. A host whose light client should start from
+the checkpoint the build ships, which a stolen descriptor key cannot replace,
+opens it from the bundled descriptor's bytes; the provider does not enforce
+that. The checkpoint ages until a new build bundles a fresher one, which only makes the
 first sync longer, and the relay's bootnodes come from that same file. The
 operator has to keep serving the bundled spec at its URL, which names the
 spec's digest on Polkadot.

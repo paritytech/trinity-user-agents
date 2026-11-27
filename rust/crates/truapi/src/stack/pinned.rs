@@ -23,8 +23,9 @@ use super::{ReservedValuesPolicy, StackError};
 /// `dotns` and `coinage`. The pins fix what the descriptor says, not what a
 /// chain answers: the core does not check a genesis hash against the chain it
 /// reads. Such a stack also runs the relay light spec its bundled copy names,
-/// whatever a newer copy names, so a light client starts from the sync
-/// checkpoint the build ships.
+/// whatever a newer copy names. The core runs no light client: one starts
+/// from the sync checkpoint the build ships only when its host opens it from
+/// the bundled copy.
 #[derive(Clone)]
 pub struct Pinned {
 	bundled: Descriptor,

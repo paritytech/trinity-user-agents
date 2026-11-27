@@ -199,7 +199,9 @@ export interface StackStatus {
    * The verified descriptor the core runs, as plain descriptor JSON. The
    * host's own features read their chains and services from it. On a `stack`
    * allowed reserved values its relay `lightSpec` is the bundled
-   * descriptor's.
+   * descriptor's. It carries no signature, so the provider does not open a
+   * keyed stack from it: open a light client from the bundled descriptor to
+   * start from the checkpoint the build ships.
    */
   descriptor: string;
   /**

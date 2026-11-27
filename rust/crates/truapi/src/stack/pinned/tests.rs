@@ -125,8 +125,8 @@ fn a_stack_allowed_reserved_values_pins_its_chains_assets_and_contracts() {
 /// A relay light spec carries the sync checkpoint a light client starts from,
 /// and an operator publishes a fresher one from time to time. A stack allowed
 /// reserved values runs the one its build ships, so a key that signs a newer
-/// copy cannot hand its light clients a checkpoint the build never saw, and
-/// the rest of that copy is still taken. A copy that names none, or a bundled
+/// copy cannot put a checkpoint the build never saw in the descriptor the core
+/// runs, and the rest of that copy is still taken. A copy that names none, or a bundled
 /// copy that names none, leaves the relay with the bundled copy's.
 #[test]
 fn a_stack_allowed_reserved_values_keeps_its_bundled_relay_light_spec() {
