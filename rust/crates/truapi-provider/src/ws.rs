@@ -231,27 +231,31 @@ impl LastRead {
 		LastRead(Arc::new(Mutex::new(Reads { at: Instant::now(), unreturned_bytes: 0 })))
 	}
 
+	fn lock(&self) -> std::sync::MutexGuard<'_, Reads> {
+		self.0.lock().expect("last-read mutex poisoned")
+	}
+
 	fn touch(&self, bytes: usize) {
-		let mut reads = self.0.lock().expect("last-read mutex poisoned");
+		let mut reads = self.lock();
 		reads.at = Instant::now();
 		reads.unreturned_bytes = reads.unreturned_bytes.saturating_add(bytes);
 	}
 
 	/// The receiver returned a message or a pong, so what was read is spent.
 	fn message_returned(&self) {
-		self.0.lock().expect("last-read mutex poisoned").unreturned_bytes = 0;
+		self.lock().unreturned_bytes = 0;
 	}
 
 	/// How long a message still on its way has gone without a byte.
 	fn mid_message_silence(&self) -> Option<Duration> {
-		let reads = self.0.lock().expect("last-read mutex poisoned");
+		let reads = self.lock();
 		(reads.unreturned_bytes >= MESSAGE_ON_ITS_WAY_BYTES).then(|| reads.at.elapsed())
 	}
 
 	/// Resolves once nothing has arrived for [`READ_TIMEOUT`].
 	async fn silence(&self) {
 		loop {
-			let deadline = self.0.lock().expect("last-read mutex poisoned").at + READ_TIMEOUT;
+			let deadline = self.lock().at + READ_TIMEOUT;
 			if Instant::now() >= deadline {
 				return;
 			}
