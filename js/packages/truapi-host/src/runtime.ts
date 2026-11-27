@@ -63,7 +63,7 @@ export type LogLevel = string;
  * with `allowed` a `stack`, not a `testStack`, is pinned to its bundled
  * descriptor. The core refuses a policy it cannot read or that would reserve
  * less than it says, before it checks the stack. `ReservedValuesPolicy` in `rust/crates/truapi/src/stack.rs` has the
- * full rules.
+ * rules.
  */
 export interface ReservedValuesPolicy {
   /**

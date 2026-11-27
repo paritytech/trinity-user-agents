@@ -309,11 +309,8 @@ a refused or failed fetch, `last_refresh` reports that fetch even if writing
 the record fails.
 
 On a stack whose build allows it reserved values the core pins more of the
-bundled copy, such as its genesis hashes, `assets` and `contracts`, and runs
-its relay light spec. `ReservedValuesPolicy` in
-[`src/stack.rs`](src/stack.rs) lists what is pinned, what the pins do not
-protect, and what a host does to start its light client from the bundled
-checkpoint.
+bundled copy, as `ReservedValuesPolicy` in [`src/stack.rs`](src/stack.rs)
+describes.
 
 A newer descriptor the core takes that changes the genesis hash of the relay,
 Asset Hub, People or Bulletin chain, the network, the `generation` or the

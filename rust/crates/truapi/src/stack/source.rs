@@ -138,8 +138,8 @@ pub struct StackStatus {
 	/// The verified descriptor the core runs, as plain descriptor JSON with
 	/// the fields this core knows. The host's own features read their chains
 	/// and services from it. On a stack allowed reserved values its relay
-	/// `lightSpec` is the bundled copy's, as [`ReservedValuesPolicy`]
-	/// describes.
+	/// `lightSpec` is the bundled copy's. It carries no signature: open a
+	/// light client from the bundled descriptor.
 	pub descriptor: String,
 	/// The descriptor's `generation`, which changes when the stack restarts
 	/// its chains. Key cached chain data by it, such as a light client's

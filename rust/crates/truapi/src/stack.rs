@@ -107,40 +107,18 @@ impl<D> From<UnservedProduct> for CallError<D> {
 
 /// A host build's policy on reserved values for its stack.
 ///
-/// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
-/// reserve more here and cannot reserve fewer. A stack that names a reserved
-/// value, the core's or the build's, under any chain role starts only when
-/// `allowed` is set. Extra values only protect networks the build does not
-/// run: `allowed` cannot be set alongside them, so the build's own stack
-/// cannot name them. An extra TLD adds nothing for a stored or fetched copy,
-/// which the core already holds to the bundled copy's TLD: it only refuses a
-/// stack on that TLD that the build starts from, its bundled copy or one from
-/// [`Stack::new`].
-///
-/// The core refuses a policy that would reserve less than it says: `allowed`
-/// together with extra values, which the allowed stack may name anyway, and
-/// an extra TLD that no stack can have: one that is not a DNS label, or a
-/// TLD whose names already mean something else. It refuses the policy before
-/// it reads the stack.
-///
-/// With `allowed`, a stack [`StackRefresh::load`] resolves is pinned to its
-/// bundled copy: a stored or fetched copy is refused when it changes the chain
-/// roles, a genesis hash, `assets`, `contracts`, `dotns` or `coinage`. Only a
-/// new build changes those, a wipe included. The core also keeps the bundled
-/// relay `lightSpec`, which carries the sync checkpoint, and takes the rest of
-/// a newer copy. A stack from [`Stack::new`] pins nothing.
-///
-/// The pins cover the descriptor, not the chains: reads are protected only by
-/// a light client started from the bundled relay spec, and only for the
-/// relay. The core runs none, so a host opens its light client from the
-/// bundled descriptor: [`StackStatus::descriptor`] is unsigned, and
-/// `truapi-provider` refuses it for a keyed stack.
+/// The core reserves Polkadot's genesis hashes and the `dot` TLD, and a build
+/// can reserve more. A stack that names a reserved value starts only with
+/// `allowed`. With it, the stack is pinned to its bundled copy: a newer copy
+/// that changes its chain roles, genesis hashes, `assets`, `contracts`,
+/// `dotns` or `coinage` is refused, and the bundled relay `lightSpec` is
+/// kept. Reads are protected only if the host starts its light client from
+/// the bundled descriptor.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
 	/// Whether the stack may name reserved values. A build that sets it
-	/// reserves no extra values, and a stack [`StackRefresh::load`] resolves
-	/// for it is pinned to its bundled copy.
+	/// reserves no extra values.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
