@@ -7,13 +7,13 @@ use futures::{
 	StreamExt,
 	channel::mpsc::{UnboundedSender, unbounded},
 };
-use truapi::latest::{ProductRendererRenderItem, RenderContext};
+use truapi::latest::{PocketCardSide, ProductRendererRenderItem, RenderContext};
 
 use super::renderer::{NativeRendererObserver, NativeSubscription};
 use crate::{
 	Spawner,
 	platform::ProductId,
-	pocket_cards::{PocketCardSide, PocketCards, PocketEntry},
+	pocket_cards::{PocketCards, PocketEntry},
 	time::RealTimer,
 };
 

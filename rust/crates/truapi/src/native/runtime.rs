@@ -36,7 +36,7 @@ use crate::{
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	host_logic::root_entropy::RootEntropy,
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
+	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -169,11 +169,6 @@ impl NativeTrUApiHostRuntime {
 			};
 		let core_db = futures::executor::block_on(Db::open(core_db_config(directory)))
 			.map_err(unavailable)?;
-		let pocket = futures::executor::block_on(PocketCards::open(
-			core_db.clone(),
-			runtime_config.pinned_pocket_cards,
-		))
-		.map_err(unavailable)?;
 		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
 			&pointer,
@@ -183,9 +178,14 @@ impl NativeTrUApiHostRuntime {
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
 		))?;
+		let stack = stack_refresh.stack();
+		let pinned = PinnedPocketCard::privileged(stack.tld())
+			.expect("a verified stack names a dotNS TLD; qed");
+		let pocket = futures::executor::block_on(PocketCards::open(core_db.clone(), pinned))
+			.map_err(unavailable)?;
 		let signing = SigningHostConfig {
 			host: runtime_config.host,
-			stack: stack_refresh.stack(),
+			stack,
 			materials_enabled: runtime_config.materials_enabled,
 		};
 		let events = Arc::new(NativeEventBus::default());
@@ -299,7 +299,7 @@ impl NativeTrUApiHostRuntime {
 			renderer_failures: Arc::new(crate::runtime::ActionChannel::renderer_failures()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
-			product_control: Arc::new(Mutex::new(None)),
+			product_controls: Arc::new(Mutex::new(Vec::new())),
 		});
 
 		if product.execution_kind == ExecutableKind::Worker {
@@ -727,8 +727,11 @@ impl NativeTrUApiHostRuntime {
 	/// Chat modality pass `None`. `game_callbacks` does the same for game
 	/// reminders.
 	///
-	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
-	/// parse throws in Swift and Kotlin.
+	/// Fails when `execution_config.product_id` is not an id the stack
+	/// serves. For a name under `dot` on a stack with another TLD the reason
+	/// names the id to open instead. An
+	/// `execution_config.product_id` UniFFI cannot parse throws in Swift and
+	/// Kotlin the same way.
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
@@ -736,21 +739,22 @@ impl NativeTrUApiHostRuntime {
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
+		let ProductExecutionConfig { product_id, execution_kind } = execution_config;
+		let product = ProductContext::served_by(self.runtime.stack(), product_id, execution_kind)?;
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			game_callbacks,
-			execution_config.into(),
+			product,
 		))
 	}
 
 	/// Claim a product's worker while this consumer needs it.
 	///
-	/// Each call returns a separate claim on the worker.
+	/// Each call returns a separate claim on the worker. A product the stack
+	/// does not serve is logged, and its claim holds nothing.
 	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
-		Arc::new(NativeWorkerClaim {
-			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
-		})
+		Arc::new(NativeWorkerClaim { reference: Mutex::new(self.runtime.hold_worker(&product_id)) })
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1097,7 +1101,7 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		product_id: ProductId,
 		card_id: String,
-		side: PocketCardSide,
+		side: latest::PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
 		Ok(self.pocket.face(product_id, card_id, side).await?)
 	}
@@ -1189,7 +1193,10 @@ pub struct NativeProductExecution {
 	closed: AtomicBool,
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
-	product_control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
+	/// The controls of the product connections the bridge accepted, oldest first.
+	///
+	/// Ended ones are dropped at the next accept.
+	product_controls: Arc<Mutex<Vec<crate::ProductRuntimeControl>>>,
 }
 
 impl NativeProductExecution {
@@ -1237,7 +1244,20 @@ impl NativeProductExecution {
 		if let Some(token) = token {
 			self.ws_bridge.revoke(&token);
 		}
-		*self.product_control.lock().expect("native product control mutex poisoned") = None;
+		self.product_controls.lock().expect("native product control mutex poisoned").clear();
+	}
+
+	/// The control of the newest product connection that is still open.
+	///
+	/// A product that hung up leaves a disposed control behind, which does not count.
+	fn live_control(&self) -> Option<crate::ProductRuntimeControl> {
+		self.product_controls
+			.lock()
+			.expect("native product control mutex poisoned")
+			.iter()
+			.rev()
+			.find(|control| !control.is_disposed())
+			.cloned()
 	}
 }
 
@@ -1327,7 +1347,9 @@ impl NativeProductExecution {
 	/// Resolve a product's hard-subtree public key for hosts naming the account
 	/// a review will sign with. Answers from the cache, the persisted slot, or
 	/// the Account Holder, and `timeout_ms` bounds that wait. Exceeding it is
-	/// an error; `None` means no active session.
+	/// an error; `None` means no active session, which is answered before any
+	/// other check. A product the stack does not serve is an error, whatever
+	/// subtree was kept for it.
 	pub fn product_subtree_public_key(
 		&self,
 		product_id: ProductId,
@@ -1400,20 +1422,23 @@ impl NativeProductExecution {
 	/// Ask the product to draw one body, delivering each replacement tree to
 	/// `observer` until the returned subscription is cancelled. A Pocket
 	/// card's newest face is also kept, so the card has it offline.
+	///
+	/// Uses the newest product connection still open. Fails with
+	/// `NotConnected` while none is open, and when that connection ends during
+	/// the call.
 	pub fn render(
 		&self,
 		request: truapi::latest::ProductRendererRenderRequest,
 		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
-		let control = self
-			.product_control
-			.lock()
-			.expect("native product control mutex poisoned")
-			.clone()
-			.ok_or(crate::ProductRuntimeError::NotConnected)?;
+		let control = self.live_control().ok_or(crate::ProductRuntimeError::NotConnected)?;
 		let card = card_side(&request.context);
-		let stream = control.render(request)?;
+		let stream = control.render(request).map_err(|error| match error {
+			crate::ProductRuntimeError::Closed if !self.closed.load(Ordering::Acquire) =>
+				crate::ProductRuntimeError::NotConnected,
+			other => other,
+		})?;
 		let observer = match card {
 			Some((card_id, side)) => keeping_faces(
 				self.pocket.clone(),
@@ -1524,12 +1549,14 @@ impl NativeProductExecution {
 		let runtime = self.runtime.clone();
 		let product = self.product.clone();
 		let adapters = self.adapters();
-		let product_control = self.product_control.clone();
+		let product_controls = self.product_controls.clone();
 		let runtime_factory = Arc::new(move |sink| {
 			let product_runtime =
 				runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
-			*product_control.lock().expect("native product control mutex poisoned") =
-				Some(product_runtime.control());
+			let mut controls =
+				product_controls.lock().expect("native product control mutex poisoned");
+			controls.retain(|control| !control.is_disposed());
+			controls.push(product_runtime.control());
 			product_runtime
 		});
 		let endpoint = self.ws_bridge.register(bind_port, runtime_factory, logger)?;

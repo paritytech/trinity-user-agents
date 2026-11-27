@@ -14,7 +14,7 @@ extension ServiceCoordinator {
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         spaFlowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
-        pocket: ProductPocketService?
+        pocket: ProductPocketService
     ) -> (registry: ChatExtensionsRegistering, workerFacade: ProductWorkerFacade) {
         let productRepositoryFactory = ProductRepositoryFactory()
 
@@ -35,7 +35,7 @@ extension ServiceCoordinator {
         let botFactory = ProductBotFactory(
             productFileProvider: productFileProvider,
             runtimeProvider: truapiRuntimeProvider,
-            workers: { pocket?.workers },
+            workers: { pocket.workers },
             workerManager: workerFacade.manager,
             productImages: spaFlowState.productImages
         )

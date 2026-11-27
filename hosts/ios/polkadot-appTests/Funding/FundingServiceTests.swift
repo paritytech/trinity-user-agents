@@ -155,12 +155,43 @@ struct FundingServiceTests {
 
         let start = Task { try await service.start(intent, provider: provider("routed")) }
         try await waitUntil { runtime.selectedProviders.count == 1 }
-        let cancelled = try await service.cancel(intent)
+        service.leave(intent)
         runtime.releaseSelection()
 
-        #expect(cancelled == .cancelled)
         #expect(await outcome.value == .dismissed)
+        #expect(runtime.cancels.isEmpty)
         await #expect(throws: FundingStartError.left) { try await start.value }
+    }
+
+    @Test
+    func cancellingWhileTheOverlayIsUpTakesItDown() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let service = makeService(runtime)
+        let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
+        _ = try await firstEvent(of: service)
+        runtime.answerCancels(with: .cancelled, dropping: { outcome.cancel() })
+        var following = service.subscribeEntryState(intent).makeAsyncIterator()
+        _ = try await following.next()
+
+        let cancelled = try await service.cancel(intent)
+
+        #expect(cancelled == .cancelled)
+        #expect(runtime.cancels == [intent])
+        #expect(await outcome.value == .dismissed)
+        while try await following.next() != nil {}
+    }
+
+    @Test
+    func cancellingAStartedSessionAnswersWhatTheCoreDid() async throws {
+        let runtime = MockFundingRuntime()
+        runtime.hold(session(provider: "ramp"), progress: FundingProgressFixtures.inFlight)
+        runtime.answerCancels(with: .requested)
+        let service = makeService(runtime)
+
+        let cancelled = try await service.cancel(intent)
+
+        #expect(cancelled == .requested)
+        #expect(runtime.cancels == [intent])
     }
 
     @Test
@@ -205,6 +236,38 @@ struct FundingServiceTests {
         try await waitUntil { runtime.autoStarts.count == 2 }
 
         #expect(runtime.autoStarts == [.armed(requestId: 1), .cancelled])
+    }
+
+    @Test
+    func closingTheDepositScreenLeavesItsStartToTheCore() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
+        let service = makeService(runtime)
+        let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
+        _ = try await firstEvent(of: service)
+        service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
+        service.quote(amount: 50_000_000, for: intent)
+        try await service.start(intent, provider: nil)
+        try await waitUntil { runtime.autoStarts == [.armed(requestId: 1)] }
+
+        service.leave(intent)
+
+        #expect(await outcome.value == .dismissed)
+        #expect(runtime.autoStarts == [.armed(requestId: 1)])
+    }
+
+    @Test
+    func cancellingOnTheDepositScreenLeavesItsStartToTheCore() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
+        let service = makeService(runtime)
+        service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
+        service.quote(amount: 50_000_000, for: intent)
+        try await service.start(intent, provider: nil)
+        try await waitUntil { runtime.autoStarts == [.armed(requestId: 1)] }
+
+        _ = try await service.cancel(intent)
+
+        #expect(runtime.cancels == [intent])
+        #expect(runtime.autoStarts == [.armed(requestId: 1)])
     }
 
     @Test

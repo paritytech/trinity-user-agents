@@ -108,6 +108,18 @@ extension CollectiblesViewController: PocketItemScreen {
     var pocketItem: PocketItem {
         .collectibles
     }
+
+    var statusStripTitle: String {
+        String(localized: .Products.collectibles)
+    }
+}
+
+// MARK: - NavigationBarHiding
+
+extension CollectiblesViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
 }
 
 // MARK: - NavigationTransitionAnimating

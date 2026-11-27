@@ -339,16 +339,19 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 	let (_other, other_callbacks) = open_widget("other.dot");
 
 	let admin = card.admin();
-	let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
+	let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_card_covered(
 		admin.product_runtime().as_ref(),
 		&truapi::CallContext::default(),
-		v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
+		truapi::latest::HostExpandedCardSetCardCoveredRequest { covered: true }.into(),
 	));
 
-	let turned = futures::executor::block_on(truapi::api::ExpandedCard::set_back_shown(
+	let turned = futures::executor::block_on(truapi::api::ExpandedCard::turn_card(
 		admin.product_runtime().as_ref(),
 		&truapi::CallContext::default(),
-		v01::HostExpandedCardSetBackShownRequest { shown: true }.into(),
+		truapi::latest::HostExpandedCardTurnCardRequest {
+			side: truapi::latest::PocketCardSide::Back,
+		}
+		.into(),
 	));
 
 	assert!(
@@ -356,12 +359,12 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 		"the card's own host applied both: {reply:?} {turned:?}"
 	);
 	assert_eq!(
-		(card_callbacks.face_requests(), card_callbacks.back_requests()),
-		(vec![false], vec![true])
+		(card_callbacks.cover_requests(), card_callbacks.turn_requests()),
+		(vec![true], vec![truapi::latest::PocketCardSide::Back])
 	);
 	assert!(
-		other_callbacks.face_requests().is_empty() && other_callbacks.back_requests().is_empty(),
-		"another product's card must not be asked to move its face or turn"
+		other_callbacks.cover_requests().is_empty() && other_callbacks.turn_requests().is_empty(),
+		"another product's card must not be asked to cover or turn"
 	);
 }
 
@@ -656,6 +659,85 @@ fn a_missing_database_directory_fails_runtime_creation() {
 	);
 
 	assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));
+}
+
+/// A host opens an execution only under an id its stack serves, so the host
+/// and the core never hold two ids for one product. A name under another
+/// network's TLD gets no runtime. Neither does a name under `dot` on a stack
+/// with a TLD of its own, and the refusal names the id to open instead.
+#[test]
+fn an_execution_opens_only_for_a_product_the_stack_serves() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let open_on = |tld: &str, product_id: &str| {
+		let descriptor =
+			crate::test_support::test_descriptor(tld, [0xa2; 32], [0xbb; 32], [0xcc; 32]);
+		let config = HostRuntimeConfig {
+			stack: crate::native::BundledStack {
+				reserved_values: crate::platform::ReservedValuesPolicy::ALLOWED,
+				..native_bundled_stack(&descriptor)
+			},
+			local_session_secret: None,
+			local_session_lite_username: None,
+			..native_host_runtime_config()
+		};
+		NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+			.expect("host runtime config should be valid")
+			.open_product_execution(
+				callbacks.clone(),
+				None,
+				None,
+				native_execution_config(product_id, ExecutableKind::App),
+			)
+			.map(|_| ())
+	};
+	let refused =
+		|reason: &str| Err(NativeRuntimeConfigError::Invalid { reason: reason.to_string() });
+
+	assert_eq!(
+		[
+			open_on("dot", "myapp.dot"),
+			open_on("paseo", "myapp.paseo"),
+			open_on("paseo", "myapp.dot"),
+			open_on("paseo", "myapp.elsewhere"),
+		],
+		[
+			Ok(()),
+			Ok(()),
+			refused(
+				"the paseo stack serves no product under the id myapp.dot, which names its \
+				 product myapp.paseo"
+			),
+			refused("the paseo stack serves no product under the id myapp.elsewhere"),
+		]
+	);
+}
+
+/// A worker claim under an id the stack does not serve holds nothing. The
+/// worker can never open, so a reference would make the host retry it
+/// forever. On a `paseo` stack that goes for a name under `dot` as well as for
+/// another network's id: the host claims the worker under the id it opens.
+#[test]
+fn a_worker_claim_for_an_unserved_product_starts_nothing() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let descriptor =
+		crate::test_support::test_descriptor("paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32]);
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		HostRuntimeConfig {
+			stack: native_bundled_stack(&descriptor),
+			..native_host_runtime_config()
+		},
+	)
+	.expect("host runtime config should be valid");
+
+	let _unserved = host.claim_worker(ProductId::for_test("shared.elsewhere"));
+	let _under_dot = host.claim_worker(ProductId::for_test("shared.dot"));
+	let _served = host.claim_worker(ProductId::for_test("shared.paseo"));
+
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(ProductId::for_test("shared.paseo"), crate::WorkerTransition::Start)]
+	);
 }
 
 /// The sink a runtime installs carries events as well as lines, so a host that

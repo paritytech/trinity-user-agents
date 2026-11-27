@@ -75,8 +75,8 @@ class PocketViewModel @Inject constructor(
     private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val collectiblesPage = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url) } }
-    private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
-    private var openingFaceLookup: Job? = null
+    private val _startsCovered = MutableStateFlow<Boolean?>(null)
+    private var openingCoverLookup: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -229,8 +229,8 @@ class PocketViewModel @Inject constructor(
     /** The collectibles page loading inside the open book, live only while the book is open. */
     val collectiblesProduct = collectiblesPage.shown
 
-    /** Whether the selected card opens with its face shown; null until its product has answered. */
-    val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
+    /** Whether the selected card opens covered by its page; null until its product has answered. */
+    val startsCovered: StateFlow<Boolean?> = _startsCovered
 
     init {
         // A tab shown for the first time has no product cards until the collection loads.
@@ -278,19 +278,19 @@ class PocketViewModel @Inject constructor(
         if (card is PocketCardUiModel.ProductCard) {
             expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
             warmUpProduct(card)
-            lookUpOpeningFace(card)
+            lookUpOpeningCover(card)
         }
     }
 
-    private fun lookUpOpeningFace(card: PocketCardUiModel.ProductCard) {
-        openingFaceLookup?.cancel()
-        _openingFaceShown.value = null
-        openingFaceLookup = launch { _openingFaceShown.value = interactor.faceShownOnOpen(card.key) }
+    private fun lookUpOpeningCover(card: PocketCardUiModel.ProductCard) {
+        openingCoverLookup?.cancel()
+        _startsCovered.value = null
+        openingCoverLookup = launch { _startsCovered.value = interactor.startsCovered(card.key) }
     }
 
-    private fun forgetOpeningFace() {
-        openingFaceLookup?.cancel()
-        _openingFaceShown.value = null
+    private fun forgetOpeningCover() {
+        openingCoverLookup?.cancel()
+        _startsCovered.value = null
     }
 
     /**
@@ -314,7 +314,7 @@ class PocketViewModel @Inject constructor(
 
     fun dismissCard() {
         expandedProduct.close()
-        forgetOpeningFace()
+        forgetOpeningCover()
         selectedCardId.value = null
     }
 
@@ -391,7 +391,7 @@ class PocketViewModel @Inject constructor(
 
     private fun closeExpandedCard() {
         expandedProduct.release()
-        forgetOpeningFace()
+        forgetOpeningCover()
         selectedCardId.value = null
     }
 

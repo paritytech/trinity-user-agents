@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use futures::{StreamExt, stream::BoxStream};
 use subxt::{ext::scale_value::Value, storage::dynamic, utils::H256};
+use trinity_stack::{Chain, Descriptor, Document};
 use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
 
 use crate::{
@@ -65,6 +66,23 @@ pub fn live_asset_hub(genesis: H256) -> ChainRuntime {
 	let source = ChainSource::rpc_node(url.parse().expect("LIVE_ASSET_HUB_WS is a URL"));
 	let provider = EmbeddedChainProvider::builder().chain(genesis.0, source).build();
 	ChainRuntime::new(Arc::new(SingleNodeChainProvider(provider)), tokio_spawner())
+}
+
+/// The chain runtime over the first RPC node of each of `chains`, its tasks
+/// on the test's runtime.
+pub fn live_chains<'a>(chains: impl IntoIterator<Item = &'a Chain>) -> ChainRuntime {
+	let provider = chains.into_iter().fold(EmbeddedChainProvider::builder(), |builder, chain| {
+		let url = chain.rpc[0].parse().expect("a stack chain's RPC node is a URL");
+		builder.chain(chain.genesis(), ChainSource::rpc_node(url))
+	});
+	ChainRuntime::new(Arc::new(SingleNodeChainProvider(provider.build())), tokio_spawner())
+}
+
+/// The descriptor of the `paseo-next-v2` stack the repository bundles.
+pub fn bundled_paseo_next_v2() -> Descriptor {
+	let bytes = include_bytes!("../../../../../../stacks/paseo-next-v2.json");
+	let document = Document::parse(bytes).expect("the bundled paseo-next-v2 stack parses");
+	document.descriptor().clone()
 }
 
 /// Runs tasks on the test's tokio runtime.

@@ -5,13 +5,13 @@ use parity_scale_codec::Encode;
 // call, and its discriminant must stay first so older clients keep decoding it.
 #[test]
 fn not_presented_error_is_discriminant_zero() {
-	let face =
-		HostExpandedCardSetFaceShownError::V1(v01::HostExpandedCardSetFaceShownError::NotPresented);
-	let back =
-		HostExpandedCardSetBackShownError::V1(v01::HostExpandedCardSetBackShownError::NotPresented);
+	let covered = HostExpandedCardSetCardCoveredError::V1(
+		v01::HostExpandedCardSetCardCoveredError::NotPresented,
+	);
+	let turn = HostExpandedCardTurnCardError::V1(v01::HostExpandedCardTurnCardError::NotPresented);
 
 	assert_eq!(
-		(hex::encode(face.encode()), hex::encode(back.encode())),
+		(hex::encode(covered.encode()), hex::encode(turn.encode())),
 		("0000".into(), "0000".into())
 	);
 }
