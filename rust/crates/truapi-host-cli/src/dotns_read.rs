@@ -8,19 +8,23 @@
 //! different controllers when the stack and the chain disagree.
 
 use anyhow::{Context, Result};
+use parity_scale_codec::Decode;
 use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	chain::{EvmContractCaller, EvmContractError},
 	host_logic::dotns_gateway::{
-		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, claim_blocker,
-		classify_labels, label_available, lite_label_owner_key, resolve_labels, timestamp_now_key,
+		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, account_alias_key,
+		account_names_key, claim_blocker, classify_labels, label_available, lite_label_owner_key,
+		resolve_labels, timestamp_now_key,
 	},
 };
 
 use crate::{chain::CliChainProvider, network::Stack};
 
-/// One Asset Hub RPC connection for a batch of dotNS reads.
+/// One Asset Hub RPC connection for a batch of dotNS reads. Clones share the
+/// connection.
+#[derive(Clone)]
 pub struct AssetHubReader {
 	rpc: RpcClient,
 	/// The stack's `DotnsPopController`.
@@ -64,6 +68,20 @@ impl AssetHubReader {
 	pub async fn lite_label_owner(&self, lite_label: &str) -> Result<Option<[u8; 32]>> {
 		let value = self.raw_storage(&lite_label_owner_key(lite_label.as_bytes())).await?;
 		account_id_value("DotnsGateway.LiteLabelOwner", value)
+	}
+
+	/// Names the gateway recorded for `account`, per `DotnsGateway.AccountNames`.
+	///
+	/// RPC failures and a value that does not decode as [`AccountNameRecord`] are
+	/// errors.
+	pub async fn account_names(&self, account: &[u8; 32]) -> Result<Option<AccountNameRecord>> {
+		self.raw_storage(&account_names_key(account))
+			.await?
+			.map(|bytes| {
+				AccountNameRecord::decode(&mut bytes.as_slice())
+					.context("decode DotnsGateway.AccountNames value")
+			})
+			.transpose()
 	}
 
 	/// Usernames of `account` as recorded by the dotNS contracts, or `None`
@@ -115,6 +133,28 @@ impl AssetHubReader {
 			})
 			.transpose()
 	}
+}
+
+/// `DotnsGateway.AccountNames` value: the account's lite and full names.
+///
+/// Mirrors the pallet's `AccountNameRecord`, whose `NameEntry` holds a
+/// `BoundedVec<u8, 32>` label and an optional 65-byte `ChatKey`. A runtime that
+/// changes that layout makes [`AssetHubReader::account_names`] fail to decode.
+#[derive(Decode)]
+pub struct AccountNameRecord {
+	/// Dotted lite username, when the gateway recorded one.
+	pub lite: Option<NameEntry>,
+	/// Full-person username, when the gateway recorded one.
+	pub full: Option<NameEntry>,
+}
+
+/// One gateway name and the chat key published with it.
+#[derive(Decode)]
+pub struct NameEntry {
+	/// The name's bare label bytes.
+	pub label: Vec<u8>,
+	/// 65-byte ECDH chat key, when one was published.
+	pub chat: Option<[u8; 65]>,
 }
 
 /// Decodes an optional 32-byte account id storage value. A value of another

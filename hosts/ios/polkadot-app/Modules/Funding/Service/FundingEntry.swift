@@ -112,7 +112,7 @@ extension FundingEntry {
 
     /// The cancel action's title for what the core offers.
     var cancelTitle: String {
-        progress?.cancel.title ?? String(localized: .Funding.depositCancel)
+        progress?.cancel.title ?? String(localized: .Common.cancel)
     }
 }
 

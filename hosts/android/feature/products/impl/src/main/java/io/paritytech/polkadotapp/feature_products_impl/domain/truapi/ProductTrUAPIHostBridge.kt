@@ -171,6 +171,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             hostApiInteractor
                 .publishNotificationAuthorized(
                     callingProductId = callingProductId,
+                    title = request.title,
                     text = request.text,
                     deeplink = request.deeplink,
                     // Wire carries Unix millis UTC; null fires immediately.

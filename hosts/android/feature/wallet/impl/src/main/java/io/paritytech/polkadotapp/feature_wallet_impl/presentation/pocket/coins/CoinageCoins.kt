@@ -179,7 +179,12 @@ internal fun CoinageCoins(
                     }
                 }
                 .then(if (isExpanded) Modifier else Modifier.flickDown(onFlickedDown)),
-            factory = { context -> CoinageCoinsView(context).also { view = it } },
+            factory = { context ->
+                CoinageCoinsView(context).also {
+                    view = it
+                    CoinageLatencyOverlay.attach(it)
+                }
+            },
             update = { coinsView ->
                 coinsView.onMetrics = onMetrics
                 coinsView.update(

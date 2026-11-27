@@ -37,7 +37,7 @@ struct FundingSummaryView: View {
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.continueAction, expands: true, isLoading: viewModel.isStarting, action: presenter.start)
+            DSButton(.Common.continue, expands: true, isLoading: viewModel.isStarting, action: presenter.start)
                 .disabled(!viewModel.hasQuote)
         }
         .fundingScreen()

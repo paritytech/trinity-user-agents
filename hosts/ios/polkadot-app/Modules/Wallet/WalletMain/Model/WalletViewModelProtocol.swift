@@ -16,7 +16,7 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var pocketCardFrames: [PocketCardKey: CGRect] { get set }
     var openItem: PocketItem? { get set }
     var openPocketCardOffset: CGSize { get set }
-    var isPocketCleared: Bool { get set }
+    var pocketClearance: CGFloat { get set }
     var collectiblesPeek: CollectiblesPeek { get set }
     var balanceCardFrame: CGRect { get set }
     var collectiblesFrame: CGRect { get set }
@@ -26,6 +26,12 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var onCollectiblesPress: ((Bool) -> Void)? { get set }
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)? { get set }
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)? { get set }
+}
+
+extension WalletViewModelProtocol {
+    var isPocketCleared: Bool {
+        pocketClearance > 0
+    }
 }
 
 @Observable
@@ -40,8 +46,8 @@ class WalletViewModel: WalletViewModelProtocol {
     /// How far the open card is drawn from its slot. The Pocket draws the card
     /// while it flies, so it keeps its place in the stack.
     var openPocketCardOffset: CGSize = .zero
-    /// Whether the rest of the Pocket has cleared away for the open card.
-    var isPocketCleared = false
+    /// How far the rest of the Pocket has cleared away for the open card: 0 at rest, 1 cleared.
+    var pocketClearance: CGFloat = 0
     var collectiblesPeek: CollectiblesPeek = .resting
     /// Where the Balance card is in the window, for its screen to fly from. Read on demand, so moving it never
     /// redraws the Pocket.
