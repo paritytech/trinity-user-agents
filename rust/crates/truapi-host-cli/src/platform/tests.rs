@@ -230,11 +230,11 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 	assert!(alice_dir.ends_with("alice_pairing_host"));
 
 	// Alice's product KV. `switch_pairing_user_storage` intentionally carries
-	// the transient pairing keys (AuthSession, PairingDeviceIdentity,
-	// LastProcessedPairingStatement) across namespaces, because the core
-	// writes a session before it knows the username. Product KV is the state
-	// the comment there promises stays with its own user, so that is what
-	// isolation is asserted on.
+	// the transient pairing keys (AuthSession, SessionTimes,
+	// PairingDeviceIdentity, LastProcessedPairingStatement) across namespaces,
+	// because the core writes a session before it knows the username. Product
+	// KV is the state the comment there promises stays with its own user, so
+	// that is what isolation is asserted on.
 	let alice_key = ProductStorageKey::new(ProductId::for_test("demo-product.dot"), "secret");
 	platform
 		.write(alice_key.encode(), b"alice-only".to_vec())

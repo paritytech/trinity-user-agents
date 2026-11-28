@@ -21,11 +21,13 @@ use crate::{
 	Spawner,
 	chain_runtime::ChainRuntime,
 	host_logic::{
-		session::{SessionInfo, SessionState, encode_persisted_session},
+		session::{SessionInfo, SessionState, SsoSessionInfo, encode_persisted_session},
 		session_store::SessionStoreChangeNotifier,
+		session_times::{SessionTimes, StoredSessionTimes},
 	},
 	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo},
 	session_usernames::SessionUsernames,
+	unix_time::current_unix_secs,
 };
 use channel::SsoDisconnectMonitor;
 use futures::{StreamExt, channel::oneshot};
@@ -116,6 +118,8 @@ enum StoredSessionActivationError {
 	Missing,
 	#[display("invalid stored auth session: {_0}")]
 	Invalid(String),
+	#[display("stored auth session expired")]
+	Expired,
 	#[display("failed to read stored auth session: {_0}")]
 	Read(String),
 	#[display("stored auth session changed during activation")]
@@ -378,10 +382,22 @@ impl SsoRequestService {
 			},
 		};
 		if let Some((clear_auth, error)) = error {
-			if self.begin_session_clear(clear_auth, Some(activation_epoch), None) {
+			if self.begin_session_clear(clear_auth, Some(activation_epoch), None, None) {
 				self.drain_session_deletions(&barrier).await;
 			}
 			return Err(error);
+		}
+		let now = current_unix_secs();
+		if let Some(sso) = resolved.sso.as_ref() &&
+			self.load_or_record_session_times(sso, now)
+				.await
+				.is_some_and(|times| times.is_expired(now))
+		{
+			if !self.begin_session_clear(true, Some(activation_epoch), None, Some(&resolved)) {
+				return Err(StoredSessionActivationError::Changed);
+			}
+			self.drain_session_deletions(&barrier).await;
+			return Err(StoredSessionActivationError::Expired);
 		}
 		self.prepare_session_installation(&barrier, &resolved).await;
 		if self.session_epoch() != activation_epoch {
@@ -398,7 +414,55 @@ impl SsoRequestService {
 				.await;
 		}
 		self.drain_session_deletions(&barrier).await;
+		self.discard_committed_pairing_keys().await;
 		Ok(())
+	}
+
+	/// `sso`'s stored times, recording them as first seen at `now` when the slot
+	/// is empty or holds another session's. `None` when storage cannot say,
+	/// which never ends a session.
+	async fn load_or_record_session_times(
+		&self,
+		sso: &SsoSessionInfo,
+		now: u64,
+	) -> Option<SessionTimes> {
+		let stored = match self.platform.read_core_storage(CoreStorageKey::SessionTimes).await {
+			Ok(stored) => stored,
+			Err(error) => {
+				warn!(reason = %error.reason, "session times read failed");
+				return None;
+			},
+		};
+		match SessionTimes::from_stored(stored.as_deref(), sso) {
+			StoredSessionTimes::Current(times) => Some(times),
+			StoredSessionTimes::Unreadable => None,
+			StoredSessionTimes::Replaceable => {
+				let times = SessionTimes::first_seen(sso, now);
+				if let Err(error) = self
+					.platform
+					.write_core_storage(CoreStorageKey::SessionTimes, times.to_stored())
+					.await
+				{
+					warn!(reason = %error.reason, "session times write failed");
+				}
+				Some(times)
+			},
+		}
+	}
+
+	/// Delete the pairing keys a committed session no longer needs.
+	async fn discard_committed_pairing_keys(&self) {
+		let stored = self.platform.read_core_storage(CoreStorageKey::PairingDeviceIdentity).await;
+		let result = match stored {
+			Ok(None) => return,
+			Ok(Some(_)) => {
+				self.platform.clear_core_storage(CoreStorageKey::PairingDeviceIdentity).await
+			},
+			Err(error) => Err(error),
+		};
+		if let Err(error) = result {
+			warn!(reason = %error.reason, "pairing device identity delete failed");
+		}
 	}
 
 	/// Reconcile at boot and after storage notifications, reporting auth state.
@@ -449,6 +513,17 @@ impl SsoRequestService {
 		self.platform
 			.write_core_storage(CoreStorageKey::AuthSession, blob.clone())
 			.await?;
+		if let Some(sso) = session.sso.as_ref() &&
+			let Err(error) = self
+				.platform
+				.write_core_storage(
+					CoreStorageKey::SessionTimes,
+					SessionTimes::paired(sso, current_unix_secs()).to_stored(),
+				)
+				.await
+		{
+			warn!(reason = %error.reason, "session times write failed");
+		}
 		while self.is_current_login_attempt(generation) {
 			let latest_epoch = self.session_epoch();
 			if latest_epoch != epoch {
@@ -558,11 +633,14 @@ impl SsoRequestService {
 		}
 	}
 
+	/// Clear the selected session, and `stored` too when it is a stored
+	/// session other than the selected one, so the grants of both are revoked.
 	fn begin_session_clear(
 		&self,
 		clear_auth_session: bool,
 		expected_epoch: Option<u64>,
 		expected_peer: Option<SsoSessionKey>,
+		stored: Option<&SessionInfo>,
 	) -> bool {
 		let mut selection = self.selection.lock().expect("session selection mutex poisoned");
 		if expected_epoch.is_some_and(|epoch| selection.session_epoch != epoch) ||
@@ -573,6 +651,15 @@ impl SsoRequestService {
 		let previous = self.session_state.current();
 		selection.advance_epoch();
 		self.owner.session_ended(previous.as_ref(), true);
+		let previous_key = previous
+			.as_ref()
+			.and_then(|session| session.sso.as_ref())
+			.map(|sso| sso.ss_public_key);
+		if let Some(stored) =
+			stored.filter(|stored| stored.sso.as_ref().map(|sso| sso.ss_public_key) != previous_key)
+		{
+			self.owner.session_ended(Some(stored), true);
+		}
 		selection.pending_auth_deletion |= clear_auth_session;
 		selection.external_session_active = false;
 		self.session_state.clear_session();
@@ -610,6 +697,12 @@ impl SsoRequestService {
 		} else {
 			Ok(())
 		};
+		if pending_auth_deletion &&
+			auth_result.is_ok() &&
+			let Err(error) = self.platform.clear_core_storage(CoreStorageKey::SessionTimes).await
+		{
+			warn!(reason = %error.reason, "session times delete failed");
+		}
 		let grants_result = self.owner.finish_cleanup(barrier).await;
 		if let Err(reason) = auth_result.and(grants_result) {
 			warn!(%reason, "session cleanup remains pending");
@@ -622,7 +715,7 @@ impl SsoRequestService {
 		clear_auth_session: bool,
 		expected_epoch: Option<u64>,
 	) {
-		if !self.begin_session_clear(clear_auth_session, expected_epoch, None) {
+		if !self.begin_session_clear(clear_auth_session, expected_epoch, None, None) {
 			return;
 		}
 		let barrier = self.owner.write_barrier().await;
@@ -700,7 +793,7 @@ impl SsoRequestService {
 	// Stale peer notifications wake only their own waiters.
 	async fn handle_signing_host_disconnected(&self, key: SsoSessionKey) {
 		self.session_disconnects.notify_key(key, SSO_PEER_DISCONNECT_REASON);
-		if !self.begin_session_clear(true, None, Some(key)) {
+		if !self.begin_session_clear(true, None, Some(key), None) {
 			return;
 		}
 		let barrier = self.owner.write_barrier().await;

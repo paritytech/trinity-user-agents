@@ -26,6 +26,7 @@ pub mod root_entropy;
 pub mod scanner;
 pub mod session;
 pub mod session_store;
+pub mod session_times;
 pub mod sso;
 pub mod statement_store;
 pub mod worker;

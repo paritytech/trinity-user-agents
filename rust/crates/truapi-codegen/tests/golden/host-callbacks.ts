@@ -160,7 +160,8 @@ export type CoreStorageKey =
    */
   | { tag: "AuthSession"; value?: undefined }
   /**
-   * Pairing device identity used during SSO flows.
+   * The pairing host's keys for its current login attempt. The core deletes
+   * the slot once that session is committed.
    */
   | { tag: "PairingDeviceIdentity"; value?: undefined }
   /**
@@ -261,7 +262,13 @@ export type CoreStorageKey =
    * start does not go back to the bundled copy. A native core keeps this
    * record in its own database instead.
    */
-  | { tag: "StackRecord"; value: { stackId: string } };
+  | { tag: "StackRecord"; value: { stackId: string } }
+  /**
+   * When the pairing host's paired session began and when its keys last
+   * changed. Kept beside `Self::AuthSession` rather than inside it, and
+   * shared the same way.
+   */
+  | { tag: "SessionTimes"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1150,6 +1157,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         17,
         S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
       ] as const,
+      SessionTimes: [18, S._void] as const,
     }),
 );
 

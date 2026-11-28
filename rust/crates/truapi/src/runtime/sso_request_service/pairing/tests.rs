@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+	host_logic::session_times::{KEY_ROTATION_INTERVAL_SECS, SessionTimes, StoredSessionTimes},
 	host_rpc_client::HostRpcClient,
 	platform::{AuthState, ChainProvider, CoreStorageKey},
 	runtime::{HostRole, ProductRuntimeHost, sso_request_service::SsoRequestService},
@@ -8,6 +9,7 @@ use crate::{
 		runtime_config, session_info, signed_test_statement, stub_platform, subscribe_ack_frame,
 		wallet_device_encryption_public_key, wallet_handshake_statement,
 	},
+	unix_time::current_unix_secs,
 };
 use truapi::{
 	CallContext,
@@ -458,6 +460,38 @@ fn request_login_surfaces_wallet_failure_status() {
 			|state| matches!(state, AuthState::LoginFailed { reason, .. } if reason == expected_reason)
 		),
 		"wallet failure should be surfaced to the modal: {auth_states:?}"
+	);
+}
+
+#[test]
+fn successful_pairing_deletes_the_pairing_device_identity_and_records_new_keys() {
+	let platform = Arc::new(StubPlatform { pairing_success_response: true, ..Default::default() });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let paired_at = current_unix_secs();
+	let cx = CallContext::default();
+	let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
+
+	let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
+
+	assert_eq!(response, HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Success));
+	let session = host.test_session_state().current().expect("paired session should be active");
+	let storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+	let keys_fresh = matches!(
+		SessionTimes::from_stored(
+			storage.get(&core_storage_test_key(CoreStorageKey::SessionTimes)).map(Vec::as_slice),
+			session.sso.as_ref().unwrap(),
+		),
+		StoredSessionTimes::Current(times)
+			if !times.is_rotation_due(paired_at + KEY_ROTATION_INTERVAL_SECS)
+	);
+	assert_eq!(
+		(
+			storage.contains_key(&core_storage_test_key(CoreStorageKey::PairingDeviceIdentity)),
+			keys_fresh,
+		),
+		(false, true),
+		"pairing must not leave a second copy of the session keys, and its keys start fresh"
 	);
 }
 

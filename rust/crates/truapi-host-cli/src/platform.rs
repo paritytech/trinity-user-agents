@@ -384,6 +384,7 @@ impl CliPlatform {
 		// allowances, and product KV remain isolated to their previous user.
 		let transient_keys = [
 			CoreStorageKey::AuthSession,
+			CoreStorageKey::SessionTimes,
 			CoreStorageKey::PairingDeviceIdentity,
 			CoreStorageKey::LastProcessedPairingStatement,
 		]
