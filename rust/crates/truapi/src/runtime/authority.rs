@@ -624,6 +624,10 @@ pub trait AccountHolder: Send + Sync + 'static {
 		policy: OnExistingAllowancePolicy,
 	) -> Result<AccountGrant, AuthorityError>;
 
+	/// The chain refused the product's Statement Store key, so the holder
+	/// stops relying on what it remembers about that allowance.
+	async fn statement_store_key_refused(&self, product_id: &ProductId);
+
 	/// Resolve the public hard subtree under the selected account holder.
 	async fn product_subtree_public_key<'a>(
 		&'a self,

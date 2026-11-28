@@ -528,13 +528,15 @@ impl<H: AccountHolder> HostAccounts<H> {
 	/// `public_key`, preserving any replacement.
 	///
 	/// A paired host serves its stored key again on the next call: the phone
-	/// renews the sponsorships it issued.
-	pub fn forget_statement_store_allowance_key(
+	/// renews the sponsorships it issued. A wallet confirms the allowance on
+	/// chain again before it issues the key.
+	pub async fn forget_statement_store_allowance_key(
 		&self,
 		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
 		self.grants.forget_statement_store_allowance_key(product_id, public_key);
+		self.holder.statement_store_key_refused(product_id).await;
 	}
 
 	/// The product's kept Bulletin key, or one the account holder issues.

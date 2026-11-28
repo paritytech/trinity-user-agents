@@ -1,5 +1,6 @@
 //! Wallet resource approval and allowance issuance.
 
+use parity_scale_codec::Encode;
 use tracing::{debug, warn};
 use truapi::latest as api;
 
@@ -8,9 +9,9 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::product_account::ProductAccountError,
-	platform::ProductId,
+	platform::{CoreStorageKey, ProductId},
 	runtime::{
-		allowances::current_unix_secs,
+		allowances::{AllowanceResource, current_unix_secs},
 		authority::{AccountHolder, AuthorityError, AuthoritySession},
 		statement_allowance::StatementAllowanceError,
 		statement_store_rpc::StatementStoreRpcClientError,
@@ -81,16 +82,45 @@ impl WalletAccountHolder {
 		product_id: &ProductId,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-		let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
-			Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
-		})?;
-		let period = self.ensure_statement_slot(session, product_id, target, policy).await?;
+		let period = self.statement_slot_period(session, product_id, policy).await?;
 		self.with_keys(session, |keys| {
 			Ok(StatementStoreAllocation {
 				secret: keys.statement_allowance_key(product_id)?.secret.to_bytes().to_vec(),
 				period,
 			})
 		})
+	}
+
+	/// The period the product's statement slot is held in: the current one
+	/// when this wallet already confirmed it, otherwise the one the chain
+	/// answers, which is then recorded.
+	///
+	/// Only `OnExistingAllowancePolicy::Ignore` trusts a recorded confirmation.
+	async fn statement_slot_period(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		policy: OnExistingAllowancePolicy,
+	) -> Result<u32, AllowanceAllocationError> {
+		let resource = AllowanceResource::StatementStore;
+		let current =
+			crate::runtime::statement_allowance::slot::current_period(current_unix_secs()?);
+		// Test signatures use real keys without claiming on-chain registration.
+		#[cfg(feature = "test-host")]
+		if self.resource_controls.grants_allowances_unchecked() {
+			return Ok(current);
+		}
+		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
+			self.allowance_is_confirmed(product_id, resource, Some(current)).await
+		{
+			return Ok(current);
+		}
+		let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
+			Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
+		})?;
+		let period = self.ensure_statement_slot(session, product_id, target, policy).await?;
+		self.record_confirmed_allowance(product_id, resource, Some(period)).await;
+		Ok(period)
 	}
 
 	/// Find or register the statement slot `target` holds for this period.
@@ -108,11 +138,6 @@ impl WalletAccountHolder {
 			register_statement_account_pooled, scan_collections,
 		};
 
-		// Test signatures use real keys without claiming on-chain registration.
-		#[cfg(feature = "test-host")]
-		if self.resource_controls.grants_allowances_unchecked() {
-			return Ok(statement_allowance::slot::current_period(current_unix_secs()?));
-		}
 		let client =
 			self.services.statement_store.chain_client("statement-store allowance").await?;
 		let rpc = client.rpc();
@@ -240,6 +265,13 @@ impl WalletAccountHolder {
 		if self.resource_controls.grants_allowances_unchecked() {
 			return self.bulletin_secret(session, product_id);
 		}
+		let reuse_existing = matches!(policy, OnExistingAllowancePolicy::Ignore);
+		if reuse_existing &&
+			self.allowance_is_confirmed(product_id, AllowanceResource::Bulletin, None)
+				.await
+		{
+			return self.bulletin_secret(session, product_id);
+		}
 		let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
 			Ok(keys.bulletin_allowance_key(product_id)?.public.to_bytes())
 		})?;
@@ -253,9 +285,9 @@ impl WalletAccountHolder {
 			})?,
 		);
 		let current_allowance = fetch_bulletin_allowance(&bulletin_rpc, &target).await?;
-		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
-			current_allowance.is_some_and(|allowance| allowance.available())
-		{
+		if reuse_existing && current_allowance.is_some_and(|allowance| allowance.available()) {
+			self.record_confirmed_allowance(product_id, AllowanceResource::Bulletin, None)
+				.await;
 			return self.bulletin_secret(session, product_id);
 		}
 
@@ -326,6 +358,8 @@ impl WalletAccountHolder {
 			remained_transactions = authorization.remained_transactions,
 			"Bulletin authorization visible"
 		);
+		self.record_confirmed_allowance(product_id, AllowanceResource::Bulletin, None)
+			.await;
 		self.bulletin_secret(session, product_id)
 	}
 
@@ -434,5 +468,70 @@ impl WalletAccountHolder {
 			"claimed PGAS allowance"
 		);
 		Ok(())
+	}
+
+	/// Whether this wallet confirmed `resource` for `product_id` in `period`,
+	/// so its key is served without asking the chain.
+	///
+	/// `period` is the Statement Store allowance period, and `None` for a
+	/// Bulletin authorization. A record that cannot be read answers `false`,
+	/// so the chain is asked.
+	async fn allowance_is_confirmed(
+		&self,
+		product_id: &ProductId,
+		resource: AllowanceResource,
+		period: Option<u32>,
+	) -> bool {
+		match self.services.platform.read_core_storage(confirmed_key(product_id, resource)).await {
+			Ok(recorded) => recorded.is_some_and(|recorded| recorded == period.encode()),
+			Err(error) => {
+				warn!(%product_id, %error, "failed to read the confirmed allowance");
+				false
+			},
+		}
+	}
+
+	/// Record that this wallet confirmed `resource` for `product_id` in
+	/// `period`.
+	///
+	/// A failed write is logged: the next activation then asks the chain.
+	pub async fn record_confirmed_allowance(
+		&self,
+		product_id: &ProductId,
+		resource: AllowanceResource,
+		period: Option<u32>,
+	) {
+		let recorded = self
+			.services
+			.platform
+			.write_core_storage(confirmed_key(product_id, resource), period.encode())
+			.await;
+		if let Err(error) = recorded {
+			warn!(%product_id, %error, "failed to record the confirmed allowance");
+		}
+	}
+
+	/// Stop relying on what this wallet recorded about `resource` for
+	/// `product_id`, so its next request is confirmed on chain.
+	pub async fn forget_confirmed_allowance(
+		&self,
+		product_id: &ProductId,
+		resource: AllowanceResource,
+	) {
+		let forgotten =
+			self.services.platform.clear_core_storage(confirmed_key(product_id, resource)).await;
+		if let Err(error) = forgotten {
+			warn!(%product_id, %error, "failed to forget the confirmed allowance");
+		}
+	}
+}
+
+fn confirmed_key(product_id: &ProductId, resource: AllowanceResource) -> CoreStorageKey {
+	let product_id = product_id.clone();
+	match resource {
+		AllowanceResource::StatementStore => {
+			CoreStorageKey::ConfirmedStatementAllowance { product_id }
+		},
+		AllowanceResource::Bulletin => CoreStorageKey::ConfirmedBulletinAllowance { product_id },
 	}
 }

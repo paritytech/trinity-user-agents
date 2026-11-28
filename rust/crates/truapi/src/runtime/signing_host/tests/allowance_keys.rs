@@ -6,6 +6,7 @@ use parity_scale_codec::Encode;
 use crate::{
 	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::root_entropy::RootEntropy,
+	platform::mock::MockPlatform,
 	runtime::{statement_allowance, statement_allowance::slot},
 };
 
@@ -293,4 +294,159 @@ fn a_preimage_the_bulletin_authorization_holds_is_submitted_without_extending_it
 			.to_vec()
 		),
 	);
+}
+
+/// `platform`, keeping its core storage in `storage` so a later host finds it.
+fn keeping(mut platform: Arc<StubPlatform>, storage: &Arc<MockPlatform>) -> Arc<StubPlatform> {
+	Arc::get_mut(&mut platform).expect("the platform is not shared yet").core_storage_override =
+		Some(storage.clone());
+	platform
+}
+
+/// A signing host active under [`ENTROPY`].
+fn active_signing_host_on(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
+		.expect("activation succeeds");
+	signing_host
+}
+
+/// A platform whose chains cannot be reached.
+fn offline() -> Arc<StubPlatform> {
+	Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..StubPlatform::default() })
+}
+
+/// The product's Statement Store key and period, or `None` when the wallet
+/// could not issue it. Bounded so a wait on an unanswered chain read fails.
+fn statement_allocation(
+	signing_host: &SigningHost,
+	policy: OnExistingAllowancePolicy,
+) -> Option<(Vec<u8>, u32)> {
+	futures::executor::block_on(async {
+		let session = signing_host.wallet.current_session().unwrap();
+		let product_id = ProductId::for_test(PRODUCT_ID);
+		futures::select! {
+			result = signing_host
+				.wallet
+				.allocate_statement_store_allowance(&session, &product_id, policy)
+				.fuse() => result.ok().map(|allocation| (allocation.secret, allocation.period)),
+			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+				panic!("allocation blocked on a chain read")
+			}
+		}
+	})
+}
+
+/// The first statement after a restart must not wait on a chain scan the
+/// wallet already made: a slot confirmed once is served from the record.
+#[test]
+fn a_restarted_host_serves_a_confirmed_statement_slot_without_the_chain() {
+	let storage = Arc::new(MockPlatform::new());
+	let confirmed = statement_allocation(
+		&active_signing_host_on(keeping(chain_with_allocated_slot(), &storage)),
+		OnExistingAllowancePolicy::Ignore,
+	);
+	let platform = keeping(offline(), &storage);
+	let restarted = statement_allocation(
+		&active_signing_host_on(platform.clone()),
+		OnExistingAllowancePolicy::Ignore,
+	);
+
+	let allowance = RootEntropy::new(ENTROPY)
+		.derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
+		.expect("allowance derivation succeeds");
+	let period = slot::current_period(crate::runtime::allowances::current_unix_secs().unwrap());
+	let served = Some((allowance.secret.to_bytes().to_vec(), period));
+	assert_eq!((confirmed, restarted, sent_rpc_count(&platform)), (served.clone(), served, 0));
+}
+
+/// A record only stands in for the chain while it can still be true: one from
+/// an earlier period and a request to replace the allowance both go back to
+/// the chain.
+#[test]
+fn a_statement_slot_record_that_may_be_stale_is_not_trusted() {
+	let product_id = ProductId::for_test(PRODUCT_ID);
+	let period = slot::current_period(crate::runtime::allowances::current_unix_secs().unwrap());
+	let resource = crate::runtime::allowances::AllowanceResource::StatementStore;
+	let served_offline = |recorded_period, policy| {
+		let signing_host = active_signing_host_on(offline());
+		futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
+			&product_id,
+			resource,
+			Some(recorded_period),
+		));
+		statement_allocation(&signing_host, policy).is_some()
+	};
+
+	assert_eq!(
+		(
+			served_offline(period, OnExistingAllowancePolicy::Ignore),
+			served_offline(period - 1, OnExistingAllowancePolicy::Ignore),
+			served_offline(period, OnExistingAllowancePolicy::Increase),
+		),
+		(true, false, false),
+	);
+}
+
+/// A Bulletin authorization the wallet confirmed is served after a restart
+/// without reading the Bulletin chain, until a refused submission asks for
+/// more.
+#[test]
+fn a_confirmed_bulletin_allowance_is_served_without_the_chain_until_increased() {
+	let product_id = ProductId::for_test(PRODUCT_ID);
+	let resource = crate::runtime::allowances::AllowanceResource::Bulletin;
+	let storage = Arc::new(MockPlatform::new());
+	let bulletin_secret = |signing_host: &SigningHost, policy| {
+		let session = signing_host.wallet.current_session().unwrap();
+		futures::executor::block_on(
+			signing_host.wallet.allocate_bulletin_allowance(&session, &product_id, policy),
+		)
+		.ok()
+	};
+	let unconfirmed =
+		bulletin_secret(
+		&active_signing_host_on(keeping(offline(), &storage)),
+		OnExistingAllowancePolicy::Ignore,
+	);
+	let signing_host = active_signing_host_on(keeping(offline(), &storage));
+	futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
+		&product_id,
+		resource,
+		None,
+	));
+	let restarted = active_signing_host_on(keeping(offline(), &storage));
+
+	let allowance = RootEntropy::new(ENTROPY)
+		.derive_sr25519_hard_path(&["allowance", "bulletin", PRODUCT_ID])
+		.expect("allowance derivation succeeds");
+	assert_eq!(
+		(
+			unconfirmed,
+			bulletin_secret(&restarted, OnExistingAllowancePolicy::Ignore),
+			bulletin_secret(&restarted, OnExistingAllowancePolicy::Increase),
+		),
+		(None, Some(allowance.secret.to_bytes().to_vec()), None),
+	);
+}
+
+/// A slot the chain stopped honouring within its period must be looked up
+/// again, or the wallet would keep issuing a key every submission refuses.
+#[test]
+fn a_refused_statement_key_is_confirmed_on_chain_again() {
+	let product_id = ProductId::for_test(PRODUCT_ID);
+	let signing_host = active_signing_host_on(offline());
+	futures::executor::block_on(signing_host.wallet.record_confirmed_allowance(
+		&product_id,
+		crate::runtime::allowances::AllowanceResource::StatementStore,
+		Some(slot::current_period(crate::runtime::allowances::current_unix_secs().unwrap())),
+	));
+	let served = statement_allocation(&signing_host, OnExistingAllowancePolicy::Ignore).is_some();
+	futures::executor::block_on(
+		signing_host.accounts().forget_statement_store_allowance_key(&product_id, [0; 32]),
+	);
+	let served_after_refusal =
+		statement_allocation(&signing_host, OnExistingAllowancePolicy::Ignore).is_some();
+
+	assert_eq!((served, served_after_refusal), (true, false));
 }

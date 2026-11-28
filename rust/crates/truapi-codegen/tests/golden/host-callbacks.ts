@@ -261,7 +261,19 @@ export type CoreStorageKey =
    * start does not go back to the bundled copy. A native core keeps this
    * record in its own database instead.
    */
-  | { tag: "StackRecord"; value: { stackId: string } };
+  | { tag: "StackRecord"; value: { stackId: string } }
+  /**
+   * The allowance period a signing host's wallet confirmed a product's
+   * Statement Store slot in on chain, so a restart serves its key without
+   * a chain read. No key is stored: the wallet derives it.
+   */
+  | { tag: "ConfirmedStatementAllowance"; value: { productId: ProductId } }
+  /**
+   * Marks a product's Bulletin authorization as confirmed on chain by a
+   * signing host's wallet, so a restart serves its key without a chain
+   * read. No key is stored: the wallet derives it.
+   */
+  | { tag: "ConfirmedBulletinAllowance"; value: { productId: ProductId } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1149,6 +1161,14 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       StackRecord: [
         17,
         S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
+      ConfirmedStatementAllowance: [
+        18,
+        S.Struct({ productId: ProductId }) as S.Codec<{ productId: ProductId }>,
+      ] as const,
+      ConfirmedBulletinAllowance: [
+        19,
+        S.Struct({ productId: ProductId }) as S.Codec<{ productId: ProductId }>,
       ] as const,
     }),
 );
