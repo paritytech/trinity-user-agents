@@ -32,46 +32,54 @@ data class FundingLimits(
 data class FundingFlowState(
     val direction: FundingDirection,
     val cashPrecision: Int,
-    val spendable: BigDecimal?,
+    val format: FundingCashFormat,
+    val spendable: Balance?,
     val options: FundingOptions?,
     val rail: FundingRail,
-    val railChosen: Boolean,
     val amountText: String,
     val country: FundingCountry?,
     val network: String?,
     val asset: String?,
     val chosenProviderId: ProductId?,
     val rows: Map<ProductId, FundingQuoteState>,
-    val askedAmount: Balance?,
     val staleQuotes: Map<ProductId, FundingQuote>,
+    val askedAmount: Balance?,
     val list: FundingQuoteList?,
+    val quotesFailed: Boolean,
     val amountIssue: FundingAmountIssue?,
+    val amountCheckFailed: Boolean,
+    val spendableUnread: Boolean,
 ) {
     companion object {
         fun initial(
             direction: FundingDirection,
             cashPrecision: Int,
-            spendable: BigDecimal?,
+            format: FundingCashFormat,
+            spendable: Balance?,
             options: FundingOptions?,
-            amount: BigDecimal?,
+            amount: Balance?,
             country: FundingCountry?,
+            spendableUnread: Boolean,
         ) = FundingFlowState(
             direction = direction,
             cashPrecision = cashPrecision,
+            format = format,
             spendable = spendable,
             options = options,
             rail = options.defaultRail,
-            railChosen = false,
-            amountText = amount?.let(::textFor).orEmpty(),
+            amountText = amount?.amountFromPlanks(cashPrecision)?.let(::textFor).orEmpty(),
             country = country,
             network = null,
             asset = null,
             chosenProviderId = null,
             rows = emptyMap(),
-            askedAmount = null,
             staleQuotes = emptyMap(),
+            askedAmount = null,
             list = null,
+            quotesFailed = false,
             amountIssue = null,
+            amountCheckFailed = false,
+            spendableUnread = spendableUnread,
         )
 
         fun textFor(value: BigDecimal): String =
@@ -83,7 +91,7 @@ data class FundingFlowState(
         get() = amountText.takeIf(AMOUNT_TEXT::matches)?.toBigDecimalOrNull()?.planksFromAmount(cashPrecision)
 
     val amount: BigDecimal
-        get() = units?.let(::decimal) ?: BigDecimal.ZERO
+        get() = units?.let(::cashAmount) ?: BigDecimal.ZERO
 
     val candidates: List<FundingCandidate>
         get() = options?.candidates.orEmpty()
@@ -95,7 +103,11 @@ data class FundingFlowState(
         get() = rows.keys.mapNotNull { id -> candidates.firstOrNull { it.providerId == id } }
 
     val canContinue: Boolean
-        get() = amount.signum() > 0 && amountIssue == null && rail in availableRails
+        get() = amount.signum() > 0 && amountIssue == null && !amountCheckFailed && !withdrawalUnchecked && rail in availableRails
+
+    // Without the balance, the core would check a withdrawal's amount against no limit at all.
+    private val withdrawalUnchecked: Boolean
+        get() = spendableUnread && direction == FundingDirection.OUT
 
     val amountLimits: FundingLimits
         get() = options?.limits.toLimits()
@@ -105,6 +117,8 @@ data class FundingFlowState(
 
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
+
+    fun cashAmount(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
@@ -122,7 +136,10 @@ data class FundingFlowState(
         get() = list?.let { Instant.fromEpochMilliseconds(it.refreshAtMs.toLong()) }
 
     val isQuoting: Boolean
-        get() = selectedQuote == null && askedAmount != null && list?.complete != true
+        get() = selectedQuote == null && (quoting || list?.complete == false)
+
+    val quoting: Boolean
+        get() = askedAmount != null && list == null && !quotesFailed
 
     val allAnswered: Boolean
         get() = list?.complete == true && rows.isNotEmpty()
@@ -154,14 +171,13 @@ data class FundingFlowState(
         }.toMap()
 
     val askAmount: Balance?
-        get() = units?.takeIf { amount.signum() > 0 && options?.asset != null }
+        get() {
+            val asked = if (rail == FundingRail.CRYPTO) asset else options?.asset
+            return units?.takeIf { amount.signum() > 0 && asked != null }
+        }
 
     fun withRail(newRail: FundingRail): FundingFlowState =
-        if (newRail == rail) {
-            copy(railChosen = true)
-        } else {
-            dropped().copy(rail = newRail, railChosen = true, network = null, asset = null)
-        }
+        if (newRail == rail) this else copy(rail = newRail, network = null, asset = null)
 
     fun withAmountText(text: String): FundingFlowState = copy(amountText = text)
 
@@ -173,26 +189,25 @@ data class FundingFlowState(
 
     fun withChosenProvider(providerId: ProductId): FundingFlowState = copy(chosenProviderId = providerId)
 
-    fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue)
+    fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue, amountCheckFailed = false)
 
-    fun asking(amount: Balance): FundingFlowState = copy(
-        askedAmount = amount,
-        rows = rows.mapValues { FundingQuoteState.Pending },
-        staleQuotes = if (amount == askedAmount) quotedProviders.toMap() else emptyMap(),
-        list = null,
-    )
+    fun withAmountCheck(check: Result<FundingAmountIssue?>): FundingFlowState =
+        copy(amountIssue = check.getOrNull(), amountCheckFailed = check.isFailure)
 
-    fun receiving(newList: FundingQuoteList?): FundingFlowState {
-        if (newList == null) return dropped()
-        if (askedAmount == null) return this
+    fun withQuotes(newList: FundingQuoteList?, asked: Balance?, failed: Boolean): FundingFlowState {
+        if (asked == null) return copy(rows = emptyMap(), staleQuotes = emptyMap(), askedAmount = null, list = null, quotesFailed = false)
 
-        val newRows = newList.rows.associate { it.providerId to it.state }
-        val stale = newRows
-            .filterValues { it.isPending }
-            .mapNotNull { (providerId, _) -> (rows[providerId]?.quote ?: staleQuotes[providerId])?.let { providerId to it } }
-            .toMap()
+        val onScreen = if (asked == askedAmount) quotedProviders.toMap() + staleQuotes else emptyMap()
+        val newRows = newList?.rows?.associate { it.providerId to it.state }
+        val stale = if (newRows == null) onScreen else onScreen.filterKeys { newRows[it]?.isPending == true }
 
-        return copy(rows = newRows, staleQuotes = stale, list = newList)
+        return copy(
+            rows = newRows ?: stale.mapValues { FundingQuoteState.Pending },
+            staleQuotes = stale,
+            askedAmount = asked,
+            list = newList,
+            quotesFailed = failed,
+        )
     }
 
     val selection: FundingSelection
@@ -204,25 +219,12 @@ data class FundingFlowState(
             currency = country?.currencyCode,
         )
 
-    fun withOptions(newOptions: FundingOptions): FundingFlowState {
-        val updated = copy(options = newOptions)
-        return if (railChosen || newOptions.defaultRail == rail) {
-            updated
-        } else {
-            updated.dropped().copy(rail = newOptions.defaultRail, network = null, asset = null)
-        }
-    }
-
-    private fun dropped(): FundingFlowState = copy(rows = emptyMap(), askedAmount = null, staleQuotes = emptyMap(), list = null)
-
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
         minimum = this?.min?.let(::cashDecimal),
         maximum = this?.max?.let(::cashDecimal),
     )
 
-    private fun decimal(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
-
-    private fun cashDecimal(units: U128): BigDecimal? = units.toBalanceOrNull()?.let(::decimal)
+    private fun cashDecimal(units: U128): BigDecimal? = units.toBalanceOrNull()?.let(::cashAmount)
 }
 
 val FUNDING_RAIL_ORDER: List<FundingRail> = listOf(FundingRail.CRYPTO, FundingRail.CARD, FundingRail.BANK)

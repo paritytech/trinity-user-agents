@@ -5,7 +5,7 @@ Fallible operations return `Result<T>`. Errors carry domain meaning via sealed `
 ## Rules at a glance
 
 1. **`major`** — Fallible domain/data operations return `Result<T>`. Don't throw across a layer boundary.
-2. **`major`** — `getOrThrow()` is forbidden everywhere except `Worker.doWork()` (the Result → WorkManager-Result seam) and test code. **`blocking`** when in a ViewModel, UI mapper, or any main-path code. (The PostToolUse hook will warn on `.kt` files outside `Worker` / tests.)
+2. **`major`** — `getOrThrow()` is forbidden everywhere except `Worker.doWork()` (the Result → WorkManager-Result seam), a Coil `Fetcher.fetch()` (Coil reads a failed load from a throw) and test code. **`blocking`** when in a ViewModel, UI mapper, or any main-path code. (The PostToolUse hook will warn on `.kt` files outside `Worker` / tests.)
 3. **`major`** — Compose `Result` chains via `flatMap` / `mapCatching` / `flatRecover`; don't unwrap with `.onSuccess { state.value = ... }` inside non-terminal flows.
 4. **`major`** — `runCatching { throw ... }` ping-pong is forbidden. Return `Result.failure(...)` directly, or `runCatching` only ambient-throwing bodies.
 5. **`major`** — Don't paper failures with a hidden default; propagate `Result` and let the caller decide.
@@ -81,7 +81,7 @@ override val state = combine(metadataFlow, approving) { metadata, approving ->
 
 ## ✗ Anti-patterns
 
-### `getOrThrow()` — forbidden except at two seams
+### `getOrThrow()` — forbidden except at three seams
 
 ```kotlin
 // ✗ Anywhere on the main path
@@ -99,10 +99,11 @@ doSomething(account)
 return accountResult.flatMap { account -> doSomething(account) }
 ```
 
-**The two legitimate seams** where `getOrThrow()` is allowed:
+**The three legitimate seams** where `getOrThrow()` is allowed:
 
 1. **Inside `Worker.doWork()`** — the seam where domain `Result<Unit>` becomes WorkManager `Result.retry / failure`. Centralize the unwrap there, log the throwable, return the appropriate WorkManager result.
-2. **Test code** (`*/src/test/*`, `*/src/androidTest/*`) — assertions over `Result` are easier with `getOrThrow()` than with verbose `fold`.
+2. **Inside a Coil `Fetcher.fetch()`** — Coil signals a failed load only by a throw, so the fetcher unwraps once, at the end of its `Result` chain.
+3. **Test code** (`*/src/test/*`, `*/src/androidTest/*`) — assertions over `Result` are easier with `getOrThrow()` than with verbose `fold`.
 
 Anywhere else: forbidden. Severity is `major` in source docs (PostToolUse hook will warn). **`blocking`** when the call is in a ViewModel / UI mapper / main-path code (the reviewer escalates).
 
