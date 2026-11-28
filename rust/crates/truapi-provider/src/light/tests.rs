@@ -8,8 +8,9 @@ use futures::{
 	stream::StreamExt,
 };
 
+use super::LightState;
 use crate::{
-	ChainSource, EmbeddedChainProvider,
+	ChainSource, ConnectionTypes, EmbeddedChainProvider,
 	platform::ChainProvider,
 	test_specs::{PARACHAIN_GENESIS, PARACHAIN_SPEC, RELAY_GENESIS, RELAY_SPEC},
 };
@@ -520,4 +521,23 @@ fn connections_to_the_same_chain_are_isolated() {
 	);
 	let response = block_on(second_responses.next()).expect("the second connection stays alive");
 	assert!(response.contains("Paseo Testnet"), "unexpected response: {response}");
+}
+
+/// smoldot panics on some calls made under the shared client lock. Dropping a
+/// connection during that unwind must not panic again on the poisoned lock,
+/// which would abort the process.
+#[test]
+fn dropping_a_connection_after_a_panic_under_the_client_lock_does_not_panic() {
+	let state = LightState::new(ConnectionTypes::default(), false);
+	let source = ChainSource::light_client(RELAY_SPEC).build();
+	let connection =
+		block_on(state.connect(RELAY_GENESIS, &source, None)).expect("offline add_chain succeeds");
+	std::thread::scope(|scope| {
+		let holder = scope.spawn(|| {
+			let _guard = state.inner().lock().expect("not poisoned yet");
+			panic!("smoldot panics under the client lock");
+		});
+		assert!(holder.join().is_err(), "only a holder that panicked poisons the lock");
+	});
+	drop(connection);
 }

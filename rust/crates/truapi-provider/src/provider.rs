@@ -16,12 +16,6 @@ use crate::{
 	error::ProviderError,
 };
 
-/// Lock a mutex, recovering the guard if a previous holder panicked.
-#[cfg(feature = "smoldot")]
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-	mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 /// Builder collecting genesis-hash to [`ChainSource`] registrations.
 #[derive(Default)]
 pub struct EmbeddedChainProviderBuilder {
@@ -323,7 +317,11 @@ impl EmbeddedChainProvider {
 		// has no ws variant.
 		if let ChainSource::LightClient { database_content, .. } = &mut source &&
 			database_content.is_none() &&
-			let Some(blob) = lock(&self.seeded_databases).remove(&genesis_hash)
+			let Some(blob) = self
+				.seeded_databases
+				.lock()
+				.expect("seeded databases mutex poisoned")
+				.remove(&genesis_hash)
 		{
 			*database_content = Some(blob);
 		}
@@ -494,13 +492,20 @@ impl EmbeddedChainProvider {
 	#[cfg(feature = "smoldot")]
 	fn return_seed(&self, genesis_hash: [u8; 32], source: ChainSource) {
 		if let ChainSource::LightClient { database_content: Some(blob), .. } = source {
-			lock(&self.seeded_databases).entry(genesis_hash).or_insert(blob);
+			self.seeded_databases
+				.lock()
+				.expect("seeded databases mutex poisoned")
+				.entry(genesis_hash)
+				.or_insert(blob);
 		}
 	}
 
 	/// Whether a blob is already in hand for `genesis_hash`.
 	fn has_database(&self, genesis_hash: [u8; 32]) -> bool {
-		lock(&self.seeded_databases).contains_key(&genesis_hash)
+		self.seeded_databases
+			.lock()
+			.expect("seeded databases mutex poisoned")
+			.contains_key(&genesis_hash)
 	}
 
 	/// Read the stored blob for `genesis_hash` into this provider, so the next
@@ -534,7 +539,11 @@ impl EmbeddedChainProvider {
 			let Ok(store) = self.storage() &&
 			let Some(blob) = self.load_stored(&*store, relay).await?
 		{
-			lock(&self.seeded_databases).entry(relay).or_insert(blob);
+			self.seeded_databases
+				.lock()
+				.expect("seeded databases mutex poisoned")
+				.entry(relay)
+				.or_insert(blob);
 		}
 		if self.is_connected(genesis_hash) {
 			// smoldot keys a chain by its genesis hash and discards the blob on
@@ -553,7 +562,11 @@ impl EmbeddedChainProvider {
 		let Some(blob) = self.load_stored(&*store, genesis_hash).await? else {
 			return Ok(false);
 		};
-		lock(&self.seeded_databases).entry(genesis_hash).or_insert(blob);
+		self.seeded_databases
+			.lock()
+			.expect("seeded databases mutex poisoned")
+			.entry(genesis_hash)
+			.or_insert(blob);
 		Ok(true)
 	}
 
@@ -612,7 +625,12 @@ impl EmbeddedChainProvider {
 			None
 		} else {
 			// Bound before the await so the lock guard is not held across it.
-			let known = lock(&self.stored_quality).get(&genesis_hash).copied();
+			let known = self
+				.stored_quality
+				.lock()
+				.expect("stored quality mutex poisoned")
+				.get(&genesis_hash)
+				.copied();
 			match known {
 				Some(known) => Some(known),
 				None => Some(
@@ -648,7 +666,10 @@ impl EmbeddedChainProvider {
 			},
 			None => store.save(genesis_hash, blob, None).await?,
 		}
-		lock(&self.stored_quality).insert(genesis_hash, has_code);
+		self.stored_quality
+			.lock()
+			.expect("stored quality mutex poisoned")
+			.insert(genesis_hash, has_code);
 		Ok(true)
 	}
 

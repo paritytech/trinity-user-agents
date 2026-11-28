@@ -391,13 +391,19 @@ impl JsonRpcConnection for WsConnection {
 		self.last_read.mid_message_silence()
 	}
 
+	// Skips what a poisoned lock guards instead of panicking: `Drop` runs this, and a
+	// panic there while another panic unwinds aborts the process.
 	fn close(&self) {
 		if self.closed.swap(true, Ordering::SeqCst) {
 			return;
 		}
-		self.requests.lock().expect("requests mutex poisoned").close_channel();
+		if let Ok(mut requests) = self.requests.lock() {
+			requests.close_channel();
+		}
 		self.stream_abort.abort();
-		self.responses.lock().expect("responses mutex poisoned").take();
+		if let Ok(mut responses) = self.responses.lock() {
+			responses.take();
+		}
 	}
 }
 

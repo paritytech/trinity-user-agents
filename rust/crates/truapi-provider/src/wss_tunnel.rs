@@ -35,7 +35,7 @@ use core::time::Duration;
 use std::{
 	collections::HashMap,
 	sync::{
-		Arc, Mutex, MutexGuard, OnceLock, PoisonError,
+		Arc, Mutex, OnceLock,
 		atomic::{AtomicBool, Ordering},
 	},
 };
@@ -83,15 +83,6 @@ const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(20);
 /// `Host` header. smoldot's is a few hundred bytes; anything past this is not a
 /// handshake this tunnel should be repairing.
 const MAX_UPGRADE_BYTES: usize = 8 * 1024;
-
-/// Lock the tunnel map, recovering the guard if a previous holder panicked.
-///
-/// Mirrors [`crate::light`]: one poisoning event must not disable tunnelling for
-/// the rest of the process, which would leave every `/wss` chain undialable with
-/// no way back.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-	mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Rewrite every `/wss` bootnode in `spec` to a loopback `/ws` tunnel.
 ///
@@ -191,7 +182,7 @@ fn tunnel_address(address: &str) -> Option<String> {
 /// while this function holds the tunnel map.
 fn ensure_tunnel(host: &str, port: u16) -> Option<u16> {
 	let tunnels = TUNNELS.get_or_init(|| Mutex::new(HashMap::new()));
-	let mut guard = lock(tunnels);
+	let mut guard = tunnels.lock().expect("tunnel map mutex poisoned");
 	let key = (host.to_owned(), port);
 	if let Some(tunnel) = guard.get(&key) &&
 		tunnel.alive.load(Ordering::Acquire)

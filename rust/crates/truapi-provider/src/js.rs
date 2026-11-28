@@ -47,12 +47,6 @@ use crate::{
 	provider::{EmbeddedChainProvider, EmbeddedChainProviderBuilder},
 };
 
-/// Lock a mutex, recovering the guard if a previous holder panicked.
-#[cfg(feature = "smoldot")]
-fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-	mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 /// Route the embedded provider's (and smoldot's) `tracing` output to the
 /// browser console at `level` (`error`|`warn`|`info`|`debug`|`trace`; anything
 /// else disables it). Installs the console subscriber on the first call and is
@@ -371,7 +365,12 @@ impl ChainProviderHandle {
 		if !self.inner.has_storage() {
 			return;
 		}
-		if !lock(&self.persisting).insert(genesis) {
+		if !self
+			.persisting
+			.lock()
+			.expect("persisting chains mutex poisoned")
+			.insert(genesis)
+		{
 			return;
 		}
 
@@ -407,7 +406,7 @@ impl ChainProviderHandle {
 			// starting a second loop that doubles the snapshot cost and resets
 			// the backoff. The break paths above reach this too, which is what
 			// lets a later connect restart persistence once the chain is gone.
-			lock(&persisting).remove(&genesis);
+			persisting.lock().expect("persisting chains mutex poisoned").remove(&genesis);
 		});
 	}
 }

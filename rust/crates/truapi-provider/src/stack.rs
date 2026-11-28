@@ -8,7 +8,7 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Mutex, MutexGuard, PoisonError},
+	sync::{Mutex, MutexGuard},
 };
 
 use trinity_stack::{Chain, Descriptor, Error, Pointer};
@@ -160,7 +160,7 @@ impl LightStack {
 	}
 
 	fn specs(&self) -> MutexGuard<'_, HashMap<[u8; 32], String>> {
-		self.specs.lock().unwrap_or_else(PoisonError::into_inner)
+		self.specs.lock().expect("light specs mutex poisoned")
 	}
 }
 
