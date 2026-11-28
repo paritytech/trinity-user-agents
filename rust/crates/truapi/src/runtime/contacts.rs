@@ -21,7 +21,7 @@ use std::{collections::HashMap, sync::Mutex};
 
 use parity_scale_codec::Encode;
 
-use crate::{host_logic::keyed_hash::blake2b_256_keyed, product_id::ProductId};
+use crate::{host_logic::keyed_hash, product_id::ProductId};
 
 /// Upper bound on cached handles. The cache holds contacts the user picked, so
 /// it stays small; reaching the bound empties it rather than evicting in order.
@@ -38,13 +38,13 @@ pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle-key/user";
 /// key, so it cannot collide with another key derived from the same source.
 /// Never used to mint: only [`product_handle_key`] reads it.
 pub fn user_handle_key(root_entropy_source: &[u8; 32]) -> [u8; 32] {
-	blake2b_256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
+	keyed_hash::blake2b_256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
 }
 
 /// Scope the user's handle key to one product, so the same contact hashes to an
 /// unrelated handle in every other product.
 pub fn product_handle_key(user_handle_key: &[u8; 32], product_id: &ProductId) -> [u8; 32] {
-	blake2b_256_keyed(product_id.as_str().as_bytes(), user_handle_key)
+	keyed_hash::blake2b_256_keyed(product_id.as_str().as_bytes(), user_handle_key)
 }
 
 /// The handle one contact is known by in one product, on every host of this
@@ -57,7 +57,7 @@ pub fn product_handle_key(user_handle_key: &[u8; 32], product_id: &ProductId) ->
 /// accounts, because People-chain accounts are enumerable but the key is not
 /// guessable.
 pub fn contact_handle(handle_key: &[u8; 32], account: &[u8; 32]) -> [u8; 32] {
-	blake2b_256_keyed(&account.encode(), handle_key)
+	keyed_hash::blake2b_256_keyed(&account.encode(), handle_key)
 }
 
 /// One product's handle key: mints the handles that product holds and checks

@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 
 use super::{
 	entropy::{ProductEntropyError, derive_product_entropy_from_source},
-	keyed_hash::blake2b_256_keyed,
+	keyed_hash,
 	product_account::{
 		ProductAccountError, create_chain_code, derive_hard_path_from_keypair,
 		derive_ring_vrf_entropy_from_domain, index_bytes, normalize_chain_code,
@@ -138,7 +138,7 @@ impl RootEntropy {
 		product_id: &ProductId,
 	) -> Result<[u8; 32], ProductAccountError> {
 		let root = self.keyed_hash(RING_VRF_ROOT_KEY);
-		Ok(blake2b_256_keyed(&root, &create_chain_code(product_id.as_str())?))
+		Ok(keyed_hash::blake2b_256_keyed(&root, &create_chain_code(product_id.as_str())?))
 	}
 
 	/// Derive product-scoped entropy from the root entropy.
@@ -164,7 +164,7 @@ impl RootEntropy {
 	pub fn derive_x25519_keypair(&self, domain: &[u8]) -> ([u8; 32], [u8; 32]) {
 		let root = self.keyed_hash(b"ecdh");
 		let chain_code = normalize_chain_code(domain.encode());
-		let secret_bytes = blake2b_256_keyed(&root, &chain_code);
+		let secret_bytes = keyed_hash::blake2b_256_keyed(&root, &chain_code);
 		(secret_bytes, X25519PrivateKey::from(secret_bytes).public_key().0)
 	}
 
@@ -177,6 +177,6 @@ impl RootEntropy {
 	}
 
 	fn keyed_hash(&self, key: &[u8]) -> [u8; 32] {
-		blake2b_256_keyed(&self.0, key)
+		keyed_hash::blake2b_256_keyed(&self.0, key)
 	}
 }

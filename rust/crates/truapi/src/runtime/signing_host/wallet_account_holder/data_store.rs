@@ -10,8 +10,8 @@ use zeroize::Zeroizing;
 use super::{WalletAccountHolder, WalletKeys};
 use crate::{
 	host_logic::{
-		dotns_gateway::account_to_h160, keyed_hash::blake2b_256_keyed,
-		product_account::ProductAccountError, x25519_seal::AeadKey,
+		dotns_gateway::account_to_h160, keyed_hash, product_account::ProductAccountError,
+		x25519_seal::AeadKey,
 	},
 	installation::InstallationId,
 	runtime::AuthorityError,
@@ -66,7 +66,7 @@ impl WalletKeys {
 /// BLAKE2b-256 of the context, keyed with the 64-byte secret in schnorrkel's
 /// ed25519 form, the form polkadot-js and the Android SDK hold.
 fn record_encryption_key_from_secret(secret: &[u8; 64]) -> AeadKey {
-	let key = blake2b_256_keyed(RECORD_KEY_CONTEXT, secret);
+	let key = keyed_hash::blake2b_256_keyed(RECORD_KEY_CONTEXT, secret);
 	AeadKey::from_bytes(Zeroizing::new(key))
 }
 
