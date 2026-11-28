@@ -114,7 +114,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
+                approvalRequester: PaymentApprovalRequesterFactory.create(
+                    router: productsRouter,
+                    paymentsSupport: paymentsSupport,
+                    chainRegistry: chainRegistry
+                ),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),

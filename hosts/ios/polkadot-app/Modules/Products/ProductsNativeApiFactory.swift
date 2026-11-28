@@ -119,7 +119,11 @@ final class ProductsNativeApiFactory: ProductsNativeApiMaking {
             entropyDeriver: entropyDeriver,
             substrateStorageFacade: substrateStorageFacade,
             permissionGuard: permissionGuard,
-            paymentApprovalRequester: PaymentApprovalRequesterFactory.create(router: routers.productsRouter),
+            paymentApprovalRequester: PaymentApprovalRequesterFactory.create(
+                router: routers.productsRouter,
+                paymentsSupport: paymentsSupport,
+                chainRegistry: chainRegistry
+            ),
             paymentPrivacyConfirmer: PaymentPrivacyConfirmer(router: routers.productsRouter),
             recyclingStrategy: CoinageRecyclingStrategyStore.shared,
             paymentsSupport: paymentsSupport,

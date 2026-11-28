@@ -11,7 +11,7 @@ protocol ModuleNavigating: AnyObject {
     func openProduct(page: ProductPage)
     func presentProduct(page: ProductPage)
     func openPocket()
-    func openScanPanel()
+    func openContactSearch()
     func openBackupSettings()
 }
 
@@ -73,8 +73,8 @@ extension ModuleNavigator: ModuleNavigating {
         }
     }
 
-    func openScanPanel() {
-        UIApplication.shared.mainTabBarController?.openScanPanel()
+    func openContactSearch() {
+        UIApplication.shared.mainTabBarController?.openContactSearch()
     }
 
     func openBackupSettings() {

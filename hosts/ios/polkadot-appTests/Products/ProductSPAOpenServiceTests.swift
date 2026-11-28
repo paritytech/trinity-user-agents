@@ -51,6 +51,6 @@ private final class ProductLinkNavigator: ModuleNavigating {
     func openWallet(then _: @escaping @MainActor (UINavigationController, _ wasOnScreen: Bool) -> Void) {}
     func presentProduct(page _: ProductPage) {}
     func openPocket() {}
-    func openScanPanel() {}
+    func openContactSearch() {}
     func openBackupSettings() {}
 }
