@@ -8,4 +8,6 @@ struct TransferSpendableBreakdown: Equatable {
     let availablePrivate: BigUInt
     /// Held back for privacy; reachable only with a confirmation (zero when the strategy forbids it).
     let gainingPrivacy: BigUInt
+    /// Every coin the user holds, the base of the confirmation limit's share rule.
+    let total: BigUInt
 }

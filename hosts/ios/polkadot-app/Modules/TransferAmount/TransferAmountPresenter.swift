@@ -21,6 +21,7 @@ final class TransferAmountPresenter {
     let availableBalanceViewModelFactory: BalanceViewModelFactoryProtocol
     let amountInputStrategy: AmountInputStrategyProtocol
     let paymentAssetViewModelFactory: PaymentAssetViewModelMaking
+    let confirmationGateRule: ConfirmationGateRuleProtocol
 
     private var inputAmount: AmountInputResult?
 
@@ -45,7 +46,8 @@ final class TransferAmountPresenter {
         amountInputStrategy: AmountInputStrategyProtocol,
         dataValidationFactory: TransferDataValidatorFactoryProtocol,
         config: TransferAmountConfig = .default,
-        paymentAssetViewModelFactory: PaymentAssetViewModelMaking = PaymentAssetViewModelFactory()
+        paymentAssetViewModelFactory: PaymentAssetViewModelMaking = PaymentAssetViewModelFactory(),
+        confirmationGateRule: ConfirmationGateRuleProtocol
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
@@ -56,6 +58,7 @@ final class TransferAmountPresenter {
         self.dataValidationFactory = dataValidationFactory
         self.config = config
         self.paymentAssetViewModelFactory = paymentAssetViewModelFactory
+        self.confirmationGateRule = confirmationGateRule
     }
 }
 
@@ -300,6 +303,11 @@ private extension TransferAmountPresenter {
     }
 
     func authorizeAndSubmit(validation: TransferPreviewValidation) {
+        guard requiresAuthentication(for: validation) else {
+            doSubmit(validation: validation)
+            return
+        }
+
         wireframe.authorize(animated: true, retriable: false) { [weak self] isAuthorized in
             guard isAuthorized else {
                 self?.view?.didStopSubmission()
@@ -381,6 +389,13 @@ private extension TransferAmountPresenter {
     func formattedAmount(_ amount: BigUInt) -> String {
         balanceViewModelFactory.amountFromValue(amount)
             .value(for: .current)
+    }
+
+    func requiresAuthentication(for validation: TransferPreviewValidation) -> Bool {
+        confirmationGateRule.requiresAuthentication(
+            amount: validation.fullAmount,
+            total: spendableBreakdown?.total
+        )
     }
 
     func applyConfig() {

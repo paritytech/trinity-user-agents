@@ -25,9 +25,6 @@ extension ChatPresenter {
             return
         }
 
-        wireframe.authorize(animated: true, retriable: false) { [weak self] isAuthorized in
-            guard isAuthorized else { return }
-            self?.interactor.reclaimTransfer(messageId: messageId, coinKeys: content.coinKeys)
-        }
+        interactor.reclaimTransfer(messageId: messageId, coinKeys: content.coinKeys)
     }
 }

@@ -80,7 +80,7 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 }
 
 @MainActor
-protocol ChatWireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable, AuthorizationPresentable {
+protocol ChatWireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable {
     func showSendAsset(
         from view: ControllerBackedProtocol?,
         chatMetadata: ChatMetadata

@@ -20,26 +20,53 @@ struct HostLogFilterTests {
     /// What a line counts against: its marker on `truapi.core`, its name as a
     /// host event, and its tag where it names neither.
     @Test(arguments: [
-        (HostLogLine.core("truapi.tracing.warn: chain call failed"),
-         HostLogLine.core("truapi.tracing.warn: chain call failed again"), true),
-        (HostLogLine.core("truapi.funding.step_reached"),
-         HostLogLine.core("truapi.funding.step_reached: step 3 of 15"), true),
-        (HostLogLine.core(tooLongToNameAMarker),
-         HostLogLine.core(tooLongToNameAMarker + " and then some"), true),
-        (HostLogLine.core(": fields with no marker before them"),
-         HostLogLine.core(tooLongToNameAMarker), true),
-        (HostLogLine.event("host.notification.not_scheduled"),
-         HostLogLine.event("host.notification.not_scheduled"), true),
+        (
+            HostLogLine.core("truapi.tracing.warn: chain call failed"),
+            HostLogLine.core("truapi.tracing.warn: chain call failed again"),
+            true
+        ),
+        (
+            HostLogLine.core("truapi.funding.step_reached"),
+            HostLogLine.core("truapi.funding.step_reached: step 3 of 15"),
+            true
+        ),
+        (
+            HostLogLine.core(tooLongToNameAMarker),
+            HostLogLine.core(tooLongToNameAMarker + " and then some"),
+            true
+        ),
+        (
+            HostLogLine.core(": fields with no marker before them"),
+            HostLogLine.core(tooLongToNameAMarker),
+            true
+        ),
+        (
+            HostLogLine.event("host.notification.not_scheduled"),
+            HostLogLine.event("host.notification.not_scheduled"),
+            true
+        ),
         (HostLogLine.tagged("truapi.chain"), HostLogLine.tagged("truapi.chain"), true),
         (HostLogLine.tagged("truapi.chain"), HostLogLine.tagged("truapi.auth"), false),
-        (HostLogLine.core("truapi.tracing.warn: chain call failed"),
-         HostLogLine.core("truapi.chain.follow_budget_reached: c1 open 4s"), false),
-        (HostLogLine.core("truapi.funding.step_reached"),
-         HostLogLine.core("truapi.funding.ended"), false),
-        (HostLogLine.core(tooLongToNameAMarker),
-         HostLogLine.core("truapi.funding.ended"), false),
-        (HostLogLine.event("host.notification.not_scheduled"),
-         HostLogLine.event("host.product.opened"), false)
+        (
+            HostLogLine.core("truapi.tracing.warn: chain call failed"),
+            HostLogLine.core("truapi.chain.follow_budget_reached: c1 open 4s"),
+            false
+        ),
+        (
+            HostLogLine.core("truapi.funding.step_reached"),
+            HostLogLine.core("truapi.funding.ended"),
+            false
+        ),
+        (
+            HostLogLine.core(tooLongToNameAMarker),
+            HostLogLine.core("truapi.funding.ended"),
+            false
+        ),
+        (
+            HostLogLine.event("host.notification.not_scheduled"),
+            HostLogLine.event("host.product.opened"),
+            false
+        )
     ])
     func twoLinesShareAWindowOnlyWhenTheyShareAKey(first: HostLogLine, second: HostLogLine, shared: Bool) {
         let filter = HostLogFilter()

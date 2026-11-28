@@ -58,6 +58,6 @@ extension PolkadotSigningDetailsPresentable {
 }
 
 @MainActor
-protocol PolkadotSigningWireframeProtocol: PolkadotSigningDetailsPresentable, AuthorizationPresentable {
+protocol PolkadotSigningWireframeProtocol: PolkadotSigningDetailsPresentable {
     func hide(view: PolkadotSigningViewProtocol?, decision: PolkadotSigningDecision)
 }

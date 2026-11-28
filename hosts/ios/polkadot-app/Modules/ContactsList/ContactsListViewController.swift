@@ -105,7 +105,7 @@ private extension ContactsListViewController {
     func addHandlers() {
         rootView.newChatButton.accessibilityId(AccessibilityID.Chats.newChatButton)
         rootView.newChatHandler = { [weak self] in
-            self?.presenter.showScanPanel()
+            self?.presenter.showContactSearch()
         }
 
         rootView.contactSelectionHandler = { [weak self] id in
