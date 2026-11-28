@@ -50,10 +50,11 @@ class TabBarVisibilityHolder @Inject constructor() {
 
     private fun recompute() {
         val hiding = pins.lastKeyPinning(TabBarPin.Hidden)
-        val tucking = pins.lastKeyPinning(TabBarPin.Tucked)
+        val tucking = pins.entries.lastOrNull { it.value == TabBarPin.Tucked || it.value == TabBarPin.TuckedIfAutoHideOn }
         mode.value = when {
             hiding != null -> TabBarMode.HiddenByScreen(hiding)
-            tucking != null -> TabBarMode.TuckedOverScreen(tucking)
+            tucking?.value == TabBarPin.Tucked -> TabBarMode.TuckedOverScreen(tucking.key)
+            tucking != null -> TabBarMode.TuckedOverScreenIfAutoHideOn(tucking.key)
             pins.isNotEmpty() -> TabBarMode.Main
             arriving.isNotEmpty() -> mode.value
             else -> TabBarMode.Absent
@@ -63,18 +64,20 @@ class TabBarVisibilityHolder @Inject constructor() {
     private fun Map<Any, TabBarPin>.lastKeyPinning(pin: TabBarPin): Any? = entries.lastOrNull { it.value == pin }?.key
 }
 
-enum class TabBarPin { Main, Tucked, Hidden }
+enum class TabBarPin { Main, Tucked, TuckedIfAutoHideOn, Hidden }
 
 @Immutable
 sealed interface TabBarMode {
     val showsBar: Boolean
-        get() = this == Main || this is TuckedOverScreen
+        get() = this == Main || this is TuckedOverScreen || this is TuckedOverScreenIfAutoHideOn
 
     data object Absent : TabBarMode
 
     data object Main : TabBarMode
 
     data class TuckedOverScreen(val screen: Any) : TabBarMode
+
+    data class TuckedOverScreenIfAutoHideOn(val screen: Any) : TabBarMode
 
     data class HiddenByScreen(val screen: Any) : TabBarMode
 }
@@ -93,6 +96,11 @@ fun ForceShowTabBar() {
 @Composable
 fun ShowTabBarTucked() {
     PinTabBar(TabBarPin.Tucked)
+}
+
+@Composable
+fun ShowTabBarTuckedIfAutoHideOn() {
+    PinTabBar(TabBarPin.TuckedIfAutoHideOn)
 }
 
 @Composable
