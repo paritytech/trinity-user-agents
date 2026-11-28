@@ -41,7 +41,9 @@ interface DebugMenuContract {
 
     fun onTruapiRuntimeToggled(enabled: Boolean)
 
-    fun onRuntimeRestartConfirmed()
+    fun onMaterialsOverrideClick()
 
-    fun onRuntimeRestartCancelled()
+    fun onRestartConfirmed()
+
+    fun onRestartCancelled()
 }

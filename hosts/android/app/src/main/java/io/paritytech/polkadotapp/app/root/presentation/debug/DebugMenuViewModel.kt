@@ -17,6 +17,8 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.MaterialsDebugSettings
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.MaterialsOverride
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.store.JWTTokenStore
@@ -38,6 +40,7 @@ class DebugMenuViewModel @Inject constructor(
     private val jwtTokenStore: JWTTokenStore,
     private val coinageDebugSettings: CoinageDebugSettings,
     private val productRuntimeSettings: ProductRuntimeSettings,
+    private val materialsDebugSettings: MaterialsDebugSettings,
     private val restartAppUseCase: RestartAppUseCase,
     private val devServerAddresses: DevServerAddresses,
 ) : BaseViewModel(), DebugMenuContract {
@@ -52,6 +55,7 @@ class DebugMenuViewModel @Inject constructor(
         refreshJWTTokenState()
         refreshCoinageDebugWidgetsState()
         refreshTruapiRuntimeState()
+        refreshMaterialsState()
     }
 
     override fun onBackClick() {
@@ -149,18 +153,32 @@ class DebugMenuViewModel @Inject constructor(
     override fun onTruapiRuntimeToggled(enabled: Boolean) {
         val previous = state.value.truapiRuntimeEnabled
         productRuntimeSettings.setTrUAPIRuntimeEnabled(enabled)
-        state.update { it.copy(runtimeRestartRevertsTo = previous) }
+        state.update { it.copy(pendingRestart = PendingRestart.Runtime(revertsTo = previous)) }
         refreshTruapiRuntimeState()
     }
 
-    override fun onRuntimeRestartConfirmed() {
+    /** Steps through Remote config, On and Off. The core reads the choice when its runtime starts. */
+    override fun onMaterialsOverrideClick() {
+        val previous = state.value.materialsOverride
+        val entries = MaterialsOverride.entries
+        materialsDebugSettings.setOverride(entries[(previous.ordinal + 1) % entries.size])
+        state.update { it.copy(pendingRestart = PendingRestart.Materials(revertsTo = previous)) }
+        refreshMaterialsState()
+    }
+
+    override fun onRestartConfirmed() {
         restartAppUseCase()
     }
 
-    override fun onRuntimeRestartCancelled() {
-        state.value.runtimeRestartRevertsTo?.let(productRuntimeSettings::setTrUAPIRuntimeEnabled)
-        state.update { it.copy(runtimeRestartRevertsTo = null) }
+    override fun onRestartCancelled() {
+        when (val pending = state.value.pendingRestart) {
+            is PendingRestart.Runtime -> productRuntimeSettings.setTrUAPIRuntimeEnabled(pending.revertsTo)
+            is PendingRestart.Materials -> materialsDebugSettings.setOverride(pending.revertsTo)
+            null -> Unit
+        }
+        state.update { it.copy(pendingRestart = null) }
         refreshTruapiRuntimeState()
+        refreshMaterialsState()
     }
 
     private fun refreshJWTTokenState() {
@@ -174,5 +192,9 @@ class DebugMenuViewModel @Inject constructor(
 
     private fun refreshTruapiRuntimeState() {
         state.update { it.copy(truapiRuntimeEnabled = productRuntimeSettings.isTrUAPIRuntimeEnabled()) }
+    }
+
+    private fun refreshMaterialsState() {
+        state.update { it.copy(materialsOverride = materialsDebugSettings.override()) }
     }
 }

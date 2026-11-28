@@ -307,6 +307,11 @@
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>
+    <string name="debug_menu_materials">Materials (shaders)</string>
+    <string name="debug_menu_materials_remote_config">Remote config</string>
+    <string name="debug_menu_materials_on">On</string>
+    <string name="debug_menu_materials_off">Off</string>
+    <string name="debug_menu_materials_restart_message">Materials changed. Restart the app to apply it: the core reads the setting when it starts.</string>
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>

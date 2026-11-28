@@ -32,6 +32,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardCo
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.MaterialsDebugSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
@@ -147,6 +148,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.profile.CorePublicProfileAvatarSource
+import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsMaterialsDebugSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
@@ -514,6 +516,15 @@ internal interface ProductsModule {
             PrefsProductRuntimeSettings(
                 prefs = context.getSharedPreferences("product_runtime_settings", Context.MODE_PRIVATE),
                 isDebugBuild = BuildConfig.DEBUG,
+            )
+
+        // Nightly has the debug menu too, and `BuildConfig.DEBUG` cannot tell it from debug.
+        @Provides
+        @Singleton
+        fun provideMaterialsDebugSettings(@ApplicationContext context: Context): MaterialsDebugSettings =
+            PrefsMaterialsDebugSettings(
+                prefs = context.getSharedPreferences("product_runtime_settings", Context.MODE_PRIVATE),
+                debugToolsEnabled = FeatureOption.DEBUG_MENU.isEnabled,
             )
 
         @Provides

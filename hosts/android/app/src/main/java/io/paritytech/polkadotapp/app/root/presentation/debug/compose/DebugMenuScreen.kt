@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.app.root.presentation.debug.DebugMenuContract
 import io.paritytech.polkadotapp.app.root.presentation.debug.DebugMenuState
+import io.paritytech.polkadotapp.app.root.presentation.debug.PendingRestart
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.compound.NovaSwitch
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -37,6 +38,7 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.MaterialsOverride
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -63,8 +65,9 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onClearJWTTokenClick = contract::onClearJWTTokenClick,
         onCoinageDebugWidgetsToggled = contract::onCoinageDebugWidgetsToggled,
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
-        onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
-        onRuntimeRestartCancelled = contract::onRuntimeRestartCancelled,
+        onMaterialsOverrideClick = contract::onMaterialsOverrideClick,
+        onRestartConfirmed = contract::onRestartConfirmed,
+        onRestartCancelled = contract::onRestartCancelled,
     )
 }
 
@@ -90,8 +93,9 @@ private fun DebugMenuScreenInternal(
     onClearJWTTokenClick: () -> Unit,
     onCoinageDebugWidgetsToggled: (Boolean) -> Unit,
     onTruapiRuntimeToggled: (Boolean) -> Unit,
-    onRuntimeRestartConfirmed: () -> Unit,
-    onRuntimeRestartCancelled: () -> Unit,
+    onMaterialsOverrideClick: () -> Unit,
+    onRestartConfirmed: () -> Unit,
+    onRestartCancelled: () -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -123,6 +127,20 @@ private fun DebugMenuScreenInternal(
                 title = stringResource(RCommon.string.debug_menu_truapi_runtime, state.truapiHostVersion),
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
+            )
+
+            VerticalSpacer { large }
+
+            DebugMenuValueItem(
+                title = stringResource(RCommon.string.debug_menu_materials),
+                value = stringResource(
+                    when (state.materialsOverride) {
+                        MaterialsOverride.REMOTE_CONFIG -> RCommon.string.debug_menu_materials_remote_config
+                        MaterialsOverride.ON -> RCommon.string.debug_menu_materials_on
+                        MaterialsOverride.OFF -> RCommon.string.debug_menu_materials_off
+                    }
+                ),
+                onClick = onMaterialsOverrideClick
             )
 
             VerticalSpacer { extraLargeIncreased }
@@ -242,17 +260,24 @@ private fun DebugMenuScreenInternal(
         )
     }
 
-    if (state.runtimeRestartRevertsTo != null) {
-        RuntimeRestartDialog(
-            onDismiss = onRuntimeRestartCancelled,
-            onConfirm = onRuntimeRestartConfirmed,
+    state.pendingRestart?.let { pending ->
+        RestartDialog(
+            message = stringResource(
+                when (pending) {
+                    is PendingRestart.Runtime -> RCommon.string.debug_menu_runtime_restart_message
+                    is PendingRestart.Materials -> RCommon.string.debug_menu_materials_restart_message
+                }
+            ),
+            onDismiss = onRestartCancelled,
+            onConfirm = onRestartConfirmed,
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RuntimeRestartDialog(
+private fun RestartDialog(
+    message: String,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -274,7 +299,7 @@ private fun RuntimeRestartDialog(
                 VerticalSpacer { mediumIncreased }
 
                 NovaText(
-                    text = stringResource(RCommon.string.debug_menu_runtime_restart_message),
+                    text = message,
                     style = PolkadotTheme.typography.body.large,
                     color = PolkadotTheme.colors.fg.secondary
                 )
@@ -367,6 +392,34 @@ private fun DebugMenuItem(
 }
 
 @Composable
+private fun DebugMenuValueItem(
+    title: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = PolkadotTheme.spacings.large),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        NovaText(
+            modifier = Modifier.weight(1f),
+            text = title,
+            style = PolkadotTheme.typography.body.large,
+            color = PolkadotTheme.colors.fg.primary
+        )
+
+        NovaText(
+            text = value,
+            style = PolkadotTheme.typography.body.large,
+            color = PolkadotTheme.colors.fg.secondary
+        )
+    }
+}
+
+@Composable
 private fun DebugMenuToggleItem(
     title: String,
     checked: Boolean,
@@ -417,8 +470,9 @@ private fun DebugMenuScreenPreview() {
             onClearJWTTokenClick = {},
             onCoinageDebugWidgetsToggled = {},
             onTruapiRuntimeToggled = {},
-            onRuntimeRestartConfirmed = {},
-            onRuntimeRestartCancelled = {},
+            onMaterialsOverrideClick = {},
+            onRestartConfirmed = {},
+            onRestartCancelled = {},
         )
     }
 }
