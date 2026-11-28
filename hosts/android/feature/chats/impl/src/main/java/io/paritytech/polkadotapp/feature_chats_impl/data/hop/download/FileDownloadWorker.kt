@@ -24,8 +24,15 @@ class FileDownloadWorker @AssistedInject constructor(
     private val transferQueue: FileDownloadTransferQueue
 ) : CoroutineWorker(appContext, parameters) {
     override suspend fun doWork(): Result {
-        runCancellableCatching { setForeground(getForegroundInfo()) }
-            .onFailure { Timber.d(it, "Failed to promote download worker to foreground; continuing as background work") }
+        // Every launch enqueues this worker; an unreadable queue counts as work so a download is never left behind.
+        val hasDueWork = runCancellableCatching { transferQueue.nextPending() != null }.getOrDefault(true)
+
+        if (hasDueWork) {
+            runCancellableCatching { setForeground(getForegroundInfo()) }
+                .onFailure {
+                    Timber.d(it, "Failed to promote download worker to foreground; continuing as background work")
+                }
+        }
 
         val processed = runCancellableCatching { transferQueueProcessor.processPending(transferQueue) }
 

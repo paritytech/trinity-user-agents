@@ -77,6 +77,12 @@ class DurableRecoveryWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         durabilityLogD("Recovery worker run started")
 
+        // Every launch enqueues this worker, and an ongoing notification with nothing to confirm misleads.
+        if (!recoveryLoop.hasLiveTransactions()) {
+            durabilityLogD("Recovery worker run skipped: nothing is live")
+            return Result.success()
+        }
+
         promoteToForeground()
 
         // A restart after process death reaches this worker without anything having started the executor, and

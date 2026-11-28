@@ -89,7 +89,7 @@ class DurableRecoveryLoop @Inject constructor(
     }
 
     /** An unreadable ledger counts as live: abandoning transactions is far worse than one wasted pass. */
-    private suspend fun hasLiveTransactions(): Boolean = repository.hasLiveTransactions()
+    internal suspend fun hasLiveTransactions(): Boolean = repository.hasLiveTransactions()
         .onFailure { durabilityLogW("live-transactions-read-failed error=$it") }
         .getOrDefault(true)
 }
