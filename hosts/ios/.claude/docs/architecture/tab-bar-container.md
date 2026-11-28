@@ -264,7 +264,7 @@ A pushed screen without the flag derives no state, so the Docklet stays Shown on
 
 **Tucked and hidden.** Moving between `tucked` and `hidden` writes the end pose without animation, because the bar is off screen at both ends.
 
-**Interactive pops.** The fold follows the transition. When it ends, the chrome commits the incoming screen's state, or rebuilds the staying screen's state if the pop was cancelled.
+**Navigation transitions.** Every animated push or pop with a transition coordinator moves the fold on the push curve, interactive or not. The host sets the incoming screen's state inside the coordinator's alongside animation, and the navigation controller's did-show callback commits it through `applyChrome(_:)`. A cancelled interactive pop applies the staying screen's rebuilt chrome in the interaction-changed callback. A transition without a coordinator, or an unanimated one, calls `applyChrome(_:)` directly. Tab switches, drags, taps and Auto-hide keep the display-link spring. See [ADR 0001](../../../docs/adr/0001-docklet-motion-display-link.md#navigation-transitions).
 
 **Drag.** A horizontal pan that starts on the bar follows the finger live. The Path decides which pans it accepts (`acceptsPan`). A touch catches a moving bar where it is. A release that changes the rest records the user override.
 
@@ -357,9 +357,9 @@ The two change at different rates. The navigation controller is stable for the t
 - The chrome's safe area changes (`TabBarBottomChromeController.onBottomClearanceInvalidated`).
 - A tab mounts (`TabBarContainer.onContentInsetInvalidated`).
 
-Navigation and tab switches (`applyChrome(_:animatingAlongside:)`), the in-place commit, and widget attach and detach also run the same layout. Re-deriving from the selected controller stops a late `didShow` from a background tab pinning insets to a screen that is not on screen.
+Navigation and tab switches (`applyChrome(_:)`), the in-place commit, and widget attach and detach also run the same layout. Re-deriving from the selected controller stops a late `didShow` from a background tab pinning insets to a screen that is not on screen.
 
-**Fold inputs.** The derived state and the screen change only through `TabBarBottomChromeController.apply(_:)`, which `applyChrome(_:animatingAlongside:)` calls. The inset path reads them but never writes them. `resolvedState(for:)` reads the user override and does not change it.
+**Fold inputs.** The derived state and the screen change only through `TabBarBottomChromeController.apply(_:)`, which `applyChrome(_:)` calls. The inset path reads them but never writes them. `resolvedState(for:)` reads the user override and does not change it.
 
 **No window.** `updateWidgetLayout` returns while the view has no window, so a `.fullScreen` presentation elsewhere does not produce bad insets. The last applied insets hold until the view reattaches.
 
