@@ -360,10 +360,11 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
   the product drew resolves on the execution that drew it, so the product hears of its fallbacks; a kept face resolves
   on the runtime and reports to no product, and it shows plain until the runtime answers. `RealPocketFaceSource`
   closes a resolution when the next face replaces it. The layers draw on OpenGL ES 3.0 through `MaterialsSurface`
-  on the injected `MaterialsGl` (`api/presentation/widget/materials/`). The Pocket card provides
-  `LocalJsMaterialsRenderer` (`wallet/impl/.../product/materials/`), and its `CardMaterials`, held by the card's
-  ViewModel scope, loads the layers' images and reports failures; every other surface draws the children plain
-  through the default renderer, and chat also reports its nodes `Unsupported` to the product.
+  on the injected `MaterialsGl` (`api/presentation/widget/materials/`). The Pocket card draws its face through
+  `MaterialsFace` in the same package, which provides `LocalJsMaterialsRenderer`, and its `CardMaterials`, held by the
+  card's ViewModel scope, loads the layers' images and reports failures. A chat message card draws through the same
+  `MaterialsFace` (see Materials in chat cards below); every other surface draws the children plain through the default
+  renderer, and the chat footer card also reports its nodes `Unsupported` to the product.
 - A card expands in place rather than into a sheet: the wallet's Pocket screen moves the same card element to the top
   of a full-screen page with the shared-element transition the native cards use, and hosts the product under it through
   `SpaHost` (`api/presentation/spaHost`, with `ProductWebViewHost`). `ExpandedProductPage` keeps one session at a time
@@ -395,6 +396,15 @@ is written to the product tables, so nothing can uninstall them, and the product
 the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,
 and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
 (`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
+
+### Materials in chat cards
+
+A chat message card draws its `Materials` nodes with the renderer Pocket cards use. `TrUAPIChatWorker` resolves the
+materials of each tree it draws for `RenderContext.ChatMessage` and publishes them through `messageMaterials`, open
+while the card shows that tree. `ProductsMessageViewModel` holds a `CardMaterialsSlot` for the card, and
+`ProductsMessageRenderer` draws the tree through `MaterialsFace`, the same composable `ProductPocketCard` uses. The
+footer card draws a `Materials` node as its children, and its resolution only reports the nodes unsupported. Demo:
+`feature/products/product-sample/chat-materials-worker`.
 
 ---
 

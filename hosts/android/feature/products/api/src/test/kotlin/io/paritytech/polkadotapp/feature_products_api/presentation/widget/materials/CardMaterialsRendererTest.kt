@@ -1,14 +1,14 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import androidx.compose.runtime.mutableStateOf
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class PocketMaterialsTest {
+class CardMaterialsRendererTest {
     private val card = mockk<CardMaterials>()
 
-    private fun copy() = PocketMaterials(card, mutableStateOf(null), mutableStateOf(null))
+    private fun copy() = CardMaterialsRenderer(card, mutableStateOf(null), mutableStateOf(null))
 
     // The list card and the opened card are two copies of one card. Each hides a node's children only
     // once its own surface drew, or the opened copy would show a blank node until its first frame.

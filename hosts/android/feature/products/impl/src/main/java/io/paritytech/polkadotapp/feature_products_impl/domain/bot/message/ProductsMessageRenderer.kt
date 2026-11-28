@@ -29,8 +29,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsFace
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
@@ -104,11 +104,12 @@ class ProductsMessageRenderer(
         val viewModel: ProductsMessageViewModel = hiltViewModel(
             key = messageId,
             creationCallback = { factory: ProductsMessageViewModel.Factory ->
-                factory.create(content, messageId, product, worker, roomId)
+                factory.create(content, messageId, product, worker, roomId, imageResolver)
             }
         )
 
         val state by viewModel.state.collectAsState()
+        val resolution by viewModel.resolution.collectAsState()
 
         when (val currentState = state) {
             is LoadingState.Loading -> {
@@ -120,8 +121,10 @@ class ProductsMessageRenderer(
             }
             is LoadingState.Loaded -> {
                 CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
-                    JsWidgetRenderer(
-                        widget = currentState.data,
+                    MaterialsFace(
+                        face = currentState.data,
+                        resolution = resolution,
+                        materials = viewModel.materials,
                         jsEventHandler = viewModel::handleUiEvent,
                     )
                 }

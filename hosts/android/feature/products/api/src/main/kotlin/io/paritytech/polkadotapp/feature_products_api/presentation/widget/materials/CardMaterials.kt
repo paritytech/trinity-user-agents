@@ -1,14 +1,9 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import io.parity.truapi.MaterialsResolution
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImageRefused
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsSurface
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.drawsSameAs
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.imageRef
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

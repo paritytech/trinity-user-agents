@@ -4,6 +4,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.parity.truapi.MaterialsResolution
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -12,20 +13,26 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.CardMaterialsSlot
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImages
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 
 /**
  * ViewModel for rendering a single Products message.
  *
  * Takes the message content (scriptId + data bytes) and asynchronously
- * invokes the script executor to produce a widget tree.
+ * invokes the script executor to produce a widget tree, with the materials its `Materials` nodes draw.
  */
 @HiltViewModel(assistedFactory = ProductsMessageViewModel.Factory::class)
 class ProductsMessageViewModel @AssistedInject constructor(
@@ -35,12 +42,22 @@ class ProductsMessageViewModel @AssistedInject constructor(
     @Assisted private val product: Product,
     // Dagger cannot take a value class here: Kotlin mangles the factory method name.
     @Assisted("roomId") private val roomId: String?,
+    @Assisted imageResolver: JsImageResolver,
+    materialsGl: MaterialsGl,
+    materialImages: MaterialImages,
     private val renderObservers: Set<@JvmSuppressWildcards ProductMessageRenderObserver>,
 ) : BaseViewModel() {
     private val room = roomId?.let(::ProductChatIdParameter)
 
     private val _state = MutableStateFlow<LoadingState<JsWidget>>(LoadingState.Loading)
     val state: StateFlow<LoadingState<JsWidget>> = _state.asStateFlow()
+
+    /** The materials of the tree [state] shows, or null when it has none. */
+    val resolution: StateFlow<MaterialsResolution?> = worker.messageMaterials(room, messageId, content.messageType)
+        .stateIn(this, SharingStarted.Eagerly, null)
+
+    /** Holds the card's materials across its trees, and loads the images their layers read in this ViewModel's scope. */
+    val materials = CardMaterialsSlot(materialsGl, { source -> materialImages.load(imageResolver, source) }, this)
 
     init {
         loadWidget()
@@ -83,6 +100,7 @@ class ProductsMessageViewModel @AssistedInject constructor(
             product: Product,
             worker: ProductWorker,
             @Assisted("roomId") roomId: String?,
+            imageResolver: JsImageResolver,
         ): ProductsMessageViewModel
     }
 }

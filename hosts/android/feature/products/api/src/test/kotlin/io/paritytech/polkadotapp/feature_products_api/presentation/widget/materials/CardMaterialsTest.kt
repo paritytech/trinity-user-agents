@@ -1,12 +1,9 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.MaterialsResolution
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.CompileGuard
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImageRefused
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow

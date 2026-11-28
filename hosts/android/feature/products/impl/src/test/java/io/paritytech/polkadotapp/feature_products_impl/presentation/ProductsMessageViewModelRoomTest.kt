@@ -1,9 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
@@ -55,6 +57,9 @@ class ProductsMessageViewModelRoomTest {
         worker = worker,
         product = product,
         roomId = ROOM,
+        imageResolver = JsImageResolver { null },
+        materialsGl = mockk(),
+        materialImages = mockk(),
         renderObservers = emptySet(),
     )
 }
