@@ -2,6 +2,7 @@
 
 mod channel;
 mod pairing;
+mod rotation;
 #[cfg(test)]
 mod tests;
 
@@ -27,10 +28,15 @@ use crate::{
 	},
 	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo},
 	session_usernames::SessionUsernames,
+	time::{RealTimer, Timer},
 	unix_time::current_unix_secs,
 };
 use channel::SsoDisconnectMonitor;
-use futures::{StreamExt, channel::oneshot};
+use futures::{
+	StreamExt,
+	channel::oneshot,
+	future::{Either, select},
+};
 use pairing::{SsoPairingFlow, SsoPairingOutcome};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -160,6 +166,13 @@ pub struct SsoRequestService {
 	selection: Mutex<Selection>,
 	owner: Arc<dyn PairedSessionOwner>,
 	session_store_activation: futures::lock::Mutex<()>,
+	/// Held while this instance changes the session's keys.
+	rotation: futures::lock::Mutex<()>,
+	/// Keys the signing host disconnected while a change of them was pending.
+	disconnected_during_rotation: Mutex<Option<SsoSessionKey>>,
+	/// Statement key whose change the signing host refused, asked again only
+	/// at the next restore rather than at every periodic check.
+	refused_rotation: Mutex<Option<[u8; 32]>>,
 	#[cfg(test)]
 	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 	#[cfg(test)]
@@ -194,6 +207,9 @@ impl SsoRequestService {
 			selection: Mutex::new(Selection::default()),
 			owner,
 			session_store_activation: futures::lock::Mutex::new(()),
+			rotation: futures::lock::Mutex::new(()),
+			disconnected_during_rotation: Mutex::new(None),
+			refused_rotation: Mutex::new(None),
 			#[cfg(test)]
 			external_session_activation_pause: Mutex::new(None),
 			#[cfg(test)]
@@ -415,6 +431,8 @@ impl SsoRequestService {
 		}
 		self.drain_session_deletions(&barrier).await;
 		self.discard_committed_pairing_keys().await;
+		*self.refused_rotation.lock().expect("refused rotation mutex poisoned") = None;
+		self.rotate_keys_when_due();
 		Ok(())
 	}
 
@@ -479,11 +497,20 @@ impl SsoRequestService {
 			sync.reconcile(&booting).await;
 			booting.auth_state.announce_current();
 			drop(booting);
-			while ticks.next().await.is_some() {
+			loop {
+				let check = RealTimer.sleep(rotation::ROTATION_CHECK_INTERVAL);
+				let changed = select(ticks.next(), check).await;
 				let Some(service) = service.upgrade() else {
 					break;
 				};
-				sync.reconcile(&service).await;
+				match changed {
+					Either::Left((None, _)) => break,
+					Either::Left((Some(()), _)) => sync.reconcile(&service).await,
+					Either::Right(_) => {
+						service.rotate_keys_when_due();
+						continue;
+					},
+				}
 				#[cfg(test)]
 				service.session_store_change_ticks.fetch_add(1, Ordering::SeqCst);
 			}
@@ -697,11 +724,12 @@ impl SsoRequestService {
 		} else {
 			Ok(())
 		};
-		if pending_auth_deletion &&
-			auth_result.is_ok() &&
-			let Err(error) = self.platform.clear_core_storage(CoreStorageKey::SessionTimes).await
-		{
-			warn!(reason = %error.reason, "session times delete failed");
+		if pending_auth_deletion && auth_result.is_ok() {
+			for key in [CoreStorageKey::SessionTimes, CoreStorageKey::PendingSessionRotation] {
+				if let Err(error) = self.platform.clear_core_storage(key).await {
+					warn!(reason = %error.reason, "session record delete failed");
+				}
+			}
 		}
 		let grants_result = self.owner.finish_cleanup(barrier).await;
 		if let Err(reason) = auth_result.and(grants_result) {
@@ -793,6 +821,15 @@ impl SsoRequestService {
 	// Stale peer notifications wake only their own waiters.
 	async fn handle_signing_host_disconnected(&self, key: SsoSessionKey) {
 		self.session_disconnects.notify_key(key, SSO_PEER_DISCONNECT_REASON);
+		if self.change_pending_for(key).await {
+			self.follow_disconnect_during_rotation(key);
+		} else {
+			self.end_session_unless_stored_elsewhere(key).await;
+		}
+	}
+
+	/// End the session on `key` after its signing host disconnected it.
+	async fn end_disconnected_session(&self, key: SsoSessionKey) {
 		if !self.begin_session_clear(true, None, Some(key), None) {
 			return;
 		}

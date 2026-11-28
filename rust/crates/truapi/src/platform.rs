@@ -1288,6 +1288,12 @@ pub enum CoreStorageKey {
 	/// shared the same way.
 	#[codec(index = 18)]
 	SessionTimes,
+	/// The pairing host's change to new session keys while the signing host
+	/// has not answered it, holding those keys. Kept beside
+	/// [`Self::AuthSession`] and shared the same way, so whichever instance
+	/// finds it finishes the same change.
+	#[codec(index = 19)]
+	PendingSessionRotation,
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1408,6 +1414,7 @@ pub fn describe_core_storage_key(
 		},
 		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 		CoreStorageKey::SessionTimes => ("SessionTimes", None),
+		CoreStorageKey::PendingSessionRotation => ("PendingSessionRotation", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }

@@ -56,6 +56,7 @@ fn pending_wait<'a>(
 		remote_message_id: "request-1",
 		cancel,
 		disconnect: None,
+		peer_disconnect: PeerDisconnect::EndsWait,
 	}
 }
 
@@ -262,4 +263,33 @@ fn an_undecodable_message_is_skipped() {
 
 	let expected = Ok(Response { responding_to: "request-1".to_string(), payload: Ok([7; 32]) });
 	assert_eq!((before, after), (expected.clone(), expected));
+}
+
+/// A peer that cannot decode the request says so in its acknowledgement, and
+/// the caller learns it as its own error, not as a transport failure.
+#[test]
+fn a_request_the_peer_cannot_decode_is_reported_as_not_understood() {
+	let (host, responder) = sso_host_and_responder_sessions();
+	let ack = |code: SsoResponseCode| {
+		build_signed_session_response_statement(
+			&responder,
+			"request-1".to_string(),
+			code as u8,
+			fresh_statement_expiry(),
+		)
+		.unwrap()
+	};
+
+	assert_eq!(
+		[
+			wait_for_subtree(&host, vec![peer_page(ack(SsoResponseCode::DecodingFailed))]),
+			wait_for_subtree(&host, vec![peer_page(ack(SsoResponseCode::DecryptionFailed))]),
+		],
+		[
+			Err(SsoRemoteResponseError::NotUnderstood),
+			Err(SsoRemoteResponseError::Failure(
+				"SSO request request-1 was rejected: decryptionFailed".to_string()
+			)),
+		]
+	);
 }

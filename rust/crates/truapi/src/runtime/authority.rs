@@ -226,6 +226,7 @@ impl From<SsoRemoteResponseError> for AuthorityError {
 			SsoRemoteResponseError::LocalDisconnected |
 			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
 			SsoRemoteResponseError::ChainUnavailable(reason) => Self::ChainUnavailable { reason },
+			SsoRemoteResponseError::NotUnderstood => Self::Unknown { reason: reason.to_string() },
 			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
 				"Rejected" | "User rejected" => Self::Rejected,
 				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,

@@ -20,6 +20,7 @@ pub mod funding;
 pub mod funding_providers;
 pub mod funding_view;
 pub mod keyed_hash;
+pub mod pending_session_rotation;
 pub mod product_account;
 pub mod raw_signing;
 pub mod root_entropy;

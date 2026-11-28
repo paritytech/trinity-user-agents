@@ -4,6 +4,8 @@
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/B-inter-host.md?plain=1#L189-L208>
 //! Additional deployed variants are tracked as divergence D-B.5.6:
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/divergences.md?plain=1#L26-L35>
+//! The session key change, variants 25 and 26, is a truapi extension that
+//! host-spec does not describe yet.
 
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{
@@ -16,8 +18,8 @@ use super::{
 	CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse, ListRingVrfKeysResponse,
 	ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
 	ResourceAllocationRequest, ResourceAllocationResponse, Response, RingVrfSignResponse,
-	SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-	SignVrfResponse, Withdrawal,
+	RotateSessionRequest, RotateSessionResponse, SignRawWithLegacyAccountRequest,
+	SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse, Withdrawal,
 };
 
 /// v1 messages exchanged with the paired signing host over the encrypted SSO channel.
@@ -88,4 +90,11 @@ pub enum RemoteMessage {
 	/// the pairing host.
 	#[codec(index = 24)]
 	Cancel(Withdrawal),
+	/// The pairing host replaces its session keys; meaningful only from the
+	/// pairing host.
+	#[codec(index = 25)]
+	RotateSessionRequest(RotateSessionRequest),
+	/// Signing host's answer to [`RemoteMessage::RotateSessionRequest`].
+	#[codec(index = 26)]
+	RotateSessionResponse(Response<RotateSessionResponse>),
 }

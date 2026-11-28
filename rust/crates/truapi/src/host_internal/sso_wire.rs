@@ -8,7 +8,9 @@ use core::fmt::Display;
 
 use truapi::latest::HostAccountSignVrfError;
 
-use super::sso_messages::{RemoteMessage, RemoteMessageData, Response, RingVrfError, v1};
+use super::sso_messages::{
+	RemoteMessage, RemoteMessageData, Response, RingVrfError, RotateSessionError, v1,
+};
 
 /// A request payload and the wire response selected by its handler declaration.
 pub trait SsoRequest: Sized {
@@ -39,6 +41,12 @@ impl SsoError for String {
 impl SsoError for RingVrfError {
 	fn not_connected() -> Self {
 		Self::Unknown { reason: String::not_connected() }
+	}
+}
+
+impl SsoError for RotateSessionError {
+	fn not_connected() -> Self {
+		Self::Rejected { reason: String::not_connected() }
 	}
 }
 

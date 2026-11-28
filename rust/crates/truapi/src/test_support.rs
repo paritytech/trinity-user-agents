@@ -766,7 +766,9 @@ pub fn submitted_remote_messages(
 		.collect()
 }
 
-fn submitted_sso_request_from_submit(
+/// Statement request id and message of the SSO request in one
+/// `statement_submit` call, decrypted with `session`.
+pub fn submitted_sso_request_from_submit(
 	submit: &str,
 	session: &SessionInfo,
 ) -> (String, RemoteMessage) {
@@ -932,7 +934,8 @@ pub fn subscribe_ack_frame(request_id: &str, subscription_id: &str) -> String {
 	.to_string()
 }
 
-fn statement_submit_ack_frame(request_id: &str) -> String {
+/// JSON-RPC answer accepting the `statement_submit` call `request_id`.
+pub fn statement_submit_ack_frame(request_id: &str) -> String {
 	// Mirror the real `statement_submit` result shape (`SubmitResult`); `submit`
 	// treats only `new`/`known` as accepted.
 	serde_json::json!({
@@ -975,7 +978,9 @@ pub fn statement_page_frame(
 	.to_string()
 }
 
-fn sso_statement(
+/// Session statement carrying `data`, encrypted for `session` and signed by
+/// the peer's statement key.
+pub fn sso_statement(
 	session: &crate::host_logic::session::SessionInfo,
 	data: pairing::SsoStatementData,
 	nonce_seed: u8,

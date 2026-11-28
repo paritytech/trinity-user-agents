@@ -506,6 +506,62 @@ fn product_subtree_messages_match_mobile_wire_contract() {
 	);
 }
 
+/// Wallets implement these messages and the signed bytes on their own, so the
+/// encodings are pinned here for them to check theirs against.
+#[test]
+fn session_key_change_messages_match_the_wire_contract() {
+	let request = RemoteMessage::request(
+		"request".to_string(),
+		RotateSessionRequest {
+			statement_account_id: [0x11; 32],
+			encryption_public_key: [0x22; 32],
+			signature: [0x33; 64],
+		},
+	);
+	let answer = |payload: RotateSessionResponse| {
+		hex::encode(
+			RemoteMessage {
+				message_id: "response".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::RotateSessionResponse(Response {
+					responding_to: "request".to_string(),
+					payload,
+				})),
+			}
+			.encode(),
+		)
+	};
+	let answering = "20726573706f6e7365001a1c72657175657374";
+
+	assert_eq!(
+		[
+			hex::encode(request.encode()),
+			hex::encode(RotateSessionRequest::signed_payload([0xAA; 32], [0x11; 32], [0x22; 32])),
+			answer(Ok(())),
+			answer(Err(RotateSessionError::Unsupported)),
+			answer(Err(RotateSessionError::Replaced)),
+			answer(Err(RotateSessionError::Rejected { reason: "no".to_string() })),
+		],
+		[
+			format!(
+				"1c726571756573740019{}{}{}",
+				"11".repeat(32),
+				"22".repeat(32),
+				"33".repeat(64)
+			),
+			format!(
+				"547472756170693a726f746174652d73657373696f6e{}{}{}",
+				"aa".repeat(32),
+				"11".repeat(32),
+				"22".repeat(32)
+			),
+			format!("{answering}00"),
+			format!("{answering}0100"),
+			format!("{answering}0101"),
+			format!("{answering}0102086e6f"),
+		]
+	);
+}
+
 #[test]
 fn sign_vrf_messages_match_mobile_wire_contract() {
 	let payload = HostAccountSignVrfRequest {
@@ -913,4 +969,30 @@ fn ignores_expired_session_response_ack() {
 	let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
 
 	assert_eq!(decoded, None);
+}
+
+/// A refused acknowledgement reads as a statement of its own, so a reader
+/// that waits for something else, such as a disconnect, skips it instead of
+/// stopping, while the request it answers learns why it was refused.
+#[test]
+fn a_refused_acknowledgement_decodes_as_the_refusal() {
+	let (host_session, responder_session) = sso_host_and_responder_sessions();
+	let refusal = |code: SsoResponseCode| {
+		let ack = build_signed_session_response_statement(
+			&responder_session,
+			"statement-1".to_string(),
+			code as u8,
+			fresh_expiry(),
+		)
+		.unwrap();
+		decode_sso_session_statement(&host_session, &ack, "statement-1")
+	};
+
+	assert_eq!(
+		[refusal(SsoResponseCode::DecryptionFailed), refusal(SsoResponseCode::DecodingFailed)],
+		[
+			Ok(Some(SsoSessionStatement::RequestRefused(SsoResponseCode::DecryptionFailed))),
+			Ok(Some(SsoSessionStatement::RequestRefused(SsoResponseCode::DecodingFailed))),
+		]
+	);
 }
