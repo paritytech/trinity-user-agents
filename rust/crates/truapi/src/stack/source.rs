@@ -10,12 +10,20 @@ use core::time::Duration;
 use trinity_stack::{FetchRequest, Pointer, Refresh, Served, StackReader, Status, open};
 
 use super::{
-	ReplaceCheck, Stack, StackError,
+	ReplaceCheck, ReservedValuesPolicy, Stack, StackError,
 	held::{CopyRules, HeldCopy},
 };
+use crate::chain_runtime::{GenesisHashes, encode_hex};
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
+
+/// How old a copy gets before the next fetch while one of its chains gives a
+/// different genesis hash from the one it names.
+///
+/// Chains that restart from genesis get new hashes, which the operator
+/// publishes. Until the core has them the chain is out of use.
+const MISMATCH_REFRESH_MAX_AGE_SECS: u64 = 5 * 60;
 
 /// A fetch of the stack's descriptor for the host to make.
 ///
@@ -74,6 +82,55 @@ pub enum StackRefreshOutcome {
 	},
 }
 
+/// A difference between the stack's descriptor and what one of its chains answered.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum StackMismatch {
+	/// The chain's last connection reached one with a different genesis hash
+	/// from the descriptor's, as happens after a chain restarts from genesis.
+	/// The core refused that connection.
+	#[display(
+		"the {role} chain gave genesis hash {}, not {}",
+		encode_hex(answered),
+		encode_hex(named)
+	)]
+	GenesisHash {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// The genesis hash the descriptor names.
+		named: [u8; 32],
+		/// The genesis hash the chain gave.
+		answered: [u8; 32],
+	},
+	/// People's `NetworkSuffix.NetworkSuffix` is not the descriptor's `tld`.
+	///
+	/// The core derives its identities under `peopl.<tld>` and builds proof
+	/// contexts with People's suffix, so an identity derived under one does
+	/// not match the other. The core keeps using People.
+	#[display("People's NetworkSuffix is \"{answered}\", not the stack's tld \"{named}\"")]
+	NetworkSuffix {
+		/// The descriptor's `tld`.
+		named: String,
+		/// The suffix People gave, escaped as [`u8::escape_ascii`] escapes
+		/// it: printable ASCII stays as it is, apart from a backslash, single
+		/// quote or double quote, which gets a backslash before it, and any
+		/// other byte is written as `\t`, `\r`, `\n` or `\xNN`.
+		answered: String,
+	},
+}
+
+/// What an answer from a chain did to [`StackStatus::mismatches`].
+#[cfg_attr(test, derive(Debug, PartialEq))]
+pub enum Listing {
+	/// Nothing: the list is as it was.
+	Unchanged,
+	/// The entry the list had is gone, because the answer agrees with the
+	/// descriptor.
+	Cleared,
+	/// The list has this entry now.
+	Listed(StackMismatch),
+}
+
 /// The stack the core runs, and what the host shows and does about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -99,8 +156,18 @@ pub struct StackStatus {
 	/// runtime again to follow it. A copy on another TLD is refused and never
 	/// sets it.
 	pub restart_required: bool,
-	/// The last finished fetch, or `None` before the first one.
+	/// The last finished fetch, or `None` before the first one. A fetch that
+	/// changed the stored record finishes once that record is stored or its
+	/// store fails; the whole status shows it only from then on.
 	pub last_refresh: Option<StackRefreshOutcome>,
+	/// Where a chain's last answer differed from the descriptor the core
+	/// runs: its chains in the descriptor's order, then People's
+	/// `NetworkSuffix`. The suffix is listed only once this runtime has read
+	/// it, so a suffix that is not listed may not have been read yet. While a
+	/// chain is listed, a refresh that was started fetches the descriptor
+	/// every five minutes instead of every hour, until a newer copy sets
+	/// `restart_required`.
+	pub mismatches: Vec<StackMismatch>,
 }
 
 /// The stack a host build runs: the copy the core started from, and each
@@ -120,11 +187,23 @@ pub struct StackSource {
 	stale: bool,
 	expired: bool,
 	last_refresh: Option<StackRefreshOutcome>,
+	/// The last answer of each chain that gave a different genesis hash from
+	/// the one the running copy names.
+	wrong_genesis: Vec<GenesisHashes>,
+	/// People's `NetworkSuffix` as last read, or `None` before any read. It is
+	/// not stored, so each runtime starts without one.
+	people_suffix: Option<Vec<u8>>,
+	/// The status from before the last [`Self::fetched`], shown until the
+	/// record it returned is stored or fails to store, so that the host is
+	/// never told `Current` for a copy whose store may still fail.
+	before_store: Option<StackStatus>,
 }
 
 impl StackSource {
 	/// Starts from the newer of `bundled`, the signed copy the build ships,
 	/// and `stored`, the record the last [`Self::fetched`] returned.
+	/// `reserved_values` is the build's policy, already checked. Every copy,
+	/// bundled, stored or fetched, is held to it.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
 	/// a stack the core can run. A stored record the core would refuse is
@@ -133,10 +212,10 @@ impl StackSource {
 		pointer: Pointer,
 		bundled: &[u8],
 		stored: Option<&[u8]>,
-		allows_reserved_values: bool,
+		reserved_values: ReservedValuesPolicy,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
-		let rules = CopyRules::new(pointer, bundled, allows_reserved_values)?;
+		let rules = CopyRules::new(pointer, bundled, reserved_values)?;
 		let stored = stored.filter(|record| match rules.stored_copy(record) {
 			Ok(copy) => copy.is_some(),
 			Err(error) => {
@@ -160,6 +239,9 @@ impl StackSource {
 			stale: current.stale,
 			expired: current.expired,
 			last_refresh: None,
+			wrong_genesis: Vec::new(),
+			people_suffix: None,
+			before_store: None,
 		})
 	}
 
@@ -174,7 +256,14 @@ impl StackSource {
 	}
 
 	/// What the host is told about the stack.
+	///
+	/// While the record a [`Self::fetched`] returned is being stored, this is
+	/// the status from before that fetch, with the chains' answers since.
 	pub fn status(&self) -> StackStatus {
+		let mismatches = self.mismatches();
+		if let Some(before) = &self.before_store {
+			return StackStatus { mismatches, ..before.clone() };
+		}
 		StackStatus {
 			descriptor: serde_json::to_string(&self.running.descriptor)
 				.expect("a descriptor always serialises"),
@@ -183,29 +272,106 @@ impl StackSource {
 			expired: self.expired,
 			restart_required: self.next_start.is_some(),
 			last_refresh: self.last_refresh.clone(),
+			mismatches,
 		}
+	}
+
+	fn mismatches(&self) -> Vec<StackMismatch> {
+		self.wrong_chains().chain(self.wrong_suffix()).collect()
+	}
+
+	/// People's suffix as last read, when it is not the running copy's `tld`.
+	fn wrong_suffix(&self) -> Option<StackMismatch> {
+		let tld = self.running.stack.tld();
+		let answered =
+			self.people_suffix.as_deref().filter(|answered| *answered != tld.as_bytes())?;
+		Some(StackMismatch::NetworkSuffix {
+			named: tld.to_owned(),
+			answered: answered.escape_ascii().to_string(),
+		})
+	}
+
+	/// The chains of the running copy whose last answer was a different
+	/// genesis hash from the one it names, in the copy's order.
+	fn wrong_chains(&self) -> impl Iterator<Item = StackMismatch> {
+		self.running.descriptor.chains.iter().filter_map(|chain| {
+			let named = chain.genesis();
+			let wrong = self.wrong_genesis.iter().find(|wrong| wrong.named == named)?;
+			let answered = wrong.answered;
+			Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
+		})
+	}
+
+	/// Takes People's `NetworkSuffix.NetworkSuffix` as read from the chain.
+	///
+	/// Returns what that did to [`Self::status`], which lists the last suffix
+	/// read when it is not the running copy's `tld`. The core refuses nothing
+	/// over a suffix, so unlike a wrong genesis hash it does not bring the
+	/// next fetch forward.
+	pub fn people_suffix_answered(&mut self, answered: &[u8]) -> Listing {
+		let listed = self.wrong_suffix();
+		self.people_suffix = Some(answered.to_vec());
+		match self.wrong_suffix() {
+			wrong if wrong == listed => Listing::Unchanged,
+			Some(wrong) => Listing::Listed(wrong),
+			None => Listing::Cleared,
+		}
+	}
+
+	/// Records the genesis hash a new connection's chain gave.
+	///
+	/// Returns what that did to [`Self::status`]. A chain the running copy
+	/// does not name changes nothing. While a chain's last answer is wrong
+	/// and no newer copy waits for the next start, [`Self::next_fetch_in`]
+	/// counts to five minutes instead of an hour.
+	pub fn chain_answered(&mut self, hashes: GenesisHashes) -> Listing {
+		let GenesisHashes { named, answered } = hashes;
+		let chains = &self.running.descriptor.chains;
+		let Some(chain) = chains.iter().find(|chain| chain.genesis() == named) else {
+			return Listing::Unchanged;
+		};
+		let entry = self.wrong_genesis.iter().find(|entry| entry.named == named);
+		let listed = entry.map(|entry| entry.answered);
+		let wrong = (answered != named).then_some(answered);
+		if listed == wrong {
+			return Listing::Unchanged;
+		}
+		self.wrong_genesis.retain(|entry| entry.named != named);
+		if answered == named {
+			return Listing::Cleared;
+		}
+		self.wrong_genesis.push(hashes);
+		Listing::Listed(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
 	/// out. Answer it with [`Self::fetched`].
 	#[must_use = "a fetch handed out stays pending until `fetched` answers it"]
 	pub fn due_fetch(&mut self, now_unix_seconds: i64) -> Option<FetchRequest> {
-		self.first_fetch
-			.take()
-			.or_else(|| self.reader.get(self.rules.pointer(), now_unix_seconds).fetch)
+		match self.next_fetch_in(now_unix_seconds) {
+			Some(Duration::ZERO) => self.forced_fetch(now_unix_seconds),
+			_ => None,
+		}
 	}
 
 	/// How long until [`Self::due_fetch`] has a fetch to make, or `None` while
 	/// one is out.
 	#[must_use]
 	pub fn next_fetch_in(&self, now_unix_seconds: i64) -> Option<Duration> {
-		match self.first_fetch {
-			Some(_) => Some(Duration::ZERO),
-			None => self
-				.reader
-				.due_in(self.rules.pointer(), now_unix_seconds)
-				.map(Duration::from_secs),
+		if self.first_fetch.is_some() {
+			return Some(Duration::ZERO);
 		}
+		let until_an_hour_old = self.reader.due_in(self.rules.pointer(), now_unix_seconds)?;
+		// Once a newer copy waits for the next start, fetching sooner has
+		// done its job.
+		let chain_is_wrong = self.wrong_chains().next().is_some();
+		let max_age = if chain_is_wrong && self.next_start.is_none() {
+			MISMATCH_REFRESH_MAX_AGE_SECS
+		} else {
+			REFRESH_MAX_AGE_SECS
+		};
+		let sooner_by = REFRESH_MAX_AGE_SECS - max_age;
+		Some(Duration::from_secs(until_an_hour_old.saturating_sub(sooner_by)))
 	}
 
 	/// A fetch to make now whatever the copy's age, unless one is out. Answer
@@ -220,7 +386,8 @@ impl StackSource {
 	/// Takes the answer to a fetch, or why the fetch failed, and returns the
 	/// record to store when it changed. Store it, then call
 	/// [`Self::record_stored`], or [`Self::record_not_stored`] when the store
-	/// failed. The record goes back to [`Self::load`] as `stored`.
+	/// failed. Until then [`Self::status`] shows the status from before this
+	/// fetch. The record goes back to [`Self::load`] as `stored`.
 	///
 	/// A copy the core cannot run, or that changes a pinned field, is refused
 	/// and not stored. After a refused or failed fetch the record holds the
@@ -273,6 +440,9 @@ impl StackSource {
 				return None;
 			},
 		};
+		if refreshed.stored.is_some() {
+			self.before_store = Some(self.status());
+		}
 		self.last_refresh = Some(outcome);
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
@@ -291,6 +461,7 @@ impl StackSource {
 	/// host told to restart before the record is stored would start from the
 	/// old copy again.
 	pub fn record_stored(&mut self) {
+		self.before_store = None;
 		if let Some(copy) = self.unstored.take() {
 			self.next_start = Some(copy);
 		}
@@ -302,6 +473,7 @@ impl StackSource {
 	/// It shows in [`StackStatus::last_refresh`] only after a fetch that came
 	/// to `Current`. A refused or failed fetch stays reported as such.
 	pub fn record_not_stored(&mut self, reason: String) {
+		self.before_store = None;
 		if self.last_refresh == Some(StackRefreshOutcome::Current) {
 			self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });
 		}

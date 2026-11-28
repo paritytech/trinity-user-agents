@@ -1215,6 +1215,28 @@
         }
       }
     },
+    "transfer.reclaim.action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return to my balance"
+          }
+        }
+      }
+    },
+    "transfer.reclaim.retryAction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        }
+      }
+    },
     "transfer.status.amount.differs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1314,6 +1336,61 @@
         }
       }
     },
+    "transfer.status.reclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Returned to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimedPartially" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(amount)@ returned to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t return it"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaiming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Returning to your balance…"
+          }
+        }
+      }
+    },
+    "transfer.status.returnedToSender" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expired · you didn’t receive it in time"
+          }
+        }
+      }
+    },
     "transfer.status.sending" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1332,6 +1409,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sent · not received yet"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recipient didn't claim it in time"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ didn’t receive it in time"
           }
         }
       }

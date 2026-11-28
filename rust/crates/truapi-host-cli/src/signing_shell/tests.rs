@@ -26,6 +26,18 @@ fn profile_commands_distinguish_reads_from_uploads_and_preserve_quoted_paths() {
 }
 
 #[test]
+fn search_takes_exactly_one_username_prefix() {
+	assert_eq!(
+		["/search schtrule", "/search", "/search sch trule"].map(parse_command),
+		[
+			Ok(ShellCommand::Search("schtrule".to_string())),
+			Err("usage: /search <username prefix>".into()),
+			Err("usage: /search <username prefix>".into()),
+		]
+	);
+}
+
+#[test]
 fn profile_completion_can_continue_inside_a_quoted_directory() {
 	let directory = tempfile::tempdir().expect("create image directory");
 	let pictures = directory.path().join("my pictures");
@@ -188,9 +200,9 @@ fn rejects_bare_and_malformed_commands() {
 		Err(CommandParseError::LogLevel(InvalidLogLevel { value: "noisy".to_string() }))
 	);
 	assert_eq!(
-		parse_command("/product example.com"),
+		parse_command("/product my_app.dot"),
 		Err(CommandParseError::Product(ProductIdError::Invalid {
-			input: "example.com".to_string()
+			input: "my_app.dot".to_string()
 		}))
 	);
 	assert_eq!(

@@ -102,8 +102,9 @@ Swift's `try ProductId("my-product.dot")` and Kotlin's
 `ProductId.fromName("my-product", "dot")`; both return `Result<ProductId>`
 so callers explicitly handle invalid input. Kotlin's `executable(kind)` and
 `owner()` methods expose their failures the same way. Both platforms
-own the resulting immutable values. Browser hosts can use their existing worker
-runtime's `parseProductId` method for the same validation and normalization.
+own the resulting immutable values. Browser hosts use their existing worker
+runtime's `parseProductId` method, which also answers the id the host's stack
+serves the name under and rejects a name it does not serve.
 Native callers use Rust for product names, executable ownership, and share-link parsing and formatting.
 Both native hosts use Rust's `ExecutableKind` for executable selection and
 its label mapping for manifest discriminators.
@@ -128,10 +129,11 @@ The [permission model](docs/rfcs/0002-permission-model.md) separates outbound do
 Android permission prompts belong to one request and close when it finishes or is cancelled,
 including cancellation while the app is backgrounded.
 
-The shared Rust core asks trusted products (`peopl`, `dim2` and `stash`,
-on every supported network) only for legacy-account signing other than
-watermarked raw bytes. All other operations it handles bypass permission prompts
-and recorded decisions. Device permissions still need the OS grant.
+The shared Rust core asks privileged products (`PrivilegedProduct`: `peopl`,
+`dim2` and `stash`, on every supported network) only for legacy-account
+signing other than watermarked raw bytes. All other operations it handles
+bypass permission prompts and recorded decisions. Device permissions still need
+the OS grant.
 
 ## Repository layout
 
@@ -378,6 +380,22 @@ nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
 Transactions of a domain or policy the core did not register on this start
 are left as they are and do not count as live, so they resume once it is
 registered again.
+
+### PGAS claims
+
+Native signing hosts register a PGAS claim domain with the durable engine,
+for NFT transfers to depend on. `PgasClaims::claim` registers a deferred claim
+of one slot into a destination account. A destination has at most one claim
+waiting to be built or to reach a block, and a second claim into it is refused
+with the id of the active one. A claim is built from the signed-in session,
+which a signing host keeps for one account, and waits while nobody is signed
+in. A refused or expired attempt is built again in a fresh slot, up to five
+attempts, and no attempt is built later than ten minutes after registration.
+The engine decides a claim by finding its extrinsic in a block, because
+`Pgas.ClaimedGasAliases` records only the person's alias for a day and slot,
+whichever claim of that slot landed. Nothing registers claims yet: a
+`SmartContractAllowance` request claims PGAS directly, without the durable
+ledger.
 
 ### NFT purses
 

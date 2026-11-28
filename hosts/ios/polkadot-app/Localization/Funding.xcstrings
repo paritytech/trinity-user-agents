@@ -12,17 +12,6 @@
         }
       }
     },
-    "offer.tooLate" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Too late to cancel. Your CASH is already on its way."
-          }
-        }
-      }
-    },
     "activity.convertingOut" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -56,17 +45,6 @@
         }
       }
     },
-    "activity.inProgress" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "In progress"
-          }
-        }
-      }
-    },
     "activity.retrying" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -85,17 +63,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The provider is retrying the payout"
-          }
-        }
-      }
-    },
-    "activity.sending" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sending"
           }
         }
       }
@@ -177,17 +144,6 @@
         }
       }
     },
-    "backAction" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Back"
-          }
-        }
-      }
-    },
     "cancel.anyway" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -228,17 +184,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cancel top-up?"
-          }
-        }
-      }
-    },
-    "continueAction" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue"
           }
         }
       }
@@ -419,28 +364,6 @@
         }
       }
     },
-    "deposit.cancel" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancel"
-          }
-        }
-      }
-    },
-    "deposit.copied" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copied"
-          }
-        }
-      }
-    },
     "deposit.exactAmount" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -503,17 +426,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Maximum %1$(amount)@"
-          }
-        }
-      }
-    },
-    "error.minimum" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Minimum %1$(amount)@"
           }
         }
       }
@@ -1112,6 +1024,28 @@
         }
       }
     },
+    "error.openMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something went wrong. Try again."
+          }
+        }
+      }
+    },
+    "error.openTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't open"
+          }
+        }
+      }
+    },
     "error.quoteTimeout" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1156,17 +1090,6 @@
         }
       }
     },
-    "failure.close" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Close"
-          }
-        }
-      }
-    },
     "failure.expired" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1185,17 +1108,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Failed · %1$(reason)@"
-          }
-        }
-      }
-    },
-    "failure.insufficientBalance" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Not enough balance"
           }
         }
       }
@@ -1383,28 +1295,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Start over"
-          }
-        }
-      }
-    },
-    "ended.stepPaymentFailed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Payment failed"
-          }
-        }
-      }
-    },
-    "ended.stepPaymentDeclined" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Payment declined"
           }
         }
       }
@@ -1629,28 +1519,6 @@
         }
       }
     },
-    "ended.started" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Started"
-          }
-        }
-      }
-    },
-    "ended.completed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Completed"
-          }
-        }
-      }
-    },
     "ended.ended" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1871,17 +1739,6 @@
         }
       }
     },
-    "offer.fee" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fee"
-          }
-        }
-      }
-    },
     "offer.refund" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1981,17 +1838,6 @@
         }
       }
     },
-    "activity.completed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Completed"
-          }
-        }
-      }
-    },
     "activity.paymentFailedAt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2069,17 +1915,6 @@
         }
       }
     },
-    "history.open" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "History"
-          }
-        }
-      }
-    },
     "pending.newTopUp" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2131,28 +1966,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You sent inc. fees"
-          }
-        }
-      }
-    },
-    "band.waitingPayment" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for your payment"
-          }
-        }
-      }
-    },
-    "band.waitingDeposit" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for your deposit"
           }
         }
       }
@@ -2307,17 +2120,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The provider is retrying. Don't send the money again."
-          }
-        }
-      }
-    },
-    "band.retryingPayout" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The provider is retrying the payout"
           }
         }
       }
@@ -2571,17 +2373,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Payout failed"
-          }
-        }
-      }
-    },
-    "activity.refunded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refunded"
           }
         }
       }

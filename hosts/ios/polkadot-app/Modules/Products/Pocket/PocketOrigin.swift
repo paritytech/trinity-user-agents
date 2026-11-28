@@ -20,14 +20,28 @@ protocol PocketOrigin: AnyObject {
 
     func setOpenItem(_ item: PocketItem?)
 
-    /// Draws the open item `offset` away from its slot, and clears the rest of
-    /// the Pocket away from it or brings it back, on the flight's clock when
-    /// animated.
-    func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool)
+    /// Draws the open item `offset` away from its slot, with the rest of the
+    /// Pocket cleared away from it by `clearance`: 0 at rest, 1 cleared. A
+    /// duration animates the change on the flight's curve; nil applies it at once.
+    func moveOpenItem(by offset: CGSize, clearance: CGFloat, animatedOver duration: TimeInterval?)
+}
+
+extension PocketOrigin {
+    /// Clears the Pocket fully or brings it back, on the flight's clock when animated.
+    func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+        moveOpenItem(
+            by: offset,
+            clearance: clearingPocket ? 1 : 0,
+            animatedOver: animated ? PocketFlightTiming.duration : nil
+        )
+    }
 }
 
 /// A screen that shows an item the Pocket opened.
 @MainActor
 protocol PocketItemScreen: UIViewController {
     var pocketItem: PocketItem { get }
+
+    /// The title the status strip shows while this screen is up.
+    var statusStripTitle: String { get }
 }

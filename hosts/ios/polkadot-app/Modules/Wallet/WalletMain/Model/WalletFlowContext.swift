@@ -8,6 +8,8 @@ protocol WalletFlowContextProtocol {
     var depositService: DepositServiceProtocol { get }
     var coinageService: CoinageServicing { get }
     var coinageBackupSyncService: CoinageBackupSyncServicing { get }
+    var fundingService: FundingServiceProtocol { get }
+    var fundingActivityCenter: FundingActivityCenterProtocol { get }
     var networkStatusService: NetworkStatusProviding { get }
     var flowState: SPAFlowState { get }
 }
@@ -16,6 +18,8 @@ final class WalletFlowContext: WalletFlowContextProtocol {
     let depositService: DepositServiceProtocol
     let coinageService: CoinageServicing
     let coinageBackupSyncService: CoinageBackupSyncServicing
+    let fundingService: FundingServiceProtocol
+    let fundingActivityCenter: FundingActivityCenterProtocol
     let networkStatusService: NetworkStatusProviding
     let flowState: SPAFlowState
 
@@ -23,12 +27,16 @@ final class WalletFlowContext: WalletFlowContextProtocol {
         depositService: DepositServiceProtocol,
         coinageService: CoinageServicing,
         coinageBackupSyncService: CoinageBackupSyncServicing,
+        fundingService: FundingServiceProtocol,
+        fundingActivityCenter: FundingActivityCenterProtocol,
         networkStatusService: NetworkStatusProviding,
         flowState: SPAFlowState
     ) {
         self.depositService = depositService
         self.coinageService = coinageService
         self.coinageBackupSyncService = coinageBackupSyncService
+        self.fundingService = fundingService
+        self.fundingActivityCenter = fundingActivityCenter
         self.networkStatusService = networkStatusService
         self.flowState = flowState
     }

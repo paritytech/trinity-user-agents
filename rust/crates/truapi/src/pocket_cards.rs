@@ -1,10 +1,10 @@
 //! The Pocket collection in the core database: which cards are in the Pocket,
 //! and the newest face drawn for each.
 //!
-//! The host hands over the cards it pins when the runtime starts and adds the
-//! cards the user approves. Products read their own cards and may remove them.
-//! The faces their renders draw are kept here, so a card has one to show
-//! offline and at the next start.
+//! The runtime pins the privileged products' cards when it starts, and the
+//! host adds the cards the user approves. Products read their own cards and
+//! may remove them. The faces their renders draw are kept here, so a card has
+//! one to show offline and at the next start.
 
 use core::time::Duration;
 use std::sync::{
@@ -23,14 +23,14 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Type};
 use truapi::latest::{
 	GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-	HostPocketRemoveCardRequest, PocketCard, RendererNode,
+	HostPocketRemoveCardRequest, PocketCard, PocketCardSide, RendererNode,
 };
 
 use crate::{
 	native::MAX_FACE_DEPTH,
 	platform::{
-		ChatFieldError, PocketPlatform, ProductContext, ProductId, normalize_chat_identifier,
-		validate_chat_name,
+		ChatFieldError, PocketPlatform, PrivilegedProduct, ProductContext, ProductId,
+		ProductIdError, normalize_chat_identifier, validate_chat_name,
 	},
 	store::{Db, DbError},
 	time::Timer,
@@ -48,14 +48,16 @@ pub struct PinnedPocketCard {
 }
 
 impl PinnedPocketCard {
-	/// The card with its id and title screened as a product's would be, so a
-	/// product can address it.
-	pub fn screened(self) -> Result<Self, ChatFieldError> {
-		Ok(Self {
-			card_id: normalize_chat_identifier("cardId", &self.card_id)?,
-			title: validate_chat_name("title", &self.title)?,
-			..self
-		})
+	/// The cards every host pins on the network with `network_suffix`, each
+	/// backed by a [`PrivilegedProduct`].
+	///
+	/// Fails when `network_suffix` is not a dotNS TLD.
+	pub fn privileged(network_suffix: &str) -> Result<Vec<Self>, ProductIdError> {
+		Ok(vec![Self {
+			product_id: PrivilegedProduct::Personhood.product_id(network_suffix)?,
+			card_id: "humanity".into(),
+			title: "Humanity".into(),
+		}])
 	}
 }
 
@@ -72,21 +74,10 @@ pub struct PocketEntry {
 	pub privileged: bool,
 }
 
-/// The side of a card a face is drawn on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum PocketCardSide {
-	/// The face the card shows unless it is turned over.
-	Front,
-	/// The face drawn for `PocketCardBack`, shown when the card is turned over.
-	Back,
-}
-
-impl PocketCardSide {
-	fn column(self) -> &'static str {
-		match self {
-			Self::Front => "FRONT",
-			Self::Back => "BACK",
-		}
+fn side_column(side: PocketCardSide) -> &'static str {
+	match side {
+		PocketCardSide::Front => "FRONT",
+		PocketCardSide::Back => "BACK",
 	}
 }
 
@@ -242,7 +233,7 @@ impl PocketCards {
 				let params = named_params! {
 					":product": product_id.as_str(),
 					":card": card_id,
-					":side": side.column(),
+					":side": side_column(side),
 				};
 				Ok(conn.prepare_cached(FACE)?.query_row(params, |row| row.get(0)).optional()?)
 			})
@@ -423,7 +414,7 @@ fn upsert_face(
 	tx.prepare_cached(UPSERT_FACE)?.execute(named_params! {
 		":product": product_id.as_str(),
 		":card": card_id,
-		":side": side.column(),
+		":side": side_column(side),
 		":face": face.encode(),
 		":draw_order": draw_order,
 	})?;

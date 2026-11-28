@@ -142,7 +142,8 @@ enum TransferAmountViewFactory {
             availableBalanceViewModelFactory: availableBalanceViewModelFactory,
             amountInputStrategy: inputStrategy,
             dataValidationFactory: dataValidatorFactory,
-            config: config
+            config: config,
+            confirmationGateRule: ConfirmationGateRule(asset: chainAsset.asset)
         )
 
         let view = TransferAmountViewController(presenter: presenter)

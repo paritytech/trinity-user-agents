@@ -15,6 +15,6 @@ extension FundingToastPresentable {
 
     /// Says a value was copied.
     func showCopied() {
-        showToast(String(localized: .Funding.depositCopied))
+        showToast(String(localized: .Common.copied))
     }
 }

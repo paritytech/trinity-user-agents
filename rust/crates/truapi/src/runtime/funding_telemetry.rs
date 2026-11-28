@@ -1,5 +1,6 @@
-//! Funding facts for telemetry, emitted as [`CoreEvent`]s under exported
-//! `truapi.funding.*` markers.
+//! Funding facts for telemetry, emitted as [`CoreEvent`]s under
+//! `truapi.funding.*` markers. The table keeps every one of them on the
+//! device bar the fault, which is exported at error.
 //!
 //! A fact is a [`CoreEvent`] carrying closed values only: labels from enum
 //! names and fixed buckets, conditions, and counts or durations. Before it
@@ -26,6 +27,7 @@ use crate::{
 	logging::CoreEvent,
 	markers,
 	platform::{FundingQuoteList, FundingQuoteState, FundingQuoteUnavailable, ProductId},
+	stack::Stack,
 };
 
 /// Balance units in one CASH.
@@ -225,12 +227,14 @@ pub struct Common {
 
 impl Common {
 	/// The common labels of `session`, its route taken from `route` when
-	/// given. `listed` says whether the host lists a provider. A session the
-	/// core no longer holds carries nothing but its absence.
+	/// given. `listed` says whether the host lists a provider, and `stack` is
+	/// the stack the session runs on, `None` once its runtime is gone. A
+	/// session the core no longer holds carries nothing but its absence.
 	pub fn of(
 		session: Option<&FundingSession>,
 		route: Option<&FundingQuoteAsk>,
 		listed: impl Fn(&ProductId) -> bool,
+		stack: Option<&Stack>,
 		now_ms: u64,
 	) -> Self {
 		let Some(session) = session else {
@@ -252,7 +256,7 @@ impl Common {
 		let tags = vec![
 			("direction", lower(session.direction.into())),
 			("opener", if session.owner_product_id.is_some() { "product" } else { "host" }.into()),
-			("product", product_tag(session.owner_product_id.as_ref())),
+			("product", product_tag(session.owner_product_id.as_ref(), stack)),
 			("rail", rail.map_or("none".to_string(), |rail| lower(rail.into()))),
 			("provider", provider),
 			("asset", known_tag(asset, KNOWN_ASSETS).to_string()),
@@ -669,11 +673,12 @@ pub fn eta_bucket(eta_secs: Option<u64>) -> &'static str {
 	}
 }
 
-/// The opening product as a tag: its dotNS label when first-party.
-fn product_tag(product: Option<&ProductId>) -> String {
+/// The opening product as a tag: its dotNS label when `stack` trusts it.
+/// Without a stack no product is trusted.
+fn product_tag(product: Option<&ProductId>, stack: Option<&Stack>) -> String {
 	match product {
 		None => "none".to_string(),
-		Some(product) if product.has_trusted_remote_permissions() => {
+		Some(product) if stack.is_some_and(|stack| stack.trusts(product)) => {
 			product.dotns_name().unwrap_or("third_party").to_string()
 		},
 		Some(_) => "third_party".to_string(),

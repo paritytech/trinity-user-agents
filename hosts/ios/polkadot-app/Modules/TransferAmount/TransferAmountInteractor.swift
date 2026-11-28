@@ -232,7 +232,8 @@ private extension TransferAmountInteractor {
                         : 0
                     let breakdown = TransferSpendableBreakdown(
                         availablePrivate: balance.availablePrivate,
-                        gainingPrivacy: gainingPrivacy
+                        gainingPrivacy: gainingPrivacy,
+                        total: balance.total
                     )
                     await self?.presenter?.didReceive(spendableBreakdown: breakdown)
                 }

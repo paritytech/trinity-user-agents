@@ -26,22 +26,29 @@ class CoreLogLineTest {
     }
 
     /**
-     * A local marker's detail describes what the person is doing, so it is logged below the level
-     * `HostLogSinkTree` forwards.
+     * A local marker is logged below the level `HostLogSinkTree` forwards, whether its detail
+     * describes what the person is doing or it only records that something went normally.
      */
     @Test
     fun `a local marker stays on the device`() {
         logCoreLine("truapi.native.callback.push_notification", "hello")
+        logCoreLine("truapi.core.started", "truapi 0.0.0")
+        logCoreLine("truapi.ws_bridge.connection_open", "one of eight")
 
         verify(exactly = 1) {
             tree.log(Log.DEBUG, "truapi.core", "truapi.native.callback.push_notification: hello", null)
+            tree.log(Log.DEBUG, "truapi.core", "truapi.core.started: truapi 0.0.0", null)
+            tree.log(Log.DEBUG, "truapi.core", "truapi.ws_bridge.connection_open: one of eight", null)
         }
-        // Stated as its own negative, because a notification body reaching info is the leak this
-        // test exists to catch. `confirmVerified` cannot stand in for it: Timber calls
-        // `getExplicitTag`, the 3-arg `log` and `getTag` on a planted tree before the call verified
-        // above, so acknowledging every interaction is not something a Timber spy allows.
+        // Stated as its own negative, because a local line reaching info is the leak this test
+        // exists to catch, a notification body and a record that something went normally alike.
+        // `confirmVerified` cannot stand in for it: Timber calls `getExplicitTag`, the 3-arg `log`
+        // and `getTag` on a planted tree before the call verified above, so acknowledging every
+        // interaction is not something a Timber spy allows.
         verify(exactly = 0) {
             tree.log(Log.INFO, "truapi.core", "truapi.native.callback.push_notification: hello", null)
+            tree.log(Log.INFO, "truapi.core", "truapi.core.started: truapi 0.0.0", null)
+            tree.log(Log.INFO, "truapi.core", "truapi.ws_bridge.connection_open: one of eight", null)
         }
     }
 
@@ -51,15 +58,11 @@ class CoreLogLineTest {
      */
     @Test
     fun `an exported marker is logged at its own severity`() {
-        logCoreLine("truapi.core.started", "truapi 0.0.0")
-        logCoreLine("truapi.ws_bridge.connection_open", "one of eight")
         logCoreLine("truapi.chain.follow_budget_reached", "four of four")
         logCoreLine("truapi.tracing.warn", "truapi::runtime: retrying")
         logCoreLine("truapi.tracing.error", "truapi::runtime: chain call failed")
 
         verify(exactly = 1) {
-            tree.log(Log.INFO, "truapi.core", "truapi.core.started: truapi 0.0.0", null)
-            tree.log(Log.INFO, "truapi.core", "truapi.ws_bridge.connection_open: one of eight", null)
             tree.log(Log.WARN, "truapi.core", "truapi.chain.follow_budget_reached: four of four", null)
             tree.log(Log.WARN, "truapi.core", "truapi.tracing.warn: truapi::runtime: retrying", null)
             tree.log(Log.ERROR, "truapi.core", "truapi.tracing.error: truapi::runtime: chain call failed", null)

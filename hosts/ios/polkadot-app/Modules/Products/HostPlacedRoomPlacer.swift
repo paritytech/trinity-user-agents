@@ -2,6 +2,7 @@ import Foundation
 import Keystore_iOS
 import Operation_iOS
 import Products
+import TrUAPIHost
 
 /// Draws a host-placed product's chat room before that product has run, so a first launch is not
 /// an empty list while the worker downloads and boots. Pocket bundles a card's face for the same
@@ -37,8 +38,12 @@ struct HostPlacedRoomPlacer {
         // Bounded: this runs detached, so it must not outlive the reason it was started.
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return }
 
-        for hostPlaced in HostPlacedProducts.all {
-            await place(hostPlaced, tld: tld)
+        do {
+            for hostPlaced in try HostPlacedProducts.all(tld: tld) {
+                await place(hostPlaced)
+            }
+        } catch {
+            logger.error("Failed to list the host-placed rooms on \(tld): \(error)")
         }
     }
 }
@@ -48,9 +53,9 @@ private extension HostPlacedRoomPlacer {
     static var tldAttempts: Int { 20 }
 
     /// A failure costs the placeholder, not the room: the product's own `createRoom` still runs.
-    func place(_ hostPlaced: HostPlacedProduct, tld: String) async {
+    func place(_ hostPlaced: HostPlacedChat) async {
         do {
-            let extensionId = try hostPlaced.productId(tld).rawValue
+            let extensionId = hostPlaced.productId.rawValue
             let chatId = Chat.Id.chatExtension(extensionId, roomId: hostPlaced.roomId)
 
             let existing = try await chatRepository
@@ -64,14 +69,14 @@ private extension HostPlacedRoomPlacer {
                 roomId: hostPlaced.roomId,
                 roomMetadata: Chat.RoomMetadata(
                     chatRelativeId: hostPlaced.roomId,
-                    name: hostPlaced.fallbackName,
+                    name: hostPlaced.name,
                     icon: nil
                 )
             )
 
             try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
         } catch {
-            logger.error("Failed to place the room for \(hostPlaced.fallbackName): \(error)")
+            logger.error("Failed to place the room for \(hostPlaced.name): \(error)")
         }
     }
 }

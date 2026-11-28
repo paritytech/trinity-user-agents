@@ -24,8 +24,8 @@ private extension ContactsListWireframe {
 }
 
 extension ContactsListWireframe: ContactsListWireframeProtocol {
-    func showScanPanel() {
-        moduleNavigator.openScanPanel()
+    func showContactSearch() {
+        moduleNavigator.openContactSearch()
     }
 
     func showChat(from view: ContactsListViewProtocol?, for model: ChatOpenModel) {

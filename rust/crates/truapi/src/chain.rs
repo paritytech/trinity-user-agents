@@ -62,8 +62,8 @@ pub use crate::evm_contract::{
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub use tests::{
-	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, live_asset_hub,
-	live_asset_hub_genesis, method_count, serve, tokio_spawner,
+	FixedExtensionVersions, Node, V4OnlyHost, bundled_paseo_next_v2, extrinsic_service_serving,
+	live_asset_hub, live_asset_hub_genesis, live_chains, method_count, serve, tokio_spawner,
 };
 
 /// An encoded extrinsic, ready to submit.

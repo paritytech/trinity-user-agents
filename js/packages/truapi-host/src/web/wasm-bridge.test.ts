@@ -1,10 +1,20 @@
-import { asProductId } from "@parity/truapi";
+import {
+  asProductId,
+  createClient,
+  createMessagePortProvider,
+  createTransport,
+} from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { CoreStorageKey } from "../generated/host-callbacks.js";
+import {
+  CoreStorageKey,
+  type JsonRpcConnection,
+} from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import type {
+  BundledStack,
+  ReservedValuesPolicy,
   StackCallbacks,
   StackFetchRequest,
   StackFetchResponse,
@@ -15,11 +25,48 @@ import { wasmIsBuilt } from "../testing/require-wasm.js";
 
 /**
  * {@link mockRuntimeConfig} with the bundled previewnet stack in place of its
- * test stack: the production bundle reads only a signed `stack`.
+ * test stack: the production bundle reads only a signed `stack`. The product
+ * is one previewnet serves.
  */
 function bundledRuntimeConfig() {
   const { testStack: _testStack, ...config } = mockRuntimeConfig();
-  return { ...config, stack: bundledTestStack() };
+  return {
+    ...config,
+    productId: asProductId("mock.testnet"),
+    stack: bundledTestStack(),
+  };
+}
+
+/**
+ * A connection to a node that gives `genesisHash` as its chain's, as one whose
+ * chain restarted from genesis does. It answers no other request.
+ */
+function chainWithGenesis(genesisHash: string): JsonRpcConnection {
+  const answers: string[] = [];
+  let closed = false;
+  let wake = () => {};
+  return {
+    send(request) {
+      const { id, method } = JSON.parse(request);
+      if (method !== "chainSpec_v1_genesisHash") return;
+      answers.push(JSON.stringify({ jsonrpc: "2.0", id, result: genesisHash }));
+      wake();
+    },
+    async *responses() {
+      while (!closed) {
+        // Waits only with nothing to deliver, so no answer or close that
+        // comes while one is being delivered is missed.
+        if (answers.length === 0) {
+          await new Promise<void>((resolve) => (wake = resolve));
+        }
+        yield* answers.splice(0);
+      }
+    },
+    close() {
+      closed = true;
+      wake();
+    },
+  };
 }
 
 // Drives the REAL truapi WASM core against createMockHost's callbacks —
@@ -39,6 +86,25 @@ const glueUrl = new URL(
   "../../dist/wasm/web/truapi_server.js",
   import.meta.url,
 );
+/** Starts a pairing host on a stack, as the production bundle does. */
+async function pairingHostStarter(): Promise<
+  (stack: BundledStack) => Promise<unknown>
+> {
+  const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+  const { createWasmRawCallbacks } =
+    await import("../generated/host-callbacks-adapter.js");
+  initSync({ module: readFileSync(wasmUrl) });
+  const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+  return (stack) =>
+    WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      { ...hostConfig, stack },
+    );
+}
+
 // The gate lives in `require-wasm.ts` so rewriting any one suite cannot
 // quietly disable it for the others.
 const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
@@ -59,6 +125,42 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       "worker.truapi-playground.paseo",
     ]);
     expect(() => parseProductId("not a product")).toThrow();
+  });
+
+  it("opens a product only under an id the stack serves, and names that id", async () => {
+    const { WasmPairingHostRuntime, initSync } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      hostConfig,
+    );
+    const open = (productId: string) =>
+      runtime.productRuntime({ productId }, { emitFrame: () => {} });
+
+    // The bundled stack is previewnet, on `testnet`. A name under `dot` is
+    // that stack's own product, which the host asks for before it opens it,
+    // so the host and the core hold one id for it.
+    expect([
+      runtime.parseProductId(" Game.DOT "),
+      runtime.parseProductId("game.testnet"),
+      runtime.parseProductId("localhost:3000"),
+    ]).toEqual(["game.testnet", "game.testnet", "localhost:3000"]);
+    expect(() => runtime.parseProductId("game.paseo")).toThrow(
+      "the testnet stack serves no product under the id game.paseo",
+    );
+    expect(() => open("game.dot")).toThrow(
+      "the testnet stack serves no product under the id game.dot, which names its product game.testnet",
+    );
+    expect(() => open("game.paseo")).toThrow(
+      "the testnet stack serves no product under the id game.paseo",
+    );
+    open("game.testnet").dispose();
   });
 
   it("distinguishes product IDs from shared labels in persisted storage keys", async () => {
@@ -134,26 +236,95 @@ suite("real WASM core ↔ createMockHost bridge", () => {
   it("refuses a stack pointer without a key", async () => {
     // A copy the host fetches later is checked against the pointer's key, so
     // the production bundle refuses a pointer without one.
-    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } =
-      await import("../generated/host-callbacks-adapter.js");
-    initSync({ module: readFileSync(wasmUrl) });
-    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
-    const pointer = new URL(hostConfig.stack.pointer);
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const pointer = new URL(stack.pointer);
     pointer.searchParams.delete("key");
 
+    await expect(start({ ...stack, pointer: pointer.href })).rejects.toThrow(
+      "runtimeConfig.stack: stack pointer has no key",
+    );
+  });
+
+  it("holds a stack to the reserved values its build adds", async () => {
+    // A build that reserves previewnet's TLD or one of its genesis hashes does
+    // not start previewnet, and one that allows its stack every reserved value
+    // has none of its own to add.
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
+    const genesisHash: string = JSON.parse(atob(envelope.payload)).chains[0]
+      .genesisHash;
+    const reserving = (reservedValues: ReservedValuesPolicy) =>
+      start({ ...stack, reservedValues });
+
+    await expect(reserving({ extraTlds: ["testnet"] })).rejects.toThrow(
+      "runtimeConfig.stack: stack uses the reserved tld testnet",
+    );
     await expect(
-      WasmPairingHostRuntime.create(
-        {
-          ...createWasmRawCallbacks(createMockHost().callbacks),
-          requestWorkerTransition: () => {},
-        },
-        {
-          ...hostConfig,
-          stack: { ...hostConfig.stack, pointer: pointer.href },
-        },
+      reserving({ extraGenesisHashes: [genesisHash] }),
+    ).rejects.toThrow(
+      `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
+    );
+    await expect(
+      reserving({ allowed: true, extraTlds: ["testnet"] }),
+    ).rejects.toThrow(
+      "runtimeConfig.stack: reserved values that allow the stack every reserved value cannot reserve extra ones",
+    );
+    await expect(reserving({ allowed: true })).resolves.toBeDefined();
+  });
+
+  it("refuses a stack field it does not have", async () => {
+    // A retired or misspelt field would be read as absent, and a host on an
+    // older shape would meet a refusal that does not name its mistake.
+    const start = await pairingHostStarter();
+    const stack = { ...bundledTestStack(), allowsReservedValues: true };
+
+    await expect(start(stack)).rejects.toThrow(
+      "runtimeConfig.stack.allowsReservedValues is not a field; runtimeConfig.stack takes pointer, descriptor, reservedValues",
+    );
+  });
+
+  it("refuses reserved values it cannot read in full", async () => {
+    // A field or entry the core skipped would leave the build reserving less
+    // than it wrote, with nothing to say so.
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const path = "runtimeConfig.stack.reservedValues";
+    const refusal = async (reservedValues: unknown) => {
+      try {
+        await start({ ...stack, reservedValues } as BundledStack);
+        return "started";
+      } catch (error) {
+        return String(error);
+      }
+    };
+
+    expect(
+      await Promise.all(
+        [
+          ["testnet"],
+          { extraTLDs: ["testnet"] },
+          { allowed: "true" },
+          { extraTlds: "testnet" },
+          { extraTlds: ["paseo", null] },
+          { extraTlds: [".testnet"] },
+          { extraTlds: ["li"] },
+          { extraGenesisHashes: ["0x1234"] },
+          { extraGenesisHashes: [new Uint8Array(31)] },
+        ].map(refusal),
       ),
-    ).rejects.toThrow("runtimeConfig.stack: stack pointer has no key");
+    ).toEqual([
+      `${path} must be an object`,
+      `${path}.extraTLDs is not a field; ${path} takes allowed, extraGenesisHashes, extraTlds`,
+      `${path}.allowed must be a boolean`,
+      `${path}.extraTlds must be an array`,
+      `${path}.extraTlds[1] must be a string`,
+      'runtimeConfig.stack: reserved tld ".testnet" is not a TLD a stack can have',
+      'runtimeConfig.stack: reserved tld "li" is not a TLD a stack can have',
+      `${path}.extraGenesisHashes[0]: expected 32-byte hex string, got 4 hex chars`,
+      `${path}.extraGenesisHashes[0] must be exactly 32 bytes, got 31`,
+    ]);
   });
 
   it("refreshes the stack through the host's fetch and reports each change", async () => {
@@ -248,8 +419,102 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       hostConfig,
     );
 
-    expect(statuses).toEqual([runtime.stackStatus()]);
-    expect(statuses[0].lastRefresh).toBeUndefined();
+    try {
+      expect(statuses).toEqual([runtime.stackStatus()]);
+      expect(statuses[0].lastRefresh).toBeUndefined();
+      expect(statuses[0].mismatches).toEqual([]);
+    } finally {
+      runtime.free();
+    }
+  });
+
+  it("tells a host without fetchStackDescriptor of a chain that restarted", async () => {
+    // A stack can restart its chains while a page stays open. A host that
+    // does not fetch the descriptor still has to keep its own features off
+    // such a chain, so what the chain answered has to reach `stackChanged`
+    // in the shape `StackMismatch` documents.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+    let mismatchReported = () => {};
+    const mismatchReport = new Promise<void>(
+      (resolve) => (mismatchReported = resolve),
+    );
+    const mock = createMockHost();
+    const restarted = `0x${"ab".repeat(32)}`;
+    mock.callbacks.chain.connect = async () => chainWithGenesis(restarted);
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(mock.callbacks),
+        requestWorkerTransition: () => {},
+        stackChanged: (status: StackStatus) => {
+          statuses.push(status);
+          if (status.mismatches.length > 0) mismatchReported();
+        },
+      },
+      hostConfig,
+    );
+    const channel = new MessageChannel();
+    const core = runtime.productRuntime(
+      { productId },
+      { emitFrame: (frame: Uint8Array) => channel.port1.postMessage(frame) },
+    );
+    channel.port1.onmessage = (event: MessageEvent) =>
+      void core.receiveFrame(event.data);
+    channel.port1.start();
+    const provider = createMessagePortProvider(channel.port2);
+    const client = createClient(createTransport(provider));
+    const people = JSON.parse(statuses[0].descriptor).chains.find(
+      (chain: { role: string }) => chain.role === "People",
+    );
+
+    try {
+      const answer = await client.chain.getSpecGenesisHash({
+        genesisHash: people.genesisHash,
+      });
+      // A task of the core's own sends the report, in no set order with the
+      // answer.
+      let giveUp: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        mismatchReport,
+        new Promise((_, reject) => {
+          giveUp = setTimeout(
+            () => reject(new Error("no status listed the mismatch")),
+            2000,
+          );
+        }),
+      ]);
+      clearTimeout(giveUp);
+
+      // The call fails as a host failure, and the mismatch names People:
+      // together they show it was this chain's connection the core refused.
+      expect([
+        answer.isErr() && answer.error.tag,
+        statuses.map((status) => status.mismatches),
+      ]).toEqual([
+        "HostFailure",
+        [
+          [],
+          [
+            {
+              kind: "genesisHash",
+              role: "People",
+              named: people.genesisHash,
+              answered: restarted,
+            },
+          ],
+        ],
+      ]);
+    } finally {
+      provider.dispose();
+      core.dispose();
+      runtime.free();
+      channel.port1.close();
+      channel.port2.close();
+    }
   });
 
   it("tells a host of its stack only once the runtime exists", async () => {

@@ -8,7 +8,7 @@ if (!client) {
   throw new Error("The expanded card page needs a TrUAPI host connection");
 }
 
-const HIDE_DELAY_MS = 2000;
+const COVER_DELAY_MS = 2000;
 
 const log = document.getElementById("log") as HTMLUListElement;
 const height = document.getElementById("height") as HTMLSpanElement;
@@ -19,10 +19,10 @@ function logLine(message: string): void {
   log.prepend(line);
 }
 
-const setFaceShown = async (shown: boolean): Promise<void> => {
-  const outcome = await client.expandedCard.setFaceShown({ shown });
+const setCardCovered = async (covered: boolean): Promise<void> => {
+  const outcome = await client.expandedCard.setCardCovered({ covered });
   const answer = outcome.isOk() ? "ok" : errorTag(outcome.error);
-  logLine(`setFaceShown(${shown}): ${answer}`);
+  logLine(`setCardCovered(${covered}): ${answer}`);
 };
 
 // A domain error nests the versioned error one level down; the other kinds are the tag itself.
@@ -36,17 +36,17 @@ function showHeight(): void {
   height.textContent = String(window.innerHeight);
 }
 
-document.getElementById("hide")!.addEventListener("click", () => void setFaceShown(false));
-document.getElementById("show")!.addEventListener("click", () => void setFaceShown(true));
-document.getElementById("hide-later")!.addEventListener("click", () => {
-  logLine(`hiding in ${HIDE_DELAY_MS / 1000} s`);
-  setTimeout(() => void setFaceShown(false), HIDE_DELAY_MS);
+document.getElementById("cover")!.addEventListener("click", () => void setCardCovered(true));
+document.getElementById("uncover")!.addEventListener("click", () => void setCardCovered(false));
+document.getElementById("cover-later")!.addEventListener("click", () => {
+  logLine(`covering in ${COVER_DELAY_MS / 1000} s`);
+  setTimeout(() => void setCardCovered(true), COVER_DELAY_MS);
 });
 window.addEventListener("resize", () => {
   showHeight();
 });
 
 showHeight();
-if (new URLSearchParams(location.search).has("hideOnLoad")) {
-  void setFaceShown(false);
+if (new URLSearchParams(location.search).has("coverOnLoad")) {
+  void setCardCovered(true);
 }

@@ -31,12 +31,7 @@ extension PolkadotSigningPresenter: PolkadotSigningPresenterProtocol {
         guard let parsedResult else {
             return
         }
-        wireframe.authorize(animated: true, retriable: false) { [weak self] isAuthorized in
-            guard isAuthorized else {
-                return
-            }
-            self?.interactor.signParsedResult(parsedResult)
-        }
+        interactor.signParsedResult(parsedResult)
     }
 
     func cancel() {

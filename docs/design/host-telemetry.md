@@ -82,7 +82,7 @@ A line travels two stages, and which one governs depends on who raised it.
   unlisted target refused                          the severity        HostLogSinkDestination
                                                                        tag "truapi." + INFO+
 
- host-originated lines (truapi.auth, truapi.chain, truapi.product, truapi.payments)
+ host-originated lines (truapi.auth, truapi.chain, truapi.payments)
    join at stage 2 and never cross the boundary -----------------------> logs
 ```
 
@@ -90,9 +90,15 @@ For a core line the table is the decision. `logCoreLine` logs a marker at the se
 
 ## What this does not touch
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`HostLogSinkTree.kt:30-31`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:35,47`).
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay, the one in `HostLogSinkTree` and the one in `HostLogSinkDestination` beside its info `minLevel`.
 
-Both `HostLogSinkTree` and `HostLogSinkDestination` also limit each tag to 60 lines a minute, and each `truapi.core` marker to 60 of its own. The first line after a minute that dropped lines is preceded by one more that counts them, with the count as a `dropped` attribute and, on `truapi.core`, the marker as a `marker` attribute. A product's console warnings and errors reach Sentry as `truapi.product`, so a product stuck in a loop sends at most 60 lines a minute per device plus that count, for as long as it loops. A count that no later line follows, because the tag went quiet or the app stopped, is never sent. Core events are not limited here, whether they reach the sink through `CoreEventLogger` on Android or carry a `CoreEventContext` on iOS.
+Each tag sends at most 60 lines a minute, and each `truapi.core` marker 60 of its own, so one noisy tag or marker cannot hide the others. A core event counts against its marker, and on iOS a host event counts against its own name. A tag, marker or event name stuck in a loop therefore costs at most 60 lines a minute per device.
+
+Both hosts count at the SDK's own gate, in `HostLogFilter`, which the SDK calls on every log whatever route reached the logger. A log carrying no tag this host writes is turned away there, so a line reaching the logger by a route nobody planned never leaves. The first line after a minute that dropped some carries the count as a `dropped` attribute rather than following an extra line, since emitting a log from inside the callback would re-enter it.
+
+Android installs that gate in `SentryLogGate`, which starts the SDK itself so the gate is in place before the first log, and reads every other option from the manifest as the SDK does when it starts itself. A build whose manifest carries no DSN starts nothing.
+
+A product's console output never reaches the sink. `ProductWebChromeClient` on Android and `JSEngineLogger` on iOS log it untagged at its own level. Only a testing build keeps it on the device, in the Android debug log or the iOS testnet log file, and a release build drops it. A product reports to its own Sentry project.
 
 Telemetry also leaves through six senders, three on each host. iOS carries four protocols (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`), and the first two reach the backend through one sender, which splits on level so a `CriticalIssue` leaves as a captured event and a lifecycle step leaves as a log. On Android the three are `HostProcessTelemetry`, `DeviceReadingsInitializer` and `SentryHostLogSink`, and both `HostLogSinkTree` and `CoreEventLogger` reach that last one through `HostLogSink`.
 
@@ -120,7 +126,7 @@ pub enum MarkerClass {
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum Severity { Info, Warn, Error }
+pub enum Severity { Warn, Error }
 
 /// Every marker the core may address to a host, keyed by its dotted target.
 /// A host reads this once and looks up each marker it is handed. A target the
@@ -145,7 +151,7 @@ An unregistered target is caught three times over, in this order:
 
 That predicate is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
 
-**What the table decides.** A marker absent from it is local, because lookup is exact. `MarkerClass::Export { severity }` is what carries a core error to Sentry as an error rather than as info. The rule exists once, in the core, whatever the host count.
+**What the table decides.** A marker absent from it is local, because lookup is exact. `MarkerClass::Export { severity }` is what keeps a core error an error at Sentry rather than flattening it to a warning. The rule exists once, in the core, whatever the host count.
 
 The two tag filters stay. They are the only gate on host-originated lines such as `truapi.payments`, which the core table says nothing about. Deleting them would ship every host debug line on any tag.
 
@@ -197,9 +203,9 @@ The benefit is that the number of places the rule is written stays at one as hos
 
 ## Funding events
 
-Funding's flow facts leave the core as core events under exported markers. The core emits them; each app's `onCoreEvent` sink hands them to Sentry Logs as the marker with its attributes, so they arrive from builds that are not released, through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
+Funding's flow facts leave the core as core events under markers the table keeps on the device, so each app's `onCoreEvent` sink writes them to its own log at debug and they go no further. The exception is the fault, which is exported and reaches Sentry through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
 
-**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. The table gates the event path as it does the log path, so an entry missing or local would reach no host. Each entry's doc comment lists the attributes it carries and the closed set each takes.
+**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Local`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on. The table gates the event path as it does the log path, so a local entry reaches a host's own log and nothing beyond it, and an entry missing from the table reaches no host at all. Each entry's doc comment lists the attributes it carries and the closed set each takes.
 
 | Marker | Logged when |
 |---|---|

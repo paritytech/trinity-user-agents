@@ -72,7 +72,7 @@ class ProductBotManagementViewModel @Inject constructor(
                         cardTitle = card?.title.orEmpty(),
                         previewUrl = card?.previewUrl.orEmpty(),
                         appUrl = appUrl,
-                        openWithFaceAway = card?.faceShown == false,
+                        startsCovered = card?.startsCovered == true,
                     )
                 )
             }
@@ -130,10 +130,10 @@ class ProductBotManagementViewModel @Inject constructor(
         }
     }
 
-    override fun onOpenWithFaceAwayChanged(faceAway: Boolean) {
+    override fun onStartsCoveredChanged(startsCovered: Boolean) {
         state.update {
             val form = it.dialogState as? ProductDialogState.Form ?: return@update it
-            it.copy(dialogState = form.copy(openWithFaceAway = faceAway))
+            it.copy(dialogState = form.copy(startsCovered = startsCovered))
         }
     }
 
@@ -188,7 +188,7 @@ class ProductBotManagementViewModel @Inject constructor(
             cardId = PocketCardId(cardId.trim()),
             title = cardTitle.ifBlank { cardId }.trim(),
             previewUrl = previewUrl.trim(),
-            faceShown = !openWithFaceAway,
+            startsCovered = startsCovered,
         )
     }
 }

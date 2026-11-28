@@ -2,7 +2,10 @@
 // mock host, over a real MessagePort, with the result observable on the mock.
 import { describe, expect, it } from "bun:test";
 
-import type { RemotePreimageLookupSubscribeItem } from "@parity/truapi";
+import {
+  asProductId,
+  type RemotePreimageLookupSubscribeItem,
+} from "@parity/truapi";
 
 import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
@@ -156,5 +159,30 @@ suite("createMockClient", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("runs a product named under dot as the test stack's own", async () => {
+    // The test stack is on `paseo`, where the name `tx-demo.dot` is the
+    // product `tx-demo.paseo`. The core opens only that id, so a client that
+    // passed the name on as written would not start.
+    const { client, dispose } = await createMockClient({
+      runtimeConfig: { productId: asProductId("tx-demo.dot") },
+    });
+    try {
+      const context = await client.system.getProductContext();
+      expect(context._unsafeUnwrap().productId).toBe("tx-demo.paseo");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("refuses a product the test stack does not serve", async () => {
+    await expect(
+      createMockClient({
+        runtimeConfig: { productId: asProductId("tx-demo.testnet") },
+      }),
+    ).rejects.toThrow(
+      "the paseo stack serves no product under the id tx-demo.testnet",
+    );
   });
 });

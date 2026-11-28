@@ -26,7 +26,7 @@ use crate::{
 	runtime::{
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
 		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
-		statement_store_rpc::StatementStoreRpc,
+		statement_allowance, statement_store_rpc::StatementStoreRpc,
 	},
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,6 +36,7 @@ use crate::{
 	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
+	pgas_claims::PgasClaims,
 };
 use truapi::latest;
 
@@ -130,6 +131,9 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// PGAS claims through the durable engine, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pgas_claims: OnceLock<PgasClaims>,
 	/// The NFT ledger (purse records and item keys) over the core database,
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -230,6 +234,10 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let chain = match crate::stack::checks(&stack) {
+			Some(checks) => chain.checking_genesis(checks.genesis_check()),
+			None => chain,
+		};
 		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
 			chain.clone(),
 			stack.chains().asset_hub,
@@ -270,6 +278,8 @@ impl RuntimeServices {
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
+			pgas_claims: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			materials: OnceLock::new(),
@@ -306,6 +316,29 @@ impl RuntimeServices {
 	/// product. Returns whether this call installed it.
 	pub fn install_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
 		self.permission_status.set(host).is_ok()
+	}
+
+	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
+	///
+	/// The suffix also goes to the stack's checks, which report one that is
+	/// not the stack's `tld`. Over a client the host routes by another chain's
+	/// genesis hash, that chain's suffix is returned and does not go to the
+	/// checks.
+	///
+	/// Fails when the read fails or the chain holds no suffix of one to
+	/// sixteen bytes. A failed read changes nothing the checks report: a
+	/// suffix reported before stays reported.
+	pub async fn people_network_suffix(
+		&self,
+		people: &statement_allowance::ChainClient,
+	) -> Result<Vec<u8>, statement_allowance::StatementAllowanceError> {
+		let suffix = statement_allowance::slot::read_network_suffix(people.rpc()).await?;
+		if people.configured_genesis_hash() == self.stack.chains().people &&
+			let Some(checks) = crate::stack::checks(&self.stack)
+		{
+			checks.people_suffix_answered(&suffix);
+		}
+		Ok(suffix)
 	}
 
 	/// The stack the host runs.
@@ -483,6 +516,19 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the PGAS claims of the durable engine. Set-once, like the
+	/// engine they register with. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_pgas_claims(&self, claims: PgasClaims) -> bool {
+		self.pgas_claims.set(claims).is_ok()
+	}
+
+	/// The PGAS claims of the durable engine, once it is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn pgas_claims(&self) -> Option<PgasClaims> {
+		self.pgas_claims.get().cloned()
 	}
 
 	/// Install the materials on the device. Set-once, like the database they

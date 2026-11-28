@@ -39,12 +39,13 @@ pub enum MarkerClass {
 /// rather than read from the event, and it is what lets a core error be
 /// alerted on separately from a core warning. Its `&'static str` form is the
 /// lowercase name the generated marker table uses.
+///
+/// A marker recording that something went normally carries no severity, so it
+/// cannot be declared exportable at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum Severity {
-	/// Routine progress. Useful as context around a failure, not on its own.
-	Info,
 	/// Something degraded that the core recovered from or worked around.
 	Warn,
 	/// Something failed that the core could not recover from.
@@ -63,7 +64,7 @@ pub struct Marker {
 /// Declares every marker once.
 ///
 /// Each entry gives a constant, the dotted target it carries, and its class:
-/// `Local`, or `Export(Info)`, `Export(Warn)`, `Export(Error)`. From that one
+/// `Local`, or `Export(Warn)`, `Export(Error)`. From that one
 /// list this emits the constant, its entry in [`MARKERS`], and its arm in
 /// [`class_of`], so a marker cannot be declared without being listed.
 macro_rules! markers {
@@ -103,7 +104,7 @@ markers! {
 	// ---------------------------------------------------------------- core
 
 	/// The core finished starting. Detail carries its version string.
-	CORE_STARTED = "truapi.core.started" => Export(Info);
+	CORE_STARTED = "truapi.core.started" => Local;
 
 	/// A chain refused another follow because the node's budget is spent. Detail
 	/// names the chain and the budget, never an account or a call.
@@ -140,12 +141,12 @@ markers! {
 
 	/// The overlay opened on a new session. `amount_preset`: `true` when the
 	/// opener named the amount.
-	FUNDING_OVERLAY_OPENED = "truapi.funding.overlay_opened" => Export(Info);
+	FUNDING_OVERLAY_OPENED = "truapi.funding.overlay_opened" => Local;
 
 	/// The overlay closed. `outcome`: `started`, `dismissed`, `failed`.
 	/// `furthest`, how far the user got: `amount`, `rail`, `quotes`,
 	/// `provider`. `age_ms` is how long it was up.
-	FUNDING_OVERLAY_CLOSED = "truapi.funding.overlay_closed" => Export(Info);
+	FUNDING_OVERLAY_CLOSED = "truapi.funding.overlay_closed" => Local;
 
 	/// Every provider asked for one quote request answered, or a newer
 	/// request replaced it first. `region`: `eu`, `uk`, `us`, `other`,
@@ -154,26 +155,26 @@ markers! {
 	/// `refused_country`, `refused_min`, `refused_max`,
 	/// `refused_unavailable`, `refused_other`, `timed_out`, `pending`;
 	/// `first_quote_ms` and `settle_ms` from the request.
-	FUNDING_QUOTES_SETTLED = "truapi.funding.quotes_settled" => Export(Info);
+	FUNDING_QUOTES_SETTLED = "truapi.funding.quotes_settled" => Local;
 
 	/// The session was handed to a provider on one of its quotes. `best`.
 	/// `fee_bucket`, fees against what the user sends in basis points:
 	/// `<50`, `50-100`, `100-200`, `200-500`, `500+`. `eta_bucket`: `<1m`,
 	/// `1-10m`, `10-60m`, `1-24h`, `1d+`, `unknown`. `rank` by what the user
 	/// gets, and `quote_count`.
-	FUNDING_PROVIDER_CHOSEN = "truapi.funding.provider_chosen" => Export(Info);
+	FUNDING_PROVIDER_CHOSEN = "truapi.funding.provider_chosen" => Local;
 
 	/// The provider's worker took the session, or first failed to.
 	/// `outcome`: `taken`, `not_taken`. `take_ms` since it was handed over.
-	FUNDING_PROVIDER_TOOK = "truapi.funding.provider_took" => Export(Info);
+	FUNDING_PROVIDER_TOOK = "truapi.funding.provider_took" => Local;
 
 	/// The session first reached a milestone. `step`: `received`, `added`,
 	/// `sent`. `since_prev_ms` since the milestone before.
-	FUNDING_STEP_REACHED = "truapi.funding.step_reached" => Export(Info);
+	FUNDING_STEP_REACHED = "truapi.funding.step_reached" => Local;
 
 	/// The session first showed a warning state. `flag`: `taking_longer`,
 	/// `retrying`, `retrying_payout`.
-	FUNDING_STATUS_FLAG = "truapi.funding.status_flag" => Export(Info);
+	FUNDING_STATUS_FLAG = "truapi.funding.status_flag" => Local;
 
 	/// The provider is done with the session, on an ending that is no fault.
 	/// `outcome`: `topped_up`, `sent`, `refunded`, `payout_failed`, `failed`,
@@ -182,7 +183,7 @@ markers! {
 	/// core's `not_claimed` or `payment_failed`, or `provider_other`.
 	/// `payout_failed` comes only under `ended_unexpectedly`. `money_moved`,
 	/// `region`, and `to_received_ms`; `age_ms` is the session's whole run.
-	FUNDING_ENDED = "truapi.funding.ended" => Export(Info);
+	FUNDING_ENDED = "truapi.funding.ended" => Local;
 
 	/// An ending that is a fault: failed, a failed payout, or expired once
 	/// money moved, and not the user's or the rules' doing. Carries what
@@ -192,31 +193,31 @@ markers! {
 	/// The user asked to cancel. `result`: `cancelled`, `requested`,
 	/// `pending`, `too_late`, `refused`. `status_at`: the status variant when
 	/// asked, such as `waiting_for_payment`. `money_moved`.
-	FUNDING_CANCEL_REQUESTED = "truapi.funding.cancel_requested" => Export(Info);
+	FUNDING_CANCEL_REQUESTED = "truapi.funding.cancel_requested" => Local;
 
 	/// The provider answered a cancel, or its worker first failed to.
 	/// `answer`: `offered`, `refused`, `stopped`, `no_answer`. `fee_bucket`:
 	/// an offer's fee against its total, as on `provider_chosen`, or `none`.
 	/// `answer_ms` since the cancel was asked.
-	FUNDING_CANCEL_ANSWERED = "truapi.funding.cancel_answered" => Export(Info);
+	FUNDING_CANCEL_ANSWERED = "truapi.funding.cancel_answered" => Local;
 
 	/// The user answered a cancel offer. `result`: `accepted`, `declined`,
 	/// `lapsed`, `no_offer`, `too_late`.
-	FUNDING_CANCEL_CONFIRMED = "truapi.funding.cancel_confirmed" => Export(Info);
+	FUNDING_CANCEL_CONFIRMED = "truapi.funding.cancel_confirmed" => Local;
 
 	/// The provider asked to show a screen. `target`: `app`, `page`.
 	/// `replaced`: whether it replaced one still waiting.
-	FUNDING_FRAME_REQUESTED = "truapi.funding.frame_requested" => Export(Info);
+	FUNDING_FRAME_REQUESTED = "truapi.funding.frame_requested" => Local;
 
 	/// The host opened a screen the provider asked for. `target`, and
 	/// `wait_ms` since it was asked for.
-	FUNDING_FRAME_OPENED = "truapi.funding.frame_opened" => Export(Info);
+	FUNDING_FRAME_OPENED = "truapi.funding.frame_opened" => Local;
 
 	/// A provider's screen closed. `target`. `outcome`: `closed`,
 	/// `dismissed`, `returned` or `failed` once shown, `closed_by_core` when
 	/// withdrawn before it showed, `dropped_unopened` when the user never
 	/// opened it. `open_ms` on screen.
-	FUNDING_FRAME_CLOSED = "truapi.funding.frame_closed" => Export(Info);
+	FUNDING_FRAME_CLOSED = "truapi.funding.frame_closed" => Local;
 
 	// ------------------------------------------------------------- materials
 
@@ -265,11 +266,11 @@ markers! {
 	/// The host reported that auth state changed for the person signed in.
 	NATIVE_AUTH_STATE_CHANGED = "truapi.native.callback.auth_state_changed" => Local;
 
-	/// A card face was expanded or collapsed. Detail names the card.
-	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN = "truapi.native.callback.set_expanded_card_face_shown" => Local;
+	/// An expanded card was covered or uncovered. Detail says whether it is covered.
+	NATIVE_SET_EXPANDED_CARD_COVERED = "truapi.native.callback.set_expanded_card_covered" => Local;
 
-	/// An expanded card was turned to its back or its front.
-	NATIVE_SET_EXPANDED_CARD_BACK_SHOWN = "truapi.native.callback.set_expanded_card_back_shown" => Local;
+	/// An expanded card was turned. Detail names the side turned up.
+	NATIVE_TURN_EXPANDED_CARD = "truapi.native.callback.turn_expanded_card" => Local;
 
 	/// The host's chain socket connected. Detail names the chain.
 	NATIVE_CHAIN_CONNECTED = "truapi.native.callback.chain_connected" => Local;
@@ -303,19 +304,19 @@ markers! {
 	// retrying, or by dropping the one connection that failed.
 
 	/// The bridge's listener came up. Detail carries the port and runtime id.
-	WS_BRIDGE_STARTED = "truapi.ws_bridge.started" => Export(Info);
+	WS_BRIDGE_STARTED = "truapi.ws_bridge.started" => Local;
 
 	/// The bridge's accept loop is exiting.
-	WS_BRIDGE_SHUTDOWN = "truapi.ws_bridge.shutdown" => Export(Info);
+	WS_BRIDGE_SHUTDOWN = "truapi.ws_bridge.shutdown" => Local;
 
 	/// A connection was accepted. Detail carries the count against the limit.
-	WS_BRIDGE_CONNECTION_OPEN = "truapi.ws_bridge.connection_open" => Export(Info);
+	WS_BRIDGE_CONNECTION_OPEN = "truapi.ws_bridge.connection_open" => Local;
 
 	/// A connection closed. Detail carries the count against the limit.
-	WS_BRIDGE_CONNECTION_CLOSED = "truapi.ws_bridge.connection_closed" => Export(Info);
+	WS_BRIDGE_CONNECTION_CLOSED = "truapi.ws_bridge.connection_closed" => Local;
 
 	/// The listener was rebound after being lost. Detail carries the new port.
-	WS_BRIDGE_RELISTENED = "truapi.ws_bridge.relistened" => Export(Info);
+	WS_BRIDGE_RELISTENED = "truapi.ws_bridge.relistened" => Local;
 
 	/// A requested bind port was ignored because the listener was already up.
 	WS_BRIDGE_BIND_PORT_IGNORED = "truapi.ws_bridge.bind_port_ignored" => Export(Warn);

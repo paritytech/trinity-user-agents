@@ -1039,6 +1039,28 @@
         }
       }
     },
+    "chat.transfer.reclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You reclaimed %1$(amount)@"
+          }
+        }
+      }
+    },
+    "chat.transfer.returnedToSender" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$(amount)@ from %1$(username)@ expired"
+          }
+        }
+      }
+    },
     "chat.transfer.sent" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3100,13 +3122,38 @@
         }
       }
     },
-    "settings.privacymode.balanced.details" : {
+    "settings.privacymode.balanced.bullet1" : {
+      "comment" : "A bullet point under the Balanced privacy mode in Settings.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Stronger privacy, moderate speed"
+            "value" : "Balances coin quality and waiting time"
+          }
+        }
+      }
+    },
+    "settings.privacymode.balanced.bullet2" : {
+      "comment" : "A bullet point under the Balanced privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Most funds ready in seconds, the rest in minutes"
+          }
+        }
+      }
+    },
+    "settings.privacymode.balanced.bullet3" : {
+      "comment" : "A bullet point under the Balanced privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins typically indistinguishable"
           }
         }
       }
@@ -3122,13 +3169,38 @@
         }
       }
     },
-    "settings.privacymode.fastest.details" : {
+    "settings.privacymode.fastest.bullet1" : {
+      "comment" : "A bullet point under the Fastest privacy mode in Settings.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fastest payments, lower privacy"
+            "value" : "Minimises waiting time"
+          }
+        }
+      }
+    },
+    "settings.privacymode.fastest.bullet2" : {
+      "comment" : "A bullet point under the Fastest privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Funds typically ready in seconds"
+          }
+        }
+      }
+    },
+    "settings.privacymode.fastest.bullet3" : {
+      "comment" : "A bullet point under the Fastest privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins somewhat distinguishable"
           }
         }
       }
@@ -3144,13 +3216,134 @@
         }
       }
     },
-    "settings.privacymode.private.details" : {
+    "settings.privacymode.info.matter.button" : {
+      "comment" : "Button on the coin quality info page that opens the second page.",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Maximum privacy, lowest speed"
+            "value" : "Why does it matter?"
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.matter.paragraph1" : {
+      "comment" : "First paragraph of the 'Why does it matter?' info page. Words between ** are highlighted, not bolded; keep the markers around the translated words.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When coins of the **same denomination** are **indistinguishable**, they can be treated as interchangeable, regardless of their individual histories. This property is called **fungibility**."
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.matter.paragraph2" : {
+      "comment" : "Second paragraph of the 'Why does it matter?' info page. Words between ** are highlighted, not bolded; keep the markers around the translated words.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Greater **fungibility** means fewer differences between individual coins."
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.matter.title" : {
+      "comment" : "Title of the second page of the privacy mode info sheet.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Why does it matter?"
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.quality.illustration" : {
+      "comment" : "VoiceOver description of the coin quality illustration.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Three mismatched one-dollar coins have lower quality; three identical one-dollar coins have higher quality."
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.quality.paragraph1" : {
+      "comment" : "First paragraph of the coin quality info page. Words between ** are highlighted, not bolded; keep the markers around the translated words.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "**Coin quality** describes how **indistinguishable** coins of the same denomination are from one another."
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.quality.paragraph2" : {
+      "comment" : "Second paragraph of the coin quality info page. Words between ** are highlighted, not bolded; keep the markers around the translated words.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins with **higher quality** behave more like real coins: they are harder to tell apart based on their individual histories or distinguishing characteristics."
+          }
+        }
+      }
+    },
+    "settings.privacymode.info.quality.title" : {
+      "comment" : "Title of the first page of the privacy mode info sheet; also the info button's accessibility label.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What is coin quality?"
+          }
+        }
+      }
+    },
+    "settings.privacymode.private.bullet1" : {
+      "comment" : "A bullet point under the Most Private privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximises coin quality"
+          }
+        }
+      }
+    },
+    "settings.privacymode.private.bullet2" : {
+      "comment" : "A bullet point under the Most Private privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Funds ready in minutes"
+          }
+        }
+      }
+    },
+    "settings.privacymode.private.bullet3" : {
+      "comment" : "A bullet point under the Most Private privacy mode in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coins practically indistinguishable"
           }
         }
       }
@@ -3162,6 +3355,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Most Private"
+          }
+        }
+      }
+    },
+    "settings.privacymode.subtitle" : {
+      "comment" : "Subtitle under the payment privacy mode title in Settings.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the balance between coin quality and waiting time."
           }
         }
       }
@@ -3651,6 +3856,39 @@
         }
       }
     },
+    "transfer.status.reclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaimed"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaimFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaiming failed"
+          }
+        }
+      }
+    },
+    "transfer.status.reclaiming" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reclaiming funds…"
+          }
+        }
+      }
+    },
     "transfer.status.sending" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3669,6 +3907,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sent, waiting to be claimed"
+          }
+        }
+      }
+    },
+    "transfer.status.unclaimed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recipient didn't claim it in time"
           }
         }
       }
@@ -3702,6 +3951,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wallet creation failed with error %@. Please, contact support"
+          }
+        }
+      }
+    },
+    "wallet.main.backToPocket" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to Pocket"
           }
         }
       }

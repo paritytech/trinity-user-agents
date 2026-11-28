@@ -2,15 +2,20 @@ import Testing
 @testable import polkadot_app
 
 struct CoreLogLineTests {
-    /// A local marker's detail describes what the person is doing, so it is
-    /// logged below the level the host log sink forwards.
+    /// A local marker is logged below the level the host log sink forwards,
+    /// whether its detail describes what the person is doing or it only
+    /// records that something went normally.
     @Test func aLocalMarkerStaysOnTheDevice() {
         let logger = RecordingLogger()
 
         logger.logCoreLine(marker: "truapi.native.callback.push_notification", detail: "hello")
+        logger.logCoreLine(marker: "truapi.core.started", detail: "truapi 0.0.0")
+        logger.logCoreLine(marker: "truapi.ws_bridge.connection_open", detail: "one of eight")
 
         #expect(logger.lines == [
-            .debug("[truapi.core] truapi.native.callback.push_notification: hello")
+            .debug("[truapi.core] truapi.native.callback.push_notification: hello"),
+            .debug("[truapi.core] truapi.core.started: truapi 0.0.0"),
+            .debug("[truapi.core] truapi.ws_bridge.connection_open: one of eight")
         ])
     }
 
@@ -19,15 +24,11 @@ struct CoreLogLineTests {
     @Test func anExportedMarkerIsLoggedAtItsOwnSeverity() {
         let logger = RecordingLogger()
 
-        logger.logCoreLine(marker: "truapi.core.started", detail: "truapi 0.0.0")
-        logger.logCoreLine(marker: "truapi.ws_bridge.connection_open", detail: "one of eight")
         logger.logCoreLine(marker: "truapi.chain.follow_budget_reached", detail: "four of four")
         logger.logCoreLine(marker: "truapi.tracing.warn", detail: "truapi::runtime: retrying")
         logger.logCoreLine(marker: "truapi.tracing.error", detail: "truapi::runtime: chain call failed")
 
         #expect(logger.lines == [
-            .info("[truapi.core] truapi.core.started: truapi 0.0.0"),
-            .info("[truapi.core] truapi.ws_bridge.connection_open: one of eight"),
             .warning("[truapi.core] truapi.chain.follow_budget_reached: four of four"),
             .warning("[truapi.core] truapi.tracing.warn: truapi::runtime: retrying"),
             .error("[truapi.core] truapi.tracing.error: truapi::runtime: chain call failed")

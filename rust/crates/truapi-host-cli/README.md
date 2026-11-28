@@ -225,7 +225,7 @@ client could drive a host that auto-approves confirmations. Unix-socket clients
 and loopback TCP clients that send no `Origin` are treated as local processes.
 
 The product is then detected as hosted and holds the real product account for
-its own `.dot` name, so signing, statements, entropy, permissions and storage
+its own name, so signing, statements, entropy, permissions and storage
 all take their production code paths with no phone involved. `--product-id` is
 not optional: the host derives the product account from it and refuses to _sign_
 for any other product id, and a mismatch only surfaces later, as a
@@ -284,6 +284,7 @@ Commands always start with `/`:
 | `/profile` | Resolve the active identity's public avatar metadata from dotNS (signing host). |
 | `/profile <username>` | Resolve another username's public avatar metadata without provisioning an identity (signing host). |
 | `/profile upload <image>` | Publish a local PNG, JPEG, GIF, or WebP image as the active identity's avatar (signing host). |
+| `/search <prefix>` | List the usernames the network's identity backend holds under a prefix, with what Asset Hub records for each: the `DotnsGateway` pallet's `LiteLabelOwner` and `AccountNames` entries, and the username the dotNS contracts resolve for the account (signing host). Apps only find names whose `AccountNames` entry matches. |
 | `/session` | Show the current session name, path, and user id (signing host). |
 | `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
@@ -741,9 +742,11 @@ try {
 }
 ```
 
-`--product-id` (a dotNS name ending in `.dot`, `.paseo` or `.testnet`, or a
+`--product-id` (a dotNS name ending in `.dot` or in the stack's TLD, or a
 `localhost` identifier; default
-`headless-playground.dot`) sets the initial product. `/product <id>` changes it
+`headless-playground.dot`) sets the initial product. On a stack whose TLD is
+not `dot`, a `.dot` name selects the same name under the stack's TLD, so the
+default is `headless-playground.paseo` on Paseo. `/product <id>` changes it
 for the lifetime of the process. Switching disconnects active product
 WebSockets. Reload browser dev pages to use the new product context. The
 network, pairing relationship, signing-host session, and wallet identity stay active.
@@ -1171,8 +1174,8 @@ People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
 role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
 stack that lacks one of those roles, gives two of them one genesis hash, has a
-`tld` the core does not serve (`dot`, `paseo`, `testnet`), has no `dub` service or
-no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
+`tld` that is not a lowercase DNS label, has no `dub` service or no
+`dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
 chain. `get_chain_info` reports the descriptor's `network`. The product

@@ -52,6 +52,8 @@ final class MainTabBarViewController: UIViewController {
     private var isSearchSwipePending = false
     /// Set while the landing focuses search, so the bar's hide plays no feedback.
     private var isFocusingFromSwipe = false
+    /// Set while a programmatic open carries the panel toward Search; the open's settle lands it.
+    private var landsSearchOnOpen = false
     /// The Tab index the user tapped while an outgoing navigation transition was running.
     private var pendingSelectionIndex: Int?
 
@@ -105,6 +107,8 @@ final class MainTabBarViewController: UIViewController {
         chromeController.onCenterPanelDidChangeOpen = { [weak self] isOpen in
             if !isOpen {
                 self?.cancelSearchSwipe()
+            } else if self?.landsSearchOnOpen == true {
+                self?.landSearchSwipe()
             }
             guard isOpen else { return }
             self?.scanPanel?.setCaptureActive(true)
@@ -225,22 +229,48 @@ private extension MainTabBarViewController {
         ChainConnectionStatusBarView.bottomPadding + ChainConnectionStatusBarView.preferredHeight / 2
     }
 
-    func makeStatusBarTitleViewModel() -> StatusBarTitleViewModel {
+    func makeStatusBarTitleViewModel(showing screen: UIViewController?) -> StatusBarTitleViewModel {
         switch container.selection {
         case let .spa(tabId):
             let provider = container.selectedController as? StatusBarTitleProviding
             return StatusBarTitleViewModel(
                 title: provider?.statusBarTitle ?? spaChipViewModels.first { $0.id == tabId }?.name ?? "",
                 showsLogo: true,
-                menu: provider?.makeStatusBarMenu()
+                menu: provider?.makeStatusBarMenu(),
+                backAction: nil
             )
         case let .tab(index):
+            guard tabs.indices.contains(index) else {
+                return StatusBarTitleViewModel(title: "", showsLogo: false, menu: nil, backAction: nil)
+            }
+            let item = tabs[index]
+            if item == .wallet, let navigation = container.selectedController as? UINavigationController {
+                return makeWalletStatusBarTitleViewModel(navigation: navigation, showing: screen)
+            }
             return StatusBarTitleViewModel(
-                title: tabs.indices.contains(index) ? Self.statusBarTitle(for: tabs[index]) : "",
+                title: Self.statusBarTitle(for: item),
                 showsLogo: false,
-                menu: nil
+                menu: nil,
+                backAction: nil
             )
         }
+    }
+
+    func makeWalletStatusBarTitleViewModel(
+        navigation: UINavigationController,
+        showing screen: UIViewController?
+    ) -> StatusBarTitleViewModel {
+        let shown = screen ?? navigation.topViewController
+        let openItem = shown as? PocketItemScreen
+        let backAction: (() -> Void)? = openItem == nil
+            ? nil
+            : { [weak navigation] in navigation?.popViewController(animated: true) }
+        return StatusBarTitleViewModel(
+            title: (openItem ?? navigation.nearestPocketItem)?.statusStripTitle ?? Self.statusBarTitle(for: .wallet),
+            showsLogo: false,
+            menu: nil,
+            backAction: backAction
+        )
     }
 
     static func statusBarTitle(for item: TabBarItem) -> String {
@@ -436,7 +466,14 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 // MARK: - Scan panel
 
 extension MainTabBarViewController {
-    func openScanPanel() {
+    /// Opens the scan panel with its search field focused.
+    func openContactSearch() {
+        if chromeController.panelController.open == .content(.scan), let scanPanel {
+            scanPanel.focusSearch()
+            return
+        }
+        beginSearchSwipe()
+        landsSearchOnOpen = true
         chromeController.openPanelShowingDocklet(.content(.scan))
     }
 
@@ -484,6 +521,7 @@ private extension MainTabBarViewController {
 
     func landSearchSwipe() {
         isSearchSwipePending = false
+        landsSearchOnOpen = false
         isFocusingFromSwipe = true
         scanPanel?.focusSearch()
         isFocusingFromSwipe = false
@@ -492,6 +530,7 @@ private extension MainTabBarViewController {
     /// Drops a swipe that did not land, and returns the scan panel to the Scan state's layout.
     func cancelSearchSwipe() {
         isSearchSwipePending = false
+        landsSearchOnOpen = false
         scanPanel?.setSearchPending(false)
     }
 }
@@ -509,11 +548,21 @@ extension MainTabBarViewController {
     func applyChrome(_ context: TabBarChromeContext) {
         chromeController.apply(context)
         applyWidgetLayout(for: context)
-        refreshStatusBarTitle()
+        refreshStatusBarTitle(showing: context.screen)
     }
 
-    func refreshStatusBarTitle() {
-        statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
+    /// `screen` is the screen being shown. Nil reads the top of the selected Wallet stack.
+    func refreshStatusBarTitle(showing screen: UIViewController? = nil) {
+        statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel(showing: screen))
+    }
+}
+
+// MARK: - Navigation Stack
+
+private extension UINavigationController {
+    /// The topmost Pocket item on the stack, at the top or below a deeper screen.
+    var nearestPocketItem: PocketItemScreen? {
+        viewControllers.reversed().lazy.compactMap { $0 as? PocketItemScreen }.first
     }
 }
 

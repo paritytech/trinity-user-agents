@@ -40,7 +40,7 @@ use crate::{
 		live_asset_hub, live_asset_hub_genesis, tokio_spawner,
 	},
 	chain_runtime::ChainRuntime,
-	durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+	durable::{DurableRegistry, live_engine},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::root_entropy::RootEntropy,
@@ -50,7 +50,6 @@ use crate::{
 	},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
-	time::RealTimer,
 };
 
 const DEV_PHRASE: &str = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
@@ -172,32 +171,6 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		spawner: tokio_spawner(),
 	};
 	LivePurses { _dir: dir, db, ledger, _tracker: HoldingTracker::start(tracking) }
-}
-
-/// An engine over the live chain that builds and settles transfers on its own.
-fn live_engine(
-	chain: &ChainRuntime,
-	db: crate::store::Db,
-	registry: DurableRegistry,
-) -> Arc<DurableTxEngine> {
-	let chain = Arc::new(chain.clone());
-	let engine = DurableTxEngine::new(DurableDeps {
-		db,
-		registry,
-		heads: chain.clone(),
-		blocks: chain.clone(),
-		validator: chain.clone(),
-		submitter: chain,
-		timer: Arc::new(RealTimer),
-		spawner: tokio_spawner(),
-	});
-	let settling = engine.clone();
-	tokio::spawn(async move {
-		while settling.run_until_settled().await.is_ok() {
-			tokio::time::sleep(POLL).await
-		}
-	});
-	engine
 }
 
 impl CollectionOwner {

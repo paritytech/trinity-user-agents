@@ -51,7 +51,7 @@ fn a_fact_carries_closed_values_only() {
 	held.owner_product_id = Some(ProductId::for_test("someones-shop.dot"));
 	held.provider_id = Some(ProductId::for_test("ramp.dot"));
 	held.choice = Some(test_choice());
-	let common = Common::of(Some(&held), None, |_| false, NOW);
+	let common = Common::of(Some(&held), None, |_| false, None, NOW);
 	let events: Vec<CoreEvent> = facts().into_iter().map(|fact| common.attach(fact, "ref")).collect();
 	for event in &events {
 		let line = line(event);
@@ -109,26 +109,23 @@ fn an_unknown_measure_is_left_off() {
 	assert_eq!((value(&took, "outcome"), value(&took, "take_ms")), (text("not_taken"), None));
 }
 
-// The table gates both ways out of the core, so a funding marker the table
-// does not export would reach no host: each one a fact goes out under is
-// exported, an unexpected ending at error so it can be alerted on.
+// The table gates both ways out of the core on registration, so a funding
+// marker it does not list would reach no host at all. Every marker a fact goes
+// out under is local, reaching a host's own log and nothing past it, bar an
+// unexpected ending at error so it can be alerted on.
 #[test]
-fn every_funding_marker_is_exported() {
+fn only_a_funding_fault_leaves_the_device() {
 	use crate::markers::{MarkerClass, Severity};
 	let funding: Vec<_> =
 		markers::MARKERS.iter().filter(|marker| marker.target.starts_with("truapi.funding.")).collect();
 	assert_eq!(funding.len(), 15);
 	for marker in funding {
-		let severity = match marker.class {
-			MarkerClass::Export { severity } => severity,
-			MarkerClass::Local => panic!("{} stays on the device", marker.target),
-		};
 		let expected = if *marker == markers::FUNDING_ENDED_UNEXPECTEDLY {
-			Severity::Error
+			MarkerClass::Export { severity: Severity::Error }
 		} else {
-			Severity::Info
+			MarkerClass::Local
 		};
-		assert_eq!(severity, expected, "{}", marker.target);
+		assert_eq!(marker.class, expected, "{}", marker.target);
 	}
 }
 
@@ -167,7 +164,7 @@ fn endings_say_whether_they_were_expected() {
 		let mut ended = top_up();
 		ended.fail(reason, NOW);
 		let fact = Telemetry::default().changed(Some(&top_up()), &ended, NOW).pop().expect("ended");
-		let event = Common::of(None, None, |_| false, NOW).attach(fact, "ref");
+		let event = Common::of(None, None, |_| false, None, NOW).attach(fact, "ref");
 		let [outcome, reason] = ["outcome", "reason"].map(|key| value(&event, key));
 		(outcome, reason, event.marker() == markers::FUNDING_ENDED)
 	};
