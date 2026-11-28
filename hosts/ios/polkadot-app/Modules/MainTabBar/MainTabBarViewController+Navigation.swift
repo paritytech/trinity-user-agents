@@ -50,15 +50,8 @@ private extension MainTabBarViewController {
             showing: target
         )
 
-        guard
-            animated,
-            let coordinator = navigationController.transitionCoordinator,
-            coordinator.isInteractive
-        else {
-            applyChrome(
-                incoming,
-                animatingAlongside: animated ? navigationController.transitionCoordinator : nil
-            )
+        guard animated, let coordinator = navigationController.transitionCoordinator else {
+            applyChrome(incoming)
             return
         }
 

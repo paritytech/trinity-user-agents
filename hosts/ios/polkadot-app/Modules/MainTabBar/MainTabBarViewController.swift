@@ -545,12 +545,9 @@ extension MainTabBarViewController {
         applyChips()
     }
 
-    func applyChrome(
-        _ context: TabBarChromeContext,
-        animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil
-    ) {
+    func applyChrome(_ context: TabBarChromeContext) {
         chromeController.apply(context)
-        applyWidgetLayout(for: context, animatingAlongside: transitionCoordinator)
+        applyWidgetLayout(for: context)
         refreshStatusBarTitle(showing: context.screen)
     }
 

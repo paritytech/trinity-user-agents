@@ -325,13 +325,13 @@ final class TabBarBottomChromeController: UIViewController {
         tipController.setBarShown(foldController.state == .shown)
     }
 
-    /// Resolves the visibility state a context would settle on, without committing it — used to
-    /// drive the offset alongside an interactive navigation transition.
+    /// Resolves the visibility state a context would settle on, without committing it, used to
+    /// drive the offset alongside a navigation transition.
     func resolvedState(for context: TabBarChromeContext) -> TabBarVisibilityState {
         foldController.resolvedState(for: context)
     }
 
-    /// Moves the chrome toward `state` in sync with an interactive transition. Unlike `apply(state:)`
+    /// Moves the chrome toward `state` in sync with a navigation transition. Unlike `apply(state:)`
     /// it runs no animator of its own, so the caller's transition coordinator owns the timing.
     func setInteractiveTarget(_ state: TabBarVisibilityState) {
         foldController.setInteractiveTarget(state)

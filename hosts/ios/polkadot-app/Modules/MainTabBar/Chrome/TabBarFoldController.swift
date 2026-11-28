@@ -87,8 +87,8 @@ final class TabBarFoldController {
         return true
     }
 
-    /// Resolves the visibility state a context would settle on, without committing it — used to
-    /// drive the offset alongside an interactive navigation transition.
+    /// Resolves the visibility state a context would settle on, without committing it, used to
+    /// drive the offset alongside a navigation transition.
     func resolvedState(for context: TabBarChromeContext) -> TabBarVisibilityState {
         let override = context.screen === navigationScreen
             ? userOverride
@@ -96,7 +96,7 @@ final class TabBarFoldController {
         return TabBarVisibilityState(derived: context.foldDerived, override: override)
     }
 
-    /// Moves the chrome toward `state` in sync with an interactive transition. Unlike `apply(state:)`
+    /// Moves the chrome toward `state` in sync with a navigation transition. Unlike `apply(state:)`
     /// it runs no animator or display link of its own, so the caller's transition coordinator owns the timing.
     func setInteractiveTarget(_ state: TabBarVisibilityState) {
         isFoldInterpolating = true
