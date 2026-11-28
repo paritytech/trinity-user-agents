@@ -18,8 +18,8 @@ use trinity_stack::{
 use zeroize::Zeroizing;
 
 use crate::{
+	file_access::{self, FileAccess},
 	network::ensure_built_in_runnable,
-	platform,
 	stack_descriptor::{
 		FETCH_TIMEOUT, bundles_same, describe_pin_change, fetch, light_client_chains, pointer_of,
 		read_stack, refused, unix_now,
@@ -198,20 +198,14 @@ fn publish(
 	// The state goes first: if the descriptor write then fails, a retry repeats the same
 	// `sequence` rather than skipping one the readers never saw.
 	if let Some(state_file) = state_file {
-		write_atomically(state_file, &serde_json::to_vec_pretty(&state)?)?;
+		let encoded = serde_json::to_vec_pretty(&state)?;
+		file_access::write_atomically(state_file, &encoded, FileAccess::Shared)?;
 	}
-	write_atomically(&path, &document)?;
+	file_access::write_atomically(&path, &document, FileAccess::Shared)?;
 	println!("wrote {}, sequence {}", path.display(), state.sequence);
 	if let Some(link) = link {
 		println!("{link}");
 	}
-	Ok(())
-}
-
-/// Replaces `path` in one step, so a web root or a build never sees half a file. The file gets the
-/// umask's permissions, so a web server running as another user can serve it.
-fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-	platform::atomic_write(path, contents)?;
 	Ok(())
 }
 
@@ -306,7 +300,7 @@ async fn bundle(
 			.map_err(|error| anyhow!("not bundled: {error}, {} is unchanged", out.display()))?;
 		let mut written = serde_json::to_vec_pretty(&specs)?;
 		written.push(b'\n');
-		write_atomically(light_specs_out, &written)?;
+		file_access::write_atomically(light_specs_out, &written, FileAccess::Shared)?;
 		println!("wrote {}, {} light specs", light_specs_out.display(), specs.len());
 	}
 	if is_current {
@@ -318,7 +312,7 @@ async fn bundle(
 		);
 		return Ok(());
 	}
-	write_atomically(out, &accepted.document)?;
+	file_access::write_atomically(out, &accepted.document, FileAccess::Shared)?;
 	println!("wrote {}, {} sequence {}", out.display(), descriptor.id, descriptor.sequence);
 	Ok(())
 }

@@ -20,6 +20,8 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::file_access::{self, FileAccess};
+
 /// Version this binary was built at.
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -112,9 +114,9 @@ impl ManagedInstall {
 	/// Record a check attempt. Called *before* the network request, so an
 	/// unreachable release host is not retried on every invocation.
 	fn record_check(&self, now: u64) -> Result<()> {
-		fs::create_dir_all(&self.root)?;
 		let state = CheckState { last_check: now };
-		fs::write(self.root.join(CHECK_STATE_FILE), serde_json::to_vec(&state)?)
+		let path = self.root.join(CHECK_STATE_FILE);
+		file_access::write_atomically(&path, &serde_json::to_vec(&state)?, FileAccess::Shared)
 			.context("record the update check timestamp")
 	}
 }

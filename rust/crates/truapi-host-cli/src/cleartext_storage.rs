@@ -13,7 +13,7 @@ use std::{
 use truapi::{encrypted_storage::EncryptedStorage, latest::GenericError};
 use zeroize::Zeroizing;
 
-use crate::accounts::write_secret_file;
+use crate::file_access::{self, FileAccess};
 
 /// The values stored in one file, read and replaced whole on every call.
 pub struct CliCleartextStorage {
@@ -71,7 +71,11 @@ fn read_values(path: &Path) -> Result<BTreeMap<String, String>, GenericError> {
 fn write_values(path: &Path, values: &BTreeMap<String, String>) -> Result<(), GenericError> {
 	let text = serde_json::to_string_pretty(values)
 		.map_err(|error| file_error("encoding", path, error))?;
-	write_secret_file(path, text.as_bytes()).map_err(|error| file_error("writing", path, error))
+	file_access::write_atomically(path, text.as_bytes(), FileAccess::Private).map_err(|error| {
+		GenericError {
+			reason: format!("writing cleartext storage: {:#}", anyhow::Error::new(error)),
+		}
+	})
 }
 
 /// A failed file operation, naming the file.

@@ -15,6 +15,7 @@ use truapi::{
 };
 
 use crate::{
+	file_access::{self, FileAccess},
 	network::Stack,
 	platform::{ApprovalPolicy, CliPlatform},
 };
@@ -70,7 +71,8 @@ pub async fn run(command: MaterialsCommand, network: &Stack) -> Result<()> {
 /// A runtime that draws materials, kept in their own database under `state`, apart from any
 /// signing host's.
 async fn runtime(network: &Stack, state: &Path) -> Result<HostRuntime<SigningHost>> {
-	fs::create_dir_all(state).with_context(|| format!("creating {}", state.display()))?;
+	file_access::create_dir_all(state, FileAccess::Private)
+		.with_context(|| format!("creating {}", state.display()))?;
 	let db = truapi::store::Db::open(truapi::store::core_db_config(state))
 		.await
 		.with_context(|| crate::core_db_cleanup_request(state))?;

@@ -191,7 +191,10 @@ fn save_roundtrips_account_store() -> Result<()> {
 		loaded.get("paseo-next-v2", "auto-1").map(|record| record.name.as_str()),
 		Some("auto-1")
 	);
-	assert!(!temp_path(&dir.path().join(ACCOUNT_STORE_FILE)).exists());
+	let files: Vec<_> = fs::read_dir(dir.path())?
+		.map(|entry| entry.map(|entry| entry.file_name()))
+		.collect::<std::io::Result<_>>()?;
+	assert_eq!(files, [ACCOUNT_STORE_FILE]);
 	Ok(())
 }
 

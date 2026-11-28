@@ -41,73 +41,41 @@ use truapi::{
 use crate::{
 	bulletin_lookup::BitswapRpc,
 	chain::CliChainProvider,
+	file_access::{self, FileAccess},
 	stack_descriptor::Roles,
 	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
 };
 
-static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
-
 /// A persistence failure with its filesystem operation or serialization cause.
 #[derive(derive_more::Display, derive_more::From, Debug)]
 pub enum StorageError {
-	/// The destination cannot identify a parent directory.
-	#[display("storage path has no parent: {}", path.display())]
-	MissingParent { path: PathBuf },
 	/// The stored value could not be serialized.
 	#[display("{_0}")]
 	#[from]
 	Serialize(serde_json::Error),
-	/// The parent storage directory could not be created.
-	#[display("create storage dir")]
-	CreateStorageDirectory { source: std::io::Error },
-	/// The product's storage directory could not be created.
-	#[display("create product storage directory {}", path.display())]
-	CreateProductDirectory { path: PathBuf, source: std::io::Error },
-	/// A storage file or directory could not be created.
+	/// A storage directory could not be created.
 	#[display("create {}", path.display())]
 	Create { path: PathBuf, source: std::io::Error },
-	/// A storage file could not be written.
-	#[display("write {}", path.display())]
-	Write { path: PathBuf, source: std::io::Error },
-	/// A storage file could not be synchronized.
-	#[display("sync {}", path.display())]
-	Sync { path: PathBuf, source: std::io::Error },
-	/// An existing destination could not be removed.
-	#[cfg(windows)]
-	#[display("replace {}", path.display())]
-	Replace { path: PathBuf, source: std::io::Error },
+	/// A storage file could not be replaced with its new contents.
+	#[display("{_0}")]
+	#[from]
+	Write(file_access::WriteError),
 	/// A storage file could not be removed.
 	#[display("remove {}", path.display())]
 	Remove { path: PathBuf, source: std::io::Error },
-	/// A completed write could not be moved to its destination.
-	#[display("persist {}", path.display())]
-	Persist { path: PathBuf, source: std::io::Error },
 	/// The navigation transcript could not be appended.
 	#[display("could not record navigation in {}", path.display())]
 	RecordNavigation { path: PathBuf, source: std::io::Error },
-	/// The storage directory could not be synchronized.
-	#[cfg(unix)]
-	#[display("sync storage dir {}", path.display())]
-	SyncDirectory { path: PathBuf, source: std::io::Error },
 }
 
 impl std::error::Error for StorageError {
 	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
 		match self {
-			Self::MissingParent { .. } => None,
 			Self::Serialize(source) => std::error::Error::source(source),
-			Self::CreateStorageDirectory { source } |
-			Self::CreateProductDirectory { source, .. } |
+			Self::Write(source) => std::error::Error::source(source),
 			Self::Create { source, .. } |
-			Self::Write { source, .. } |
-			Self::Sync { source, .. } |
 			Self::Remove { source, .. } |
-			Self::Persist { source, .. } |
 			Self::RecordNavigation { source, .. } => Some(source),
-			#[cfg(windows)]
-			Self::Replace { source, .. } => Some(source),
-			#[cfg(unix)]
-			Self::SyncDirectory { source, .. } => Some(source),
 		}
 	}
 }
@@ -221,7 +189,8 @@ impl CliPlatform {
 		let (product_storage_dir, core_storage_path) = storage
 			.as_ref()
 			.map(|paths| {
-				if let Err(err) = fs::create_dir_all(&paths.state_dir) {
+				if let Err(err) = file_access::create_dir_all(&paths.state_dir, FileAccess::Private)
+				{
 					tracing::warn!(
 						path = %paths.state_dir.display(),
 						%err,
@@ -245,7 +214,7 @@ impl CliPlatform {
 				.as_ref()
 				.map(|scope| scope.bootstrap_dir.clone())
 				.unwrap_or_else(|| paths.state_dir.clone());
-			if let Err(err) = fs::create_dir_all(&directory) {
+			if let Err(err) = file_access::create_dir_all(&directory, FileAccess::Private) {
 				tracing::warn!(
 					path = %directory.display(),
 					%err,
@@ -373,7 +342,7 @@ impl CliPlatform {
 			return Ok(());
 		}
 
-		fs::create_dir_all(&target_state)
+		file_access::create_dir_all(&target_state, FileAccess::Private)
 			.map_err(|source| StorageError::Create { path: target_state.clone(), source })?;
 		let target_product_dir = target_state.join("storage");
 		let target_core_path = target_state.join("core-storage.json");
@@ -1172,17 +1141,15 @@ fn save_product_storage(
 	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
 ) -> Result<(), StorageError> {
-	fs::create_dir_all(directory).map_err(|source| StorageError::CreateProductDirectory {
-		path: directory.to_path_buf(),
-		source,
-	})?;
 	let document = ProductStorageDocument {
 		version: 1,
 		product_id: product_id.clone(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&document)?;
-	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
+	let path = product_storage_path(directory, product_id);
+	file_access::write_atomically(&path, text.as_bytes(), FileAccess::Private)?;
+	Ok(())
 }
 
 fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
@@ -1267,39 +1234,7 @@ fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&json)?;
-	atomic_write(path, text.as_bytes())
-}
-
-/// Replace a persisted value after its contents have reached the filesystem.
-pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
-	let parent = match path.parent() {
-		Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
-		Some(parent) => parent,
-		None => return Err(StorageError::MissingParent { path: path.to_path_buf() }),
-	};
-	fs::create_dir_all(parent).map_err(|source| StorageError::CreateStorageDirectory { source })?;
-	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
-	let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-	let temporary =
-		path.with_file_name(format!(".{name}.{}.{temporary_id}.tmp", std::process::id()));
-	let mut file = fs::File::create(&temporary)
-		.map_err(|source| StorageError::Create { path: temporary.clone(), source })?;
-	file.write_all(bytes)
-		.map_err(|source| StorageError::Write { path: temporary.clone(), source })?;
-	file.sync_all()
-		.map_err(|source| StorageError::Sync { path: temporary.clone(), source })?;
-	drop(file);
-	#[cfg(windows)]
-	if path.exists() {
-		fs::remove_file(path)
-			.map_err(|source| StorageError::Replace { path: path.to_path_buf(), source })?;
-	}
-	fs::rename(&temporary, path)
-		.map_err(|source| StorageError::Persist { path: path.to_path_buf(), source })?;
-	#[cfg(unix)]
-	fs::File::open(parent)
-		.and_then(|directory| directory.sync_all())
-		.map_err(|source| StorageError::SyncDirectory { path: parent.to_path_buf(), source })?;
+	file_access::write_atomically(path, text.as_bytes(), FileAccess::Private)?;
 	Ok(())
 }
 
@@ -1342,14 +1277,9 @@ fn read_current_pairing_user(bootstrap_dir: &Path) -> Option<String> {
 }
 
 fn persist_current_pairing_user(bootstrap_dir: &Path, user_id: &str) -> Result<(), StorageError> {
-	fs::create_dir_all(bootstrap_dir)
-		.map_err(|source| StorageError::Create { path: bootstrap_dir.to_path_buf(), source })?;
 	let path = bootstrap_dir.join(CURRENT_PAIRING_USER_FILE);
-	let temporary =
-		bootstrap_dir.join(format!(".{CURRENT_PAIRING_USER_FILE}.{}.tmp", std::process::id()));
-	fs::write(&temporary, format!("{user_id}\n"))
-		.map_err(|source| StorageError::Write { path: temporary.clone(), source })?;
-	fs::rename(&temporary, &path).map_err(|source| StorageError::Persist { path, source })
+	file_access::write_atomically(&path, format!("{user_id}\n").as_bytes(), FileAccess::Private)?;
+	Ok(())
 }
 
 fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), StorageError> {

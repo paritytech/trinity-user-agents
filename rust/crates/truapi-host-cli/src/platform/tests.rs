@@ -736,3 +736,58 @@ fn product_storage_is_isolated_by_session_then_product() {
 		fs::read_to_string(second_path).expect("read second session file")
 	);
 }
+
+/// Core storage holds the auth session and the allowance and auto-signing
+/// keys, device storage the key peers encrypt to, and product storage what
+/// products chose to keep. Another user on the machine must not read any of
+/// it, so the directories the host creates are owner-only and so is every
+/// file, also once a user switch writes a new namespace.
+#[cfg(unix)]
+#[test]
+fn storage_the_host_creates_is_readable_by_its_owner_only() {
+	use crate::file_access::mode;
+
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let platform = CliPlatform::new(
+		&test_network(),
+		Some(CliStoragePaths::pairing(network_dir.clone())),
+		ApprovalPolicy::AutoAccept,
+		None,
+	);
+	let product_id = ProductId::for_test("product.dot");
+	let product_key = ProductStorageKey::new(product_id.clone(), "theme");
+
+	futures::executor::block_on(async {
+		platform
+			.write_core_storage(CoreStorageKey::AuthSession, vec![1])
+			.await
+			.expect("write core storage");
+		platform
+			.write_core_storage(CoreStorageKey::DeviceEncryptionKey, vec![7; 32])
+			.await
+			.expect("write device storage");
+		platform
+			.write(product_key.encode(), b"dark".to_vec())
+			.await
+			.expect("write product");
+	});
+	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
+
+	let bootstrap = network_dir.join("pairing-host");
+	let alice = network_dir.join("alice.dot_pairing_host");
+	let directories = [&network_dir, &bootstrap, &alice, &alice.join("storage")];
+	let files = [
+		bootstrap.join("device-storage.json"),
+		bootstrap.join("current-user"),
+		alice.join("core-storage.json"),
+		product_storage_path(&alice.join("storage"), &product_id),
+	];
+	let expected = directories
+		.iter()
+		.map(|directory| (directory.to_path_buf(), 0o700))
+		.chain(files.iter().map(|file| (file.clone(), 0o600)))
+		.collect::<Vec<_>>();
+	let actual = expected.iter().map(|(path, _)| (path.clone(), mode(path))).collect::<Vec<_>>();
+	assert_eq!(actual, expected);
+}
